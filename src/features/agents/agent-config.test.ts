@@ -32,6 +32,8 @@ const revision = (text: string | null, prev?: string, op?: string) =>
     key,
   ) as RelayEvent;
 
+const gen = (store: AgentConfigStore) => store.capture(subject).generation;
+
 function seeded(text = "A") {
   const store = new AgentConfigStore(memoryStorage());
   const head = revision(text);
@@ -71,15 +73,15 @@ describe("artifact state", () => {
   it("marks an invalid head and a deletion as blocking", () => {
     const { store, head } = seeded();
     const bad = revision("x", head.id);
-    expect(store.applyLive(subject, bad, "Unknown artifact version")).toBe(
-      "reread",
-    );
+    expect(
+      store.applyLive(subject, gen(store), bad, "Unknown artifact version"),
+    ).toBe("reread");
     expect(store.instructions(subject)).toMatchObject({
       ok: false,
       state: "invalid",
     });
     const gone = revision(null, bad.id, "delete");
-    store.applyLive(subject, gone);
+    store.applyLive(subject, gen(store), gone);
     expect(store.state(subject).state).toBe("deleted");
   });
 });
@@ -89,7 +91,7 @@ describe("successor check", () => {
     const { store, head } = seeded("A0");
     const captured = store.capture(subject);
     const b = revision("B", head.id);
-    expect(store.applyLive(subject, b)).toBe("applied");
+    expect(store.applyLive(subject, gen(store), b)).toBe("applied");
     const a = revision("A");
     expect(store.applyRead(subject, captured, { kind: "head", event: a })).toBe(
       "reread",
@@ -100,7 +102,7 @@ describe("successor check", () => {
   it("drops a held positive read released after a redaction of the head", () => {
     const { store, head } = seeded();
     const captured = store.capture(subject);
-    expect(store.applyRedaction(subject, head.id)).toBe("reread");
+    expect(store.applyRedaction(subject, gen(store), head.id)).toBe("reread");
     expect(
       store.applyRead(subject, captured, { kind: "head", event: head }),
     ).toBe("reread");
@@ -110,7 +112,7 @@ describe("successor check", () => {
   it("drops a held empty read released after a newer live head", () => {
     const { store, head } = seeded();
     const captured = store.capture(subject);
-    store.applyLive(subject, revision("B", head.id));
+    store.applyLive(subject, gen(store), revision("B", head.id));
     expect(store.applyRead(subject, captured, { kind: "empty" })).toBe(
       "reread",
     );
@@ -125,15 +127,15 @@ describe("successor check", () => {
       kind: "head",
       event: restore,
     });
-    expect(store.applyLive(subject, deletion)).toBe("reread");
+    expect(store.applyLive(subject, gen(store), deletion)).toBe("reread");
     expect(store.instructions(subject)).toEqual({ ok: true, text: "A again" });
   });
 
   it("asks for a read when a live revision does not follow the cached head", () => {
     const { store } = seeded();
-    expect(store.applyLive(subject, revision("Z", "f".repeat(64)))).toBe(
-      "reread",
-    );
+    expect(
+      store.applyLive(subject, gen(store), revision("Z", "f".repeat(64))),
+    ).toBe("reread");
   });
 
   it("refuses every capture taken before a rebind", () => {
@@ -144,6 +146,24 @@ describe("successor check", () => {
       store.applyRead(subject, captured, { kind: "head", event: head }),
     ).toBe("reread");
     expect(store.state(subject).state).toBe("unavailable");
+  });
+
+  it("refuses live revisions and redactions held from a binding retired by a rebind", () => {
+    const { store, head } = seeded("A");
+    const old = gen(store);
+    const b = revision("B", head.id);
+    store.rebind(subject);
+    store.applyRead(subject, store.capture(subject), {
+      kind: "head",
+      event: head,
+    });
+    const before = store.state(subject);
+    expect(store.applyLive(subject, old, b)).toBe("unchanged");
+    expect(store.applyRedaction(subject, old, head.id)).toBe("unchanged");
+    expect(store.state(subject)).toEqual(before);
+    expect(store.instructions(subject)).toEqual({ ok: true, text: "A" });
+    // The new binding's own successor still applies against the current head.
+    expect(store.applyLive(subject, gen(store), b)).toBe("applied");
   });
 });
 
@@ -192,6 +212,10 @@ describe("synced settings", () => {
 
   it("rejects unknown keys, wrong types, unsupported values and relative folders", () => {
     expect(settingsProblem(schema, { token: "s" })).toMatch(/Unknown/);
+    for (const name of ["constructor", "toString", "__proto__"])
+      expect(
+        settingsProblem(schema, JSON.parse(`{"${name}":"unexpected"}`)),
+      ).toMatch(/Unknown/);
     expect(settingsProblem(schema, { model: 1 })).toMatch(/not text/);
     expect(settingsProblem(schema, { scope: "dm" })).toMatch(/unsupported/);
     expect(settingsProblem(schema, { workspace: "work/x" })).toMatch(/folder/);

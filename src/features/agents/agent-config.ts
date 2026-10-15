@@ -92,10 +92,17 @@ export class AgentConfigStore {
     return "applied";
   }
 
-  /** A live revision. It advances only a successor of the cached head;
-   * anything else asks for a read rather than deciding by order of arrival. */
-  applyLive(subject: Subject, event: RelayEvent, problem?: string): Applied {
+  /** A live revision from the binding taken at `generation`. It advances only
+   * a successor of the head current now; anything else asks for a read rather
+   * than deciding by order of arrival. A retired binding changes nothing. */
+  applyLive(
+    subject: Subject,
+    generation: number,
+    event: RelayEvent,
+    problem?: string,
+  ): Applied {
     const entry = this.state(subject);
+    if (generation !== entry.generation) return "unchanged";
     if (entry.head?.id === event.id) return "unchanged";
     if (!entry.head || artifactPrev(event) !== entry.head.id) return "reread";
     this.markHadVersion(subject);
@@ -103,9 +110,16 @@ export class AgentConfigStore {
     return problem ? "reread" : "applied";
   }
 
-  /** A live NIP-29 redaction. Redacting the head retires it. */
-  applyRedaction(subject: Subject, target: string): Applied {
-    if (this.state(subject).head?.id !== target) return "unchanged";
+  /** A live NIP-29 redaction from the binding taken at `generation`.
+   * Redacting the head retires it; a retired binding changes nothing. */
+  applyRedaction(
+    subject: Subject,
+    generation: number,
+    target: string,
+  ): Applied {
+    const entry = this.state(subject);
+    if (generation !== entry.generation || entry.head?.id !== target)
+      return "unchanged";
     this.write(subject, { state: "unavailable" });
     return "reread";
   }
@@ -225,7 +239,7 @@ export function settingsProblem(schema: SettingsSchema, value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     return "Settings are not an object";
   for (const [name, setting] of Object.entries(value)) {
-    const rule = schema[name];
+    const rule = Object.hasOwn(schema, name) ? schema[name] : undefined;
     if (!rule) return `Unknown setting "${name}"`;
     if (typeof setting !== "string") return `Setting "${name}" is not text`;
     if (rule === "workspace" && !workspace(setting.trim()))

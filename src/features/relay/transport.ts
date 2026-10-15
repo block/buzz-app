@@ -1424,10 +1424,19 @@ export async function acceptPublish(response: Response, id: string) {
       throw new PublishRejected(
         "conflict: the relay state changed; reload before writing again",
       );
-    if ([400, 401, 403, 404, 413, 422].includes(response.status))
+    if ([400, 401, 403, 404, 413, 422].includes(response.status)) {
+      // Keep the relay's bounded `{error}` text for writers that classify it.
+      let reason: string | undefined;
+      await readApiFailure(response, (value) => {
+        const error = (value as { error?: unknown } | null)?.error;
+        if (typeof error === "string") reason = error;
+        return undefined;
+      });
       throw new PublishRejected(
         `Relay rejected the message (${response.status})`,
+        reason,
       );
+    }
     // Only proven non-delivery is safe to mark failed. Socket quota reasons are
     // display-only: keep them distinct from HTTP API quota/cooldown ownership.
     const body = await readApiFailure(response, (value) => {

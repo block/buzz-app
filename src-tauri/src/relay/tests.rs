@@ -3612,31 +3612,37 @@ async fn snapshot_media_read_preserves_auth_and_enforces_the_tighter_file_cap() 
     }
 }
 
-#[test]
-fn artifact_signing_limit_fits_a_worst_case_config_artifact() {
-    // Every content byte escapes to two, plus a full NIP-AP envelope.
-    let content = "\"".repeat(131_072);
-    let tags = serde_json::json!([
-        ["ar", "1"],
-        ["d", "6ba7b811-9dad-11d1-80b4-00c04fd430c8"],
-        ["h", "6ba7b811-9dad-11d1-80b4-00c04fd430c8"],
-        ["type", "buzz.agent.instructions"],
-        ["title", "x".repeat(512)],
-        ["op", "update"],
-        ["prev", "f".repeat(64)],
-        ["team", "t".repeat(64)]
-    ]);
-    let serialized = serde_json::to_vec(&serde_json::json!([
-        0,
-        "f".repeat(64),
-        9_007_199_254_740_991u64,
-        45010,
-        tags,
-        content
-    ]))
-    .unwrap();
+#[tokio::test]
+async fn artifact_signing_limit_fits_a_worst_case_config_artifact() {
+    // A maximum snapshot whose every byte escapes to two, with the NIP-AP
+    // envelope plus fifteen preserved 4 KiB tags that also escape fully.
+    let mut tags: Vec<Vec<String>> = vec![
+        vec!["ar".into(), "1".into()],
+        vec!["d".into(), "6ba7b811-9dad-11d1-80b4-00c04fd430c8".into()],
+        vec!["h".into(), "6ba7b811-9dad-11d1-80b4-00c04fd430c8".into()],
+        vec!["type".into(), "buzz.agent.instructions".into()],
+        vec!["title".into(), "x".repeat(512)],
+        vec!["op".into(), "update".into()],
+        vec!["prev".into(), "f".repeat(64)],
+        vec!["team".into(), "t".repeat(64)],
+    ];
+    tags.extend((0..15).map(|_| vec!["x".into(), "\"".repeat(4096)]));
+    let template = |kind| EventTemplate {
+        created_at: 9_007_199_254_740_991,
+        kind,
+        tags: tags.clone(),
+        content: "\"".repeat(131_071),
+    };
+    let host = IdentityHost::fixture();
     let limit = signing_limit(45010).unwrap();
-    assert!(serialized.len() <= limit, "{} > {limit}", serialized.len());
-    assert!(limit > 64 * 1024);
+    let signed = host.sign_bounded(template(45010), limit).await.unwrap();
+    let size = serde_json::to_vec(&signed).unwrap().len();
+    assert!(size > 300 * 1024, "worst case is {size}");
+    assert!(
+        size <= ARTIFACT_MAX_EVENT_BYTES,
+        "{size} > {ARTIFACT_MAX_EVENT_BYTES}"
+    );
+    // The same bytes under an ordinary kind keep the default 64 KiB bound.
     assert_eq!(signing_limit(9), None);
+    assert!(host.sign(template(9)).await.is_err());
 }

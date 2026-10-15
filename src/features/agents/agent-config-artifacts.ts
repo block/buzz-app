@@ -1,7 +1,7 @@
 // NIP-AP config artifacts (NIP-AR kind 45010) in an agent's or team's config
 // channel: identity, validation, the reads that decide state, and one save that
 // tells "accepted" apart from "current". Dormant until config channels ship; the
-// caller supplies the session's read and a narrow artifact writer.
+// caller supplies a relay-only snapshot reader and a narrow artifact writer.
 import { PublishRejected } from "../relay/outbox";
 import type { RelayWriter } from "../relay/transport";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
@@ -14,10 +14,10 @@ export type ArtifactType =
 export const ARTIFACT_MAX_CONTENT_BYTES = 131_072;
 export const SETTINGS_MAX_CONTENT_BYTES = 65_535;
 const MAX_TAGS = 256;
-/** Serialized event bound: JSON escaping at most doubles content, plus the
- * envelope and bounded tags. Mirrors `ARTIFACT_MAX_EVENT_BYTES` in
- * `src-tauri/src/relay.rs`. */
-export const ARTIFACT_MAX_EVENT_BYTES = 2 * ARTIFACT_MAX_CONTENT_BYTES + 16_384;
+/** The largest complete signed event the relay takes: its default 512 KiB
+ * WebSocket frame less the `["EVENT",…]` wrapper. Mirrors
+ * `ARTIFACT_MAX_EVENT_BYTES` in `src-tauri/src/relay.rs`. */
+export const ARTIFACT_MAX_EVENT_BYTES = 512 * 1024 - 16;
 
 const encoder = new TextEncoder();
 const bytes = (value: string) => encoder.encode(value).length;
@@ -48,7 +48,32 @@ export type Expected = Readonly<{
   channel: string;
   type: ArtifactType;
   d: string;
+  /** For `buzz.team`: the selected team's id, from `expectedTeam`. */
+  team?: string;
 }>;
+
+/** A team config channel's subject label (NIP-AP "Config channels"). */
+export async function teamLabel(team: string) {
+  const hash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", encoder.encode(team)),
+  );
+  const hex = [...hash].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `team-${hex.slice(0, 59)}`;
+}
+
+/** NIP-AP team id grammar: 1–64 scalars, no control or whitespace. */
+const teamId = (value: string) =>
+  [...value].length >= 1 &&
+  [...value].length <= 64 &&
+  !/[\p{Cc}\p{White_Space}]/u.test(value);
+
+/** The team id to expect in a channel, once its subject label is proven to be
+ * the channel's. Throws for a malformed id or a label from another team. */
+export async function expectedTeam(team: string, channelLabel: string) {
+  if (!teamId(team) || (await teamLabel(team)) !== channelLabel)
+    throw new Error("Team does not belong to this config channel");
+  return team;
+}
 
 const tag = (event: EventData, name: string) => {
   const found = event.tags.filter((t) => t[0] === name);
@@ -90,9 +115,11 @@ export function artifactProblem(event: EventData, expected: Expected) {
   const value = body as Record<string, unknown>;
   if (value.version !== 1) return "Unknown artifact version";
   if (expected.type === "buzz.agent.instructions")
-    return typeof value.text === "string"
-      ? undefined
-      : "Instructions text missing";
+    return typeof value.text !== "string"
+      ? "Instructions text missing"
+      : value.text.includes("\u0000")
+        ? "Instructions contain U+0000"
+        : undefined;
   if (expected.type === "buzz.agent.settings")
     return value.settings &&
       typeof value.settings === "object" &&
@@ -105,10 +132,14 @@ export function artifactProblem(event: EventData, expected: Expected) {
     !value.name.trim() ||
     bytes(value.name) > 512 ||
     value.name !== title ||
-    typeof value.instructions !== "string" ||
-    event.tags.filter((t) => t[0] === "team").length !== 1
+    typeof value.instructions !== "string"
   )
     return "Malformed team";
+  if (value.instructions.includes("\u0000"))
+    return "Instructions contain U+0000";
+  const team = tag(event, "team");
+  if (!team || !teamId(team) || team !== expected.team)
+    return "Team does not match this config channel";
   return undefined;
 }
 
@@ -142,56 +173,62 @@ export function artifactTemplate(
   };
 }
 
-/** The exact size the native signer bounds: NIP-01's serialized commitment. */
-export const signedSize = (
-  pubkey: string,
-  template: ReturnType<typeof artifactTemplate>,
-) =>
-  bytes(
-    JSON.stringify([
-      0,
-      pubkey,
-      template.created_at,
-      template.kind,
-      template.tags,
-      template.content,
-    ]),
-  );
+/** Bytes of the complete signed event as sent, checked against
+ * `ARTIFACT_MAX_EVENT_BYTES` before dispatch. */
+export const signedEventBytes = (event: RelayEvent) =>
+  bytes(JSON.stringify(event));
 
-export type Read = (
+/** The relay's answer to one query, and nothing else: signature-verified,
+ * access-checked, in the relay's order, with no merged live observations or
+ * local outgoing events. Ordinary `session.read` merges both and so cannot
+ * stand in for it. */
+export type SnapshotRead = (
   filters: readonly ReadFilter[],
-  options: { signal?: AbortSignal | undefined; fresh: true },
+  options: { signal?: AbortSignal | undefined },
 ) => Promise<readonly RelayEvent[]>;
 
+/** The explicit current-heads query. The relay's artifact parser takes only
+ * `artifact`, `kinds`, `limit`, `offset` and `#tag` keys, and already reads
+ * from the writer pool, so it carries no `consistency`. */
+export const currentFilter = (channel: string): ReadFilter => ({
+  kinds: [ARTIFACT_KIND],
+  "#h": [channel],
+  artifact: "current",
+  limit: 16,
+});
+
 /** Current heads in a channel, by `d`. Omits deletions and redacted heads; a
- * returned head is authoritative even when its history is unreadable. */
+ * returned head is authoritative even when its history is unreadable. Two
+ * heads for one `d` decide nothing: undefined. */
 export async function readCurrent(
-  read: Read,
+  read: SnapshotRead,
   channel: string,
   signal?: AbortSignal,
 ) {
-  const events = await read(
-    [
-      {
-        kinds: [ARTIFACT_KIND],
-        "#h": [channel],
-        artifact: "current",
-        limit: 16,
-        consistency: "strong",
-      },
-    ],
-    { signal, fresh: true },
-  );
-  return new Map(events.map((event) => [tag(event, "d") ?? "", event]));
+  const heads = new Map<string, RelayEvent>();
+  for (const event of await read([currentFilter(channel)], { signal })) {
+    const d = tag(event, "d");
+    if (!d || heads.has(d)) return undefined;
+    heads.set(d, event);
+  }
+  return heads;
 }
 
-/** The head by `d`, including a deletion. Empty decides nothing. */
-export async function readHead(read: Read, d: string, signal?: AbortSignal) {
-  const [event] = await read(
+/** The head by `d`, including a deletion. Empty, or anything but one revision
+ * of `d`, decides nothing. */
+export async function readHead(
+  read: SnapshotRead,
+  d: string,
+  signal?: AbortSignal,
+) {
+  const events = await read(
     [{ kinds: [ARTIFACT_KIND], "#d": [d], limit: 1, consistency: "strong" }],
-    { signal, fresh: true },
+    { signal },
   );
-  return event;
+  const [event] = events;
+  return events.length === 1 && event && tag(event, "d") === d
+    ? event
+    : undefined;
 }
 
 export type Refusal =
@@ -233,25 +270,36 @@ export type Delivery =
       refusal: Refusal;
       message: string;
     }>
-  | Readonly<{ status: "uncertain"; event: RelayEvent }>;
+  | Readonly<{ status: "uncertain"; event: RelayEvent; message: string }>;
 
 /** Sends one signed revision. Only an OK or duplicate-OK proves acceptance; a
- * failure without a typed refusal leaves it uncertain, never rejected. */
+ * failure without a typed refusal leaves it uncertain, never rejected. An
+ * event over the relay's size limit is refused before dispatch. */
 export async function deliver(
   writer: RelayWriter,
   event: RelayEvent,
   signal: AbortSignal,
 ): Promise<Delivery> {
+  if (signedEventBytes(event) > ARTIFACT_MAX_EVENT_BYTES)
+    return {
+      status: "refused",
+      event,
+      refusal: "too-large",
+      message: "Artifact event is too large",
+    };
   try {
     await writer.publish(event, signal);
     return { status: "accepted", event };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     if (!(error instanceof PublishRejected))
-      return { status: "uncertain", event };
-    const kind = refusal(error.message);
+      return { status: "uncertain", event, message };
+    const reason = error.reason ?? error.message;
+    const kind = refusal(reason);
     if (kind === "duplicate") return { status: "accepted", event };
-    if (kind === "unknown") return { status: "uncertain", event };
-    return { status: "refused", event, refusal: kind, message: error.message };
+    if (kind === "unknown")
+      return { status: "uncertain", event, message: reason };
+    return { status: "refused", event, refusal: kind, message: reason };
   }
 }
 
@@ -259,7 +307,7 @@ export async function deliver(
  * accepted replay is superseded and never installed; no readable head leaves
  * the caller with acceptance only. */
 export async function settle(
-  read: Read,
+  read: SnapshotRead,
   event: RelayEvent,
   signal?: AbortSignal,
 ) {

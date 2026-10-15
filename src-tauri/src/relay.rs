@@ -222,10 +222,12 @@ pub(crate) async fn relay_git_authorization(
     ))
 }
 
-/// NIP-AR artifacts carry up to 131,072 content bytes (NIP-AP config). JSON
-/// escaping at most doubles that, plus the envelope and at most 256 tags.
-/// Mirrors `ARTIFACT_MAX_EVENT_BYTES` in `agent-config-artifacts.ts`.
-const ARTIFACT_MAX_EVENT_BYTES: usize = 2 * 131_072 + 16 * 1024;
+/// The largest complete signed NIP-AR artifact the relay takes: its default
+/// 512 KiB WebSocket frame (`DEFAULT_MAX_FRAME_BYTES`) less the `["EVENT",…]`
+/// wrapper. A 131,072-byte config snapshot plus the relay's 65,536 tag bytes
+/// fits even fully escaped. Mirrors `ARTIFACT_MAX_EVENT_BYTES` in
+/// `agent-config-artifacts.ts`.
+const ARTIFACT_MAX_EVENT_BYTES: usize = 512 * 1024 - 16;
 
 /// Kinds whose events may exceed the default 64 KiB signing bound.
 fn signing_limit(kind: u16) -> Option<usize> {
@@ -260,10 +262,17 @@ pub(crate) async fn relay_sign(
     } else {
         None
     };
+    let artifact = event.kind == 45010;
     let signed = match signing_limit(event.kind) {
         Some(limit) => host.sign_bounded(event, limit).await?,
         None => host.sign(event).await?,
     };
+    // The commitment bound above omits id, pubkey key and sig; the relay
+    // limits the whole event.
+    if artifact && serde_json::to_vec(&signed).map_or(true, |b| b.len() > ARTIFACT_MAX_EVENT_BYTES)
+    {
+        return Err("Relay event is too large".into());
+    }
     if coordinate_delete
         .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())
     {

@@ -6,9 +6,15 @@ import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { Button } from "../shared/design-system/ui/Button";
-import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
+import { Switch } from "../shared/design-system/ui/Switch";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import { SquaresFourIcon } from "../shared/design-system/icons/index";
@@ -50,8 +56,19 @@ function isRequiredPlugin(plugin: PluginInfo) {
   return plugin.manifest.id === "buzz.channels";
 }
 
-function compareRequiredPlugins(a: PluginInfo, b: PluginInfo) {
-  return Number(isRequiredPlugin(b)) - Number(isRequiredPlugin(a));
+function isEssentialPlugin(plugin: PluginInfo) {
+  return (
+    plugin.manifest.discovery?.tags?.some(
+      (tag) => tag.trim().toLowerCase() === "essentials",
+    ) ?? false
+  );
+}
+
+function comparePlugins(a: PluginInfo, b: PluginInfo) {
+  return (
+    Number(isRequiredPlugin(b)) - Number(isRequiredPlugin(a)) ||
+    Number(isEssentialPlugin(b)) - Number(isEssentialPlugin(a))
+  );
 }
 
 function groupPlugins(plugins: readonly PluginInfo[]) {
@@ -59,28 +76,15 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
     pluginCategoryDefinitions.map(({ id }) => [id, []]),
   );
   const other: PluginInfo[] = [];
-  const essentials: PluginInfo[] = [];
   for (const plugin of plugins) {
-    if (
-      plugin.manifest.discovery?.tags?.some(
-        (tag) => tag.trim().toLowerCase() === "essentials",
-      )
-    ) {
-      essentials.push(plugin);
-      continue;
-    }
     const group = known.get(plugin.manifest.discovery?.category ?? "");
     (group ?? other).push(plugin);
   }
   for (const entries of known.values()) {
-    entries.sort(compareRequiredPlugins);
+    entries.sort(comparePlugins);
   }
-  other.sort(compareRequiredPlugins);
-  essentials.sort(compareRequiredPlugins);
+  other.sort(comparePlugins);
   return [
-    ...(essentials.length
-      ? [{ id: "essentials", label: "Essentials", plugins: essentials }]
-      : []),
     ...pluginCategoryDefinitions.flatMap(({ id, label }) => {
       const entries = known.get(id) ?? [];
       return entries.length ? [{ id, label, plugins: entries }] : [];
@@ -158,9 +162,16 @@ export function Settings({
   const ready = configuration.status === "ready" ? configuration : undefined;
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
+  const [essentialsOnly, setEssentialsOnly] = useState(false);
+  const pluginControlPrefix = useId();
   const pluginGroups = useMemo(
-    () => groupPlugins(catalog?.plugins ?? []),
-    [catalog?.plugins],
+    () =>
+      groupPlugins(
+        (catalog?.plugins ?? []).filter(
+          (plugin) => !essentialsOnly || isEssentialPlugin(plugin),
+        ),
+      ),
+    [catalog?.plugins, essentialsOnly],
   );
   return (
     <div
@@ -333,6 +344,23 @@ export function Settings({
                     )}
                   </div>
                   <div className="grid grid-cols-1 gap-section-gap">
+                    {catalog && (
+                      <div className={styles.pluginFilter}>
+                        <Button
+                          size="sm"
+                          variant={essentialsOnly ? "prominent" : "outline"}
+                          aria-pressed={essentialsOnly}
+                          onClick={() => setEssentialsOnly((value) => !value)}
+                        >
+                          Essentials only
+                        </Button>
+                        {essentialsOnly && pluginGroups.length === 0 && (
+                          <p role="status" className="text-body-sm text-subtle">
+                            No plugins are tagged Essentials.
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {pluginGroups.map((group) => (
                       <section
                         aria-labelledby={`plugin-category-${group.id}`}
@@ -345,6 +373,16 @@ export function Settings({
                         <SettingsGroup>
                           {group.plugins.map((plugin) => {
                             const id = plugin.manifest.id;
+                            const title = (
+                              <span className={styles.pluginTitle}>
+                                <span>{plugin.manifest.name}</span>
+                                {isEssentialPlugin(plugin) && (
+                                  <span className={styles.essentialBadge}>
+                                    Essential
+                                  </span>
+                                )}
+                              </span>
+                            );
                             const running = activation[id];
                             const failure =
                               plugin.error ??
@@ -361,7 +399,7 @@ export function Settings({
                                 {isRequiredPlugin(plugin) ? (
                                   <PreferenceRow
                                     icon={<SquaresFourIcon size={20} />}
-                                    title={plugin.manifest.name}
+                                    title={title}
                                     subtitle={plugin.manifest.description}
                                     trailing={
                                       <span className="text-body-sm text-subtle">
@@ -370,29 +408,34 @@ export function Settings({
                                     }
                                   />
                                 ) : (
-                                  <SwitchPreferenceRow
+                                  <PreferenceRow
                                     icon={<SquaresFourIcon size={20} />}
-                                    label={plugin.manifest.name}
-                                    {...(plugin.manifest.description
-                                      ? {
-                                          description:
-                                            plugin.manifest.description,
+                                    title={title}
+                                    subtitle={plugin.manifest.description}
+                                    controlId={`${pluginControlPrefix}-${id}`}
+                                    accessibleTitle={`Enable ${plugin.manifest.name}`}
+                                    trailing={(labelProps) => (
+                                      <Switch
+                                        {...labelProps}
+                                        id={`${pluginControlPrefix}-${id}`}
+                                        aria-label={`Enable ${plugin.manifest.name}`}
+                                        checked={plugin.enabled}
+                                        readOnly={busy}
+                                        aria-disabled={busy}
+                                        onClick={(event) =>
+                                          event.currentTarget.focus()
                                         }
-                                      : {})}
-                                    aria-label={`Enable ${plugin.manifest.name}`}
-                                    checked={plugin.enabled}
-                                    readOnly={busy}
-                                    aria-disabled={busy}
-                                    onClick={(event) =>
-                                      event.currentTarget.focus()
-                                    }
-                                    onCheckedChange={() => {
-                                      if (busy) return;
-                                      void plugins.change(
-                                        plugin.enabled ? "disable" : "enable",
-                                        id,
-                                      );
-                                    }}
+                                        onCheckedChange={() => {
+                                          if (busy) return;
+                                          void plugins.change(
+                                            plugin.enabled
+                                              ? "disable"
+                                              : "enable",
+                                            id,
+                                          );
+                                        }}
+                                      />
+                                    )}
                                   />
                                 )}
                                 {failure && (

@@ -127,7 +127,7 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
               apiVersion: 1,
               description: "Record voice notes and play them in conversations.",
               discovery: {
-                category: essentials ? "productivity" : "communication",
+                category: "communication",
                 ...(essentials ? { tags: ["  essentials  "] } : {}),
               },
             },
@@ -162,7 +162,10 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
               name: "Codex",
               apiVersion: 1,
               description: "Run local Codex coding agents in Buzz.",
-              discovery: { category: "agents" },
+              discovery: {
+                category: "agents",
+                ...(essentials ? { tags: ["Essentials"] } : {}),
+              },
             },
             source: "bundled",
             enabled: true,
@@ -195,6 +198,21 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
     refreshError: null,
   };
   const { cards } = registry([]);
+  ready.configuration.catalog.plugins.unshift({
+    source: "bundled",
+    enabled: true,
+    revision: "bundled",
+    previous: null,
+    reloadable: false,
+    error: null,
+    manifest: {
+      id: "example.messages",
+      name: "Messages",
+      apiVersion: 1,
+      description: "Read messages.",
+      discovery: { category: "communication" },
+    },
+  });
   render(
     <Settings
       {...host}
@@ -217,10 +235,10 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
     within(content)
       .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent),
-  ).toEqual([essentials ? "Essentials" : "Communication", "Agents", "Other"]);
+  ).toEqual(["Communication", "Agents", "Other"]);
   const communication = within(content)
     .getByRole("heading", {
-      name: essentials ? "Essentials" : "Communication",
+      name: "Communication",
     })
     .closest("section");
   expect(communication).not.toBeNull();
@@ -228,10 +246,19 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
     within(communication as HTMLElement)
       .getAllByRole("article")
       .map(
-        (row) => within(row).getByText(/^(Channels|Voice Notes)$/).textContent,
+        (row) =>
+          within(row).getByText(/^(Channels|Voice Notes|Messages)$/)
+            .textContent,
       ),
-  ).toEqual(["Channels", "Voice Notes"]);
-  expect(within(content).getAllByRole("article")).toHaveLength(4);
+  ).toEqual(
+    essentials
+      ? ["Channels", "Voice Notes", "Messages"]
+      : ["Channels", "Messages", "Voice Notes"],
+  );
+  expect(within(content).getAllByRole("article")).toHaveLength(5);
+  expect(within(content).queryAllByText("Essential")).toHaveLength(
+    essentials ? 3 : 0,
+  );
   expect(
     within(content).queryByRole("switch", { name: "Enable Channels" }),
   ).toBeNull();
@@ -263,6 +290,31 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
   expect(
     within(content).queryByRole("heading", { name: "Finance" }),
   ).toBeNull();
+  const filter = within(content).getByRole("button", {
+    name: "Essentials only",
+  });
+  fireEvent.click(filter);
+  expect(filter).toHaveAttribute("aria-pressed", "true");
+  expect(within(content).queryByText("Messages")).toBeNull();
+  expect(within(content).queryByText("Invoices")).toBeNull();
+  if (essentials) {
+    expect(within(content).getAllByRole("article")).toHaveLength(3);
+    expect(
+      within(content)
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Communication", "Agents"]);
+    expect(
+      within(content).getByRole("switch", { name: "Enable Voice Notes" }),
+    ).toBeEnabled();
+  } else {
+    expect(within(content).getByRole("status")).toHaveTextContent(
+      "No plugins are tagged Essentials.",
+    );
+  }
+  fireEvent.click(filter);
+  expect(filter).toHaveAttribute("aria-pressed", "false");
+  expect(within(content).getAllByRole("article")).toHaveLength(5);
 });
 
 it("uses contributed icons in community and account navigation", () => {

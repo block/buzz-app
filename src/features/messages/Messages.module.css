@@ -809,7 +809,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
    both read it as the thread's placeholder, not a stray icon. */
 .threadLoading picture {
   display: block;
-  width: clamp(5rem, 24cqmin, 10rem);
+  width: clamp(3.35rem, 16cqmin, 6.7rem);
   line-height: 0;
 }
 .threadLoading img {

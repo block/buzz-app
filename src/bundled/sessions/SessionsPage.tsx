@@ -3,7 +3,6 @@ import { useChannelNavigation } from "../../features/channel-navigation/ChannelN
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
 import { useChannelLabels } from "../channels/useChannelLabels";
-import panelStyles from "../../features/panels/Panels.module.css";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelFrame } from "../../features/panels/PanelFrame";
@@ -17,6 +16,9 @@ import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
+import { ChannelLifecycleDialog } from "../channels/ChannelLifecycleDialog";
+import { ChannelLifecycleMenu } from "../channels/ChannelLifecycleMenu";
+import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -111,9 +113,9 @@ export function SessionsPage({
     />
   ) : (
     <PanelFrame companion={companion}>
-      <section className={styles.empty} aria-label="Me">
+      <section className={styles.empty} aria-label="Solo">
         <ChatCircleIcon size={28} />
-        <h1>Me</h1>
+        <h1>Solo</h1>
         <p>
           {connection.status === "connecting"
             ? "Connecting to your community…"
@@ -132,16 +134,7 @@ export function SessionsPage({
   );
 }
 
-function LiveSessions({
-  relay,
-  panels,
-  companion,
-  session,
-  scope,
-  extensions,
-  navigator,
-  navigation,
-}: {
+type LiveProps = {
   relay: RelayData;
   panels: Panels;
   companion?: ReactNode;
@@ -150,7 +143,55 @@ function LiveSessions({
   extensions: ConversationExtensions;
   navigator?: Navigation | undefined;
   navigation?: PageNavigation | undefined;
-}) {
+};
+type Lifecycle = {
+  channel: ChannelSummary;
+  action: ChannelLifecycleAction;
+  trigger?: HTMLElement | undefined;
+  origin?: AbortSignal | undefined;
+};
+
+// Lifecycle actions remove the conversation from Me, so the dialog outlives
+// the view but not the visit that opened it.
+function LiveSessions(props: LiveProps) {
+  const { session, scope, navigator } = props;
+  const [lifecycle, setLifecycle] = useState<Lifecycle>();
+  return (
+    <>
+      <SessionsView {...props} chooseLifecycle={setLifecycle} />
+      {lifecycle && !lifecycle.origin?.aborted && (
+        <ChannelLifecycleDialog
+          channelId={lifecycle.channel.id}
+          channelName={lifecycle.channel.name}
+          action={lifecycle.action}
+          lifecycle={session.channelLifecycle}
+          close={() => {
+            setLifecycle(undefined);
+            if (lifecycle.trigger?.isConnected)
+              lifecycle.trigger.focus({ preventScroll: true });
+          }}
+          completed={() => {
+            setLifecycle(undefined);
+            if (!lifecycle.origin?.aborted)
+              void navigator?.open(meTarget(scope));
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function SessionsView({
+  relay,
+  panels,
+  companion,
+  session,
+  scope,
+  extensions,
+  navigator,
+  navigation,
+  chooseLifecycle,
+}: LiveProps & { chooseLifecycle(lifecycle: Lifecycle): void }) {
   const list = useChannelList(session.channels);
   const placement = useMePlacement(session);
   const selected = meSelection(navigation?.target);
@@ -206,6 +247,14 @@ function LiveSessions({
   if (selectedSession)
     return (
       <SessionWork
+        chooseLifecycle={(action, trigger) =>
+          chooseLifecycle({
+            channel: selectedSession,
+            action,
+            trigger,
+            origin: navigation?.signal,
+          })
+        }
         relay={relay}
         panels={panels}
         companion={companion}
@@ -222,14 +271,12 @@ function LiveSessions({
     <PanelFrame companion={companion}>
       <section className={styles.empty}>
         {placement.status !== "ready" ? (
-          <p role="status">{placement.error ?? "Loading Me placement…"}</p>
+          <p role="status">{placement.error ?? "Loading Solo chats…"}</p>
         ) : list.status === "loading" ? (
           <p role="status">Loading your conversation…</p>
         ) : (
           <>
-            <p>
-              This conversation isn’t in your Me workspace. Open it in Messages.
-            </p>
+            <p>This conversation isn’t in Solo. Open it in Multiplayer.</p>
             {selectedSession && (
               <Button
                 onClick={() => {
@@ -243,7 +290,7 @@ function LiveSessions({
                     });
                 }}
               >
-                Open in Messages
+                Open in Multiplayer
               </Button>
             )}
             <Button
@@ -271,6 +318,7 @@ function SessionWork({
   parentName,
   navigator,
   navigation,
+  chooseLifecycle,
 }: {
   relay: RelayData;
   panels: Panels;
@@ -282,12 +330,14 @@ function SessionWork({
   parentName?: string | undefined;
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
+  chooseLifecycle(action: ChannelLifecycleAction, trigger?: HTMLElement): void;
 }) {
   const window = useChannelWindow(session.channels, channel.id);
   const recoveryShown = useRecoveryShown(session.recovery);
   const [sent, setSent] = useState<string>();
   const [renameOpen, setRenameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   const [selectedAgent, setSelectedAgent] = useState(() =>
     readSelectedAssistant(scope, channel.id),
   );
@@ -313,7 +363,9 @@ function SessionWork({
       mounted.current = false;
     };
   }, []);
+  const focusFallback = useRef<HTMLElement>(null);
   const secondary = useConversationTabs({
+    fallbackFocus: focusFallback,
     state: tabState,
     relay,
     session,
@@ -395,8 +447,10 @@ function SessionWork({
   const workspace = (
     <div className={channelStyles.root}>
       <div ref={split.ref} style={split.style} className={channelStyles.board}>
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: pane file-drop fallback; the composer provides a keyboard-accessible picker. */}
-        <div
+        <section
+          ref={focusFallback}
+          aria-label={`Chat ${channel.name}`}
+          tabIndex={-1}
           className={styles.work}
           data-attachment-drop-zone=""
           onDragOver={rejectUnhandledFileDrop}
@@ -422,15 +476,15 @@ function SessionWork({
             />
             <MenuRoot>
               <MenuTrigger
-                render={(props) => (
+                render={
                   <IconButton
-                    {...props}
+                    ref={menuTrigger}
                     size="toolbar"
                     aria-label="Session actions"
                     title="Session actions"
                     icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
                   />
-                )}
+                }
               />
               <MenuPopup aria-label="Session actions" align="end">
                 <MenuItem
@@ -453,23 +507,30 @@ function SessionWork({
                   </MenuIcon>
                   {inMe ? "Chat settings…" : "Session settings…"}
                 </MenuItem>
+                {!channel.readOnly && !channel.cached && !channel.archived && (
+                  <ChannelLifecycleMenu
+                    channelId={channel.id}
+                    lifecycle={session.channelLifecycle}
+                    disabled={false}
+                    separator
+                    choose={(action) =>
+                      chooseLifecycle(action, menuTrigger.current ?? undefined)
+                    }
+                  />
+                )}
               </MenuPopup>
             </MenuRoot>
-            {!showingPanel && (
-              <span className={panelStyles.paneToggle}>
-                <IconButton
-                  ref={splitTrigger}
-                  data-tab-pane-toggle=""
-                  size="toolbar"
-                  aria-label="Toggle tab pane"
-                  title={showingPanel ? "Close tab pane" : "Open tab pane"}
-                  aria-expanded={!!showingPanel}
-                  icon={<SidebarRightIcon size="1rem" />}
-                  disabled={!hasLocalPanel}
-                  focusableWhenDisabled
-                  onClick={() => tabState.setPaneOpen(!showingPanel)}
-                />
-              </span>
+            {hasLocalPanel && !showingPanel && (
+              <IconButton
+                ref={splitTrigger}
+                data-tab-pane-toggle=""
+                size="toolbar"
+                aria-label="Toggle tab pane"
+                title="Open tab pane"
+                aria-expanded={false}
+                icon={<SidebarRightIcon size="1rem" />}
+                onClick={() => tabState.setPaneOpen(true)}
+              />
             )}
           </SessionHeading>
           {renameOpen && (
@@ -494,22 +555,22 @@ function SessionWork({
             <p role="status">
               {placement.error}{" "}
               <Button onClick={() => void session.mePlacement.refresh()}>
-                Retry Me
+                Retry Solo
               </Button>
             </p>
           ) : (
             placement.status !== "ready" && (
-              <p role="status">Loading Me placement…</p>
+              <p role="status">Loading Solo chats…</p>
             )
           )}
           {!inMe && placement.status === "ready" && (
             <div role="status">
-              <p>This conversation is in Messages.</p>
+              <p>This conversation is in Multiplayer.</p>
               {navigator && (
                 <Button
                   onClick={() => openLink(`buzz://channel/${channel.id}`)}
                 >
-                  Open in Messages
+                  Open in Multiplayer
                 </Button>
               )}
             </div>
@@ -598,7 +659,7 @@ function SessionWork({
             />
           </SessionColumn>
           {drawer.content}
-        </div>
+        </section>
         <PanelDock
           open={!!companion || !!showingPanel}
           keepMounted={hasLocalPanel && !tabState.paneOpen}

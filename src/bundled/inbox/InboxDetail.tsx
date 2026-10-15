@@ -92,6 +92,13 @@ export function InboxDetail({
   // Inbox keys this component by the captured visit. Revalidation withholds an
   // admitted reader, but must not recreate its reveal request or editor.
   const [admitted, setAdmitted] = useState(false);
+  // A late reply can regroup a session's opening message into its thread;
+  // keep the reader this visit opened with.
+  const flat =
+    item.target.kind === "channel" ||
+    (channel?.channelType === "session" && !item.thread);
+  const [timeline, setTimeline] = useState<boolean>();
+  if (available && timeline === undefined) setTimeline(flat);
   useEffect(() => {
     if (!available) setAdmitted(false);
     else if (!previewIncomplete) setAdmitted(true);
@@ -313,14 +320,12 @@ export function InboxDetail({
                 scope={session.scope}
                 extensions={extensions}
                 host={host}
-                threadId={
-                  item.target.kind === "channel" ? undefined : target.messageId
-                }
+                threadId={(timeline ?? flat) ? undefined : target.messageId}
                 channel={channel}
                 channelName={channelName}
                 active={false}
               >
-                {item.target.kind === "channel" ? (
+                {(timeline ?? flat) ? (
                   <ChannelPreview
                     channelName={
                       channel.channelType === "dm"

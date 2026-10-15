@@ -68,6 +68,7 @@ import {
   reopenArchives,
   updateArchive,
 } from "./archive";
+import { avatarMedia } from "../../shared/avatar-source";
 
 type AttentionFilter = "all" | "unread";
 const shows = [
@@ -962,9 +963,12 @@ export function InboxView({
                                   ) : undefined
                                 }
                                 src={
-                                  !item.workflowOwnerId && profile?.picture
-                                    ? session.media(profile.picture)
-                                    : undefined
+                                  item.workflowOwnerId
+                                    ? undefined
+                                    : avatarMedia(
+                                        profile?.picture,
+                                        session.media,
+                                      )
                                 }
                                 shape={
                                   item.workflowOwnerId || profile?.isAgent

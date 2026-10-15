@@ -56,7 +56,11 @@ function fixture(direct = false) {
       metadata(relay, source, "Work", clock, [
         ["t", "stream"],
         ["private"],
-        ["about", "Buzz session (buzz.sessions/v1)"],
+        // Direct share promotes a Me chat, which carries the personal line.
+        [
+          "about",
+          `Buzz session (buzz.sessions/v1)${direct ? "\npersonal" : ""}`,
+        ],
       ]),
     ],
     [
@@ -834,6 +838,9 @@ it("shares Me with zero added people using default private/ongoing settings and 
   const t = fixture(true);
   const onShared = vi.fn();
   const { user, dialog } = await openDirect(t, { onShared });
+  expect(
+    within(dialog).getByText(/^Move this conversation to Multiplayer/),
+  ).toHaveTextContent("threads in Multiplayer");
   expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue(
     "Work",
   );

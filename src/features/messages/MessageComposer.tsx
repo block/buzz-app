@@ -1,5 +1,6 @@
 import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
+import { messageButtonStyle } from "../../shared/theme/bubble-color";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -102,6 +103,8 @@ import type {
   ComposerLinkEdit,
   ComposerFormat,
 } from "./composer-dom";
+import { TargetOpenerProvider } from "../conversation/opener";
+import { avatarMedia } from "../../shared/avatar-source";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
   status: "idle",
@@ -246,11 +249,13 @@ export function MessageComposer(props: MessageComposerProps) {
   )}`;
   return (
     <TypingPresentation active key={key}>
-      {props.personalConversation ? (
-        <PersonalComposer {...props} />
-      ) : (
-        <Composer {...props} />
-      )}
+      <TargetOpenerProvider canOpen={props.canOpenLink} open={props.onOpenLink}>
+        {props.personalConversation ? (
+          <PersonalComposer {...props} />
+        ) : (
+          <Composer {...props} />
+        )}
+      </TargetOpenerProvider>
     </TypingPresentation>
   );
 }
@@ -1025,7 +1030,9 @@ function Composer({
               .selectable.some((agent) => agent.pubkey === key),
         )
       )
-        throw new Error("Only your available agents can be mentioned in Me.");
+        throw new Error(
+          "Only your available agents can be mentioned in Solo chats.",
+        );
       await session.workSessions.addAgents(
         channelId,
         missing,
@@ -1039,7 +1046,7 @@ function Composer({
   function requireCompletedSessionStart() {
     if (pendingSessionDraft(scope, channelId))
       throw new Error(
-        "Finish setting up this conversation in Me before sending messages.",
+        "Finish setting up this conversation in Solo before sending messages.",
       );
   }
   async function send() {
@@ -1120,7 +1127,7 @@ function Composer({
         )
       )
         throw new Error(
-          "Only your available agents can be mentioned in Me. Remove the unavailable recipient and retry.",
+          "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
       if (submission) {
         submission.submit(captured);
@@ -1614,7 +1621,6 @@ function Composer({
                   !event.shiftKey &&
                   !event.altKey &&
                   !event.ctrlKey &&
-                  !event.metaKey &&
                   !event.repeat &&
                   !event.defaultPrevented &&
                   !editingDisabled &&
@@ -1730,6 +1736,7 @@ function Composer({
               }
               size="toolbar"
               type="submit"
+              style={messageButtonStyle}
               aria-label={editing.target ? "Save changes" : "Send message"}
               title={editing.target ? "Save changes" : "Send message"}
               disabled={
@@ -1907,7 +1914,7 @@ function RecipientAvatars({
                 <Avatar
                   alt=""
                   fallback={recipient.name}
-                  src={session.media(profile?.picture ?? "", "small")}
+                  src={avatarMedia(profile?.picture, session.media)}
                   size="small"
                   shape={
                     agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"

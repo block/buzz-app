@@ -220,6 +220,7 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     ),
     "Fresh start",
     undefined,
+    false,
   );
 });
 
@@ -804,6 +805,12 @@ it("retries Me placement on the same created channel before sending, including a
   expect(f.messages.send).not.toHaveBeenCalled();
   const id = f.workSessions.create.mock.calls[0]?.[0];
   if (!id) throw new Error("Missing creation");
+  expect(f.workSessions.create).toHaveBeenCalledWith(
+    id,
+    "Private thought",
+    undefined,
+    true,
+  );
   view.unmount();
   render(
     <NewSessionComposer
@@ -929,7 +936,7 @@ it("keeps the Me draft and creates nothing until capacity admission succeeds", a
   const f = setup();
   const user = userEvent.setup();
   const started = vi.fn();
-  f.mePlacement.admit.mockRejectedValueOnce(new Error("Me storage is full"));
+  f.mePlacement.admit.mockRejectedValueOnce(new Error("Solo storage is full"));
   writeView("me-full", "me:new-draft", "Keep this thought");
   const view = render(
     <NewSessionComposer
@@ -940,7 +947,7 @@ it("keeps the Me draft and creates nothing until capacity admission succeeds", a
     />,
   );
   await user.click(screen.getByRole("button", { name: "Send message" }));
-  await screen.findByText("Me storage is full");
+  await screen.findByText("Solo storage is full");
   expect(f.workSessions.create).not.toHaveBeenCalled();
   expect(f.messages.send).not.toHaveBeenCalled();
   const id = f.mePlacement.admit.mock.calls[0]?.[0];
@@ -1301,7 +1308,7 @@ it("allows changing an unavailable assistant before any remote creation", async 
   );
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await screen.findByText(
-    "Me can only use your available agents. Check mentions and section defaults.",
+    "Solo chats can only use your available agents. Check mentions and section defaults.",
   );
   expect(f.workSessions.create).not.toHaveBeenCalled();
   await user.click(

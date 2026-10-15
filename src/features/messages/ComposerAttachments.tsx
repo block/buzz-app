@@ -34,6 +34,7 @@ export function ComposerAttachments({
   remove,
   retry,
   media,
+  onExitComplete,
 }: {
   renderers?: ContributionReader<AttachmentRenderer> | undefined;
   media(url: string): string | undefined;
@@ -41,6 +42,8 @@ export function ComposerAttachments({
   disabled: boolean;
   remove(id: string): void;
   retry(id: string): void;
+  /** The section finished animating out after the last item was removed. */
+  onExitComplete?: (() => void) | undefined;
 }) {
   const active = useConversationPresentation();
   const mixed = items.some((item) => {
@@ -54,7 +57,10 @@ export function ComposerAttachments({
     setSelected(undefined);
   return (
     <>
-      <AnimatePresence initial={false}>
+      <AnimatePresence
+        initial={false}
+        {...(onExitComplete ? { onExitComplete } : {})}
+      >
         {items.length > 0 && (
           <motion.section
             key="attachments"

@@ -134,6 +134,75 @@ test("short narrow Settings keeps full plugin rows usable at 200% interface size
   await expect(channelsSidebar).toBeVisible();
 });
 
+for (const action of ["Remove from this device", "Leave community"]) {
+  test(`${action} hands keyboard focus to Personal Profile`, async ({
+    page,
+    app,
+  }) => {
+    const leaveRequests = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname.endsWith("/leave"))
+        leaveRequests.push(request.url());
+    });
+    if (action === "Leave community")
+      await page.route("**/api/relay/*/leave", (route) =>
+        route.fulfill({ json: { accepted: true, event_id: "f".repeat(64) } }),
+      );
+    await page.goto(app.origin);
+    await button(page, "Your profile").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    const settings = page.getByRole("complementary", {
+      name: "Settings sidebar",
+    });
+    await settings
+      .getByRole("button", { name: "Leave or remove", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Leave or remove", exact: true }),
+    ).toBeVisible();
+    const trigger = page.getByRole("button", { name: action, exact: true });
+    await trigger.focus();
+    await page.keyboard.press("Enter");
+    let dialog = page.getByRole("alertdialog");
+    // Cancel must still restore the exact trigger rather than focus Profile.
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press("Enter");
+    dialog = page.getByRole("alertdialog", {
+      name:
+        action === "Leave community"
+          ? "Leave Primary?"
+          : "Remove Primary from this device?",
+    });
+    if (action === "Remove from this device")
+      await expect(dialog).toContainText(
+        "The community connection and any saved drafts or data will be removed from Buzz on this device.",
+      );
+    await dialog.getByRole("button", { name: action, exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByText(
+        action === "Leave community"
+          ? "Left Primary."
+          : "Primary was removed from this device. Your membership wasn’t changed. You can add it again later.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Personal space", exact: true }),
+    ).toHaveAttribute("aria-current", "true");
+    await expect(
+      page.getByRole("heading", { name: "Profile", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("#main-content")).toBeFocused();
+    await expect(
+      page.getByText("This destination couldn’t open", { exact: true }),
+    ).toHaveCount(0);
+    expect(leaveRequests).toHaveLength(action === "Leave community" ? 1 : 0);
+  });
+}
+
 test.describe("community administration permissions", () => {
   test("shows Membership to a verified owner", async ({ page, app }) => {
     let rosterGate;
@@ -427,6 +496,10 @@ confirmedPresence(
       await expect(customEmoji).toBeFocused();
       await tab();
       await expect(
+        sections.getByRole("button", { name: "Leave or remove", exact: true }),
+      ).toBeFocused();
+      await tab();
+      await expect(
         sections.getByRole("button", { name: "Builderlab", exact: true }),
       ).toBeFocused();
       await tab();
@@ -503,6 +576,10 @@ confirmedPresence(
       await expect(channelTemplates).toBeFocused();
       await tab();
       await expect(customEmoji).toBeFocused();
+      await tab();
+      await expect(
+        sections.getByRole("button", { name: "Leave or remove", exact: true }),
+      ).toBeFocused();
       await tab();
       await expect(
         sections.getByRole("button", { name: "Builderlab", exact: true }),

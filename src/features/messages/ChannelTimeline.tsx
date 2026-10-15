@@ -131,6 +131,8 @@ export type ChannelTimelineProps = {
   historyControl?: "button" | "scroll";
   /** Me's quieter centered transcript and viewer-message alignment. */
   chatPresentation?: boolean | undefined;
+  /** A following composer shows conversation activity; the jump button leaves it a lane. */
+  activityLane?: boolean | undefined;
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -185,6 +187,7 @@ function Timeline({
   onOpenThread,
   onOpenMediaReview,
   chatPresentation = false,
+  activityLane = false,
 }: ChannelTimelineProps) {
   useMessageSelectionCopy();
   const [initialPosition] = useState(() =>
@@ -747,6 +750,7 @@ function Timeline({
       className={styles.feed}
       data-channel-timeline={channelId}
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
+      data-jump-visible={showJumpToLatest || undefined}
       onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;
@@ -838,6 +842,9 @@ function Timeline({
         visible={showJumpToLatest}
         newMessageCount={newMessageCount}
         onClick={jumpToLatest}
+        activityLane={
+          activityLane ? { session: queries, channelId } : undefined
+        }
       />
       {width > 0 && (
         <Virtualizer

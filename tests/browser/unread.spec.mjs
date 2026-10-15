@@ -126,7 +126,9 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
   page,
   app,
 }) => {
-  // Startup autofocus must not read messages before the unread baseline exists.
+  // Messages starts with its composer focused, and composer focus is reading.
+  // On a slow runner that dwell can read Alpha before the search palette takes
+  // focus, so hold reading focus until the unread baseline is observed.
   await holdReadingFocus(page);
   await open(page, app);
   await expect
@@ -140,12 +142,12 @@ test("built sidebar → visible dwell → durable journal → encrypted broker p
     /^500 observed unread messages/,
   );
   await park(page);
+  await releaseReadingFocus(page);
   // Install after startup and focus cancellation have settled on the real
   // clock; pause at a fixed instant rather than the page's ticking clock.
   const base = Date.now();
   await page.clock.install({ time: base });
   await page.clock.pauseAt(base + 20_000);
-  await releaseReadingFocus(page);
   await page.clock.runFor(900); // Sidebar focus is not reading, even past dwell.
   expect((await journal(page)).state.frontiers).toEqual({});
   expect(app.report.readPublications).toEqual([]);
@@ -413,6 +415,8 @@ test.describe("explicit mark-through with membership activity", () => {
             : loaded,
         );
         const lastChat = loaded.findLast((event) => event.kind === 9);
+        // Startup composer focus must not read the unread baseline.
+        await holdReadingFocus(page);
         await open(page, app);
         await park(page);
         await expect(

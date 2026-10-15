@@ -168,7 +168,7 @@ function MessageRowContent({
   viewer = session?.viewer,
   stackPrevious = layout === "continuation",
   stackNext = false,
-  alignViewer = false,
+  alignViewer = true,
 
   mediaMode = "inline",
   mediaSeekTo,
@@ -711,12 +711,9 @@ function MessageRowContent({
                 <div
                   className={shownRow ? undefined : styles.messageBubble}
                   data-message-action-anchor
+                  data-emoji-only={emojiOnly || undefined}
+                  data-diff-only={!!row.diff || undefined}
                   data-own={ownBubble || undefined}
-                  data-long-text={
-                    row.content.length > 160 ||
-                    row.content.includes("\n") ||
-                    undefined
-                  }
                 >
                   {timeReply && (
                     <span className={styles.mediaTimeLink}>

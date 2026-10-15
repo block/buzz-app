@@ -485,7 +485,7 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
     const toolbar = await actions.boundingBox();
     expect(
       toolbar.y + toolbar.height <= prose.y ||
-        toolbar.x >= prose.x + prose.width,
+        toolbar.x + toolbar.width <= prose.x,
     ).toBe(true);
     await expect(actions).toHaveCSS("position", "fixed");
     expect((await following.boundingBox()).y).toBe(baseline.y);

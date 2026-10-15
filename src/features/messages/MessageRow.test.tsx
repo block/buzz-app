@@ -306,6 +306,7 @@ it.each([
       />,
     );
     expect(html.includes('data-single-emoji="true"')).toBe(large);
+    expect(html.includes('data-emoji-only="true"')).toBe(large);
   },
 );
 function render(
@@ -2191,37 +2192,48 @@ it("keeps a plugin action dialog closed when its plugin is reinstalled with the 
   }
 });
 
-it("renders built-in own bubbles and keeps only the last grouped avatar", () => {
-  const props = {
-    row: { ...row, authorId: "ab".repeat(32) },
-    viewer: "ab".repeat(32),
-    profile: { name: "author" },
-    media: () => undefined,
-    onOpenLink: () => true,
-    canOpenLink: () => true,
-    day: false,
-    retry: undefined,
-  };
-  try {
-    const { container, rerender } = renderDom(
-      <MessageRow {...props} stackNext />,
-    );
-    expect(
-      container.querySelector("[data-message-action-anchor][data-own]"),
-    ).toHaveTextContent("Root");
-    expect(
-      screen.queryByRole("button", { name: "View author profile" }),
-    ).toBeNull();
-    rerender(<MessageRow {...props} stackPrevious />);
-    expect(
-      screen.getByRole("button", { name: "View author profile" }),
-    ).toBeInTheDocument();
-    rerender(<MessageRow {...props} viewer="someone-else" />);
-    expect(container.querySelector("[data-own]")).toBeNull();
-  } finally {
-    cleanup();
-  }
-});
+it.each(["timeline", "thread", "continuation"] as const)(
+  "right-aligns own %s rows and keeps only the last grouped avatar",
+  (layout) => {
+    const props = {
+      layout,
+      row: { ...row, authorId: "ab".repeat(32) },
+      viewer: "ab".repeat(32),
+      profile: { name: "author" },
+      media: () => undefined,
+      onOpenLink: () => true,
+      canOpenLink: () => true,
+      day: false,
+      retry: undefined,
+    };
+    try {
+      const { container, rerender } = renderDom(
+        <MessageRow {...props} stackNext />,
+      );
+      expect(container.querySelector("[data-own]")).toHaveTextContent("Root");
+      expect(
+        container.querySelector("[data-viewer-message]"),
+      ).toHaveTextContent("Root");
+      expect(
+        screen.queryByRole("button", { name: "View author profile" }),
+      ).toBeNull();
+      rerender(<MessageRow {...props} stackPrevious />);
+      expect(
+        screen.getByRole("button", { name: "View author profile" }),
+      ).toBeInTheDocument();
+      expect(
+        container.querySelector("[data-viewer-message]"),
+      ).toHaveTextContent("Root");
+      rerender(<MessageRow {...props} viewer="someone-else" />);
+      expect(container.querySelector("[data-own]")).toBeNull();
+      expect(container.querySelector("[data-viewer-message]")).toBeNull();
+      rerender(<MessageRow {...props} viewer={undefined} />);
+      expect(container.querySelector("[data-viewer-message]")).toBeNull();
+    } finally {
+      cleanup();
+    }
+  },
+);
 
 it.each(["timeline", "thread", "continuation"] as const)(
   "retains a focused grouped avatar until focus leaves in %s rows",

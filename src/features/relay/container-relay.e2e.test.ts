@@ -171,8 +171,8 @@ it.skipIf(!relayUrl)(
       { timeout: 10_000 },
     );
 
-    // A fresh session for the same key: the full roster read leaves the system
-    // channel out, and the list never shows it.
+    // A fresh session for the same key: the full pass reads the system
+    // channel through its opt-in filter, and the list never shows it.
     const again = await viewerSession(alice.key);
     const [found] =
       (await again.session.channels.findLabeled?.({
@@ -195,7 +195,7 @@ it.skipIf(!relayUrl)(
     expect(
       again.session.channels.list().channels.map((c) => c.id),
     ).not.toContain(id);
-    // The complete roster read did not revoke access the relay never denied.
+    // The complete pass carried the system roster, so access stands.
     expect(again.session.channels.get?.(id)?.channelType).toBe("system");
     again.session.channels.ensure(id);
     await vi.waitFor(

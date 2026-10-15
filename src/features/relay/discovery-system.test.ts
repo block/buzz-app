@@ -45,15 +45,15 @@ it("reads a system channel by id but never lists it", () => {
   expect(state.channels()).toEqual([]);
 });
 
-it("keeps a system channel when a complete roster read omits it", () => {
+it("loses a system channel when a complete read omits it", () => {
   const viewer = keypair(),
     relay = keypair();
   const state = new DiscoveryState(viewer.pubkey, relay.pubkey);
   const [metadata, members] = systemChannel(relay, "records", viewer.pubkey);
   state.accept(metadata);
   state.accept(members);
-  // The relay leaves system channels out of the `#p` roster read, so a
-  // complete read without this roster proves nothing about access.
+  // A NIP-CL pass reads system rosters into the complete set, so their
+  // absence from it proves loss, as for any other channel.
   state.retain(new Set(), new Map([["records", members]]));
-  expect(state.get("records")?.channelType).toBe("system");
+  expect(state.get("records")).toBeUndefined();
 });

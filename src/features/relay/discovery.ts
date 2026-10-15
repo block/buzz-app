@@ -115,12 +115,11 @@ export class DiscoveryState {
     let changed = !this.complete;
     this.complete = true;
     // Keep the last signed version: an old replay cannot undo authoritative loss.
-    // The relay leaves system channels out of the `#p` roster read (NIP-CL),
-    // so their absence from it says nothing about access.
+    // A NIP-CL pass reads system channels through their own opt-in filter
+    // into the same complete set, so one absence rule covers them too.
     for (const [id, roster] of this.rosters)
       if (
         hasTag(roster, "p", this.viewer) &&
-        tag(roster, "t") !== "system" &&
         !ids.has(id) &&
         !this.denied.has(id) &&
         started.get(id) === roster
@@ -204,7 +203,16 @@ export class DiscoveryState {
   get(id: string): ChannelSummary | undefined {
     if (!this.canAccess(id) || (!this.authorized(id) && !this.open(id))) return;
     const event = this.metadata.get(id);
-    const type = this.isSession(id) ? "session" : event && tag(event, "t");
+    // The relay tags a system roster too, so a roster that arrives before its
+    // metadata (the full pass reads names later) never lists as a channel.
+    const roster = this.rosters.get(id);
+    const type = this.isSession(id)
+      ? "session"
+      : event
+        ? tag(event, "t")
+        : roster && hasTag(roster, "t", "system")
+          ? "system"
+          : undefined;
     const channelType =
       type === "stream" ||
       type === "forum" ||
@@ -213,7 +221,6 @@ export class DiscoveryState {
       (type === "session" && this.isSession(id))
         ? type
         : undefined;
-    const roster = this.rosters.get(id);
     const parentId = event && sessionMetadata(tag(event, "about"))?.parentId;
     const identity = event && channelIdentity(event);
     return {

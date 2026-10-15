@@ -184,10 +184,9 @@ export function createWorkSessions(
    * gate unsatisfied, the full viewer-roster discovery runs. All three apply
    * through the same discovery path.
    *
-   * A system channel (NIP-CL) never joins the list, and the relay leaves it
-   * out of the full roster read. Its evidence is the exact one-channel read
-   * alone (`resolve` before the store knows it, `refreshRoster` after),
-   * checked through `get`, and repeated until the gate decides. */
+   * A system channel (NIP-CL) never joins the list, so the gate finds it
+   * through `get` once the list is ready. The full pass reads system rosters
+   * too, so it follows the same path. */
   async function refresh(
     id: string,
     expected: {
@@ -203,7 +202,16 @@ export function createWorkSessions(
     // Aborted once the gate decides, so a still-running exact read releases
     // its reader slot instead of holding it until the connection closes.
     const exact = new AbortController();
-    let recheck = () => {};
+    // A system channel never lists; `get` carries it once discovery is ready.
+    const found = (
+      matches: (channel: ChannelSummary) => boolean | undefined,
+    ) => {
+      if (!expected.system) return channels.list().channels.some(matches);
+      const channel = channels.get?.(id);
+      return (
+        channel?.channelType === "system" && !channel.cached && matches(channel)
+      );
+    };
     const wait = new Promise<void>((resolve, reject) => {
       let unsubscribe = () => {};
       const done = (error?: Error) => {
@@ -235,14 +243,10 @@ export function createWorkSessions(
         (!expected.parent || channel.parentChannelId === expected.parent);
       const inspect = (reportError = true) => {
         const list = channels.list();
-        if (expected.system) {
-          const channel = channels.get?.(id);
-          if (channel?.channelType === "system" && matches(channel)) done();
-        } else if (reportError && list.status === "error")
+        if (reportError && list.status === "error")
           done(new Error(list.error ?? "Session membership could not load."));
-        else if (list.status === "ready" && list.channels.some(matches)) done();
+        else if (list.status === "ready" && found(matches)) done();
       };
-      recheck = inspect;
       unsubscribe = channels.subscribeList(inspect);
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) abort();
@@ -251,34 +255,6 @@ export function createWorkSessions(
     // The gate may time out or abort while a read is in flight; its rejection
     // stays observed here and is rethrown below.
     const gate = wait.catch(() => {});
-    if (expected.system) {
-      while (!settled) {
-        try {
-          const options = {
-            signal: AbortSignal.any([signal, exact.signal]),
-            consistency: "strong" as const,
-          };
-          // As below: `resolve` skips a channel the store already authorizes,
-          // so an agent added to a system channel the viewer belongs to is
-          // confirmed by re-reading its roster.
-          const known = channels.get?.(id);
-          await (known && !known.cached
-            ? channels.refreshRoster?.(id, options)
-            : channels.resolve?.([id], options));
-        } catch {
-          // A failed exact read is retried until the gate times out.
-        }
-        if (settled) break;
-        recheck();
-        if (!settled)
-          await Promise.race([
-            gate,
-            new Promise((resolve) => setTimeout(resolve, 500)),
-          ]);
-      }
-      await wait;
-      return;
-    }
     // The exact read extends a list discovery has already made ready. Any other
     // status (idle, loading, error) needs the full pass to become ready at all,
     // and that pass carries the new channel; the store's exact reads would
@@ -290,9 +266,7 @@ export function createWorkSessions(
       // member addition re-reads that one roster through `refreshRoster`; a
       // channel the list lacks (just created) is admitted by `resolve`'s exact
       // metadata-and-roster read.
-      const listed = channels
-        .list()
-        .channels.some((channel) => channel.id === id);
+      const listed = found((channel) => channel.id === id);
       await Promise.race([
         gate,
         (async () => {

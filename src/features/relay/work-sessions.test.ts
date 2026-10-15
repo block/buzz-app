@@ -19,7 +19,7 @@ import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
 import { canAddMembers } from "../channel-members/members";
 import { matchesEvent } from "./projection";
-import type { ReadFilter } from "./events";
+import type { ReadFilter, RelayEvent } from "./events";
 const event = message(keypair(), "session", "Work", 1);
 
 it("keeps verified session roster reads available for sends without member-add capability", async () => {
@@ -767,6 +767,137 @@ it("creates a channel during initial discovery without committing a list of only
     owner.dispose();
   }
 });
+
+it.each(["held", "failed"] as const)(
+  "creates a system channel while initial discovery is %s without certifying the list",
+  async (initial) => {
+    const viewer = keypair(),
+      relay = keypair();
+    const other = "22222222-2222-4222-8222-222222222222";
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let records: readonly OutgoingEvent[] = [];
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        channelIdentity: true,
+        writer: {
+          kinds: [9, 9000, 9007],
+          sign: async (template) => signed(viewer, template),
+          publish: async () => {},
+        },
+      },
+      {
+        outboxStorage: {
+          load: () => structuredClone(records),
+          save: (next) => {
+            records = structuredClone(next);
+          },
+        },
+      },
+    );
+    try {
+      owner.session.channels.ensureList();
+      await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+      // A NIP-CL pass reads the viewer's system channels first.
+      expect(wire.pending[0]?.filters[0]?.["#t"]).toEqual(["system"]);
+      if (initial === "failed") {
+        wire.next().fail(new Error("relay unavailable"));
+        await vi.waitFor(() =>
+          expect(owner.session.channels.list().status).toBe("error"),
+        );
+      }
+      expect(owner.session.channels.list().status).toBe(
+        initial === "held" ? "loading" : "error",
+      );
+      const snapshots: ReturnType<ChannelQueries["list"]>[] = [];
+      const unsubscribe = owner.session.channels.subscribeList(() =>
+        snapshots.push(owner.session.channels.list()),
+      );
+      const creating = owner.session.channelCreation.create({
+        name: "For You records",
+        visibility: "private",
+        labels: ["for-you"],
+        system: true,
+      });
+      await vi.waitFor(() =>
+        expect(records.some(({ event }) => event.kind === 9007)).toBe(true),
+      );
+      const id =
+        records
+          .find(({ event }) => event.kind === 9007)
+          ?.event.tags.find(([name]) => name === "h")?.[1] ?? "";
+      // The relay lists the new system channel only to writer reads.
+      const respond = (filter: ReadFilter): RelayEvent[] => {
+        const strong = filter.consistency === "strong";
+        if (filter.kinds?.includes(39000))
+          return (filter["#d"] ?? []).flatMap((channel) =>
+            channel === id
+              ? strong
+                ? [
+                    metadata(relay, id, "For You records", undefined, [
+                      ["private"],
+                      ["hidden"],
+                      ["t", "system"],
+                      ["t", "for-you"],
+                    ]),
+                  ]
+                : []
+              : [metadata(relay, channel, "Existing", undefined, [["public"]])],
+          );
+        if (!filter.kinds?.includes(39002) || !filter["#p"]) return [];
+        if (filter["#t"]?.includes("system"))
+          return strong
+            ? [
+                signed(relay, {
+                  kind: 39002,
+                  content: "",
+                  tags: [
+                    ["d", id],
+                    ["t", "system"],
+                    ["p", viewer.pubkey],
+                  ],
+                }),
+              ]
+            : [];
+        return filter["#d"] ? [] : [roster(relay, other, [viewer.pubkey])];
+      };
+      const serve = () => {
+        for (const request of wire.pending.splice(0))
+          request.respond(request.filters.flatMap(respond));
+      };
+      await flush();
+      // No exact read: it would certify a list discovery has not made ready.
+      expect(
+        wire.pending.some((request) =>
+          request.filters.some((filter) => filter["#d"]),
+        ),
+      ).toBe(false);
+      for (let round = 0; round < 20; round++) {
+        serve();
+        const done = await Promise.race([
+          creating.then(() => true),
+          flush().then(() => false),
+        ]);
+        if (done) break;
+      }
+      await expect(creating).resolves.toBe(id);
+      expect(owner.session.channels.get?.(id)).toMatchObject({
+        id,
+        channelType: "system",
+        members: [viewer.pubkey],
+      });
+      // Every ready list came from a full pass: it carries the ordinary
+      // channel and never the system one.
+      const ready = snapshots.filter((snapshot) => snapshot.status === "ready");
+      expect(ready.length).toBeGreaterThan(0);
+      for (const snapshot of ready)
+        expect(snapshot.channels.map((channel) => channel.id)).toEqual([other]);
+      unsubscribe();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 
 it("confirms an agent added to a session and its parent with two concurrent exact roster reads and no rediscovery", async () => {
   const viewer = keypair(),

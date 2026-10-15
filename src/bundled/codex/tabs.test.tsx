@@ -1077,6 +1077,32 @@ it("keeps sign-in available after a failed Codex login without showing models", 
   ).not.toBeInTheDocument();
 });
 
+it("offers to install Codex from its card when Buzz has no copy", async () => {
+  const f = fixture({ installed: false });
+  render(
+    <f.tabs.CreateModel
+      config={defaults}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Install Codex" }));
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  // A failed download leaves the offer in place, with what went wrong.
+  expect(
+    await screen.findByRole("log", { name: "Setup output" }),
+  ).toHaveTextContent("Codex downloads need the desktop app");
+  expect(
+    await screen.findByRole("button", { name: "Install Codex" }),
+  ).toBeEnabled();
+
+  f.disk.installed = true;
+  await f.provider.check();
+  expect(
+    await screen.findByRole("combobox", { name: "Model" }),
+  ).toHaveTextContent("Model A");
+});
+
 it("installs and signs in Buzz's copy of Codex from its provider settings", async () => {
   const f = fixture({ installed: false, signedIn: false });
   const provider = new CodexProvider(f.spawn, localStorage, f.setup);

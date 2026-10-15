@@ -24,7 +24,11 @@ import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
-import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
+import {
+  coreOf,
+  MemoryReads,
+  READ_TIMEOUT_MS,
+} from "../../features/agent-harness/core-memory";
 import {
   CONTEXT_LIMIT,
   type Scope,
@@ -81,7 +85,8 @@ export type SavedConversation = Conversation & {
   at: number;
 };
 
-const MEMORY_TIMEOUT_MS = 5_000;
+/** How long a new session waits on its `core` memory. */
+const CORE_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 
@@ -640,13 +645,13 @@ export class ClaudeRuntime {
 
   /** The agent's memory, or only entry `slug`, as its community's reads give
    * it. */
-  private memories(pubkey: string, slug?: string) {
+  private memories(pubkey: string, slug?: string, wait = READ_TIMEOUT_MS) {
     const reads = this.reads(pubkey);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
       reads,
       pubkey,
-      AbortSignal.timeout(MEMORY_TIMEOUT_MS),
+      AbortSignal.timeout(wait),
       slug,
     );
   }
@@ -655,7 +660,7 @@ export class ClaudeRuntime {
    * starts without it. */
   private async core(pubkey: string) {
     try {
-      return coreOf(await this.memories(pubkey, "core"));
+      return coreOf(await this.memories(pubkey, "core", CORE_TIMEOUT_MS));
     } catch (error) {
       console.warn("Claude could not read the agent's memory", error);
       return undefined;

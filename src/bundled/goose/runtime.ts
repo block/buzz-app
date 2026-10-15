@@ -8,7 +8,11 @@
 // signed by the agent's native-held key; the runtime only reports a turn that
 // fails.
 import type { Context, Memories } from "../../buzz-mcp/client";
-import { coreOf } from "../../features/agent-harness/core-memory";
+import {
+  abortable,
+  coreOf,
+  READ_TIMEOUT_MS,
+} from "../../features/agent-harness/core-memory";
 import { respond } from "../../buzz-mcp/rpc";
 import { appClient } from "../../buzz-mcp/app-client";
 import { turnNote } from "../../buzz-mcp/session-tools";
@@ -61,7 +65,8 @@ export const config = (value: unknown): Config => ({
 
 /** How long a read of the agent's core memory is reused. */
 const MEMORY_TTL_MS = 5 * 60_000;
-const MEMORY_TIMEOUT_MS = 5_000;
+/** How long a new session waits on its `core` memory. */
+const CORE_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 const TITLE_LIMIT = 80;
@@ -539,7 +544,7 @@ export class GooseRuntime {
       return entry.memory.value;
     let value: string | null | undefined;
     try {
-      value = coreOf(await this.memories(pubkey, "core"));
+      value = coreOf(await this.memories(pubkey, "core", CORE_TIMEOUT_MS));
     } catch (error) {
       console.warn("goose could not read the agent's memory", error);
     }
@@ -549,7 +554,11 @@ export class GooseRuntime {
 
   /** The agent's memory, or only entry `slug`, read back through the owner's
    * session: it is encrypted to the owner, so no agent key is needed. */
-  private memories(pubkey: string, slug?: string): Promise<Memories> {
+  private memories(
+    pubkey: string,
+    slug?: string,
+    wait = READ_TIMEOUT_MS,
+  ): Promise<Memories> {
     const key = `${pubkey}\0${slug ?? ""}`;
     let reading = this.reading.get(key);
     if (!reading) {
@@ -559,7 +568,9 @@ export class GooseRuntime {
       this.reading.set(key, started);
       reading = started;
     }
-    return reading;
+    // The shared read keeps its own bound, so a caller that stops waiting
+    // sooner cannot cut it short for the others.
+    return abortable(reading, AbortSignal.timeout(wait));
   }
   /** After a memory write, a read that may have started before it is not
    * shared with later callers. */
@@ -572,7 +583,7 @@ export class GooseRuntime {
     if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
     return snapshot.session.agentMemories.read(
       pubkey,
-      AbortSignal.timeout(MEMORY_TIMEOUT_MS),
+      AbortSignal.timeout(READ_TIMEOUT_MS),
       slug,
     );
   }

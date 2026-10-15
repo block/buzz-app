@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import type { BuzzClient } from "../../buzz-mcp/client";
+import { callTool } from "../../buzz-mcp/tools";
+import { createAgentMemories } from "../../features/agents/memory";
 import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
@@ -408,7 +411,7 @@ describe("goose memory reads", () => {
       entries: [{ slug: "core", body: "old" }],
     });
     // The old read finishing must not drop the newer one.
-    expect(runtime.memories(self, "core")).toBe(after);
+    void runtime.memories(self, "core");
     expect(read).toHaveBeenCalledTimes(2);
     pending[1]?.("new");
     await expect(after).resolves.toEqual({
@@ -431,4 +434,69 @@ describe("goose memory reads", () => {
     listing = { entries: [], partial: false };
     await expect(runtime.memory(self, {})).resolves.toBeNull();
   });
+
+  it("gives a tool the partial listing a slow native read answers", async () => {
+    vi.useFakeTimers();
+    // AbortSignal.timeout runs on real time; put it on the fake clock.
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(
+        () => controller.abort(new DOMException("", "TimeoutError")),
+        ms,
+      );
+      return controller.signal;
+    });
+    try {
+      const relay = {
+        snapshot: () => ({
+          status: "ready",
+          session: { agentMemories: slowMemories(alice) },
+        }),
+      } as unknown as RelayData;
+      const runtime = new GooseRuntime({} as Host, () => relay) as unknown as {
+        memories(
+          pubkey: string,
+          slug?: string,
+        ): ReturnType<BuzzClient["memories"]>;
+      };
+      const client = {
+        memories: (slug?: string) => runtime.memories(self, slug),
+      } as unknown as BuzzClient;
+      const reply = callTool(client, {}, "mem_get", {});
+      await vi.advanceTimersByTimeAsync(9_500);
+      await expect(reply).resolves.toMatch(
+        /^mem\/a .*\nThis list is incomplete: some memory could not be read\.$/,
+      );
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
 });
+
+/** A native read that pages until its deadline and answers partial at 9.5
+ * seconds, behind the session's real serialized memory reads. */
+function slowMemories(viewer: string) {
+  return createAgentMemories(
+    () =>
+      new Promise((done) =>
+        setTimeout(
+          () =>
+            done({
+              entries: [
+                {
+                  slug: "mem/a",
+                  body: "a",
+                  eventId: "e".repeat(64),
+                  createdAt: 1,
+                },
+              ],
+              partial: true,
+            }),
+          9_500,
+        ),
+      ),
+    viewer,
+    () => true,
+  ).capability;
+}

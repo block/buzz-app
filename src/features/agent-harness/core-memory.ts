@@ -2,8 +2,10 @@
 // agents, through the reads of the agent's community.
 import type { AgentReads, MemoryListing } from "../agents/reads";
 
-/** How long a shared read may take; each caller can stop waiting sooner. */
-const READ_TIMEOUT_MS = 10_000;
+/** How long a shared read may take; each caller can stop waiting sooner. It
+ * matches the frontend's bound on the native read, which answers a slow
+ * listing partial within it. */
+export const READ_TIMEOUT_MS = 10_000;
 
 /** One read per connection, agent and slug (or full listing) at a time, which
  * concurrent turns and tool calls share. A new connection, even to the same community, may read as
@@ -70,7 +72,7 @@ export function coreMemorySection(memory: string | null | undefined) {
 }
 
 /** Stops waiting when `signal` aborts, even if the read itself does not. */
-function abortable<T>(promise: Promise<T>, signal: AbortSignal) {
+export function abortable<T>(promise: Promise<T>, signal: AbortSignal) {
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(signal.reason);
     signal.addEventListener("abort", abort, { once: true });

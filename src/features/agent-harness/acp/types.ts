@@ -54,28 +54,33 @@ export type McpServer = Readonly<{
   headers: HostMcpServer["headers"];
 }>;
 
-/** What a harness adds to, or does in place of, plain ACP. */
+/** What a harness adds to, or does in place of, plain ACP. Each hook is
+ * optional: without it the client uses plain ACP's way, or none. */
 export type AcpHooks = Readonly<{
   /** Names the harness in errors. */
   label: string;
   /** The manifest process it runs as. */
   program: string;
-  /** The error when that program cannot be found. */
+  /** The error when that program cannot be found, or cannot run. */
   missing: string;
-  /** Its environment, under the launch's own. */
+  /** Its environment, under the launch's own. The Buzz identity is always
+   * removed, whatever either says. */
   env: Readonly<Record<string, string | null>>;
   /** `session/new`'s `_meta`. */
   newSessionMeta?(
     buzz: McpServer | undefined,
     open: Readonly<{ title?: string; provider: string }>,
   ): Record<string, unknown>;
-  /** Appends `text` to a new session's system prompt; a throw closes it. */
+  /** Appends `text` to a new session's system prompt; a throw closes it.
+   * Without it, ACP's `systemPrompt` carries it when advertised, else it
+   * leads the session's first prompt. */
   systemPrompt?(
     process: AcpProcess,
     sessionId: string,
     text: string,
   ): Promise<void>;
-  /** Steers a message into the running turn. */
+  /** Steers a message into the running turn. Without it, a message sent
+   * mid-turn runs as the next turn. */
   steering?: Readonly<{
     /** The running turn's id from an update: undefined when none runs,
      * null when the update says nothing about it. */
@@ -88,10 +93,13 @@ export type AcpHooks = Readonly<{
     ): Promise<void>;
   }>;
   /** Puts a session on `want` before a turn, keeping `session.chosen` to
-   * what it now runs on. */
+   * what it now runs on. Without it, the harness's own pick stands. */
   select?(
     process: AcpProcess,
     session: { readonly id: string; chosen: Choice },
     want: Choice,
   ): Promise<void>;
+  /** Whether `session/close` is sent: always, or only when
+   * `sessionCapabilities.close` is advertised (the default). */
+  closeSession?: "always" | "advertised";
 }>;

@@ -42,12 +42,7 @@ import {
 } from "../claude-code/prompt";
 import { ownerCanvas, readProject } from "../../features/agent-harness/project";
 import type { ServeMcp, Spawn, ToolServer } from "./goose";
-import {
-  AgentSessions,
-  localSessions,
-  ServerPool,
-  SharedProcess,
-} from "./sessions";
+import { AgentSessions, localSessions, SharedProcess } from "./sessions";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the provider's default, or the
@@ -116,8 +111,6 @@ type Entry = {
 
 export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
-  /** The MCP servers every agent's sessions share. */
-  private readonly pool = new ServerPool();
   /** The goose every agent's sessions open in. */
   private readonly goose = new SharedProcess(
     (id, options) => this.spawn(id, options),
@@ -544,7 +537,6 @@ export class GooseRuntime {
       spawn: (id, options) => this.spawn(id, options),
       tools,
       process: this.goose,
-      pool: this.pool,
       store: localSessions(this.storage, pubkey),
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.

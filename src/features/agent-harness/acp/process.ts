@@ -30,11 +30,22 @@ export const REQUEST_TIMEOUT_MS = 60_000;
  * `buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
 
+/** How long a harness that failed to start has to exit once stopped. */
+const STOP_TIMEOUT_MS = 5_000;
+
 const STDERR_LIMIT = 4_000;
 
-/** The hooks every harness on this client provides so far. One without them
- * is not supported yet. */
-export type Hooks = Required<AcpHooks>;
+/** Never reaches a harness, whatever its hooks or launch say: its Buzz tools
+ * come over HTTP MCP, never a Buzz key. */
+export const PROTECTED_ENV: Readonly<Record<string, null>> = {
+  BUZZ_PRIVATE_KEY: null,
+  BUZZ_AUTH_TAG: null,
+  BUZZ_RELAY_URL: null,
+};
+
+/** Exit codes for a program that cannot be found or run, as `env` reports
+ * them. */
+const MISSING_CODES = new Set([126, 127]);
 
 type Wire = {
   jsonrpc?: string;
@@ -57,15 +68,17 @@ export class AcpProcess {
   private buffer = "";
   private stderr = "";
   private alive = true;
+  private code: number | null | undefined;
   private capabilities: Readonly<Record<string, unknown>> = {};
 
   private constructor(
     private readonly process: HostProcess,
-    readonly hooks: Hooks,
+    readonly hooks: AcpHooks,
     private readonly serve: ServeMcp | undefined,
   ) {
     this.exited = process.exited.then((code) => {
       this.alive = false;
+      this.code = code;
       const error = new Error(
         this.stderr.trim().split("\n").at(-1) ||
           `${hooks.label} exited (${code ?? "signal"})`,
@@ -81,33 +94,43 @@ export class AcpProcess {
     });
   }
 
-  /** Starts the harness and checks it can reach the Buzz tools. Sessions
-   * with tools need `serve`, which starts their MCP server. */
+  /** Starts the harness with `args` and checks it can reach the Buzz tools.
+   * Sessions with tools need `serve`, which starts their MCP server. Once
+   * `signal` aborts, it stops the harness and rejects. */
   static async start(
     spawn: Spawn,
     hooks: AcpHooks,
     launch: Readonly<{
       cwd: string;
+      args?: readonly string[];
       env?: Readonly<Record<string, string | null>>;
       serve?: ServeMcp;
+      signal?: AbortSignal;
     }>,
   ) {
-    const supported = supportedHooks(hooks);
+    const { signal } = launch;
+    signal?.throwIfAborted();
     let acp: AcpProcess | undefined;
     const early: string[] = [];
+    const earlyErrors: string[] = [];
     const process = await spawn(hooks.program, {
       cwd: launch.cwd,
-      env: { ...hooks.env, ...launch.env },
+      ...(launch.args ? { args: launch.args } : {}),
+      env: { ...hooks.env, ...launch.env, ...PROTECTED_ENV },
       onStdout: (data) => (acp ? acp.read(data) : early.push(data)),
-      onStderr: (data) => acp?.readError(data),
+      onStderr: (data) => (acp ? acp.readError(data) : earlyErrors.push(data)),
     }).catch((error: unknown) => {
       throw /os error 2|no such file|not found/i.test(errorMessage(error))
         ? new Error(hooks.missing)
         : error;
     });
-    acp = new AcpProcess(process, supported, launch.serve);
+    acp = new AcpProcess(process, hooks, launch.serve);
+    for (const data of earlyErrors) acp.readError(data);
     for (const data of early) acp.read(data);
+    const abort = () => void process.kill();
+    signal?.addEventListener("abort", abort, { once: true });
     try {
+      signal?.throwIfAborted();
       const init = (await acp.request(
         "initialize",
         {
@@ -121,14 +144,20 @@ export class AcpProcess {
           mcpCapabilities?: { http?: boolean };
         };
       };
+      signal?.throwIfAborted();
       acp.capabilities = init.agentCapabilities ?? {};
-      if (!init.agentCapabilities?.mcpCapabilities?.http)
+      if (init.agentCapabilities?.mcpCapabilities?.http !== true)
         throw new Error(
           `This ${hooks.label} cannot reach Buzz tools (no HTTP MCP support)`,
         );
     } catch (error) {
-      void process.kill();
+      await acp.stop(STOP_TIMEOUT_MS);
+      signal?.throwIfAborted();
+      // A program `env` cannot find or run exits before it answers.
+      if (MISSING_CODES.has(acp.code ?? 0)) throw new Error(hooks.missing);
       throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
     }
     return acp;
   }
@@ -142,6 +171,15 @@ export class AcpProcess {
   /** The `agentCapabilities` the harness answered `initialize` with. */
   get agentCapabilities() {
     return this.capabilities;
+  }
+  /** Whether `initialize` advertised `sessionCapabilities[name]`. */
+  advertises(name: string) {
+    const session = this.capabilities.sessionCapabilities as
+      | Record<string, unknown>
+      | null
+      | undefined;
+    const value = session?.[name];
+    return typeof value === "object" && value !== null;
   }
 
   /** Opens a new session in `cwd`, named `title`, whose system prompt has
@@ -159,6 +197,9 @@ export class AcpProcess {
   ): Promise<AcpSession> {
     const { hooks } = this;
     const provider = launch.choice?.().provider ?? "";
+    const { systemPrompt } = launch;
+    const prompting = !!systemPrompt && !hooks.systemPrompt;
+    const standard = prompting && this.advertises("systemPrompt");
     let server: HostMcpServer | undefined;
     // The harness connects while it opens the session, before it is known here.
     let session: AcpSession | undefined;
@@ -192,9 +233,17 @@ export class AcpProcess {
         {
           cwd: launch.cwd,
           mcpServers: buzz ? [buzz] : [],
-          _meta: hooks.newSessionMeta(buzz, {
-            ...(launch.title ? { title: launch.title } : {}),
-            provider,
+          ...(standard && {
+            systemPrompt: {
+              mode: "append",
+              content: [{ type: "text", text: systemPrompt }],
+            },
+          }),
+          ...(hooks.newSessionMeta && {
+            _meta: hooks.newSessionMeta(buzz, {
+              ...(launch.title ? { title: launch.title } : {}),
+              provider,
+            }),
           }),
         },
         REQUEST_TIMEOUT_MS,
@@ -203,18 +252,22 @@ export class AcpProcess {
       void server?.close();
       throw error;
     }
-    session = new AcpSession(this, sessionId, server, launch.choice, {
-      provider,
-      model: "",
-    });
+    session = new AcpSession(
+      this,
+      sessionId,
+      server,
+      launch.choice,
+      { provider, model: "" },
+      prompting && !standard ? systemPrompt : "",
+    );
     this.sessions.set(sessionId, session);
     if (stopped) {
       void this.close(session);
       throw new Error(STOPPED);
     }
     try {
-      if (launch.systemPrompt)
-        await hooks.systemPrompt(this, sessionId, launch.systemPrompt);
+      if (systemPrompt && hooks.systemPrompt)
+        await hooks.systemPrompt(this, sessionId, systemPrompt);
     } catch (error) {
       void this.close(session);
       throw error;
@@ -222,13 +275,16 @@ export class AcpProcess {
     return session;
   }
 
-  /** Ends a session. Its turn, if any, is cancelled first. */
+  /** Ends a session. Its turn, if any, is cancelled first. The harness is
+   * asked to close it only when it says it can. */
   async close(session: AcpSession) {
     if (!this.sessions.delete(session.id)) return;
     session.fail("The session was closed");
     void session.server?.close();
     if (!this.alive) return;
     this.notify("session/cancel", { sessionId: session.id });
+    if (this.hooks.closeSession !== "always" && !this.advertises("close"))
+      return;
     await this.request(
       "session/close",
       { sessionId: session.id },
@@ -240,6 +296,20 @@ export class AcpProcess {
 
   kill() {
     return this.process.kill();
+  }
+
+  /** Stops the harness, and resolves once it has exited or `timeout` ms
+   * have passed, whichever is first. */
+  async stop(timeout = REQUEST_TIMEOUT_MS) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      this.kill()
+        .catch(() => undefined)
+        .then(() => this.exited),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, timeout);
+      }),
+    ]).finally(() => clearTimeout(timer));
   }
 
   /** Sends a request and resolves with its result. When the harness does not
@@ -371,13 +441,4 @@ export class AcpProcess {
       session?.finished();
     return response;
   }
-}
-
-/** `hooks`, once it has every hook: a harness that lacks one is not
- * supported yet. */
-function supportedHooks(hooks: AcpHooks): Hooks {
-  const { newSessionMeta, systemPrompt, steering, select } = hooks;
-  if (!newSessionMeta || !systemPrompt || !steering || !select)
-    throw new Error(`${hooks.label} is unsupported: it lacks an ACP hook`);
-  return { ...hooks, newSessionMeta, systemPrompt, steering, select };
 }

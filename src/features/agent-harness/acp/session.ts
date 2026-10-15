@@ -9,8 +9,8 @@ const WRITTEN_LIMIT = 20_000;
 type Waiter = (settled: Settled) => void;
 
 /** One conversation's ACP session. Messages sent while a turn runs are
- * steered into it; one that arrives as the turn ends, or asks for another
- * model, runs as the next turn. */
+ * steered into it, when the harness can steer; one that arrives as the turn
+ * ends, or asks for another model, runs as the next turn. */
 export class AcpSession {
   /** The conversation it serves. */
   conversation: string | undefined;
@@ -49,6 +49,9 @@ export class AcpSession {
     private readonly choice?: () => Choice,
     /** The provider, model and thinking level it runs on, as chosen here. */
     public chosen: Choice = { provider: "", model: "" },
+    /** Instructions that lead its first prompt, for a harness that takes no
+     * system prompt. */
+    private preamble = "",
   ) {}
 
   get busy() {
@@ -81,6 +84,7 @@ export class AcpSession {
     // A steer cannot change the model, and must not pass a queued turn.
     if (
       this.prompting &&
+      this.acp.hooks.steering &&
       !this.queue.length &&
       (!model || model === this.model)
     )
@@ -114,7 +118,7 @@ export class AcpSession {
       if (typeof content?.text === "string")
         this.written = (this.written + content.text).slice(0, WRITTEN_LIMIT);
     }
-    const runId = this.acp.hooks.steering.runId(update);
+    const runId = this.acp.hooks.steering?.runId(update) ?? null;
     if (runId !== null) {
       this.runId = runId;
       if (runId) this.ranAs(runId);
@@ -151,9 +155,10 @@ export class AcpSession {
               this.runWaiters.push(resolve),
             )
           : undefined);
-      if (runId) {
+      const { steering } = this.acp.hooks;
+      if (runId && steering) {
         try {
-          await this.acp.hooks.steering.steer(this.acp, this.id, runId, text);
+          await steering.steer(this.acp, this.id, runId, text);
           this.acknowledge(activity, waiter);
           return;
         } catch {
@@ -177,9 +182,13 @@ export class AcpSession {
         const { text, model } = this.queue.shift() ?? { text: "" };
         try {
           await this.select(model);
+          const lead = this.preamble;
+          this.preamble = "";
           const { stopReason } = (await this.acp.request("session/prompt", {
             sessionId: this.id,
-            prompt: [{ type: "text", text }],
+            prompt: [
+              { type: "text", text: lead ? `${lead}\n\n${text}` : text },
+            ],
           })) as { stopReason?: string };
           if (stopReason === "refusal")
             this.lastError = `${this.acp.hooks.label} refused the request`;
@@ -203,7 +212,7 @@ export class AcpSession {
     if (!chosen) return;
     const want = model ? { ...chosen, model } : chosen;
     this.model = want.model;
-    await this.acp.hooks.select(this.acp, this, want);
+    await this.acp.hooks.select?.(this.acp, this, want);
   }
 
   private ranAs(runId: string | undefined) {

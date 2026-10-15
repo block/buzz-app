@@ -51,6 +51,8 @@ const texts = (content: readonly Json[]) =>
     .map((block) => str(block.text))
     .filter(Boolean)
     .join("\n");
+/** The `systemNotification` blocks that say something lasting. */
+const NOTICES = new Set(["inlineMessage", "creditsExhausted"]);
 const KINDS: Record<string, string> = {
   shell: "execute",
   edit: "edit",
@@ -169,6 +171,28 @@ export function gooseTurns(
           at,
           type: "thought",
           text: str(block.thinking),
+        });
+      // A provider or auth failure, which is often all a failed turn has.
+      else if (block.type === "error" && str(block.message).trim()) {
+        current.error = str(block.message);
+        current.items.push({
+          id: key,
+          at,
+          type: "status",
+          text: str(block.message),
+        });
+      }
+      // What goose showed in its own UI; progress and thinking notes pass.
+      else if (
+        block.type === "systemNotification" &&
+        NOTICES.has(str(block.notificationType)) &&
+        str(block.msg).trim()
+      )
+        current.items.push({
+          id: key,
+          at,
+          type: "status",
+          text: str(block.msg),
         });
       else if (block.type === "toolRequest") {
         const call = object(block.toolCall);

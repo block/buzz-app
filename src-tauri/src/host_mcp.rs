@@ -11,7 +11,10 @@
 //! - The token admits one MCP session. The agent's `initialize` is answered
 //!   with a random `Mcp-Session-Id`, and every later request must send it. An
 //!   agent may save its server's token to disk (goose does), so a token read
-//!   from there is useless once the agent connected.
+//!   from there is useless once the agent connected. Before then, only
+//!   `initialize`, `server/discover` and `ping` are answered. A second
+//!   `initialize` means two clients hold the token, so the server stops: the
+//!   one that claimed the session may not be the agent.
 //! - A refused request gets 404, never 401 or 403: MCP clients answer those
 //!   by starting an OAuth sign-in.
 //! - It answers in JSON, never SSE. `POST /mcp` carries one message: a request
@@ -33,7 +36,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tauri::ipc::Channel;
@@ -53,6 +56,9 @@ const BODY_TIMEOUT: Duration = Duration::from_secs(30);
 const REPLY_LIMIT: usize = 16 * 1024 * 1024;
 const ENDPOINT: &str = "/mcp";
 const SESSION: HeaderName = HeaderName::from_static("mcp-session-id");
+const UNCLAIMED: u8 = 0;
+const CLAIMING: u8 = 1;
+const CLAIMED: u8 = 2;
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -79,8 +85,9 @@ struct Shared {
     token: String,
     /// The `Mcp-Session-Id` of the one session the token admits.
     session: String,
-    /// Whether an `initialize` claimed the session.
-    claimed: AtomicBool,
+    /// `UNCLAIMED`, `CLAIMING` while an `initialize` waits for its answer, or
+    /// `CLAIMED` once one succeeded.
+    claim: AtomicU8,
     events: Channel<McpEvent>,
     stop: CancellationToken,
     pending: Mutex<Pending>,
@@ -157,7 +164,7 @@ impl HostMcpServers {
             authority: authority.clone(),
             token: token.clone(),
             session: secret()?,
-            claimed: AtomicBool::new(false),
+            claim: AtomicU8::new(UNCLAIMED),
             events,
             stop: CancellationToken::new(),
             pending: Mutex::default(),
@@ -273,8 +280,16 @@ async fn answer(
             match tokio::time::timeout(BODY_TIMEOUT, body).await {
                 Ok(Ok(body)) => match String::from_utf8(body.to_bytes().into()) {
                     Ok(body) => match join(shared, named, &body) {
-                        Ok(joined) => {
+                        Ok(join) => {
+                            let claim = (join == Join::Claiming).then_some(Claim {
+                                shared,
+                                claimed: false,
+                            });
                             let (status, reply) = forward(shared, body).await;
+                            let joined = match claim {
+                                Some(claim) => claim.settle(status, reply.as_deref()),
+                                None => join == Join::Inside,
+                            };
                             (status, reply, joined)
                         }
                         Err(status) => (status, None, false),
@@ -370,28 +385,78 @@ fn refuse(shared: &Shared, request: &Request<Incoming>) -> Result<bool, StatusCo
     }
 }
 
-/// Whether `body` is in the session: it named it, or it is the `initialize`
-/// that claims it. Until then a message may come without one, as a client's
-/// `server/discover` does; after it, the token alone admits nothing.
-fn join(shared: &Shared, named: bool, body: &str) -> Result<bool, StatusCode> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Join {
+    /// Before the session, as `server/discover` is.
+    Outside,
+    /// The `initialize` that claims the session once it succeeds.
+    Claiming,
+    /// In the session.
+    Inside,
+}
+
+/// Where `body` stands to the session, or the status that refuses it.
+fn join(shared: &Shared, named: bool, body: &str) -> Result<Join, StatusCode> {
     #[derive(serde::Deserialize)]
     struct Message {
         method: Option<String>,
     }
+    let state = shared.claim.load(Ordering::SeqCst);
     if named {
-        return Ok(true);
+        return if state == CLAIMED {
+            Ok(Join::Inside)
+        } else {
+            Err(StatusCode::NOT_FOUND)
+        };
     }
-    let initialize = serde_json::from_str::<Message>(body)
-        .is_ok_and(|message| message.method.as_deref() == Some("initialize"));
-    let claimed = if initialize {
-        shared.claimed.swap(true, Ordering::SeqCst)
-    } else {
-        shared.claimed.load(Ordering::SeqCst)
-    };
-    if claimed {
-        Err(StatusCode::NOT_FOUND)
-    } else {
-        Ok(initialize)
+    let method = serde_json::from_str::<Message>(body)
+        .ok()
+        .and_then(|message| message.method);
+    match method.as_deref() {
+        Some("initialize") => {
+            if shared
+                .claim
+                .compare_exchange(UNCLAIMED, CLAIMING, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                return Ok(Join::Claiming);
+            }
+            // Another client has the token too, and may hold the session.
+            shared.stop.cancel();
+            Err(StatusCode::NOT_FOUND)
+        }
+        Some("server/discover" | "ping") if state != CLAIMED => Ok(Join::Outside),
+        _ => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+/// Holds the session for an `initialize` until it is answered. A success
+/// claims it; a failure, or a client that hung up first, releases it.
+struct Claim<'a> {
+    shared: &'a Shared,
+    claimed: bool,
+}
+impl Claim<'_> {
+    fn settle(mut self, status: StatusCode, reply: Option<&str>) -> bool {
+        #[derive(serde::Deserialize)]
+        struct Reply {
+            result: Option<serde::de::IgnoredAny>,
+        }
+        self.claimed = status == StatusCode::OK
+            && reply
+                .and_then(|reply| serde_json::from_str::<Reply>(reply).ok())
+                .is_some_and(|reply| reply.result.is_some());
+        if self.claimed {
+            self.shared.claim.store(CLAIMED, Ordering::SeqCst);
+        }
+        self.claimed
+    }
+}
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        if !self.claimed {
+            self.shared.claim.store(UNCLAIMED, Ordering::SeqCst);
+        }
     }
 }
 

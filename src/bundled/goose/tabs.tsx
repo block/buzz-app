@@ -140,13 +140,15 @@ export function createTabs({
     disabled?: boolean;
   }>) {
     const [listing, reload] = useRead(() => setup.providers(), "providers");
+    // A new key or host can offer other models, so each save reads them again.
+    const [saves, setSaves] = useState(0);
     const providers: Providers | undefined = listing.value;
     const fallback = providers?.defaults.provider;
     const id = value.provider || fallback || "";
     const provider = providers?.providers.find((item) => item.id === id);
     const [models] = useRead(
       () => (id ? setup.models(id) : Promise.resolve([] as ModelChoice[])),
-      `${id}:${provider?.configured ?? false}`,
+      `${id}:${provider?.configured ?? false}:${saves}`,
     );
     // A result belongs to the choice it tested.
     const choice = `${value.provider}\u0000${value.model}`;
@@ -202,7 +204,10 @@ export function createTabs({
             key={provider.id}
             provider={provider}
             disabled={disabled}
-            onSaved={reload}
+            onSaved={() => {
+              reload();
+              setSaves((count) => count + 1);
+            }}
           />
         )}
         <ModelPicker
@@ -568,6 +573,7 @@ export function createTabs({
                   <Button
                     type="button"
                     variant="ghost"
+                    aria-label={`View transcript: ${label(row)}`}
                     onClick={() => show(row)}
                   >
                     View transcript
@@ -598,7 +604,6 @@ export function createTabs({
     );
   }
 
-  /** The provider, model and instructions a new agent starts with. */
   /** The instructions a new agent starts with. */
   function Create({ config, onChange, disabled }: AgentCreateProps<Config>) {
     const current = readConfig(config);

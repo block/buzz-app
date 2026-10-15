@@ -21,6 +21,8 @@ const WRITTEN_LIMIT = 20_000;
 /** The Buzz tools that answer where people see it. A read, or a send that
  * failed, still leaves goose's text to post. */
 const ANSWERS = new Set(["send", "edit", "react"]);
+const STOPPED =
+  "Buzz stopped this session's tools: another program used their token";
 
 /** How long goose has to answer a request that starts it or opens or closes
  * a session. One that does not is stopped. A turn's prompt is never timed. */
@@ -203,6 +205,17 @@ export class GooseProcess {
       url: server.url,
       headers: server.headers,
     };
+    // The host stops a server whose token a second client used, so the
+    // session's tools may be someone else's. A session closed here has
+    // already left `sessions`.
+    let stopped = false;
+    void server?.closed.then(() => {
+      stopped = true;
+      if (session && this.sessions.get(session.id) === session) {
+        session.fail(STOPPED);
+        void this.close(session);
+      }
+    });
     let sessionId: string;
     try {
       ({ sessionId } = (await this.request(
@@ -229,6 +242,10 @@ export class GooseProcess {
     }
     session = new GooseSession(this, sessionId, server);
     this.sessions.set(sessionId, session);
+    if (stopped) {
+      void this.close(session);
+      throw new Error(STOPPED);
+    }
     try {
       // Appended under goose's own prompt, which carries each extension's
       // instructions; `set` would replace it, and render ours as a template.

@@ -12,6 +12,35 @@ test.use({
   meChannels: [id, other],
   historyCounts: { [id]: 2, [other]: 1, gamma: 1 },
 });
+// Browser-only: Sessions shares Channels' review, with real portalled dismissal.
+test("Me opens video review and Escape returns to its opener", async ({
+  page,
+  app,
+}) => {
+  await page.route("**/api/relay/primary/media?**", (route) =>
+    route.fulfill({
+      path: "tests/fixtures/message-gallery/assets/sample.mp4",
+      contentType: "video/mp4",
+    }),
+  );
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  app.append("primary", id, "Me video", true, false, undefined, undefined, [
+    ["imeta", "url https://primary.example/media/me-review.mp4", "m video/mp4"],
+  ]);
+  const work = page.getByRole("region", { name: "Chat Alpha" });
+  await work.locator("[data-video-preview]").hover();
+  const opener = work.getByRole("button", { name: "Open video fullscreen" });
+  await opener.click();
+  const review = page.getByRole("dialog", { name: "Video review" });
+  await expect(review).toBeVisible();
+  await review.getByRole("button", { name: "Close fullscreen viewer" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(review).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
 // Activity opens the agent's profile, where its type's Activity tab lives.
 const agentProfile = (page) =>
   page.getByRole("region", { name: "Profile details", exact: true });

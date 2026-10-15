@@ -541,9 +541,9 @@ grants capabilities, asserts provenance, or describes runtime state. The
 `discovery` object accepts unknown display hints for forward compatibility;
 security-bearing manifest fields remain strict.
 
-Older hosts that validate tags as slugs will reject readable phrases. Publishers
-targeting those hosts must continue using slug tags; existing slug tags remain
-valid in the new host.
+Hosts released before these metadata fields were introduced reject `description`
+and `discovery` as unknown manifest keys. Publishers targeting those hosts must
+omit both fields; using slug tags does not make them compatible.
 
 Plugins can separately declare host access in `manifest.json`:
 

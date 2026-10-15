@@ -271,7 +271,9 @@ it.each(["bare", "angle", "markdown", "escaped"] as const)(
     const enabled = render(true);
     expect(enabled).toContain(`href="${url}"`);
     expect(enabled).toContain('data-link-kind="github"');
-    expect(enabled.replace(/<[^>]+>/g, "")).toContain(`Before ${label}. After`);
+    const container = document.createElement("div");
+    container.innerHTML = enabled;
+    expect(container.textContent).toContain(`Before ${label}. After`);
     expect(enabled).not.toContain("&lt;");
     expect(enabled).not.toContain("&gt;");
     expect(render(false)).not.toContain("data-link-kind");

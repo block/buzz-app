@@ -746,7 +746,7 @@ describe("Markdown inline extensions", () => {
         media: () => "https://media.test/emoji.png",
       });
       expect(html).not.toContain("<img");
-      expect(html).toContain(`>${url.replace("&", "&amp;")}</a>`);
+      expect(html).toContain(`>${url.replaceAll("&", "&amp;")}</a>`);
     },
   );
 
@@ -836,9 +836,10 @@ it("keeps resolved private channel labels and lock icons for Buzz links", () => 
   });
   expect(html).toContain('data-link-kind="message"');
   expect(html).toContain('data-link-kind="channel"');
-  const text = html.replace(/<[^>]*>/g, "");
-  expect(text).toContain("design");
-  expect(text).not.toContain("buzz://");
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(container.textContent).toContain("design");
+  expect(container.textContent).not.toContain("buzz://");
   const lock = renderToStaticMarkup(
     <LockIcon className={referenceStyles.icon} />,
   );

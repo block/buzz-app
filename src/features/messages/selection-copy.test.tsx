@@ -21,7 +21,7 @@ import {
 const person = "a".repeat(64);
 const target = `nostr:${npubEncode(person)}`;
 const message = `buzz://message?channel=general&id=${"b".repeat(64)}`;
-const messageHtml = message.replace("&", "&amp;");
+const messageHtml = message.replaceAll("&", "&amp;");
 const formats: CopyFormat[] = ["text", "markdown", "html"];
 
 // Markup shapes produced by MessageMarkdown's renderProfile and MessageLink.

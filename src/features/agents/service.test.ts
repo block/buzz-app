@@ -5921,7 +5921,12 @@ it("stops trying presence on a session that cannot send it", async () => {
   await service.create({ type: "example/echo", name: "Echo" });
   await vi.advanceTimersByTimeAsync(180_000);
   expect(presence).toHaveBeenCalledTimes(1);
-  expect(warn).toHaveBeenCalledTimes(1);
+  // Count only presence warnings: an earlier test's service still runs.
+  const warned = () =>
+    warn.mock.calls.filter(([text]) =>
+      String(text).startsWith("Agent presence cannot be sent"),
+    ).length;
+  expect(warned()).toBe(1);
   presence.mockResolvedValue(true);
   connect(true);
   await vi.advanceTimersByTimeAsync(0);

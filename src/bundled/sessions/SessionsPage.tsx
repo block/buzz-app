@@ -12,6 +12,7 @@ import { SidebarRightIcon } from "../../shared/design-system/icons";
 import { channelIcon } from "../../features/channels/channel-icon";
 import channelStyles from "../channels/Channels.module.css";
 import { SessionShare } from "./SessionShare";
+import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
@@ -458,6 +459,7 @@ function SessionWork({
           onDrop={rejectUnhandledFileDrop}
         >
           <SessionHeading channel={channel} parentName={parentName}>
+            <ChannelMembersButton session={session} channelId={channel.id} />
             {drawer.launchers}
             <SessionShare
               session={session}

@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -291,4 +292,30 @@ it("only offers Sessions as a destination from a custom section", async () => {
   await user.click(screen.getByRole("menuitem", { name: "Sessions" }));
   await waitFor(() => expect(h.saved().assignments.session).toBeUndefined());
   store.dispose();
+});
+
+it("tabs through a section's overflow before its trailing new-session action", async () => {
+  const h = fixture();
+  const store = h.store();
+  const user = userEvent.setup();
+  render(h.view(store.queries));
+  try {
+    const heading = await screen.findByRole("button", { name: "Work" });
+    heading.focus();
+    await user.tab();
+    expect(
+      screen.getByRole("button", { name: "Actions for Work" }),
+    ).toHaveFocus();
+    const header = heading.parentElement;
+    if (!header) throw new Error("Missing section header");
+    const newSession = within(header).getByRole("button", {
+      name: "New session in Work",
+    });
+    await user.tab();
+    expect(newSession).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+  } finally {
+    store.dispose();
+  }
 });

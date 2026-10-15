@@ -214,7 +214,7 @@ test("Me hides the empty pane launcher until content opens it", async ({
   await expect(split).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Channel members", exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   await expect(page.locator("[data-panel-workspace]")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Choose a tab" })).toHaveCount(
     0,

@@ -1,0 +1,211 @@
+import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import { describe, expect, it } from "vitest";
+import type { RelayEvent } from "../relay/events";
+import {
+  AgentConfigStore,
+  CONFIG_STORAGE_KEY,
+  settingsProblem,
+  syncedSettings,
+  type Subject,
+} from "./agent-config";
+import { memoryStorage } from "./test-fakes";
+
+const key = generateSecretKey();
+const subject: Subject = {
+  owner: "a".repeat(64),
+  community: "c",
+  subject: "b".repeat(64),
+  channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+  type: "buzz.agent.instructions",
+};
+const revision = (text: string | null, prev?: string, op?: string) =>
+  finalizeEvent(
+    {
+      kind: 45010,
+      created_at: 1,
+      content: text === null ? "" : JSON.stringify({ version: 1, text }),
+      tags: [
+        ["op", op ?? (prev ? "update" : "create")],
+        ...(prev ? [["prev", prev]] : []),
+      ],
+    },
+    key,
+  ) as RelayEvent;
+
+function seeded(text = "A") {
+  const store = new AgentConfigStore(memoryStorage());
+  const head = revision(text);
+  store.applyRead(subject, store.capture(subject), {
+    kind: "head",
+    event: head,
+  });
+  return { store, head };
+}
+
+describe("artifact state", () => {
+  it("is unavailable, never absent, before any evidence or after an empty read", () => {
+    const store = new AgentConfigStore(memoryStorage());
+    expect(store.instructions(subject)).toEqual({
+      ok: false,
+      state: "unavailable",
+    });
+    store.applyRead(subject, store.capture(subject), { kind: "empty" });
+    expect(store.state(subject).state).toBe("unavailable");
+    expect(store.hadVersion(subject)).toBe(false);
+  });
+
+  it("installs a read head, sets had-version, and resolves its text", () => {
+    const { store } = seeded("Be brief");
+    expect(store.instructions(subject)).toEqual({ ok: true, text: "Be brief" });
+    expect(store.hadVersion(subject)).toBe(true);
+  });
+
+  it("leaves state alone on a failed read", () => {
+    const { store, head } = seeded();
+    expect(
+      store.applyRead(subject, store.capture(subject), { kind: "failed" }),
+    ).toBe("unchanged");
+    expect(store.state(subject).head?.id).toBe(head.id);
+  });
+
+  it("marks an invalid head and a deletion as blocking", () => {
+    const { store, head } = seeded();
+    const bad = revision("x", head.id);
+    expect(store.applyLive(subject, bad, "Unknown artifact version")).toBe(
+      "reread",
+    );
+    expect(store.instructions(subject)).toMatchObject({
+      ok: false,
+      state: "invalid",
+    });
+    const gone = revision(null, bad.id, "delete");
+    store.applyLive(subject, gone);
+    expect(store.state(subject).state).toBe("deleted");
+  });
+});
+
+describe("successor check", () => {
+  it("drops a held positive read A released after live B, and asks for a read", () => {
+    const { store, head } = seeded("A0");
+    const captured = store.capture(subject);
+    const b = revision("B", head.id);
+    expect(store.applyLive(subject, b)).toBe("applied");
+    const a = revision("A");
+    expect(store.applyRead(subject, captured, { kind: "head", event: a })).toBe(
+      "reread",
+    );
+    expect(store.instructions(subject)).toEqual({ ok: true, text: "B" });
+  });
+
+  it("drops a held positive read released after a redaction of the head", () => {
+    const { store, head } = seeded();
+    const captured = store.capture(subject);
+    expect(store.applyRedaction(subject, head.id)).toBe("reread");
+    expect(
+      store.applyRead(subject, captured, { kind: "head", event: head }),
+    ).toBe("reread");
+    expect(store.state(subject).state).toBe("unavailable");
+  });
+
+  it("drops a held empty read released after a newer live head", () => {
+    const { store, head } = seeded();
+    const captured = store.capture(subject);
+    store.applyLive(subject, revision("B", head.id));
+    expect(store.applyRead(subject, captured, { kind: "empty" })).toBe(
+      "reread",
+    );
+    expect(store.instructions(subject)).toEqual({ ok: true, text: "B" });
+  });
+
+  it("does not apply a buffered deletion after an authoritative restore", () => {
+    const { store, head } = seeded("A");
+    const deletion = revision(null, head.id, "delete");
+    const restore = revision("A again", deletion.id, "restore");
+    store.applyRead(subject, store.capture(subject), {
+      kind: "head",
+      event: restore,
+    });
+    expect(store.applyLive(subject, deletion)).toBe("reread");
+    expect(store.instructions(subject)).toEqual({ ok: true, text: "A again" });
+  });
+
+  it("asks for a read when a live revision does not follow the cached head", () => {
+    const { store } = seeded();
+    expect(store.applyLive(subject, revision("Z", "f".repeat(64)))).toBe(
+      "reread",
+    );
+  });
+
+  it("refuses every capture taken before a rebind", () => {
+    const { store, head } = seeded();
+    const captured = store.capture(subject);
+    store.rebind(subject);
+    expect(
+      store.applyRead(subject, captured, { kind: "head", event: head }),
+    ).toBe("reread");
+    expect(store.state(subject).state).toBe("unavailable");
+  });
+});
+
+describe("persistence", () => {
+  it("survives a restart and re-verifies stored heads", () => {
+    const storage = memoryStorage();
+    const store = new AgentConfigStore(storage);
+    store.applyRead(subject, store.capture(subject), {
+      kind: "head",
+      event: revision("A"),
+    });
+    expect(new AgentConfigStore(storage).instructions(subject)).toEqual({
+      ok: true,
+      text: "A",
+    });
+
+    const stored = JSON.parse(storage.getItem(CONFIG_STORAGE_KEY) ?? "null");
+    const [k] = Object.keys(stored.entries) as [string];
+    stored.entries[k].head.content = JSON.stringify({
+      version: 1,
+      text: "forged",
+    });
+    storage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(stored));
+    const reloaded = new AgentConfigStore(storage);
+    expect(reloaded.state(subject).state).toBe("unavailable");
+    expect(reloaded.hadVersion(subject)).toBe(true);
+  });
+});
+
+describe("synced settings", () => {
+  const schema = {
+    model: "string",
+    workspace: "workspace",
+    scope: ["thread", "channel"],
+  } as const;
+
+  it("accepts allowlisted values", () => {
+    expect(
+      settingsProblem(schema, {
+        model: "m",
+        workspace: "~/x",
+        scope: "channel",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects unknown keys, wrong types, unsupported values and relative folders", () => {
+    expect(settingsProblem(schema, { token: "s" })).toMatch(/Unknown/);
+    expect(settingsProblem(schema, { model: 1 })).toMatch(/not text/);
+    expect(settingsProblem(schema, { scope: "dm" })).toMatch(/unsupported/);
+    expect(settingsProblem(schema, { workspace: "work/x" })).toMatch(/folder/);
+  });
+
+  it("treats settings for another agent type as invalid", () => {
+    const content = JSON.stringify({
+      version: 1,
+      agentType: "codex",
+      settings: {},
+    });
+    expect(syncedSettings(content, "goose", schema)).toMatchObject({
+      problem: expect.any(String),
+    });
+    expect(syncedSettings(content, "codex", schema)).toEqual({ settings: {} });
+  });
+});

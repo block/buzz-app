@@ -222,6 +222,22 @@ pub(crate) async fn relay_git_authorization(
     ))
 }
 
+/// NIP-AR artifacts carry up to 131,072 content bytes (NIP-AP config). JSON
+/// escaping at most doubles that, plus the envelope and at most 256 tags.
+/// Mirrors `ARTIFACT_MAX_EVENT_BYTES` in `agent-config-artifacts.ts`.
+const ARTIFACT_MAX_EVENT_BYTES: usize = 2 * 131_072 + 16 * 1024;
+
+/// Kinds whose events may exceed the default 64 KiB signing bound.
+fn signing_limit(kind: u16) -> Option<usize> {
+    if catalog::is_catalog(kind) {
+        Some(catalog::MAX_EVENT_BYTES)
+    } else if kind == 45010 {
+        Some(ARTIFACT_MAX_EVENT_BYTES)
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn relay_sign(
     host: tauri::State<'_, IdentityHost>,
@@ -244,10 +260,9 @@ pub(crate) async fn relay_sign(
     } else {
         None
     };
-    let signed = if catalog::is_catalog(event.kind) {
-        host.sign_bounded(event, catalog::MAX_EVENT_BYTES).await?
-    } else {
-        host.sign(event).await?
+    let signed = match signing_limit(event.kind) {
+        Some(limit) => host.sign_bounded(event, limit).await?,
+        None => host.sign(event).await?,
     };
     if coordinate_delete
         .is_some_and(|coordinate| coordinate.split(':').nth(1) != signed["pubkey"].as_str())

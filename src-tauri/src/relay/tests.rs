@@ -3611,3 +3611,32 @@ async fn snapshot_media_read_preserves_auth_and_enforces_the_tighter_file_cap() 
         assert_strict(&blossom_event(&headers), "get", server);
     }
 }
+
+#[test]
+fn artifact_signing_limit_fits_a_worst_case_config_artifact() {
+    // Every content byte escapes to two, plus a full NIP-AP envelope.
+    let content = "\"".repeat(131_072);
+    let tags = serde_json::json!([
+        ["ar", "1"],
+        ["d", "6ba7b811-9dad-11d1-80b4-00c04fd430c8"],
+        ["h", "6ba7b811-9dad-11d1-80b4-00c04fd430c8"],
+        ["type", "buzz.agent.instructions"],
+        ["title", "x".repeat(512)],
+        ["op", "update"],
+        ["prev", "f".repeat(64)],
+        ["team", "t".repeat(64)]
+    ]);
+    let serialized = serde_json::to_vec(&serde_json::json!([
+        0,
+        "f".repeat(64),
+        9_007_199_254_740_991u64,
+        45010,
+        tags,
+        content
+    ]))
+    .unwrap();
+    let limit = signing_limit(45010).unwrap();
+    assert!(serialized.len() <= limit, "{} > {limit}", serialized.len());
+    assert!(limit > 64 * 1024);
+    assert_eq!(signing_limit(9), None);
+}

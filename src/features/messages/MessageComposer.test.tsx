@@ -2262,6 +2262,61 @@ it("opens the model picker while discovery is pending, then fills its controls",
   ).not.toBeInTheDocument();
 });
 
+it("sends the model and effort shown by an untouched agent picker", async () => {
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+  };
+  const models = {
+    current: "gpt-6.1-sol",
+    models: [
+      {
+        id: "gpt-6.1-sol",
+        label: "GPT-6.1-Sol",
+        effort: "high",
+        efforts: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+        ],
+      },
+      { id: "other", label: "Other", efforts: [] },
+    ],
+  };
+  const types = [{ key: "test/agent", models: () => models }];
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
+  await h.user.type(h.input(), "use what you show");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    }),
+  );
+  expect(
+    await screen.findByRole("button", {
+      name: "Model for Honey's next run",
+    }),
+  ).toHaveTextContent("GPT-6.1-Sol");
+  expect(
+    await screen.findByLabelText("Effort for Honey's next run"),
+  ).toHaveAttribute("aria-valuetext", "High");
+  await h.user.keyboard("{Escape}");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    expect.stringContaining("use what you show"),
+    [first.pubkey],
+    [],
+    undefined,
+    [],
+    { [first.pubkey]: { model: "gpt-6.1-sol", effort: "high" } },
+  );
+});
+
 it("asks a mentioned agent of the viewer's for a model and effort on the next run only", async () => {
   // Snapshots are stable, as the service's are.
   const snapshot = {
@@ -2342,7 +2397,7 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
     [],
     undefined,
     [],
-    { [first.pubkey]: { effort: "high" } },
+    { [first.pubkey]: { model: "fast", effort: "high" } },
   );
   await write("First Honey", "think deeper");
   const again = await open();
@@ -2373,7 +2428,7 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
   await h.user.click(
     await screen.findByRole("menuitemradio", { name: "Deep" }),
   );
-  // Back to the agent's own model is no pick at all.
+  // Back to the agent's own model remains explicit on the wire.
   await h.user.click(model());
   await h.user.click(
     await screen.findByRole("menuitemradio", { name: "Fast" }),
@@ -2385,6 +2440,9 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
     expect.stringContaining("as usual"),
     [first.pubkey],
     [],
+    undefined,
+    [],
+    { [first.pubkey]: { model: "fast" } },
   );
 });
 
@@ -2436,7 +2494,7 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
   slider.focus();
   await h.user.keyboard("{ArrowRight}");
   expect(slider).toHaveAttribute("aria-valuetext", "High");
-  // Back to the agent's own effort is no pick at all.
+  // Back to the shown default remains explicit on the wire.
   await h.user.keyboard("{ArrowLeft}");
   expect(slider).toHaveAttribute("aria-valuetext", "Medium");
   await send();
@@ -2445,6 +2503,9 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
     expect.stringContaining("think hard"),
     [first.pubkey],
     [],
+    undefined,
+    [],
+    { [first.pubkey]: { model: "fast", effort: "medium" } },
   );
 });
 

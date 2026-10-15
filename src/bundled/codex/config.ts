@@ -28,11 +28,7 @@ export function config(raw: unknown): Config {
   const value =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   return {
-    // Normalize the recommendation marker used by an earlier local build.
-    model:
-      typeof value.model === "string" && value.model !== "buzz:recommended"
-        ? value.model
-        : "",
+    model: typeof value.model === "string" ? value.model : "",
     effort: typeof value.effort === "string" ? value.effort : "",
     instructions:
       typeof value.instructions === "string" ? value.instructions : "",

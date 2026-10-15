@@ -580,18 +580,6 @@ it("offers recommendation and explicit models without inheriting local Codex pre
     ),
   );
 });
-it("normalizes the earlier recommendation marker while preserving explicit Buzz preferences", () => {
-  localStorage.setItem(
-    "buzz.codex.provider-defaults.v1",
-    JSON.stringify({ version: 1, model: "buzz:recommended", effort: "high" }),
-  );
-  const f = fixture();
-  expect(f.provider.snapshot().defaults).toEqual({ model: "", effort: "high" });
-  expect(f.provider.resolve(defaults)).toMatchObject({
-    model: "",
-    effort: "high",
-  });
-});
 it("falls back for an unavailable provider default and restores it when the catalog recovers", async () => {
   localStorage.setItem(
     "buzz.codex.provider-defaults.v1",

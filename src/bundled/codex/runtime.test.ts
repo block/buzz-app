@@ -893,7 +893,6 @@ it("previews each model at the configured effort when it has it", async () => {
 });
 it.each([
   ["", "", "test-model", "medium"],
-  ["buzz:recommended", "", "test-model", "medium"],
   ["test-model", "high", "test-model", "high"],
   ["deep-model", "", "deep-model", "high"],
   ["deep-model", "xhigh", "deep-model", "xhigh"],

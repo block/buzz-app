@@ -90,6 +90,8 @@ it("revocation is synchronous, irreversible through ABA, and preserves the origi
   await vi.advanceTimersByTimeAsync(1);
   expect(await t.promise).toEqual({ status: "failed", reason: "timeout" });
   expect(next.signal.aborted).toBe(true);
+  // Revocation forwards the visit's shared reason rather than minting its own.
+  expect(next.signal.reason).toBe(t.attempt.signal.reason);
   expect(next.complete({ status: "opened" })).toBe(false);
 });
 it("session replacement revokes only bound authority, not static pages or the visit", async () => {

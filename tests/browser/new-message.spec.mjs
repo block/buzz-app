@@ -1,7 +1,7 @@
 import { openPage } from "./navigation.mjs";
 import { upper, settle } from "./timeline.mjs";
 import { test as base, expect } from "./playwright-test.mjs";
-import { preview } from "vite";
+import { preview } from "./vite-server.mjs";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { relayBrokerPlugin } from "../../browser-host/relay-broker.mjs";
 import { brokerSocket } from "../broker-socket.mjs";

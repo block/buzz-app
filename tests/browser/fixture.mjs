@@ -1,6 +1,6 @@
 import { fixtureRelayUrl, fixtureAliases } from "../relay-config.ts";
 import { test as base, expect, stopRoutes } from "./playwright-test.mjs";
-import { preview } from "vite";
+import { preview } from "./vite-server.mjs";
 import {
   finalizeEvent,
   generateSecretKey,

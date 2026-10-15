@@ -3,7 +3,7 @@
   "name": "Codex",
   "apiVersion": 1,
   "description": "Run local Codex coding agents in Buzz.",
-  "discovery": { "category": "agents" },
+  "discovery": { "category": "agents", "tags": ["Essentials"] },
   "host": {
     "networkOrigins": ["https://releases.openai.com"],
     "processes": [

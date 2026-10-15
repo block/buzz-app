@@ -183,7 +183,7 @@ async fn run(
     request: &StaffRequest,
 ) -> Result<Value, Failure> {
     let ctx = context(host, fixture).await;
-    execute(net, host, &ctx, Some(origin(fixture)), request).await
+    execute(net, host, &ctx, Ok(Some(origin(fixture))), request).await
 }
 
 #[tokio::test]
@@ -434,16 +434,16 @@ async fn a_changed_context_is_refused_before_sending() {
         &net,
         &host,
         &ctx,
-        Some("https://other.example".into()),
+        Ok(Some("https://other.example".into())),
         &write,
     )
     .await;
-    let gone = execute(&net, &host, &ctx, None, &write).await;
+    let gone = execute(&net, &host, &ctx, Ok(None), &write).await;
     let other = Context {
         signer: "ef".repeat(32),
         ..context(&host, &fixture).await
     };
-    let switched = execute(&net, &host, &other, Some(origin(&fixture)), &write).await;
+    let switched = execute(&net, &host, &other, Ok(Some(origin(&fixture))), &write).await;
     let local = Context {
         origin: "https://localhost".into(),
         ..context(&host, &fixture).await
@@ -452,13 +452,48 @@ async fn a_changed_context_is_refused_before_sending() {
         &net,
         &host,
         &local,
-        Some("https://localhost".into()),
+        Ok(Some("https://localhost".into())),
         &write,
     )
     .await;
     for result in [moved, gone, switched, refused] {
         assert!(result.unwrap_err().not_sent);
     }
+    assert!(fixture.seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn relay_info_omitting_the_host_reports_that_it_moved() {
+    let fixture = fixture(vec![]).await;
+    let net = net(&fixture, vec![lo()]);
+    let host = IdentityHost::fixture();
+    let ctx = context(&host, &fixture).await;
+    let failure = execute(&net, &host, &ctx, Ok(None), &ban(ID))
+        .await
+        .unwrap_err();
+    assert!(failure.not_sent);
+    assert_eq!(
+        failure.message,
+        "The relay no longer advertises this admin host"
+    );
+    assert!(fixture.seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn relay_info_that_fails_to_load_is_a_connection_failure() {
+    let fixture = fixture(vec![]).await;
+    let net = net(&fixture, vec![lo()]);
+    let host = IdentityHost::fixture();
+    let ctx = context(&host, &fixture).await;
+    let failure = execute(&net, &host, &ctx, Err("timed out".into()), &ban(ID))
+        .await
+        .unwrap_err();
+    assert_eq!(failure.category, Category::NotSent);
+    assert!(failure.not_sent);
+    assert_eq!(
+        failure.message,
+        "Could not reach the relay to confirm its admin host"
+    );
     assert!(fixture.seen.lock().unwrap().is_empty());
 }
 
@@ -479,7 +514,7 @@ async fn attachment_fetch_checks_type_size_and_hash() {
     let net = net(&fixture, vec![lo(); 3]);
     let host = IdentityHost::fixture();
     let ctx = context(&host, &fixture).await;
-    let found = Some(origin(&fixture));
+    let found = Ok(Some(origin(&fixture)));
     let attachment = |sha256: &str, mime: &str| AttachmentRef {
         feedback_id: ID.into(),
         sha256: sha256.into(),
@@ -1001,7 +1036,7 @@ async fn attachment_size_limit_is_enforced_before_and_while_reading() {
             &net,
             &host,
             &ctx,
-            Some(origin(&fixture)),
+            Ok(Some(origin(&fixture))),
             &at(size),
             Use::Preview,
         )
@@ -1012,7 +1047,7 @@ async fn attachment_size_limit_is_enforced_before_and_while_reading() {
         &net,
         &host,
         &ctx,
-        Some(origin(&fixture)),
+        Ok(Some(origin(&fixture))),
         &at(4),
         Use::Preview,
     )
@@ -1041,7 +1076,7 @@ async fn previews_are_only_raster_images() {
             &net,
             &host,
             &ctx,
-            Some(origin(&fixture)),
+            Ok(Some(origin(&fixture))),
             &attachment,
             Use::Preview,
         )
@@ -1780,7 +1815,7 @@ async fn every_received_401_or_403_reports_lost_access() {
             &net,
             &host,
             &ctx,
-            Some(origin(&fixture)),
+            Ok(Some(origin(&fixture))),
             &attachment,
             Use::Preview,
         )

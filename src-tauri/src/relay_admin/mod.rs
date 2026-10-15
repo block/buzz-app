@@ -95,7 +95,10 @@ pub(crate) async fn relay_admin_discover(relay: String) -> Result<Option<String>
     discover(&relay).await
 }
 
-async fn discover(relay: &str) -> Result<Option<String>, String> {
+/// The relay's advertised admin origin, or why its relay info couldn't be read.
+type Discovered = Result<Option<String>, String>;
+
+async fn discover(relay: &str) -> Discovered {
     let info = crate::relay::relay_info(relay).await?;
     Ok(advertised(&info))
 }
@@ -113,7 +116,7 @@ pub(crate) async fn relay_admin_request(
     context: Context,
     request: StaffRequest,
 ) -> Result<Value, String> {
-    let discovered = discover(&context.relay).await.ok().flatten();
+    let discovered = discover(&context.relay).await;
     Ok(outcome(
         execute(&Net::system(), host.inner(), &context, discovered, &request).await,
     ))
@@ -123,7 +126,7 @@ async fn execute(
     net: &Net,
     host: &IdentityHost,
     context: &Context,
-    discovered: Option<String>,
+    discovered: Discovered,
     request: &StaffRequest,
 ) -> Result<Value, Failure> {
     let origin = expected_origin(host, context, discovered).await?;
@@ -137,10 +140,14 @@ async fn execute(
 async fn expected_origin(
     host: &IdentityHost,
     context: &Context,
-    discovered: Option<String>,
+    discovered: Discovered,
 ) -> Result<Url, Failure> {
     crate::relay::origin(&context.relay).map_err(Failure::not_sent)?;
     let origin = net::admin_origin(&context.origin).map_err(Failure::not_sent)?;
+    // Only a relay-info document that loads and omits the host means it moved;
+    // failing to load it is a connection failure the caller can retry.
+    let discovered = discovered
+        .map_err(|_| Failure::not_sent("Could not reach the relay to confirm its admin host"))?;
     if discovered.as_deref() != Some(origin.origin().ascii_serialization().as_str()) {
         return Err(Failure::not_sent(
             "The relay no longer advertises this admin host",

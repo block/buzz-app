@@ -56,7 +56,7 @@ pub(super) async fn fetch(
     net: &Net,
     host: &IdentityHost,
     context: &Context,
-    discovered: Option<String>,
+    discovered: super::Discovered,
     attachment: &AttachmentRef,
     purpose: Use,
 ) -> Result<Vec<u8>, Failure> {
@@ -142,7 +142,7 @@ pub(crate) async fn relay_admin_attachment(
     context: Context,
     attachment: AttachmentRef,
 ) -> Result<tauri::ipc::Response, Value> {
-    let discovered = super::discover(&context.relay).await.ok().flatten();
+    let discovered = super::discover(&context.relay).await;
     fetch(
         &Net::system(),
         host.inner(),
@@ -165,7 +165,7 @@ pub(crate) async fn relay_admin_save_attachment<R: tauri::Runtime>(
     context: Context,
     attachment: AttachmentRef,
 ) -> Result<Value, String> {
-    let discovered = super::discover(&context.relay).await.ok().flatten();
+    let discovered = super::discover(&context.relay).await;
     let bytes = match fetch(
         &Net::system(),
         host.inner(),

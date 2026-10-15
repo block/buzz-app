@@ -249,6 +249,7 @@ export function Select({
   if (requestedVariant === "preference")
     return (
       <>
+        {/* The row names the setting; the trigger carries unavailability. */}
         <PreferenceRow
           title={label}
           subtitle={description}

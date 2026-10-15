@@ -4381,6 +4381,82 @@ it("gives a missed event to more of one Interest's watches than its lane holds, 
   }
 }, 10_000);
 
+it("keeps an Interest's room for a catch-up being classified, so live events cannot drop it", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const jev = fakeJev();
+    let answer!: (value: Answer) => void;
+    jev.classify.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ran: string[] = [];
+    const { service, history, recover, emit } = await setup({
+      jev,
+      identities: [echo],
+      runOnce: async ({ delivery }) => {
+        const { trigger } = delivery;
+        ran.push(
+          trigger.type === "watch" ? (trigger.event.id[0] ?? "") : trigger.type,
+        );
+        if (ran.length === 1) await blocked;
+        return { ok: true };
+      },
+    });
+    const now = nowSeconds();
+    vi.setSystemTime(now * 1000);
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": null,
+        "watch/chat": {
+          ...chat["watch/chat"],
+          classifier: {
+            questions: {
+              deploy: { question: "Is it about a deploy?", threshold: 0.5 },
+            },
+          },
+        },
+        // Live only, in the same Interest.
+        "watch/likes": {
+          type: "event",
+          interest_id: "default",
+          enabled: true,
+          since: 1,
+          channels: [channel],
+          kinds: [7],
+        },
+      },
+    });
+    await settle();
+    vi.setSystemTime((now + 60) * 1000);
+    history.push(posted("missed", now + 30));
+    recover();
+    // The catch-up turn is being classified, and its checkpoint is past it.
+    await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+    await settle();
+    // One runs; of the eight that then wait, the catch-up keeps one.
+    const likes = Array.from({ length: 9 }, (_, i) =>
+      event(`${i}`, { kind: 7, created_at: now + 61 + i }),
+    );
+    emit({ events: likes.slice(0, 1) });
+    await vi.waitFor(() => expect(ran).toEqual(["0"]));
+    emit({ events: likes.slice(1) });
+    await settle();
+    answer(yes);
+    await settle();
+    release();
+    await vi.waitFor(() => expect(ran).toContain("catch-up"));
+    await settle();
+    expect(ran).toEqual(["0", "1", "2", "3", "4", "5", "6", "7", "catch-up"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("does not give a missed event again after a restart to watches that had it before the rest", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {

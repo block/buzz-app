@@ -254,10 +254,12 @@ type Runner = {
   /** Whether a claim has been answered, so `mayHold` is known rather than
    * assumed. */
   asked?: boolean;
-  /** Classified watch events not yet queued or dropped. Each counts against
-   * the queue and rate room a catch-up page needs. */
+  /** Classified watch events not yet queued or dropped, against
+   * CLASSIFY_LIMIT. */
   classifying: number;
-  /** Classified jobs not yet queued or dropped, by the Interest they go to. */
+  /** Classified jobs not yet queued or dropped, by the Interest they go to.
+   * Each holds the queue, rate and Interest room it will take when it
+   * passes, so work admitted later cannot drop it. */
   readonly classifyingIn: Map<string, number>;
   /** Lanes running a job now: "mention", or an attention job's Interest. */
   readonly busy: Set<string>;
@@ -629,9 +631,9 @@ export class AgentRunners {
       runner.seenIn.delete(runner.seenIn.keys().next().value as string);
   }
   /** Whether the agent can take `mentions` more mentions and an attention
-   * job for each of `interests`, `classified` of them first through the
-   * classifier, without dropping any. Events still being classified will
-   * take queue and rate room too. */
+   * job for each of `interests`, `classified` events of them first through
+   * the classifier, without dropping any. Every attention job is admitted
+   * here, and one being classified keeps the room it was admitted to. */
   private fits(
     runner: Runner,
     mentions: number,
@@ -657,12 +659,14 @@ export class AgentRunners {
         : rate.admitted;
     };
     const { mention, watch } = runner.queues;
+    let reserved = 0;
+    for (const count of runner.classifyingIn.values()) reserved += count;
     return (
       mention.length + mentions <= QUEUE_LIMIT &&
       admitted("mention") + mentions <= RATE_LIMIT &&
-      watch.length + runner.classifying + watches <= QUEUE_LIMIT &&
+      watch.length + reserved + watches <= QUEUE_LIMIT &&
       runner.classifying + classified <= CLASSIFY_LIMIT &&
-      admitted("watch") + runner.classifying + watches <= RATE_LIMIT
+      admitted("watch") + reserved + watches <= RATE_LIMIT
     );
   }
   /** Attention jobs waiting for the Interest's lane. */
@@ -1273,19 +1277,27 @@ export class AgentRunners {
       trigger.type === "watch"
         ? [trigger.event]
         : trigger.events.map(({ event }) => event);
-    // Never bypassed: past the limit the event is dropped, like a full queue.
-    if (runner.classifying + events.length > CLASSIFY_LIMIT) {
+    const interest = trigger.watch.interest_id;
+    // Never bypassed: without room the event is dropped, like a full queue.
+    if (!this.fits(runner, 0, [interest], events.length)) {
       console.warn(`Agent ${agent.name} dropped an event to classify`);
       return;
     }
     runner.classifying += events.length;
-    const interest = trigger.watch.interest_id;
     const count = (by: number) => {
       const next = (runner.classifyingIn.get(interest) ?? 0) + by;
       if (next) runner.classifyingIn.set(interest, next);
       else runner.classifyingIn.delete(interest);
     };
     count(1);
+    // Hands the room it holds to its queued job, or gives it back.
+    let reserved = true;
+    const unreserve = () => {
+      if (!reserved) return;
+      reserved = false;
+      runner.classifying -= events.length;
+      count(-1);
+    };
     const lifetime = runner.controller.signal;
     // Whether this runner, as it is now, should still act on the event.
     const live = () =>
@@ -1315,6 +1327,7 @@ export class AgentRunners {
         // A retired or replaced runner keeps none of its work.
         if (lifetime.aborted || this.runners.get(runner.pubkey) !== runner)
           return;
+        unreserve();
         if (trigger.type === "watch") {
           const [result] = results;
           if (result)
@@ -1334,8 +1347,7 @@ export class AgentRunners {
             trigger: { ...trigger, events: passed },
           });
       } finally {
-        runner.classifying -= events.length;
-        count(-1);
+        unreserve();
       }
     })();
   }
@@ -1574,10 +1586,12 @@ export class AgentRunners {
     }
     const interest = interestOf(job.trigger);
     if (
-      queue.length >= QUEUE_LIMIT ||
-      rate.admitted >= RATE_LIMIT ||
-      (interest !== undefined &&
-        this.waitingIn(runner, interest) >= INTEREST_LIMIT)
+      !this.fits(
+        runner,
+        lane === "mention" ? 1 : 0,
+        interest === undefined ? [] : [interest],
+        0,
+      )
     ) {
       if (runner.activityClaimed) {
         this.showWork(runner, job);

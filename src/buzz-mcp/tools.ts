@@ -10,6 +10,10 @@ import {
   lifecycleChannelId,
   lifecycleTemplate,
 } from "../features/relay/channel-lifecycle-protocol";
+import {
+  PROFILE_SEARCH_MAX,
+  PROFILE_SEARCH_QUERY_MAX,
+} from "../features/relay/profile-search";
 import { sessionMetadata } from "../features/sessions/metadata";
 import { threadReference } from "../features/relay/thread-reference";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
@@ -475,9 +479,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!ids.length && !q) throw new Error("Give ids or q.");
     // Name search matches only name and display_name, best match first;
     // NIP-50 search matches the whole profile, so text in avatars or `about`
-    // can fill its results and hide the person asked for.
+    // can fill its results and hide the person asked for. Name search refuses
+    // a query longer than its limit, so a longer name uses NIP-50 search.
     const named =
-      !ids.length && q ? await client.searchProfiles?.(q, 100) : undefined;
+      !ids.length && q && [...q].length <= PROFILE_SEARCH_QUERY_MAX
+        ? await client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
+        : undefined;
     const profiles =
       named?.filter((event) => event.kind === 0) ??
       (await client.query([

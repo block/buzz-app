@@ -1421,6 +1421,22 @@ it("finds users with NIP-50 search where the community has no name search", asyn
   ]);
 });
 
+it("finds a name longer than the name search's limit with NIP-50 search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => []);
+  // 100 code points (200 UTF-16 units) is the longest name search accepts.
+  const longest = "😀".repeat(100);
+  await callTool(client, {}, "users", { q: longest });
+  expect(client.searchProfiles).toHaveBeenCalledWith(longest, 100);
+  expect(client.query).not.toHaveBeenCalled();
+  const over = `${longest}w`;
+  expect(await callTool(client, {}, "users", { q: over })).toBe("No users.");
+  expect(client.searchProfiles).toHaveBeenCalledTimes(1);
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: [0], search: over, limit: 100 },
+  ]);
+});
+
 it("reads users by id without the name search", async () => {
   const { client } = fake(community);
   client.searchProfiles = vi.fn(async () => []);

@@ -25,13 +25,14 @@ import type { RelaySession } from "../relay/session";
 import type { MessageLinkOrigin } from "./MessageRow";
 import styles from "./TypingIndicator.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
+import { useActivityLanePublisher } from "./activity-lane";
 
 const noSubscribe = () => () => {};
 const noActivity = () => undefined;
 const noRows: readonly never[] = [];
 
 /** Agents working in one conversation, over existing stores; no reads or capture. */
-export function useConversationAgents(
+function useConversationAgents(
   session: RelaySession,
   channelId: string,
   threadRootId: string | undefined,
@@ -85,6 +86,8 @@ export function TypingIndicator({
     channelId,
     threadRootId,
   );
+  // The history's jump button beside this composer reserves the lane the pill uses.
+  useActivityLanePublisher(session, channelId, threadRootId, agents.length > 0);
   const resolveName = useChannelIdentityNames(session, channelId);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,

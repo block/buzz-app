@@ -6918,10 +6918,21 @@ it("marks the leading tools while explicit recipients are shown", async () => {
   h.unmount();
 });
 
-it("marks the composer with attachments only while items are listed", async () => {
+it("marks the composer with attachments until the emptied section has animated out", async () => {
+  // jsdom applies no CSS module styles, so the gap/padding this attribute
+  // drives cannot be measured here; the attribute's timeline is asserted.
   const h = await mountUploadComposer();
   expect(h.form()).not.toHaveAttribute("data-attachments");
   attachByPaste(h.input(), attachmentFile("notes.txt"));
+  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
+  const section = screen.getByRole("region", { name: "Attachments" });
+  fireEvent.click(screen.getByRole("button", { name: "Remove notes.txt" }));
+  // The list is empty but the section is still exiting: keep the mark.
+  expect(section).toBeInTheDocument();
+  expect(h.form()).toHaveAttribute("data-attachments");
+  await waitFor(() => expect(section).not.toBeInTheDocument());
+  expect(h.form()).not.toHaveAttribute("data-attachments");
+  attachByPaste(h.input(), attachmentFile("again.txt"));
   await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
   fireEvent.click(h.send());
   await waitFor(() => expect(h.form()).not.toHaveAttribute("data-attachments"));

@@ -1359,6 +1359,17 @@ function Composer({
     }
   }
   const readingOnly = !outbox?.supports(9) && !cached;
+  // The attachments section animates out over 180 ms; the form's gap and
+  // padding (data-attachments) collapse when it has, not when the list empties.
+  // An edit unmounts the section at once, so no exit completes during one.
+  const hasAttachments = attachments.items.length > 0;
+  const [attachmentsExiting, setAttachmentsExiting] = useState(false);
+  const [hadAttachments, setHadAttachments] = useState(hasAttachments);
+  if (hadAttachments !== hasAttachments) {
+    setHadAttachments(hasAttachments);
+    setAttachmentsExiting(!hasAttachments);
+  }
+  if (attachmentsExiting && editing.target) setAttachmentsExiting(false);
   const context = (
     <div className={styles.composerContext}>
       {!cached && !submission && (
@@ -1449,7 +1460,8 @@ function Composer({
           (active && !editing.target && !!trailingTool) || undefined
         }
         data-attachments={
-          (!editing.target && attachments.items.length > 0) || undefined
+          (!editing.target && (hasAttachments || attachmentsExiting)) ||
+          undefined
         }
         onKeyDown={(event) => {
           if (
@@ -1534,6 +1546,7 @@ function Composer({
               renderers={extensions?.attachments}
               items={attachments.items}
               disabled={editingDisabled}
+              onExitComplete={() => setAttachmentsExiting(false)}
               remove={(id) => {
                 const item = attachments.items.find(
                   (candidate) => candidate.id === id,

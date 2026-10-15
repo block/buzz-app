@@ -11,6 +11,7 @@ import {
 import { StrictMode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
+import { useActivityLanePublisher } from "./activity-lane";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
@@ -20,14 +21,12 @@ import type { PageNavigation } from "../navigation/service";
 import { createNavigationController } from "../navigation/controller";
 import { createMemoryHistory } from "../navigation/history";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
-import type { TypingEntry } from "../relay/typing";
 import type {
   ChannelList,
   ChannelMessage,
   ChannelSummary,
 } from "../relay/contracts";
 import { formatPublicKey } from "../../shared/identity/public-key";
-const noTyping: readonly never[] = [];
 
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
@@ -198,7 +197,6 @@ function messagesHarness(
     thread,
     profiles: { ensure },
     agentChoices: createAgentLibrary(undefined).queries,
-    typing: { snapshot: () => noTyping, subscribe: () => () => {} },
     messages: { retry: vi.fn() },
     media: () => undefined,
     unread: {
@@ -836,32 +834,27 @@ it("counts replies recovered after a completed traversal, not initial history pa
   expect(screen.getByRole("button", { name: "2 new messages" })).toBeVisible();
 });
 
-it("reserves the jump button's activity lane only for agents working in this thread of a live channel", () => {
+it("reserves the jump button's activity lane only for this thread's composer in a live channel", () => {
   const h = messagesHarness();
   const listeners = new Set<() => void>();
-  let typing: readonly TypingEntry[] = [];
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
     return () => {
       listeners.delete(listener);
     };
   };
-  const agent = "a".repeat(64);
-  const library = { identities: [{ pubkey: agent }] };
   let list: ChannelList = {
     status: "ready",
     channels: [{ id: "channel", name: "General" }],
   };
   Object.assign(h.session, {
-    typing: { snapshot: () => typing, subscribe },
-    agentChoices: { snapshot: () => library, subscribe },
     channels: { list: () => list, subscribeList: subscribe },
   });
-  const publish = (entries: readonly TypingEntry[]) =>
-    act(() => {
-      typing = entries;
-      for (const listener of listeners) listener();
-    });
+  // The composer is mocked here; publish what its TypingIndicator would.
+  function Shown({ threadRootId }: { threadRootId: string | undefined }) {
+    useActivityLanePublisher(h.session, "channel", threadRootId, true);
+    return null;
+  }
   h.render();
   h.scroll(500);
   const lane = () =>
@@ -870,20 +863,24 @@ it("reserves the jump button's activity lane only for agents working in this thr
       .closest("[data-visible]");
   const live = lane();
   expect(live).not.toHaveAttribute("data-activity-lane");
-  publish([{ pubkey: agent, channelId: "channel", threadRootId: row.id }]);
-  expect(live).toHaveAttribute("data-activity-lane");
   // Channel-level activity shows in the channel composer, not this thread's.
-  publish([{ pubkey: agent, channelId: "channel" }]);
+  const channelLevel = render(<Shown threadRootId={undefined} />);
   expect(live).not.toHaveAttribute("data-activity-lane");
-  // A cached channel's composer mounts no TypingIndicator, so no lane. The
-  // gate flip swaps the button's component, so re-query after it.
+  channelLevel.unmount();
+  const thread = render(<Shown threadRootId={row.id} />);
+  expect(live).toHaveAttribute("data-activity-lane");
+  // A cached channel's composer mounts no TypingIndicator, so no lane; the
+  // gate flip keeps the same button mounted.
   list = {
     status: "ready",
     channels: [{ id: "channel", name: "General", cached: true }],
   };
-  publish([{ pubkey: agent, channelId: "channel", threadRootId: row.id }]);
-  expect(live).not.toBeInTheDocument();
-  expect(lane()).not.toHaveAttribute("data-activity-lane");
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  expect(lane()).toBe(live);
+  expect(live).not.toHaveAttribute("data-activity-lane");
+  thread.unmount();
 });
 
 it("transfers keyboard focus to the thread history before removing the jump button", () => {

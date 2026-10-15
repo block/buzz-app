@@ -355,6 +355,7 @@ function SessionWork({
       mounted.current = false;
     };
   }, []);
+  const focusFallback = useRef<HTMLElement>(null);
   const secondary = useConversationTabs({
     state: tabState,
     relay,
@@ -369,7 +370,7 @@ function SessionWork({
     navigationSignal: navigation?.signal,
     isLive: () => !navigation?.signal.aborted,
     openLink: (url) => openLink(url),
-    fallbackFocus: menuTrigger,
+    fallbackFocus: focusFallback,
     conversationIcon: (item) => {
       const Icon = channelIcon(item);
       return <Icon size="1rem" />;
@@ -439,6 +440,7 @@ function SessionWork({
     <div className={channelStyles.root}>
       <div ref={split.ref} style={split.style} className={channelStyles.board}>
         <section
+          ref={focusFallback}
           aria-label={`Chat ${channel.name}`}
           tabIndex={-1}
           className={styles.work}

@@ -945,7 +945,7 @@ export class AgentsService extends Service implements Agents {
         meChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
       remembered: (pubkey, slug, body) =>
         this.coreMemory.wrote(pubkey, slug, body),
-      finished: (pubkey) => this.coreMemory.refresh(pubkey),
+      finished: (pubkey) => void this.coreMemory.refresh(pubkey),
     });
     ctx.effect(() => {
       const stops = [
@@ -2484,7 +2484,7 @@ export class AgentsService extends Service implements Agents {
   private refreshCore(origin: string) {
     for (const agent of this.state.running)
       if (originOf(agent.relay) === origin)
-        this.coreMemory.refresh(agent.pubkey);
+        void this.coreMemory.refresh(agent.pubkey);
   }
 
   // Joins identities, records and the connections into the running and visible

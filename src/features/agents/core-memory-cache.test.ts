@@ -196,11 +196,11 @@ it("forgets a left community's copy, keeps it across a disconnect, and lets no h
     vi.fn(() => read.promise),
     "wss://one.test",
   );
-  f.cache.refresh(agent);
+  const refreshed = f.cache.refresh(agent);
   forgetCoreMemory("wss://one.test", f.storage);
+  // The read finishes on the same connection: only the purge's fence keeps it out.
   read.release(listing("stale"));
-  await Promise.resolve();
-  await Promise.resolve();
+  await refreshed;
   expect([...f.data.keys()]).toEqual([
     `buzz.core-memory.v1:wss://two.test:${agent}`,
   ]);

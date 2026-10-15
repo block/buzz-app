@@ -11,8 +11,10 @@ const FIRST_READ_MS = 5_000;
 /** How long a refresh nothing waits on may take. */
 const REFRESH_MS = 10_000;
 const PREFIX = "buzz.core-memory.v1:";
-/** Every cache on this page, so leaving a community can clear their copies. */
-const caches = new Set<CoreMemoryCache>();
+/** Every cache on this page, so leaving a community can clear their copies.
+ * Held weakly: nothing tears a cache down, so one its owner dropped (a rebuilt
+ * service) is collected and pruned here rather than kept alive. */
+const caches = new Set<WeakRef<CoreMemoryCache>>();
 
 /** Forgets every agent's cached `core` memory for one community and viewer
  * (`origin:viewer`): the saved copies and each cache's in-memory copy. A read
@@ -22,7 +24,11 @@ export function forgetCoreMemory(
   storage: Storage = localStorage,
 ) {
   const prefix = `${PREFIX}${scope}:`;
-  for (const cache of caches) cache.forget(prefix);
+  for (const ref of caches) {
+    const cache = ref.deref();
+    if (cache) cache.forget(prefix);
+    else caches.delete(ref);
+  }
   const keys: string[] = [];
   for (let i = 0; i < storage.length; i++) {
     const key = storage.key(i);
@@ -44,7 +50,7 @@ export class CoreMemoryCache {
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     private readonly storage: Storage,
   ) {
-    caches.add(this);
+    caches.add(new WeakRef(this));
   }
 
   /** Drops the in-memory copies under `prefix` and fences reads under way. */
@@ -82,11 +88,11 @@ export class CoreMemoryCache {
   }
 
   /** Reads it again for the agent's next start, which does not wait on it; a
-   * failure only leaves the cached copy as it is. */
-  refresh(pubkey: string) {
+   * failure only leaves the cached copy as it is. Settles when it is done. */
+  async refresh(pubkey: string): Promise<void> {
     const reads = this.reads(pubkey);
     if (!reads) return;
-    this.read(reads, pubkey, AbortSignal.timeout(REFRESH_MS)).catch(
+    await this.read(reads, pubkey, AbortSignal.timeout(REFRESH_MS)).catch(
       (error: unknown) =>
         console.warn("Could not refresh the agent's core memory", error),
     );

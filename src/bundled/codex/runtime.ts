@@ -20,6 +20,7 @@ import {
 } from "../../buzz-mcp/session-tools";
 import {
   config,
+  resolveModel,
   defaults,
   absoluteWorkspace,
   effortName,
@@ -153,7 +154,7 @@ export class CodexRuntime {
   private stopping = new Map<string, Promise<void>>();
   private views = new Map<string, readonly SessionView[]>();
   private listeners = new Set<() => void>();
-  /** Read-only model discovery, kept per agent until its settings change. */
+  /** Read-only model discovery, kept until effective model settings change. */
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
   private memoryReads = new MemoryReads();
   constructor(
@@ -173,26 +174,15 @@ export class CodexRuntime {
     this.views.get(pubkey) ?? EMPTY;
   preview(agent: Agent) {
     const settings = this.resolveConfig(agent.config);
-    const key = JSON.stringify([
-      settings.workspace,
-      settings.model,
-      settings.effort,
-    ]);
+    const key = JSON.stringify([settings.model, settings.effort]);
     const existing = this.previews.get(agent.pubkey);
     if (existing?.key === key) return existing.ready;
     const server = this.open();
     const rpc = server.rpc;
     const ready = (async () => {
-      const workspace = await this.workspace(settings.workspace);
       await server.opening;
-      const normalized = await rpc.request<{
-        config: { model?: string | null };
-      }>("config/read", { cwd: workspace });
       const models = await listModels(rpc);
-      const model =
-        settings.model ||
-        normalized.config.model ||
-        models.find((row) => row.isDefault)?.model;
+      const model = resolveModel(settings.model, models);
       const offered = models.map((row) => {
         const efforts = row.supportedReasoningEfforts.map(
           ({ reasoningEffort: id }) => ({ id, label: effortName(id) }),
@@ -211,9 +201,10 @@ export class CodexRuntime {
       // A configured model this Codex does not list still leaves the
       // listed ones to pick, so the picker stays.
       return !model || models.some((row) => row.model === model)
-        ? { current: model ?? "", models: offered }
+        ? { current: model ?? "", models: offered, sendDefaults: true }
         : {
             current: model,
+            sendDefaults: true,
             models: [{ id: model, label: model, efforts: [] }, ...offered],
           };
     })();
@@ -950,15 +941,11 @@ export class CodexRuntime {
   ) {
     const normalized = await rpc.request<{
       config: {
-        model?: string | null;
         mcp_servers?: Record<string, Record<string, unknown>>;
       };
     }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
-    const own =
-      settings.model ||
-      normalized.config.model ||
-      models.find((row) => row.isDefault)?.model;
+    const own = resolveModel(settings.model, models);
     // Model and effort are per turn, so a pick changes nothing after it.
     const picked = models.find((row) => row.model === pick.model);
     const selected = picked ?? models.find((row) => row.model === own);

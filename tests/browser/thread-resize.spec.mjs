@@ -303,6 +303,13 @@ test.describe("exact history resize ownership", () => {
   // anchoring is off.
   test("reading position shift committed with a live reply", ({ page, app }) =>
     heldResizeThenReply({ page, app }, "with reply after reading"));
+  // Content above the reader shrinks in the reply's commit far enough that
+  // the browser clamps scrollTop to the new maximum. That clamp is layout, not
+  // reader intent, so the reading anchor must still own the shift.
+  test("reading position contraction clamped with a live reply", ({
+    page,
+    app,
+  }) => heldResizeThenReply({ page, app }, "contraction after reading"));
 
   async function heldResizeThenReply({ page, app }, shift) {
     const key = generateSecretKey();
@@ -417,7 +424,8 @@ test.describe("exact history resize ownership", () => {
       await page.evaluate(() => window.releaseExactReveal());
       await settle(page, history);
       let anchor = target;
-      if (shift === "with reply after reading") {
+      const reading = shift.endsWith("after reading");
+      if (reading) {
         await history.hover();
         await page.mouse.wheel(0, 200);
         await settle(page, history);
@@ -429,6 +437,15 @@ test.describe("exact history resize ownership", () => {
         });
         expect(id).toBeTruthy();
         anchor = history.locator(`[data-message-id="${id}"]`);
+      }
+      if (shift === "contraction after reading") {
+        await anchor.evaluate((el) => {
+          const spacer = document.createElement("div");
+          spacer.dataset.contraction = "";
+          spacer.style.height = "700px";
+          el.before(spacer);
+        });
+        await settle(page, history);
       }
       const y = () =>
         anchor.evaluate(
@@ -450,9 +467,9 @@ test.describe("exact history resize ownership", () => {
         resized = await y();
       } else {
         resized = await y();
-        // Add the spacer when React inserts the next reply's row: inside that
-        // commit and before its layout effects run.
-        await anchor.evaluate((el) => {
+        // Shift the layout when React inserts the next reply's row: inside
+        // that commit and before its layout effects run.
+        await anchor.evaluate((el, contract) => {
           const originals = {
             appendChild: Node.prototype.appendChild,
             insertBefore: Node.prototype.insertBefore,
@@ -462,20 +479,32 @@ test.describe("exact history resize ownership", () => {
               const result = original.call(this, node, ...rest);
               if (node?.textContent?.includes("Review live reply 15")) {
                 Object.assign(Node.prototype, originals);
-                const spacer = document.createElement("div");
-                spacer.style.height = "37px";
-                el.before(spacer);
-                el.getBoundingClientRect();
+                if (contract) {
+                  const scroller = el.closest('[aria-label="Thread messages"]');
+                  const before = scroller.scrollTop;
+                  scroller.querySelector("[data-contraction]").remove();
+                  window.contractionClamped = scroller.scrollTop < before;
+                } else {
+                  const spacer = document.createElement("div");
+                  spacer.style.height = "37px";
+                  el.before(spacer);
+                  el.getBoundingClientRect();
+                }
               }
               return result;
             };
-        });
+        }, shift === "contraction after reading");
       }
       reply();
       await expect(
         history.getByText("Review live reply 15", { exact: true }),
       ).toHaveCount(1);
       await settle(page, history);
+      if (shift === "contraction after reading")
+        expect(
+          await page.evaluate(() => window.contractionClamped),
+          "the contraction must clamp scrollTop",
+        ).toBe(true);
       const later = await y();
       expect(
         Math.abs(later - resized),

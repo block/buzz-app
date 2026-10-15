@@ -907,15 +907,21 @@ function ThreadMessages({
     // Native scroll anchoring is off here, so this panel owns ordinary reading
     // too. With no explicit anchor, keep the saved first visible row in place
     // through this commit's layout shift. A scroll since that save is newer
-    // reader intent and wins.
+    // reader intent and wins. A drop in scrollTop while the scroll range shrank
+    // is the browser clamping it during this commit's layout, not the reader.
     const reading = resizePosition.current;
+    const clamped =
+      reading !== undefined &&
+      element.scrollTop < reading.scrollTop &&
+      element.scrollHeight - element.clientHeight <
+        reading.contentHeight - reading.height;
     if (
       !olderAnchor.current &&
       targetAnchor.current === undefined &&
       !follow.current &&
       !jumpingToLatest.current &&
       reading?.anchor &&
-      reading.scrollTop === element.scrollTop &&
+      (reading.scrollTop === element.scrollTop || clamped) &&
       element.contains(reading.anchor.element)
     )
       correctScrollTop(element, readingDrift(element, reading.anchor));

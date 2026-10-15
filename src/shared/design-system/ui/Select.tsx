@@ -36,6 +36,7 @@ export function Select({
   valueSuffix,
   leading,
   align = "start",
+  size,
   appearance = "outlined",
 }: {
   label: string;
@@ -55,6 +56,8 @@ export function Select({
   /** Anchor the popup to the corresponding trigger edge. */
   align?: "start" | "center" | "end";
   variant?: "inline" | "field" | "compact" | "preference";
+  /** Match adjacent controls without changing the selection treatment. */
+  size?: "sm" | "md";
   appearance?: "outlined" | "subtle";
   disabled?: boolean;
   value: string;
@@ -136,7 +139,7 @@ export function Select({
                       : "outline"
                     : "ghost"
                 }
-                size={variant === "compact" ? "sm" : "md"}
+                size={size ?? (variant === "compact" ? "sm" : "md")}
               >
                 <span className="buzz-select-value-content">
                   {leading && (

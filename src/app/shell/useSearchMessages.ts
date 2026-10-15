@@ -53,11 +53,10 @@ async function readPage(
     });
   if (channelId && !session.channels.get?.(channelId))
     return { messages: [], more: false };
-  const events = await session.read([page > 1 ? { ...filter, page } : filter], {
-    signal,
-    priority: "foreground",
-    fresh: true,
-  });
+  const { events, relayCount } = await session.readPage(
+    [page > 1 ? { ...filter, page } : filter],
+    { signal, priority: "foreground", fresh: true },
+  );
   signal.throwIfAborted();
   const messages = events.flatMap((event): SearchMessage[] => {
     const destinations = event.tags.filter(([name]) => name === "h");
@@ -93,7 +92,7 @@ async function readPage(
     ];
   });
   // The relay pages by offset, so only a full page can have a successor.
-  return { messages, more: events.length >= PAGE_SIZE };
+  return { messages, more: relayCount >= PAGE_SIZE };
 }
 
 /** Later pages extend the list. Offsets can shift between reads, so a repeated

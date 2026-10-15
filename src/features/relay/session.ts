@@ -2147,7 +2147,14 @@ export function createRelaySession(
     },
     /** Whether read() search filters may ask for `search_sort: "newest"`. */
     searchSort: transport?.searchSort === true,
-    async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
+    async read(
+      filters: readonly ReadFilter[],
+      settings?: ReadOptions,
+    ): Promise<readonly VisibleEvent[]> {
+      return (await session.readPage(filters, settings)).events;
+    },
+    /** Relay continuation evidence is separate from projected local/live results. */
+    async readPage(filters: readonly ReadFilter[], settings?: ReadOptions) {
       const began = revision;
       const epoch = accessEpoch;
       const result = await verified.read(filters, settings);
@@ -2172,7 +2179,14 @@ export function createRelaySession(
           merged.set(id, observation.event);
       }
       const events = [...merged.values()];
-      return projectEvents(events.filter(visibility(events)), local(), filters);
+      return {
+        events: projectEvents(
+          events.filter(visibility(events)),
+          local(),
+          filters,
+        ),
+        relayCount: result.length,
+      };
     },
     /** An owned retained event view, not a replacement query snapshot. Limits bound
      * requests, not retained results. Ranked search/feed filters require read().

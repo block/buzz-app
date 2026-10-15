@@ -75,6 +75,11 @@ export function Tabs<Value extends string>({
             key={item.value}
             className="buzz-tabs-item"
             data-closable={!!item.onClose || undefined}
+            onAuxClick={(event) => {
+              if (event.button !== 1 || !item.onClose) return;
+              event.preventDefault();
+              item.onClose();
+            }}
           >
             <BaseTabs.Tab
               value={item.value}

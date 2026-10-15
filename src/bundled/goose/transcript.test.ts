@@ -152,6 +152,41 @@ describe("gooseTurns", () => {
       text: "The message above was not posted: relay closed",
     });
   });
+
+  it("shows a turn that failed with goose's error, and its lasting notices", () => {
+    const [turn] = gooseTurns(
+      [
+        user([text(ask())]),
+        assistant([
+          {
+            type: "systemNotification",
+            notificationType: "thinkingMessage",
+            msg: "Thinking…",
+          },
+          {
+            type: "systemNotification",
+            notificationType: "creditsExhausted",
+            msg: "Out of credits",
+          },
+          {
+            type: "error",
+            kind: "providerError",
+            message: "Authentication failed: invalid API key",
+          },
+        ]),
+      ],
+      { sessionId: "s1", channelId: CHANNEL },
+      false,
+    );
+    expect(turn?.error).toBe("Authentication failed: invalid API key");
+    expect(
+      turn?.items.map((item) => [item.type, "text" in item ? item.text : ""]),
+    ).toEqual([
+      ["prompt", "@Gander what's up?"],
+      ["status", "Out of credits"],
+      ["status", "Authentication failed: invalid API key"],
+    ]);
+  });
 });
 
 describe("startedFor", () => {

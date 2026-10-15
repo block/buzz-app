@@ -180,6 +180,84 @@ it("chooses a provider in its dialog, saves its key into goose, and tests it", a
   expect(modelButton()).toHaveTextContent("Anthropic · claude-opus-5-5");
 });
 
+it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", async () => {
+  const saved = new Map<string, Set<string>>();
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    saved,
+  });
+  const { SettingsTab } = createTabs({
+    setup: new GooseSetup(fake.spawn),
+    ...unused,
+  });
+  const save = vi.fn(async (_config: Config) => undefined);
+  render(
+    <SettingsTab
+      agent={
+        {
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: DEFAULT_CONFIG,
+        } as Agent<Config>
+      }
+      save={save}
+    />,
+  );
+  const user = userEvent.setup();
+  await choose("Provider", "Anthropic");
+  await user.type(await screen.findByLabelText("API key"), "sk-test{Enter}");
+  expect(
+    await screen.findByText("Anthropic is set up in goose."),
+  ).toBeVisible();
+  expect(saved.get("anthropic")).toEqual(new Set(["ANTHROPIC_API_KEY"]));
+  expect(save).not.toHaveBeenCalled();
+
+  const workspace = screen.getByLabelText("Workspace");
+  await user.clear(workspace);
+  await user.type(workspace, "projects/goose");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Enter an absolute or ~/… workspace path.",
+  );
+  expect(save).not.toHaveBeenCalled();
+  await user.clear(workspace);
+  await user.type(workspace, "~/projects/goose");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "anthropic",
+        workspace: "~/projects/goose",
+      }),
+    ),
+  );
+});
+
+it("reads a provider's models again after its fields are saved", async () => {
+  const { fake } = created({
+    spawn: (fake) => new GooseSetup(fake.spawn),
+  });
+  const user = userEvent.setup();
+  const dialog = await openChoices();
+  const listed = () =>
+    fake.geese
+      .flatMap((goose) => goose.received)
+      .filter(
+        (message) =>
+          message.method === "_goose/unstable/providers/supported-models/list",
+      ).length;
+  await waitFor(() => expect(listed()).toBe(1));
+  await user.click(within(dialog).getByRole("button", { name: "Change" }));
+  await user.type(within(dialog).getByLabelText(/host/i), "https://new.test");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save to goose" }),
+  );
+  await waitFor(() => expect(listed()).toBe(2));
+});
+
 it("shows what the provider said when the test fails", async () => {
   created({ reply: "Authentication failed: invalid x-api-key" });
   const dialog = await openChoices();
@@ -298,7 +376,11 @@ it("lists the agent's goose sessions and shows one's transcript", async () => {
   );
   const user = userEvent.setup();
   expect(await screen.findByText("#general · 11111111")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "View transcript" }));
+  await user.click(
+    screen.getByRole("button", {
+      name: "View transcript: #general · 11111111",
+    }),
+  );
   expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
   expect(screen.getAllByText(/@Gander what's up\?/).length).toBeGreaterThan(0);
 });

@@ -8,12 +8,19 @@
 //!   per server authorizes every request as `Authorization: Bearer <token>`.
 //!   `Host` must name the bound address, and a request that sends `Origin`
 //!   (a web page) is refused. Nothing is logged.
+//! - The token admits one MCP session. The agent's `initialize` is answered
+//!   with a random `Mcp-Session-Id`, and every later request must send it. An
+//!   agent may save its server's token to disk (goose does), so a token read
+//!   from there is useless once the agent connected. Before then, only
+//!   `initialize`, `server/discover` and `ping` are answered. A second
+//!   `initialize` means two clients hold the token, so the server stops: the
+//!   one that claimed the session may not be the agent.
 //! - A refused request gets 404, never 401 or 403: MCP clients answer those
 //!   by starting an OAuth sign-in.
-//! - It is stateless and answers in JSON, never SSE. `POST /mcp` carries one
-//!   message: a request is answered with the page's reply, and a notification
-//!   or response with 202. `GET` and `DELETE` get 405, since there is no
-//!   server stream or session to end.
+//! - It answers in JSON, never SSE. `POST /mcp` carries one message: a request
+//!   is answered with the page's reply, and a notification or response with
+//!   202. `GET` and `DELETE` get 405: there is no server stream, and the
+//!   session ends with the server.
 //! - Each connection answers one request and closes. A client that closes
 //!   before its answer drops the request; the page's late reply is refused.
 //! - A server belongs to the plugin and the page that started it. It stops
@@ -29,6 +36,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::Ipv4Addr;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tauri::ipc::Channel;
@@ -47,6 +55,10 @@ const BODY_LIMIT: usize = 4 * 1024 * 1024;
 const BODY_TIMEOUT: Duration = Duration::from_secs(30);
 const REPLY_LIMIT: usize = 16 * 1024 * 1024;
 const ENDPOINT: &str = "/mcp";
+const SESSION: HeaderName = HeaderName::from_static("mcp-session-id");
+const UNCLAIMED: u8 = 0;
+const CLAIMING: u8 = 1;
+const CLAIMED: u8 = 2;
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -71,6 +83,11 @@ pub(crate) struct McpServerInfo {
 struct Shared {
     authority: String,
     token: String,
+    /// The `Mcp-Session-Id` of the one session the token admits.
+    session: String,
+    /// `UNCLAIMED`, `CLAIMING` while an `initialize` waits for its answer, or
+    /// `CLAIMED` once one succeeded.
+    claim: AtomicU8,
     events: Channel<McpEvent>,
     stop: CancellationToken,
     pending: Mutex<Pending>,
@@ -137,12 +154,17 @@ impl HostMcpServers {
         let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(failed)?;
         listener.set_nonblocking(true).map_err(failed)?;
         let authority = listener.local_addr().map_err(failed)?.to_string();
-        let mut secret = [0; 32];
-        getrandom::fill(&mut secret).map_err(|_| "Could not start the MCP server")?;
-        let token = URL_SAFE_NO_PAD.encode(secret);
+        let secret = || {
+            let mut secret = [0; 32];
+            getrandom::fill(&mut secret).map_err(|_| "Could not start the MCP server")?;
+            Ok::<_, &str>(URL_SAFE_NO_PAD.encode(secret))
+        };
+        let token = secret()?;
         let shared = Arc::new(Shared {
             authority: authority.clone(),
             token: token.clone(),
+            session: secret()?,
+            claim: AtomicU8::new(UNCLAIMED),
             events,
             stop: CancellationToken::new(),
             pending: Mutex::default(),
@@ -251,22 +273,39 @@ async fn answer(
     shared: &Shared,
     request: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let (status, body) = match refuse(shared, &request) {
-        Some(status) => (status, None),
-        None => {
+    let (status, body, joined) = match refuse(shared, &request) {
+        Err(status) => (status, None, false),
+        Ok(named) => {
             let body = Limited::new(request.into_body(), BODY_LIMIT).collect();
             match tokio::time::timeout(BODY_TIMEOUT, body).await {
                 Ok(Ok(body)) => match String::from_utf8(body.to_bytes().into()) {
-                    Ok(body) => forward(shared, body).await,
-                    Err(_) => (StatusCode::BAD_REQUEST, None),
+                    Ok(body) => match join(shared, named, &body) {
+                        Ok(join) => {
+                            let claim = (join == Join::Claiming).then(|| Claim {
+                                shared,
+                                claimed: false,
+                            });
+                            let (status, reply) = forward(shared, body).await;
+                            let joined = match claim {
+                                Some(claim) => claim.settle(status, reply.as_deref()),
+                                None => join == Join::Inside,
+                            };
+                            (status, reply, joined)
+                        }
+                        Err(status) => (status, None, false),
+                    },
+                    Err(_) => (StatusCode::BAD_REQUEST, None, false),
                 },
-                _ => (StatusCode::BAD_REQUEST, None),
+                _ => (StatusCode::BAD_REQUEST, None, false),
             }
         }
     };
     let mut response = Response::builder()
         .status(status)
         .header(header::CACHE_CONTROL, "no-store");
+    if joined && (status == StatusCode::OK || status == StatusCode::ACCEPTED) {
+        response = response.header(SESSION, &shared.session);
+    }
     if status == StatusCode::OK {
         response = response.header(header::CONTENT_TYPE, "application/json");
     }
@@ -311,8 +350,9 @@ async fn forward(shared: &Shared, body: String) -> (StatusCode, Option<String>) 
     }
 }
 
-/// The status that refuses `request`, unless it is an authorized `POST /mcp`.
-fn refuse(shared: &Shared, request: &Request<Incoming>) -> Option<StatusCode> {
+/// Whether an authorized `POST /mcp` names the session, or the status that
+/// refuses `request`.
+fn refuse(shared: &Shared, request: &Request<Incoming>) -> Result<bool, StatusCode> {
     let token = header(request, header::AUTHORIZATION)
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or_default();
@@ -322,23 +362,108 @@ fn refuse(shared: &Shared, request: &Request<Incoming>) -> Option<StatusCode> {
         || request.uri().path() != ENDPOINT
         || !same(token.as_bytes(), shared.token.as_bytes())
     {
-        return Some(StatusCode::NOT_FOUND);
+        return Err(StatusCode::NOT_FOUND);
     }
     // No server stream for `GET` and no session for `DELETE` to end.
     if request.method() != Method::POST {
-        return Some(StatusCode::METHOD_NOT_ALLOWED);
+        return Err(StatusCode::METHOD_NOT_ALLOWED);
     }
     let json = header(request, header::CONTENT_TYPE)
         .and_then(|value| value.split(';').next())
         .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"));
     if !json {
-        return Some(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
     let length = header(request, header::CONTENT_LENGTH).and_then(|value| value.parse().ok());
     if length.is_some_and(|length: usize| length > BODY_LIMIT) {
-        return Some(StatusCode::PAYLOAD_TOO_LARGE);
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
-    None
+    match header(request, SESSION) {
+        Some(session) if same(session.as_bytes(), shared.session.as_bytes()) => Ok(true),
+        Some(_) => Err(StatusCode::NOT_FOUND),
+        None => Ok(false),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Join {
+    /// Before the session, as `server/discover` is.
+    Outside,
+    /// The `initialize` that claims the session once it succeeds.
+    Claiming,
+    /// In the session.
+    Inside,
+}
+
+/// Where `body` stands to the session, or the status that refuses it.
+fn join(shared: &Shared, named: bool, body: &str) -> Result<Join, StatusCode> {
+    #[derive(serde::Deserialize)]
+    struct Message {
+        method: Option<String>,
+    }
+    let state = shared.claim.load(Ordering::SeqCst);
+    if named {
+        return if state == CLAIMED {
+            Ok(Join::Inside)
+        } else {
+            Err(StatusCode::NOT_FOUND)
+        };
+    }
+    let method = serde_json::from_str::<Message>(body)
+        .ok()
+        .and_then(|message| message.method);
+    match method.as_deref() {
+        Some("initialize") => {
+            if shared
+                .claim
+                .compare_exchange(UNCLAIMED, CLAIMING, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                return Ok(Join::Claiming);
+            }
+            // Another client has the token too, and may hold the session.
+            shared.stop.cancel();
+            Err(StatusCode::NOT_FOUND)
+        }
+        Some("server/discover" | "ping") if state != CLAIMED => Ok(Join::Outside),
+        _ => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+/// Holds the session for an `initialize` until it is answered. A success
+/// claims it; a failure, or a client that hung up first, releases it.
+struct Claim<'a> {
+    shared: &'a Shared,
+    claimed: bool,
+}
+impl Claim<'_> {
+    fn settle(mut self, status: StatusCode, reply: Option<&str>) -> bool {
+        #[derive(serde::Deserialize)]
+        struct Reply {
+            result: Option<serde::de::IgnoredAny>,
+        }
+        self.claimed = status == StatusCode::OK
+            && reply
+                .and_then(|reply| serde_json::from_str::<Reply>(reply).ok())
+                .is_some_and(|reply| reply.result.is_some());
+        if self.claimed {
+            self.shared.claim.store(CLAIMED, Ordering::SeqCst);
+        }
+        self.claimed
+    }
+}
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        // Only the claim this guard holds is released.
+        if !self.claimed {
+            let _ = self.shared.claim.compare_exchange(
+                CLAIMING,
+                UNCLAIMED,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
+        }
+    }
 }
 
 fn header(request: &Request<Incoming>, name: HeaderName) -> Option<&str> {

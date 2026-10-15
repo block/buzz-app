@@ -43,6 +43,8 @@ export type FakeGoose = {
   env: Readonly<Record<string, string | null>>;
   /** When set, a turn stays open until it is finished. */
   hold: boolean;
+  /** When set, a turn takes a steer and ends before goose answers the steer. */
+  endOnSteer: boolean;
   killed: boolean;
   /** Asks the client a request and resolves with its response. */
   ask(method: string, params: Record<string, unknown>): Promise<Message>;
@@ -72,6 +74,8 @@ export type FakeMcpServer = {
   token: string;
   handler: McpHandler;
   closed: boolean;
+  /** Stops it from the host's side, as when a second client initializes. */
+  stop(): void;
 };
 
 /** A spawn whose `goose` processes answer like `goose-acp`, and whose
@@ -109,15 +113,16 @@ export function fakeSpawn(
       token: `token-${index}`,
       handler,
       closed: false,
+      stop: () => {
+        server.closed = true;
+        stopped();
+      },
     };
     servers.push(server);
     return {
       url: server.url,
       headers: [{ name: "Authorization", value: `Bearer ${server.token}` }],
-      close: async () => {
-        server.closed = true;
-        stopped();
-      },
+      close: async () => server.stop(),
       closed,
     };
   };
@@ -170,6 +175,7 @@ export function fakeSpawn(
       deleted: [],
       env: process.env ?? {},
       hold: options.hold ?? false,
+      endOnSteer: false,
       killed: false,
       ask: (method, params) => {
         const requestId = `goose-${++requests}`;
@@ -281,6 +287,7 @@ export function fakeSpawn(
               .map((block) => block.text)
               .join(""),
           );
+          if (fake.endOnSteer) turn.finish();
           return reply(id, { runId: turn.runId, messageId: "m" });
         }
         case "session/cancel":

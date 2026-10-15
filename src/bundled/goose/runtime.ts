@@ -18,6 +18,7 @@ import {
   type StandaloneTurn,
   type TurnResult,
 } from "../../features/agents/service";
+import { meChat } from "../../features/agents/me-chat";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -219,9 +220,23 @@ export class GooseRuntime {
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
+    // Frozen for the turn: its key, prompt, tools and posts all follow it.
+    const topLevel = await meChat(
+      () => this.relay(agent.pubkey),
+      agent.owner,
+      channel,
+      signal,
+    );
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) => {
-      const turn = await this.turn(entry, agent.pubkey, event, channel, fresh);
+      const turn = await this.turn(
+        entry,
+        agent.pubkey,
+        event,
+        channel,
+        topLevel,
+        fresh,
+      );
       const { channel: where } = turn;
       return {
         key: turn.key,
@@ -239,15 +254,19 @@ export class GooseRuntime {
     const { key, text, place } = await prompt(false);
     entry.contexts.set(
       key,
-      key === channel
-        ? { channel }
-        : { channel, root: threadReference(event)?.rootId ?? event.id },
+      topLevel
+        ? { channel, topLevel }
+        : key === channel
+          ? { channel }
+          : { channel, root: threadReference(event)?.rootId ?? event.id },
     );
     const done = entry.sessions.deliver(key, text, event.created_at, {
       steer: steerPrompt(text),
       fresh: async () => (await prompt(true)).text,
       title: sessionTitle(entry.name, place, key.split("/")[1]),
-      activityScope: threadReference(event)?.rootId ?? event.id,
+      activityScope: topLevel
+        ? channel
+        : (threadReference(event)?.rootId ?? event.id),
       ...(step ? { step } : {}),
       ...(acknowledged ? { acknowledged } : {}),
       ...(superseded ? { superseded } : {}),
@@ -257,10 +276,17 @@ export class GooseRuntime {
     void done
       .then((result) => {
         if (!result.ok)
-          return this.report(agent, channel, event, result.error ?? "");
+          return this.report(
+            agent,
+            channel,
+            event,
+            result.error ?? "",
+            topLevel,
+          );
         // An answer goose wrote without `send` is posted for it, so the
         // thread is not left waiting.
-        if (result.text) return this.post(agent, channel, event, result.text);
+        if (result.text)
+          return this.post(agent, channel, event, result.text, topLevel);
       })
       .catch((error) => console.warn("goose turn failed", error))
       .finally(() => this.notify());
@@ -297,22 +323,26 @@ export class GooseRuntime {
     channel: string,
     event: EventData,
     error: string,
+    topLevel: boolean,
   ) {
     return this.post(
       agent,
       channel,
       event,
       `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
+      topLevel,
       [["p", agent.owner]],
     );
   }
 
-  /** Replies in the event's thread as the agent. */
+  /** Replies as the agent in the event's thread, or at a Me chat's top
+   * level. */
   private post(
     agent: AgentHandle,
     channel: string,
     event: EventData,
     content: string,
+    topLevel: boolean,
     tags: string[][] = [],
   ) {
     return agent
@@ -321,7 +351,9 @@ export class GooseRuntime {
         content,
         tags: [
           ["h", channel],
-          ["e", threadReference(event)?.rootId ?? event.id, "", "reply"],
+          ...(topLevel
+            ? []
+            : [["e", threadReference(event)?.rootId ?? event.id, "", "reply"]]),
           ...tags,
         ],
       })
@@ -334,6 +366,7 @@ export class GooseRuntime {
     self: string,
     event: EventData,
     channelId: string,
+    topLevel: boolean,
     fresh = false,
   ) {
     const snapshot = this.relay(self)?.snapshot();
@@ -344,15 +377,19 @@ export class GooseRuntime {
     const dm = summary?.channelType === "dm";
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
-    const scope = entry.config.scope;
+    // A Me chat is one conversation, as a DM is.
     const key =
-      dm || scope === "channel" ? channelId : `${channelId}/${rootId}`;
+      topLevel || dm || entry.config.scope === "channel"
+        ? channelId
+        : `${channelId}/${rootId}`;
+    // The conversation it was admitted to, not the scope as it is now.
+    const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
     let earlier: readonly EventData[] = [];
-    if (session && (thread || dm))
+    if (session && (thread || dm || topLevel))
       try {
         const events = await session.read(
-          thread
+          thread && !topLevel
             ? [
                 { ids: [rootId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
@@ -394,6 +431,7 @@ export class GooseRuntime {
       key,
       event,
       scope,
+      topLevel,
       channel: {
         id: channelId,
         ...(summary?.name ? { name: summary.name } : {}),

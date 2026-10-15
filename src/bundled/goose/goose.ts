@@ -16,15 +16,20 @@ export type Spawn = (
 ) => Promise<HostProcess>;
 export type ServeMcp = (handler: McpHandler) => Promise<HostMcpServer>;
 
+/** The most of a turn's text kept, to post when it answers nowhere in Buzz. */
+const WRITTEN_LIMIT = 20_000;
+/** The Buzz tools that answer where people see it. A read, or a send that
+ * failed, still leaves goose's text to post. */
+const ANSWERS = new Set(["send", "edit", "react"]);
+const STOPPED =
+  "Buzz stopped this session's tools: another program used their token";
+
 /** How a burst of work ended: every message sent so far has been answered,
  * or the session or its process is gone. */
-/** The most of a turn's text kept, to post when it calls no Buzz tool. */
-const WRITTEN_LIMIT = 20_000;
-
 export type Settled = Readonly<{
   ok: boolean;
   error?: string;
-  /** What goose wrote, when it called no Buzz tool. Nobody in Buzz saw it. */
+  /** What goose wrote, when it answered nowhere in Buzz. Nobody saw it. */
   text?: string;
 }>;
 
@@ -188,6 +193,17 @@ export class GooseProcess {
       url: server.url,
       headers: server.headers,
     };
+    // The host stops a server whose token a second client used, so the
+    // session's tools may be someone else's. A session closed here has
+    // already left `sessions`.
+    let stopped = false;
+    void server?.closed.then(() => {
+      stopped = true;
+      if (session && this.sessions.get(session.id) === session) {
+        session.fail(STOPPED);
+        void this.close(session);
+      }
+    });
     let sessionId: string;
     try {
       ({ sessionId } = (await this.request("session/new", {
@@ -209,6 +225,10 @@ export class GooseProcess {
     }
     session = new GooseSession(this, sessionId, server);
     this.sessions.set(sessionId, session);
+    if (stopped) {
+      void this.close(session);
+      throw new Error(STOPPED);
+    }
     try {
       // Appended under goose's own prompt, which carries each extension's
       // instructions; `set` would replace it, and render ours as a template.
@@ -335,18 +355,16 @@ export class GooseProcess {
       method,
       params,
     })) as Wire;
-    if (method === "tools/call") session?.used();
     const call = (params ?? {}) as {
       name?: unknown;
       arguments?: { final?: unknown };
     };
-    if (
+    const worked =
       method === "tools/call" &&
       !response.error &&
-      call.name === "send" &&
-      call.arguments?.final === true &&
-      !(response.result as { isError?: unknown } | undefined)?.isError
-    )
+      !(response.result as { isError?: unknown } | undefined)?.isError;
+    if (worked && ANSWERS.has(String(call.name))) session?.answered();
+    if (worked && call.name === "send" && call.arguments?.final === true)
       session?.finished();
     return response;
   }
@@ -372,7 +390,7 @@ export class GooseSession {
   private readonly active = new Map<string, ActivityReceipt>();
   private lastStep = "";
   private lastError: string | undefined;
-  /** Whether this work called a Buzz tool, and what goose wrote meanwhile: a
+  /** Whether this work answered in Buzz, and what goose wrote meanwhile: a
    * provider failure comes back as text, and text is never posted. */
   private acted = false;
   private written = "";
@@ -418,8 +436,8 @@ export class GooseSession {
       this.settle({ ok: true });
   }
 
-  /** goose called a Buzz tool. */
-  used() {
+  /** A Buzz tool that answers, such as `send`, succeeded. */
+  answered() {
     this.acted = true;
   }
 
@@ -484,8 +502,9 @@ export class GooseSession {
       this.acknowledge(activity);
     } finally {
       this.steering--;
+      // Runs the next turn, or ends work whose turn ended during the steer.
+      void this.pump();
     }
-    void this.pump();
   }
 
   private async pump() {
@@ -526,7 +545,7 @@ export class GooseSession {
     activity.acknowledged?.();
   }
   private done() {
-    // Work that wrote text and never acted in Buzz answered only goose: a
+    // Work that wrote text and never answered in Buzz answered only goose: a
     // model that forgot `send`, or goose saying it cannot reach its provider.
     const text = this.acted ? "" : this.written.trim();
     const error = this.lastError;

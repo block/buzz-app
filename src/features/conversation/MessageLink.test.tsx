@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { afterEach, assert, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
@@ -18,16 +18,8 @@ import type { LinkRenderer } from "./contracts";
 import { MessageLink, resolveLink } from "./MessageLink";
 import { createRelaySession } from "../relay/session";
 import { matchesEvent } from "../relay/projection";
-import {
-  flush,
-  keypair,
-  roster,
-  scriptedTransport,
-  signed,
-} from "../relay/testing";
+import { keypair, signed } from "../relay/testing";
 import { sessionDescription } from "../sessions/metadata";
-import type { RelaySession } from "../relay/session";
-import type { ChannelList } from "../relay/contracts";
 import { ConversationPresentation } from "./ConversationPresentation";
 import { LinkThreadTabContext } from "./LinkLabelContext";
 
@@ -346,109 +338,13 @@ it("does not present or replay copy feedback completed in an inactive conversati
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
 });
 
-it("old and new generated session links react to names without changing authored bytes or navigation", () => {
-  const id = "11111111-1111-4111-8111-111111111111",
-    viewer = "a".repeat(64);
-  const original = `Session · ${id.slice(0, 8)}`;
-  let list: ChannelList = {
-    status: "ready",
-    channels: [
-      { id, name: "First prompt", channelType: "session", members: [viewer] },
-    ],
-  };
-  const listeners = new Set<() => void>();
-  const session = {
-    viewer,
-    channels: {
-      list: () => list,
-      subscribeList: (listener: () => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-    },
-  } as unknown as RelaySession;
-  const open = vi.fn(() => true);
-  const link = (label: string) => (
-    <MessageLink
-      url={`buzz://channel/${id}`}
-      session={session}
-      registry={undefined}
-      onOpenLink={open}
-      label={label}
-    >
-      {label}
-    </MessageLink>
-  );
-  const mounted = render(
-    <>
-      {link(original)}
-      {link("Authored label")}
-    </>,
-  );
-  const old = screen.getByRole("link", { name: original });
-  old.focus();
-  const update = (patch: Partial<ChannelList["channels"][number]>) =>
-    act(() => {
-      list = {
-        ...list,
-        channels: list.channels.map((channel) => ({ ...channel, ...patch })),
-      };
-      for (const notify of listeners) notify();
-    });
-  update({
-    name: "Make contrast meet accessibility standards",
-    sessionNamed: true,
-  });
-  expect(
-    screen.getByRole("link", {
-      name: "Session: Make contrast meet accessibility standards",
-    }),
-  ).toBe(old);
-  expect(old).toHaveFocus();
-  expect(old).toHaveAttribute("data-link-label", original);
-  expect(old).toHaveAttribute("href", `buzz://channel/${id}`);
-  expect(
-    screen.getByRole("link", { name: "Authored label" }),
-  ).toHaveTextContent("Authored label");
-  mounted.rerender(
-    <>
-      {link(original)}
-      {link(original)}
-    </>,
-  );
-  expect(
-    screen.getAllByRole("link", {
-      name: "Session: Make contrast meet accessibility standards",
-    }),
-  ).toHaveLength(2);
-  update({ cached: true });
-  expect(screen.queryByRole("link", { name: /Session:/ })).toBeNull();
-  act(() => {
-    list = {
-      ...list,
-      channels: [
-        { id, name: "First prompt", channelType: "session", members: [viewer] },
-      ],
-    };
-    for (const notify of listeners) notify();
-  });
-  expect(screen.getAllByRole("link", { name: original })).toHaveLength(2);
-  expect(open).not.toHaveBeenCalled();
-  fireEvent.click(
-    screen.getAllByRole("link", { name: original })[0] as HTMLElement,
-  );
-  expect(open).toHaveBeenCalledOnce();
-});
-
-it("a signed details rename updates an already-mounted generated link through the actual session projection", async () => {
+it("a signed details rename keeps generated link bytes, numeric label and navigation unchanged", async () => {
   const id = "11111111-1111-4111-8111-111111111111",
     viewer = keypair(),
     relay = keypair();
   let clock = 100,
     name = "First prompt",
-    about = sessionDescription(undefined, {
-      naming: { automatic: "First prompt", explicit: false },
-    });
+    about = sessionDescription();
   const record = (kind: number, tags: string[][]) =>
     signed(relay, {
       kind,
@@ -512,98 +408,10 @@ it("a signed details rename updates an already-mounted generated link through th
       owner.session.channelDetails.save(base, {
         ...base,
         name: "Accessible contrast",
-        description: sessionDescription(undefined, {
-          naming: { automatic: "First prompt", explicit: true },
-        }),
       }),
     );
-    expect(
-      await screen.findByRole("link", { name: "Session: Accessible contrast" }),
-    ).toBe(anchor);
+    expect(await screen.findByRole("link", { name: label })).toBe(anchor);
     expect(anchor).toHaveAttribute("data-link-label", label);
-    expect(publish).not.toHaveBeenCalled();
-  } finally {
-    cleanup();
-    owner.dispose();
-  }
-});
-
-it("updates a mounted generated link when signed naming provenance alone wins a same-second replacement", async () => {
-  const id = "11111111-1111-4111-8111-111111111111";
-  const viewer = keypair(),
-    relay = keypair();
-  const metadata = (explicit: boolean) =>
-    signed(relay, {
-      kind: 39000,
-      created_at: 100,
-      content: "",
-      tags: [
-        ["d", id],
-        ["name", "Same title"],
-        ["t", "stream"],
-        ["private"],
-        [
-          "about",
-          sessionDescription(undefined, { automatic: "Same title", explicit }),
-        ],
-      ],
-    });
-  // Install the higher ID first so the second
-  // event wins the actual replaceable-event tie-break, without changing time/name.
-  const replacements = [metadata(true), metadata(false)].sort((a, b) =>
-    b.id.localeCompare(a.id),
-  );
-  const [before, after] = replacements;
-  assert(before && after);
-  const script = scriptedTransport(viewer.pubkey, relay.pubkey);
-  const publish = vi.fn(async () => {});
-  const owner = createRelaySession({
-    ...script.transport,
-    writer: {
-      kinds: [9],
-      sign: async (template) => signed(viewer, template),
-      publish,
-    },
-  });
-  const original = `Session · ${id.slice(0, 8)}`;
-  const label = (event: (typeof replacements)[number]) =>
-    event.tags.some(
-      ([key, value]) => key === "about" && value?.includes('"explicit":true'),
-    )
-      ? "Session: Same title"
-      : original;
-  try {
-    owner.session.channels.ensureList();
-    script.next().respond([roster(relay, id, [viewer.pubkey]), before]);
-    await waitFor(() =>
-      expect(owner.session.channels.list().status).toBe("ready"),
-    );
-    const summary = owner.session.channels.list().channels[0];
-    render(
-      <MessageLink
-        session={owner.session}
-        url={`buzz://channel/${id}`}
-        registry={undefined}
-        onOpenLink={() => true}
-        label={original}
-      >
-        {original}
-      </MessageLink>,
-    );
-    const anchor = screen.getByRole("link", { name: label(before) });
-    await act(async () => {
-      owner.session.channels.refreshList?.();
-      script.next().respond([roster(relay, id, [viewer.pubkey]), after]);
-      await flush();
-    });
-    expect(owner.session.channels.list().channels[0]).not.toBe(summary);
-    expect(owner.session.channels.list().channels[0]).toMatchObject({
-      name: "Same title",
-      updatedAt: 100,
-    });
-    expect(screen.getByRole("link", { name: label(after) })).toBe(anchor);
-    expect(anchor).toHaveAttribute("data-link-label", original);
-    expect(anchor).toHaveAttribute("href", `buzz://channel/${id}`);
     expect(publish).not.toHaveBeenCalled();
   } finally {
     cleanup();

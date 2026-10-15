@@ -68,11 +68,7 @@ export function validChannelCommand(event) {
       (!about ||
         (about.length === 2 &&
           [...aboutValue].length <= 1000 &&
-          ((session !== undefined &&
-            (!session.naming ||
-              session.naming.explicit ||
-              session.naming.automatic === tags[1][1])) ||
-            !aboutValue.includes("Buzz session (")))) &&
+          (session !== undefined || !aboutValue.includes("Buzz session (")))) &&
       (!ttl ||
         (ttl.length === 2 &&
           /^(?:[1-9]\d*)$/.test(ttlValue) &&

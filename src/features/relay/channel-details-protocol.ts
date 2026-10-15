@@ -114,20 +114,13 @@ export function validateDetailsDraft(
       !next ||
       next.parentId ||
       draft.visibility !== base?.visibility ||
-      (draft.description !== base?.description &&
-        (!next.naming ||
-          next.naming.automatic !== metadata.naming?.automatic)) ||
+      draft.description !== base?.description ||
       (draft.labels !== undefined &&
         !sameLabels(draft.labels, base.labels ?? []))
     )
       throw new Error(
         "Only the name and lifetime of a session can be changed here.",
       );
-    if (next.naming && !next.naming.explicit) {
-      if (!next.naming.automatic)
-        throw new Error("The automatic session name could not be verified.");
-      draft = { ...draft, name: next.naming.automatic };
-    }
     draft = { ...draft, description: "" };
   }
   const errors = detailsDraftErrors(draft);
@@ -193,9 +186,6 @@ export function detailsTemplate(
       tags: [
         ["h", lifecycleChannelId(id)],
         ["name", draft.name],
-        ...(draft.description !== base.description
-          ? [["about", draft.description]]
-          : []),
         ...(draft.ttlSeconds !== base.ttlSeconds
           ? [
               [
@@ -317,16 +307,6 @@ export function validateDetailsTemplate(event: EventTemplate): void {
   )
     throw new Error("Invalid channel details command.");
   const labels = detailsLabels(event.tags.filter(([key]) => key === "t"));
-  const session = sessionMetadata(event.tags[2]?.[1]);
-  if (
-    session &&
-    (session.parentId ||
-      !session.naming ||
-      event.tags.some(([key]) => key === "visibility" || key === "t") ||
-      (!session.naming.explicit &&
-        event.tags[1]?.[1] !== session.naming.automatic))
-  )
-    throw new Error("Invalid session naming command.");
   const visibility = event.tags.find(([key]) => key === "visibility");
   if (visibility && !["private", "open"].includes(visibility[1] ?? ""))
     throw new Error("Invalid channel details command.");
@@ -334,9 +314,7 @@ export function validateDetailsTemplate(event: EventTemplate): void {
   lifecycleChannelId(event.tags[0]?.[1] ?? "");
   validateDetailsDraft({
     name: event.tags[1]?.[1] ?? "",
-    description: sessionMetadata(event.tags[2]?.[1])
-      ? ""
-      : (event.tags[2]?.[1] ?? ""),
+    description: event.tags[2]?.[1] ?? "",
     visibility: visibility?.[1] === "private" ? "private" : "public",
     ttlSeconds: ttl === "" ? undefined : parseDetailsTtl(ttl),
     ...(event.tags.some(([key]) => key === "t") ? { labels } : {}),

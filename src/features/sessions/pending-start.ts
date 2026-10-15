@@ -12,7 +12,9 @@ export type PendingStart = {
   messageId?: string;
   ttlSeconds?: number | undefined;
   name?: string;
+  /** Legacy local receipt fallback, used only when no title was frozen. */
   automaticName?: string;
+  /** Legacy receipt hint; no longer used for writes or eligibility. */
   explicitName?: boolean;
   setup?: SessionSetup;
   setupDone?: boolean;

@@ -20,16 +20,8 @@ html[data-keyboard-navigation] .sessionLink:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: var(--space-half);
-  min-width: 0;
-  font-size: var(--text-body-sm);
-}
-.sessionChip > .sessionName {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-.sessionChip > .sessionPrefix {
   white-space: nowrap;
+  font-size: var(--text-body-sm);
 }
 .sessionChip svg {
   flex-shrink: 0;

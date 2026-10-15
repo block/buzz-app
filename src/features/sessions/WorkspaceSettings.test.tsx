@@ -240,23 +240,14 @@ it("recreates deleted section defaults using the tombstone revision", async () =
 
 // The combined modal talks to the real signed details owner; Canvas remains its
 // independent revision/receipt boundary, held explicitly for orchestration tests.
-function combined(naming?: Parameters<typeof sessionDescription>[1]) {
+function combined(personal = false) {
   const id = "11111111-1111-4111-8111-111111111111";
   const viewer = keypair(),
     relay = keypair();
-  const suppliedNaming =
-    naming && typeof naming === "object" && "explicit" in naming
-      ? naming
-      : naming && typeof naming === "object"
-        ? naming.naming
-        : undefined;
   let ttl: number | undefined = 600,
     clock = 100,
-    description = sessionDescription(undefined, naming),
-    name =
-      suppliedNaming?.explicit === false
-        ? (suppliedNaming.automatic ?? "Plan")
-        : "Plan";
+    description = sessionDescription(undefined, personal),
+    name = "Plan";
   const record = (kind: number, tags: string[][]) =>
     signed(relay, {
       kind,
@@ -679,8 +670,8 @@ it("shows independent Canvas and lifetime read failures with both recovery actio
   expect(saveChanges()).toBeDisabled();
 });
 
-it("saves name and lifetime together after Canvas and resets to signed automatic provenance", async () => {
-  const h = combined({ automatic: "First prompt", explicit: true });
+it("saves name and lifetime together after Canvas; clearing later preserves the confirmed title", async () => {
+  const h = combined();
   await editBoth();
   const name = screen.getByRole("textbox", { name: "Session name (optional)" });
   fireEvent.change(name, { target: { value: "  Better name  " } });
@@ -702,23 +693,17 @@ it("saves name and lifetime together after Canvas and resets to signed automatic
   );
   fireEvent.click(saveChanges());
   await waitFor(() => expect(h.close).toHaveBeenCalledTimes(2));
-  expect(h.sign.mock.calls[1]?.[0].tags).toEqual([
-    ["h", h.id],
-    ["name", "First prompt"],
-    [
-      "about",
-      sessionDescription(undefined, {
-        automatic: "First prompt",
-        explicit: false,
-      }),
-    ],
-  ]);
+  expect(h.sign).toHaveBeenCalledOnce();
+  expect(await h.details.capability.load(h.id)).toMatchObject({
+    name: "Better name",
+    description: sessionDescription(),
+  });
   expect(h.canvas.save).toHaveBeenCalledOnce();
 });
-it.each([undefined, { explicit: true }])(
-  "historical blank name preserves the saved title and provenance (%j)",
-  async (naming) => {
-    const h = combined(naming);
+it.each([false, true])(
+  "historical blank name preserves the saved title and personal metadata (%j)",
+  async (personal) => {
+    const h = combined(personal);
     const name = await screen.findByRole("textbox", {
       name: "Session name (optional)",
     });
@@ -733,7 +718,7 @@ it.each([undefined, { explicit: true }])(
     expect(h.canvas.save).not.toHaveBeenCalled();
     expect(await h.details.capability.load(h.id)).toMatchObject({
       name: "Plan",
-      description: sessionDescription(undefined, naming),
+      description: sessionDescription(undefined, personal),
     });
     h.mounted.unmount();
     render(h.view());
@@ -742,10 +727,10 @@ it.each([undefined, { explicit: true }])(
     ).toHaveValue("Plan");
   },
 );
-it.each([undefined, { explicit: true }])(
-  "historical blank name allows Canvas and lifetime saves without changing provenance, including retry (%j)",
-  async (naming) => {
-    const h = combined(naming);
+it.each([false, true])(
+  "historical blank name allows Canvas and lifetime saves without changing session metadata, including retry (%j)",
+  async (personal) => {
+    const h = combined(personal);
     await editBoth();
     fireEvent.change(
       screen.getByRole("textbox", { name: "Session name (optional)" }),
@@ -782,7 +767,7 @@ it.each([undefined, { explicit: true }])(
     const saved = await h.details.capability.load(h.id);
     expect(saved).toMatchObject({
       name: "Plan",
-      description: sessionDescription(undefined, naming),
+      description: sessionDescription(undefined, personal),
     });
     expect(saved.ttlSeconds).toBeUndefined();
   },
@@ -849,7 +834,7 @@ it("uncertain name survives remount and reconciles without publishing or saving 
 });
 
 it("explicit-to-explicit uncertain rename is still the same settings receipt", async () => {
-  const h = combined({ automatic: "Original prompt", explicit: true });
+  const h = combined();
   await editBoth();
   fireEvent.change(
     screen.getByRole("textbox", { name: "Session name (optional)" }),
@@ -936,26 +921,23 @@ it("failed initial read then Reload keeps the uncertain name through check and C
   expect(h.publish).toHaveBeenCalledOnce();
   expect(h.canvas.save).toHaveBeenCalledTimes(2);
 });
-it("automatic sessions can change only lifetime while the name field stays blank", async () => {
-  const h = combined({ automatic: "First prompt", explicit: false });
+it("a saved title stays visible during a lifetime-only save", async () => {
+  const h = combined();
   await editBoth();
   expect(
     screen.getByRole("textbox", { name: "Session name (optional)" }),
-  ).toHaveValue("");
+  ).toHaveValue("Plan");
   fireEvent.click(saveChanges());
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
     ["h", h.id],
-    ["name", "First prompt"],
+    ["name", "Plan"],
     ["ttl", ""],
   ]);
 });
 
-it("renaming and resetting a personal session preserve its signed personal marker", async () => {
-  const h = combined({
-    personal: true,
-    naming: { automatic: "First prompt", explicit: true },
-  });
+it("renaming and clearing a personal session preserve its signed personal marker", async () => {
+  const h = combined(true);
   fireEvent.change(
     await screen.findByRole("textbox", { name: "Session name (optional)" }),
     { target: { value: "Solo title" } },
@@ -967,10 +949,8 @@ it("renaming and resetting a personal session preserve its signed personal marke
     ["name", "Solo title"],
   ]);
   expect(await h.details.capability.load(h.id)).toMatchObject({
-    description: sessionDescription(undefined, {
-      personal: true,
-      naming: { automatic: "First prompt", explicit: true },
-    }),
+    name: "Solo title",
+    description: sessionDescription(undefined, true),
   });
   h.mounted.unmount();
   render(h.view());
@@ -980,11 +960,9 @@ it("renaming and resetting a personal session preserve its signed personal marke
   );
   fireEvent.click(saveChanges());
   await waitFor(() => expect(h.close).toHaveBeenCalledTimes(2));
+  expect(h.publish).toHaveBeenCalledOnce();
   expect(await h.details.capability.load(h.id)).toMatchObject({
-    name: "First prompt",
-    description: sessionDescription(undefined, {
-      personal: true,
-      naming: { automatic: "First prompt", explicit: false },
-    }),
+    name: "Solo title",
+    description: sessionDescription(undefined, true),
   });
 });

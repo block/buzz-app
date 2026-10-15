@@ -225,7 +225,6 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     "Fresh start",
     undefined,
     undefined,
-    undefined,
     false,
   );
 });
@@ -1401,7 +1400,6 @@ it.each(
       "My chosen title",
       undefined,
       600,
-      { automatic: "New project chat", explicit: true },
       true,
     );
   },
@@ -1555,7 +1553,7 @@ it("allows changing an unavailable assistant before any remote creation", async 
 });
 
 it.each(["", "Make contrast accessible"])(
-  "freezes optional name %j and automatic fallback before asynchronous setup",
+  "freezes the chosen or first-prompt name %j before asynchronous setup",
   async (name) => {
     const h = setup(),
       user = userEvent.setup(),
@@ -1584,9 +1582,7 @@ it.each(["", "Make contrast accessible"])(
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
     for (const call of h.workSessions.create.mock.calls) {
       expect(call[1]).toBe(name || "Original prompt");
-      expect(call[4]).toEqual(
-        name ? { automatic: "Original prompt", explicit: true } : undefined,
-      );
+      expect(call[4]).toBe(false);
     }
     expect(h.messages.send).toHaveBeenCalledOnce();
   },
@@ -1623,12 +1619,10 @@ it.each([
   { source: "draft", fields: { name: { invalid: true } } },
   { source: "draft", fields: { name: "x".repeat(121) } },
   { source: "receipt", fields: { name: { invalid: true } } },
-  { source: "receipt", fields: { automaticName: null } },
-  { source: "receipt", fields: { automaticName: 7 } },
-  { source: "receipt", fields: { automaticName: "x".repeat(81) } },
-  { source: "receipt", fields: { automaticName: " untrimmed " } },
-  { source: "receipt", fields: { explicitName: "true" } },
-  { source: "receipt", fields: { explicitName: undefined } },
+  { source: "receipt", fields: { name: "", automaticName: null } },
+  { source: "receipt", fields: { name: "", automaticName: 7 } },
+  { source: "receipt", fields: { name: "", automaticName: "x".repeat(81) } },
+  { source: "receipt", fields: { name: "", automaticName: " untrimmed " } },
 ])(
   "rejects malformed persisted naming before start side effects: $source $fields",
   async ({ source, fields }) => {
@@ -1658,7 +1652,6 @@ it.each([
       writeView("test", `${key}:pending`, {
         id: parent.id,
         text: "Keep this draft",
-        name: "Named",
         automaticName: "Keep this draft",
         explicitName: true,
         ...fields,
@@ -1792,12 +1785,7 @@ it.each(
       ]);
       expect(created?.tags).toContainEqual([
         "about",
-        sessionDescription(undefined, {
-          personal,
-          ...(explicit
-            ? { naming: { automatic: "Original prompt", explicit: true } }
-            : {}),
-        }),
+        sessionDescription(undefined, personal),
       ]);
       expect(created?.tags).toContainEqual(["ttl", "600"]);
       expect(publish.mock.calls.map(([event]) => event.kind)).toEqual([
@@ -1809,5 +1797,55 @@ it.each(
       lifetime.abort();
       outbox.dispose();
     }
+  },
+);
+
+it.each([
+  {
+    fields: {
+      name: "Frozen title",
+      automaticName: null,
+      explicitName: "obsolete",
+    },
+    title: "Frozen title",
+  },
+  {
+    fields: {
+      name: "",
+      automaticName: "Old automatic title",
+      explicitName: true,
+    },
+    title: "Old automatic title",
+  },
+  { fields: {}, title: "Original receipt prompt" },
+])(
+  "recovers old pending naming fields without changing original intent: $fields",
+  async ({ fields, title }) => {
+    const h = setup(),
+      user = userEvent.setup(),
+      started = vi.fn();
+    writeView("test", "sessions:pending", {
+      id: parent.id,
+      text: "Original receipt prompt",
+      ...fields,
+    });
+    render(
+      <NewSessionComposer
+        session={h.session}
+        scope="test"
+        onStarted={started}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    expect(h.workSessions.create).toHaveBeenCalledWith(
+      parent.id,
+      title,
+      undefined,
+      undefined,
+      false,
+    );
+    expect(h.workSessions.create).toHaveBeenCalledOnce();
+    expect(h.messages.send).toHaveBeenCalledOnce();
   },
 );

@@ -681,7 +681,7 @@ it.each([false, true])(
   "renames standalone sessions with a name-only command and confirmed relay readback (personal=%s)",
   async (personal) => {
     const h = harness();
-    const about = sessionDescription(undefined, { personal });
+    const about = sessionDescription(undefined, personal);
     h.set([h.metadata("Old title", about, "private"), ...h.events().slice(1)]);
     const base = await h.owner.capability.load(id);
     expect(base.canEdit).toBe(true);
@@ -907,53 +907,40 @@ it.each([
   },
 );
 
-it("one signed session naming edit preserves fallback and confirms the full metadata", async () => {
+it("a signed rename keeps the exact legacy session metadata and rejects a provenance extension", async () => {
   const h = harness();
-  const before = sessionDescription(undefined, {
-    naming: { automatic: "First prompt", explicit: false },
-  });
+  const description = sessionDescription();
   h.set([
-    h.metadata("First prompt", before, "private"),
+    h.metadata("First prompt", description, "private"),
     ...h.events().slice(1),
   ]);
   const base = await h.owner.capability.load(id);
-  const description = sessionDescription(undefined, {
-    naming: { automatic: "First prompt", explicit: true },
-  });
   h.publish.mockImplementationOnce(async () =>
     h.set([
       h.metadata("Named", description, "private"),
       ...h.events().slice(1),
     ]),
   );
-  await h.owner.capability.save(base, { ...base, name: "Named", description });
+  await h.owner.capability.save(base, { ...base, name: "Named" });
   const command = h.sign.mock.calls[0]?.[0];
   assert(command);
   expect(command.tags).toEqual([
     ["h", id],
     ["name", "Named"],
-    ["about", description],
   ]);
   expect(() => validateDetailsTemplate(command)).not.toThrow();
   await expect(
     h.owner.capability.save(await h.owner.capability.load(id), {
       ...base,
       name: "Invented",
-      description: sessionDescription(undefined, {
-        naming: {
-          automatic: "Invented",
-          explicit: false,
-        },
-      }),
+      description: `${description}\nnaming:{"explicit":true}`,
     }),
   ).rejects.toThrow("Only the name and lifetime");
   expect(h.publish).toHaveBeenCalledOnce();
 });
 it("a name-only writer can rename automatic sessions without blocking later lifetime edits", async () => {
   const h = harness();
-  const description = sessionDescription(undefined, {
-    naming: { automatic: "First prompt", explicit: false },
-  });
+  const description = sessionDescription();
   const metadata = (name: string, ttl?: number) =>
     h.record(39000, [
       ["name", name],
@@ -995,14 +982,8 @@ it.each([undefined, 600])(
   "session naming preserves NIP-CL labels with lifetime %s",
   async (ttlSeconds) => {
     const h = harness("owner", true);
-    const before = sessionDescription(undefined, {
-      automatic: "First prompt",
-      explicit: false,
-    });
-    const after = sessionDescription(undefined, {
-      automatic: "First prompt",
-      explicit: true,
-    });
+    const before = sessionDescription();
+    const after = sessionDescription();
     const metadata = (name: string, description: string, ttl?: number) =>
       h.record(39000, [
         ["name", name],
@@ -1038,7 +1019,6 @@ it.each([undefined, 600])(
     expect(command.tags).toEqual([
       ["h", id],
       ["name", "Named"],
-      ["about", after],
       ...(ttlSeconds === undefined ? [] : [["ttl", String(ttlSeconds)]]),
     ]);
     expect((await h.owner.capability.load(id)).labels).toEqual(["for-you"]);

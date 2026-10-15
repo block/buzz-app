@@ -219,11 +219,6 @@ export class DiscoveryState {
         : {}),
       ...(this.cached.has(id) ? { cached: true as const } : {}),
       name: this.name(id),
-      ...(channelType === "session" &&
-      event &&
-      sessionMetadata(tag(event, "about"))?.naming?.explicit
-        ? { sessionNamed: true as const }
-        : {}),
       ...(event
         ? {
             visibility: channelVisibility(event),

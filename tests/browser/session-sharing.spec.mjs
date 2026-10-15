@@ -39,10 +39,7 @@ test("a session chip opens the same authorized conversation in the channel side 
             tag[0] === "name"
               ? ["name", title]
               : tag[0] === "about"
-                ? [
-                    "about",
-                    'Buzz session (buzz.sessions/v1)\nnaming:{"automatic":"First prompt","explicit":true}',
-                  ]
+                ? ["about", "Buzz session (buzz.sessions/v1)"]
                 : tag,
           ),
         });
@@ -60,7 +57,7 @@ test("a session chip opens the same authorized conversation in the channel side 
     "[Session · beta](buzz://channel/beta)",
   );
   const row = destination.locator(`[data-message-id="${link.id}"]`);
-  const chip = row.getByRole("link", { name: `Session: ${title}` });
+  const chip = row.getByRole("link", { name: "Session · beta" });
   await expect(chip).toBeVisible();
   await expect(chip.locator("svg")).toBeVisible();
   await chip.click();

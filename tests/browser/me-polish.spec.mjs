@@ -1645,7 +1645,6 @@ test("unified session naming and lifetime retain host focus and save only explic
   expect(event.tags).toEqual([
     ["h", id],
     ["name", "Make contrast meet accessibility standards"],
-    ["about", 'Buzz session (buzz.sessions/v1)\nnaming:{"explicit":true}'],
     ["ttl", "1209600"],
   ]);
   const saved = readbacks.find((entry) =>
@@ -1655,7 +1654,7 @@ test("unified session naming and lifetime retain host focus and save only explic
   expect(verifyEvent(saved)).toBe(true);
   expect(saved.tags).toContainEqual([
     "about",
-    'Buzz session (buzz.sessions/v1)\nnaming:{"explicit":true}',
+    "Buzz session (buzz.sessions/v1)",
   ]);
   expect(saved.tags).toContainEqual(["private"]);
   expect(saved.tags).not.toContainEqual(["public"]);

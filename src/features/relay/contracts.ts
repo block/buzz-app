@@ -16,8 +16,6 @@ export type MessageReaction = Readonly<{
 export type ChannelSummary = Readonly<{
   id: string;
   name: string;
-  /** Explicit naming from signed session metadata; absent is legacy/automatic. */
-  sessionNamed?: true;
   /** Ordinary channel prose; session machine metadata is not a description. */
   description?: string | undefined;
   /** Explicit signed visibility; absent means unknown, not public. */

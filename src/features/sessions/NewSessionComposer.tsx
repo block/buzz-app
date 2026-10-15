@@ -151,20 +151,11 @@ export function NewSessionComposer({
       : {
           id: channelId,
           ttlSeconds: draftSettings.ttlSeconds,
-          automaticName:
-            canonicalDetailsName(
-              [...composerMarkdown(draft).trim().replace(/\s+/g, " ")]
-                .slice(0, 80)
-                .join(""),
-            ) || "Session",
           name:
             typeof draftSettings.name === "string"
-              ? canonicalDetailsName(draftSettings.name)
+              ? canonicalDetailsName(draftSettings.name) ||
+                automaticTitle(composerMarkdown(draft))
               : draftSettings.name,
-          explicitName:
-            typeof draftSettings.name === "string"
-              ? !!canonicalDetailsName(draftSettings.name)
-              : true,
           text: composerMarkdown(draft),
           draft,
         };
@@ -184,8 +175,21 @@ export function NewSessionComposer({
     try {
       if (current.name !== undefined && typeof current.name !== "string")
         throw new Error("The saved session name could not be verified.");
-      if (current.name === "" && current.automaticName !== undefined)
-        current.name = current.automaticName;
+      // Receipts from before optional naming have no frozen title. Transitional
+      // receipts may have a separate fallback; use it only if no title was saved.
+      if (!current.name) {
+        const fallback = current.automaticName;
+        if (
+          fallback !== undefined &&
+          (typeof fallback !== "string" ||
+            !fallback ||
+            [...fallback].length > 80 ||
+            fallback !== canonicalDetailsName(fallback))
+        )
+          throw new Error("The saved session name could not be verified.");
+        current.name =
+          fallback ?? automaticTitle(pending?.text ?? current.text);
+      }
       const errors = detailsDraftErrors({
         name: current.name ?? "Session",
         description: "",
@@ -194,16 +198,6 @@ export function NewSessionComposer({
       });
       if (current.name !== undefined && errors.name)
         throw new Error(errors.name);
-      if (
-        current.automaticName !== undefined &&
-        (typeof current.automaticName !== "string" ||
-          !current.automaticName ||
-          [...current.automaticName].length > 80 ||
-          current.automaticName !==
-            canonicalDetailsName(current.automaticName) ||
-          typeof current.explicitName !== "boolean")
-      )
-        throw new Error("The saved session name could not be verified.");
       const lifetimeError = errors.lifetime;
       if (lifetimeError || (parent && current.ttlSeconds !== undefined))
         throw new Error(
@@ -280,13 +274,9 @@ export function NewSessionComposer({
         }
         current.creationId = session.workSessions.create(
           current.id,
-          current.name ??
-            [...current.text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
+          current.name,
           parent?.id,
           current.ttlSeconds,
-          current.automaticName !== undefined && current.explicitName
-            ? { automatic: current.automaticName, explicit: true }
-            : undefined,
           personal,
         );
         save({ ...current });
@@ -591,5 +581,13 @@ export function NewSessionComposer({
         />
       )}
     </NewSessionView>
+  );
+}
+
+function automaticTitle(text: string) {
+  return (
+    canonicalDetailsName(
+      [...text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
+    ) || "Session"
   );
 }

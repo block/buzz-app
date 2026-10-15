@@ -1,4 +1,4 @@
-import cases from "../src/features/sessions/naming-contract.json" with {
+import cases from "../src/features/sessions/metadata-contract.json" with {
   type: "json",
 };
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
@@ -301,7 +301,7 @@ it("admits NIP-CL labels at the end of a channel creation, before the client id"
     expect(validChannelCommand(create(labels))).toBe(false);
 });
 
-it("uses the shared naming grammar for creation and signed-details commands", () => {
+it("preserves legacy creation metadata and rejects metadata rewrites at the details boundary", () => {
   for (const [key, accepted] of [
     ["accepted", true],
     ["rejected", false],
@@ -329,8 +329,7 @@ it("uses the shared naming grammar for creation and signed-details commands", ()
           ["about", row.about],
         ],
       };
-      if (accepted) expect(() => validateDetailsTemplate(edit)).not.toThrow();
-      else expect(() => validateDetailsTemplate(edit)).toThrow();
+      expect(() => validateDetailsTemplate(edit)).toThrow();
       if (accepted) {
         for (const tail of [
           ["visibility", "open"],
@@ -345,7 +344,7 @@ it("uses the shared naming grammar for creation and signed-details commands", ()
             ...edit,
             tags: [...edit.tags, ["ttl", ""]],
           }),
-        ).not.toThrow();
+        ).toThrow();
       }
     }
 });

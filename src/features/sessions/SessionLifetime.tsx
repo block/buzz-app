@@ -7,7 +7,7 @@ import {
   type ChannelDetails,
 } from "../relay/channel-details-protocol";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/work-sessions";
-import { sessionDescription, sessionMetadata } from "./metadata";
+import { sessionMetadata } from "./metadata";
 
 /** Presentation only: the details owner rechecks fresh signed edit authority. */
 export function canEditSessionLifetime(
@@ -55,11 +55,8 @@ export function useSessionLifetime({
   const metadata = base && sessionMetadata(base.description);
   const eligible = !!base?.canEdit && !!metadata && !metadata.parentId;
   const matchingAttempt = !!base && matchesLifetime(base, attempt?.draft);
-  // A historical title has no proven automatic fallback. Blank keeps its
-  // confirmed name and provenance rather than inventing either.
-  const normalized =
-    canonicalDetailsName(name) ||
-    (metadata?.naming?.automatic ? "" : confirmedName.current);
+  // Persisted automatic-name provenance is deferred. Blank preserves the current title.
+  const normalized = canonicalDetailsName(name) || confirmedName.current;
   const nameChanged = normalized !== confirmedName.current;
   const nameError =
     base && normalized
@@ -90,13 +87,11 @@ export function useSessionLifetime({
           setBase(next);
           const saved = details.snapshot(id);
           confirmedTtl.current = next.ttlSeconds;
-          confirmedName.current = adoptName(next);
+          confirmedName.current = next.name;
           setName(
-            adoptName(
-              matchesLifetime(next, saved?.draft)
-                ? { ...next, ...saved?.draft }
-                : next,
-            ),
+            (matchesLifetime(next, saved?.draft)
+              ? saved?.draft.name
+              : next.name) ?? next.name,
           );
           const ttl = matchesLifetime(next, saved?.draft)
             ? saved?.draft.ttlSeconds
@@ -139,18 +134,15 @@ export function useSessionLifetime({
               : next.ttlSeconds;
             setTtl(ttl);
             setName(
-              adoptName(
-                matchesLifetime(next, saved?.draft)
-                  ? { ...next, ...saved?.draft }
-                  : next,
-              ),
+              (matchesLifetime(next, saved?.draft)
+                ? saved?.draft.name
+                : next.name) ?? next.name,
             );
             setTemporaryTtl(ttl ?? DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS);
           }
           confirmedTtl.current = next.ttlSeconds;
-          if (base && normalized === confirmedName.current)
-            setName(adoptName(next));
-          confirmedName.current = adoptName(next);
+          if (base && normalized === confirmedName.current) setName(next.name);
+          confirmedName.current = next.name;
           refreshBeforeSave.current = false;
           setBase(next); // Retain the person's lifetime choice on conflict.
         }
@@ -170,28 +162,11 @@ export function useSessionLifetime({
               throw new Error(
                 "This conversation is no longer an editable standalone session. Reload session details before changing its name or lifetime.",
               );
-            const naming = metadata.naming;
-            const description = nameChanged
-              ? normalized || naming?.automatic || naming?.explicit
-                ? sessionDescription(undefined, {
-                    personal: !!metadata.personal,
-                    naming: {
-                      ...(naming?.automatic
-                        ? { automatic: naming.automatic }
-                        : {}),
-                      explicit: !!normalized,
-                    },
-                  })
-                : current.description
-              : current.description;
             await details.save(
               current,
               {
                 ...current,
-                name: nameChanged
-                  ? normalized || naming?.automatic || current.name
-                  : current.name,
-                description,
+                name: nameChanged ? normalized : current.name,
                 ttlSeconds: ttl,
               },
               active,
@@ -203,7 +178,7 @@ export function useSessionLifetime({
           action === "check" ? attempt?.draft.ttlSeconds : ttl;
         confirmedName.current =
           action === "check" && attempt && base
-            ? adoptName({ ...base, ...attempt.draft })
+            ? attempt.draft.name
             : normalized;
         refreshBeforeSave.current = true;
       }
@@ -259,13 +234,6 @@ function matchesLifetime(
     !!next &&
     !next.parentId &&
     draft.visibility === base.visibility &&
-    (draft.description === base.description ||
-      (!!next.naming && next.naming.automatic === metadata.naming?.automatic))
+    draft.description === base.description
   );
-}
-
-function adoptName(next: Pick<ChannelDetails, "name" | "description">) {
-  return sessionMetadata(next.description)?.naming?.explicit === false
-    ? ""
-    : next.name;
 }

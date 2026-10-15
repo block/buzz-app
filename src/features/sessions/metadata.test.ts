@@ -7,51 +7,27 @@ import {
 
 const parent = "22222222-2222-4222-8222-222222222222";
 
-it("retains legacy markers and round-trips bounded naming evidence", () => {
+it("retains the exact legacy marker, parent and personal grammar", () => {
   expect(sessionMetadata(sessionDescription())).toEqual({});
   expect(sessionMetadata(sessionDescription(parent))).toEqual({
     parentId: parent,
   });
-  expect(
-    sessionMetadata(sessionDescription(undefined, { personal: true })),
-  ).toEqual({ personal: true });
-  expect(
-    sessionMetadata(sessionDescription(parent, { personal: true })),
-  ).toEqual({ parentId: parent, personal: true });
-  expect(sessionDescription(undefined, { personal: true })).toBe(
-    `${SESSION_CHANNEL_DESCRIPTION}\npersonal`,
-  );
-  for (const automatic of [
-    "First prompt",
-    "🙂".repeat(80),
-    'A "quoted" prompt',
-  ])
-    for (const explicit of [false, true])
-      expect(
-        sessionMetadata(
-          sessionDescription(undefined, { naming: { automatic, explicit } }),
-        ),
-      ).toEqual({ naming: { automatic, explicit } });
-  expect(
-    sessionMetadata(
-      sessionDescription(undefined, { naming: { explicit: true } }),
-    ),
-  ).toEqual({ naming: { explicit: true } });
-  expect(
-    sessionMetadata(
-      sessionDescription(parent, {
-        personal: true,
-        naming: { automatic: "First prompt", explicit: false },
-      }),
-    ),
-  ).toEqual({
+  expect(sessionMetadata(sessionDescription(undefined, true))).toEqual({
+    personal: true,
+  });
+  expect(sessionMetadata(sessionDescription(parent, true))).toEqual({
     parentId: parent,
     personal: true,
-    naming: { automatic: "First prompt", explicit: false },
   });
+  expect(sessionDescription(undefined, true)).toBe(
+    `${SESSION_CHANNEL_DESCRIPTION}\npersonal`,
+  );
 });
 
 it.each([
+  '{"automatic":"First prompt","explicit":true}',
+  '{"automatic":"First prompt","explicit":false}',
+  '{"explicit":true}',
   '{"explicit":false}',
   '{"automatic":"","explicit":false}',
   '{"automatic":null,"explicit":true}',
@@ -62,11 +38,14 @@ it.each([
   '{"explicit":true,"automatic":"name"}',
   '{"automatic":"name","automatic":"name","explicit":true}',
   JSON.stringify({ automatic: "a".repeat(81), explicit: true }),
-])("rejects malformed or noncanonical naming evidence %s", (json) => {
-  expect(
-    sessionMetadata(`${sessionDescription()}\nnaming:${json}`),
-  ).toBeUndefined();
-});
+])(
+  "rejects deferred naming extensions, including malformed evidence %s",
+  (json) => {
+    expect(
+      sessionMetadata(`${sessionDescription()}\nnaming:${json}`),
+    ).toBeUndefined();
+  },
+);
 
 it("rejects extra lines and malformed ancestry without changing legacy recognition", () => {
   for (const description of [

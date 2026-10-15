@@ -163,8 +163,8 @@ internal preparation or already dispatched write. No atomic rollback or composit
 app-restart journal is added. Native GUI, packaged/live-relay and renewed human
 acceptance remain separate gates.
 
-The edit wire command is exact `h,name[,about][,ttl]`; `about` is included only
-when changing naming provenance and contains the validated session marker.
+The session edit wire command is exact `h,name[,ttl]`; it never rewrites `about`,
+so the legacy session marker and optional parent/personal lines stay unchanged.
 Unchanged lifetime omits `ttl`; a changed positive canonical decimal
 (1–2147483647) sets it, and an empty value removes it. Lifetime-only changes
 omit `about`; session settings always omit visibility. Creation permits positive
@@ -178,23 +178,20 @@ prove parent ancestry; the shared fresh-details owner remains edit authority.
 New and saved sessions use the same Session settings form. A blank new name retains
 the first-prompt automatic title (80 code points, canonicalized like relay names).
 Explicit names use the shared canonical 1–120-code-point validation. The first
-attempt freezes both the selected title and its automatic fallback before any
-asynchronous setup; retries do not change them when prompt or local settings change.
+attempt freezes the chosen or first-prompt title before any asynchronous setup;
+retries do not change it when prompt or local settings change.
 Old Canvas-only settings and pending receipts still load without a migration or
 another creation/rename operation.
 
-New session `about` metadata retains the existing marker, optional parent line,
-and the `personal` line for Solo chats. Automatic/default creation omits naming
-metadata. Explicit creation includes one canonical `naming:` JSON line with the
-already-frozen automatic fallback; the real creation service, not just the form,
-validates that payload. Name/lifetime edits preserve `personal`; only Share's
-existing conversion clears it. The recorded `automatic` title is immutable through
-session settings; `explicit` records whether the signed channel name is a chosen
-name. Clear sets that same channel's name to the retained automatic title,
-never an empty wire name. Historical markers have unknown naming provenance:
-renaming records `explicit:true` without inventing an automatic fallback. Clearing
-when that fallback is unavailable keeps the last confirmed title and its existing
-provenance without a name write or validation error. Other settings can still save.
+New session `about` metadata uses only the existing marker, optional parent line,
+and the `personal` line for Solo chats, exactly as recognized by older Buzz clients.
+Custom creation and subsequent renames do not append a `naming:` extension.
+Name/lifetime edits leave that metadata unchanged; only Share's existing conversion
+clears `personal`. Persisted naming provenance and automatic-name reset are deferred.
+Clearing a saved name silently preserves the last confirmed title without a name
+write or validation error. Other settings can still save. Transitional local pending
+receipts retain their frozen title/fallback; obsolete explicit-name hints are not
+wire authority and do not invalidate an otherwise valid receipt.
 The form uses the shared content-sized dialog and its normal footer spacing, with
 one body scrollport and no reserved bottom area. The title and actions stay visible
 in ordinary short windows. If enlarged controls cannot fit, the outer dialog also
@@ -206,20 +203,17 @@ details-write exclusion.
 Naming uses the existing fresh signed authority/version check and exact full details
 readback. Conflicts retain input for explicit Reload; an uncertain name/lifetime save
 is checked without republishing or implicitly saving newer Canvas drafts. Browser
-and native guards consume a shared naming contract fixture, including legacy markers
-and malformed/contradictory evidence. Relay compatibility is based on local block/buzz
-`4472da6491f7d76ebcffed4b65c341a3278aa25f` source: create/edit preserve the `about`
-description and signed kind-39000 discovery emits it verbatim. This is source
-compatibility evidence, not live-relay or cross-version-client acceptance. Older
-clients that do not recognize the extended marker may present it as an ordinary
-private channel; no membership/access policy changes.
+and native guards consume a shared legacy-metadata contract fixture, accepting only
+the existing marker/parent/personal grammar for creation and rejecting extensions.
+The parser remains identical to the pre-feature parser. Source compatibility and
+synthetic signed create/rename/readback coverage are not live cross-version-client
+acceptance.
 
-Generated sharing messages and recovery receipts keep their original numeric
-labels and signed bytes. Eligible members see **Session: current explicit name**
-on old and newly posted generated links; automatic/unknown naming keeps the numeric
-label. Signed discovery updates drive rendering without a new details read, repost,
-or navigation. Arbitrary authored labels, raw pasted URLs and message/thread links
-are unchanged; copied selection retains the authored label and link URL.
+Generated sharing messages and recovery receipts retain their original numeric
+`Session · short ID` labels and signed bytes, including after a rename. Dynamic
+explicit-only share-link titles are deferred together with naming provenance; no
+local title inference, metadata protocol, repost or authored-byte rewrite is added.
+Arbitrary authored labels, raw URLs, navigation and access rules are unchanged.
 
 ## Owners and validation limits
 

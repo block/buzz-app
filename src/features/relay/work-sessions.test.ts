@@ -1478,7 +1478,7 @@ it("starts a standalone session using existing private-channel creation without 
       ["about", `${SESSION_CHANNEL_DESCRIPTION}\nparent:${parent}`],
     ],
   });
-  test.service.create(id, "Solo", undefined, undefined, undefined, true);
+  test.service.create(id, "Solo", undefined, undefined, true);
   expect(test.outbox.send).toHaveBeenLastCalledWith({
     kind: 9007,
     content: "",
@@ -1792,13 +1792,10 @@ it("standalone session creation sends validated TTL in its single durable outbox
   expect(h.outbox.send).toHaveBeenCalledOnce();
 });
 
-it("creates explicit naming and frozen automatic fallback in the original command without rename", () => {
+it("creates a custom title and lifetime in one legacy-compatible command without a rename", () => {
   const h = setup(),
     id = "11111111-1111-4111-8111-111111111111";
-  h.service.create(id, "Named", undefined, 600, {
-    automatic: "Original prompt",
-    explicit: true,
-  });
+  h.service.create(id, "Named", undefined, 600);
   expect(h.outbox.send).toHaveBeenCalledOnce();
   expect(h.outbox.send).toHaveBeenCalledWith({
     kind: 9007,
@@ -1808,20 +1805,8 @@ it("creates explicit naming and frozen automatic fallback in the original comman
       ["name", "Named"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      [
-        "about",
-        sessionDescription(undefined, {
-          naming: { automatic: "Original prompt", explicit: true },
-        }),
-      ],
+      ["about", sessionDescription()],
       ["ttl", "600"],
     ],
   });
-  expect(() =>
-    h.service.create(id, "Different", undefined, undefined, {
-      automatic: "Original prompt",
-      explicit: false,
-    }),
-  ).toThrow("automatic session name");
-  expect(h.outbox.send).toHaveBeenCalledOnce();
 });

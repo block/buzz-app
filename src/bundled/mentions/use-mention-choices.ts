@@ -135,7 +135,7 @@ export function useMentionChoices(
     if (!open) return { candidates: [], local: new Set<string>() };
     return { candidates: current(), local: localKeys() };
   }, [open, current, localKeys, profiles, list, agents, archives, resolve]);
-  // Only local sources gate the list. Directory results append below it.
+  // Pending sources report status, but must not hide usable local choices.
   const pending =
     !roster &&
     (((list.status === "idle" || list.status === "loading") &&
@@ -154,14 +154,15 @@ export function useMentionChoices(
     ? rank(candidates.filter((c) => !local.has(c.recipient.pubkey)))
     : [];
   const missingNames = channel?.members?.some((key) => !profiles.has(key));
-  if (open && !rows && !pending) {
+  if (open && !rows) {
     const ranked = rank(
       candidates.filter((c) => local.has(c.recipient.pubkey)),
     ).slice(0, 50);
     if (
       ranked.length ||
       outside.length ||
-      (!missingNames &&
+      (!pending &&
+        !missingNames &&
         (!invite || !agents.pending) &&
         list.status === "ready" &&
         !agents.error &&
@@ -171,10 +172,10 @@ export function useMentionChoices(
       install({ session, key, rows, people: none });
     }
   }
-  if (rows && outside.length && rows.length < 50) {
-    // Append-only: rows already shown never move when directory pages arrive.
+  if (rows && rows.length < 50) {
+    // Append-only: late invited agents and directory pages never move shown rows.
     const shown = new Set(rows.map((row) => row.recipient.pubkey));
-    const added = outside
+    const added = (invite ? rank(candidates.filter((c) => c.agent)) : outside)
       .filter((c) => !shown.has(c.recipient.pubkey))
       .slice(0, 50 - rows.length);
     if (added.length) {
@@ -201,10 +202,13 @@ export function useMentionChoices(
   const complete = !directory.loading && !directory.error && !directory.more;
   return useMemo(() => {
     const spaceMention = (choices: MentionChoice[], keys: Set<string>) =>
-      (missingNames
+      pending
         ? undefined
-        : exactMention(choices, query, (c) => keys.has(c.recipient.pubkey))) ??
-      (complete ? exactMention(choices, query) : undefined);
+        : ((missingNames
+            ? undefined
+            : exactMention(choices, query, (c) =>
+                keys.has(c.recipient.pubkey),
+              )) ?? (complete ? exactMention(choices, query) : undefined));
     const live = new Map(candidates.map((c) => [c.recipient.pubkey, c]));
     const choices = (rows ?? []).map((row) => {
       const now = live.get(row.recipient.pubkey);

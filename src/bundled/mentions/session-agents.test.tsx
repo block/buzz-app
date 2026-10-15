@@ -243,6 +243,60 @@ const emptyCompletion = {
   observation: { revision: 1, text: "@", start: 1, end: 1 },
   query: { start: 0, end: 1, query: "" },
 };
+it("offers a known member for Tab while agents load, then appends late agents", async () => {
+  const test = setup();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = vi.fn(async () => {
+    await gate;
+    return {
+      definitions: [],
+      identities: [{ pubkey: test.key, name: "Aaron agent" }],
+    };
+  });
+  const library = createAgentLibrary(read);
+  const session = {
+    ...test.session,
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+  };
+  const publish = vi.fn();
+  const result = () => publish.mock.lastCall?.[0] as CompletionResult;
+  const props = { ...emptyCompletion, session, inviteAgents: true, publish };
+  const view = render(<MentionCompletion {...props} />);
+  try {
+    await waitFor(() => expect(read).toHaveBeenCalledOnce());
+    expect(session.agentChoices.snapshot().status).toBe("loading");
+    expect(completionLabels(publish)).toEqual(["Member"]);
+    expect(result().items[0]?.canSelect?.("Tab")).toBe(true);
+    view.rerender(
+      <MentionCompletion
+        {...props}
+        query={{ start: 0, end: 7, query: "Member" }}
+      />,
+    );
+    expect(completionLabels(publish)).toEqual(["Member"]);
+    expect(result().items[0]?.canSelect?.("Tab")).toBe(true);
+    expect(result().spaceId).toBeUndefined();
+    expect(result().items[0]?.canSelect?.(" ")).toBe(false);
+    view.rerender(<MentionCompletion {...props} />);
+    await act(async () => release());
+    await waitFor(() =>
+      expect(completionLabels(publish)).toEqual(["Member", "Aaron agent"]),
+    );
+    expect(result().items[1]?.canSelect?.("Tab")).toBe(true);
+  } finally {
+    await act(async () => release());
+    view.unmount();
+    library.dispose();
+    test.library.dispose();
+  }
+});
 it("offers the viewer's own unmanaged agent outside a stream before directory people", async () => {
   const test = setup();
   // Remote agent setup refreshes agent choices after creating the agent.
@@ -2291,7 +2345,13 @@ it.each([false, true])(
           screen.getByRole("button", { name: `Member ${test.member}` }),
         ).toBeVisible();
         expect(screen.queryByText("Loading agents…")).not.toBeInTheDocument();
-      } else expect(screen.getByText("Loading agents…")).toBeVisible();
+      } else {
+        // A cold agent read does not hide the already-known channel member.
+        expect(
+          screen.getByRole("button", { name: `Member ${test.member}` }),
+        ).toBeVisible();
+        expect(screen.queryByText("Loading agents…")).not.toBeInTheDocument();
+      }
       await act(async () => release());
       await waitFor(() =>
         expect(session.agentChoices.snapshot().status).toBe("ready"),

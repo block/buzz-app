@@ -256,9 +256,9 @@ function ReportDetail({
   });
   useEffect(() => {
     if (reopened === null || detail.state === "loading") return;
-    if (detail.settled <= reopened) return;
+    // A failed reload keeps the confirmation for the next successful read.
+    if (detail.settled <= reopened || detail.state !== "ok") return;
     setReopened(null);
-    if (detail.state !== "ok") return;
     const now = detail.value.status;
     notify(
       now === "open" || now === "processing"
@@ -268,6 +268,9 @@ function ReportDetail({
     );
   }, [reopened, detail, notify]);
   useWrite<CancelRequest>(`cancel ${id}`, (outcome) => {
+    // A cancel proves a held resolve landed and was undone; on `open` the
+    // relay would reject its request id, so a fresh decision must start over.
+    if (outcome.ok) resolve.discard();
     notify(
       outcome.ok
         ? "Enforcement cancelled. The report is open again."
@@ -281,8 +284,9 @@ function ReportDetail({
   // is resolved again. A held write whose report has moved on can only
   // conflict or answer without acting, so release it: a resolve once the
   // report is past processing, a reopen once it is open again. A resolve that
-  // landed and whose report was reopened before we saw it stays held, and its
-  // Retry keeps failing; Discard is the way out.
+  // landed and whose report was reopened by someone else before we saw it
+  // stays held, and its Retry keeps failing; Discard is the way out. Our own
+  // Cancel and reopen releases it directly.
   const status = detail.state === "ok" ? detail.value.status : null;
   const active = status === "open" || status === "processing";
   const releaseResolve =

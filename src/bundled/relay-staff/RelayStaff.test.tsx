@@ -501,6 +501,38 @@ it("cancels a failed enforcement by its action id", async () => {
   await waitFor(() => expect(sent("getReport").length).toBeGreaterThan(1));
 });
 
+it("a held resolve is released by a successful Cancel and reopen", async () => {
+  let current: typeof report & Record<string, unknown> = report;
+  routes.listReports = () => ok([current]);
+  routes.getReport = () => ok(current);
+  routes.resolveReport = () => {
+    // The resolve lands, its answer is lost, and enforcement then fails.
+    current = {
+      ...report,
+      status: "processing",
+      actionId: "act1",
+      activeAction: failedAction,
+    };
+    return fail({ category: "ambiguous", status: 502 });
+  };
+  routes.cancelReport = () => {
+    current = report;
+    return ok({ status: "open", activeAction: null });
+  };
+  await openReport();
+  fireEvent.click(await screen.findByRole("radio", { name: "Ban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Cancel and reopen" }),
+  );
+  fireEvent.click(await screen.findByRole("radio", { name: "Ban" }));
+  expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  await waitFor(() => expect(sent("resolveReport")).toHaveLength(2));
+  const [a, b] = sent("resolveReport") as ResolveSent[];
+  expect(a?.requestId).not.toBe(b?.requestId);
+});
+
 it("changes feedback status and previews and saves attachments", async () => {
   const sha = "f".repeat(64);
   const revoke = vi.fn();
@@ -3444,6 +3476,27 @@ it("a retried reopen that landed before a re-resolve does not claim the report i
   expect(
     await screen.findByRole("button", { name: "Reopen report" }),
   ).toBeVisible();
+});
+
+it("a reopen confirmation survives a failed reload", async () => {
+  let status = "resolved";
+  let failReads = 0;
+  routes.listReports = () => ok([{ ...report, status }]);
+  routes.getReport = () =>
+    failReads-- > 0
+      ? fail({ category: "rejected", status: 500 })
+      : ok({ ...report, status });
+  routes.reopenReport = () => {
+    status = "open";
+    failReads = 1;
+    return ok({ status: "open" });
+  };
+  await openReport();
+  fireEvent.click(await screen.findByRole("button", { name: "Reopen report" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("Report reopened")).toBeInTheDocument();
+  await screen.findByRole("radio", { name: "Ban" });
+  expect(screen.getAllByText("Report reopened")).toHaveLength(1);
 });
 
 it("an uncertain Dismiss asks for a fresh decision instead of a held Retry", async () => {

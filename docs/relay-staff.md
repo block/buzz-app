@@ -145,9 +145,12 @@ so instead of "Report reopened". An uncertain Dismiss or Escalate is never
 retried: the page drops it, reloads the report and asks for a fresh decision,
 since a retry after someone reopened the report would close the new cycle too.
 Automatic release doesn't cover every transition: if an uncertain resolve
-landed and the report was reopened before the page read it, the report is open
-again, the held resolve's **Retry** keeps failing, and **Discard** is the way
-out. Resolve and reopen each have **Discard**, and show the last failure beside
+landed and someone else reopened the report before the page read it, the
+report is open again, the held resolve's **Retry** keeps failing, and
+**Discard** is the way out. A successful **Cancel and reopen** from the page
+itself proves the resolve landed and was undone, so it drops the held resolve.
+A reopen announcement survives a failed reload and is made by the next
+successful read. Resolve and reopen each have **Discard**, and show the last failure beside
 **Retry**. A request native code refuses before sending, such as a reason too long for
 the relay's 4,096-byte body limit, is `notSent`, so the form stays editable. `request_id_conflict` is shown as an error and is never
 resent under a new ID without the user starting a new action.

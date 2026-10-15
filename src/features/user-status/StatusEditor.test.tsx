@@ -391,7 +391,7 @@ it.each([
   },
 );
 
-it("delays refresh feedback, surfaces failure and retries without overwriting a draft", async () => {
+it("delays refresh feedback, surfaces failure and retries an untouched draft", async () => {
   const owner = createRelaySession(null);
   owners.push(owner);
   let reject!: (error: Error) => void;
@@ -418,10 +418,7 @@ it("delays refresh feedback, surfaces failure and retries without overwriting a 
     />,
   );
   try {
-    fireEvent.change(screen.getByLabelText("Status message"), {
-      target: { value: "My draft" },
-    });
-    expect(screen.getByRole("button", { name: "Save status" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save status" })).toBeDisabled();
     await act(async () => vi.advanceTimersByTime(999));
     expect(
       screen.queryByText("Checking your current status…"),
@@ -441,7 +438,7 @@ it("delays refresh feedback, surfaces failure and retries without overwriting a 
     expect(current).toHaveBeenCalledTimes(2);
     await act(async () => resolve(undefined));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Status message")).toHaveValue("My draft");
+    expect(screen.getByLabelText("Status message")).toHaveValue("");
   } finally {
     await act(async () => resolve(undefined));
     vi.useRealTimers();
@@ -488,3 +485,66 @@ it("ignores a late refresh after a failed save and keeps the submitted draft", a
     await act(async () => resolve(cached));
   }
 });
+
+it.each(["pending", "checking", "failed"] as const)(
+  "hides irrelevant refresh feedback after editing while %s",
+  async (phase) => {
+    const owner = createRelaySession(null);
+    owners.push(owner);
+    let reject!: (error: Error) => void;
+    const current = vi.fn(
+      () =>
+        new Promise<undefined>((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+    vi.useFakeTimers();
+    render(
+      <StatusEditor
+        session={{
+          ...owner.session,
+          statuses: { ...owner.session.statuses, current },
+        }}
+        viewer={"a".repeat(64)}
+        scope="https://status.test"
+        current={undefined}
+        close={() => {}}
+        finalFocus={{ current: null }}
+      />,
+    );
+    try {
+      expect(current).toHaveBeenCalledOnce();
+      if (phase !== "pending") {
+        await act(async () => vi.advanceTimersByTime(1000));
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "Checking your current status…",
+        );
+      }
+      if (phase === "failed") {
+        await act(async () => reject(new Error("Offline")));
+        expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+      }
+      fireEvent.change(screen.getByLabelText("Status message"), {
+        target: { value: "My draft" },
+      });
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Retry" }),
+      ).not.toBeInTheDocument();
+      await act(async () => vi.advanceTimersByTime(1000));
+      await act(async () => reject(new Error("Offline")));
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Retry" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Status message")).toHaveValue("My draft");
+      expect(screen.getByRole("button", { name: "Save status" })).toBeEnabled();
+    } finally {
+      await act(async () => reject(new Error("Test finished")));
+      cleanup();
+      vi.useRealTimers();
+    }
+  },
+);

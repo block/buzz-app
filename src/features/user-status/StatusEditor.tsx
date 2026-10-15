@@ -33,6 +33,19 @@ const choices = [
   ["🏖️", "Vacationing"],
   ["🏠", "Working remotely"],
 ] as const;
+function draftFrom(status: UserStatus | undefined) {
+  return {
+    text: status?.text ?? "",
+    emoji: status?.emoji ?? "",
+    duration: status
+      ? statusDuration(status.expiresAt, status.updatedAt)
+      : "today",
+    date: new Date(
+      (status?.expiresAt ?? statusDeadline("today", Date.now() / 1000)) * 1000,
+    ),
+  };
+}
+
 export function StatusEditor({
   session,
   scope,
@@ -55,17 +68,12 @@ export function StatusEditor({
   const [checkAttempt, setCheckAttempt] = useState(0);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState(false);
-  const [text, setText] = useState(current?.text ?? "");
-  const [emoji, setEmoji] = useState(current?.emoji ?? "");
-  const [duration, setDuration] = useState(
-    current ? statusDuration(current.expiresAt, current.updatedAt) : "today",
-  );
+  const [initialDraft] = useState(() => draftFrom(initialCurrent));
+  const [text, setText] = useState(initialDraft.text);
+  const [emoji, setEmoji] = useState(initialDraft.emoji);
+  const [duration, setDuration] = useState(initialDraft.duration);
   const [durationChanged, setDurationChanged] = useState(false);
-  const [date, setDate] = useState(
-    new Date(
-      (current?.expiresAt ?? statusDeadline("today", Date.now() / 1000)) * 1000,
-    ),
-  );
+  const [date, setDate] = useState(initialDraft.date);
   const effectiveEmoji = emoji || (text.trim() ? "💬" : "");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -84,33 +92,28 @@ export function StatusEditor({
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry explicitly starts a new background check.
   useEffect(() => {
-    if (!viewer || submitted.current) return;
+    if (!viewer || edited.current || submitted.current) return;
     let active = true;
     setChecking(false);
     setCheckError(false);
     const timer = setTimeout(() => {
-      if (active && !submitted.current) setChecking(true);
+      if (active && !edited.current && !submitted.current) setChecking(true);
     }, 1000);
     void session.statuses
       .current(viewer)
       .then(
         (fresh) => {
           if (!active || edited.current || submitted.current) return;
+          const draft = draftFrom(fresh);
           setCurrent(fresh);
-          setText(fresh?.text ?? "");
-          setEmoji(fresh?.emoji ?? "");
-          setDuration(
-            fresh ? statusDuration(fresh.expiresAt, fresh.updatedAt) : "today",
-          );
-          setDate(
-            new Date(
-              (fresh?.expiresAt ?? statusDeadline("today", Date.now() / 1000)) *
-                1000,
-            ),
-          );
+          setText(draft.text);
+          setEmoji(draft.emoji);
+          setDuration(draft.duration);
+          setDate(draft.date);
         },
         () => {
-          if (active && !submitted.current) setCheckError(true);
+          if (active && !edited.current && !submitted.current)
+            setCheckError(true);
         },
       )
       .finally(() => {
@@ -122,6 +125,11 @@ export function StatusEditor({
       clearTimeout(timer);
     };
   }, [session, viewer, checkAttempt]);
+  function markEdited() {
+    edited.current = true;
+    setChecking(false);
+    setCheckError(false);
+  }
   const durationLabel =
     duration === "custom"
       ? "Custom date and time"
@@ -147,10 +155,8 @@ export function StatusEditor({
       setError("Choose a date and time in the future.");
       return;
     }
-    edited.current = true;
+    markEdited();
     submitted.current = true;
-    setChecking(false);
-    setCheckError(false);
     working.current = true;
     setBusy(true);
     setError("");
@@ -245,7 +251,7 @@ export function StatusEditor({
               placeholder="What's your status?"
               value={text}
               onChange={(event) => {
-                edited.current = true;
+                markEdited();
                 setText(event.target.value);
               }}
             />
@@ -264,7 +270,7 @@ export function StatusEditor({
                 <MenuRadioGroup
                   value={duration}
                   onValueChange={(value) => {
-                    edited.current = true;
+                    markEdited();
                     setDuration(value);
                     setDurationChanged(true);
                   }}
@@ -289,7 +295,7 @@ export function StatusEditor({
                 value={date}
                 disabled={busy}
                 onChange={(next) => {
-                  edited.current = true;
+                  markEdited();
                   setDate(next);
                   setDurationChanged(true);
                   setError("");
@@ -307,7 +313,7 @@ export function StatusEditor({
                     key={label}
                     type="button"
                     onClick={() => {
-                      edited.current = true;
+                      markEdited();
                       setEmoji(icon);
                       setText(label);
                       message.current?.focus();
@@ -331,7 +337,7 @@ export function StatusEditor({
             disabled={busy}
             reaction
             insert={(value) => {
-              edited.current = true;
+              markEdited();
               setEmoji(value);
             }}
             externalTrigger={{

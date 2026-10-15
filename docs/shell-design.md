@@ -209,8 +209,9 @@ focus to the header avatar.
 Set a status has a soft inset fill without a border and keeps shared menu hover
 and focus behavior. Its editor opens immediately from the session's cached status,
 then checks the latest status in the background. Refresh cannot overwrite an edited
-or submitted draft; after about one second it shows checking feedback, and failures
-offer Retry. Closing or changing account/community discards the editor and fences
+or submitted draft. While the draft is untouched, a check lasting about one second
+shows progress and failures offer Retry; editing dismisses that feedback. Closing
+or changing account/community discards the editor and fences
 late results. Status signing and save admission remain with the existing session.
 
 Avatar artwork uses the shared source/media owner, with initials on missing/failed

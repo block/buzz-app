@@ -1,4 +1,5 @@
 import { test, expect, repeats, timeline } from "./runner.mjs";
+import { scrollCadence } from "./cadence.mjs";
 
 // Short reading gesture within the loaded head; long gesture across preloaded
 // history whose older rows have not yet been mounted/measured by the virtualizer.
@@ -107,16 +108,9 @@ for (const [name, distance, speed, count] of [
         const seen = new Set(
           frames.flatMap((frame) => frame.rows.map(([id]) => id)),
         );
-        const gaps = frames.map(
-          (frame, index) => frame.t - (frames[index - 1]?.t ?? 0),
-        );
-        const sorted = [...gaps].sort((a, b) => a - b);
         sample.metrics.scrollTopRangePx =
           Math.max(before.top, ...tops) - Math.min(before.top, ...tops);
-        sample.metrics.rafMaxGapMs = Math.max(...gaps);
-        sample.metrics.rafP95GapMs =
-          sorted[Math.ceil(sorted.length * 0.95) - 1];
-        sample.metrics.rafGapsOver50 = gaps.filter((gap) => gap > 50).length;
+        Object.assign(sample.metrics, scrollCadence(sample.recording));
         Object.assign(sample.work, {
           wheels,
           distinctVisibleRows: seen.size,

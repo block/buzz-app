@@ -79,10 +79,22 @@ released pages, wheel count and observed rows. `scrollTopRangePx` is the observe
 offset range, including virtualizer corrections; it is not physical input distance.
 
 `rafMaxGapMs`, `rafP95GapMs` and `rafGapsOver50` describe animation-frame callback
-cadence over the entire operation, including the start-to-first-frame interval
-and the settling tail. They expose main-thread stalls, not compositor FPS or a
-measured dropped-frame count. These metrics accompany the browser cost counters;
-no generic blank-time, overlap or visual-shift verdict is inferred from them.
+cadence during the gesture. Raw `gestureStartMs` and `gestureEndMs` timestamps
+are relative to the recording start: the first observed wheel event and the
+browser marker after Chromium reports the synthetic gesture complete. The end
+includes that marker's protocol dispatch. Gaps are clipped to those boundaries,
+including partial gaps before the first and after the last callback inside the
+window. All callbacks count, including stalls when the scroll offset is unchanged.
+The settling tail after the end marker is excluded from cadence only:
+`scriptMs`, `layoutMs`, `styleMs`, `taskMs` and `durationMs` still cover scrolling
+plus settling, with the same measurement overhead.
+
+Recordings without these gesture timestamps used whole-operation cadence,
+including the settling tail. Their cadence values are not comparable with the
+new definition; rerun baselines before comparing. No summary metrics were added.
+Callback gaps expose main-thread stalls, not compositor FPS or a measured
+dropped-frame count. No generic blank-time, overlap or visual-shift verdict is
+inferred from them.
 
 ## Results and iteration
 

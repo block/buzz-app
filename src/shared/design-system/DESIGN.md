@@ -199,7 +199,8 @@ Choose by interaction before choosing size. They share a material, not semantics
 
 Do not put a form in an action-menu item or simulate selectable values with a set
 of unrelated buttons. Use `MenuNote` for non-action explanatory text and `tone="danger"`
-for a destructive menu action. Select an existing compact/default/wide recipe for
+for a destructive menu action; its icon inherits the danger color and highlighted/pressed
+rows use the matching danger affordance. Select an existing compact/default/wide recipe for
 the content; never make every popup compact just because the screen is narrow.
 Shared owners handle collision, viewport bounds, layers, insets, corners, and motion.
 For choices that must stay within a modal, pass its element to
@@ -659,6 +660,15 @@ colors while blocking activation; never swap in a differently sized loading labe
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
+The proposed `attention` variant is used by overdue reminder snooze actions.
+It reuses the outline button's 1px inset stroke and capsule geometry, tinting
+the stroke with `border-danger` at 45% opacity. Dashes travel slowly around the
+perimeter, advancing one 8px dash-and-gap cycle every 3s with linear timing.
+The capsule and label stay still. Reduced motion and disabled/loading states
+keep the dashed border static. This is a status cue, so retain an
+explicit status label or group heading and the scheduled time. Danger hover
+and pressed fills, disabled boundaries, and keyboard focus remain shared.
+
 IconButton's `bare` variant is for toggles whose glyph supplies the state:
 no resting, hover, pressed or selected background. The small control keeps its
 32px hit area with 20px artwork. The caller supplies outline/filled artwork,
@@ -985,6 +995,10 @@ collapsing them preserves local input state; leave the default for static conten
 Use `variant="form"` when the surrounding form owns spacing. It removes outer
 margins while keeping the shared row and panel padding. Adjacent disclosure rows
 form one stack; avoid inserting form-section gaps between individual rows.
+Use the proposed `section` variant for a disclosure alongside InlineHeader
+groups, such as completed reminders. It shares the heading type treatment,
+extends the hit area around the aligned label, and leaves panel content flush
+with adjacent lists. Render counts with the same caption role as those groups.
 
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and

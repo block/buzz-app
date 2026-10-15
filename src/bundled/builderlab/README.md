@@ -13,10 +13,18 @@ an existing Settings sign-in attempt; a failed or canceled login leaves the
 action available for retry. Settings still provides sign-in and sign-out.
 Canceling an action's wait does not cancel a shared login; disabling the plugin
 or closing Buzz cancels it.
-The agent's Instructions tab reads its current instructions from Builderlab and
+Beekeeper accepts an owner proof only from the Buzz key bound to the signed-in
+Builderlab account. After sign-in, and again before each activation, the plugin
+checks `/v1/buzz/nostr-identities/current` and binds an unbound account to this
+device's key through the native kind 24243 signer, which accepts only
+production Builderlab or this build's `BUZZ_BUILDERLAB_URL` origin. An account
+bound to another key is reported and never unbound.
+The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
+Settings shows the fixed remote workspace and per-thread session behavior. Both
+tabs link to the configured Builderlab site for remote runtime management.
 Profile updates remain TODO and report an unsupported-operation error.
 
 The adapter retains the provider agent ID, server, verified account subject and

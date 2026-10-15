@@ -20,7 +20,11 @@ import type { PageNavigation } from "../navigation/service";
 import { createNavigationController } from "../navigation/controller";
 import { createMemoryHistory } from "../navigation/history";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
-import type { ChannelMessage } from "../relay/contracts";
+import type {
+  ChannelList,
+  ChannelMessage,
+  ChannelSummary,
+} from "../relay/contracts";
 import { formatPublicKey } from "../../shared/identity/public-key";
 
 // Real React owns effects, refs and subscriptions. Only independent child UI is
@@ -452,7 +456,7 @@ it("keeps initial thread loading until available content has been positioned", (
   expect(within(section).getByText("root")).toBeVisible();
   expect(within(section).queryByText("Loading thread…")).toBeNull();
 });
-it("keeps seeded rows usable but unread until the initial legacy walk settles", async () => {
+it("holds seeded rows behind the loader until the first page, and unread until the legacy walk settles", async () => {
   vi.useFakeTimers();
   const h = messagesHarness(ordinaryNavigation());
   h.resize(600);
@@ -478,8 +482,8 @@ it("keeps seeded rows usable but unread until the initial legacy walk settles", 
   h.snapshot.readKind = "refresh";
   h.render();
   h.element.focus();
-  expect(h.element).not.toHaveAttribute("data-positioning");
-  expect(h.element.querySelector("[data-thread-rows]")).not.toHaveAttribute(
+  expect(h.element).toHaveAttribute("data-positioning");
+  expect(h.element.querySelector("[data-thread-rows]")).toHaveAttribute(
     "inert",
   );
   await act(() => vi.advanceTimersByTimeAsync(300));
@@ -578,6 +582,93 @@ it.each([false, true])(
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
   },
 );
+it("separates the original from replies with the relay's reply total", () => {
+  const h = messagesHarness();
+  h.snapshot.root = { ...row, replyCount: 0 };
+  h.snapshot.status = "loading";
+  h.render();
+  expect(
+    screen.queryByText("Replies", { exact: true }),
+  ).not.toBeInTheDocument();
+  h.snapshot.status = "ready";
+  // An unavailable exact target stops the read before any replies are read.
+  for (const targetStatus of ["unavailable", "loading", "error"] as const) {
+    h.snapshot.targetStatus = targetStatus;
+    h.render();
+    expect(
+      screen.queryByText("Replies", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+  }
+  h.snapshot.targetStatus = "ready";
+  h.render();
+  expect(
+    screen.queryByText("Replies", { exact: true }),
+  ).not.toBeInTheDocument();
+  h.snapshot.targetStatus = undefined;
+  h.render();
+  expect(
+    screen.queryByText("Replies", { exact: true }),
+  ).not.toBeInTheDocument();
+
+  // Empty presentation never proves empty history, including after a repair
+  // or selection reset leaves ready with no continuation or error evidence.
+  for (const { canLoadMore, limited } of [
+    { canLoadMore: true, limited: false },
+    { canLoadMore: false, limited: true },
+    { canLoadMore: false, limited: false },
+  ]) {
+    h.snapshot.canLoadMore = canLoadMore;
+    h.snapshot.limited = limited;
+    h.render();
+    expect(
+      screen.queryByText("Replies", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+  }
+
+  // A server total alone is not something to separate from the original.
+  h.snapshot.root = { ...row, replyCount: 11 };
+  h.render();
+  expect(screen.queryByText("11 replies")).not.toBeInTheDocument();
+  h.snapshot.root = { ...row, replyCount: 0 };
+
+  // A just-sent reply can arrive before the relay's summary counts it.
+  h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
+  h.render();
+  expect(screen.getByText("Replies", { exact: true })).toBeVisible();
+  expect(screen.queryByText("No replies yet")).not.toBeInTheDocument();
+
+  // The total comes from the summary, not from the replies loaded so far.
+  h.snapshot.root = { ...row, replyCount: 11 };
+  h.render();
+  const divider = screen.getByText("11 replies");
+  const root = screen.getByText("root");
+  const reply = screen.getByText("first reply");
+  expect(
+    root.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    divider.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+
+  h.snapshot.root = { ...row, replyCount: 1 };
+  h.render();
+  expect(screen.getByText("1 reply")).toBeVisible();
+
+  h.snapshot.replies = [];
+  h.render();
+  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+  h.snapshot.replies = [{ ...row, id: "reply", content: "first reply" }];
+  h.render();
+  expect(screen.getByText("1 reply")).toBeVisible();
+
+  h.snapshot.root = undefined;
+  h.render();
+  expect(screen.getByText("Original message unavailable.")).toBeVisible();
+  expect(screen.queryByText("1 reply")).not.toBeInTheDocument();
+});
+
 it("keeps older-page loading quiet and retry between root and replies", () => {
   const h = messagesHarness();
   h.snapshot.direction = "older";
@@ -1186,6 +1277,83 @@ it("passes the Me recipient, readiness and direct Activity contract through to t
   view.rerender(<ThreadPanel {...h.props} />);
   expect(composer).not.toHaveAttribute("data-personal");
   expect(composer).not.toHaveAttribute("data-direct-activity");
+});
+
+it.each([
+  { channelType: "stream" as const, joinable: true },
+  { channelType: "forum" as const, joinable: true },
+  { channelType: "stream" as const, archived: true as const, joinable: false },
+  { channelType: "session" as const, joinable: false },
+])(
+  "replaces the reply composer for a $channelType preview (joinable: $joinable)",
+  ({ joinable, ...metadata }) => {
+    const h = messagesHarness();
+    const channel: ChannelSummary = {
+      id: "channel",
+      name: "General",
+      readOnly: true,
+      ...metadata,
+    };
+    const list: ChannelList = { status: "ready", channels: [] };
+    Object.assign(h.session, {
+      channels: {
+        list: () => list,
+        get: () => channel,
+        subscribeList: () => () => {},
+      },
+      channelLifecycle: { available: true, run: vi.fn() },
+    });
+    h.render();
+    expect(
+      screen.getByRole("region", { name: "Channel preview" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+    expect(!!screen.queryByRole("button", { name: "Join" })).toBe(joinable);
+  },
+);
+
+it("keeps a thread preview until membership arrives, with failed joins retryable", async () => {
+  const h = messagesHarness();
+  const channel: ChannelSummary = {
+    id: "channel",
+    name: "General",
+    channelType: "stream",
+    readOnly: true,
+  };
+  let list: ChannelList = { status: "ready", channels: [] };
+  const listeners = new Set<() => void>();
+  const run = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Try again."))
+    .mockResolvedValue(undefined);
+  Object.assign(h.session, {
+    channels: {
+      list: () => list,
+      get: () => channel,
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    channelLifecycle: { available: true, run },
+  });
+  h.render();
+  fireEvent.click(screen.getByRole("button", { name: "Join" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Try again.");
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Join" }));
+  });
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+  act(() => {
+    list = {
+      status: "ready",
+      channels: [{ id: "channel", name: "General", channelType: "stream" }],
+    };
+    for (const listener of listeners) listener();
+  });
+  expect(screen.queryByRole("region", { name: "Channel preview" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Composer" })).toBeVisible();
 });
 
 it("retained navigation keeps the mounted editor when another message belongs to the open thread", async () => {

@@ -2544,3 +2544,31 @@ test("dialog footer focus rings remain visible in both themes and widths", async
     }
   }
 });
+
+// Real layout is required to catch padding cancelled by the footer's negative margin.
+test("padded dialog footer preserves its body gutter", async ({ page }) => {
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const mode of ["light", "dark"]) {
+      await page.goto(`${viewer}#/design/components/dialog`);
+      const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+      if (await toggle.count()) await toggle.click();
+      await page.getByRole("region", { name: "Tall creation surface", exact: true })
+        .getByRole("button", { name: "Open dialog", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Create an item" });
+      await expect(dialog).toBeVisible();
+      await expect.poll(() => dialog.evaluate((element) => {
+        const body = element.querySelector(".buzz-dialog-body");
+        const button = element.querySelector(".buzz-dialog-actions > button");
+        if (!body || !button) throw new Error("Missing dialog body or action");
+        return Math.round(button.getBoundingClientRect().top - body.getBoundingClientRect().bottom);
+      })).toBe(width < 480 ? 16 : 24);
+      await page.keyboard.press("Tab");
+      const save = dialog.getByRole("button", { name: "Save", exact: true });
+      await save.focus();
+      await expectKeyboardRing(save);
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+    }
+  }
+});

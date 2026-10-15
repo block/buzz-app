@@ -24,6 +24,8 @@ import { selectProfiles } from "../../features/relay/profile-selection";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  ArchiveIcon,
+  ArchiveOffIcon,
   ArrowSquareOutIcon,
   ChatCircleIcon,
   HashIcon,
@@ -41,6 +43,7 @@ export function InboxDetail({
   extensions,
   channelName,
   previewIncomplete,
+  archiveAction,
   onBack,
   resizeHandle,
 }: {
@@ -53,8 +56,14 @@ export function InboxDetail({
   extensions?: ConversationExtensions | undefined;
   channelName: string;
   previewIncomplete?: "loading" | "error" | undefined;
+  archiveAction?:
+    | { archived: boolean; disabled: boolean; run(): void }
+    | undefined;
   onBack(): void;
 }) {
+  const archiveLabel = archiveAction?.archived
+    ? "Restore conversation"
+    : "Archive conversation";
   const [error, setError] = useState<string>();
   const placeholderClose = useRef<HTMLButtonElement>(null);
   const reader = useRef<HTMLDivElement>(null);
@@ -81,6 +90,13 @@ export function InboxDetail({
   // Inbox keys this component by the captured visit. Revalidation withholds an
   // admitted reader, but must not recreate its reveal request or editor.
   const [admitted, setAdmitted] = useState(false);
+  // A late reply can regroup a session's opening message into its thread;
+  // keep the reader this visit opened with.
+  const flat =
+    item.target.kind === "channel" ||
+    (channel?.channelType === "session" && !item.thread);
+  const [timeline, setTimeline] = useState<boolean>();
+  if (available && timeline === undefined) setTimeline(flat);
   useEffect(() => {
     if (!available) setAdmitted(false);
     else if (!previewIncomplete) setAdmitted(true);
@@ -221,6 +237,25 @@ export function InboxDetail({
         }
         actions={
           <>
+            {archiveAction && (
+              <IconButton
+                size="sm"
+                variant="ghost"
+                disabled={
+                  archiveAction.disabled || !available || !!previewIncomplete
+                }
+                onClick={archiveAction.run}
+                aria-label={archiveLabel}
+                title={archiveLabel}
+                icon={
+                  archiveAction.archived ? (
+                    <ArchiveOffIcon size="1rem" aria-hidden="true" />
+                  ) : (
+                    <ArchiveIcon size="1rem" aria-hidden="true" />
+                  )
+                }
+              />
+            )}
             {openAction}
             <IconButton
               ref={placeholderClose}
@@ -284,7 +319,7 @@ export function InboxDetail({
                 active={false}
               >
                 <MessageManagementStatus />
-                {item.target.kind === "channel" ? (
+                {(timeline ?? flat) ? (
                   <ChannelPreview
                     session={session}
                     extensions={extensions}

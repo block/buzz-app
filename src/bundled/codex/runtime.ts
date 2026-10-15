@@ -1,17 +1,23 @@
 import type { WorkOutcome } from "../../features/agents/local-activity";
-import {
-  fromOwner,
-  type Agent,
-  type AgentHandle,
-  type Delivery,
-  type Models,
+import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import type { AgentReads } from "../../features/agents/reads";
+import type {
+  Agent,
+  AgentHandle,
+  Delivery,
+  Models,
+  StandaloneTurn,
+  TurnResult,
 } from "../../features/agents/service";
-import type { RelayData } from "../../features/relay/service";
-import type { RelaySession } from "../../features/relay/session";
 import type { EventData } from "../../features/relay/events";
-import type { MemoryListing } from "../../features/agents/memory";
 import { appClient } from "../../buzz-mcp/app-client";
-import { TOOLS, callTool } from "../../buzz-mcp/tools";
+import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
+import type { Context } from "../../buzz-mcp/client";
+import {
+  BUZZ_SESSION,
+  callSessionTool,
+  turnNote,
+} from "../../buzz-mcp/session-tools";
 import {
   config,
   defaults,
@@ -25,6 +31,7 @@ import {
   developerInstructions,
   rootOf,
   sessionName,
+  turnContext,
   turnInput,
   type Conversation,
 } from "./prompt";
@@ -46,14 +53,13 @@ type Request = {
   conversation: Conversation;
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
-  interest: string;
   /** The agent's team sections, if it is on a team. */
   team: string;
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
   /** Called once a final send answers this request, or one steered after it,
-   * or a steering rejection is posted in its place. */
+   * a steering rejection is posted in its place, or the turn ends normally. */
   answered: () => void;
   step?: (tool: string, target?: string) => void;
   acknowledged?: () => void;
@@ -77,12 +83,23 @@ type Active = {
   effort?: string;
   workspace: string;
   signal: AbortSignal;
-  version: number;
-  sentVersion?: number;
   /** Every request this turn has taken in, the first and each steered one. */
   requests: Request[];
   /** Latest acknowledged mention per Buzz thread; independent of session scope. */
   activity: Map<string, Request>;
+};
+/** A watch or timer turn on an ephemeral thread of its own. Its tools have
+ * no default destination and it answers no request. */
+type Once = {
+  threadId?: string;
+  turnId?: string;
+  finished: boolean;
+  signal: AbortSignal;
+  workspace: string;
+  agent: AgentHandle;
+  scope: string;
+  /** Settles once the turn has ended and let go of its thread. */
+  released: Promise<void>;
 };
 type Lane = {
   tail: Promise<void>;
@@ -97,6 +114,8 @@ type Entry = {
   after: Promise<void>;
   lanes: Map<string, Lane>;
   saved: Record<string, Saved>;
+  /** Standalone turns now running, for their tool calls to find. */
+  onces: Set<Once>;
 };
 type Server = {
   rpc: AppServer;
@@ -123,22 +142,6 @@ function textOf(event: EventData, name: string) {
   if (text.startsWith(`@${name}`)) text = text.slice(name.length + 1).trim();
   return text;
 }
-async function abortable<T>(promise: Promise<T>, signal: AbortSignal) {
-  signal.throwIfAborted();
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => {
-      try {
-        signal.throwIfAborted();
-      } catch (error) {
-        reject(error);
-      }
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    void promise
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener("abort", abort));
-  });
-}
 
 /** Agents owns admission/identity. This plugin owns work after hand-over, and
  * uses one app-server for every agent. Each conversation is its own Codex
@@ -152,15 +155,11 @@ export class CodexRuntime {
   private listeners = new Set<() => void>();
   /** Read-only model discovery, kept per agent until its settings change. */
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
-  /** One owner-view read per session and agent; concurrent turns share it. */
-  private memoryReads = new WeakMap<
-    RelaySession,
-    Map<string, Promise<MemoryListing>>
-  >();
+  private memoryReads = new MemoryReads();
   constructor(
     private readonly spawn: Spawn,
-    /** The owner's connection to each agent's own community. */
-    private readonly relay: (pubkey: string) => RelayData | undefined,
+    /** What each agent's turns read of its community, while it can be read. */
+    private readonly reads: (pubkey: string) => AgentReads | undefined,
     private readonly storage: Storage = localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
@@ -252,6 +251,16 @@ export class CodexRuntime {
     ]);
     for (const listener of this.listeners) listener();
   }
+  /** Stops listing `key`'s session. */
+  private forget(pubkey: string, key: string) {
+    const views = this.sessions(pubkey);
+    if (!views.some((view) => view.key === key)) return;
+    this.views.set(
+      pubkey,
+      views.filter((view) => view.key !== key),
+    );
+    for (const listener of this.listeners) listener();
+  }
   sync(agents: readonly Agent[]) {
     const present = new Set(agents.map((agent) => agent.pubkey));
     for (const pubkey of this.previews.keys())
@@ -274,11 +283,12 @@ export class CodexRuntime {
    * again waits rather than resuming a thread that is still letting go. */
   private stop(server: Server, pubkey: string, entry: Entry) {
     const stopped = (async () => {
-      await Promise.all(
-        [...entry.lanes.values()].map((lane) =>
+      await Promise.all([
+        ...[...entry.lanes.values()].map((lane) =>
           lane.tail.catch(() => undefined),
         ),
-      );
+        ...[...entry.onces].map((once) => once.released),
+      ]);
       for (const [threadId, owner] of server.threads)
         if (owner === pubkey) {
           if (this.server !== server) return;
@@ -306,6 +316,10 @@ export class CodexRuntime {
     this.stopping.clear();
     this.close();
   }
+  /** Starts the shared server ahead of the first mention. */
+  warm() {
+    this.open();
+  }
   private close() {
     void this.server?.rpc.close();
     this.server = undefined;
@@ -331,17 +345,17 @@ export class CodexRuntime {
     this.server = server;
     return server;
   }
-  private entry(request: Request) {
-    const pubkey = request.agent.pubkey;
+  private entry(pubkey: string, scope: string) {
     const prior = this.entries.get(pubkey);
     if (prior) return prior;
-    const saved = this.load(this.storageKey(request.scope, pubkey));
+    const saved = this.load(this.storageKey(scope, pubkey));
     const entry: Entry = {
-      storageKey: this.storageKey(request.scope, pubkey),
+      storageKey: this.storageKey(scope, pubkey),
       abort: new AbortController(),
       after: this.stopping.get(pubkey) ?? Promise.resolve(),
       saved,
       lanes: new Map(),
+      onces: new Set(),
     };
     this.entries.set(pubkey, entry);
     return entry;
@@ -367,12 +381,10 @@ export class CodexRuntime {
   }
   /** The agent's bindings in this community, most recently used first. */
   conversations(pubkey: string): SavedConversation[] {
-    const snapshot = this.relay(pubkey)?.snapshot();
-    const ready = snapshot?.status === "ready" ? snapshot : undefined;
+    const reads = this.reads(pubkey);
     const saved =
       this.entries.get(pubkey)?.saved ??
-      (ready ? this.load(this.storageKey(ready.scope ?? "", pubkey)) : {});
-    const channels = ready?.session.channels.list().channels ?? [];
+      (reads ? this.load(this.storageKey(reads.scope, pubkey)) : {});
     // Untimestamped bindings keep save order, newest last; listed newest first.
     return Object.entries(saved)
       .reverse()
@@ -381,7 +393,7 @@ export class CodexRuntime {
           const [channelId, root] = JSON.parse(key) as unknown[];
           if (typeof channelId !== "string" || typeof root !== "string")
             return [];
-          const name = channels.find((row) => row.id === channelId)?.name;
+          const name = reads?.channelName(channelId);
           return [
             {
               key,
@@ -400,12 +412,7 @@ export class CodexRuntime {
   }
   /** A display name for a pubkey in the agent's community, if known. */
   name(agentPubkey: string, pubkey: string) {
-    const snapshot = this.relay(agentPubkey)?.snapshot();
-    return snapshot?.status === "ready"
-      ? (snapshot.session.names.resolve(pubkey) ??
-          snapshot.session.profiles.snapshot().get(pubkey)?.name ??
-          undefined)
-      : undefined;
+    return this.reads(agentPubkey)?.name(pubkey);
   }
   /** The agent's latest thread for a conversation that another build of the
    * app started, found by the name the agent gave it. */
@@ -414,13 +421,7 @@ export class CodexRuntime {
     place: Readonly<{ channelId: string; root?: string }>,
     signal: AbortSignal,
   ): Promise<SavedConversation | undefined> {
-    const snapshot = this.relay(agent.pubkey)?.snapshot();
-    const name =
-      snapshot?.status === "ready"
-        ? snapshot.session.channels
-            .list()
-            .channels.find((row) => row.id === place.channelId)?.name
-        : undefined;
+    const name = this.reads(agent.pubkey)?.channelName(place.channelId);
     const found = await findConversation(
       this.spawn,
       { agent, ...place, ...(name ? { name } : {}) },
@@ -437,8 +438,9 @@ export class CodexRuntime {
   }
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
-    // tool change starts fresh. v4 added media_get.
-    return `buzz.codex.sessions.v4:${scope}:${pubkey}`;
+    // tool change starts fresh. v5 added channel and member management; v6
+    // added the shared session tools.
+    return `buzz.codex.sessions.v6:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -460,36 +462,35 @@ export class CodexRuntime {
   async run(delivery: Delivery) {
     delivery.signal.throwIfAborted();
     const { trigger, agent } = delivery;
-    if (trigger.type === "timer")
-      throw new Error(
-        "Codex timers are not supported yet; use mentions or event watches.",
-      );
-    const snapshot = this.relay(agent.pubkey)?.snapshot();
+    // Watches and timers come as standalone turns (`runOnce`).
+    if (trigger.type !== "mention") return delivery.ignored?.();
+    const reads = this.reads(agent.pubkey);
     if (
-      !(await fromOwner(trigger.event, agent.owner, {
-        agent: agent.pubkey,
-        authority:
-          snapshot?.status === "ready"
-            ? snapshot.session.workflowAuthority
-            : undefined,
-        profiles:
-          snapshot?.status === "ready" ? snapshot.session.profiles : undefined,
-      }))
+      !(await fromOwner(
+        trigger.event,
+        agent.owner,
+        workflowOf(reads, agent.pubkey),
+      ))
     ) {
       delivery.ignored?.();
       return;
     }
     delivery.signal.throwIfAborted();
-    if (snapshot?.status !== "ready")
-      throw new Error("Connect to the agent's community first");
+    if (!reads) throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
     const settings = this.resolveConfig(delivery.config);
-    const channel = snapshot.session.channels
-      .list()
-      .channels.find((row) => row.id === channelId);
+    const channel = await reads.channel(channelId);
+    const topLevel = await reads.meChat(
+      agent.owner,
+      channelId,
+      delivery.signal,
+    );
+    // A stop during the reads deleted this agent's entry; recreating it would
+    // reopen the agent.
+    delivery.signal.throwIfAborted();
     const toolRoot =
-      channel?.channelType === "dm" ? undefined : rootOf(trigger.event);
+      channel?.dm || topLevel ? undefined : rootOf(trigger.event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
     let finishActivity!: (result: WorkOutcome) => void;
     const replied = new Promise<WorkOutcome>((resolve) => {
@@ -502,7 +503,7 @@ export class CodexRuntime {
     // Codex makes one more model call after a final send before its turn
     // ends; the agent is done working on this request once it has replied.
     const request: Request = {
-      scope: snapshot.scope ?? "",
+      scope: reads.scope,
       event: trigger.event,
       agent,
       settings,
@@ -513,21 +514,14 @@ export class CodexRuntime {
         channelId,
         name: channel?.name ?? channelId,
         ...(root ? { root } : {}),
+        ...(topLevel ? { topLevel } : {}),
       },
-      interest:
-        trigger.type === "watch" ? (trigger.interest?.instructions ?? "") : "",
       team: delivery.team ?? "",
       answered,
       failActivity,
-      ...(trigger.type === "mention"
-        ? {
-            ...(delivery.step ? { step: delivery.step } : {}),
-            ...(delivery.acknowledged
-              ? { acknowledged: delivery.acknowledged }
-              : {}),
-            ...(delivery.superseded ? { superseded: delivery.superseded } : {}),
-          }
-        : {}),
+      ...(delivery.step ? { step: delivery.step } : {}),
+      ...(delivery.acknowledged ? { acknowledged: delivery.acknowledged } : {}),
+      ...(delivery.superseded ? { superseded: delivery.superseded } : {}),
     };
     if (!validWorkspace(settings.workspace)) {
       failActivity(
@@ -541,7 +535,7 @@ export class CodexRuntime {
     }
     const key = JSON.stringify([channelId, root ?? "channel"]);
     const text = textOf(request.event, agent.name);
-    const entry = this.entry(request);
+    const entry = this.entry(agent.pubkey, request.scope);
     let lane = entry.lanes.get(key);
     if (!lane) {
       lane = { tail: entry.after, queued: 0 };
@@ -560,10 +554,13 @@ export class CodexRuntime {
           // Steering cannot carry a model or effort, so a differing pick
           // waits for this turn and runs as the next one. Everything after
           // it queues too until the lane drains: steering would run later
-          // messages first.
+          // messages first. A turn keeps the posting policy it was admitted
+          // with, so a request under the other policy waits for it too.
           if (
             active.finished ||
             lane.queued ||
+            request.conversation.topLevel !==
+              active.reply.conversation.topLevel ||
             (request.model && request.model !== active.model) ||
             (request.effort && request.effort !== active.effort)
           ) {
@@ -583,12 +580,11 @@ export class CodexRuntime {
             threadId: active.threadId,
             expectedTurnId: active.turnId,
             input: input(
-              `${context}${turnInput(request.event, request.conversation, text, request.interest, true)}`,
+              `${context}${turnInput(request.event, request.conversation, text, true, turnNote(request.agent))}`,
             ),
           });
           active.reply = request;
           active.requests.push(request);
-          active.version++;
           this.acknowledgeActivity(active, request);
         } catch (error) {
           if (entry.abort.signal.aborted) {
@@ -618,11 +614,128 @@ export class CodexRuntime {
     this.start(request, text, key, lane, entry);
   }
 
+  /** Runs a standalone turn, such as a watch's or a timer's: a new
+   * ephemeral thread that joins no conversation and is not saved, stopped
+   * when the turn's signal aborts. Asks for its prompt once the thread can
+   * start, and starts none when the turn is no longer wanted. A failure is
+   * logged, not posted. */
+  async runOnce({
+    delivery,
+    key,
+    signal: turnSignal,
+    prompt,
+  }: StandaloneTurn): Promise<TurnResult> {
+    const { agent } = delivery;
+    const reads = this.reads(agent.pubkey);
+    if (!reads)
+      return { ok: false, error: "Connect to the agent's community first" };
+    const { scope } = reads;
+    const entry = this.entry(agent.pubkey, scope);
+    const settings = this.resolveConfig(delivery.config);
+    const team = delivery.team ?? "";
+    if (entry.abort.signal.aborted)
+      return { ok: false, error: "Codex was stopped" };
+    if (!validWorkspace(settings.workspace))
+      return {
+        ok: false,
+        error:
+          "Choose an absolute workspace path or ~/.buzz in Codex settings first.",
+      };
+    await entry.after.catch(() => undefined);
+    const server = this.open();
+    const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
+    let release!: () => void;
+    const once: Once = {
+      finished: false,
+      signal,
+      workspace: settings.workspace,
+      agent,
+      scope,
+      released: new Promise((resolve) => {
+        release = resolve;
+      }),
+    };
+    const followed = follow(server.rpc, signal, once);
+    entry.onces.add(once);
+    try {
+      const rpc = await server.opening;
+      signal.throwIfAborted();
+      const workspace = await this.workspace(settings.workspace);
+      signal.throwIfAborted();
+      once.workspace = workspace;
+      const { params, model, effort } = await this.prepare(
+        rpc,
+        agent,
+        settings,
+        workspace,
+        {},
+      );
+      const text = await prompt();
+      if (text === undefined) return { ok: true };
+      const memory = await this.core({ agent, scope }, signal);
+      signal.throwIfAborted();
+      const started = await rpc.request<{ thread: { id: string } }>(
+        "thread/start",
+        { ...params, ephemeral: true, dynamicTools: DYNAMIC_TOOLS },
+      );
+      once.threadId = started.thread.id;
+      server.threads.set(once.threadId, agent.pubkey);
+      signal.throwIfAborted();
+      const turnStarted = await rpc.request<{ turn: { id: string } }>(
+        "turn/start",
+        {
+          threadId: once.threadId,
+          input: input(text),
+          model,
+          effort,
+          additionalContext: turnContext(agent, settings, team, memory),
+        },
+      );
+      once.turnId ??= turnStarted.turn.id;
+      this.status(agent.pubkey, key, "Working");
+      const status = await followed.completed;
+      if (status === "interrupted") {
+        this.status(agent.pubkey, key, "Interrupted");
+        return { ok: false, error: "Codex’s turn was interrupted" };
+      }
+      // A finished wake leaves nothing to show; a failed one stays listed.
+      this.forget(agent.pubkey, key);
+      return { ok: true };
+    } catch (error) {
+      if (!once.finished && once.threadId && once.turnId)
+        await server.rpc
+          .request("turn/interrupt", {
+            threadId: once.threadId,
+            turnId: once.turnId,
+          })
+          .catch(() => server.rpc.close());
+      this.status(agent.pubkey, key, "Needs attention", message(error));
+      return { ok: false, error: message(error) };
+    } finally {
+      once.finished = true;
+      followed.stop();
+      const { threadId } = once;
+      // Nothing resumes the thread, so the shells it left are ended now.
+      if (threadId && server.threads.get(threadId) === agent.pubkey) {
+        await this.terminals(server.rpc, threadId).catch(() => undefined);
+        server.threads.delete(threadId);
+        await server.rpc
+          .request("thread/unsubscribe", { threadId })
+          .catch(() => undefined);
+      }
+      entry.onces.delete(once);
+      release();
+    }
+  }
+
   /** A positive harness response transfers presentation, not execution or
-   * success. Watches have no bubble; mentions in other threads keep theirs. */
+   * success. Watches have no bubble; mentions in other threads keep theirs,
+   * and a top-level chat is one scope. */
   private acknowledgeActivity(active: Active, request: Request) {
     if (!request.step) return;
-    const scope = rootOf(request.event);
+    const scope = request.conversation.topLevel
+      ? request.conversation.channelId
+      : rootOf(request.event);
     const prior = active.activity.get(scope);
     if (prior === request) return;
     prior?.superseded?.();
@@ -661,11 +774,11 @@ export class CodexRuntime {
   }
   private async history(request: Request, signal: AbortSignal) {
     signal.throwIfAborted();
-    const snapshot = this.relay(request.agent.pubkey)?.snapshot();
-    if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
+    const reads = this.reads(request.agent.pubkey);
+    if (reads?.scope !== request.scope)
       throw new Error("The community changed");
     return conversationHistory(request.event, request.conversation, (filters) =>
-      snapshot.session.read(filters, { signal }),
+      reads.read(filters, signal),
     );
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
@@ -676,29 +789,34 @@ export class CodexRuntime {
       content,
       tags: [
         ["h", request.conversation.channelId],
-        ["e", rootOf(request.event), "", "reply"],
+        ...(request.conversation.topLevel
+          ? []
+          : [["e", rootOf(request.event), "", "reply"]]),
         ["p", request.agent.owner],
       ],
     });
   }
   private async tool(call: ToolCall): Promise<ToolReply> {
-    const active = [...this.entries.values()]
+    const entries = [...this.entries.values()];
+    const matches = (turn?: { threadId?: string; turnId?: string }) =>
+      turn?.threadId === call?.threadId && turn?.turnId === call?.turnId;
+    const active = entries
       .flatMap((entry) => [...entry.lanes.values()])
       .map((lane) => lane.active)
-      .find(
-        (active) =>
-          active?.threadId === call?.threadId &&
-          active?.turnId === call?.turnId,
-      );
+      .find(matches);
+    const once = active
+      ? undefined
+      : entries.flatMap((entry) => [...entry.onces]).find(matches);
+    const turn = active ?? once;
     if (
-      !active ||
+      !turn ||
       call.namespace !== "buzz" ||
-      !TOOLS.some((tool) => tool.name === call.tool)
+      !BUZZ_SESSION.tools.some((tool) => tool.name === call.tool)
     )
       throw new Error("No active Buzz tool for this thread and turn");
     const check = () => {
-      active.signal.throwIfAborted();
-      if (active.finished) throw new Error("The Codex turn has ended");
+      turn.signal.throwIfAborted();
+      if (turn.finished) throw new Error("The Codex turn has ended");
     };
     check();
     if (
@@ -708,37 +826,36 @@ export class CodexRuntime {
     )
       throw new Error("Buzz tool arguments must be an object");
     const args = call.arguments as Record<string, unknown>;
-    const version = active.version;
-    const request = active.reply;
-    const answering = [...active.requests];
-    const client = appClient(request.agent, {
+    const request = active?.reply;
+    const answering = active ? [...active.requests] : [];
+    const owner = request ?? (once as Once);
+    const { agent } = owner;
+    const client = appClient(agent, {
       spawn: this.spawn,
-      cwd: active.workspace,
+      cwd: turn.workspace,
       check,
-      signal: active.signal,
+      signal: turn.signal,
       memories: async () => {
-        const { entries } = await this.memories(request, active.signal);
+        const { entries } = await this.memories(owner, turn.signal);
         check();
         return entries;
       },
       remembered: () => {
-        const snapshot = this.relay(request.agent.pubkey)?.snapshot();
-        if (snapshot?.status === "ready")
-          this.memoryReads.get(snapshot.session)?.delete(request.agent.pubkey);
+        const reads = this.reads(agent.pubkey);
+        if (reads) this.memoryReads.forget(reads.connection, agent.pubkey);
       },
     });
-    const reply = await callTool(
-      client,
-      {
-        channel: request.conversation.channelId,
-        ...(request.toolRoot ? { root: request.toolRoot } : {}),
-      },
-      call.tool,
-      args,
-    );
+    // A watch or timer turn has no default destination.
+    const context: Context = request
+      ? {
+          channel: request.conversation.channelId,
+          ...(request.toolRoot ? { root: request.toolRoot } : {}),
+          ...(request.conversation.topLevel ? { topLevel: true } : {}),
+        }
+      : {};
+    const reply = await callSessionTool(client, context, call.tool, args);
     const final = call.tool === "send" && args.final === true;
     if (final) {
-      active.sentVersion = Math.max(active.sentVersion ?? -1, version);
       for (const taken of answering) taken.answered();
     }
     return {
@@ -753,50 +870,31 @@ export class CodexRuntime {
       ],
     };
   }
-  /** The agent's memory, read back through the owner's session: it is
-   * encrypted to the owner, so no agent key is needed to read it. */
-  private async memories(request: Request, signal: AbortSignal) {
-    const snapshot = this.relay(request.agent.pubkey)?.snapshot();
-    if (snapshot?.status !== "ready" || snapshot.scope !== request.scope)
+  /** The agent's memory, as its community's reads give it. */
+  private async memories(
+    request: Pick<Request, "scope" | "agent">,
+    signal: AbortSignal,
+  ) {
+    const { pubkey } = request.agent;
+    const reads = this.reads(pubkey);
+    if (reads?.scope !== request.scope)
       throw new Error("Buzz is not connected to this community");
-    const { session } = snapshot;
-    let reads = this.memoryReads.get(session);
-    if (!reads) {
-      reads = new Map();
-      this.memoryReads.set(session, reads);
-    }
-    let read = reads.get(request.agent.pubkey);
-    if (!read) {
-      read = session.agentMemories.read(
-        request.agent.pubkey,
-        AbortSignal.timeout(10000),
-      );
-      reads.set(request.agent.pubkey, read);
-      void read.then(
-        () => reads?.delete(request.agent.pubkey),
-        () => reads?.delete(request.agent.pubkey),
-      );
-    }
-    const listing = await abortable(read, signal);
+    const { connection } = reads;
+    const listing = await this.memoryReads.read(reads, pubkey, signal);
     signal.throwIfAborted();
-    const current = this.relay(request.agent.pubkey)?.snapshot();
-    if (
-      current?.status !== "ready" ||
-      current.scope !== request.scope ||
-      current.session !== session
-    )
+    const current = this.reads(pubkey);
+    if (current?.scope !== request.scope || current.connection !== connection)
       throw new Error("Buzz is not connected to this community");
     return listing;
   }
   /** The agent's `core` memory for a turn: its text, `null` when it has none,
    * or undefined when it could not be read, so the turn goes on without it. */
-  private async core(request: Request, signal: AbortSignal) {
+  private async core(
+    request: Pick<Request, "scope" | "agent">,
+    signal: AbortSignal,
+  ) {
     try {
-      const listing = await this.memories(request, signal);
-      return (
-        listing.entries.find((entry) => entry.slug === "core")?.body ??
-        (listing.partial ? undefined : null)
-      );
+      return coreOf(await this.memories(request, signal));
     } catch (error) {
       signal.throwIfAborted();
       console.warn("Codex could not read the agent's memory", error);
@@ -841,6 +939,73 @@ export class CodexRuntime {
       throw error;
     }
   }
+  /** What a thread for `agent` starts or resumes with in `workspace`, and the
+   * model and effort its turn runs on: `pick`'s when available. */
+  private async prepare(
+    rpc: AppServer,
+    agent: AgentHandle,
+    settings: Config,
+    workspace: string,
+    pick: Readonly<{ model?: string; effort?: string }>,
+  ) {
+    const normalized = await rpc.request<{
+      config: {
+        model?: string | null;
+        mcp_servers?: Record<string, Record<string, unknown>>;
+      };
+    }>("config/read", { cwd: workspace });
+    const models = await listModels(rpc);
+    const own =
+      settings.model ||
+      normalized.config.model ||
+      models.find((row) => row.isDefault)?.model;
+    // Model and effort are per turn, so a pick changes nothing after it.
+    const picked = models.find((row) => row.model === pick.model);
+    const selected = picked ?? models.find((row) => row.model === own);
+    if (!selected)
+      throw new Error(
+        "The selected Codex model is unavailable. Choose an available model in Settings.",
+      );
+    const model = selected.model;
+    const supported = selected.supportedReasoningEfforts.map(
+      (level) => level.reasoningEffort,
+    );
+    // A picked model may not support the configured effort.
+    const effort =
+      [pick.effort, settings.effort].find(
+        (level) => level && supported.includes(level),
+      ) ?? selected.defaultReasoningEffort;
+    const mcp = Object.fromEntries(
+      Object.entries(normalized.config.mcp_servers ?? {}).map(
+        ([name, server]) => [
+          name,
+          // CLI overrides replace this table; disabled servers still need a transport.
+          {
+            ...(typeof server.command === "string"
+              ? { command: server.command }
+              : { url: server.url }),
+            enabled: false,
+          },
+        ],
+      ),
+    );
+    const params = {
+      model,
+      cwd: workspace,
+      developerInstructions: developerInstructions(agent),
+      approvalPolicy: "never",
+      // Matches Claude's bypassPermissions; only the owner's mentions and the
+      // agent's own watches and timers start work.
+      sandbox: "danger-full-access",
+      config: {
+        web_search: "disabled",
+        mcp_servers: mcp,
+        "features.plugins": false,
+        "features.apps": false,
+      },
+    };
+    return { params, model, effort };
+  }
   private async execute(
     request: Request,
     text: string,
@@ -865,66 +1030,26 @@ export class CodexRuntime {
       finished: false,
       workspace: request.settings.workspace,
       signal,
-      version: 0,
       requests: [request],
       activity: new Map(),
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
     const { settings, agent } = request;
-    let finish!: (status: string) => void;
-    let fail!: (error: Error) => void;
-    const completed = new Promise<string>((resolve, reject) => {
-      finish = resolve;
-      fail = reject;
-    });
-    void completed.catch(() => undefined);
-    const abort = () => fail(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
-    const off = server.rpc.onMessage((wire) => {
-      const p = wire.params as
-        | {
-            threadId?: string;
-            message?: string;
-            turn?: { id: string; status: string; error?: { message: string } };
-            item?: {
-              type: string;
-              text?: string;
-              phase?: string;
-              command?: string;
-              aggregatedOutput?: string;
-            };
-          }
-        | undefined;
-      if (wire.method === "connection/closed") {
-        fail(new Error(p?.message ?? "Codex connection closed"));
-        return;
-      }
-      if (!p || p.threadId !== active.threadId) return;
-      if (wire.method === "turn/started" && p.turn) active.turnId = p.turn.id;
-      const step =
-        wire.method === "item/started" ? codexStep(p.item) : undefined;
+    const followed = follow(server.rpc, signal, active, (method, item) => {
+      const step = method === "item/started" ? codexStep(item) : undefined;
       if (step)
         for (const taken of active.activity.values())
           taken.step?.(step.tool, step.target);
-      if (wire.method === "item/started" && p.item?.command)
-        this.status(agent.pubkey, key, "Working", p.item.command);
-      if (
-        wire.method === "item/completed" &&
-        p.item?.type === "commandExecution"
-      )
+      if (method === "item/started" && item.command)
+        this.status(agent.pubkey, key, "Working", item.command);
+      if (method === "item/completed" && item.type === "commandExecution")
         this.status(
           agent.pubkey,
           key,
           "Working",
-          `${p.item.command ?? ""}\n${p.item.aggregatedOutput ?? ""}`,
+          `${item.command ?? ""}\n${item.aggregatedOutput ?? ""}`,
         );
-      if (wire.method === "turn/completed" && p.turn) {
-        active.finished = true;
-        if (p.turn.status === "failed")
-          fail(new Error(p.turn.error?.message ?? "Codex turn failed"));
-        else finish(p.turn.status);
-      }
     });
     try {
       const rpc = await server.opening;
@@ -935,63 +1060,15 @@ export class CodexRuntime {
       signal.throwIfAborted();
       active.workspace = workspace;
       const existing = entry.saved[key];
-      const normalized = await rpc.request<{
-        config: {
-          model?: string | null;
-          mcp_servers?: Record<string, Record<string, unknown>>;
-        };
-      }>("config/read", { cwd: workspace });
-      const models = await listModels(rpc);
-      const own =
-        settings.model ||
-        normalized.config.model ||
-        models.find((row) => row.isDefault)?.model;
-      // Model and effort are per turn, so a pick changes nothing after it.
-      const picked = models.find((row) => row.model === request.model);
-      const selected = picked ?? models.find((row) => row.model === own);
-      if (!selected)
-        throw new Error(
-          "The selected Codex model is unavailable. Choose an available model in Settings.",
-        );
-      const model = selected.model;
-      const supported = selected.supportedReasoningEfforts.map(
-        (level) => level.reasoningEffort,
+      const { params, model, effort } = await this.prepare(
+        rpc,
+        agent,
+        settings,
+        workspace,
+        request,
       );
-      // A picked model may not support the configured effort.
-      const effort =
-        [request.effort, settings.effort].find(
-          (level) => level && supported.includes(level),
-        ) ?? selected.defaultReasoningEffort;
       active.model = model;
       active.effort = effort;
-      const mcp = Object.fromEntries(
-        Object.entries(normalized.config.mcp_servers ?? {}).map(
-          ([name, server]) => [
-            name,
-            // CLI overrides replace this table; disabled servers still need a transport.
-            {
-              ...(typeof server.command === "string"
-                ? { command: server.command }
-                : { url: server.url }),
-              enabled: false,
-            },
-          ],
-        ),
-      );
-      const params = {
-        model,
-        cwd: workspace,
-        developerInstructions: developerInstructions(agent),
-        approvalPolicy: "never",
-        // Matches Claude's bypassPermissions; only the owner can start work.
-        sandbox: "danger-full-access",
-        config: {
-          web_search: "disabled",
-          mcp_servers: mcp,
-          "features.plugins": false,
-          "features.apps": false,
-        },
-      };
       const resuming = existing?.workspace === workspace;
       let started: { thread: { id: string; cwd: string } };
       try {
@@ -1033,17 +1110,12 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${turnInput(request.event, request.conversation, text, request.interest)}`,
+          `${context}${turnInput(request.event, request.conversation, text, false, turnNote(request.agent))}`,
         ),
         model,
         effort,
         // Application context is a developer message that updates on each turn.
-        additionalContext: {
-          "buzz.instructions": {
-            kind: "application",
-            value: developerInstructions(agent, settings, request.team, memory),
-          },
-        },
+        additionalContext: turnContext(agent, settings, request.team, memory),
       });
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);
@@ -1055,7 +1127,7 @@ export class CodexRuntime {
       });
       ready();
       this.status(agent.pubkey, key, "Working");
-      const status = await completed;
+      const status = await followed.completed;
       await active.steering;
       signal.throwIfAborted();
       if (status === "interrupted") {
@@ -1068,11 +1140,8 @@ export class CodexRuntime {
         );
         this.status(agent.pubkey, key, "Interrupted");
       } else {
-        if (active.sentVersion !== active.version)
-          await this.publish(
-            active.reply,
-            "Codex ended this turn without a final reply through buzz.send. Send another mention to ask it to continue.",
-          );
+        // A turn may end without a reply when there is nothing new to say.
+        for (const taken of active.requests) taken.answered();
         this.status(agent.pubkey, key, "Idle");
       }
     } catch (error) {
@@ -1104,9 +1173,8 @@ export class CodexRuntime {
     } finally {
       for (const taken of active.requests)
         taken.failActivity("Codex ended without a final reply");
-      signal.removeEventListener("abort", abort);
+      followed.stop();
       turnAbort.abort(new Error("The Codex turn has ended"));
-      off();
       // Release the subscription before the next resume: loaded-thread rejoin
       // ignores instruction/config overrides while a client is subscribed.
       if (active.threadId)
@@ -1117,12 +1185,73 @@ export class CodexRuntime {
     }
   }
 }
+/** A started or completed item, as the app-server reports it. */
+type Item = {
+  type: string;
+  text?: string;
+  phase?: string;
+  command?: string;
+  aggregatedOutput?: string;
+};
+/** Follows `turn`'s thread on `rpc`: notes its turn id, passes its items to
+ * `onItem`, and settles `completed` with the turn's status. Rejects when the
+ * turn fails, `signal` aborts or the connection closes. */
+function follow(
+  rpc: AppServer,
+  signal: AbortSignal,
+  turn: { threadId?: string; turnId?: string; finished: boolean },
+  onItem?: (method: string, item: Item) => void,
+) {
+  let finish!: (status: string) => void;
+  let fail!: (error: Error) => void;
+  const completed = new Promise<string>((resolve, reject) => {
+    finish = resolve;
+    fail = reject;
+  });
+  void completed.catch(() => undefined);
+  const abort = () => fail(signal.reason);
+  signal.addEventListener("abort", abort, { once: true });
+  const off = rpc.onMessage((wire) => {
+    const p = wire.params as
+      | {
+          threadId?: string;
+          message?: string;
+          turn?: { id: string; status: string; error?: { message: string } };
+          item?: Item;
+        }
+      | undefined;
+    if (wire.method === "connection/closed") {
+      fail(new Error(p?.message ?? "Codex connection closed"));
+      return;
+    }
+    if (!p || !turn.threadId || p.threadId !== turn.threadId) return;
+    if (wire.method === "turn/started" && p.turn) turn.turnId = p.turn.id;
+    if (p.item && wire.method) onItem?.(wire.method, p.item);
+    if (wire.method === "turn/completed" && p.turn) {
+      turn.finished = true;
+      if (p.turn.status === "failed")
+        fail(new Error(p.turn.error?.message ?? "Codex turn failed"));
+      else finish(p.turn.status);
+    }
+  });
+  return {
+    completed,
+    stop() {
+      signal.removeEventListener("abort", abort);
+      off();
+    },
+  };
+}
+/** The Buzz tools every new thread gets. */
 const DYNAMIC_TOOLS = [
   {
     type: "namespace",
     name: "buzz",
     description: "Read and act in Buzz as this agent.",
-    tools: TOOLS.map((tool) => ({ type: "function", ...tool })),
+    tools: BUZZ_SESSION.tools.map((tool) => ({
+      type: "function",
+      ...tool,
+    })),
   },
 ];
 const EMPTY: readonly SessionView[] = Object.freeze([]);

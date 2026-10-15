@@ -1,7 +1,7 @@
+import { profileActivityViewTarget } from "../../features/profiles/target";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
 import type { Agents } from "../../features/agents/service";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
-import { activityTarget } from "../../features/agents/activity-target";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "./useConversationTabs";
 import tabStyles from "./ChannelTabs.module.css";
@@ -9,7 +9,7 @@ import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
 import { ChannelBody } from "./ChannelBody";
-import { useChannelTabState } from "./useChannelTabState";
+import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
@@ -20,7 +20,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
-import { ChannelJoinNotice } from "./ChannelJoinNotice";
+import { ChannelJoinNotice } from "../../features/messages/ChannelJoinNotice";
 import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -37,6 +37,7 @@ import {
 } from "../../features/sessions/SessionPresentation";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
 import {
   useCallback,
   useEffect,
@@ -73,12 +74,16 @@ import {
   MessageManagementStatus,
 } from "../../features/messages/MessageManagement";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
-import type { Attachment } from "../../features/relay/contracts";
+import type {
+  Attachment,
+  ChannelSummary,
+} from "../../features/relay/contracts";
 import { readView, writeView, subscribeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 export function ChannelsPage({
   extensions,
@@ -194,7 +199,10 @@ function ChannelWorkspace({
     channelId: string;
     navigation: PageNavigation | undefined;
   }>();
+  const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
+  const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
+  const historyContainer = useRef<HTMLElement>(null);
   // A visit applied by a header opening must not take that opening's focus.
   const [preservedVisit, setPreservedVisit] = useState<PageNavigation>();
   // A started join focuses the composer when membership makes it writable,
@@ -315,6 +323,19 @@ function ChannelWorkspace({
     !joinedRequest &&
     !!queries.channels.resolve &&
     resolved?.request !== navigation;
+  // Thread navigation revalidates access, but should not tear down the
+  // already-visible preview in this channel while that lookup is pending.
+  // Navigation can also briefly omit its request during the route handoff.
+  const visiblePreview = useRef<{
+    channelId: string;
+    queries: RelaySession;
+  }>(undefined);
+  const previewAvailable =
+    resolved?.request === navigation
+      ? resolved?.available
+      : !cached &&
+        visiblePreview.current?.channelId === requestedChannel &&
+        visiblePreview.current?.queries === queries;
   // Lifecycle completion must not reopen retained archived/hidden membership
   // through the mounted workspace's saved selection or first-channel fallback.
   const emptyDestination =
@@ -326,11 +347,20 @@ function ChannelWorkspace({
       ? (channels.find((channel) => channel.id === requestedChannel) ??
         // Sidebar visibility is not access: retain a joined archived selection.
         list.channels.find((channel) => channel.id === requestedChannel) ??
-        (resolved?.request === navigation && resolved?.available
+        (previewAvailable
           ? queries.channels.get?.(requestedChannel)
           : undefined))
-      : (channels.find((channel) => channel.id === selected) ??
+      : ((!navigation && !cached && visiblePreview.current?.queries === queries
+          ? queries.channels.get?.(visiblePreview.current.channelId)
+          : undefined) ??
+        channels.find((channel) => channel.id === selected) ??
         channels.find((item) => item.channelType !== "session"));
+  useLayoutEffect(() => {
+    visiblePreview.current =
+      current?.readOnly && !current.cached && !cached
+        ? { channelId: current.id, queries }
+        : undefined;
+  });
   // Sidebar routing can update the same mounted page. Keep its saved default
   // aligned with the resolved conversation, not only page-local clicks.
   useEffect(() => {
@@ -614,20 +644,13 @@ function ChannelWorkspace({
     ],
   );
   const conversationIcon = (item: (typeof channels)[number]) => {
-    const Icon = channelIcon(item);
     const person = item.participants?.[0];
-    const picture = person ? profiles.get(person)?.picture : undefined;
-    return item.channelType === "dm" ? (
-      <span className={tabStyles.icon}>
-        <Avatar
-          alt=""
-          fallback={item.name}
-          size="fill"
-          src={picture ? queries.media(picture) : null}
-        />
-      </span>
-    ) : (
-      <Icon size="1rem" />
+    return (
+      <ConversationIcon
+        item={item}
+        picture={person ? profiles.get(person)?.picture : undefined}
+        media={queries.media}
+      />
     );
   };
   const channelConversation = useRef<HTMLDivElement>(null);
@@ -649,16 +672,32 @@ function ChannelWorkspace({
     threadId: routedThread?.messageId,
     mainPane: true,
     routed: routedThread,
-    onCloseThread: (tab, active) => {
+    onCloseThread: (tab, active, last) => {
       // Closing the addressed thread returns the route to its channel, so a
       // later Back/Forward visit is the only way to reopen it.
+      // That channel visit keeps the tab selected in place of the closed one.
       if (
         routedThread?.channelId === tab.channelId &&
         routedThread.messageId === tab.messageId
-      )
+      ) {
         select(tab.channelId);
+        const entry = navigator?.snapshot().entry.id;
+        if (entry) tabState.enterVisit(`${entry}:channel`, undefined, true);
+      }
       const trigger = threadTrigger.current;
-      if (trigger) returnFocus.current = { trigger, channelId: currentId };
+      // While tabs remain, the opener takes focus only from within their pane.
+      if (
+        trigger &&
+        (last ||
+          trigger
+            .closest("[data-panel-workspace], [data-main-workspace]")
+            ?.hasAttribute(
+              tabPane(tab) === "main"
+                ? "data-main-workspace"
+                : "data-panel-workspace",
+            ))
+      )
+        returnFocus.current = { trigger, channelId: currentId };
       if (active && tab.channelId === currentId) highlightReturn(tab.rootId);
     },
     onRetryNavigation: () => void navigator?.retry(),
@@ -732,12 +771,9 @@ function ChannelWorkspace({
     }
     const activityAgent = handoff?.activityAgent.current;
     if (activityAgent && activityAgent.channelId === current?.id) {
-      const target = activityTarget(
-        activityAgent.agent,
-        activityAgent.channelId,
-      );
-      const panel = panels.resolve(target);
-      if (panel) {
+      const target = profileActivityViewTarget(activityAgent.agent);
+      const panel = target && panels.resolve(target);
+      if (target && panel) {
         panelTrigger.current = activityAgent.trigger;
         open({ channelId: activityAgent.channelId, panel, target }, true);
       }
@@ -824,6 +860,20 @@ function ChannelWorkspace({
       tabState.openThreadTab,
       tabState.leaveVisit,
     ],
+  );
+  // Closing a linked thread returns focus to its link, as an opened thread does.
+  const openLinkedThread = useCallback(
+    (channelId: string, messageId: string, rootId: string) => {
+      const trigger =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      if (!secondary.openLinkedThread(channelId, messageId, rootId))
+        return false;
+      threadTrigger.current = trigger;
+      return true;
+    },
+    [secondary.openLinkedThread],
   );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
@@ -1094,85 +1144,112 @@ function ChannelWorkspace({
   const body = (
     <SessionColumn enabled={flatSession}>
       <MessageManagementStatus />
-      {flatSession &&
-      current &&
-      navigation &&
-      requestedMessage &&
-      exact &&
-      !exact.inTimeline ? (
-        <SessionMessageTarget
-          key={`${current.id}:${requestedMessage}`}
-          session={queries}
-          scope={scope}
-          channelId={current.id}
-          messageId={requestedMessage}
-          navigation={navigation}
-          extensions={extensions}
-          onOpenLink={openLink}
-          canOpenLink={canOpenLink}
-          onLatest={() => select(current.id)}
-          onRetry={() => {
-            void navigator?.retry();
-          }}
-        />
-      ) : current ? (
-        <ChannelBody
-          viewer={viewer}
-          extensions={extensions}
-          key={current.id}
-          queries={queries}
-          scope={scope}
-          channelId={current.id}
-          cached={cached}
-          navigation={
-            flatSession || !requestedMessage || exact?.inTimeline
-              ? navigation
-              : undefined
-          }
-          onOpenLink={openLink}
-          canOpenLink={canOpenLink}
-          onOpenThread={flatSession ? undefined : openThread}
-          onOpenMediaReview={openMediaReview}
-          revealMessageId={sent?.channelId === current.id ? sent.id : undefined}
-        />
-      ) : (
-        <div
-          className={styles.empty}
-          data-buzz-launch-pending={
-            resolving && !navigation?.signal.aborted ? "required" : undefined
-          }
-        >
-          {resolving
-            ? "Checking conversation access…"
-            : "Select a channel to read it."}
-        </div>
-      )}
-      {current?.readOnly && !current.cached && (
-        <ChannelJoinNotice
-          key={`join:${current.id}`}
-          channelId={current.id}
-          lifecycle={queries.channelLifecycle}
-          joinable={
-            !current.archived &&
-            (current.channelType === "stream" ||
-              current.channelType === "forum")
-          }
-          onJoin={() => setJoiningChannel(current.id)}
-        />
-      )}
+      <section
+        data-channel-history
+        aria-label="Channel history"
+        tabIndex={-1}
+        ref={historyContainer}
+        className={`relative flex min-h-0 flex-col${current ? " flex-1" : ""}`}
+      >
+        {flatSession &&
+        current &&
+        navigation &&
+        requestedMessage &&
+        exact &&
+        !exact.inTimeline ? (
+          <SessionMessageTarget
+            key={`${current.id}:${requestedMessage}`}
+            session={queries}
+            scope={scope}
+            channelId={current.id}
+            messageId={requestedMessage}
+            navigation={navigation}
+            extensions={extensions}
+            onOpenLink={openLink}
+            canOpenLink={canOpenLink}
+            onLatest={() => select(current.id)}
+            onRetry={() => {
+              void navigator?.retry();
+            }}
+          />
+        ) : current ? (
+          <ChannelBody
+            onContentReady={setContentReadyChannel}
+            viewer={viewer}
+            extensions={extensions}
+            key={current.id}
+            queries={queries}
+            scope={scope}
+            channelId={current.id}
+            cached={cached}
+            navigation={
+              flatSession || !requestedMessage || exact?.inTimeline
+                ? navigation
+                : undefined
+            }
+            onOpenLink={openLink}
+            canOpenLink={canOpenLink}
+            onOpenThread={flatSession ? undefined : openThread}
+            onOpenMediaReview={openMediaReview}
+            revealMessageId={
+              sent?.channelId === current.id ? sent.id : undefined
+            }
+          />
+        ) : (
+          <div
+            className={styles.empty}
+            data-buzz-launch-pending={
+              resolving && !navigation?.signal.aborted ? "required" : undefined
+            }
+          >
+            {resolving
+              ? "Checking conversation access…"
+              : "Select a channel to read it."}
+          </div>
+        )}
+        {current?.readOnly && !current.cached && (
+          <ChannelJoinNotice
+            key={`join:${current.id}`}
+            ready={contentReadyChannel === current.id}
+            channelId={current.id}
+            lifecycle={queries.channelLifecycle}
+            joinable={
+              !current.archived &&
+              (current.channelType === "stream" ||
+                current.channelType === "forum")
+            }
+            onJoin={() => setJoiningChannel(current.id)}
+            onHeightChange={setJoinNoticeHeight}
+          />
+        )}
+      </section>
       {!cached && (
         <LiveStatus
           live={queries.live}
+          recovery={queries.recovery}
           channelId={current?.id}
           partialRoster={list.coverage === "partial"}
-          // Retry removes this focused control. Reuse the composer’s
-          // explicit focus handoff instead of relying on browser Tab memory.
-          onRetry={
-            current ? () => setComposerFocus((value) => value + 1) : undefined
+          // Recovery removes the focused retry control. Hand focus on
+          // explicitly; previews have no composer, so use their history.
+          onRecovered={
+            current
+              ? () => {
+                  if (current.readOnly && !current.cached) {
+                    const history = historyContainer.current;
+                    const target =
+                      history?.querySelector<HTMLElement>(
+                        "[data-message-scroller]",
+                      ) ?? history;
+                    target?.focus({ preventScroll: true });
+                  } else {
+                    setComposerFocus((value) => value + 1);
+                  }
+                }
+              : undefined
           }
         />
       )}
-      {current && (
+      {current && (!current.readOnly || current.cached) && (
         <MessageComposer
           sessionConversation={current.channelType === "session"}
           extensions={extensions}
@@ -1187,7 +1264,8 @@ function ChannelWorkspace({
               "preserve" &&
             !current.readOnly &&
             !requestedMessage &&
-            !requestedThread
+            !requestedThread &&
+            !routedThread
           }
           onOpenLink={openLink}
           canOpenLink={canOpenLink}
@@ -1243,6 +1321,14 @@ function ChannelWorkspace({
         {/* biome-ignore lint/a11y/noStaticElementInteractions: file-drop fallback; the composer also provides a keyboard-accessible picker. */}
         <div
           className={`${styles.conversation}${flatSession ? ` ${styles.sessionConversation}` : ""}`}
+          style={
+            {
+              "--channel-preview-inset":
+                current?.readOnly && !current.cached
+                  ? `calc(${joinNoticeHeight}px + var(--space-3))`
+                  : "0px",
+            } as React.CSSProperties
+          }
           data-attachment-drop-zone=""
           onDragOver={rejectUnhandledFileDrop}
           onDrop={rejectUnhandledFileDrop}
@@ -1281,7 +1367,7 @@ function ChannelWorkspace({
             />
           ) : draftParent ? (
             <p role="status" className={styles.empty}>
-              Start new conversations from Me. Channel-nested sessions are no
+              Start new conversations from Solo. Channel-nested sessions are no
               longer available.
             </p>
           ) : (
@@ -1551,7 +1637,9 @@ function ChannelWorkspace({
   );
   return (
     <MessageManagement session={queries} channelId={currentId}>
-      {workspace}
+      <LinkThreadTabContext value={openLinkedThread}>
+        {workspace}
+      </LinkThreadTabContext>
     </MessageManagement>
   );
 }
@@ -1568,4 +1656,30 @@ export function mediaReviewForDestination<
     (review.entryId === undefined || review.entryId === entryId)
     ? review
     : undefined;
+}
+
+/** A DM tab shows the other participant in a 1rem slot, so it asks for the
+ * relay thumbnail message rows already loaded rather than the original. */
+export function ConversationIcon({
+  item,
+  picture,
+  media,
+}: {
+  item: Pick<ChannelSummary, "name" | "channelType" | "private">;
+  picture: string | undefined;
+  media: RelaySession["media"];
+}) {
+  const Icon = channelIcon(item);
+  return item.channelType === "dm" ? (
+    <span className={tabStyles.icon}>
+      <Avatar
+        alt=""
+        fallback={item.name}
+        size="fill"
+        src={avatarMedia(picture, media)}
+      />
+    </span>
+  ) : (
+    <Icon size="1rem" />
+  );
 }

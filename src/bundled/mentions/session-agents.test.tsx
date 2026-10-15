@@ -243,6 +243,74 @@ const emptyCompletion = {
   observation: { revision: 1, text: "@", start: 1, end: 1 },
   query: { start: 0, end: 1, query: "" },
 };
+it.each([false, true])(
+  "waits for members before installing directory or agent choices (invite=%s)",
+  async (invite) => {
+    const test = setup();
+    await test.library.queries.refresh();
+    let list: ReturnType<RelaySession["channels"]["list"]> = {
+      status: "loading",
+      channels: [{ id: "parent", name: "Parent", channelType: "stream" }],
+    };
+    const listeners = new Set<() => void>();
+    const people = vi.fn(async () => ({
+      people: [{ pubkey: test.key, name: "Outside person" }],
+      hasMore: false,
+    }));
+    const session = {
+      ...test.session,
+      channels: {
+        ...test.session.channels,
+        list: () => list,
+        subscribeList(listener: () => void) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+      directMessages: { ...test.session.directMessages, people },
+    };
+    const publish = vi.fn();
+    const view = render(
+      <MentionCompletion
+        {...emptyCompletion}
+        session={session}
+        inviteAgents={invite}
+        publish={publish}
+      />,
+    );
+    try {
+      if (!invite) {
+        await waitFor(() => expect(people).toHaveBeenCalledOnce());
+        // Finish the directory read while membership remains held.
+        await act(async () => {
+          await people.mock.results[0]?.value;
+        });
+      }
+      expect(completionLabels(publish)).toEqual([]);
+      act(() => {
+        list = {
+          status: "ready",
+          channels: [
+            {
+              id: "parent",
+              name: "Parent",
+              channelType: "stream",
+              members: [test.member],
+            },
+          ],
+        };
+        for (const listener of listeners) listener();
+      });
+      expect(completionLabels(publish)).toEqual([
+        "Member",
+        invite ? "Outside agent" : "Outside person",
+      ]);
+    } finally {
+      view.unmount();
+      test.library.dispose();
+    }
+  },
+);
 it("offers a known member for Tab while agents load, then appends late agents", async () => {
   const test = setup();
   let release!: () => void;

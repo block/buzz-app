@@ -135,12 +135,14 @@ export function useMentionChoices(
     if (!open) return { candidates: [], local: new Set<string>() };
     return { candidates: current(), local: localKeys() };
   }, [open, current, localKeys, profiles, list, agents, archives, resolve]);
-  // Pending sources report status, but must not hide usable local choices.
-  const pending =
+  // Install membership first; agent discovery must not hide known members.
+  const membersPending =
     !roster &&
-    (((list.status === "idle" || list.status === "loading") &&
-      !channel?.members) ||
-      (!!invite && agents.pending && agents.status !== "ready"));
+    (list.status === "idle" || list.status === "loading") &&
+    !channel?.members;
+  const pending =
+    membersPending ||
+    (!roster && !!invite && agents.pending && agents.status !== "ready");
   let rows = same ? installed.rows : undefined;
   if (!same && installed) install(undefined);
   const rank = (choices: MentionChoice[]) =>
@@ -154,7 +156,7 @@ export function useMentionChoices(
     ? rank(candidates.filter((c) => !local.has(c.recipient.pubkey)))
     : [];
   const missingNames = channel?.members?.some((key) => !profiles.has(key));
-  if (open && !rows) {
+  if (open && !rows && !membersPending) {
     const ranked = rank(
       candidates.filter((c) => local.has(c.recipient.pubkey)),
     ).slice(0, 50);
@@ -174,6 +176,7 @@ export function useMentionChoices(
   }
   if (rows && rows.length < 50) {
     // Append-only: late invited agents and directory pages never move shown rows.
+    // Member-list changes keep their installed set until the query changes.
     const shown = new Set(rows.map((row) => row.recipient.pubkey));
     const added = (invite ? rank(candidates.filter((c) => c.agent)) : outside)
       .filter((c) => !shown.has(c.recipient.pubkey))

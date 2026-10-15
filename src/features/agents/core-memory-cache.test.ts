@@ -56,7 +56,11 @@ it("waits on one read with nothing cached, then answers from the cache with none
   const f = setup();
   await expect(f.cache.core(agent)).resolves.toBe("one");
   await expect(f.cache.core(agent)).resolves.toBe("one");
-  expect(f.memoryListing).toHaveBeenCalledOnce();
+  // It reads `core` alone, by its address, not the whole listing.
+  expect(f.memoryListing).toHaveBeenCalledExactlyOnceWith(
+    expect.any(AbortSignal),
+    "core",
+  );
   // A new cache on the same storage, as after a restart, reads nothing.
   const restarted = new CoreMemoryCache(
     () =>

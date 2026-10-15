@@ -115,7 +115,9 @@ export class CoreMemoryCache {
   private async read(reads: AgentReads, pubkey: string, signal: AbortSignal) {
     const key = this.key(reads.scope, pubkey);
     const writer = this.claim(key);
-    const memory = coreOf(await this.memoryReads.read(reads, pubkey, signal, "core"));
+    const memory = coreOf(
+      await this.memoryReads.read(reads, pubkey, signal, "core"),
+    );
     if (this.reads(pubkey)?.connection !== reads.connection) return undefined;
     if (this.writers.get(key) !== writer) {
       // A later write or read took over: answer with what it kept, if anything.

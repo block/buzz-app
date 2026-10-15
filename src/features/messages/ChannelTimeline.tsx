@@ -775,7 +775,19 @@ function Timeline({
       onPointerCancel={() => {
         pointerHeld.current = false;
       }}
-      onScrollEnd={() => {
+      onScrollEnd={(event) => {
+        // Virtual rows can finish measuring after the last scroll event,
+        // especially at the top where reflow cannot change scrollTop.
+        const element = event.currentTarget;
+        if (
+          settled.current &&
+          element.clientWidth === size.width &&
+          element.clientHeight === size.height
+        )
+          recordPosition(
+            element,
+            layoutCorrection.current && !pointerHeld.current,
+          );
         upwardGesture.current = false;
       }}
       onFocus={(event) => {

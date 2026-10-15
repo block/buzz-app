@@ -358,19 +358,16 @@ export function Settings({
                         <SettingsGroup>
                           {group.plugins.map((plugin) => {
                             const id = plugin.manifest.id;
-                            const title = (
-                              <span className={styles.pluginTitle}>
-                                <span>{plugin.manifest.name}</span>
-                                {isEssentialPlugin(plugin) && (
-                                  <span
-                                    className="text-caption"
-                                    role="img"
-                                    aria-label="Essential"
-                                    title="Essential"
-                                  >
-                                    ✨
-                                  </span>
-                                )}
+                            const essentialMarker = isEssentialPlugin(
+                              plugin,
+                            ) && (
+                              <span
+                                className="text-caption"
+                                role="img"
+                                aria-label="Essential"
+                                title="Essential"
+                              >
+                                ✨
                               </span>
                             );
                             const running = activation[id];
@@ -389,42 +386,48 @@ export function Settings({
                                 {isRequiredPlugin(plugin) ? (
                                   <PreferenceRow
                                     icon={<SquaresFourIcon size={20} />}
-                                    title={title}
+                                    title={plugin.manifest.name}
                                     subtitle={plugin.manifest.description}
                                     trailing={
-                                      <span className="text-body-sm text-subtle">
-                                        Required
+                                      <span className={styles.pluginControls}>
+                                        {essentialMarker}
+                                        <span className="text-body-sm text-subtle">
+                                          Required
+                                        </span>
                                       </span>
                                     }
                                   />
                                 ) : (
                                   <PreferenceRow
                                     icon={<SquaresFourIcon size={20} />}
-                                    title={title}
+                                    title={plugin.manifest.name}
                                     subtitle={plugin.manifest.description}
                                     controlId={`${pluginControlPrefix}-${id}`}
                                     accessibleTitle={`Enable ${plugin.manifest.name}`}
                                     trailing={(labelProps) => (
-                                      <Switch
-                                        {...labelProps}
-                                        id={`${pluginControlPrefix}-${id}`}
-                                        aria-label={`Enable ${plugin.manifest.name}`}
-                                        checked={plugin.enabled}
-                                        readOnly={busy}
-                                        aria-disabled={busy}
-                                        onClick={(event) =>
-                                          event.currentTarget.focus()
-                                        }
-                                        onCheckedChange={() => {
-                                          if (busy) return;
-                                          void plugins.change(
-                                            plugin.enabled
-                                              ? "disable"
-                                              : "enable",
-                                            id,
-                                          );
-                                        }}
-                                      />
+                                      <span className={styles.pluginControls}>
+                                        {essentialMarker}
+                                        <Switch
+                                          {...labelProps}
+                                          id={`${pluginControlPrefix}-${id}`}
+                                          aria-label={`Enable ${plugin.manifest.name}`}
+                                          checked={plugin.enabled}
+                                          readOnly={busy}
+                                          aria-disabled={busy}
+                                          onClick={(event) =>
+                                            event.currentTarget.focus()
+                                          }
+                                          onCheckedChange={() => {
+                                            if (busy) return;
+                                            void plugins.change(
+                                              plugin.enabled
+                                                ? "disable"
+                                                : "enable",
+                                              id,
+                                            );
+                                          }}
+                                        />
+                                      </span>
                                     )}
                                   />
                                 )}

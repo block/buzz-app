@@ -260,6 +260,16 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
     within(content).queryAllByRole("img", { name: "Essential" }),
   ).toHaveLength(essentials ? 3 : 0);
   expect(within(content).queryByText("Essential")).toBeNull();
+  if (essentials) {
+    const voiceRow = within(content)
+      .getByText("Voice Notes")
+      .closest("article");
+    expect(voiceRow).not.toBeNull();
+    const row = within(voiceRow as HTMLElement);
+    expect(row.getByRole("img", { name: "Essential" }).nextElementSibling).toBe(
+      row.getByRole("switch", { name: "Enable Voice Notes" }),
+    );
+  }
   expect(
     within(content).queryByRole("switch", { name: "Enable Channels" }),
   ).toBeNull();

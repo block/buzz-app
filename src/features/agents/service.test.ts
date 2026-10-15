@@ -4,7 +4,10 @@ import { Context } from "@deepseek-ai/cordis";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentConfigStore, type Subject } from "./agent-config";
+import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
 import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
 import { keypair, message, signed } from "../relay/testing";
@@ -12,8 +15,10 @@ import type { LiveBatch } from "../relay/incoming";
 import type { RelaySession } from "../relay/session";
 import type { AgentIdentity } from "./native";
 import {
+  type Agent,
   AgentsService,
   type AgentType,
+  type ConfigBinding,
   type Delivery,
   type Trigger,
   fromOwner,
@@ -67,6 +72,7 @@ async function setup({
   timeoutMs = 60_000,
   runOnce = undefined as AgentType<Config>["runOnce"],
   jev = undefined as ClassifierNative | undefined,
+  binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -92,6 +98,7 @@ async function setup({
     authorize,
     activity,
     jev,
+    binding,
   );
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "example", revision: "one" }),
@@ -1253,6 +1260,97 @@ it("starts each run from the start resolver, local with no synced revisions", as
     config: { reply: "local" },
     revisions: [],
   });
+});
+
+describe("a type without synced settings", () => {
+  const subject: Subject = {
+    owner: viewer,
+    community: "https://relay.example.test",
+    subject: bot,
+    channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+    type: "buzz.agent.settings",
+  };
+  /** This device once had a synced settings revision of the agent. */
+  const withHistory = () => {
+    const storage = memoryStorage();
+    const store = new AgentConfigStore(storage);
+    const head = finalizeEvent(
+      {
+        kind: 45010,
+        created_at: 1,
+        content: JSON.stringify({
+          version: 1,
+          agentType: "example/echo",
+          settings: {},
+        }),
+        tags: [["op", "create"]],
+      },
+      generateSecretKey(),
+    ) as RelayEvent;
+    store.applyRead(subject, store.capture(subject), {
+      kind: "head",
+      event: head,
+    });
+    expect(store.hadVersion(subject)).toBe(true);
+    return storage;
+  };
+  const fixtures: { ctx: Context }[] = [];
+  afterEach(async () => {
+    for (const f of fixtures.splice(0)) await f.ctx.fiber.dispose();
+  });
+  const mention = async (mode: Mode, storage = memoryStorage()) => {
+    const f = await setup({
+      storage,
+      binding: () => ({ settings: { mode, subject } }),
+    });
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await f.service.save(bot, { config: { reply: "local" } });
+    f.emit({
+      events: [
+        event("1", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    fixtures.push(f);
+    return f;
+  };
+  const refused = async (f: Awaited<ReturnType<typeof mention>>) => {
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: "This agent type has no synced settings",
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
+  };
+
+  it.each(["local", "migrating"] as const)(
+    "starts from the local config when settings are %s with no synced revision",
+    async (mode) => {
+      const f = await mention(mode);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0]).toMatchObject({
+        config: { reply: "local" },
+        revisions: [],
+      });
+    },
+  );
+
+  it("refuses to start when settings are explicitly synced", async () => {
+    await refused(await mention("synced"));
+  });
+
+  it.each(["local", "migrating"] as const)(
+    "refuses to start when settings are %s but this device had a synced revision",
+    async (mode) => {
+      await refused(await mention(mode, withHistory()));
+    },
+  );
 });
 
 it("keeps queued work across a disconnect and runs it once on reconnect", async () => {

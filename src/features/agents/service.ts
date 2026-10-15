@@ -4,7 +4,7 @@ import {
   type SettingsSchema,
   type Subject,
 } from "./agent-config";
-import { type Mode, resolveStart } from "./agent-start";
+import { isSynced, type Mode, resolveStart } from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { ownerReads } from "./reads";
@@ -969,7 +969,7 @@ export class AgentsService extends Service implements Agents {
         const merge = this.types().find(
           (type) => type.key === agent.type,
         )?.syncedSettings;
-        if (settings && !merge)
+        if (!merge && isSynced(this.configStore, settings))
           return {
             ok: false,
             state: "invalid",

@@ -66,6 +66,14 @@ const blocked = (
         : WAITING,
 });
 
+/** Whether a side launches from its synced copy: explicitly synced, or this
+ * device has had a synced revision of it, so a stale mode can't fall back. */
+export const isSynced = (
+  store: AgentConfigStore,
+  side: Readonly<{ mode: Mode; subject: Subject }> | undefined,
+): boolean =>
+  !!side && (side.mode === "synced" || store.hadVersion(side.subject));
+
 /** Pure over storage: never reads the relay. Once this device has had any
  * synced revision of a type, its local field is never a launch source again.
  * A transport failure never changes a stored state, so a confirmed `present`
@@ -76,7 +84,7 @@ export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
   const synced = (
     side: StartInput<C>["instructions"],
   ): side is Readonly<{ mode: Mode; subject: Subject }> =>
-    !!side && (side.mode === "synced" || store.hadVersion(side.subject));
+    isSynced(store, side);
   const revisions: string[] = [];
   let config = input.local;
 

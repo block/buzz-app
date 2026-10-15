@@ -15,15 +15,90 @@ use crate::transport_policy::validate_advertised_endpoint;
 
 // Same explicit policy for native initialization and embedded startup; never read
 // the user's standalone Mesh config. File stays alive through initialization.
-fn isolated_config() -> anyhow::Result<tempfile::NamedTempFile> {
+fn isolated_config(owner_key: &std::path::Path) -> anyhow::Result<tempfile::NamedTempFile> {
+    use mesh_llm_host_runtime::sdk::config::{config_to_toml, parse_config_toml};
     use std::io::Write;
+    if !owner_key.is_absolute() {
+        anyhow::bail!("Mesh owner keystore path must be absolute");
+    }
+    let directory = owner_key
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Mesh owner keystore needs a parent directory"))?
+        .join("buzz-kv-cache");
+    // Cache reusable prefixes on disk; this does not increase the live KV budget.
+    // Keep Buzz separate from a standalone Mesh process's cache and store lock.
+    let mut config = parse_config_toml(
+        r#"
+[runtime.kv_cache.disk]
+mode = "fixed"
+budget_mib = 2048
+minimum_free_mib = 16384
+codec = "native"
+
+[[plugin]]
+name = "telemetry"
+enabled = false
+
+[[plugin]]
+name = "blobstore"
+enabled = false
+"#,
+    )?;
+    config.runtime.kv_cache.disk.directory = Some(directory);
     let mut file = tempfile::NamedTempFile::new()?;
-    file.write_all(b"[[plugin]]\nname = \"telemetry\"\nenabled = false\n\n[[plugin]]\nname = \"blobstore\"\nenabled = false\n" )?;
+    file.write_all(config_to_toml(&config)?.as_bytes())?;
     Ok(file)
 }
 
+#[cfg(test)]
+mod disk_config_tests {
+    use super::*;
+
+    #[test]
+    fn serving_config_round_trips_bounded_native_cache_without_telemetry() {
+        let root = tempfile::tempdir().unwrap();
+        // Exercise serialization of platform paths rather than interpolating TOML.
+        let owner = root
+            .path()
+            .join("Buzz's \"test\" folder")
+            .join("owner.json");
+        let file = isolated_config(&owner).unwrap();
+        let config = mesh_llm_host_runtime::sdk::config::parse_config_toml(
+            &std::fs::read_to_string(file.path()).unwrap(),
+        )
+        .unwrap();
+        let disk = config.runtime.kv_cache.disk;
+        assert_eq!(disk.budget_mib, Some(2048));
+        assert_eq!(disk.minimum_free_mib, Some(16384));
+        assert_eq!(
+            serde_json::to_value(disk.effective_mode()).unwrap(),
+            "fixed"
+        );
+        assert_eq!(serde_json::to_value(disk.codec).unwrap(), "native");
+        assert_eq!(
+            disk.directory,
+            Some(owner.parent().unwrap().join("buzz-kv-cache"))
+        );
+        for name in ["telemetry", "blobstore"] {
+            let plugin = config
+                .plugins
+                .iter()
+                .find(|plugin| plugin.name == name)
+                .unwrap();
+            assert_eq!(plugin.enabled, Some(false));
+        }
+        // Building configuration must not create a cache or reserve its capacity.
+        assert!(!owner.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn rejects_cache_roots_without_an_absolute_owner_directory() {
+        assert!(isolated_config(std::path::Path::new("owner.json")).is_err());
+    }
+}
+
 /// SDK status returned by the owned worker; payload remains untyped JSON.
-pub use mesh_llm_sdk::EmbeddedNodeStatus as NodeStatus;
+pub use mesh_llm_sdk::MeshNodeStatus as NodeStatus;
 
 #[derive(Debug)]
 struct BeforeNode(anyhow::Error);
@@ -40,14 +115,14 @@ type Operation<'a, T> = Pin<Box<dyn Future<Output = anyhow::Result<T>> + Send + 
 
 trait Node: Send + Sync + 'static {
     fn join(&self, token: String) -> Operation<'_, ()>;
-    fn status(&self) -> Operation<'_, mesh_llm_sdk::EmbeddedNodeStatus>;
+    fn status(&self) -> Operation<'_, mesh_llm_sdk::MeshNodeStatus>;
     fn stop(self) -> Operation<'static, ()>;
 }
-impl Node for mesh_llm_sdk::EmbeddedNodeHandle {
+impl Node for mesh_llm_host_runtime::sdk::EmbeddedMeshNodeHandle {
     fn join(&self, token: String) -> Operation<'_, ()> {
         Box::pin(self.join_token(token))
     }
-    fn status(&self) -> Operation<'_, mesh_llm_sdk::EmbeddedNodeStatus> {
+    fn status(&self) -> Operation<'_, mesh_llm_sdk::MeshNodeStatus> {
         Box::pin(self.status())
     }
     fn stop(self) -> Operation<'static, ()> {
@@ -75,7 +150,7 @@ struct Slot {
     retryable: bool,
     dial: Option<mpsc::Sender<String>>,
     stop: Option<watch::Sender<bool>>,
-    status: Option<mpsc::Sender<oneshot::Sender<anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus>>>>,
+    status: Option<mpsc::Sender<oneshot::Sender<anyhow::Result<mesh_llm_sdk::MeshNodeStatus>>>>,
 }
 
 /// The app owns this across plugin/page lifetimes. Dropping it requests shutdown.
@@ -111,7 +186,7 @@ impl Lifecycle {
     }
 
     /// Ask the owned SDK handle for status; never discover a node by a guessed port.
-    pub async fn status(&self) -> anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus> {
+    pub async fn status(&self) -> anyhow::Result<mesh_llm_sdk::MeshNodeStatus> {
         let (reply, result) = oneshot::channel();
         {
             let slot = self
@@ -141,8 +216,16 @@ impl Lifecycle {
     }
 
     pub fn start(&self, request: ClientConfig) -> anyhow::Result<()> {
-        let config = request.build()?;
-        self.launch(async move { mesh_llm_sdk::client::start(config).await })
+        let isolated = isolated_config(&request.owner_key)?;
+        let mut config = request.build()?;
+        config.storage.config_path = Some(isolated.path().to_owned());
+        self.launch(async move {
+            // Mesh retains its node cache policy process-wide. Configure it even
+            // when starting as a consumer, so later sharing uses the same policy.
+            let result = mesh_llm_host_runtime::sdk::start_embedded_node(config).await;
+            drop(isolated);
+            result
+        })
     }
 
     /// Share a local model through the same exclusive SDK slot as consumers.
@@ -158,7 +241,13 @@ impl Lifecycle {
         observe: impl Fn(Phase) + Send + Sync + 'static,
     ) -> anyhow::Result<()> {
         let mut config = request.build()?;
-        let isolated = isolated_config()?;
+        let isolated = isolated_config(
+            config
+                .admission
+                .owner_key
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("Mesh owner keystore path is required"))?,
+        )?;
         config.storage.config_path = Some(isolated.path().to_owned());
         let progress = self.progress.clone();
         self.launch_observed(
@@ -169,7 +258,7 @@ impl Lifecycle {
                     .map_err(BeforeNode)?;
                 // Serving resolves and acquires its own artifacts (including layer packages).
                 // A separate GGUF download here duplicates acquisition.
-                mesh_llm_sdk::serve::start(config).await
+                mesh_llm_host_runtime::sdk::start_embedded_node(config).await
             },
             true,
             Arc::new(observe),
@@ -218,7 +307,7 @@ impl Lifecycle {
         self.progress.clear();
         let (dial, mut pending) = mpsc::channel::<String>(64);
         let (status, mut reads) =
-            mpsc::channel::<oneshot::Sender<anyhow::Result<mesh_llm_sdk::EmbeddedNodeStatus>>>(1);
+            mpsc::channel::<oneshot::Sender<anyhow::Result<mesh_llm_sdk::MeshNodeStatus>>>(1);
         let (stop, mut stopping) = watch::channel(false);
         slot.retryable = false;
         slot.pending_tokens.clear();
@@ -424,9 +513,9 @@ mod tests {
                 Ok(())
             })
         }
-        fn status(&self) -> Operation<'_, mesh_llm_sdk::EmbeddedNodeStatus> {
+        fn status(&self) -> Operation<'_, mesh_llm_sdk::MeshNodeStatus> {
             Box::pin(async {
-                Ok(mesh_llm_sdk::EmbeddedNodeStatus {
+                Ok(mesh_llm_sdk::MeshNodeStatus {
                     api_base_url: "fixture".into(),
                     console_url: "fixture".into(),
                     invite_token: None,
@@ -861,6 +950,38 @@ mod embedded_join_test {
             let _ = runtime.stop_and_wait().await;
         }
         ready.unwrap();
+        // Consumer startup must configure the process-wide disk tier before a
+        // later switch to serving. Check the real management API, not just TOML.
+        let cache_status = tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            let mut stream = std::net::TcpStream::connect(("127.0.0.1", console_port)).unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            stream.write_all(b"GET /api/runtime/kv-cache HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+            assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
+            serde_json::from_str::<serde_json::Value>(body).unwrap()
+        })
+        .await;
+        if cache_status.is_err() {
+            let _ = runtime.stop_and_wait().await;
+        }
+        let cache_status = cache_status.unwrap();
+        assert_eq!(cache_status["configured"]["mode"], "fixed");
+        assert_eq!(
+            cache_status["configured"]["budget_bytes"],
+            2_u64 * 1024 * 1024 * 1024
+        );
+        assert_eq!(
+            cache_status["configured"]["minimum_free_bytes"],
+            16_u64 * 1024 * 1024 * 1024
+        );
+        assert_eq!(
+            cache_status["configured"]["directory"],
+            temp.path().join("buzz-kv-cache").to_str().unwrap()
+        );
+        assert!(cache_status["usage"].is_object(), "{cache_status}");
         let dead = crate::transport_policy::endpoint_token_for_test([iroh::TransportAddr::Ip(
             ([127, 0, 0, 1], 9).into(),
         )]);

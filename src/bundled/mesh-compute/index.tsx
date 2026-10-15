@@ -3,19 +3,12 @@ import { InlineAgent } from "./inlineAgent";
 import { createMeshTranscriptTab } from "./MeshTranscriptTab";
 import { MemoryReads, coreOf } from "../../features/agent-harness/core-memory";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 
-import { EmbeddedActivity } from "./EmbeddedActivity";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { ArrowSquareOutIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Switch } from "../../shared/design-system/ui/Switch";
 import { CpuIcon } from "../../shared/design-system/icons";
-import { ShareModelPicker } from "./ShareModelPicker";
-import { CommunityMesh } from "./CommunityMesh";
-import { ConsumerComputeView } from "./ConsumerComputeView";
-import styles from "./Compute.module.css";
+import { ComputeSettings } from "./ComputeSettings";
 
 import { ComputeActivity, type ComputeActivityData } from "./ComputeActivity";
 import { MeshAgentTab } from "./MeshAgentTab";
@@ -278,6 +271,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     );
     const [status, setStatus] = useState<MeshStatus | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [statusError, setStatusError] = useState<string | null>(null);
     useEffect(() => {
       let active = true;
       if (isTauri() && status?.sharing)
@@ -289,36 +283,53 @@ export const apply: PluginModule["apply"] = (ctx) => {
         active = false;
       };
     }, [status?.sharing]);
+    const [busy, setBusy] = useState(false);
+    const sharingAction = useRef(0);
+    // Observe the app-owned runtime even while idle, restoring, or recovering
+    // from a failed read. A pending selection must not hide native progress.
     useEffect(() => {
       let active = true;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       setStatus(null);
       setError(null);
-      if (isTauri()) {
-        const selected = lease;
-        // A rejected selection still shows authoritative status and its error;
-        // the next action retries the selection.
-        void (selected ?? Promise.resolve())
-          .catch((reason) => {
-            if (active && snapshot === ctx.relay.snapshot())
-              setError(String(reason));
-          })
-          .then(() => invoke<MeshStatus>("mesh_compute_status"))
-          .then(
-            (result) => {
-              if (active && snapshot === ctx.relay.snapshot())
-                setStatus(result);
-            },
-            (error) => {
-              if (active && snapshot === ctx.relay.snapshot())
-                setError(String(error));
-            },
-          );
-      }
+      setStatusError(null);
+      if (!isTauri()) return;
+      const read = async () => {
+        const action = sharingAction.current;
+        let delay = 5000;
+        try {
+          const result = await invoke<MeshStatus>("mesh_compute_status");
+          if (
+            active &&
+            !disposed &&
+            snapshot === ctx.relay.snapshot() &&
+            action === sharingAction.current
+          ) {
+            setStatus(result);
+            setStatusError(null);
+          }
+          if (
+            result.lifecycle?.state === "starting" ||
+            result.lifecycle?.state === "stopping" ||
+            result.sharing
+          )
+            delay = 1000;
+        } catch (reason) {
+          if (active && !disposed && snapshot === ctx.relay.snapshot())
+            setStatusError(String(reason));
+        } finally {
+          if (active && !disposed)
+            timer = setTimeout(() => {
+              void read();
+            }, delay);
+        }
+      };
+      void read();
       return () => {
         active = false;
+        clearTimeout(timer);
       };
     }, [snapshot]);
-    const [busy, setBusy] = useState(false);
     // One page Refresh also rereads the community list (no second Refresh).
     const [refreshCount, setRefreshCount] = useState(0);
     // Controls wait for this community's selection instead of rejecting clicks.
@@ -370,70 +381,33 @@ export const apply: PluginModule["apply"] = (ctx) => {
         setBusy(false);
       }
     };
-    const [model, setModel] = useState("");
-    const [auto, setAuto] = useState(true);
-    const [recommended, setRecommended] = useState<string | null>(null);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: identity and community changes retire the prior model selection.
-    useEffect(() => {
-      setModel("");
-      setAuto(true);
-      setRecommended(null);
-    }, [snapshot.viewer, snapshot.scope]);
-    useEffect(() => {
-      if (status?.savedSharing?.model) {
-        setModel(status.savedSharing.model);
-        setAuto(status.savedSharing.auto ?? false);
-      }
-    }, [status?.savedSharing?.model, status?.savedSharing?.auto]);
-    const reset = async () => {
-      setBusy(true);
-      setError(null);
-      try {
-        const { selected, id } = await currentLease();
-        if (!id) throw new Error("Mesh native runtime is unavailable");
-        if (disposed || selected !== lease)
-          throw new Error("Community changed");
-        await invoke("mesh_compute_share", {
-          lease: id,
-          model: null,
-          maxVramGb: null,
-          auto: true,
-          resetOnly: true,
-        });
-        const result = await invoke<MeshStatus>("mesh_compute_status");
-        if (!disposed && snapshot === ctx.relay.snapshot()) {
-          setStatus(result);
-          setAuto(true);
-        }
-      } catch (reason) {
-        if (!disposed && snapshot === ctx.relay.snapshot()) {
-          setError(String(reason));
-          const result = await invoke<MeshStatus>("mesh_compute_status").catch(
-            () => null,
-          );
-          if (result && !disposed && snapshot === ctx.relay.snapshot())
-            setStatus(result);
-        }
-      } finally {
-        if (!disposed) setBusy(false);
-      }
-    };
-    const share = (clearSaved = false, startAuto = false) => {
-      const action = runShare(clearSaved, startAuto);
+    const share = (
+      clearSaved = false,
+      hosting?: { model: string; maxVramGb: number },
+      startAuto = false,
+    ) => {
+      const action = runShare(clearSaved, hosting, startAuto);
       lastShareAction = action;
       return action;
     };
-    const runShare = async (clearSaved: boolean, startAuto: boolean) => {
+    const runShare = async (
+      clearSaved: boolean,
+      hosting: { model: string; maxVramGb: number } | undefined,
+      startAuto: boolean,
+    ) => {
+      const action = ++sharingAction.current;
       setBusy(true);
       setError(null);
       try {
-        const turningOff = clearSaved || Boolean(status?.sharing);
+        const turningOff =
+          !startAuto && (clearSaved || Boolean(status?.sharing));
         // Capture the operation's owner before awaiting; identity or community
         // changes while waiting retire this action.
         const community = scope;
         const owner = viewer;
         const current = () =>
           !disposed &&
+          action === sharingAction.current &&
           snapshot === ctx.relay.snapshot() &&
           scope === community &&
           viewer === owner;
@@ -450,7 +424,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
             expectedViewer: owner,
           });
           const result = await invoke<MeshStatus>("mesh_compute_status");
-          if (!disposed && snapshot === ctx.relay.snapshot()) setStatus(result);
+          if (
+            !disposed &&
+            action === sharingAction.current &&
+            snapshot === ctx.relay.snapshot()
+          )
+            setStatus(result);
           return;
         }
         if (!id) throw new Error("Mesh native runtime is unavailable");
@@ -472,33 +451,42 @@ export const apply: PluginModule["apply"] = (ctx) => {
         }
         await invoke("mesh_compute_share", {
           lease: id,
-          model: startAuto
-            ? "auto"
-            : clearSaved || status?.sharing
-              ? null
-              : auto
-                ? (recommended ?? model)
-                : model,
-          maxVramGb: null,
-          auto: startAuto || auto,
+          model: startAuto ? "auto" : turningOff ? null : hosting?.model,
+          maxVramGb: hosting?.maxVramGb ?? null,
+          auto: startAuto,
         });
         const result = await invoke<MeshStatus>("mesh_compute_status");
-        if (!disposed && snapshot === ctx.relay.snapshot()) setStatus(result);
+        if (
+          !disposed &&
+          action === sharingAction.current &&
+          snapshot === ctx.relay.snapshot()
+        )
+          setStatus(result);
       } catch (error) {
-        if (!disposed && snapshot === ctx.relay.snapshot()) {
+        if (
+          !disposed &&
+          action === sharingAction.current &&
+          snapshot === ctx.relay.snapshot()
+        ) {
           setError(String(error));
           // Share Off may clear intent even when shutdown fails.
           const result = await invoke<MeshStatus>("mesh_compute_status").catch(
             () => null,
           );
-          if (result && !disposed && snapshot === ctx.relay.snapshot())
+          if (
+            result &&
+            !disposed &&
+            action === sharingAction.current &&
+            snapshot === ctx.relay.snapshot()
+          )
             setStatus(result);
         }
       } finally {
-        if (!disposed) setBusy(false);
+        if (!disposed && action === sharingAction.current) setBusy(false);
       }
     };
     const refresh = async () => {
+      setStatusError(null);
       setRefreshCount((value) => value + 1);
       setBusy(true);
       setError(null);
@@ -513,38 +501,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       }
     };
     const phase = status?.lifecycle?.state;
-    // Saved consent and live intent, not runtime health.
-    const shareOn = Boolean(status?.sharing || status?.savedSharing?.enabled);
-    useEffect(() => {
-      if (
-        busy ||
-        error ||
-        (status?.lifecycle?.state !== "starting" &&
-          status?.lifecycle?.state !== "stopping" &&
-          status?.lifecycle?.state !== "ready")
-      )
-        return;
-      let active = true;
-      const timer = setTimeout(
-        () => {
-          void invoke<MeshStatus>("mesh_compute_status").then(
-            (result) => {
-              if (active && !disposed && snapshot === ctx.relay.snapshot())
-                setStatus(result);
-            },
-            (reason) => {
-              if (active && !disposed && snapshot === ctx.relay.snapshot())
-                setError(String(reason));
-            },
-          );
-        },
-        status?.lifecycle?.state === "ready" && !status.sharing ? 5000 : 1000,
-      );
-      return () => {
-        active = false;
-        clearTimeout(timer);
-      };
-    }, [status, busy, error, snapshot]);
     if (setupOnly)
       return (
         <MeshCreateSetup
@@ -553,66 +509,44 @@ export const apply: PluginModule["apply"] = (ctx) => {
           disabled={disabled || snapshot.status !== "ready"}
           leaseReady={leaseReady}
           otherCommunity={otherCommunity}
-          error={error}
-          share={() => void share(false, true)}
+          error={error ?? statusError}
+          share={() => void share(false, undefined, true)}
           refresh={() => void refresh()}
         />
       );
     return (
-      <ConsumerComputeView
-        headerControl={
-          isTauri() && status?.available && !otherCommunity ? (
-            <div className={styles.sharingControl}>
-              <Switch
-                aria-label="Share compute"
-                checked={shareOn}
-                onCheckedChange={(next) => {
-                  if (next) void share();
-                  else void share(!status.sharing);
-                }}
-                disabled={
-                  busy ||
-                  !leaseReady ||
-                  // On may replace a connecting consumer; Off may cancel startup.
-                  // Native teardown must finish before another transition.
-                  phase === "stopping" ||
-                  snapshot.status !== "ready" ||
-                  (!shareOn && (phase === "failed" || (!auto && !model.trim())))
-                }
-              />
-            </div>
-          ) : undefined
+      <ComputeSettings
+        key={`${snapshot.viewer}:${snapshot.scope}`}
+        community={community?.id ?? viewedCommunity ?? ""}
+        relay={ctx.relay}
+        status={status}
+        busy={busy}
+        leaseReady={leaseReady && snapshot.status === "ready"}
+        otherCommunity={otherCommunity}
+        error={
+          error ??
+          statusError ??
+          status?.settingsError ??
+          status?.reason ??
+          status?.lifecycle?.reason
         }
-        status={
-          !isTauri()
-            ? "Open Buzz desktop to use shared compute."
-            : !status
-              ? "Checking shared compute…"
-              : status.available === false
-                ? "Shared compute isn’t available in this build."
-                : leaseReady
-                  ? shareStatus(status, phase, community?.name)
-                  : "Checking shared compute…"
-        }
-        error={error ?? status?.settingsError ?? status?.reason}
-        attention={
-          !isTauri() ||
-          phase === "failed" ||
-          status?.available === false ||
-          Boolean(
-            status?.savedSharing?.enabled &&
-              !status.sharing &&
-              phase !== "starting",
-          )
-        }
-        refreshDisabled={busy || !isTauri()}
+        refreshKey={refreshCount}
+        share={share}
+        openWidget={() => {
+          setError(null);
+          void openWidget().catch((reason) => {
+            if (!disposed)
+              setError(`Couldn’t open activity widget: ${String(reason)}`);
+          });
+        }}
         refresh={() => void refresh()}
       >
-        {community?.name && (
-          <p className="m-0 text-body-sm text-secondary">
-            Shared compute for <strong>{community.name}</strong>
-          </p>
-        )}
+        {isTauri() &&
+          status?.available &&
+          !otherCommunity &&
+          phase === "ready" && (
+            <ComputeActivity data={status.activity ?? null} />
+          )}
         {otherCommunity && (
           <section aria-label="Bound compute community">
             <p>
@@ -642,77 +576,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
             )}
           </section>
         )}
-        {isTauri() && status?.available && !otherCommunity && (
-          <section aria-label="Share compute">
-            <p className="m-0 text-body-sm text-secondary">
-              Let {community?.name ?? "this community"} run prompts on this
-              machine. Auto picks the best model for your hardware; you can also
-              choose one. Sharing resumes when you reopen Buzz.
-            </p>
-            {status.sharing && status.download && !status.download.done && (
-              <DownloadProgress download={status.download} />
-            )}
-            <ShareModelPicker
-              activity={
-                <div className={styles.widgetOverview}>
-                  <div className={styles.widgetCard}>
-                    <EmbeddedActivity
-                      key={snapshot.scope}
-                      data={status.activity ?? null}
-                      sharing={Boolean(status.sharing)}
-                      state={
-                        phase === "ready"
-                          ? status.modelReady
-                            ? "running"
-                            : "starting"
-                          : (phase ?? "stopped")
-                      }
-                    />
-                    <div className={styles.widgetPopout}>
-                      <IconButton
-                        size="xs"
-                        aria-label="Open activity widget"
-                        title="Open activity widget"
-                        icon={<ArrowSquareOutIcon size={16} />}
-                        variant="subtle"
-                        disabled={!status.sharing}
-                        onClick={() => {
-                          setError(null);
-                          void openWidget().catch((reason) => {
-                            if (!disposed)
-                              setError(
-                                `Couldn’t open activity widget: ${String(reason)}`,
-                              );
-                          });
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              }
-              model={model}
-              auto={auto}
-              onRecommendation={setRecommended}
-              runningModel={status.sharing ?? null}
-              onReset={() => void reset()}
-              resetDisabled={busy || snapshot.status !== "ready"}
-              onChange={(value) => {
-                setModel(value);
-                setAuto(false);
-              }}
-              disabled={
-                busy ||
-                phase === "starting" ||
-                phase === "stopping" ||
-                Boolean(status.sharing)
-              }
-            >
-              {phase === "ready" && (
-                <ComputeActivity data={status.activity ?? null} />
-              )}
-            </ShareModelPicker>
-          </section>
-        )}
         {isTauri() &&
           status?.available &&
           community &&
@@ -724,18 +587,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
               agents={ctx.agents}
             />
           )}
-        {isTauri() && status?.available && community && (
-          <details className={styles.options} open>
-            <summary className="text-body-sm">Community devices</summary>
-            <CommunityMesh
-              key={community.id}
-              community={community.id}
-              relay={ctx.relay}
-              refreshKey={refreshCount}
-            />
-          </details>
-        )}
-      </ConsumerComputeView>
+      </ComputeSettings>
     );
   }
   ctx.settingsCards.register({
@@ -745,69 +597,3 @@ export const apply: PluginModule["apply"] = (ctx) => {
     component: CommunityComputePage,
   });
 };
-
-/** One status line in the style of the original Compute page. */
-function shareStatus(
-  status: MeshStatus,
-  phase: string | undefined,
-  communityName: string | undefined,
-): string {
-  const where = communityName ?? "your community";
-  const model = status.sharing;
-  const enabled = Boolean(model || status.savedSharing?.enabled);
-  if (phase === "failed") {
-    const cause = status.lifecycle?.reason
-      ? ` ${status.lifecycle.reason}.`
-      : "";
-    return enabled
-      ? `Mesh needs recovery.${cause} Sharing is still enabled for next launch; turn it off to disable automatic sharing. Restart Buzz before starting Mesh again.`
-      : `Mesh needs recovery.${cause} Shutdown could not be confirmed. Restart Buzz before starting Mesh again.`;
-  }
-  if (phase === "stopping")
-    return status.finishingJoin
-      ? "Stopping, finishing a peer connection…"
-      : "Stopping…";
-  if (!model) {
-    if (status.savedSharing?.enabled)
-      return "Sharing is enabled but not running. Turn it off and on to start it again.";
-    // Consumer-only node (started for agents): Thomas's "connected" wording.
-    if (phase === "starting")
-      return "Sharing is off. Connecting to community compute…";
-    if (phase === "ready")
-      return "Sharing is off. Connected to community compute.";
-    return "Sharing is off.";
-  }
-  if (phase === "starting") return `Starting ${model}…`;
-  if (phase === "ready")
-    return status.modelReady
-      ? `Sharing ${model} with ${where}.`
-      : `Preparing ${model} — not serving yet.`;
-  return `Selected for sharing: ${model}`;
-}
-
-function DownloadProgress({
-  download,
-}: {
-  download: NonNullable<MeshStatus["download"]>;
-}) {
-  const received = download.downloadedBytes ?? 0;
-  const total = download.totalBytes ?? 0;
-  const percent =
-    total > 0 ? Math.min(100, Math.round((received / total) * 100)) : undefined;
-  return (
-    <div>
-      <progress
-        aria-label="Model download"
-        max={100}
-        value={percent}
-        className="w-full"
-      />
-      <span className="text-body-sm text-secondary">
-        {`Downloading ${download.file ?? download.label}`}
-        {percent === undefined
-          ? "…"
-          : ` · ${percent}% (${(received / 1e9).toFixed(2)} GB / ${(total / 1e9).toFixed(2)} GB)`}
-      </span>
-    </div>
-  );
-}

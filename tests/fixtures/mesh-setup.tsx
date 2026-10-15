@@ -1,5 +1,6 @@
+import avatar from "./design-system/assets/avatar.png";
 import { createRoot } from "react-dom/client";
-import { useState } from "react";
+import { useState, type ComponentType } from "react";
 import { AgentCreateDialog } from "../../src/bundled/agents/AgentCreateDialog";
 import { apply } from "../../src/bundled/mesh-compute/index";
 import type {
@@ -21,8 +22,13 @@ const model =
     ? "unsloth/gemma-3-4b-it-GGUF:Q4_K_M"
     : "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M";
 const downloadBytes = memory < 32 ? 2490000000 : 4980000000;
-let sharing: string | null = null;
-let stage = 0;
+const settingsPreview = params.has("settings");
+let Settings!: ComponentType<{ community: { id: string; name: string } }>;
+let sharing: string | null =
+  params.get("state") === "download" || params.get("state") === "sharing"
+    ? model
+    : null;
+let stage = params.get("state") === "sharing" ? 3 : 0.7;
 let mesh!: RegisteredAgentType;
 const profiles = new Map([
   ["alex", { name: "Alex" }],
@@ -31,12 +37,17 @@ const profiles = new Map([
 ]);
 for (let i = profiles.size; i < people; i++)
   profiles.set(`member-${i}`, { name: `Member ${i + 1}` });
+(profiles as Map<string, { name: string; picture?: string }>).set("preview", {
+  name: "You",
+  picture: avatar,
+});
 const snapshot = {
   status: "ready",
   viewer: "preview",
   scope: "https://fixture.example:preview",
   origin: "https://fixture.example",
   session: {
+    media: (url: string) => url,
     profiles: {
       snapshot: () => profiles,
       subscribe: () => () => {},
@@ -52,9 +63,22 @@ Object.assign(window, {
         case "mesh_compute_select":
           return "preview-lease";
         case "mesh_compute_status":
-          if (sharing) stage = Math.min(stage + 0.25, 3);
+          if (sharing && !settingsPreview) stage = Math.min(stage + 0.25, 3);
           return {
             available: true,
+            activity:
+              sharing && stage === 3
+                ? {
+                    otherNodes: people,
+                    sharingNodes: peers ? people : 0,
+                    outputTokens: 12480,
+                    completedRequests: 36,
+                    finishedRequests: 36,
+                    retries: 0,
+                    activeRequests: 1,
+                    tokensPerSecond: 42.6,
+                  }
+                : null,
             boundCommunity: "https://fixture.example",
             sharing,
             lifecycle: { state: sharing ? "ready" : "stopped" },
@@ -112,6 +136,7 @@ Object.assign(window, {
     },
   },
 });
+const previewAgents = { status: "ready", agents: [] };
 apply({
   relay: { snapshot: () => snapshot, subscribe: () => () => {} },
   communityReader: {
@@ -124,6 +149,9 @@ apply({
     },
   },
   agents: {
+    snapshot: () => previewAgents,
+    subscribe: () => () => {},
+    types: () => [mesh],
     register: (type: RegisteredAgentType) => {
       mesh = {
         ...type,
@@ -133,7 +161,11 @@ apply({
       };
     },
   },
-  settingsCards: { register: () => {} },
+  settingsCards: {
+    register: (card: { component: typeof Settings }) => {
+      Settings = card.component;
+    },
+  },
   effect: () => {},
 } as unknown as Parameters<PluginModule["apply"]>[0]);
 function resetSetup() {
@@ -143,10 +175,18 @@ function resetSetup() {
 }
 
 function Preview() {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(!settingsPreview);
   const [created, setCreated] = useState(false);
   return (
     <main className="p-4 text-body">
+      <p>
+        <a href="?settings&memory=32&people=3">Settings</a> ·{" "}
+        <a href="?settings&state=download&memory=32&people=3">Download</a> ·{" "}
+        <a href="?settings&state=sharing&memory=32&people=3000">
+          3,000 sharing
+        </a>{" "}
+        · <a href="?settings&memory=8&peers=0">8 GB / empty</a>
+      </p>
       <p>Mesh setup preview · simulated hardware, community and downloads</p>
       <p>
         <a href="?memory=32&people=3">3 people</a> ·{" "}
@@ -200,6 +240,16 @@ function Preview() {
       >
         Toggle theme
       </Button>
+      {settingsPreview && (
+        <div className="mx-auto max-w-3xl py-6">
+          <Settings
+            community={{
+              id: "https://fixture.example",
+              name: "Buzz community",
+            }}
+          />
+        </div>
+      )}
       {created && <p>Preview agent created. No data was saved.</p>}
       {open && (
         <AgentCreateDialog

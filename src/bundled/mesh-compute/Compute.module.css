@@ -409,3 +409,58 @@
   color: var(--text-warning);
   border: 1px solid var(--border-warning);
 }
+
+.settings {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+}
+.computeState,
+.download {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+.download {
+  width: 100%;
+}
+.liquid {
+  width: 100%;
+  height: 3rem;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--border-standard);
+}
+.liquid svg {
+  width: 100%;
+  height: 100%;
+}
+.liquidLevel {
+  transition: transform var(--duration-settle) ease-out;
+}
+.liquidBack {
+  opacity: 0.35;
+  animation: liquid-wave 3s linear infinite reverse;
+}
+.liquidFront {
+  animation: liquid-wave 2.2s linear infinite;
+}
+@keyframes liquid-wave {
+  from {
+    transform: translateY(-48px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .liquidBack,
+  .liquidFront {
+    animation: none;
+  }
+  .liquidLevel {
+    transition: none;
+  }
+}

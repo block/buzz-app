@@ -54,6 +54,28 @@ pub struct Hosting {
     pub model: Option<String>,
 }
 
+fn hosting_survey() -> hardware::HardwareSurvey {
+    let survey = hardware::survey();
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    let survey = {
+        let mut survey = survey;
+        // mesh-llm 0.78.1 omits physical RAM on macOS. Metal's working-set
+        // budget cannot substitute for it when calculating the 25% share.
+        if survey.is_soc && survey.system_ram_bytes.is_none() {
+            survey.system_ram_bytes = std::process::Command::new("/usr/sbin/sysctl")
+                .args(["-n", "hw.memsize"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .filter(|bytes| *bytes > 0);
+        }
+        survey
+    };
+    survey
+}
+
 fn hosting(survey: &hardware::HardwareSurvey, entries: &[Entry]) -> Hosting {
     // Metal's usable working set is not physical memory. Unified-memory machines
     // use reported system RAM; discrete GPUs use device VRAM, never RAM offload.
@@ -112,7 +134,7 @@ pub fn catalog() -> anyhow::Result<Catalog> {
     if let Err(error) = models::remote_catalog::ensure_catalog() {
         eprintln!("Mesh catalog metadata unavailable: {error}");
     }
-    let survey = hardware::survey();
+    let survey = hosting_survey();
     let mut result = build(
         survey.gpu_name.clone(),
         survey.vram_bytes,
@@ -285,6 +307,18 @@ fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn macos_hosting_survey_reports_physical_memory() {
+        // Exercise the OS boundary: synthetic surveys hid the SDK's missing RAM field.
+        let survey = hosting_survey();
+        assert!(survey.is_soc);
+        assert!(survey.system_ram_bytes.is_some_and(|bytes| bytes > 0));
+        let result = hosting(&survey, &[]);
+        assert_ne!(result.memory_display, "unknown");
+        assert!(result.max_vram_gb > 0);
+    }
+
     #[test]
     fn first_run_uses_physical_memory_and_excludes_unknown_or_oversized_models() {
         let mut catalog = build(
@@ -308,6 +342,7 @@ mod tests {
             (32, 8, Some("Medium")),
             (48, 12, Some("Large")),
             (64, 16, Some("Largest")),
+            (128, 32, Some("Largest")),
         ] {
             let survey = hardware::HardwareSurvey {
                 is_soc: true,

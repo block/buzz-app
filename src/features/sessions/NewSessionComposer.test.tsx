@@ -226,6 +226,7 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     undefined,
     undefined,
     false,
+    false,
   );
 });
 
@@ -1401,6 +1402,7 @@ it.each(
       undefined,
       600,
       true,
+      true,
     );
   },
 );
@@ -1744,6 +1746,12 @@ it.each(
       channels,
       { read: async () => [] },
       lifetime.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
     );
     const session = {
       ...h.session,
@@ -1824,8 +1832,30 @@ it.each([
       undefined,
       undefined,
       false,
+      false,
     );
     expect(h.workSessions.create).toHaveBeenCalledOnce();
     expect(h.messages.send).toHaveBeenCalledOnce();
   },
 );
+
+it("starts a new chat with a session card and no caption", async () => {
+  const h = setup(),
+    started = vi.fn(),
+    user = userEvent.setup();
+  const link = "[Session: Fix](buzz://channel/session-id)";
+  writeView("test", "sessions:new-draft", link);
+  render(
+    <NewSessionComposer session={h.session} scope="test" onStarted={started} />,
+  );
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toBeEnabled();
+  await user.click(send);
+  await waitFor(() => expect(started).toHaveBeenCalled());
+  expect(h.workSessions.create).toHaveBeenCalledOnce();
+  expect(h.messages.send).toHaveBeenCalledWith(
+    h.workSessions.create.mock.calls[0]?.[0],
+    link,
+    ["a".repeat(64)],
+  );
+});

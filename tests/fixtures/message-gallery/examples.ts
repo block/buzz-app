@@ -81,6 +81,58 @@ const patch =
   "diff --git a/greeting.ts b/greeting.ts\n--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-const greeting = 'Hello';\n+const greeting = 'Welcome';\n";
 export const groups: Group[] = [
   {
+    id: "session-links",
+    title: "Session links",
+    description:
+      "Session cards rendered through the real message UI, with fixed labels and document icons.",
+    examples: [
+      {
+        id: "session-id",
+        title: "Unnamed session",
+        description:
+          "The document icon and Session label stay fixed; unnamed sessions show their short ID.",
+        rows: [
+          message("session-id", "[Session: 06366cc0](buzz://channel/06366cc0)"),
+        ],
+      },
+      {
+        id: "session-name",
+        title: "Chosen name",
+        description: "A deliberately chosen name replaces the ID.",
+        rows: [
+          message(
+            "session-name",
+            "[Session: PR 45 fixes](buzz://channel/06366cc0)",
+          ),
+        ],
+      },
+      {
+        id: "session-long-name",
+        title: "Long name",
+        description:
+          "Long names truncate and remain available on hover. Try Narrow preview or enlarged text.",
+        rows: [
+          message(
+            "session-long-name",
+            "[Session: PR 45 fixes and a very long chosen title for checking the layout at narrow widths](buzz://channel/06366cc0)",
+          ),
+        ],
+      },
+      {
+        id: "session-caption",
+        title: "Session with a caption",
+        description:
+          "The caption keeps its bubble; the session card sits below it, within the same message.",
+        rows: [
+          message(
+            "session-caption",
+            "Please review these changes.\n\n[Session: PR 45 fixes](buzz://channel/06366cc0)",
+          ),
+        ],
+      },
+    ],
+  },
+  {
     id: "references",
     title: "Links and rich content",
     description:

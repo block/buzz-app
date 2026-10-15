@@ -133,7 +133,7 @@ export function NewSessionComposer({
   async function start(draft: MentionDraft) {
     if (
       submitting.current ||
-      !(pending?.text ?? draft.text).trim() ||
+      !(pending?.text ?? composerMarkdown(draft)).trim() ||
       !available
     )
       return;
@@ -151,6 +151,9 @@ export function NewSessionComposer({
       : {
           id: channelId,
           ttlSeconds: draftSettings.ttlSeconds,
+          named:
+            typeof draftSettings.name === "string" &&
+            !!canonicalDetailsName(draftSettings.name),
           name:
             typeof draftSettings.name === "string"
               ? canonicalDetailsName(draftSettings.name) ||
@@ -266,6 +269,7 @@ export function NewSessionComposer({
           parent?.id,
           current.ttlSeconds,
           personal,
+          current.named === true,
         );
         save({ ...current });
       }

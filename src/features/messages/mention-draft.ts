@@ -10,6 +10,8 @@ export type DraftRecipient = MentionRecipient &
 export type ComposerSnapshot = { version: 1; content: unknown };
 export type MentionDraft = {
   text: string;
+  /** Session references staged above the editor; serialized with the caption. */
+  sessionCards?: readonly string[];
   recipients: readonly DraftRecipient[];
   document?: ComposerSnapshot;
 };
@@ -48,6 +50,20 @@ export function mentionDraft(value: unknown): MentionDraft {
     : [];
   return {
     text,
+    ...(Array.isArray(record.sessionCards) && record.sessionCards.length
+      ? {
+          sessionCards: record.sessionCards
+            .filter(
+              (item): item is string =>
+                typeof item === "string" &&
+                item.length <= 16000 &&
+                /^\[Session(?::| ·)\s+[^\r\n]+\]\(buzz:\/\/channel\/[^\s()]+\)$/.test(
+                  item,
+                ),
+            )
+            .slice(0, 32),
+        }
+      : {}),
     ...(doc ? { document: document as ComposerSnapshot } : {}),
     recipients: safe
       .slice(0, 32)

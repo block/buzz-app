@@ -2321,6 +2321,40 @@ it.each(["image", "video", "file", "audio"] as const)(
   },
 );
 
+it.each([true, false])(
+  "aligns only own agent-audience entries and preserves expanded prose (own=%s)",
+  (own) => {
+    try {
+      const { container } = renderDom(
+        <MessageRow
+          row={{
+            ...row,
+            audience: "agents",
+            content: "A short preview\n\nMore details.",
+          }}
+          viewer={own ? row.authorId : "someone-else"}
+          profile={{ name: "author" }}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      const audience = container.querySelector('[data-audience="agents"]');
+      expect(audience?.hasAttribute("data-viewer-message")).toBe(own);
+      fireEvent.click(
+        screen.getByRole("button", { name: "author: A short preview…" }),
+      );
+      expect(screen.getByText("More details.")).toBeInTheDocument();
+      expect(audience?.querySelector("[data-layout]")).not.toHaveAttribute(
+        "data-viewer-message",
+      );
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it("shows a message for agents as one line from its author to whom it addresses", () => {
   const agent = keypair();
   const rivet = "b".repeat(64);
@@ -2364,30 +2398,40 @@ it("shows a message for agents as one line from its author to whom it addresses"
       name: "Morgarita to Rivet: **run** the suite…",
     });
     expect(line).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.getByText(/(?:1969|1970) at /, {
-        selector: 'time > span[aria-hidden="true"]',
-      }),
-    ).toBeVisible();
+    expect(line.parentElement?.querySelector("time")).toBeNull();
     // Reveal focuses the scroll anchor with tabIndex -1; on the button, that
     // would take the only toggle out of the Tab order.
     expect(line).not.toHaveAttribute("data-message-id");
     expect(line.parentElement).toHaveAttribute("data-message-id");
     expect(screen.queryByText(/Then report back/)).toBeNull();
+    expect(line.parentElement?.querySelector("time")).toBeNull();
+    fireEvent.pointerEnter(line);
+    expect(line.parentElement?.querySelector("time")).toBeNull();
     fireEvent.click(line);
     expect(line).toHaveAttribute("aria-expanded", "true");
-    expect(
-      screen.getByText(/(?:1969|1970) at /, {
-        selector: 'time > span[aria-hidden="true"]',
-      }),
-    ).toBeVisible();
+    expect(line.parentElement?.querySelector("time")).toBeNull();
     expect(
       screen.queryByRole("button", { name: "View Morgarita profile" }),
     ).toBeNull();
     const expanded = screen.getByText("run").closest("[data-message-id]");
+    expect(expanded?.querySelector("[data-viewer-message]")).toBeNull();
     expect(expanded?.querySelector('[class*="messageBubble"]')).toBeNull();
     expect(expanded?.querySelector("[data-own]")).toBeNull();
 
+    expect(line.parentElement?.querySelector("time")).toBeNull();
+    fireEvent.pointerEnter(expanded ?? line);
+    expect(line.parentElement?.querySelector("time")).toBeNull();
+    // Base UI binds the trigger to its panel. One stable message anchor stays
+    // outside the animated content, including while that content is retiring.
+    const panelId = line.getAttribute("aria-controls");
+    expect(panelId).toBeTruthy();
+    expect(document.getElementById(panelId ?? "")).toContainElement(
+      screen.getByText(/Then report back/),
+    );
+    expect(
+      document.querySelectorAll(`[data-message-id="${quiet.id}"]`),
+    ).toHaveLength(1);
+    expect(line.parentElement).toHaveAttribute("data-message-id", quiet.id);
     // The body keeps later mentions but drops the one the line shows.
     expect(screen.getByText(/Then report back/)).toBeInTheDocument();
     expect(screen.queryByText("@Rivet,")).toBeNull();
@@ -2395,15 +2439,80 @@ it("shows a message for agents as one line from its author to whom it addresses"
     // Anywhere in the open box folds it back.
     fireEvent.click(screen.getByText(/Then report back/));
     expect(line).toHaveAttribute("aria-expanded", "false");
-    expect(
-      screen.getByText(/(?:1969|1970) at /, {
-        selector: 'time > span[aria-hidden="true"]',
-      }),
-    ).toBeVisible();
+    expect(line.parentElement?.querySelector("time")).toBeNull();
   } finally {
     cleanup();
   }
 });
+
+it.each([false, true])(
+  "coordination opens its actions only from context interaction (expanded=%s)",
+  async (expanded) => {
+    const onReply = vi.fn();
+    const write = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText: write },
+    });
+    const content = "@Rivet, **run** the suite\n\nThen report back.";
+    try {
+      renderDom(
+        <ToastProvider>
+          <MessageRow
+            row={{
+              ...row,
+              content,
+              mentions: ["b".repeat(64)],
+              audience: "agents",
+            }}
+            profile={{ name: "Morgarita" }}
+            participantProfiles={new Map([["b".repeat(64), { name: "Rivet" }]])}
+            media={() => undefined}
+            onOpenLink={() => false}
+            onReply={onReply}
+            day={false}
+            retry={undefined}
+          />
+        </ToastProvider>,
+      );
+      const toggle = screen.getByRole("button", { name: /Morgarita to Rivet/ });
+      if (expanded) fireEvent.click(toggle);
+      fireEvent.pointerEnter(toggle);
+      expect(
+        screen.queryByRole("button", { name: "More message actions" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("group", { name: "Message actions" }),
+      ).toBeNull();
+      fireEvent.contextMenu(
+        expanded ? screen.getByText(/Then report back/) : toggle,
+        {
+          clientX: 20,
+          clientY: 20,
+          button: 2,
+        },
+      );
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: "Copy message" }),
+      );
+      expect(write).toHaveBeenCalledExactlyOnceWith(
+        "[@Rivet](nostr:npub1hwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwasxw04hu), **run** the suite\n\nThen report back.",
+      );
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+      expect(toggle).toHaveAttribute("aria-expanded", String(expanded));
+      toggle.focus();
+      fireEvent.keyDown(toggle, { key: "F10", shiftKey: true });
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Reply" }));
+      await waitFor(() =>
+        expect(onReply).toHaveBeenCalledExactlyOnceWith(row.id),
+      );
+      expect(toggle).toHaveAttribute("aria-expanded", String(expanded));
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 it("keeps an agents message that opens with prose, or is only a mention, as written", () => {
   const rivet = "b".repeat(64);
@@ -2649,6 +2758,103 @@ it("lets message plugins open targets through the row's link handler", async () 
     expect(open).toHaveBeenLastCalledWith("panel:action", { rootId: "root" });
   } finally {
     cleanup();
+  }
+});
+
+it("keeps coordination attribution accessible while suppressing repeated author artwork", () => {
+  const props = {
+    row: {
+      ...row,
+      audience: "agents" as const,
+      content: "Still working on this",
+    },
+    profile: { name: "Working agent" },
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  const view = renderDom(<MessageRow {...props} stackPrevious={false} />);
+  const authorArtwork = () =>
+    view.container.querySelector(
+      '[data-audience="agents"] [title="Working agent"]',
+    );
+  expect(authorArtwork()).not.toBeNull();
+  view.rerender(<MessageRow {...props} stackPrevious />);
+  expect(authorArtwork()).toBeNull();
+  const disclosure = screen.getByRole("button", {
+    name: "Working agent: Still working on this",
+  });
+  fireEvent.click(disclosure);
+  expect(authorArtwork()).not.toBeNull();
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  view.rerender(<MessageRow {...props} stackPrevious day />);
+  expect(authorArtwork()).not.toBeNull();
+});
+
+it("keeps reply activity dots when the root summary also contains a failed agent", () => {
+  const workingAgent = "a".repeat(64);
+  const failedAgent = "b".repeat(64);
+  const subscribe = () => () => {};
+  const channels = { channels: [], status: "ready" };
+  const profiles = new Map();
+  const library = { identities: [{ pubkey: workingAgent, name: "Brain" }] };
+  const typing = [
+    { channelId: row.channelId, threadRootId: row.id, pubkey: workingAgent },
+  ];
+  const catalog = { entries: [] };
+  const session = {
+    channels: { list: () => channels, subscribeList: subscribe },
+    messages: {},
+    emoji: { snapshot: () => catalog, subscribe },
+    profiles: { snapshot: () => profiles, subscribe },
+    agentChoices: { snapshot: () => library, subscribe },
+    typing: { snapshot: () => typing, subscribe },
+  } as unknown as RelaySession;
+  const noEntries: never[] = [];
+  const empty = { snapshot: () => noEntries, subscribe };
+  const entries = [
+    {
+      id: "failed-summary",
+      key: "test:failed-summary",
+      pluginId: "test",
+      revision: "1",
+      title: "Failed activity",
+      placement: "message" as const,
+      decoratesMessageSummary: true,
+      component: ({
+        renderMessageSummary,
+      }: import("../conversation/contracts").ComposerAccessoryProps) =>
+        renderMessageSummary?.({
+          participants: [failedAgent],
+          content: <span>1 failed</span>,
+          label: "Pinky failed",
+          ref: null,
+        }) ?? null,
+    },
+  ];
+  const view = renderMessage({
+    session,
+    scope: "test",
+    onOpenThread: () => {},
+    extensions: {
+      inline: empty,
+      links: empty,
+      messages: empty,
+      tools: empty,
+      accessories: { snapshot: () => entries, subscribe },
+    },
+  });
+  try {
+    const summary = screen.getByRole("button", {
+      name: "View thread: 23 replies. Brain working. Pinky failed",
+    });
+    expect(summary).toHaveTextContent("1 failed");
+    expect(
+      summary.querySelector('[data-thread-working] [data-state="working"]'),
+    ).not.toBeNull();
+  } finally {
+    view.unmount();
   }
 });
 

@@ -2785,12 +2785,53 @@ html[data-keyboard-navigation] .channelJoinSurface {
   display: none;
 }
 
-/* Messages between agents: one quiet line each, in time order, on a rail
-   that joins adjacent lines. */
+/* Agent-addressed messages use the same inset connector as thread replies. */
 .audienceRow {
-  margin-inline-start: calc(var(--size-control-sm) / 2);
-  padding-inline-start: var(--space-2);
-  border-inline-start: 1px solid var(--border-standard);
+  position: relative;
+  --audience-inset: calc(
+    var(--size-control-sm) +
+    var(--space-2) +
+    var(--space-4) +
+    var(--space-3) -
+    var(--space-1)
+  );
+  font-size: var(--text-message);
+  width: min(56ch, calc(80% - var(--space-4) - var(--space-3)));
+  max-width: calc(100% - 2 * var(--audience-inset));
+  margin-inline-start: var(--audience-inset);
+}
+.audienceRow::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(0px - var(--space-3));
+  inset-block-start: 0;
+  block-size: calc(var(--size-control-sm) / 2);
+  inline-size: var(--space-3);
+  border-inline-start: 2px solid var(--border-message-thread);
+  border-block-end: 2px solid var(--border-message-thread);
+  border-end-start-radius: var(--radius-control);
+  pointer-events: none;
+}
+.audienceRow[data-viewer-message]::before {
+  inset-inline-start: auto;
+  inset-inline-end: calc(0px - var(--space-3));
+  border-inline-start: 0;
+  border-inline-end: 2px solid var(--border-message-thread);
+  border-end-start-radius: 0;
+  border-end-end-radius: var(--radius-control);
+}
+.feed .audienceRow {
+  --audience-inset: calc(
+    var(--size-control) +
+    2 *
+    var(--space-3) +
+    var(--space-4) -
+    var(--space-1)
+  );
+}
+.audienceRow[data-viewer-message] {
+  margin-inline-start: auto;
+  margin-inline-end: var(--audience-inset);
 }
 .audienceLine {
   display: flex;
@@ -2810,9 +2851,6 @@ html[data-keyboard-navigation] .channelJoinSurface {
   letter-spacing: var(--text-caption--letter-spacing);
   text-align: start;
 }
-.audienceLine:hover {
-  background: var(--affordance-subtle-hover);
-}
 html[data-keyboard-navigation] .audienceLine:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: -2px;
@@ -2820,26 +2858,48 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
 .audienceEntry {
   display: flex;
   align-items: flex-start;
+  min-block-size: calc(var(--size-control-sm) * 0.75 + var(--space-1));
   border-radius: var(--radius-control);
 }
-.audienceRow[data-open] .audienceEntry {
+.audienceEntry:has(> .audiencePanel) {
   cursor: pointer;
-  background: var(--affordance-subtle);
 }
-.audienceRow[data-open] .audienceEntry:hover {
-  background: var(--affordance-subtle-hover);
+@media (hover: hover) {
+  .audienceEntry:hover {
+    background: var(--affordance-subtle-hover);
+  }
 }
-.audienceRow[data-open] .audienceLine {
+/* Retain the address column through the exit, so the text does not rewrap
+   while its height contracts. Base UI retires the panel after the transition. */
+.audienceEntry:has(> .audiencePanel) .audienceLine {
   flex: none;
   inline-size: auto;
+  /* Match the trigger's avatar-to-preview gap when the prose is its sibling. */
+  padding-inline-end: var(--space-1h);
   background: none;
+}
+.audiencePanel {
+  flex: 1;
+  min-inline-size: 0;
+  height: var(--collapsible-panel-height);
+  overflow: clip;
+  transition: height var(--duration-settle) var(--easing-settle);
+}
+.audiencePanel:is([data-starting-style], [data-ending-style]) {
+  /* The disclosure replaces a one-line preview, not empty space. Keep that
+     first line painted until the preview returns when Base UI unmounts it. */
+  height: calc(var(--size-control-sm) * 0.75 + var(--space-1));
+}
+@media (prefers-reduced-motion: reduce) {
+  .audiencePanel {
+    transition: none;
+  }
 }
 /* Open, the text keeps the line's size and colour and starts where its
    preview was, so expanding only lets it run on. */
 .audienceBody {
-  flex: 1;
   min-inline-size: 0;
-  padding-block-start: calc(
+  padding-block: calc(
     (
       var(--size-control-sm) *
       0.75 -
@@ -2851,6 +2911,8 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   color: var(--text-subtle);
 }
 .audienceBody .message[data-layout="continuation"] {
+  /* Coordination keeps its own balanced insets, not a grouped-message seam. */
+  padding-block: var(--space-half);
   padding-inline-end: var(--space-1);
 }
 .audienceBody .message[data-layout="continuation"] .text {
@@ -2877,6 +2939,17 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.audienceEntry:has(> .audiencePanel) .audiencePreview {
+  display: none;
+}
+@container messages (max-width: 20rem) {
+  .audienceEntry {
+    flex-wrap: wrap;
+  }
+  .audiencePanel {
+    flex-basis: 100%;
+  }
 }
 
 /* Returning from a thread only paints its already-visible origin. The wash

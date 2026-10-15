@@ -1,3 +1,4 @@
+import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
@@ -39,6 +40,8 @@ import {
   useCallback,
   useSyncExternalStore,
   type ReactNode,
+  type ReactElement,
+  type RefObject,
 } from "react";
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
@@ -49,7 +52,10 @@ import { profileTarget, profileActivityViewTarget } from "../profiles/target";
 import { MessageBody } from "../conversation/MessageBody";
 import { TargetOpenerProvider, WithTargetOpener } from "../conversation/opener";
 import { InlineText } from "../conversation/InlineText";
-import type { ConversationExtensions } from "../conversation/contracts";
+import type {
+  ConversationExtensions,
+  MessageSummaryActivity,
+} from "../conversation/contracts";
 import {
   ContributionBoundary,
   contributionKey,
@@ -129,9 +135,15 @@ export type MessageRowProps = {
   ) => void;
 };
 
-const FullMessageRow = memo(function MessageRow(
-  props: MessageRowProps & { shownRow?: ChannelMessage },
-) {
+type MessageContentProps = MessageRowProps & {
+  shownRow?: ChannelMessage;
+  renderMessage?: (
+    message: ReactNode,
+    trigger: RefObject<HTMLButtonElement | null>,
+  ) => ReactElement;
+};
+
+const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
   return props.session && props.scope && props.extensions?.accessories ? (
     <TypingPresentation
       active
@@ -146,6 +158,7 @@ const FullMessageRow = memo(function MessageRow(
 function MessageRowContent({
   row,
   shownRow,
+  renderMessage,
   getThreadRoot,
   session,
   scope,
@@ -177,10 +190,7 @@ function MessageRowContent({
   onMediaTime,
   onOpenMediaReview,
   agentPubkeys,
-}: MessageRowProps & {
-  /** The message as its body shows, when that differs from `row`. */
-  shownRow?: ChannelMessage;
-}) {
+}: MessageContentProps) {
   const [avatarFocused, setAvatarFocused] = useState(false);
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
@@ -499,8 +509,211 @@ function MessageRowContent({
       />
     </span>
   );
-  return (
-    <div data-message-id={row.id}>
+  const messageActions = (target?: ReactElement) => (
+    <MessageActionBar
+      rowRef={rowRef}
+      menuTriggerRef={menuTrigger}
+      messageId={row.id}
+      onReply={
+        (onReply ? () => onReply(row.id) : undefined) ??
+        (onOpenThread
+          ? () =>
+              onOpenThread(
+                row.threadRootId ?? row.id,
+                row.threadRootId ?? row.id,
+                "reply",
+              )
+          : undefined)
+      }
+      replyDisabled={
+        !!(row.delivery && !["accepted", "seen"].includes(row.delivery)) ||
+        archived ||
+        (!!session?.channels.get && (!listed || readOnly))
+      }
+      onSendToChannel={
+        session &&
+        listed &&
+        !archived &&
+        !readOnly &&
+        row.threadRootId &&
+        row.authorId === session.viewer &&
+        !row.agentEnvelope &&
+        !row.diff &&
+        (!row.delivery || ["accepted", "seen"].includes(row.delivery)) &&
+        session.outbox?.supports(9)
+          ? () => {
+              session.messages.sendToChannel(row, getThreadRoot?.());
+            }
+          : undefined
+      }
+      link={messageCopyLink(row, scope)}
+      copyText={() =>
+        messageCopyText(row, directory.profiles, directory.agents)
+      }
+      quickControls={
+        <>
+          {stackPrevious && (
+            <span
+              className={styles.keyboardMessageTime}
+              data-message-keyboard-time
+              aria-hidden="true"
+            >
+              {formatItemTimestamp(row.createdAt, {
+                withTime: true,
+              })}
+            </span>
+          )}
+          {quickControls ??
+            (canReact && session && scope && extensions ? (
+              <MessageReactionControls
+                row={row}
+                session={session}
+                scope={scope}
+                tools={extensions.tools}
+                inline={extensions.inline}
+                disabled={
+                  !!row.delivery && !["accepted", "seen"].includes(row.delivery)
+                }
+              />
+            ) : undefined)}
+        </>
+      }
+      leadingItems={
+        session ? (
+          <MessageReadStateItem row={row} session={session} />
+        ) : undefined
+      }
+      overflowItems={
+        <>
+          {overflowItems ??
+            (session ? (
+              <MessageManagementItems row={row} session={session} />
+            ) : undefined)}
+          {actionItems}
+          {activityItem}
+          {reportItem}
+        </>
+      }
+    >
+      {target}
+    </MessageActionBar>
+  );
+  const overlays = (
+    <>
+      {opened && session && extensions?.actions && (
+        <ContributionBoundary key={contributionKey(opened)} fallback={null}>
+          <WithTargetOpener
+            component={opened.component}
+            props={{
+              message: row,
+              session,
+              close: () => setOpenAction(undefined),
+            }}
+            registry={extensions.actions}
+            entry={opened}
+          />
+        </ContributionBoundary>
+      )}
+      {report && reporting === "open" && (
+        <ReportMessageDialog
+          report={(type, note) => report(row.id, type, note)}
+          close={(submitted) => setReporting(submitted ? "sent" : undefined)}
+          finalFocus={menuTrigger}
+        />
+      )}
+      {active && reporting === "sent" && (
+        <ToastNotice
+          tone="success"
+          timeout={5000}
+          title="Report submitted to community moderators"
+          onDismiss={() => setReporting(undefined)}
+        />
+      )}
+    </>
+  );
+  const renderMessageSummary = (activity?: MessageSummaryActivity) => {
+    const remainingThreadAgents = threadAgents.filter(
+      (agent) => !activity?.participants.includes(agent.pubkey),
+    );
+    return (
+      ((row.replyCount > 0 ||
+        (!row.threadRootId && threadAgents.length > 0) ||
+        activity) &&
+        onOpenThread && (
+          <Button
+            ref={activity?.ref}
+            variant="ghost"
+            size="sm"
+            data-thread-summary=""
+            data-reply-connector={row.replyCount > 0 || undefined}
+            data-first-participant-shape={
+              agentPubkeys?.has(row.participants[0] ?? "")
+                ? "squircle"
+                : "circle"
+            }
+            type="button"
+            aria-label={
+              row.replyCount > 0
+                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}`
+                : `View thread: ${activity?.label ?? threadWorkingLabel}`
+            }
+            onClick={(event) => {
+              event.currentTarget.focus();
+              onOpenThread(row.id, row.threadRootId ?? row.id);
+            }}
+          >
+            <ReplySummary
+              count={row.replyCount}
+              participants={row.participants}
+              profiles={participantProfiles}
+              agentPubkeys={agentPubkeys}
+              resolveName={resolveName}
+              media={media}
+              unreadLabel={unreadLabel}
+              workingParticipants={[
+                ...threadAgents.map((agent) => agent.pubkey),
+                ...(activity?.participants ?? []),
+              ]}
+              activity={
+                <>
+                  {remainingThreadAgents.length > 0 ? (
+                    <span
+                      className={`${styles.threadWorking} buzz-arrive`}
+                      data-thread-working=""
+                      aria-hidden="true"
+                    >
+                      {remainingThreadAgents.slice(0, 2).map((agent) => {
+                        const name = resolveName(agent.pubkey, agent.name);
+                        return (
+                          <Avatar
+                            key={agent.pubkey}
+                            src={avatarMedia(agent.avatar, media)}
+                            alt=""
+                            fallback={name}
+                            size="compact"
+                            shape="squircle"
+                          />
+                        );
+                      })}
+                      {remainingThreadAgents.length > 2 && (
+                        <span>+{remainingThreadAgents.length - 2}</span>
+                      )}
+                      <TypingDots
+                        state={threadWaiting ? "waiting" : "working"}
+                      />
+                    </span>
+                  ) : null}
+                  {activity?.content}
+                </>
+              }
+            />
+          </Button>
+        )) ||
+      null
+    );
+  };
+  const message = (
+    <div data-message-id={renderMessage ? undefined : row.id}>
       {day && <DayDivider createdAt={row.createdAt} />}
       <div
         ref={rowRef}
@@ -513,144 +726,20 @@ function MessageRowContent({
         }
         data-own={(!attachmentOnly && ownBubble) || undefined}
       >
-        <span className={styles.messageGutter} />
+        {!renderMessage && <span className={styles.messageGutter} />}
 
         <div className={styles.messageBody}>
-          {opened && session && extensions?.actions && (
-            <ContributionBoundary key={contributionKey(opened)} fallback={null}>
-              <WithTargetOpener
-                component={opened.component}
-                props={{
-                  message: row,
-                  session,
-                  close: () => setOpenAction(undefined),
-                }}
-                registry={extensions.actions}
-                entry={opened}
-              />
-            </ContributionBoundary>
-          )}
-          {report && reporting === "open" && (
-            <ReportMessageDialog
-              report={(type, note) => report(row.id, type, note)}
-              close={(submitted) =>
-                setReporting(submitted ? "sent" : undefined)
-              }
-              finalFocus={menuTrigger}
-            />
-          )}
-          {active && reporting === "sent" && (
-            <ToastNotice
-              tone="success"
-              timeout={5000}
-              title="Report submitted to community moderators"
-              onDismiss={() => setReporting(undefined)}
-            />
-          )}
+          {!renderMessage && overlays}
           <div
             className={styles.messageContent}
             data-bubble={(!attachmentOnly && !shownRow) || undefined}
           >
             {/* A live append must not remove the reader's current focus target. */}
-            {(!stackNext || avatarFocused) && (
+            {!renderMessage && (!stackNext || avatarFocused) && (
               <div className={styles.messageAvatar}>{avatar}</div>
             )}
             <div className={styles.messageHeader}>
-              {!row.membership && (
-                <MessageActionBar
-                  rowRef={rowRef}
-                  menuTriggerRef={menuTrigger}
-                  messageId={row.id}
-                  onReply={
-                    (onReply ? () => onReply(row.id) : undefined) ??
-                    (onOpenThread
-                      ? () =>
-                          onOpenThread(
-                            row.threadRootId ?? row.id,
-                            row.threadRootId ?? row.id,
-                            "reply",
-                          )
-                      : undefined)
-                  }
-                  replyDisabled={
-                    !!(
-                      row.delivery &&
-                      !["accepted", "seen"].includes(row.delivery)
-                    ) ||
-                    archived ||
-                    (!!session?.channels.get && (!listed || readOnly))
-                  }
-                  onSendToChannel={
-                    session &&
-                    listed &&
-                    !archived &&
-                    !readOnly &&
-                    row.threadRootId &&
-                    row.authorId === session.viewer &&
-                    !row.agentEnvelope &&
-                    !row.diff &&
-                    (!row.delivery ||
-                      ["accepted", "seen"].includes(row.delivery)) &&
-                    session.outbox?.supports(9)
-                      ? () => {
-                          session.messages.sendToChannel(
-                            row,
-                            getThreadRoot?.(),
-                          );
-                        }
-                      : undefined
-                  }
-                  link={messageCopyLink(row, scope)}
-                  copyText={() =>
-                    messageCopyText(row, directory.profiles, directory.agents)
-                  }
-                  quickControls={
-                    <>
-                      {stackPrevious && (
-                        <span
-                          className={styles.keyboardMessageTime}
-                          data-message-keyboard-time
-                          aria-hidden="true"
-                        >
-                          {formatItemTimestamp(row.createdAt, {
-                            withTime: true,
-                          })}
-                        </span>
-                      )}
-                      {quickControls ??
-                        (canReact && session && scope && extensions ? (
-                          <MessageReactionControls
-                            row={row}
-                            session={session}
-                            scope={scope}
-                            tools={extensions.tools}
-                            inline={extensions.inline}
-                            disabled={
-                              !!row.delivery &&
-                              !["accepted", "seen"].includes(row.delivery)
-                            }
-                          />
-                        ) : undefined)}
-                    </>
-                  }
-                  leadingItems={
-                    session ? (
-                      <MessageReadStateItem row={row} session={session} />
-                    ) : undefined
-                  }
-                  overflowItems={
-                    <>
-                      {overflowItems ??
-                        (session ? (
-                          <MessageManagementItems row={row} session={session} />
-                        ) : undefined)}
-                      {actionItems}
-                      {activityItem}
-                      {reportItem}
-                    </>
-                  }
-                />
-              )}
+              {!row.membership && !renderMessage && messageActions()}
               {/* Screen-reader text stays out of selections: the clipboard carries
                 what the reader saw, so a continuation copies without a byline. */}
               <div
@@ -704,7 +793,9 @@ function MessageRowContent({
               </div>
             )}
             <MessageTimestampHint
-              createdAt={stackPrevious ? row.createdAt : undefined}
+              createdAt={
+                !renderMessage && stackPrevious ? row.createdAt : undefined
+              }
               attachments={attachmentGroups.length > 0}
             >
               {!attachmentOnly && (
@@ -931,6 +1022,9 @@ function MessageRowContent({
           {active && session && scope && extensions?.accessories && (
             <ComposerAccessories
               registry={extensions.accessories}
+              renderMessageSummary={
+                onOpenThread ? renderMessageSummary : undefined
+              }
               session={session}
               scope={scope}
               channelId={row.channelId}
@@ -951,74 +1045,19 @@ function MessageRowContent({
               open={onOpenLink}
             />
           )}
-          {(row.replyCount > 0 ||
-            (!row.threadRootId && threadAgents.length > 0)) &&
-            onOpenThread && (
-              <Button
-                variant="ghost"
-                size="sm"
-                data-thread-summary=""
-                data-reply-connector={row.replyCount > 0 || undefined}
-                data-first-participant-shape={
-                  agentPubkeys?.has(row.participants[0] ?? "")
-                    ? "squircle"
-                    : "circle"
-                }
-                type="button"
-                aria-label={
-                  row.replyCount > 0
-                    ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}`
-                    : `View thread: ${threadWorkingLabel}`
-                }
-                onClick={(event) => {
-                  event.currentTarget.focus();
-                  onOpenThread(row.id, row.threadRootId ?? row.id);
-                }}
-              >
-                {row.replyCount > 0 && (
-                  <ReplySummary
-                    count={row.replyCount}
-                    participants={row.participants}
-                    profiles={participantProfiles}
-                    agentPubkeys={agentPubkeys}
-                    resolveName={resolveName}
-                    media={media}
-                    unreadLabel={unreadLabel}
-                  />
-                )}
-                {threadAgents.length > 0 && (
-                  <span
-                    className={`${styles.threadWorking} buzz-arrive`}
-                    data-thread-working=""
-                    aria-hidden="true"
-                  >
-                    {threadAgents.slice(0, 2).map((agent) => {
-                      const name = resolveName(agent.pubkey, agent.name);
-                      return (
-                        <Avatar
-                          key={agent.pubkey}
-                          src={avatarMedia(agent.avatar, media)}
-                          alt=""
-                          fallback={name}
-                          size="compact"
-                          shape="squircle"
-                        />
-                      );
-                    })}
-                    {threadAgents.length > 2 && (
-                      <span>+{threadAgents.length - 2}</span>
-                    )}
-                    <TypingDots state={threadWaiting ? "waiting" : "working"} />
-                  </span>
-                )}
-                {threadAgents.length > 0 && row.replyCount === 0 && (
-                  <span>View thread</span>
-                )}
-              </Button>
-            )}
+          {!(active && session && scope && extensions?.accessories) &&
+            renderMessageSummary()}
         </div>
       </div>
     </div>
+  );
+  return renderMessage ? (
+    <>
+      {messageActions(renderMessage(message, menuTrigger))}
+      {overlays}
+    </>
+  ) : (
+    message
   );
 }
 /** Coordination between agents reads as one quiet line in time order: who
@@ -1091,79 +1130,88 @@ function AgentsMessageRow(props: MessageRowProps) {
     </span>
   );
   return (
-    <div
-      className={styles.audienceRow}
-      data-audience="agents"
-      data-open={open || undefined}
-    >
-      {props.day && <DayDivider createdAt={row.createdAt} />}
-      {/* Open, the message starts beside its addresses and the whole entry
-          stays highlighted, so it reads as one box that folds back. */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: folding by click is a pointer shortcut; the line's button folds it from the keyboard. */}
-      <div
-        className={styles.audienceEntry}
-        // Collapsed, the entry stands in for the message as a scroll anchor.
-        // Not the button: revealing an anchor takes it out of the Tab order.
-        data-message-id={open ? undefined : row.id}
-        // Open, a click anywhere in the box folds it, except on its own
-        // controls and links or at the end of a text selection.
-        onClick={(event) => {
-          const target = event.target as Element;
-          if (
-            !open ||
-            !event.currentTarget.contains(target) ||
-            target.closest(
-              "a, button, input, textarea, select, summary, [role='button'], [role='menuitem'], [contenteditable='true']",
-            ) ||
-            !target.ownerDocument.getSelection()?.isCollapsed
-          )
-            return;
-          setOpen(false);
-        }}
-      >
-        <button
-          type="button"
-          data-buzz-ui=""
-          className={styles.audienceLine}
-          aria-expanded={open}
-          aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
-          onClick={() => setOpen(!open)}
+    <FullMessageRow
+      {...props}
+      shownRow={body}
+      alignViewer={false}
+      day={false}
+      layout="continuation"
+      stackPrevious
+      stackNext
+      renderMessage={(message, trigger) => (
+        <div
+          className={styles.audienceRow}
+          data-audience="agents"
+          data-viewer-message={
+            (props.alignViewer ?? true) &&
+            row.authorId === (props.viewer ?? session?.viewer)
+              ? ""
+              : undefined
+          }
+          data-open={open || undefined}
         >
-          {avatar(author)}
-          {to.length > 0 && (
-            <>
-              <ArrowRightIcon
-                size={12}
-                aria-hidden="true"
-                className={styles.audienceArrow}
-              />
-              {to.map(avatar)}
-            </>
-          )}
-          {!open && (
-            <>
-              <span className={styles.audiencePreview}>{preview}</span>
-              <MessageTimestamp createdAt={row.createdAt} />
-            </>
-          )}
-        </button>
-        {open && (
-          <div className={styles.audienceBody}>
-            <div className="text-caption">
-              <MessageTimestamp createdAt={row.createdAt} />
-            </div>
-            <FullMessageRow
-              {...props}
-              shownRow={body}
-              day={false}
-              layout="continuation"
-              stackPrevious
-              stackNext
-            />
-          </div>
-        )}
-      </div>
-    </div>
+          {props.day && <DayDivider createdAt={row.createdAt} />}
+          {/* Open, the message stays beside its addresses; hovering the entry
+          shows the same collapse target without a persistent fill. */}
+          <Collapsible.Root
+            open={open}
+            onOpenChange={setOpen}
+            className={styles.audienceEntry}
+            // One stable anchor survives both animation directions. Not the
+            // button: revealing an anchor takes it out of the Tab order.
+            data-message-id={row.id}
+            // Open, a click anywhere in the box folds it, except on its own
+            // controls and links or at the end of a text selection.
+            onClick={(event) => {
+              const target = event.target as Element;
+              if (
+                !open ||
+                !event.currentTarget.contains(target) ||
+                target.closest(
+                  "a, button, input, textarea, select, summary, [role='button'], [role='menuitem'], [contenteditable='true']",
+                ) ||
+                !target.ownerDocument.getSelection()?.isCollapsed
+              )
+                return;
+              setOpen(false);
+            }}
+          >
+            <Collapsible.Trigger
+              ref={trigger}
+              data-buzz-ui=""
+              className={styles.audienceLine}
+              aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
+            >
+              {props.stackPrevious && !props.day && !open ? (
+                <span className={styles.audienceAvatar} aria-hidden="true" />
+              ) : (
+                avatar(author)
+              )}
+              {to.length > 0 && (
+                <>
+                  <ArrowRightIcon
+                    size={12}
+                    aria-hidden="true"
+                    className={styles.audienceArrow}
+                  />
+                  {to.map(avatar)}
+                </>
+              )}
+              {!open && (
+                <span className={styles.audiencePreview}>{preview}</span>
+              )}
+            </Collapsible.Trigger>
+            <Collapsible.Panel
+              className={styles.audiencePanel}
+              inert={!open || undefined}
+              aria-hidden={!open || undefined}
+            >
+              <div className={styles.audienceBody}>{message}</div>
+            </Collapsible.Panel>
+          </Collapsible.Root>
+        </div>
+      )}
+    />
   );
 }
 

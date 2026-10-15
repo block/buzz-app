@@ -213,9 +213,7 @@ export function SessionShare({
   const saved = frozen ?? attempts.get(channel.id);
   const source = list.channels.find((item) => item.id === channel.id);
   const eligible = canShareConversation(session, source);
-  const chosenId = saved
-    ? (saved.created ?? saved.intent.destination)
-    : destination;
+  const chosenId = saved ? saved.intent.destination : destination;
   const liveChosen = list.channels.find(
     (item) => item.id === chosenId && item.id !== channel.id,
   );
@@ -545,8 +543,6 @@ export function SessionShare({
     }
     const exact = beginSessionShare(session, channel.id, {
       destination: destination || channel.id,
-      audience: "combined",
-      channelPeople: [],
       sessionPeople: people.map((person) => person.pubkey),
     });
     setFrozen(exact);
@@ -592,30 +588,10 @@ export function SessionShare({
       if (visible()) setProgress(text);
     };
     try {
-      // Continue already submitted legacy creation/link attempts, but never
-      // repeat the retired promotion or Me-removal behavior.
-      let target = exact.intent.destination;
-      if (target === "new") {
-        if (!exact.intent.name || !exact.intent.visibility)
-          throw new Error("Saved channel details are missing.");
-        target =
-          exact.created ??
-          (await session.channelCreation.create({
-            name: exact.intent.name,
-            visibility: exact.intent.visibility,
-          }));
-        exact.created = target;
-        for (const key of exact.intent.channelPeople)
-          await session.memberAdditions.add(target, key);
-      }
+      const target = exact.intent.destination;
       if (exact.intent.sessionPeople.some(knownAgent))
         throw new Error("Add agents from their own session controls instead.");
-      if (
-        (exact.intent.audience === "everyone" ||
-          exact.intent.audience === "combined") &&
-        target !== channel.id &&
-        !exact.audienceKeys
-      ) {
+      if (target !== channel.id && !exact.audienceKeys) {
         progress("Checking current channel members…");
         const audience = await destinationShareAudience(
           session,
@@ -631,11 +607,9 @@ export function SessionShare({
             name: selected.name,
             members: [session.viewer, ...audience],
           };
-        const union = [
+        exact.audienceKeys = [
           ...new Set([...exact.intent.sessionPeople, ...audience]),
         ];
-        exact.audienceKeys =
-          exact.intent.audience === "combined" ? union : audience;
       }
       const keys = exact.audienceKeys ?? exact.intent.sessionPeople;
       if (target !== channel.id && !keys.length && !exact.messageId)
@@ -646,8 +620,7 @@ export function SessionShare({
         throw new Error("Choose at most 100 distinct recipients.");
       progress("Confirming session access…");
       // A confirmed grant is never replayed, even if its recipient later leaves.
-      const directKeys =
-        exact.intent.audience === "everyone" ? [] : exact.intent.sessionPeople;
+      const directKeys = exact.intent.sessionPeople;
       await grantSessionAccess(
         session,
         channel.id,

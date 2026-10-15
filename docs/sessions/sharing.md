@@ -98,10 +98,10 @@ that button in place, disabled, while Retry runs. Changed eligibility
 shows inline access-change recovery and disables Share/Retry until access recovers. Closing a view does not
 cancel submitted work; a superseded visit receives no completion navigation.
 
-Legacy in-process submitted channel-creation/link intents retain their created ID
-and exact link retry. New shares cannot create channels. Retired direct promotion
-settings are not replayed. This is not an atomic grant/post transaction or a
-persistent composite app-restart journal. Start over clears choices, not access or
+Share attempts target an existing channel or the source for people-only access,
+with the same exact link on retry. Share cannot create channels or change their
+settings. This is not an atomic grant/post transaction or a persistent composite
+app-restart journal. Start over clears choices, not access or
 queued operations; a deliberately new attempt may post another link.
 
 ## Explicit conversion, separate from Share

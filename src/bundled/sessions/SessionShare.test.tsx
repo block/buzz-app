@@ -87,7 +87,6 @@ function fixture(direct = false) {
   const published: RelayEvent[] = [];
   let failLink = false;
   let holdLink: Promise<void> | undefined;
-  let failCreation = false;
   let failGrant = false;
   let failDetails = false;
   let failRoster = false;
@@ -104,8 +103,6 @@ function fixture(direct = false) {
     if (event.kind === 9 && failLink) throw new PublishRejected("Post refused");
     if (event.kind === 9000 && failGrant)
       throw new PublishRejected("Session invite refused");
-    if (event.kind === 9007 && failCreation)
-      throw new PublishRejected("Create refused");
     if (event.kind === 9002 && failDetails)
       throw new PublishRejected("Settings refused");
     published.push(event);
@@ -138,28 +135,6 @@ function fixture(direct = false) {
         ]),
       );
       if (loseDetailsResponse) throw new Error("Lost settings response");
-    }
-    if (event.kind === 9007) {
-      const id = event.tags.find(([name]) => name === "h")?.[1] ?? "";
-      members.set(id, [viewer.pubkey]);
-      metadataEvents.set(
-        id,
-        metadata(
-          relay,
-          id,
-          event.tags.find(([name]) => name === "name")?.[1] ?? "New",
-          ++clock,
-          [
-            ["t", "stream"],
-            [
-              event.tags.find(([name]) => name === "visibility")?.[1] ===
-              "private"
-                ? "private"
-                : "public",
-            ],
-          ],
-        ),
-      );
     }
     if (event.kind === 9000) {
       const id = event.tags.find(([name]) => name === "h")?.[1] ?? "";
@@ -241,7 +216,7 @@ function fixture(direct = false) {
         publish,
       },
       writer: {
-        kinds: [9, 9000, 9002, 9007],
+        kinds: [9, 9000, 9002],
         sign: async (event) => signed(viewer, event),
         publish: async (event) => {
           await publish(event);
@@ -323,9 +298,6 @@ function fixture(direct = false) {
     },
     holdLink(value: Promise<void> | undefined) {
       holdLink = value;
-    },
-    failCreation(value: boolean) {
-      failCreation = value;
     },
     failGrant(value: boolean) {
       failGrant = value;
@@ -703,8 +675,6 @@ it("does not let a stale dialog resume a replacement attempt", async () => {
   const user = userEvent.setup();
   const original = beginSessionShare(t.session, source, {
     destination,
-    audience: "selected",
-    channelPeople: [],
     sessionPeople: [],
   });
   t.mount();
@@ -716,8 +686,6 @@ it("does not let a stale dialog resume a replacement attempt", async () => {
   finishSessionShare(t.session, source);
   const replacement = beginSessionShare(t.session, source, {
     destination,
-    audience: "selected",
-    channelPeople: [],
     sessionPeople: [],
   });
   expect(replacement).not.toBe(original);
@@ -970,8 +938,6 @@ it("a stale Start over cannot discard a replacement attempt", async () => {
   const user = userEvent.setup();
   const intent = {
     destination,
-    audience: "selected" as const,
-    channelPeople: [],
     sessionPeople: [],
   };
   const original = beginSessionShare(t.session, source, intent);
@@ -1428,18 +1394,13 @@ it("shows loading and failed current access with Retry, never an empty roster", 
   }
 });
 
-it("resumes a legacy submitted new destination without replacing its created ID", async () => {
+it("resumes a submitted existing destination after remount without replacing its link ID", async () => {
   const t = fixture();
   await t.ready();
   const attempt = beginSessionShare(t.session, source, {
-    destination: "new",
-    name: "Planning",
-    visibility: "private",
-    audience: "selected",
-    channelPeople: [],
+    destination,
     sessionPeople: [t.aria.pubkey],
   });
-  attempt.created = destination;
   t.failLink(true);
   const user = userEvent.setup();
   const view = t.mount();
@@ -1596,8 +1557,6 @@ it("explains access changes and disables a saved Retry until current access reco
   await t.ready();
   const attempt = beginSessionShare(t.session, source, {
     destination: source,
-    audience: "selected",
-    channelPeople: [],
     sessionPeople: [t.aria.pubkey],
   });
   const user = userEvent.setup();
@@ -1787,8 +1746,6 @@ it("updates the row conversion guard for a share owned by another mounted entry 
   act(() => {
     beginSessionShare(t.session, source, {
       destination,
-      audience: "combined",
-      channelPeople: [],
       sessionPeople: [],
     });
   });

@@ -433,8 +433,6 @@ it("blocks an already open conversion while a share remains pending and recovers
   act(() => {
     beginSessionShare(h.session, id, {
       destination: id,
-      audience: "selected",
-      channelPeople: [],
       sessionPeople: [],
     });
   });

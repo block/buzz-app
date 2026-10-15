@@ -220,7 +220,7 @@ function fixture(
     state,
   };
 }
-it("keeps the current audience and removal controls available after Share fails to move a chat", async () => {
+it("keeps the current audience and removal controls available after conversion fails to remove placement", async () => {
   const person = keypair();
   // Start with an existing member; grant confirmation is covered by SessionShare tests.
   const f = fixture("ready", true, "session", [person.pubkey]);
@@ -276,16 +276,32 @@ it("keeps the current audience and removal controls available after Share fails 
   // Populate the real session's access evidence, not only the page's retained list.
   await f.session.read([{ kinds: [39000, 39002], "#d": [id], limit: 2 }]);
   f.set.mockRejectedValue(new Error("Placement refused"));
+  vi.spyOn(f.session.mePlacement, "has").mockReturnValue(true);
+  // Metadata is already ordinary; explicit conversion resumes placement only.
+  // The real details owner must not publish a second metadata command.
+  const save = vi.spyOn(f.session.channelDetails, "save");
   f.mount();
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Share" }));
-  const share = screen.getByRole("dialog", { name: "Share conversation" });
-  const submit = within(share).getByRole("button", { name: "Share" });
+  const share = screen.getByRole("dialog", { name: "Share session" });
+  await user.click(
+    within(share).getByRole("button", { name: "Convert to channel" }),
+  );
+  const conversion = await screen.findByRole("dialog", {
+    name: "Move to Multiplayer",
+  });
+  const submit = within(conversion).getByRole("button", {
+    name: "Move to Multiplayer",
+  });
   await waitFor(() => expect(submit).toBeEnabled());
   await user.click(submit);
-  expect(await within(share).findByRole("alert")).toHaveTextContent(
+  expect(await within(conversion).findByRole("alert")).toHaveTextContent(
     "Placement refused",
   );
+  expect(f.set).toHaveBeenCalledWith(id, false, {
+    signal: expect.any(AbortSignal),
+  });
+  expect(save).not.toHaveBeenCalled();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(f.open).not.toHaveBeenCalled();
@@ -462,8 +478,6 @@ it("updates the header conversion guard when a share starts and finishes elsewhe
   act(() => {
     beginSessionShare(f.session, id, {
       destination: id,
-      audience: "selected",
-      channelPeople: [],
       sessionPeople: [],
     });
   });

@@ -52,6 +52,7 @@ function setup(
     hold?: boolean;
     reply?: string;
     thread?: readonly EventData[];
+    scope?: "thread" | "channel";
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -115,7 +116,7 @@ function setup(
       trigger: { type: "mention", event },
       channelId: channel,
       agent,
-      config: DEFAULT_CONFIG,
+      config: { ...DEFAULT_CONFIG, scope: options.scope ?? "thread" },
       signal: new AbortController().signal,
       workingUntil: () => undefined,
     } as unknown as Delivery);
@@ -190,6 +191,43 @@ describe("GooseRuntime", () => {
         ["h", channel],
         ["p", alice],
       ],
+    ]);
+  });
+
+  it("posts a channel session's burst once, in the latest message's thread", async () => {
+    const reply = (id: string, root: EventData): RelayEvent =>
+      message(id, "@Gander", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+          ["p", self],
+        ],
+      });
+    const one = message("1", "First thread");
+    const two = message("2", "Second thread");
+    const { deliver, goose, published } = setup({
+      scope: "channel",
+      hold: true,
+      reply: "Forgot to send",
+    });
+    await deliver(reply("3", one));
+    await flush(100);
+    await deliver(reply("4", two));
+    await flush(100);
+    const process = goose();
+    expect(process?.turns).toHaveLength(1);
+    expect(process?.turns[0]?.steered).toHaveLength(1);
+    process?.turns[0]?.finish();
+    await flush(100);
+    expect(published).toEqual([
+      {
+        kind: 9,
+        content: "Forgot to send",
+        tags: [
+          ["h", channel],
+          ["e", two.id, "", "reply"],
+        ],
+      },
     ]);
   });
 

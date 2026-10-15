@@ -521,26 +521,32 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async mem_get(tools, args) {
     const slug = text(args.slug);
-    if (!slug)
-      return (
-        (await tools.client.memories())
-          .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
-          .join("\n") || "No memory."
-      );
+    if (!slug) {
+      const { entries, partial } = await tools.client.memories();
+      const lines = entries
+        .map((entry) => `${entry.slug} ${time(entry.createdAt)}`)
+        .join("\n");
+      if (!partial) return lines || "No memory.";
+      if (!lines) throw new Error("Memory could not be read; try again.");
+      return `${lines}\nThis list is incomplete: some memory could not be read.`;
+    }
     const key = memorySlug(slug);
-    return (
-      (await tools.client.memories(key)).find((entry) => entry.slug === key)
-        ?.body ?? `No memory ${key}.`
-    );
+    const { entries, partial } = await tools.client.memories(key);
+    const body = entries.find((entry) => entry.slug === key)?.body;
+    if (body !== undefined) return body;
+    if (partial) throw new Error(`Memory ${key} could not be read; try again.`);
+    return `No memory ${key}.`;
   },
 
   async mem_set(tools, args) {
     const key = memorySlug(required(args, "slug"));
     const body = (await tools.body(args, true)) as string;
-    // Unreadable memory still takes a write, dated now.
-    const current = (await tools.client.memories(key).catch(() => [])).find(
-      (entry) => entry.slug === key,
-    );
+    // Unreadable memory, including a partial read that did not find the
+    // entry, still takes a write, dated now.
+    const current = await tools.client
+      .memories(key)
+      .then(({ entries }) => entries.find((entry) => entry.slug === key))
+      .catch(() => undefined);
     await tools.client.remember(key, body, current?.createdAt ?? 0);
     return "saved";
   },

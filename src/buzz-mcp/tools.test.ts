@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import type { BuzzClient, BuzzEvent, Filter, Template } from "./client";
+import type { BuzzClient, BuzzEvent, Filter, Memory, Template } from "./client";
 import { respond } from "./rpc";
 import { ATTENTION_TOOLS } from "./attention";
 import { callTool, TOOLS } from "./tools";
@@ -71,9 +71,10 @@ function fake(events: readonly BuzzEvent[] = []) {
     read: vi.fn(async (path: string) =>
       path.endsWith(".png") ? PNG : new TextEncoder().encode(`# ${path}`),
     ),
-    memories: vi.fn(async () => [
-      { slug: "mem/notes", body: "old", createdAt: 50 },
-    ]),
+    memories: vi.fn(async () => ({
+      entries: [{ slug: "mem/notes", body: "old", createdAt: 50 }],
+      partial: false,
+    })),
     remember: vi.fn(async () => undefined),
     media: vi.fn(async (url: string) =>
       btoa(String.fromCharCode(...(url.endsWith(".png") ? PNG : [1, 2, 3]))),
@@ -290,6 +291,31 @@ it("writes memory under mem/, newer than the entry it replaces", async () => {
     ["mem/notes"],
     ["mem/notes"],
   ]);
+});
+
+it("never reports memory cut short by a limit as missing", async () => {
+  const { client } = fake();
+  const partial = (entries: Memory[]) =>
+    vi.mocked(client.memories).mockResolvedValue({ entries, partial: true });
+  partial([]);
+  await expect(callTool(client, {}, "mem_get", {})).rejects.toThrow(
+    "Memory could not be read; try again.",
+  );
+  await expect(
+    callTool(client, {}, "mem_get", { slug: "notes" }),
+  ).rejects.toThrow("Memory mem/notes could not be read; try again.");
+  // A write over an unread entry is dated now, as when the read fails.
+  await callTool(client, {}, "mem_set", { slug: "notes", text: "new" });
+  expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 0);
+  partial([{ slug: "mem/a", body: "a", createdAt: 0 }]);
+  await expect(callTool(client, {}, "mem_get", {})).resolves.toMatch(
+    /^mem\/a .*\nThis list is incomplete: some memory could not be read\.$/,
+  );
+  vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: false });
+  await expect(callTool(client, {}, "mem_get", {})).resolves.toBe("No memory.");
+  await expect(
+    callTool(client, {}, "mem_get", { slug: "notes" }),
+  ).resolves.toBe("No memory mem/notes.");
 });
 
 it("answers MCP requests, reporting a failed call as a tool error", async () => {

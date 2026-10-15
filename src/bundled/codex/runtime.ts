@@ -827,9 +827,9 @@ export class CodexRuntime {
       check,
       signal: turn.signal,
       memories: async (slug) => {
-        const { entries } = await this.memories(owner, turn.signal, slug);
+        const listing = await this.memories(owner, turn.signal, slug);
         check();
-        return entries;
+        return listing;
       },
       remembered: () => {
         const reads = this.reads(agent.pubkey);

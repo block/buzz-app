@@ -404,11 +404,31 @@ describe("goose memory reads", () => {
     const after = runtime.memories(self, "core");
     expect(read).toHaveBeenCalledTimes(2);
     pending[0]?.("old");
-    await expect(before).resolves.toEqual([{ slug: "core", body: "old" }]);
+    await expect(before).resolves.toEqual({
+      entries: [{ slug: "core", body: "old" }],
+    });
     // The old read finishing must not drop the newer one.
     expect(runtime.memories(self, "core")).toBe(after);
     expect(read).toHaveBeenCalledTimes(2);
     pending[1]?.("new");
-    await expect(after).resolves.toEqual([{ slug: "core", body: "new" }]);
+    await expect(after).resolves.toEqual({
+      entries: [{ slug: "core", body: "new" }],
+    });
+  });
+
+  it("does not take a partial read that missed core as no core memory", async () => {
+    let listing = { entries: [], partial: true };
+    const relay = {
+      snapshot: () => ({
+        status: "ready",
+        session: { agentMemories: { read: async () => listing } },
+      }),
+    } as unknown as RelayData;
+    const runtime = new GooseRuntime({} as Host, () => relay) as unknown as {
+      memory(pubkey: string, entry: object): Promise<string | null | undefined>;
+    };
+    await expect(runtime.memory(self, {})).resolves.toBeUndefined();
+    listing = { entries: [], partial: false };
+    await expect(runtime.memory(self, {})).resolves.toBeNull();
   });
 });

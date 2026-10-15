@@ -7,7 +7,8 @@
 // goose acts in Buzz with the in-process Buzz tools over loopback HTTP MCP,
 // signed by the agent's native-held key; the runtime only reports a turn that
 // fails.
-import type { Context, Memory } from "../../buzz-mcp/client";
+import type { Context, Memories } from "../../buzz-mcp/client";
+import { coreOf } from "../../features/agent-harness/core-memory";
 import { respond } from "../../buzz-mcp/rpc";
 import { appClient } from "../../buzz-mcp/app-client";
 import { turnNote } from "../../buzz-mcp/session-tools";
@@ -109,7 +110,7 @@ export class GooseRuntime {
     (id, options) => this.spawn(id, options),
     (handler) => this.serve(handler),
   );
-  private readonly reading = new Map<string, Promise<readonly Memory[]>>();
+  private readonly reading = new Map<string, Promise<Memories>>();
   private readonly listeners = new Set<() => void>();
   private readonly views = new Map<
     string,
@@ -538,8 +539,7 @@ export class GooseRuntime {
       return entry.memory.value;
     let value: string | null | undefined;
     try {
-      const memories = await this.memories(pubkey, "core");
-      value = memories.find((memory) => memory.slug === "core")?.body ?? null;
+      value = coreOf(await this.memories(pubkey, "core"));
     } catch (error) {
       console.warn("goose could not read the agent's memory", error);
     }
@@ -549,7 +549,7 @@ export class GooseRuntime {
 
   /** The agent's memory, or only entry `slug`, read back through the owner's
    * session: it is encrypted to the owner, so no agent key is needed. */
-  private memories(pubkey: string, slug?: string): Promise<readonly Memory[]> {
+  private memories(pubkey: string, slug?: string): Promise<Memories> {
     const key = `${pubkey}\0${slug ?? ""}`;
     let reading = this.reading.get(key);
     if (!reading) {
@@ -567,17 +567,13 @@ export class GooseRuntime {
     for (const key of this.reading.keys())
       if (key.startsWith(`${pubkey}\0`)) this.reading.delete(key);
   }
-  private async readMemories(
-    pubkey: string,
-    slug?: string,
-  ): Promise<readonly Memory[]> {
+  private async readMemories(pubkey: string, slug?: string): Promise<Memories> {
     const snapshot = this.relay(pubkey)?.snapshot();
     if (snapshot?.status !== "ready") throw new Error("Buzz is not connected");
-    const listing = await snapshot.session.agentMemories.read(
+    return snapshot.session.agentMemories.read(
       pubkey,
       AbortSignal.timeout(MEMORY_TIMEOUT_MS),
       slug,
     );
-    return listing.entries;
   }
 }

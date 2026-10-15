@@ -57,9 +57,10 @@ it.each([
 it("reads back its memory and rejects a tampered entry", async () => {
   const buzz = client();
   await buzz.remember("mem/notes", "keep this", 0);
-  expect(await buzz.memories()).toMatchObject([
-    { slug: "mem/notes", body: "keep this" },
-  ]);
+  expect(await buzz.memories()).toMatchObject({
+    entries: [{ slug: "mem/notes", body: "keep this" }],
+    partial: false,
+  });
 
   // The newest head would win if its signature went unchecked.
   const entry = stored[0] as { created_at: number };

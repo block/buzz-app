@@ -595,8 +595,7 @@ export class ClaudeRuntime {
           appClient(handle, {
             spawn: this.spawn,
             cwd,
-            memories: async (slug) =>
-              (await this.memories(pubkey, slug)).entries,
+            memories: (slug) => this.memories(pubkey, slug),
             remembered: () => this.forget(pubkey),
           });
         const context =

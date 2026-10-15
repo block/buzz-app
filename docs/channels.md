@@ -625,7 +625,14 @@ Create has no destination picker. Opening from a saved group's sidebar + fixes
 that destination for the draft and titles the modal **Create a channel in [icon]
 [group name]**, reusing the sidebar's decorative Unicode/custom-emoji renderer.
 Opening from the general Channels section stays ungrouped and uses **Create a
-channel**. Group placement remains managed through the left-nav Move action.
+channel**. Opening from Starred titles the modal **Create a channel in [star icon]
+Starred** and saves Starred placement with the creation intent. The filled Tabler
+star shares the section emoji slot and sizing in the sidebar and creation heading.
+Starred placement uses the existing preference writer after channel admission;
+unavailable placement blocks a new create, while a later placement failure reports
+partial setup without creating a second channel. Frozen retries preserve their
+original destination and retain the same observe-only setup recovery as groups.
+Group placement remains managed through the left-nav Move action.
 Frozen retry input remains unchanged; unavailable groups
 block a new create rather than silently falling back to a different destination.
 

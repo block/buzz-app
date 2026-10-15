@@ -28,7 +28,6 @@ import {
   CaretUpIcon,
   DotsThreeIcon,
   PlusIcon,
-  StarFilledIcon,
   TextAaIcon,
   TimerIcon,
   TrashIcon,
@@ -38,7 +37,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import type { RelaySession } from "../../features/relay/session";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
-import groupIconStyles from "./SidebarGroupIcon.module.css";
+import { SidebarStarIcon } from "./SidebarStarIcon";
 import styles from "./Channels.module.css";
 
 export function SidebarSection({
@@ -167,13 +166,7 @@ export function SidebarSection({
           >
             <span className={styles.sectionLabel}>
               {sectionKey === "starred" ? (
-                <span
-                  className={groupIconStyles.icon}
-                  aria-hidden="true"
-                  data-sidebar-group-icon=""
-                >
-                  <StarFilledIcon />
-                </span>
+                <SidebarStarIcon />
               ) : icon && session ? (
                 <SidebarGroupIcon icon={icon} session={session} />
               ) : null}

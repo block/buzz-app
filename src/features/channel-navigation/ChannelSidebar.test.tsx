@@ -448,6 +448,7 @@ it.each(["Laptop", "Channels", "Starred"])(
   "uses only the invoking section for placement (%s)",
   async (section) => {
     const fromGroup = section === "Laptop";
+    const fromStarred = section === "Starred";
     const preferences = createSidebarPreferencesStore(
       async () => ({
         sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
@@ -505,7 +506,9 @@ it.each(["Laptop", "Channels", "Starred"])(
       ).not.toBeInTheDocument();
       const title = fromGroup
         ? "Create a channel in Laptop"
-        : "Create a channel";
+        : fromStarred
+          ? "Create a channel in Starred"
+          : "Create a channel";
       expect(screen.getByRole("dialog")).toHaveAccessibleName(title);
       if (fromGroup)
         expect(
@@ -528,13 +531,14 @@ it.each(["Laptop", "Channels", "Starred"])(
         expect(create).toHaveBeenCalledWith({
           name: "New laptop channel",
           visibility: "open",
-          ...(fromGroup
+          ...(fromGroup || fromStarred
             ? {
                 setup: {
                   agents: [],
                   canvas: "",
                   templateId: "",
-                  groupId: "laptop",
+                  groupId: fromGroup ? "laptop" : "",
+                  ...(fromStarred ? { starred: true } : {}),
                 },
               }
             : {}),

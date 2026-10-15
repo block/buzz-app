@@ -321,6 +321,7 @@ function ReadySidebar({
   }, [createOrigin]);
 
   const [initialGroup, setInitialGroup] = useState("");
+  const [initialStarred, setInitialStarred] = useState(false);
   const pendingChannelCreation = useSyncExternalStore(
     queries.channelCreation.subscribe,
     queries.channelCreation.snapshot,
@@ -498,7 +499,11 @@ function ReadySidebar({
     if (!mounted.current || relay.snapshot().session !== queries) return;
     select(id);
     sidebar.toggle(
-      input.setup?.groupId ? `group:${input.setup.groupId}` : "channels",
+      input.setup?.starred
+        ? "starred"
+        : input.setup?.groupId
+          ? `group:${input.setup.groupId}`
+          : "channels",
       true,
     );
   };
@@ -1149,6 +1154,7 @@ function ReadySidebar({
                           available: queries.channelCreation.available,
                           open: (trigger) => {
                             createChannelTrigger.current = trigger;
+                            setInitialStarred(section.key === "starred");
                             setInitialGroup(
                               section.key.startsWith("group:")
                                 ? section.key.slice(6)
@@ -1472,6 +1478,7 @@ function ReadySidebar({
           agents={agents}
           destinations={preferences.data?.sections ?? []}
           initialGroup={initialGroup}
+          initialStarred={initialStarred}
           groupsReady={preferences.writable}
         />
       </ResizableSidebar>

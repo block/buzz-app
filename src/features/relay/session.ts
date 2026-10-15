@@ -1398,6 +1398,9 @@ export function createRelaySession(
             if (!setup) return;
             parseLineup({ ...setup, teamIds: [] });
             if (
+              (setup.starred !== undefined &&
+                typeof setup.starred !== "boolean") ||
+              (setup.starred && !!setup.groupId) ||
               typeof setup.groupId !== "string" ||
               setup.groupId.length > 256 ||
               (setup.groupId !== "" && !setup.groupId.trim()) ||
@@ -1416,7 +1419,9 @@ export function createRelaySession(
               ...(setup.agents.length
                 ? [agentChoices.refresh("templates")]
                 : []),
-              ...(setup.groupId ? [sidebarPreferences.queries.refresh()] : []),
+              ...(setup.groupId || setup.starred
+                ? [sidebarPreferences.queries.refresh()]
+                : []),
             ]);
             lifetime.signal.throwIfAborted();
             if (setup.agents.length) {
@@ -1444,6 +1449,10 @@ export function createRelaySession(
                   `Selected agents are unavailable in this community: ${unavailable.map(npubEncode).join(", ")}. Refresh agents or remove them before creating the channel.`,
                 );
             }
+            if (setup.starred && !sidebarPreferences.queries.starWritable)
+              throw new Error(
+                "Starred placement is unavailable; refresh your sidebar before creating the channel",
+              );
             if (setup.groupId) {
               const state = sidebarPreferences.queries.snapshot();
               if (
@@ -1454,6 +1463,18 @@ export function createRelaySession(
                   "The destination group is unavailable; refresh your sidebar before creating the channel",
                 );
             }
+          },
+          async star(id) {
+            await sidebarPreferences.queries.refresh();
+            if (!sidebarPreferences.queries.starWritable)
+              throw new Error(
+                "Starred placement is unavailable; keep the partial channel and star it separately",
+              );
+            if (
+              sidebarPreferences.queries.snapshot().data?.starred.includes(id)
+            )
+              return;
+            await sidebarPreferences.queries.setStar(id, true);
           },
           async place(id, groupId) {
             await sidebarPreferences.queries.refresh();

@@ -109,9 +109,17 @@ function setup(
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
   } as Storage;
+  // The host's copy of `core` memory, which needs no relay read.
+  const core = vi.fn(
+    async (
+      _pubkey: string,
+      _signal?: AbortSignal,
+    ): Promise<string | null | undefined> => null,
+  );
   const runtime = new ClaudeRuntime(
     host,
     (pubkey) => ownerReads(relay, pubkey),
+    core,
     storage,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
@@ -207,6 +215,7 @@ function setup(
     fake,
     read,
     memoryRead,
+    core,
     data,
     agent,
     workingUntil,
@@ -422,12 +431,8 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
   runtime.dispose();
 });
 
-it("gives each new session the agent's current core memory, and starts without it when unreadable", async () => {
-  const { deliver, claudes, memoryRead } = setup();
-  const core = (body: string) => ({
-    entries: [{ slug: "core", body, eventId: "e".repeat(64), createdAt: 1 }],
-    partial: false,
-  });
+it("starts each session from the host's core memory, reading none from the relay", async () => {
+  const { deliver, claudes, core, memoryRead } = setup();
   const mention = (id: string) =>
     deliver({
       type: "mention",
@@ -444,23 +449,18 @@ it("gives each new session the agent's current core memory, and starts without i
         process.prompts[0]?.includes(`Content: @Claude ${id}`),
       ),
     );
-  memoryRead.mockResolvedValueOnce(core("I am Claude."));
+  core.mockResolvedValueOnce("I am Claude.");
   await mention("1");
   await flush(10);
   expect(asked("1")).toContain("<core-memory>\nI am Claude.\n</core-memory>");
-  // The owner edits it between sessions; the next one reads it again.
-  memoryRead.mockResolvedValueOnce(core("I am Claude, renamed."));
+  expect(core).toHaveBeenCalledWith(self);
+  expect(memoryRead).not.toHaveBeenCalled();
+  // The host could not read it: the session starts without it.
+  core.mockResolvedValueOnce(undefined);
   await mention("2");
   await flush(10);
-  expect(asked("2")).toContain(
-    "<core-memory>\nI am Claude, renamed.\n</core-memory>",
-  );
-  vi.spyOn(console, "warn").mockImplementation(() => {});
-  memoryRead.mockRejectedValueOnce(new Error("relay down"));
-  await mention("3");
-  await flush(10);
-  expect(asked("3")).toContain("## Agent Memory");
-  expect(asked("3")).not.toContain("<core-memory>");
+  expect(asked("2")).toContain("## Agent Memory");
+  expect(asked("2")).not.toContain("<core-memory>");
 });
 
 it("names the agent in its system prompt, resuming idle sessions when it is renamed", async () => {
@@ -1549,8 +1549,10 @@ it("gives a tool the partial listing a slow native read answers", async () => {
     const relay = {
       snapshot: () => ({ status: "ready", session: { agentMemories } }),
     } as unknown as RelayData;
-    const runtime = new ClaudeRuntime({} as Host, (pubkey) =>
-      ownerReads(relay, pubkey),
+    const runtime = new ClaudeRuntime(
+      {} as Host,
+      (pubkey) => ownerReads(relay, pubkey),
+      async () => null,
     ) as unknown as {
       memories(
         pubkey: string,

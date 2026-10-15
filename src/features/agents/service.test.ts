@@ -131,8 +131,19 @@ function fakeRelay(origin = "https://relay.example.test") {
   const listed: RelayEvent[] = [];
   /** The kind 9 messages it stores, which catch-up reads. */
   const history: RelayEvent[] = [];
+  /** Each agent's `core` memory as the community holds it. */
+  const memories = new Map<string, string>();
   const session = {
     archives,
+    agentMemories: {
+      read: vi.fn(async (pubkey: string) => {
+        const body = memories.get(pubkey);
+        return {
+          entries: body === undefined ? [] : [{ slug: "core", body }],
+          partial: false,
+        };
+      }),
+    },
     read: vi.fn(async (filters: readonly ReadFilter[]) =>
       filters[0]?.kinds?.includes(9) ? page(history, filters[0]) : [...listed],
     ),
@@ -229,6 +240,7 @@ function fakeRelay(origin = "https://relay.example.test") {
     archives,
     listed,
     history,
+    memories,
     session,
     presence: session.publishAgentPresence as ReturnType<
       typeof vi.fn<RelaySession["publishAgentPresence"]>
@@ -508,6 +520,7 @@ async function setup({
     relay: fake.relay,
     reconnecting: fake.reconnecting,
     recover: fake.recover,
+    memories: fake.memories,
     archives: fake.archives,
     session: fake.session,
     history: fake.history,
@@ -2047,6 +2060,132 @@ it("retries a failed profile when the live connection recovers in the same sessi
   recover();
   expect(native.publishProfile).toHaveBeenCalledTimes(2);
   warn.mockRestore();
+});
+
+it("refreshes an agent's cached core memory when its community connects or its socket recovers in the same session", async () => {
+  const { service, session, memories, recover, connect } = await setup();
+  const read = vi.mocked(session.agentMemories.read);
+  await service.create({ type: "example/echo", name: "Echo" });
+  memories.set(bot, "one");
+  // A device that has never read it waits once.
+  await expect(service.core(bot)).resolves.toBe("one");
+  const reads = read.mock.calls.length;
+  // Changed elsewhere while the socket was down; the session is kept.
+  memories.set(bot, "two");
+  recover();
+  expect(read).toHaveBeenCalledTimes(reads + 1);
+  await settle();
+  await expect(service.core(bot)).resolves.toBe("two");
+  expect(read).toHaveBeenCalledTimes(reads + 1);
+  // A new session refreshes it too.
+  memories.set(bot, "three");
+  connect(false);
+  connect(true);
+  await settle();
+  await expect(service.core(bot)).resolves.toBe("three");
+  expect(read).toHaveBeenCalledTimes(reads + 2);
+});
+
+it("keeps core memory an agent writes through its handle, and refreshes it when the run and its handed-off work end", async () => {
+  const { service, session, memories, run, emit } = await setup();
+  const read = vi.mocked(session.agentMemories.read);
+  await service.create({ type: "example/echo", name: "Echo" });
+  memories.set(bot, "before");
+  await expect(service.core(bot)).resolves.toBe("before");
+  let finish = () => {};
+  run.mockImplementationOnce(async ({ agent, workingUntil }) => {
+    await agent.remember("core", "written", 0);
+    workingUntil(new Promise<void>((resolve) => (finish = resolve)));
+  });
+  emit({
+    events: [
+      event("m1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  await settle();
+  const reads = read.mock.calls.length;
+  // The write is the next start's at once, with no read.
+  await expect(service.core(bot)).resolves.toBe("written");
+  expect(read).toHaveBeenCalledTimes(reads);
+  // Not until the handed-off work ends.
+  memories.set(bot, "after");
+  await settle();
+  expect(read).toHaveBeenCalledTimes(reads);
+  finish();
+  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(reads + 1));
+  await settle();
+  await expect(service.core(bot)).resolves.toBe("after");
+});
+
+it("refreshes core memory when a standalone turn ends, without holding the next one on that read", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const memory: (string | null | undefined)[] = [];
+  let service!: AgentsService;
+  const f = await setup({
+    runOnce: async () => {
+      memory.push(await service.core(bot));
+      return { ok: true };
+    },
+  });
+  service = f.service;
+  const read = vi.mocked(f.session.agentMemories.read);
+  await service.create({ type: "example/echo", name: "Echo" });
+  f.memories.set(bot, "one");
+  await expect(service.core(bot)).resolves.toBe("one");
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt: "tick",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: armed,
+      max_occurrences: 1,
+      expires_at: null,
+    }) as const;
+  // The first turn's refresh is held: the second starts on the cached text.
+  let release = () => {};
+  read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            entries: [
+              { slug: "core", body: "two", eventId: "e", createdAt: 0 },
+            ],
+            partial: false,
+          });
+      }),
+  );
+  await service.save(bot, {
+    attention: { "watch/a": timer(1_000), "watch/b": timer(1_000) },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(memory).toEqual(["one", "one"]));
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+  await expect(service.core(bot)).resolves.toBe("two");
+});
+
+it("stops refreshing core memory for a community once it is left", async () => {
+  const { service, session, recover, leave, select } = await setup();
+  const read = vi.mocked(session.agentMemories.read);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.core(bot);
+  select("https://other.example.test");
+  leave("https://relay.example.test");
+  const reads = read.mock.calls.length;
+  recover();
+  await settle();
+  expect(read).toHaveBeenCalledTimes(reads);
 });
 
 it("keeps a Delete that fails partway listed and stopped, deletes nothing, and retries nothing", async () => {

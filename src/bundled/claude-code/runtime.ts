@@ -13,6 +13,7 @@ import type { AgentReads } from "../../features/agents/reads";
 import type {
   Agent,
   AgentHandle,
+  Agents,
   Delivery,
   Effort,
   Models,
@@ -25,7 +26,6 @@ import { threadReference } from "../../features/relay/thread-reference";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient } from "../../buzz-mcp/app-client";
 import {
-  coreOf,
   MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
@@ -85,8 +85,6 @@ export type SavedConversation = Conversation & {
   at: number;
 };
 
-/** How long a new session waits on its `core` memory. */
-const CORE_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 
@@ -136,6 +134,8 @@ export class ClaudeRuntime {
     private readonly host: Pick<Host, "spawn">,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
+    /** The agent's `core` memory as the host keeps it (`Agents.core`). */
+    private readonly core: Agents["core"],
     private readonly storage: Storage = globalThis.localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
@@ -645,26 +645,15 @@ export class ClaudeRuntime {
 
   /** The agent's memory, or only entry `slug`, as its community's reads give
    * it. */
-  private memories(pubkey: string, slug?: string, wait = READ_TIMEOUT_MS) {
+  private memories(pubkey: string, slug?: string) {
     const reads = this.reads(pubkey);
     if (!reads) return Promise.reject(new Error("Buzz is not connected"));
     return this.memoryReads.read(
       reads,
       pubkey,
-      AbortSignal.timeout(wait),
+      AbortSignal.timeout(READ_TIMEOUT_MS),
       slug,
     );
-  }
-  /** The agent's `core` memory for a new session's prompt: its text, `null`
-   * when it has none, or undefined when it could not be read, so the session
-   * starts without it. */
-  private async core(pubkey: string) {
-    try {
-      return coreOf(await this.memories(pubkey, "core", CORE_TIMEOUT_MS));
-    } catch (error) {
-      console.warn("Claude could not read the agent's memory", error);
-      return undefined;
-    }
   }
   private forget(pubkey: string) {
     const reads = this.reads(pubkey);

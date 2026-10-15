@@ -21,7 +21,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
-  const runtime = new GooseRuntime(host, agents.relay);
+  const runtime = new GooseRuntime(host, agents.relay, (pubkey, signal) =>
+    agents.core(pubkey, signal),
+  );
   const spawn = host.spawn?.bind(host);
   const setup = new GooseSetup(spawn);
   const { Create, CreateModel, SettingsTab, ActivityTab } = createTabs({

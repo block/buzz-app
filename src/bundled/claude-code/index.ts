@@ -28,6 +28,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const runtime = new ClaudeRuntime(
     spawn ? { spawn } : {},
     (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
+    (pubkey, signal) => agents.core(pubkey, signal),
     localStorage,
     (raw) => providerDefaults.resolve(raw),
   );

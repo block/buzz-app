@@ -25,6 +25,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const runtime = new CodexRuntime(
     start,
     (pubkey) => ownerReads(ctx.agents.relay(pubkey), pubkey),
+    (pubkey, signal) => ctx.agents.core(pubkey, signal),
     localStorage,
     (raw) => providerController.resolve(raw),
   );

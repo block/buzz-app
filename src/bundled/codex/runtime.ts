@@ -4,6 +4,7 @@ import type { AgentReads } from "../../features/agents/reads";
 import type {
   Agent,
   AgentHandle,
+  Agents,
   Delivery,
   Models,
   StandaloneTurn,
@@ -11,7 +12,7 @@ import type {
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
-import { coreOf, MemoryReads } from "../../features/agent-harness/core-memory";
+import { MemoryReads } from "../../features/agent-harness/core-memory";
 import type { Context } from "../../buzz-mcp/client";
 import {
   BUZZ_SESSION,
@@ -161,6 +162,8 @@ export class CodexRuntime {
     private readonly spawn: Spawn,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
+    /** The agent's `core` memory as the host keeps it (`Agents.core`). */
+    private readonly core: Agents["core"],
     private readonly storage: Storage = localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
   ) {}
@@ -663,7 +666,7 @@ export class CodexRuntime {
       );
       const text = await prompt();
       if (text === undefined) return { ok: true };
-      const memory = await this.core({ agent, scope }, signal);
+      const memory = await this.core(agent.pubkey, signal);
       signal.throwIfAborted();
       const started = await rpc.request<{ thread: { id: string } }>(
         "thread/start",
@@ -880,20 +883,6 @@ export class CodexRuntime {
       throw new Error("Buzz is not connected to this community");
     return listing;
   }
-  /** The agent's `core` memory for a turn: its text, `null` when it has none,
-   * or undefined when it could not be read, so the turn goes on without it. */
-  private async core(
-    request: Pick<Request, "scope" | "agent">,
-    signal: AbortSignal,
-  ) {
-    try {
-      return coreOf(await this.memories(request, signal, "core"));
-    } catch (error) {
-      signal.throwIfAborted();
-      console.warn("Codex could not read the agent's memory", error);
-      return undefined;
-    }
-  }
   private async terminals(rpc: AppServer, threadId: string) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
     try {
@@ -1093,7 +1082,7 @@ export class CodexRuntime {
       });
       const [context, memory] = await Promise.all([
         this.history(request, signal),
-        this.core(request, signal),
+        this.core(request.agent.pubkey, signal),
       ]);
       signal.throwIfAborted();
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {

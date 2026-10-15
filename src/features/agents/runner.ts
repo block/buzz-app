@@ -363,6 +363,10 @@ export type RunnerHost = {
   /** Whether a mention in `channel` continues the agent's owner's Me chat,
    * so its turn answers, and shows typing, at channel top level. */
   meChat(agent: Agent, channel: string, signal: AbortSignal): Promise<boolean>;
+  /** The agent wrote this memory through its handle. */
+  remembered(pubkey: string, slug: string, body: string): void;
+  /** A run of the agent ended, with everything it handed to `workingUntil`. */
+  finished(pubkey: string): void;
 };
 
 export class AgentRunners {
@@ -1607,8 +1611,16 @@ export class AgentRunners {
         upload: (data: string, mime: string) =>
           this.require().upload(agent.pubkey, data, mime),
         media: (url: string) => this.require().media(agent.pubkey, url),
-        remember: (slug: string, body: string, after: number) =>
-          this.require().remember(agent.pubkey, slug, body, after),
+        remember: async (slug: string, body: string, after: number) => {
+          const event = await this.require().remember(
+            agent.pubkey,
+            slug,
+            body,
+            after,
+          );
+          this.host.remembered(agent.pubkey, slug, body);
+          return event;
+        },
         templates: () => this.host.templates(agent),
         attention: this.attention(agent.pubkey),
       });
@@ -1745,6 +1757,7 @@ export class AgentRunners {
       if (--holds === 0) {
         work?.finish(outcome);
         stop();
+        this.host.finished(agent.pubkey);
       }
     };
     return {

@@ -1,5 +1,7 @@
 import { createLocalAgentActivity } from "./local-activity";
 import { AgentRunners, type Connection } from "./runner";
+import { CoreMemoryCache } from "./core-memory-cache";
+import { ownerReads } from "./reads";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -565,6 +567,15 @@ export type Agents = {
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
   relay(pubkey: string): RelayData | undefined;
+  /** The agent's `core` memory, as this device keeps it current: its text,
+   * `null` when it has none, or undefined when it could not be read. A start
+   * reads it here, which needs no relay request once this device has read it
+   * once; the host refreshes it, so no agent type does. Rejects only when
+   * `signal` aborts. */
+  core(
+    pubkey: string,
+    signal?: AbortSignal,
+  ): Promise<string | null | undefined>;
   /** Makes an agent of `type` in the selected community: here, or with a
    * hosted type at its provider. A hosted one whose setup then fails is kept
    * as `unfinished`. */
@@ -798,6 +809,7 @@ export class AgentsService extends Service implements Agents {
   /** By origin, so each agent listens in its own community, selected or not. */
   private bound = new Map<string, Bound>();
   private readonly runners: AgentRunners;
+  private readonly coreMemory: CoreMemoryCache;
   /** Counts list requests, so only the latest one is applied. */
   private listed = 0;
   /** Each running cleanup of a row deleted under the old order, which erased
@@ -870,6 +882,10 @@ export class AgentsService extends Service implements Agents {
       running: [],
       teams: this.teamList,
     });
+    this.coreMemory = new CoreMemoryCache(
+      (pubkey) => ownerReads(this.relay(pubkey), pubkey),
+      storage,
+    );
     this.runners = new AgentRunners({
       ready: (pubkey) => this.ready(pubkey),
       agent: (pubkey) => this.agent(pubkey),
@@ -927,6 +943,9 @@ export class AgentsService extends Service implements Agents {
       activity: localActivity,
       meChat: (agent, channel, signal) =>
         meChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
+      remembered: (pubkey, slug, body) =>
+        this.coreMemory.wrote(pubkey, slug, body),
+      finished: (pubkey) => this.coreMemory.refresh(pubkey),
     });
     ctx.effect(() => {
       const stops = [
@@ -1025,6 +1044,8 @@ export class AgentsService extends Service implements Agents {
     const origin = originOf(this.agent(pubkey)?.relay ?? "");
     return origin ? this.bound.get(origin)?.relay : undefined;
   };
+  core = (pubkey: string, signal?: AbortSignal) =>
+    this.coreMemory.core(pubkey, signal);
   private localCache:
     | {
         identities: readonly AgentIdentity[];
@@ -2408,7 +2429,10 @@ export class AgentsService extends Service implements Agents {
     // Disconnecting stops its agents even when no binding changed.
     this.update();
     // Its sync reads the community's agent records too.
-    if (changed && entry.binding) this.sync();
+    if (changed && entry.binding) {
+      this.sync();
+      this.refreshCore(origin);
+    }
   }
 
   /** Delivers the session's live events, and retries what failed whenever its
@@ -2437,7 +2461,10 @@ export class AgentsService extends Service implements Agents {
         connection.epoch += now ? 1 : 0;
         connection.since = now ? Math.floor(Date.now() / 1000) : undefined;
       }
-      if (now && !connected) this.sync();
+      if (now && !connected) {
+        this.sync();
+        this.refreshCore(origin);
+      }
       connected = now;
       this.runners.catchUp(false);
     });
@@ -2450,6 +2477,14 @@ export class AgentsService extends Service implements Agents {
       stopStatus();
       stopRosters?.();
     };
+  }
+
+  /** Refreshes the cached `core` memory of each agent running in the
+   * community, which may have changed elsewhere while it was not connected. */
+  private refreshCore(origin: string) {
+    for (const agent of this.state.running)
+      if (originOf(agent.relay) === origin)
+        this.coreMemory.refresh(agent.pubkey);
   }
 
   // Joins identities, records and the connections into the running and visible

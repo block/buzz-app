@@ -334,6 +334,7 @@ function setup(
       for (const listener of listeners) listener();
       return team;
     }),
+    core: vi.fn(async () => undefined),
     removeTeam: vi.fn(async (id: string) => {
       snapshot = {
         ...snapshot,

@@ -11,7 +11,6 @@ import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import { createAgentMemories } from "../../features/agents/memory";
 import { CodexRuntime, codexStep, programs } from "./runtime";
 import { Lanes } from "../../features/agent-harness/lanes";
 import { wake } from "../../features/agent-harness/wakes";
@@ -270,9 +269,18 @@ function fixture(
       storage.set(key, value);
     },
   } as Storage;
+  // The host's copy of `core` memory, which needs no relay read.
+  const core = vi.fn(
+    async (
+      _pubkey: string,
+      _signal?: AbortSignal,
+    ): Promise<string | null | undefined> =>
+      memories.find((memory) => memory.slug === "core")?.body ?? null,
+  );
   const runtime = new CodexRuntime(
     spawn,
     (pubkey) => ownerReads(relay, pubkey),
+    core,
     store,
   );
   runtimes.push(runtime);
@@ -390,6 +398,7 @@ function fixture(
       agents: {
         snapshot: () => ({ status: "ready", agents: [], running }),
         relay: () => relay,
+        core,
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -494,6 +503,7 @@ function fixture(
     fileReads,
     memoryOpen,
     memoryRead,
+    core,
     memoryView,
     remember,
     upload,
@@ -1412,6 +1422,7 @@ it("starts no work when the agent stops while its channel is read", async () => 
         }
       );
     },
+    async () => undefined,
     { getItem: () => null, setItem: () => {} } as unknown as Storage,
   );
   runtimes.push(runtime);
@@ -1977,82 +1988,31 @@ it("routes callbacks by thread and turn, rejecting stale, unknown and malformed 
   expect(f.publish).toHaveBeenCalledTimes(count);
 });
 
-it("gives each turn the agent's current core memory, and goes on without it when unreadable", async () => {
+it("starts each turn from the host's core memory, reading none from the relay", async () => {
   const f = fixture();
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  const memory = (index: number) =>
-    (
-      f.starts()[index]?.params as
-        | { additionalContext?: Record<string, { value: string }> }
-        | undefined
-    )?.additionalContext?.["buzz.instructions"]?.value;
-  await f.runtime.run(f.delivery("@Codex first"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(memory(0)).toContain(
-    "Current core memory replaces all prior core memory.\n<core-memory>\nNo core memory found.",
-  );
-  f.complete(0, "FIRST");
-  await f.remember("core", "I am Codex.", 0);
-  await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  expect(memory(1)).toContain(
-    "Current core memory replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
-  );
-  f.complete(1, "SECOND");
-  f.memoryRead.mockRejectedValueOnce(new Error("offline"));
-  await f.runtime.run(f.delivery("@Codex third", "f".repeat(64)));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
-  expect(memory(2)).toContain("TEST_INSTRUCTIONS");
-  expect(memory(2)).not.toContain("<core-memory>");
-  expect(warn).toHaveBeenCalledWith(
-    "Codex could not read the agent's memory",
-    expect.any(Error),
-  );
-  f.complete(2, "THIRD");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
-  warn.mockRestore();
-});
-
-it("gives a turn no memory read through a connection that was replaced", async () => {
-  const f = fixture();
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  type Listing = Awaited<ReturnType<typeof f.memoryRead>>;
-  let release!: (listing: Listing) => void;
-  f.memoryRead.mockImplementationOnce(
-    () =>
-      new Promise<Listing>((resolve) => {
-        release = resolve;
-      }),
-  );
   const instructions = (index: number) =>
     (
       f.starts()[index]?.params as
         | { additionalContext?: Record<string, { value: string }> }
         | undefined
     )?.additionalContext?.["buzz.instructions"]?.value;
+  f.core.mockResolvedValueOnce("I am Codex.");
   await f.runtime.run(f.delivery("@Codex first"));
-  await vi.waitFor(() => expect(f.memoryRead).toHaveBeenCalledTimes(1));
-  const freshRead = vi.fn(async () => ({
-    entries: [{ slug: "core", body: "I am the new owner's.", createdAt: 1 }],
-    partial: false,
-  }));
-  f.snapshot.session = {
-    ...f.snapshot.session,
-    agentMemories: { ...f.snapshot.session.agentMemories, read: freshRead },
-  };
-  release({
-    entries: [{ slug: "core", body: "I am the old owner's.", createdAt: 1 }],
-    partial: false,
-  });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(instructions(0)).not.toContain("old owner");
-  expect(instructions(0)).not.toContain("<core-memory>");
+  expect(instructions(0)).toContain(
+    "Current core memory replaces all prior core memory.\n<core-memory>\nI am Codex.\n</core-memory>",
+  );
+  expect(f.core).toHaveBeenCalledWith(pubkey, expect.any(AbortSignal));
+  expect(f.memoryRead).not.toHaveBeenCalled();
   f.complete(0, "FIRST");
+  // The host could not read it: the turn goes on without it.
+  f.core.mockResolvedValueOnce(undefined);
   await f.runtime.run(f.delivery("@Codex second", "e".repeat(64)));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-  expect(freshRead).toHaveBeenCalledTimes(1);
-  expect(instructions(1)).toContain("I am the new owner's.");
-  warn.mockRestore();
+  expect(instructions(1)).toContain("TEST_INSTRUCTIONS");
+  expect(instructions(1)).not.toContain("<core-memory>");
+  f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
 });
 
 it("splits turn context into ordered values that Codex does not truncate", async () => {
@@ -2126,66 +2086,6 @@ it("gives a resumed conversation the agent's current name", async () => {
   });
 });
 
-it("does not declare core missing when the owner listing is partial", async () => {
-  const f = fixture();
-  f.memoryRead.mockResolvedValueOnce({ entries: [], partial: true });
-  await f.runtime.run(f.delivery("partial"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  const start = f.starts()[0];
-  expect(start).toBeDefined();
-  const instructions = (
-    start?.params as {
-      additionalContext?: Record<string, { value: string }>;
-    }
-  )?.additionalContext?.["buzz.instructions"]?.value;
-  expect(instructions).toContain("TEST_INSTRUCTIONS");
-  expect(instructions).not.toContain("No core memory found");
-  expect(instructions).not.toContain("<core-memory>");
-});
-
-it("coalesces concurrent core reads before the owner-view pool is exhausted", async () => {
-  const f = fixture();
-  const gate = deferred<void>();
-  const read = vi.fn(async () => {
-    await gate.promise;
-    return {
-      entries: [
-        {
-          slug: "core",
-          body: "CONCURRENT CORE",
-          eventId: "6".repeat(64),
-          createdAt: 1,
-        },
-      ],
-      partial: false,
-    };
-  });
-  const memories = createAgentMemories(read, owner, () => true);
-  f.snapshot.session.agentMemories =
-    memories.capability as unknown as typeof f.snapshot.session.agentMemories;
-
-  await Promise.all(
-    Array.from({ length: 5 }, (_, index) =>
-      f.runtime.run(
-        f.delivery(`concurrent ${index}`, index.toString(16).repeat(64)),
-      ),
-    ),
-  );
-  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
-  expect(f.starts()).toHaveLength(0);
-
-  gate.resolve();
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(5));
-  for (const start of f.starts())
-    expect(start.params).toMatchObject({
-      additionalContext: {
-        "buzz.instructions": {
-          value: expect.stringContaining("CONCURRENT CORE"),
-        },
-      },
-    });
-});
-
 it("uses the launched workspace for shared file tools and the owner view for encrypted memory", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("work"));
@@ -2216,12 +2116,11 @@ it("uses the launched workspace for shared file tools and the owner view for enc
   });
   expect(f.media).toHaveBeenCalledWith("shot.png");
   expect(f.remember).toHaveBeenCalledWith("mem/test", "remembered", 0);
-  // The turn's own `core` read, then mem_set's read and a fresh post-write
-  // read, each of one entry by its slug.
+  // mem_set's read and a fresh post-write read, each of one entry by its slug;
+  // the turn's `core` came from the host.
   expect(
     f.memoryRead.mock.calls.map((call: unknown[]) => [call[0], call[2]]),
   ).toEqual([
-    [pubkey, "core"],
     [pubkey, "mem/test"],
     [pubkey, "mem/test"],
   ]);

@@ -182,6 +182,7 @@ function fixture({
   const runtime = new CodexRuntime(
     spawn,
     (pubkey) => ownerReads(relay, pubkey),
+    async () => undefined,
     sessions,
     (raw) => provider.resolve(raw),
   );

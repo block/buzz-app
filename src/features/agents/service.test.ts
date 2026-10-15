@@ -97,7 +97,8 @@ function fakeRelay(origin = "https://relay.example.test") {
     read: vi.fn(async () => [...listed]),
     mePlacement: { snapshot: () => ({ status: "ready" }), has: () => false },
     // The agent is in `channel`, `dm` and `groupDm`; `private` is the owner's
-    // alone, and `dm-others` and `dm-unknown` are DMs it is not known to be in.
+    // alone, and `dm-others` and `dm-unknown` are DMs it is not known to be in
+    // (discovery emits an empty roster, never a missing one).
     channels: {
       list: () => ({
         channels: [
@@ -106,7 +107,7 @@ function fakeRelay(origin = "https://relay.example.test") {
           { id: dm, channelType: "dm", members: [viewer, bot] },
           { id: groupDm, channelType: "dm", members: [viewer, other, bot] },
           { id: "dm-others", channelType: "dm", members: [viewer, other] },
-          { id: "dm-unknown", channelType: "dm" },
+          { id: "dm-unknown", channelType: "dm", members: [] },
         ],
       }),
     },
@@ -1582,12 +1583,16 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
       }),
     ],
   });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+  // The runner keys on the channel, not the author: someone outside the roster
+  // is queued too, and the runtime's `fromOwner` is what turns them away.
+  emit({ events: [inDm("stranger", { pubkey: other })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(5));
   expect(run.mock.calls.map(([{ trigger }]) => trigger)).toMatchObject([
     { type: "mention", event: { id: "hello".padEnd(64, "0") } },
     { type: "mention", event: { id: "more".padEnd(64, "0") } },
     { type: "mention", event: { id: "about".padEnd(64, "0") } },
     { type: "mention", event: { id: "asked".padEnd(64, "0") } },
+    { type: "mention", event: { id: "stranger".padEnd(64, "0") } },
   ]);
 });
 
@@ -2581,6 +2586,43 @@ it("wakes a watch only for channels the agent is in, even when it watches all", 
   expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
     slug: "watch/everything",
     event: { id: "open".padEnd(64, "0") },
+  });
+});
+
+it("answers an unmentioned one-to-one DM as conversation even when a watch matches it", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, {
+    attention: {
+      "watch/everything": {
+        type: "event",
+        interest_id: "default",
+        enabled: true,
+        since: 1,
+        channels: "all",
+        kinds: [],
+      },
+    },
+  });
+  // The watch covers the DM too, but the DM rule answers first: one mention,
+  // no standalone watch turn for the same message.
+  emit({ events: [event("direct", { pubkey: viewer, tags: [["h", dm]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await settle();
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
+    type: "mention",
+    event: { id: "direct".padEnd(64, "0") },
+  });
+  expect(run.mock.calls[0]?.[0].trigger).not.toHaveProperty("slug");
+  // The same message in a stream channel is the watch's alone.
+  emit({ events: [event("stream", { pubkey: viewer })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0].trigger).toMatchObject({
+    type: "watch",
+    slug: "watch/everything",
+    event: { id: "stream".padEnd(64, "0") },
   });
 });
 

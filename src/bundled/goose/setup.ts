@@ -3,6 +3,7 @@
 // call runs a short-lived `goose-acp`; keys go to goose's secret store, never
 // into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
+import type { Models } from "../../features/agents/service";
 import { GooseProcess, type Choice, type Spawn } from "./goose";
 import { absolute } from "./sessions";
 
@@ -60,6 +61,32 @@ export class GooseSetup {
   private readonly live = new Map<string, Promise<readonly ModelChoice[]>>();
 
   constructor(private readonly spawn: Spawn | undefined) {}
+
+  /** The models an agent on `choice` can be asked to run a turn on: those of
+   * its provider, or goose's config's, and the one it runs on without. */
+  async picks(choice: Choice): Promise<Models> {
+    const provider = choice.provider.trim();
+    const { providers, defaults } = await this.providers();
+    const id = provider || defaults.provider;
+    const current =
+      choice.model.trim() ||
+      (provider
+        ? providers.find((item) => item.id === id)?.defaultModel
+        : defaults.model) ||
+      "";
+    const models = (id ? await this.models(id) : []).map(({ id, label }) => ({
+      id,
+      label,
+      efforts: [],
+    }));
+    // A model its provider does not list is still the one it runs on.
+    return !current || models.some((model) => model.id === current)
+      ? { current, models }
+      : {
+          current,
+          models: [{ id: current, label: current, efforts: [] }, ...models],
+        };
+  }
 
   /** goose's providers, read once until something is saved. */
   providers(): Promise<Providers> {

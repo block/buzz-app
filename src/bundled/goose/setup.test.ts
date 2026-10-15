@@ -127,6 +127,33 @@ describe("GooseSetup", () => {
     expect(await goose.models("databricks")).toEqual([]);
   });
 
+  it("offers an agent its provider's models, or those of goose's config", async () => {
+    const { setup: goose } = setup({ supported: ["qwen3", "llama4"] });
+    await expect(
+      goose.picks({ provider: "anthropic", model: "" }),
+    ).resolves.toEqual({
+      current: "claude-sonnet-5-5",
+      models: [
+        { id: "claude-sonnet-5-5", label: "claude-sonnet-5-5", efforts: [] },
+        { id: "claude-opus-5-5", label: "Claude Opus 5.5", efforts: [] },
+        { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", efforts: [] },
+      ],
+    });
+    await expect(
+      goose.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
+    ).resolves.toMatchObject({
+      current: "claude-haiku-5-5",
+      models: [{ id: "claude-opus-5-5" }, { id: "claude-haiku-5-5" }],
+    });
+    await expect(goose.picks({ provider: "", model: "" })).resolves.toEqual({
+      current: "qwen3",
+      models: [
+        { id: "qwen3", label: "qwen3", efforts: [] },
+        { id: "llama4", label: "llama4", efforts: [] },
+      ],
+    });
+  });
+
   it("saves a provider's fields into goose and reads the list again", async () => {
     const saved = new Map<string, Set<string>>();
     const { fake, setup: goose } = setup({ saved });

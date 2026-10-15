@@ -37,8 +37,6 @@ const kept = "https://kept.example";
 const receipt = (scope: string) => `buzz-channel-setup.v2:${scope}:general`;
 const reactions = (scope: string) => `buzz.quick-reactions.v1:${scope}`;
 const follows = (scope: string) => `buzz.thread-follows.v1:${scope}`;
-const core = (scope: string) =>
-  `buzz.core-memory.v1:${scope}:${"a".repeat(64)}`;
 
 afterEach(() => {
   localStorage.clear();
@@ -62,8 +60,6 @@ it("forgets every store partitioned to the left community and viewer, and nothin
   localStorage.setItem(receipt(`${kept}:${viewer}`), "1");
   localStorage.setItem(follows(scope), "[]");
   localStorage.setItem(follows(`${kept}:${viewer}`), "[]");
-  localStorage.setItem(core(scope), '"memory"');
-  localStorage.setItem(core(`${kept}:${viewer}`), '"memory"');
   expect(await purgeCommunityDeviceState(origin, viewer)).toEqual([]);
   expect(localStorage.getItem(follows(scope))).toBeNull();
   expect(localStorage.getItem(follows(`${kept}:${viewer}`))).toBe("[]");
@@ -80,8 +76,6 @@ it("forgets every store partitioned to the left community and viewer, and nothin
   expect(localStorage.getItem(reactions(`${kept}:${viewer}`))).not.toBeNull();
   expect(localStorage.getItem(receipt(scope))).toBeNull();
   expect(localStorage.getItem(receipt(`${kept}:${viewer}`))).toBe("1");
-  expect(localStorage.getItem(core(scope))).toBeNull();
-  expect(localStorage.getItem(core(`${kept}:${viewer}`))).toBe('"memory"');
 });
 
 it("clears the remaining stores when one is unavailable and reports each failure by store", async () => {
@@ -98,7 +92,6 @@ it("clears the remaining stores when one is unavailable and reports each failure
   expect(failures).toEqual([
     { store: "view state", error: denied },
     { store: "channel setups", error: denied },
-    { store: "agent core memory", error: denied },
   ]);
   expect(localStorage.getItem(reactions(scope))).toBeNull();
   // Nothing retries a failed purge later, so each one is at least on record,
@@ -106,7 +99,6 @@ it("clears the remaining stores when one is unavailable and reports each failure
   expect(warn.mock.calls).toEqual([
     [`Couldn't clear view state for ${origin} on this device`, denied],
     [`Couldn't clear channel setups for ${origin} on this device`, denied],
-    [`Couldn't clear agent core memory for ${origin} on this device`, denied],
   ]);
 });
 

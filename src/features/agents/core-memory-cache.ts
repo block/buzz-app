@@ -1,4 +1,5 @@
-// Each agent's `core` memory as this device last read it. The host keeps it
+// Each agent's `core` memory as this session last read it, held in memory
+// only: it is never saved, so a restart starts empty. The host keeps it
 // current, so any agent type starts a session or turn from it without asking
 // the relay: the agents service refreshes it when an agent's community
 // connects or its connection recovers, and the runner when the agent writes
@@ -10,31 +11,20 @@ import type { AgentReads } from "./reads";
 const FIRST_READ_MS = 5_000;
 /** How long a refresh nothing waits on may take. */
 const REFRESH_MS = 10_000;
-const PREFIX = "buzz.core-memory.v1:";
 /** Every cache on this page, so leaving a community can clear their copies.
  * Held weakly: nothing tears a cache down, so one its owner dropped (a rebuilt
  * service) is collected and pruned here rather than kept alive. */
 const caches = new Set<WeakRef<CoreMemoryCache>>();
 
-/** Forgets every agent's cached `core` memory for one community and viewer
- * (`origin:viewer`): the saved copies and each cache's in-memory copy. A read
- * still under way cannot put it back. */
-export function forgetCoreMemory(
-  scope: string,
-  storage: Storage = localStorage,
-) {
-  const prefix = `${PREFIX}${scope}:`;
+/** Forgets every cache's copy of each agent's `core` memory for one community
+ * and viewer (`origin:viewer`). A read still under way cannot put it back. */
+export function forgetCoreMemory(scope: string) {
+  const prefix = `${scope}:`;
   for (const ref of caches) {
     const cache = ref.deref();
     if (cache) cache.forget(prefix);
     else caches.delete(ref);
   }
-  const keys: string[] = [];
-  for (let i = 0; i < storage.length; i++) {
-    const key = storage.key(i);
-    if (key?.startsWith(prefix)) keys.push(key);
-  }
-  for (const key of keys) storage.removeItem(key);
 }
 
 export class CoreMemoryCache {
@@ -42,13 +32,11 @@ export class CoreMemoryCache {
   /** Each entry's latest writer; an older read finishing later is dropped. */
   private readonly writers = new Map<string, number>();
   private writer = 0;
-  /** The latest value, which a failed save to `storage` does not lose. */
   private readonly latest = new Map<string, string | null>();
 
   constructor(
     /** The reads of each agent's community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
-    private readonly storage: Storage,
   ) {
     caches.add(new WeakRef(this));
   }
@@ -73,7 +61,7 @@ export class CoreMemoryCache {
     try {
       const reads = this.reads(pubkey);
       if (!reads) throw new Error("Buzz is not connected");
-      const cached = this.cached(this.key(reads.scope, pubkey));
+      const cached = this.latest.get(this.key(reads.scope, pubkey));
       if (cached !== undefined) return cached;
       return await this.read(
         reads,
@@ -106,7 +94,7 @@ export class CoreMemoryCache {
     if (slug !== "core") return;
     const key = this.key(reads.scope, pubkey);
     this.claim(key);
-    this.keep(key, body);
+    this.latest.set(key, body);
   }
 
   /** Reads and keeps the `core` memory, unless a partial listing missed it or
@@ -121,10 +109,10 @@ export class CoreMemoryCache {
     if (this.reads(pubkey)?.connection !== reads.connection) return undefined;
     if (this.writers.get(key) !== writer) {
       // A later write or read took over: answer with what it kept, if anything.
-      const current = this.cached(key);
+      const current = this.latest.get(key);
       return current === undefined ? memory : current;
     }
-    if (memory !== undefined) this.keep(key, memory);
+    if (memory !== undefined) this.latest.set(key, memory);
     return memory;
   }
 
@@ -134,28 +122,7 @@ export class CoreMemoryCache {
     return this.writer;
   }
 
-  private keep(key: string, memory: string | null) {
-    this.latest.set(key, memory);
-    try {
-      this.storage.setItem(key, JSON.stringify(memory));
-    } catch (error) {
-      console.warn("Could not cache the agent's core memory", error);
-    }
-  }
-
-  private cached(key: string) {
-    if (this.latest.has(key)) return this.latest.get(key);
-    try {
-      const value: unknown = JSON.parse(
-        this.storage.getItem(key) ?? "undefined",
-      );
-      return typeof value === "string" || value === null ? value : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
   private key(scope: string, pubkey: string) {
-    return `${PREFIX}${scope}:${pubkey}`;
+    return `${scope}:${pubkey}`;
   }
 }

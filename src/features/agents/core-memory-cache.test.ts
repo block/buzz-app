@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { CoreMemoryCache, forgetCoreMemory } from "./core-memory-cache";
 import type { AgentReads, MemoryListing } from "./reads";
@@ -9,28 +10,16 @@ const listing = (body?: string, partial = false): MemoryListing => ({
 });
 
 function setup() {
-  const data = new Map<string, string>();
-  const storage = {
-    getItem: (key: string) => data.get(key) ?? null,
-    setItem: (key: string, value: string) => void data.set(key, value),
-    removeItem: (key: string) => void data.delete(key),
-    key: (index: number) => [...data.keys()][index] ?? null,
-    get length() {
-      return data.size;
-    },
-  } as Storage;
   const memoryListing = vi.fn(async (_signal: AbortSignal) => listing("one"));
   let reads: AgentReads | undefined = {
     connection: {},
     scope: "wss://one.test",
     memoryListing,
   } as unknown as AgentReads;
-  const cache = new CoreMemoryCache(() => reads, storage);
+  const cache = new CoreMemoryCache(() => reads);
   return {
     cache,
-    data,
     memoryListing,
-    storage,
     /** Replaces the connection, which may read as someone else. */
     reconnect(read = memoryListing, scope = "wss://one.test") {
       reads = {
@@ -61,18 +50,29 @@ it("waits on one read with nothing cached, then answers from the cache with none
     expect.any(AbortSignal),
     "core",
   );
-  // A new cache on the same storage, as after a restart, reads nothing.
-  const restarted = new CoreMemoryCache(
-    () =>
-      ({
-        connection: {},
-        scope: "wss://one.test",
-        memoryListing: f.memoryListing,
-      }) as unknown as AgentReads,
-    f.storage,
-  );
+  // A new cache, as after a restart, starts empty and reads `core` again.
+  const reads = {
+    connection: {},
+    scope: "wss://one.test",
+    memoryListing: f.memoryListing,
+  } as unknown as AgentReads;
+  const restarted = new CoreMemoryCache(() => reads);
   await expect(restarted.core(agent)).resolves.toBe("one");
-  expect(f.memoryListing).toHaveBeenCalledOnce();
+  expect(f.memoryListing).toHaveBeenCalledTimes(2);
+  expect(f.memoryListing).toHaveBeenLastCalledWith(
+    expect.any(AbortSignal),
+    "core",
+  );
+});
+
+it("never saves core memory to web storage", async () => {
+  const setItem = vi.spyOn(Storage.prototype, "setItem");
+  const f = setup();
+  await f.cache.core(agent);
+  f.cache.wrote(agent, "core", "written");
+  await f.cache.refresh(agent);
+  expect(setItem).not.toHaveBeenCalled();
+  expect(localStorage.length).toBe(0);
 });
 
 it("shares one read between concurrent starts with nothing cached", async () => {
@@ -98,17 +98,6 @@ it("keeps what the agent wrote over a read that started before it", async () => 
   await vi.waitFor(() => expect(f.memoryListing).toHaveBeenCalledTimes(2));
   await Promise.resolve();
   await expect(f.cache.core(agent)).resolves.toBe("written");
-});
-
-it("keeps what the agent wrote when this device cannot save it", async () => {
-  const f = setup();
-  vi.spyOn(console, "warn").mockImplementation(() => {});
-  f.storage.setItem = () => {
-    throw new Error("quota");
-  };
-  f.cache.wrote(agent, "core", "written");
-  await expect(f.cache.core(agent)).resolves.toBe("written");
-  expect(f.memoryListing).not.toHaveBeenCalled();
 });
 
 it("leaves the cached copy when a refresh fails or its listing is partial", async () => {
@@ -163,10 +152,6 @@ it("keeps each community's copy apart", async () => {
   );
   await expect(f.cache.core(agent)).resolves.toBe("two");
   expect(f.memoryListing).toHaveBeenCalledOnce();
-  expect([...f.data.keys()].sort()).toEqual([
-    `buzz.core-memory.v1:wss://one.test:${agent}`,
-    `buzz.core-memory.v1:wss://two.test:${agent}`,
-  ]);
 });
 
 it("gives a start waiting on its first read what the agent wrote meanwhile", async () => {
@@ -201,13 +186,16 @@ it("forgets a left community's copy, keeps it across a disconnect, and lets no h
     "wss://one.test",
   );
   const refreshed = f.cache.refresh(agent);
-  forgetCoreMemory("wss://one.test", f.storage);
+  forgetCoreMemory("wss://one.test");
   // The read finishes on the same connection: only the purge's fence keeps it out.
   read.release(listing("stale"));
   await refreshed;
-  expect([...f.data.keys()]).toEqual([
-    `buzz.core-memory.v1:wss://two.test:${agent}`,
-  ]);
+  // The other community's copy stays.
+  f.reconnect(
+    vi.fn(async () => listing("unused")),
+    "wss://two.test",
+  );
+  await expect(f.cache.core(agent)).resolves.toBe("two");
   // Rejoining reads it again rather than reusing the forgotten copy.
   const rejoin = vi.fn(async () => listing("fresh"));
   f.reconnect(rejoin, "wss://one.test");

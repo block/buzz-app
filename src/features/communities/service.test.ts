@@ -635,7 +635,6 @@ it("leave still forgets the community when a store will not clear, and logs and 
   expect(failures).toEqual([
     { store: "view state", error: denied },
     { store: "channel setups", error: denied },
-    { store: "agent core memory", error: denied },
   ]);
   expect(warn).toHaveBeenCalledWith(
     `Couldn't clear view state for ${origin} on this device`,

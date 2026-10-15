@@ -882,9 +882,8 @@ export class AgentsService extends Service implements Agents {
       running: [],
       teams: this.teamList,
     });
-    this.coreMemory = new CoreMemoryCache(
-      (pubkey) => ownerReads(this.relay(pubkey), pubkey),
-      storage,
+    this.coreMemory = new CoreMemoryCache((pubkey) =>
+      ownerReads(this.relay(pubkey), pubkey),
     );
     this.runners = new AgentRunners({
       ready: (pubkey) => this.ready(pubkey),

@@ -42,11 +42,12 @@ export async function purgeCommunityDeviceState(
       failures.push(purgeFailure(origin, store, error));
     }
   };
+  // Agents' core memory is only ever held in memory, so this cannot fail.
+  forgetCoreMemory(scope);
   await attempt("view state", () => clearViewScope(scope));
   await attempt("channel setups", () => forgetChannelSetups(scope));
   await attempt("quick reactions", () => forgetQuickReactions(scope));
   await attempt("thread follows", () => forgetThreadFollows(scope));
-  await attempt("agent core memory", () => forgetCoreMemory(scope));
   await purgeRelayPartition(origin, viewer, attempt);
   return failures;
 }

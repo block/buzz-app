@@ -191,7 +191,7 @@ const relay = {
     },
   }),
 };
-const coreMemory = new CoreMemoryCache((key) => ownerReads(relay, key), store);
+const coreMemory = new CoreMemoryCache((key) => ownerReads(relay, key));
 const runtime = new CodexRuntime(
   nativeSpawn,
   (key) => ownerReads(relay, key),

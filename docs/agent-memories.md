@@ -93,3 +93,12 @@ own memories for their Buzz tools through `session.agentMemories.read(pubkey,
 signal, slug?)`, the paged native read described above, and pass its partial
 status through to the tool result. Without a ready relay connection the read
 fails instead of being attempted.
+
+The `core` memory a new session starts with comes from one host-owned cache per
+agent (`CoreMemoryCache`, owned by the agents service), not from each runtime.
+A start uses the cached copy without a relay request; with nothing cached it
+waits on one by-address read of `core`. A successful `mem_set` of `core` updates
+the cache ahead of any read still under way, and each finished turn refreshes it
+in the background for the next start. A partial read that missed `core` keeps
+the cached copy. Leaving a community purges its cached copies and fences reads
+still under way.

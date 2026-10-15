@@ -1528,3 +1528,44 @@ it("gives a tool the partial listing a slow native read answers", async () => {
     vi.useRealTimers();
   }
 });
+
+it("launches a session with zero relay requests beyond the message's own sender lookup", async () => {
+  const f = setup();
+  // Every relay-facing call the runtime can make, by name.
+  const requests = {
+    "session.read": f.read,
+    "agentMemories.read": f.memoryRead,
+    "profiles.ensure": f.session.profiles.ensure,
+    "mePlacement.refresh": f.session.mePlacement.refresh,
+    publish: f.agent.publish,
+    query: f.agent.query,
+    upload: f.agent.upload,
+    media: f.agent.media,
+    remember: f.agent.remember,
+  } as Record<string, { mock: { calls: unknown[][] } }>;
+  const made = () =>
+    Object.fromEntries(
+      Object.entries(requests)
+        .filter(([, fn]) => fn.mock.calls.length > 0)
+        .map(([name, fn]) => [name, fn.mock.calls]),
+    );
+  f.core.mockResolvedValue("I am Claude.");
+  await f.deliver({
+    type: "mention",
+    event: message("1", "@Claude 1", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  });
+  await flush(10);
+  expect(f.claudes()).toHaveLength(1);
+  expect(systemPromptOf(f.claudes()[0])).toContain("I am Claude.");
+  // The counter counts: it sees the names lookup for the message's sender and
+  // mentioned agent, and that is the only request. The launch itself asked
+  // the relay nothing.
+  expect(made()).toEqual({
+    "profiles.ensure": [[[alice, self], "foreground"]],
+  });
+});

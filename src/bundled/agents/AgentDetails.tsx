@@ -347,6 +347,10 @@ export function AgentDetails({
                     <AgentArchiveRetry agents={agents} agent={agent} />
                     <PreferenceRow
                       title="Delete agent"
+                      subtitle={
+                        agent.deleting &&
+                        "Its Delete didn't finish, so it stays stopped. Delete it again to finish."
+                      }
                       trailing={
                         <AgentDelete
                           agents={agents}

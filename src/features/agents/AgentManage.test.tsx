@@ -47,27 +47,6 @@ it("deletes after confirming, and keeps the dialog open with the error when Dele
   expect(remove).toHaveBeenCalledWith(agent.pubkey);
 });
 
-it("says what a Delete left undone, and offers only Done", async () => {
-  const user = userEvent.setup();
-  const left = "Ada is deleted, but may still be in some channels.";
-  const remove = vi.fn<Agents["remove"]>().mockResolvedValueOnce(left);
-  const onRemoved = vi.fn();
-  render(
-    <AgentDelete
-      agents={{ remove } as unknown as Agents}
-      agent={agent}
-      onRemoved={onRemoved}
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Delete agent" }));
-  await user.click(screen.getByRole("button", { name: "Delete" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(left);
-  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(onRemoved).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Done" }));
-  expect(onRemoved).toHaveBeenCalledOnce();
-});
-
 it("retries an unchecked archive state and shows what is left", async () => {
   const user = userEvent.setup();
   const unarchive = vi

@@ -158,11 +158,9 @@ export async function removeAgentFromChannels(
   session: Pick<RelaySession, "outbox" | "channels" | "workSessions">,
   pubkey: string,
   signal: AbortSignal,
-  fence?: AbortSignal,
 ) {
-  const waits = fenced(signal, fence);
   const pending = new Set([
-    ...(await session.workSessions.memberChannels(pubkey, waits)),
+    ...(await session.workSessions.memberChannels(pubkey, signal)),
     ...session.channels
       .list()
       .channels.filter((channel) => channel.members?.includes(pubkey))
@@ -173,9 +171,9 @@ export async function removeAgentFromChannels(
   if (!outbox?.supports(9001))
     throw new Error("This community cannot remove agents from channels.");
   await outbox.ready();
-  waits.throwIfAborted();
+  signal.throwIfAborted();
   // Nothing new is signed or published for a cancelled Delete.
-  const active = () => !waits.aborted;
+  const active = () => !signal.aborted;
   // Keep each operation as it is enqueued: a later enqueue can still throw,
   // for example when the outbox is full.
   const operations: string[] = [];
@@ -226,7 +224,7 @@ export async function removeAgentFromChannels(
   // may still list the agent after the relay removed it.
   const listed = await Promise.all(
     [...pending].map((id) =>
-      session.workSessions.listsMember(id, pubkey, waits),
+      session.workSessions.listsMember(id, pubkey, signal),
     ),
   );
   const remaining = listed.filter(Boolean);

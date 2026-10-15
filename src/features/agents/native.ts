@@ -16,6 +16,9 @@ export type AgentIdentity = Readonly<{
   /** Its key is gone; its community still has to drop it from its channels and
    * archive it, after which `forget` removes it. */
   deleted: boolean;
+  /** Its Delete started and has not finished. It keeps its key, so it cannot
+   * be imported again, and stays stopped until Delete is pressed again. */
+  deleting?: true;
 }>;
 /** Where an earlier agent system saved an identity on this machine: this app's
  * harness agents, or the installed or development build of old Buzz. */
@@ -99,6 +102,8 @@ export type AgentsNative = {
   setPicture(pubkey: string, picture: string | null): Promise<void>;
   /** Makes it an agent of another type, keeping its identity and profile. */
   setType(pubkey: string, type: string): Promise<void>;
+  /** Marks its Delete as started; only `remove` finishing it clears that. */
+  beginDelete(pubkey: string): Promise<void>;
   /** Deletes the key and marks the identity deleted. */
   remove(pubkey: string): Promise<void>;
   /** Drops a deleted identity. */
@@ -150,6 +155,7 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_set_picture", { pubkey, picture }),
         setType: (pubkey, agentType) =>
           invoke("app_agent_set_type", { pubkey, agentType }),
+        beginDelete: (pubkey) => invoke("app_agent_begin_delete", { pubkey }),
         remove: (pubkey) => invoke("app_agent_delete", { pubkey }),
         forget: (pubkey) => invoke("app_agent_forget", { pubkey }),
         publish: (pubkey, event) =>

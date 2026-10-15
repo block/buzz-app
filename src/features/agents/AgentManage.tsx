@@ -10,7 +10,8 @@ import type { Agent, Agents } from "./service";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-/** Delete, after a confirmation that says what it does. */
+/** Delete, after a confirmation that says what it does. One that cannot
+ * finish keeps the dialog open with what is left; the agent stays listed. */
 export function AgentDelete({
   agents,
   agent,
@@ -25,14 +26,11 @@ export function AgentDelete({
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
-  /** What its Delete left undone; it is deleted all the same. */
-  const [unfinished, setUnfinished] = useState("");
   const remove = async () => {
     setRemoving(true);
     setError("");
     try {
-      const left = await agents.remove(agent.pubkey);
-      if (left) return setUnfinished(left);
+      await agents.remove(agent.pubkey);
       setConfirming(false);
       onRemoved();
     } catch (reason) {
@@ -55,38 +53,32 @@ export function AgentDelete({
       )}
       <Dialog
         open={confirming}
-        onOpenChange={(open) =>
-          !open && unfinished ? onRemoved() : setConfirming(open)
-        }
+        onOpenChange={setConfirming}
         title={`Delete ${agent.name}?`}
         description={
           agent.place === "hosted"
             ? "Its provider deletes it and its key, then it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
-            : "This deletes its key from this device, then it leaves every channel and is archived so it no longer appears in member lists or mention suggestions. It can't be undone."
+            : "It stops, leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
         }
-        preventClose={removing && !unfinished}
+        preventClose={removing}
         actions={
-          unfinished ? (
-            <Button onClick={onRemoved}>Done</Button>
-          ) : (
-            <>
-              <Button onClick={() => setConfirming(false)} disabled={removing}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                loading={removing}
-                onClick={() => void remove()}
-              >
-                Delete
-              </Button>
-            </>
-          )
+          <>
+            <Button onClick={() => setConfirming(false)} disabled={removing}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              loading={removing}
+              onClick={() => void remove()}
+            >
+              Delete
+            </Button>
+          </>
         }
       >
-        {error || unfinished ? (
+        {error ? (
           <p role="alert" className="m-0 text-body-sm text-danger">
-            {error || unfinished}
+            {error}
           </p>
         ) : null}
       </Dialog>

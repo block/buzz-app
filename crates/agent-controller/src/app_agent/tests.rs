@@ -108,6 +108,45 @@ fn forgets_only_deleted_rows() {
 }
 
 #[test]
+fn an_unfinished_delete_keeps_its_key_and_refuses_import_from_any_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let path = dir.path().join("agents/identities.json");
+    let agents = AppAgents::open(path.clone());
+    // Another copy of the app shares the same saved identities.
+    let other = AppAgents::open(path);
+    let key = Secret::generate().unwrap();
+    let adopt = || {
+        AppAgents::adopt(
+            "https://relay.example/",
+            &owner(),
+            "p/t",
+            Secret::parse(&key.hex(), key.pubkey()).unwrap(),
+            "Ada",
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    let auth: Vec<String> =
+        serde_json::from_str(&crate::secret::test_attestation(key.pubkey())).unwrap();
+    let (agent, _) = agents.commit(adopt(), &auth, &credentials).unwrap();
+    agents.begin_delete(&agent.pubkey).unwrap();
+    let saved = other.get(&agent.pubkey).unwrap();
+    assert!(saved.deleting && !saved.deleted);
+    assert!(saved.read_key(&credentials).is_ok());
+    assert_eq!(
+        other.commit(adopt(), &auth, &credentials).err(),
+        Some("That agent is already here".into())
+    );
+    // Only finishing the Delete lets it be imported again.
+    agents.remove(&agent.pubkey, &credentials).unwrap();
+    agents.forget(&agent.pubkey).unwrap();
+    let (back, _) = other.commit(adopt(), &auth, &credentials).unwrap();
+    assert!(!back.deleting);
+}
+
+#[test]
 fn re_import_takes_back_a_deleted_row() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();

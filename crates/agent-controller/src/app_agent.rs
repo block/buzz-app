@@ -48,6 +48,10 @@ pub struct AppAgent {
     /// channels and was archived, which the owner signs, not the agent.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    /// Its Delete started and has not finished. It keeps its key, so it cannot
+    /// be imported again, and no copy of the app runs it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleting: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -430,6 +434,7 @@ impl AppAgents {
             about: prepared.about,
             profile: None,
             deleted: false,
+            deleting: false,
         };
         let id = agent.credential_id();
         // A harness agent saved for the same community keeps this key under the
@@ -504,6 +509,10 @@ impl AppAgents {
                 agent.profile = Some(profile);
             }
         })
+    }
+    /// Marks its Delete as started, which only finishing it clears.
+    pub fn begin_delete(&self, pubkey: &str) -> Result<()> {
+        self.edit(pubkey, |agent| agent.deleting = true)
     }
     /// Deletes the key, then marks the row deleted, so a failed deletion can be
     /// retried. Absence is success.

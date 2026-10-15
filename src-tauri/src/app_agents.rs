@@ -241,6 +241,8 @@ pub(crate) struct AppAgentSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     picture: Option<String>,
     deleted: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    deleting: bool,
 }
 impl From<AppAgent> for AppAgentSummary {
     fn from(agent: AppAgent) -> Self {
@@ -252,6 +254,7 @@ impl From<AppAgent> for AppAgentSummary {
             name: agent.name,
             picture: agent.picture,
             deleted: agent.deleted,
+            deleting: agent.deleting,
         }
     }
 }
@@ -438,6 +441,15 @@ pub(crate) async fn app_agent_delete(
     pubkey: String,
 ) -> Result<(), String> {
     state.delete(pubkey).await
+}
+
+#[tauri::command]
+pub(crate) async fn app_agent_begin_delete(
+    state: tauri::State<'_, AppAgentHost>,
+    pubkey: String,
+) -> Result<(), String> {
+    let agents = state.agents.clone()?;
+    blocking(move || agents.begin_delete(&pubkey)).await
 }
 
 #[tauri::command]
@@ -818,6 +830,7 @@ mod tests {
             profile: None,
             about: None,
             deleted: false,
+            deleting: false,
         };
         let (_, read) = host.key(agent).await.unwrap();
         assert_eq!(read.pubkey(), key.pubkey());

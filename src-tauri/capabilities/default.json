@@ -84,6 +84,7 @@
     "allow-app-agent-set-picture",
     "allow-app-agent-set-type",
     "allow-app-agent-delete",
+    "allow-app-agent-begin-delete",
     "allow-app-agent-forget",
     "allow-app-agent-publish",
     "allow-app-agent-publish-profile",

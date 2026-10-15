@@ -2,6 +2,7 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, expect, test } from "vitest";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type {
   PanelOpening,
@@ -503,7 +504,7 @@ test("the returned state keeps its identity across unrelated re-renders", () => 
 });
 
 test("agents open thread tabs in the background and never close a shown one", () => {
-  const session = {} as RelaySession;
+  const session = tabSession();
   const tabs = channelTabs(session);
   const page = renderHook(() => useChannelTabState(session, "alpha"));
   // An empty side pane stays closed; nothing is selected for the viewer.
@@ -555,7 +556,7 @@ test("agents open thread tabs in the background and never close a shown one", ()
 });
 
 test("an agent's tab leaves a page's side panel showing", () => {
-  const session = {} as RelaySession;
+  const session = tabSession();
   const tabs = channelTabs(session);
   const page = renderHook(() => useChannelTabState(session, "alpha"));
   act(() => page.result.current.setSidePanel(true));
@@ -567,7 +568,7 @@ test("an agent's tab leaves a page's side panel showing", () => {
 
 test("an agent's main-pane tab leaves the conversation showing", () => {
   setThreadPlacementPreference("main");
-  const session = {} as RelaySession;
+  const session = tabSession();
   const tabs = channelTabs(session);
   const page = renderHook(() => useChannelTabState(session, "alpha"));
   act(() => {
@@ -584,3 +585,75 @@ test("an agent's main-pane tab leaves the conversation showing", () => {
   ]);
   expect(tabs.close("alpha", "r1")).toBe("shown");
 });
+
+function tabSession(
+  channels: readonly ChannelSummary[] = [{ id: "alpha", name: "Alpha" }],
+) {
+  return {
+    channels: { list: () => ({ channels }) },
+  } as unknown as RelaySession;
+}
+
+test.each(["channel", "page", "community", "unmount"])(
+  "agents can close a selected tab after leaving its %s",
+  (destination) => {
+    const session = tabSession();
+    const tabs = channelTabs(session);
+    const page = renderHook(
+      (props) => useChannelTabState(props.session, props.channel, props.page),
+      { initialProps: { session, channel: "alpha", page: "messages" } },
+    );
+    act(() => page.result.current.openThreadTab("alpha", "side", "side"));
+    act(() =>
+      page.result.current.openThreadTab(
+        "alpha",
+        "main",
+        "main",
+        undefined,
+        "main",
+      ),
+    );
+    expect(tabs.list("alpha").every((tab) => tab.shown)).toBe(true);
+    if (destination === "unmount") page.unmount();
+    else
+      page.rerender({
+        session: destination === "community" ? tabSession() : session,
+        channel: destination === "channel" ? "beta" : "alpha",
+        page: destination === "page" ? "me" : "messages",
+      });
+    expect(tabs.list("alpha").every((tab) => !tab.shown)).toBe(true);
+    act(() => {
+      expect(tabs.close("alpha", "side")).toBe("closed");
+      expect(tabs.close("alpha", "main")).toBe("closed");
+    });
+    expect(tabs.list("alpha")).toEqual([]);
+  },
+);
+
+test("remounting a retained workspace protects its selected tabs again", () => {
+  const session = tabSession();
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => page.result.current.openThreadTab("alpha", "r1", "r1"));
+  page.unmount();
+  expect(tabs.list("alpha")[0]?.shown).toBe(false);
+  renderHook(() => useChannelTabState(session, "alpha"));
+  expect(tabs.list("alpha")[0]?.shown).toBe(true);
+  expect(tabs.close("alpha", "r1")).toBe("shown");
+});
+
+test.each(["missing", "readOnly", "archived", "cached"])(
+  "agents cannot open a thread unavailable to the owner (%s)",
+  (reason) => {
+    const channels =
+      reason === "missing"
+        ? []
+        : [{ id: "alpha", name: "Alpha", [reason]: true }];
+    const session = tabSession(channels);
+    const tabs = channelTabs(session);
+    expect(() => tabs.open("alpha", "r1")).toThrow(
+      "Your owner cannot open threads in this channel.",
+    );
+    expect(tabs.list("alpha")).toEqual([]);
+  },
+);

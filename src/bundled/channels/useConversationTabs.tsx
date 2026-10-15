@@ -34,6 +34,7 @@ import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelPanels } from "./useChannelPanels";
 import {
   panelTabId,
+  selectedTabId,
   tabPane,
   type ConversationTab as Tab,
   type TabPane,
@@ -300,9 +301,7 @@ export function useConversationTabs({
     ...sideTabs.map((tab) => tab.id),
     ...panelTabs.map(tabId),
   ];
-  const selectedTab = rootTabIds.includes(tabState.selected)
-    ? tabState.selected
-    : (rootTabIds[0] ?? "");
+  const selectedTab = selectedTabId(tabState.selected, rootTabIds);
   // A tab-placed channel launcher keeps one retained tab per channel.
   const channelTab = (panel: Opening["panel"], channelId: string) =>
     panelTabs.find(

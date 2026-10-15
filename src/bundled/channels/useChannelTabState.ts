@@ -1,5 +1,10 @@
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useSyncExternalStore,
+} from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { PanelOpening } from "../../features/panels/service";
 
@@ -79,6 +84,14 @@ const empty: State = {
 };
 export const panelTabId = (entry: PanelOpening) =>
   `${entry.panel.key}:${entry.target}`;
+export const selectedTabId = (selected: string, ids: readonly string[]) =>
+  ids.includes(selected) ? selected : (ids[0] ?? "");
+const sideSelection = (state: State) =>
+  selectedTabId(state.selected, [
+    ...(state.settings ? ["settings"] : []),
+    ...state.tabs.filter((tab) => tabPane(tab) === "side").map((tab) => tab.id),
+    ...state.entries.map(panelTabId),
+  ]);
 
 /** Opening a thread selects its existing tab or adds one in `pane`. */
 function withThread(
@@ -138,7 +151,17 @@ const sessions = new WeakMap<RelaySession, ReturnType<typeof createTabStore>>();
 function createTabStore() {
   let channels: Record<string, State> = {};
   const listeners = new Set<() => void>();
+  const mounts = new Map<string, number>();
   return {
+    visible: (key: string) => mounts.has(key),
+    mount(key: string) {
+      mounts.set(key, (mounts.get(key) ?? 0) + 1);
+      return () => {
+        const remaining = (mounts.get(key) ?? 1) - 1;
+        if (remaining) mounts.set(key, remaining);
+        else mounts.delete(key);
+      };
+    },
     snapshot: () => channels,
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -182,15 +205,8 @@ export function channelTabs(session: RelaySession) {
     store.snapshot()[keyOf("messages", channelId)] ?? empty;
   const threads = (channelId: string) => {
     const state = stateOf(channelId);
-    const side = state.tabs.filter((tab) => tabPane(tab) === "side");
-    // The pane shows its first tab when its selection names none of them.
-    const sideShown = !state.paneOpen
-      ? undefined
-      : (side.find((tab) => tab.id === state.selected) ??
-        (state.settings ||
-        state.entries.some((entry) => panelTabId(entry) === state.selected)
-          ? undefined
-          : side[0]));
+    const visible = store.visible(keyOf("messages", channelId));
+    const selected = sideSelection(state);
     return state.tabs.flatMap((tab) =>
       tab.kind === "thread" && tab.channelId === channelId
         ? [
@@ -199,8 +215,10 @@ export function channelTabs(session: RelaySession) {
               root: rootOfTab(tab),
               pane: tabPane(tab),
               shown:
-                tab === sideShown ||
-                (tabPane(tab) === "main" && state.mainSelected === tab.id),
+                visible &&
+                (tabPane(tab) === "main"
+                  ? state.mainSelected === tab.id
+                  : state.paneOpen && selected === tab.id),
             },
           ]
         : [],
@@ -212,6 +230,11 @@ export function channelTabs(session: RelaySession) {
     /** Opens thread `rootId` of `channelId` in its workspace; false when it
      * already has a tab there. */
     open(channelId: string, rootId: string) {
+      const channel = session.channels
+        .list()
+        .channels.find((item) => item.id === channelId);
+      if (!channel || channel.readOnly || channel.archived || channel.cached)
+        throw new Error("Your owner cannot open threads in this channel.");
       if (threads(channelId).some((thread) => thread.root === rootId))
         return false;
       store.update(keyOf("messages", channelId), (state) => {
@@ -232,7 +255,7 @@ export function channelTabs(session: RelaySession) {
           !state.tabs.some((tab) => tabPane(tab) === "side");
         return {
           ...opened,
-          selected: state.selected,
+          selected: sideSelection(state) || state.selected,
           mainSelected: state.mainSelected,
           paneOpen: pane === "side" && sideEmpty ? false : state.paneOpen,
         };
@@ -262,6 +285,8 @@ export function useChannelTabState(
   const channels = useSyncExternalStore(store.subscribe, store.snapshot);
   const snapshot = store.snapshot;
   const key = keyOf(page, channelId ?? "");
+  // Retain descriptors across navigation, but protect only a mounted workspace.
+  useLayoutEffect(() => store.mount(key), [key, store]);
   const state = channels[key] ?? empty;
   const update = useCallback(
     (change: (previous: State) => State) => store.update(key, change),

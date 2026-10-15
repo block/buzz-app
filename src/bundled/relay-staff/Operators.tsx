@@ -12,7 +12,12 @@ import type {
 } from "../../features/relay-staff/contract";
 import { describe, useRead, useSession, useWrite } from "./session";
 import { NamesSource, Person, PeopleScope, usePeople } from "./people";
-import { containsSecretKey, Loaded, publicKeyInput } from "./ui";
+import {
+  containsSecretKey,
+  Loaded,
+  publicKeyInput,
+  SECRET_KEY_WARNING,
+} from "./ui";
 
 type OperatorWrite = Extract<
   StaffRequest,
@@ -86,11 +91,7 @@ export function Operators() {
               <div className="flex items-end gap-2">
                 <Field
                   label="Public key"
-                  error={
-                    secret
-                      ? "That looks like a private key. Never paste it here."
-                      : undefined
-                  }
+                  error={secret ? SECRET_KEY_WARNING : undefined}
                 >
                   <Input
                     placeholder="npub or 64-hex public key"

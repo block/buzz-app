@@ -199,7 +199,10 @@ NIP-98, including the exact request URL, method, a body hash on POST and a fresh
 for each attempt. Native networking permits only discovery, join-policy, invite
 mint/acceptance/claim, relay-advertised GIF search, query, event and bounded
 workflow run-history routes on HTTPS origins, with bounded bodies, timeouts and
-no redirects. JavaScript never obtains the private key for transport.
+no redirects. JavaScript never obtains the private key for transport. NIP-11
+`self` establishes relay authority; the operator-contact `pubkey` is not a
+substitute. The existing live owner handles WSS/NIP-42 authentication and
+signature verification. IPC permissions remain limited to the main WebView.
 
 Relay staff console requests (`relay_admin_*`) use a separate native owner.
 The admin origin comes only from the selected relay's NIP-11 `admin_api` and
@@ -210,19 +213,29 @@ and connects only to the vetted addresses while keeping the hostname for TLS
 and NIP-98. That client ignores system proxies and follows no redirects. The
 webview names a closed route; native code builds the URL, checks the request's
 expected relay, admin origin and signer before signing, and caps each response.
-NIP-11 `self` establishes relay authority; the operator-contact `pubkey` is not
-a substitute. When there is a selected identity and relay and the relay
-advertises a valid admin host, opening Settings sends one signed `probe` (`GET
+
+When there is a selected identity and relay and the relay advertises a valid
+admin host, opening Settings sends one signed role check (`probe`, `GET
 /api/admin/v1/probe`, empty body) to that host without a further click, so the
 Relay admin entries show only to staff (a relay with admin auth off shows its
-read-only entries to everyone). It proves the active key to that host, which
-can differ from the community's connection host; no private key, login token or
-community data is sent. It repeats each time Settings opens, and each newly
-selected identity or relay is checked once while Settings stays open. Other
-re-checks (a 401 or 403, Check again, changing your own staff entry) are listed
-in [relay-staff.md](relay-staff.md); none starts after Settings closes.
-The existing live owner handles WSS/NIP-42 authentication and signature
-verification. IPC permissions remain limited to the main WebView.
+read-only entries to everyone). Every member who opens Settings sends it, not
+only staff, because only the answer says who is staff. It goes to whatever
+admin host the relay advertises, which can differ from the community's
+connection host and need not share its domain. That host learns the active
+public key, the client's IP address and that Settings was opened; no private
+key, login token or community data is sent. The NIP-98 signature covers only
+that URL and method and expires within NIP-98's short time window, so it can't
+be replayed elsewhere. A relay that names another deployment's real admin host
+can at most show that deployment's own staff its console inside the wrong
+relay's Settings, without seeing that traffic; each console screen names the
+admin host in its subtitle, which limits the confusion. This is accepted
+because the relay itself already knows the key, the IP address and the session
+(signing in to it proves the key), so the role check reveals nothing a relay
+the user connected to doesn't already have. It repeats each time Settings
+opens, re-reading the advertised admin host first, and each newly selected
+identity or relay is checked once while Settings stays open. Other re-checks
+(a 401 or 403, Check again, changing your own staff entry) are listed in
+[relay-staff.md](relay-staff.md); none starts after Settings closes.
 
 Channel lifecycle/details and identity archive commands, channel recipe preparation/decoding,
 and opening direct messages use purpose-bound native commands. Creation kind 9007 is

@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { ArrowLeftIcon } from "../../shared/design-system/icons";
-import type { CommunityDto } from "../../features/relay-staff/contract";
+import {
+  type CommunityDto,
+  unsupported,
+} from "../../features/relay-staff/contract";
 import { ActionsSection, MembersSection } from "./DirectActions";
 import { Reports } from "./Reports";
 import { Restrictions } from "./Restrictions";
@@ -15,22 +18,13 @@ import {
   listButton,
   Loading,
   NotConnected,
+  SEARCH_DEBOUNCE_MS,
+  SECRET_KEY_WARNING,
   UNSUPPORTED_BROWSING,
+  useDebounced,
   useRetry,
   type CommunityRef,
 } from "./ui";
-
-/** Each search is a signed request: wait for typing to pause. */
-export const SEARCH_DEBOUNCE_MS = 250;
-
-function useDebounced<T>(value: T, ms: number) {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setSettled(value), ms);
-    return () => clearTimeout(timer);
-  }, [value, ms]);
-  return settled;
-}
 
 /**
  * The relay's community directory, searched by host prefix, with the
@@ -107,10 +101,11 @@ export function Communities({
       />
       {secret && (
         <p className="text-body-sm text-danger" role="alert">
-          That's a secret key. Never paste it here.
+          {SECRET_KEY_WARNING}
         </p>
       )}
-      {pinnedRetry.failure && (
+      {/* The directory's own alert already explains a missing route. */}
+      {pinnedRetry.failure && !unsupported(pinnedRetry.failure) && (
         <Failure
           failure={pinnedRetry.failure}
           onRetry={pinnedRetry.retry}

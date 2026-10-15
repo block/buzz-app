@@ -20,8 +20,6 @@ import type {
 } from "../../features/relay-staff/contract";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { cards } from "./index";
-import { SEARCH_DEBOUNCE_MS } from "./Communities";
-import { SEARCH_DEBOUNCE_MS as MEMBER_SEARCH_DEBOUNCE_MS } from "./DirectActions";
 import { ProfilesContext } from "./people";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import {
@@ -32,7 +30,7 @@ import { foldProfiles } from "../../features/relay/profiles";
 import { StrictMode, useState, useSyncExternalStore } from "react";
 import { createSession, SessionProvider, useRead, useWrite } from "./session";
 import { createStaff, type Staff, type StaffTarget } from "./staff";
-import { useRetry } from "./ui";
+import { SEARCH_DEBOUNCE_MS, useRetry } from "./ui";
 
 const signer = "a".repeat(64);
 const member = "b".repeat(64);
@@ -191,19 +189,20 @@ async function openCommunityActions() {
   fireEvent.click(screen.getByRole("button", { name: "Review" }));
 }
 
-const noEntries = () =>
-  waitFor(() =>
-    expect(
-      within(screen.getByRole("tablist", { name: "Settings" })).queryAllByRole(
-        "tab",
-      ),
-    ).toHaveLength(0),
-  );
+/** The check has answered "not staff", and Settings lists no entries. */
+async function noEntries(staff: Staff) {
+  await waitFor(() => expect(staff.visible()).toBe(false));
+  expect(
+    within(screen.getByRole("tablist", { name: "Settings" })).queryAllByRole(
+      "tab",
+    ),
+  ).toHaveLength(0);
+}
 
 it("a key that isn't staff sees no entries and nothing else is requested", async () => {
   routes.probe = () => fail({ category: "forbidden", status: 403 });
-  mount();
-  await noEntries();
+  const { staff } = mount();
+  await noEntries(staff);
   expect(calls.map((c) => c.route)).toEqual(["probe"]);
 });
 
@@ -260,6 +259,10 @@ it("keeps the Communities tab and explains an unsupported directory", async () =
       "This relay doesn't support community browsing yet.",
     ),
   ).toBeInTheDocument();
+  // The pinned lookup fails the same way; only one alert explains it.
+  await waitFor(() => expect(sent("listCommunities")).toHaveLength(2));
+  await act(async () => {});
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
 });
 
 it("never sends a pasted secret key as a search", async () => {
@@ -270,7 +273,9 @@ it("never sends a pasted secret key as a search", async () => {
   fireEvent.change(screen.getByLabelText("Search communities"), {
     target: { value: `nsec1${"q".repeat(58)}` },
   });
-  expect(await screen.findByText(/That's a secret key/)).toBeInTheDocument();
+  expect(
+    await screen.findByText(/looks like a private key/),
+  ).toBeInTheDocument();
   expect(sent("listCommunities")).toHaveLength(before);
 });
 
@@ -963,7 +968,7 @@ it("an unresolved direct action survives losing and regaining access", async () 
       if (context) await staff.probe(context, true);
     });
   await reprobe();
-  await noEntries();
+  await noEntries(staff);
   routes.probe = () => probe();
   await reprobe();
   await reopenActions();
@@ -985,11 +990,11 @@ it("a held action is never offered under another identity", async () => {
 });
 
 it("switching identity on the same relay probes as the new identity", async () => {
-  const { select } = mountSwitchable();
+  const { select, staff } = mountSwitchable();
   await screen.findByText(/Connected as moderator/);
   routes.probe = () => fail({ category: "forbidden", status: 403 });
   await select({ signer: member });
-  await noEntries();
+  await noEntries(staff);
   expect(sent("probe")).toHaveLength(2);
   expect(contexts.at(-1)?.signer).toBe(member);
 });
@@ -1369,7 +1374,7 @@ it("a gateway 401 on a write re-probes once, even when the probe is refused too"
   routes.probe = () =>
     fail({ category: "ambiguous", status: 401, authLost: true });
   fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
-  await noEntries();
+  await noEntries(staff);
   const context = staff.context();
   // The re-probe has answered once access is denied; any further re-probe
   // would already have been sent by the write's 401.
@@ -2423,8 +2428,9 @@ it("a newer role check wins over an older one that finishes later", async () => 
   const release = staff.ensure();
   await waitFor(() => expect(sent("probe")).toHaveLength(1));
   release();
+  // Reopening re-reads the admin host first, then checks.
   staff.ensure();
-  expect(sent("probe")).toHaveLength(2);
+  await waitFor(() => expect(sent("probe")).toHaveLength(2));
   await answer(1, denied());
   expect(staff.visible()).toBe(false);
   await answer(0, operatorProbe());
@@ -2439,6 +2445,7 @@ it("a newer authorization is not hidden by an older denial", async () => {
   await waitFor(() => expect(sent("probe")).toHaveLength(1));
   release();
   staff.ensure();
+  await waitFor(() => expect(sent("probe")).toHaveLength(2));
   await answer(1, operatorProbe());
   expect(staff.operatorVisible()).toBe(true);
   await answer(0, denied());
@@ -2649,7 +2656,7 @@ it("member search waits for typing to pause before sending one request", async (
     for (const value of ["B", "Bo", "Bob"])
       fireEvent.change(input, { target: { value } });
     await act(async () => {
-      vi.advanceTimersByTime(MEMBER_SEARCH_DEBOUNCE_MS - 1);
+      vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS - 1);
     });
     expect(sent("searchMembers")).toHaveLength(0);
     await act(async () => {
@@ -3123,7 +3130,9 @@ it("a held directory Retry ends when a secret key disables the search", async ()
       target: { value: `nsec1${"q".repeat(58)}` },
     });
     expect(
-      await screen.findByText("That's a secret key. Never paste it here."),
+      await screen.findByText(
+        "That looks like a private key. Never paste it here.",
+      ),
     ).toBeVisible();
     expect(screen.queryByText("Old failure")).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
@@ -3322,4 +3331,142 @@ it("a held delete or timeout keeps its own fields after the card remounts", asyn
       ok({ state: "succeeded", actionId: "t", replayed: false }),
     );
   }
+});
+
+const ambiguous = fail({
+  category: "ambiguous",
+  status: null,
+  bodyComplete: false,
+  message: "",
+});
+
+it("a failed resolve shows its error beside Retry", async () => {
+  routes.listReports = () => ok([report]);
+  routes.getReport = () => ok(report);
+  routes.resolveReport = () => ambiguous;
+  await openReport();
+  fireEvent.click(await screen.findByRole("radio", { name: "Ban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  await screen.findByRole("button", { name: /Retry: Ban/ });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "The relay did not confirm the result.",
+  );
+});
+
+it("an uncertain resolve that landed reloads the report and is released", async () => {
+  let landed = false;
+  routes.listReports = () => ok([report]);
+  routes.getReport = () =>
+    ok(landed ? { ...report, status: "resolved" } : report);
+  routes.resolveReport = () => {
+    landed = true;
+    return ambiguous;
+  };
+  await openReport();
+  fireEvent.click(await screen.findByRole("radio", { name: "Ban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Confirm: Ban/ }));
+  expect(
+    await screen.findByRole("button", { name: "Reopen report" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  // Reopened elsewhere: a fresh choice, not the old request id.
+  landed = false;
+  fireEvent.click(screen.getByRole("button", { name: "Back to reports" }));
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  fireEvent.click(await screen.findByRole("radio", { name: "Dismiss" }));
+  expect(
+    screen.getByRole("button", { name: /Confirm: Dismiss/ }),
+  ).toBeEnabled();
+  expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+});
+
+it("a held reopen offers Discard and shows its error", async () => {
+  const resolved = { ...report, status: "resolved" };
+  routes.listReports = () => ok([resolved]);
+  routes.getReport = () => ok(resolved);
+  routes.reopenReport = () => ambiguous;
+  await openReport();
+  fireEvent.click(await screen.findByRole("button", { name: "Reopen report" }));
+  await screen.findByRole("button", { name: "Retry reopen" });
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "The relay did not confirm the result.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(
+    await screen.findByRole("button", { name: "Reopen report" }),
+  ).toBeVisible();
+});
+
+it("a held reopen is released once the report is open again", async () => {
+  let status = "resolved";
+  routes.listReports = () => ok([{ ...report, status }]);
+  routes.getReport = () => ok({ ...report, status });
+  routes.reopenReport = () => {
+    status = "open";
+    return ambiguous;
+  };
+  await openReport();
+  fireEvent.click(await screen.findByRole("button", { name: "Reopen report" }));
+  // The failure reloads the report, which shows it landed.
+  await screen.findByRole("radio", { name: "Ban" });
+  // Resolved again elsewhere: Reopen starts fresh instead of replaying.
+  status = "resolved";
+  fireEvent.click(screen.getByRole("button", { name: "Back to reports" }));
+  fireEvent.click(await screen.findByRole("button", { name: /spam/ }));
+  expect(
+    await screen.findByRole("button", { name: "Reopen report" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Retry reopen" })).toBeNull();
+});
+
+it("a direct-action error shows only on the community it was sent to", async () => {
+  routes.listCommunities = () =>
+    ok({
+      items: [
+        { id: "c1", host: "team.example.com", icon: null },
+        { id: "c2", host: "other.example.com", icon: null },
+      ],
+      nextCursor: null,
+    });
+  routes.directAction = () =>
+    fail({ status: 409, code: "target_is_staff", message: "" });
+  mount();
+  await openCommunityActions();
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+  expect(
+    await screen.findByText(/Relay staff can't be banned/),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /other\.example\.com/ }),
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
+  await screen.findByLabelText("Member");
+  expect(screen.queryByText(/Relay staff can't be banned/)).toBeNull();
+});
+
+it("opening Settings again re-reads the advertised admin host", async () => {
+  let advertised = origin;
+  const local = { ...backend, discover: async () => advertised };
+  const staff = createStaff(local, () => ({ relay, signer }));
+  const release = staff.ensure();
+  await waitFor(() => expect(staff.visible()).toBe(true));
+  release();
+  advertised = "https://admin2.example.com";
+  staff.ensure();
+  await waitFor(() =>
+    expect(staff.context()?.origin).toBe("https://admin2.example.com"),
+  );
+  await waitFor(() => expect(contexts.at(-1)?.origin).toBe(advertised));
+  expect(sent("probe")).toHaveLength(2);
+});
+
+it("a gateway sign-in page on the role check is unreachable, not denied", async () => {
+  routes.probe = () =>
+    fail({ category: "intercepted", status: 401, message: "" });
+  const staff = createStaff(backend, () => ({ relay, signer }));
+  staff.ensure();
+  await waitFor(() => expect(staff.visible()).toBe("error"));
+  const context = staff.context();
+  expect(context && staff.access(context)?.state).toBe("unreachable");
 });

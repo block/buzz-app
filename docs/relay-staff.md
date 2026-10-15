@@ -35,8 +35,8 @@ refuses private, CGNAT and `.internal` addresses.
    While Settings stays open, each (identity, admin host, relay) is probed
    once: switching identity or relay probes the new one, and opening an entry
    reuses the result instead of probing again. Closing and reopening Settings
-   probes again, so a demotion elsewhere removes the entries (or just Staff)
-   the next time Settings opens. Closing Settings does not cancel requests
+   re-reads the relay's NIP-11 and probes again, so a changed or newly enabled
+   admin host, or a demotion elsewhere, shows the next time Settings opens. Closing Settings does not cancel requests
    already underway, but no new role check starts once it is closed. A check
    that a newer one for the same identity and admin host has replaced is
    ignored when it finishes.
@@ -48,11 +48,14 @@ refuses private, CGNAT and `.internal` addresses.
    current session so open views do not reload and the re-probe cannot repeat
    itself.
 4. Probe outcomes: authorized, access denied, no admin API on the advertised
-   host, or unreachable (network, TLS, DNS, or a VPN or SSO gateway). Only
+   host, or unreachable (network, TLS, DNS, or a VPN or SSO gateway; a
+   gateway's sign-in page counts as unreachable even on a 401 or 403). Only
    authorized opens an entry. If a re-probe ends in any other outcome, the
    open entry is removed and the host's unavailable screen shows.
-5. A relay running with admin auth disabled is read-only: every write control is
-   disabled (`canMutate` is `authMode === "nip98"`).
+5. A relay running with admin auth disabled is read-only (`canMutate` is
+   `authMode === "nip98"`). Report, feedback and staff-list writes are hidden;
+   direct actions and lifting restrictions stay visible but disabled. Staff
+   itself is hidden, since such a relay reports no role.
 
 ## Screens
 
@@ -124,7 +127,12 @@ anything else settles it, including a request native code never sent. After one,
 only the relay's own answer to a request that was sent settles it: a retry that
 was never sent, was refused for authorization, or was answered with an empty
 404 or 405 (an old node mid-deploy), leaves the write held with
-the same `requestId`. A request native code refuses before sending, such as a reason too long for
+the same `requestId`. The relay replays a report write's `requestId` only while
+the report is still in the state that write acted on, so the report page
+reloads the report after any failed resolve or reopen, and releases a held
+resolve once the report is past `processing`, or a held reopen once it is open
+again; the form then offers a fresh choice. Resolve and reopen each have
+**Discard**, and show the last failure beside **Retry**. A request native code refuses before sending, such as a reason too long for
 the relay's 4,096-byte body limit, is `notSent`, so the form stays editable. `request_id_conflict` is shown as an error and is never
 resent under a new ID without the user starting a new action.
 

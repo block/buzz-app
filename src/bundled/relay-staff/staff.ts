@@ -44,7 +44,14 @@ export function createStaff(
     for (const listener of listeners) listener();
   };
 
-  const discover = () => {
+  /** Latest discovery; an older one's answer is dropped. */
+  let discovering = 0;
+  /**
+   * Reads the relay's advertised admin host. `force` re-reads a relay already
+   * known, keeping its current host on screen until the new answer lands, so
+   * a changed or newly enabled admin API shows without a restart.
+   */
+  const discover = (force = false) => {
     const relay = target()?.relay ?? null;
     if (!backend.available || !relay) {
       if (discovery) {
@@ -53,19 +60,28 @@ export function createStaff(
       }
       return;
     }
-    if (discovery?.relay === relay && discovery.origin !== "error") return;
-    const current: Discovery = { relay, origin: "pending" };
-    discovery = current;
-    emit();
+    const known = discovery?.relay === relay && discovery.origin !== "error";
+    if (known && (!force || discovery?.origin === "pending")) return;
+    const attempt = ++discovering;
+    if (!known) {
+      discovery = { relay, origin: "pending" };
+      emit();
+    }
     backend.discover(relay).then(
-      (origin) => settle(current, origin),
-      () => settle(current, "error"),
+      (origin) => settle(attempt, relay, origin),
+      () => settle(attempt, relay, "error"),
     );
   };
-  const settle = (current: Discovery, origin: Discovery["origin"]) => {
-    if (discovery !== current) return;
-    discovery = { relay: current.relay, origin };
-    emit();
+  const settle = (
+    attempt: number,
+    relay: string,
+    origin: Discovery["origin"],
+  ) => {
+    if (attempt !== discovering || discovery?.relay !== relay) return;
+    if (discovery.origin !== origin) {
+      discovery = { relay, origin };
+      emit();
+    }
     check();
   };
 
@@ -143,10 +159,13 @@ export function createStaff(
       return known?.state === "authorized" && known.probe.role === "operator";
     },
     ensure() {
-      // Opening Settings re-checks every context, so a demotion shows.
-      if (retained++ === 0) checked.clear();
-      discover();
-      check();
+      // Opening Settings re-reads the admin host and re-checks every
+      // context, so a changed admin API or a demotion shows.
+      const opening = retained++ === 0;
+      if (opening) checked.clear();
+      discover(opening);
+      // On opening, the re-read's answer runs the check, for the host it names.
+      if (!opening) check();
       let released = false;
       return () => {
         if (released) return;
@@ -201,6 +220,9 @@ function toAccess(
   if (outcome.ok)
     return { state: "authorized", probe: outcome.value as ProbeDto };
   const failure = outcome.failure;
+  // A gateway or SSO page (even on a 401 or 403) is not the relay's answer.
+  if (failure.category === "intercepted")
+    return { state: "unreachable", failure };
   if (failure.authLost) return { state: "denied" };
   if (unsupported(failure)) return { state: "notAdminApi" };
   return { state: "unreachable", failure };

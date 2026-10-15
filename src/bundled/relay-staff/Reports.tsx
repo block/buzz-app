@@ -15,6 +15,7 @@ import type {
   ReportDetailDto,
   ReportDto,
   ReportResolution,
+  StaffOutcome,
   StaffRequest,
 } from "../../features/relay-staff/contract";
 import {
@@ -33,6 +34,7 @@ import {
   Loaded,
   NotConnected,
   Row,
+  SECRET_KEY_WARNING,
   time,
 } from "./ui";
 
@@ -44,9 +46,6 @@ const LABELS: Record<ReportAction, string> = {
   dismiss: "Dismiss",
   escalate: "Escalate",
 };
-
-export const SECRET_REASON =
-  "That looks like a private key. Never paste it here.";
 
 /** Where a reason is delivered, so staff know who reads it. */
 export function reasonAudience(action: ReportAction) {
@@ -230,15 +229,16 @@ function ReportDetail({
       return changed();
     }
     notify(describe(outcome.failure), "error");
-    // The relay records a failed enforcement before answering.
-    if (outcome.failure.code === "enforcement_failed") changed();
+    // A failure may follow a resolve that landed (a retry then conflicts) or
+    // a recorded enforcement failure: show the report as it is now.
+    changed();
   });
-  useWrite<ReopenRequest>(`reopen ${id}`, (outcome) => {
+  const reopen = useWrite<ReopenRequest>(`reopen ${id}`, (outcome) => {
     notify(
       outcome.ok ? "Report reopened" : describe(outcome.failure),
       outcome.ok ? "success" : "error",
     );
-    if (outcome.ok) changed();
+    changed();
   });
   useWrite<CancelRequest>(`cancel ${id}`, (outcome) => {
     notify(
@@ -249,21 +249,24 @@ function ReportDetail({
     );
     changed();
   });
-  // A held resolve whose report has moved on can only conflict: release it so
-  // a reopened report offers a fresh choice. While processing, the relay still
-  // replays the same request id, so the held write stays.
+  // The relay replays a request id only while the report is still in the
+  // state it acted on, so a held write whose report has moved on can only
+  // conflict, or answer without acting. Release it: a resolve once the report
+  // is past processing, a reopen once it is open again. Either form then
+  // offers a fresh choice.
   const status = detail.state === "ok" ? detail.value.status : null;
-  const { frozen, busy, discard } = resolve;
+  const active = status === "open" || status === "processing";
+  const releaseResolve =
+    !!resolve.frozen && !resolve.busy && !!status && !active;
+  const releaseReopen = !!reopen.frozen && !reopen.busy && active;
+  const { discard: discardResolve } = resolve;
+  const { discard: discardReopen } = reopen;
   useEffect(() => {
-    if (
-      frozen &&
-      !busy &&
-      status &&
-      status !== "open" &&
-      status !== "processing"
-    )
-      discard();
-  }, [frozen, busy, status, discard]);
+    if (releaseResolve) discardResolve();
+  }, [releaseResolve, discardResolve]);
+  useEffect(() => {
+    if (releaseReopen) discardReopen();
+  }, [releaseReopen, discardReopen]);
   return (
     <div className="flex flex-col gap-4">
       <Button size="sm" variant="ghost" onClick={onBack}>
@@ -465,7 +468,7 @@ function Resolve({ report }: { report: ReportDto }) {
       <Field
         label="Reason (optional)"
         description={shown ? reasonAudience(shown) : undefined}
-        error={secret ? SECRET_REASON : undefined}
+        error={secret ? SECRET_KEY_WARNING : undefined}
       >
         <Input
           disabled={locked}
@@ -498,6 +501,7 @@ function Resolve({ report }: { report: ReportDto }) {
               Discard
             </Button>
           )}
+          <WriteError write={write} />
         </>
       )}
     </div>
@@ -527,7 +531,7 @@ function Reopen({ report }: { report: ReportDto }) {
       </p>
       <Field
         label="Reopen reason (optional)"
-        error={secret ? SECRET_REASON : undefined}
+        error={secret ? SECRET_KEY_WARNING : undefined}
       >
         <Input
           disabled={write.frozen !== null}
@@ -543,6 +547,30 @@ function Reopen({ report }: { report: ReportDto }) {
       >
         {write.frozen ? "Retry reopen" : "Reopen report"}
       </Button>
+      {write.frozen && !write.busy && (
+        <Button size="sm" variant="ghost" onClick={write.discard}>
+          Discard
+        </Button>
+      )}
+      <WriteError write={write} />
     </div>
+  );
+}
+
+/** The last attempt's failure, beside its Retry, until another attempt starts. */
+function WriteError({
+  write,
+}: {
+  write: {
+    held: { outcome: StaffOutcome<unknown> | null } | null;
+    busy: boolean;
+  };
+}) {
+  const outcome = write.held?.outcome;
+  if (write.busy || !outcome || outcome.ok) return null;
+  return (
+    <p className="text-body-sm text-danger" role="alert">
+      {describe(outcome.failure)}
+    </p>
   );
 }

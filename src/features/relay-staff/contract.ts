@@ -193,7 +193,9 @@ export type ReportsQuery = {
 /**
  * Every admin call the app can make. Writes carry their full frozen intent,
  * including `requestId`: mint it once per operation and reuse it on every
- * retry of an ambiguous outcome.
+ * retry of an ambiguous outcome. The relay replays a report write's
+ * `requestId` only while the report is still in the state it acted on, so a
+ * held resolve or reopen is released once the report has moved on.
  */
 export type StaffRequest =
   | { route: "probe" }
@@ -280,7 +282,8 @@ export type StaffResults = {
  * - `unauthorized`: 401, the relay did not accept the signature or roster.
  *   After a sent write, only beta's own error envelope (with its
  *   `WWW-Authenticate: Nostr` challenge) counts; otherwise `ambiguous`.
- * - `forbidden`: 403 (not staff, read-only mode, staff target refused).
+ * - `forbidden`: 403 (not staff, read-only mode). A staff target is refused
+ *   with 409 `target_is_staff`, which is `rejected`.
  *   After a sent write, only beta's `forbidden` envelope counts.
  * - `unsupported`: a complete, zero-byte 404 or 405. The route is absent.
  * - `rejected`: any other complete 4xx (including coded 404, 409, 422). After

@@ -23,7 +23,7 @@ import {
 } from "../../features/relay-staff/contract";
 import { npubEncode } from "nostr-tools/nip19";
 import { PeopleScope, Person, PersonName, usePeople } from "./people";
-import { reasonAudience, SECRET_REASON } from "./Reports";
+import { reasonAudience } from "./Reports";
 import {
   describe,
   useRead,
@@ -39,8 +39,11 @@ import {
   eventIdInput,
   NotConnected,
   publicKeyInput,
+  SEARCH_DEBOUNCE_MS,
+  SECRET_KEY_WARNING,
   time,
   UNSUPPORTED_BROWSING,
+  useDebounced,
   useRetry,
   type CommunityRef,
 } from "./ui";
@@ -58,7 +61,6 @@ export const STAFF_COPY =
   "Relay staff can't be banned or timed out. Remove their staff role first.";
 export const UNSUPPORTED_ACTIONS =
   "This relay doesn't support direct actions yet.";
-const SECRET_SEARCH = "That's a secret key. Never paste it here.";
 
 export function directFailure(failure: StaffFailure) {
   if (failure.code === "target_is_staff") return STAFF_COPY;
@@ -115,7 +117,8 @@ type Controller = {
   setDraft(draft: Draft): void;
   frozen: Frozen | null;
   pending: boolean;
-  error: string | null;
+  /** The last failure, only on the form of the community it was sent to. */
+  errorFor(host: string): string | null;
   submitting: boolean;
   review(
     frozen: Omit<Frozen, "intent">,
@@ -164,7 +167,10 @@ export function DirectActionsProvider({ children }: { children: ReactNode }) {
   const frozen = held?.request ? { ...held.meta, intent: held.request } : null;
   const outcome = held?.outcome ?? null;
   const pending = outcome?.ok === true && unresolved(outcome);
-  const error = outcome?.ok === false ? directFailure(outcome.failure) : null;
+  const errorFor = (host: string) =>
+    outcome?.ok === false && held?.sent?.communityHost === host
+      ? directFailure(outcome.failure)
+      : null;
 
   const confirm = () => write.run();
 
@@ -173,7 +179,7 @@ export function DirectActionsProvider({ children }: { children: ReactNode }) {
     setDraft,
     frozen,
     pending,
-    error,
+    errorFor,
     submitting: write.busy,
     review(lookup, intent) {
       write.freeze(
@@ -212,7 +218,7 @@ function validate(draft: Draft, eventId: string | null): Problems {
     ...(draft.action === "timeout" && !(Number.isInteger(secs) && secs > 0)
       ? { secs: "Duration must be a whole number of seconds above zero." }
       : {}),
-    ...(containsSecretKey(draft.reason) ? { reason: SECRET_REASON } : {}),
+    ...(containsSecretKey(draft.reason) ? { reason: SECRET_KEY_WARNING } : {}),
   };
 }
 
@@ -375,7 +381,7 @@ export function ActionsSection({ community }: { community: CommunityRef }) {
       },
     );
   };
-  const error = c.error;
+  const error = c.errorFor(host);
 
   return (
     <div className="flex flex-col gap-3">
@@ -521,7 +527,9 @@ function ConfirmStep({ readOnly = false }: { readOnly?: boolean }) {
             disabled={!canMutate}
             onClick={c.confirm}
           >
-            {c.error || c.pending ? "Retry" : "Confirm"}
+            {c.errorFor(intent.communityHost) || c.pending
+              ? "Retry"
+              : "Confirm"}
           </Button>
         )}
         <Button
@@ -538,19 +546,6 @@ function ConfirmStep({ readOnly = false }: { readOnly?: boolean }) {
 }
 
 const label = (m: MemberSearchDto) => m.displayName || m.nip05 || null;
-
-/** How long typing must pause before a search request is signed and sent. */
-export const SEARCH_DEBOUNCE_MS = 250;
-
-/** `value` once it has stopped changing for `ms`. */
-function useDebounced<T>(value: T, ms: number) {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setSettled(value), ms);
-    return () => clearTimeout(timer);
-  }, [value, ms]);
-  return settled;
-}
 
 /**
  * Search the community's profiles (including former members), or paste an
@@ -650,7 +645,7 @@ export function MemberPicker({
           placeholder="Search by name, or paste an npub or hex key"
           error={
             secret
-              ? SECRET_SEARCH
+              ? SECRET_KEY_WARNING
               : searching && retry.failure
                 ? lookupFailure(retry.failure)
                 : error

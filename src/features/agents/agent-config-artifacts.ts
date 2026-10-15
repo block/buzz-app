@@ -214,15 +214,25 @@ export async function readCurrent(
   return heads;
 }
 
-/** The head by `d`, including a deletion. Empty, or anything but one revision
- * of `d`, decides nothing. */
+/** The head by `d` in `channel`, including a deletion. Empty, or anything but
+ * one revision of `d`, decides nothing. The relay leaves system channels out
+ * of any read whose `#h` does not name them (NIP-CL), members included. */
 export async function readHead(
   read: SnapshotRead,
+  channel: string,
   d: string,
   signal?: AbortSignal,
 ) {
   const events = await read(
-    [{ kinds: [ARTIFACT_KIND], "#d": [d], limit: 1, consistency: "strong" }],
+    [
+      {
+        kinds: [ARTIFACT_KIND],
+        "#h": [channel],
+        "#d": [d],
+        limit: 1,
+        consistency: "strong",
+      },
+    ],
     { signal },
   );
   const [event] = events;
@@ -311,7 +321,12 @@ export async function settle(
   event: RelayEvent,
   signal?: AbortSignal,
 ) {
-  const head = await readHead(read, tag(event, "d") ?? "", signal);
+  const head = await readHead(
+    read,
+    tag(event, "h") ?? "",
+    tag(event, "d") ?? "",
+    signal,
+  );
   if (!head) return { status: "accepted-unavailable" as const };
   return head.id === event.id
     ? { status: "current" as const, head }

@@ -24,6 +24,13 @@ import {
 
 const key = generateSecretKey();
 const channel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+/** A system config channel as the relay serves it: a filter whose `#h` does
+ * not name the channel reads nothing from it (NIP-CL), so a read that omits
+ * `#h` cannot pass by accident. */
+const systemChannelRead =
+  (events: readonly RelayEvent[]): SnapshotRead =>
+  async (filters) =>
+    filters.every((f) => f["#h"]?.includes(channel)) ? events : [];
 const sign = (t: ReturnType<typeof artifactTemplate>) =>
   finalizeEvent(t, key) as RelayEvent;
 async function instructions(text: string, prev?: string) {
@@ -238,10 +245,37 @@ describe("snapshot reads", () => {
       created_at: b.created_at + 100,
     });
     const { d } = expected;
-    expect(await readHead(async () => [b], d)).toBe(b);
-    expect(await readHead(async () => [b, old], d)).toBeUndefined();
-    expect(await readHead(async () => [old, b], d)).toBeUndefined();
-    expect(await readHead(async () => [b], "other")).toBeUndefined();
+    const head = (events: RelayEvent[], id = d) =>
+      readHead(systemChannelRead(events), channel, id);
+    expect(await head([b])).toBe(b);
+    expect(await head([b, old])).toBeUndefined();
+    expect(await head([old, b])).toBeUndefined();
+    expect(await head([b], "other")).toBeUndefined();
+  });
+
+  it("names the system channel in #h beside #d, so the relay returns the head", async () => {
+    const { expected, event } = await instructions("A");
+    const sent: unknown[] = [];
+    const read = systemChannelRead([event]);
+    expect(
+      await readHead(
+        async (filters, options) => {
+          sent.push(...filters);
+          return read(filters, options);
+        },
+        channel,
+        expected.d,
+      ),
+    ).toBe(event);
+    expect(sent).toEqual([
+      {
+        kinds: [45010],
+        "#h": [channel],
+        "#d": [expected.d],
+        limit: 1,
+        consistency: "strong",
+      },
+    ]);
   });
 });
 
@@ -354,10 +388,8 @@ describe("delivery", () => {
   it("never installs an accepted replay that is not the head", async () => {
     const { event: older } = await instructions("old");
     const { event: newer } = await instructions("new", older.id);
-    const reads =
-      (head?: RelayEvent): SnapshotRead =>
-      async () =>
-        head ? [head] : [];
+    const reads = (head?: RelayEvent): SnapshotRead =>
+      systemChannelRead(head ? [head] : []);
     expect(await settle(reads(older), older)).toMatchObject({
       status: "current",
     });

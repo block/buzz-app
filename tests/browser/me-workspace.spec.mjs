@@ -224,6 +224,7 @@ test("Me hides the empty pane launcher until content opens it", async ({
 // Reading needs real focus inside the chat; a pointer selection leaves it on the row.
 test.describe("reading", () => {
   test.use({ readState: true });
+  const bold = (row) => row.locator('[data-channel-unread-title="true"]');
   test("Me reads a chat opened from the sidebar, so it stays unbolded after leaving", async ({
     page,
     app,
@@ -235,7 +236,6 @@ test.describe("reading", () => {
     });
     const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
     const beta = sidebar.locator(`[data-me-channel-id="${other}"]`);
-    const bold = (row) => row.locator('[data-channel-unread-title="true"]');
     // Startup shows Alpha in Multiplayer first, so read Beta, which only Solo shows.
     await expect(bold(beta)).toHaveCount(1);
     await beta.click();
@@ -248,6 +248,51 @@ test.describe("reading", () => {
     await alpha.click();
     // Unselected, Beta's row shows its saved read state rather than selection.
     await expect(alpha).toHaveAttribute("aria-current", "page");
+    await expect(bold(beta)).toHaveCount(0);
+    expect(app.report.unexpected).toEqual([]);
+  });
+
+  // Hover opens the row's activity preview; clicking keeps it open, so focus
+  // starts on a trigger with an open popup.
+  test("Me focuses and reads a chat clicked while its activity preview is open", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Me");
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
+    const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
+    const beta = sidebar.locator(`[data-me-channel-id="${other}"]`);
+    await alpha.click();
+    await expect(bold(beta)).toHaveCount(1);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    app.observer(
+      {
+        kind: "turn_liveness",
+        seq: 1,
+        timestamp: new Date().toISOString(),
+        channelId: other,
+        sessionId: "S",
+        turnId: "preview-focus",
+      },
+      generateSecretKey(),
+    );
+    await expect(
+      beta.getByRole("img", { name: /working in Beta$/ }),
+    ).toBeVisible();
+    await beta.hover();
+    await expect(
+      page.getByRole("dialog", { name: "Activity in Beta", exact: true }),
+    ).toBeVisible();
+    await beta.click();
+    await expect(beta).toHaveAttribute("aria-current", "page");
+    await expect(
+      page.getByRole("textbox", { name: "Message your agents", exact: true }),
+    ).toBeFocused();
     await expect(bold(beta)).toHaveCount(0);
     expect(app.report.unexpected).toEqual([]);
   });

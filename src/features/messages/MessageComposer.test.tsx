@@ -626,6 +626,20 @@ it.each([
   }
 });
 
+it("takes focus from a row whose hover preview is open when the conversation mounts", () => {
+  const row = document.createElement("button");
+  row.setAttribute("data-popup-open", "");
+  row.setAttribute("data-popup-preview", "");
+  document.body.append(row);
+  try {
+    row.focus();
+    const h = mount({ autoFocus: true });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    row.remove();
+  }
+});
+
 it("restores the draft end through StrictMode replay without resetting a deliberate selection on updates", () => {
   writeView("scope", "draft:channel", "Saved draft");
   const h = mount({ autoFocus: true });

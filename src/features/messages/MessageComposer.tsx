@@ -430,9 +430,10 @@ function Composer({
       if (!editor || editor.closest("[inert]")) return;
       // A conversation can finish loading behind an already-focused dialog,
       // menu, or open popup trigger. Its default focus must not interrupt that
-      // explicit owner: moving focus away also dismisses non-modal menus.
+      // explicit owner: moving focus away also dismisses non-modal menus. A
+      // hover preview is transient and owns no focus.
       const owner = document.activeElement?.closest(
-        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]',
+        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
       );
       if (owner && !owner.contains(editor)) return;
       const end = editor.value.length;

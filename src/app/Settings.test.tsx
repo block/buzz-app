@@ -235,10 +235,10 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
     within(content)
       .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent),
-  ).toEqual(["Communication", "Agents", "Other"]);
+  ).toEqual(["Communication3 plugins", "Agents1 plugins", "Other1 plugins"]);
   const communication = within(content)
     .getByRole("heading", {
-      name: "Communication",
+      name: /^Communication/,
     })
     .closest("section");
   expect(communication).not.toBeNull();
@@ -273,7 +273,7 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
   expect(content).toHaveTextContent("Run local Codex coding agents in Buzz.");
 
   const other = within(content)
-    .getByRole("heading", { name: "Other" })
+    .getByRole("heading", { name: /^Other/ })
     .closest("section");
   expect(other).not.toBeNull();
   expect(within(other as HTMLElement).getByText("Invoices")).toBeVisible();
@@ -303,7 +303,7 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
       within(content)
         .getAllByRole("heading", { level: 3 })
         .map((heading) => heading.textContent),
-    ).toEqual(["Communication", "Agents"]);
+    ).toEqual(["Communication2 plugins", "Agents1 plugins"]);
     expect(
       within(content).getByRole("switch", { name: "Enable Voice Notes" }),
     ).toBeEnabled();

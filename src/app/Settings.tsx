@@ -368,7 +368,15 @@ export function Settings({
                       >
                         <InlineHeader
                           id={`plugin-category-${group.id}`}
-                          title={group.label}
+                          title={
+                            <span className={styles.pluginCategoryTitle}>
+                              <span>{group.label}</span>
+                              <span className={styles.pluginCount}>
+                                {group.plugins.length}
+                                <span className="sr-only"> plugins</span>
+                              </span>
+                            </span>
+                          }
                         />
                         <SettingsGroup>
                           {group.plugins.map((plugin) => {

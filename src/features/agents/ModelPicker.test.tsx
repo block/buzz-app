@@ -289,22 +289,33 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
   ).toHaveAttribute("aria-selected", "true");
 });
 
-it("keeps compact card values readable with the inherited source in title and options", async () => {
+it("shows inherited defaults on compact cards and follows updated defaults", async () => {
   const user = userEvent.setup();
-  render(
-    <ModelPicker
-      compact
-      appearance="subtle"
-      models={[{ id: "gpt-6.1-sol", label: "GPT-6.1-Sol" }]}
-      value=""
-      defaultLabel="GPT-6.1-Sol"
-      onChange={vi.fn()}
-    />,
-  );
-  expect(control()).toHaveTextContent(/^GPT-6.1-Sol$/);
+  const onChange = vi.fn();
+  const props = {
+    compact: true,
+    appearance: "subtle" as const,
+    models: [
+      { id: "gpt-6.1-sol", label: "GPT-6.1-Sol" },
+      { id: "gpt-6.1-astra", label: "GPT-6.1-Astra" },
+    ],
+    value: "",
+    defaultLabel: "GPT-6.1-Sol",
+    onChange,
+  };
+  const view = render(<ModelPicker {...props} />);
+  expect(control()).toHaveTextContent(/^Default · GPT-6.1-Sol$/);
   expect(screen.getByTitle("Default · GPT-6.1-Sol")).toBeVisible();
   await user.click(control());
   expect(
     await screen.findByRole("option", { name: "Default · GPT-6.1-Sol" }),
   ).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Escape}");
+
+  view.rerender(<ModelPicker {...props} defaultLabel="GPT-6.1-Astra" />);
+  expect(control()).toHaveTextContent(/^Default · GPT-6.1-Astra$/);
+  expect(onChange).not.toHaveBeenCalled();
+
+  view.rerender(<ModelPicker {...props} value="gpt-6.1-sol" />);
+  expect(control()).toHaveTextContent(/^GPT-6.1-Sol$/);
 });

@@ -173,14 +173,7 @@ export function ModelPicker({
         <Select
           label="Model"
           value={selected.id}
-          // Subtle card chips keep the model readable at the grid's minimum width.
-          valueLabel={
-            loading
-              ? "Loading models…"
-              : compact && appearance === "subtle"
-                ? selected.label
-                : selectedLabel
-          }
+          valueLabel={loading ? "Loading models…" : selectedLabel}
           valueTitle={loading ? "Loading models…" : selectedLabel}
           leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
           variant={compact ? "compact" : "preference"}

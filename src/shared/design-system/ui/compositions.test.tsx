@@ -459,8 +459,8 @@ test("middle-click closes only closable tabs and cancels its default action", ()
       ]}
     />,
   );
-  const click = (target: HTMLElement, button: number) => {
-    const event = new MouseEvent("auxclick", {
+  const mouse = (type: string, target: HTMLElement, button: number) => {
+    const event = new MouseEvent(type, {
       bubbles: true,
       cancelable: true,
       button,
@@ -469,15 +469,26 @@ test("middle-click closes only closable tabs and cancels its default action", ()
     return event;
   };
   expect(
-    click(screen.getByRole("tab", { name: "Thread" }), 1).defaultPrevented,
+    mouse("mousedown", screen.getByRole("tab", { name: "Thread" }), 1)
+      .defaultPrevented,
   ).toBe(false);
   expect(
-    click(screen.getByRole("tab", { name: "Ada" }), 2).defaultPrevented,
+    mouse("mousedown", screen.getByRole("tab", { name: "Ada" }), 2)
+      .defaultPrevented,
   ).toBe(false);
-  expect(close).not.toHaveBeenCalled();
   expect(
-    click(screen.getByRole("tab", { name: "Ada" }), 1).defaultPrevented,
+    mouse("mousedown", screen.getByRole("tab", { name: "Ada" }), 0)
+      .defaultPrevented,
+  ).toBe(false);
+  expect(
+    mouse("mousedown", screen.getByRole("tab", { name: "Ada" }), 1)
+      .defaultPrevented,
   ).toBe(true);
+  expect(close).not.toHaveBeenCalled();
+  mouse("auxclick", screen.getByRole("tab", { name: "Thread" }), 1);
+  mouse("auxclick", screen.getByRole("tab", { name: "Ada" }), 2);
+  expect(close).not.toHaveBeenCalled();
+  mouse("auxclick", screen.getByRole("tab", { name: "Ada" }), 1);
   expect(close).toHaveBeenCalledOnce();
   expect(select).not.toHaveBeenCalled();
 });

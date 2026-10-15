@@ -38,9 +38,16 @@ test("middle-click closes a content tab without selecting it", async ({
   await expect(settings).toHaveAttribute("aria-selected", "true");
   await beta.click({ button: "right" });
   await expect(beta).toBeVisible();
+  const draft = main.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await draft.fill("Keep this draft");
   await beta.click({ button: "middle" });
   await expect(beta).toHaveCount(0);
-  await expect(settings).toBeFocused();
+  await expect(settings).toHaveAttribute("aria-selected", "true");
+  await expect(draft).toBeFocused();
+  await expect(draft).toHaveText("Keep this draft");
   await settings.click({ button: "middle" });
   await expect(workspace).toHaveCount(0);
   await expect(

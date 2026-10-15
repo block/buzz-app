@@ -2335,7 +2335,8 @@ export function relayBrokerPlugin({
               ) ||
               typeof filters.query !== "string" ||
               !filters.query.trim() ||
-              filters.query.length > 100 ||
+              // The relay counts code points in the trimmed query.
+              [...filters.query.trim()].length > 100 ||
               !Number.isSafeInteger(filters.limit) ||
               filters.limit < 1 ||
               filters.limit > 100 ||

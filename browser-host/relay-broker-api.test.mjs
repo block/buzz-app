@@ -553,9 +553,17 @@ test("profile search forwards only the name-search shape to the relay endpoint, 
     status = 404;
     expect((await h.post("profile-search", body)).status).toBe(404);
 
+    // The limit counts code points: 100 astral characters are 200 UTF-16
+    // units, and surrounding whitespace does not count.
+    status = 200;
+    const astral = { query: ` ${"𠮷".repeat(100)} `, limit: 1 };
+    expect((await h.post("profile-search", astral)).status).toBe(200);
+    expect(h.calls[2]).toMatchObject({ body: astral });
+
     for (const rejected of [
       { query: "", limit: 1 },
       { query: "x".repeat(101), limit: 1 },
+      { query: "𠮷".repeat(101), limit: 1 },
       { query: "wes", limit: 0 },
       { query: "wes", limit: 101 },
       { query: "wes", limit: 1, search_mode: "prefix" },
@@ -564,7 +572,7 @@ test("profile search forwards only the name-search shape to the relay endpoint, 
       { query: "wes", limit: 1, page: 1.5 },
     ])
       expect((await h.post("profile-search", rejected)).status).toBe(400);
-    expect(h.calls).toHaveLength(2);
+    expect(h.calls).toHaveLength(3);
   } finally {
     await h.close();
   }

@@ -45,6 +45,7 @@ import {
   CopyIcon,
   GearIcon,
 } from "../../shared/design-system/icons";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { SessionListItem } from "./SessionsWorkspace";
 import styles from "./SessionsWorkspace.module.css";
 import channelStyles from "../channels/Channels.module.css";
@@ -59,7 +60,10 @@ export function SessionSections({
   personal = false,
   onShared,
   visit,
+  header,
 }: {
+  /** Shown above the new-item actions, such as the sidebar's brand mark. */
+  header?: ReactNode;
   personal?: boolean;
   onShared?: (id: string) => void;
   visit?: AbortSignal;
@@ -180,18 +184,23 @@ export function SessionSections({
     ) ?? [];
   return (
     <>
-      {onNew && (
-        <div className={`${styles.section} ${styles.sectionHeader}`}>
-          <button
-            type="button"
-            className={`${styles.sectionHeading} ${styles.newSessionHeading}`}
-            onClick={() => onNew(undefined)}
-          >
-            <span className={styles.sectionIcon} aria-hidden="true">
-              <PlusIcon size={15} strokeWidth={2.5} />
-            </span>
-            <span>{personal ? "New chat" : "New session"}</span>
-          </button>
+      {(header || onNew) && (
+        <div className={channelStyles.sidebarTop}>
+          {header}
+          {onNew && (
+            <div className={channelStyles.destinations}>
+              <NavigationItem
+                variant="row"
+                label={personal ? "New chat" : "New session"}
+                icon={
+                  <span className="shell-page-icon">
+                    <PlusIcon size={16} strokeWidth={2.5} />
+                  </span>
+                }
+                onClick={() => onNew(undefined)}
+              />
+            </div>
+          )}
         </div>
       )}
       {(snapshot.status === "idle" || snapshot.status === "loading") && (
@@ -211,9 +220,6 @@ export function SessionSections({
         <p role="alert" className={styles.listMessage}>
           {deleteError}
         </p>
-      )}
-      {personal && groups.length > 0 && (
-        <p className={styles.collectionHeading}>Projects</p>
       )}
       <ChannelSidebarDnd
         writable={preferences.writable}
@@ -235,8 +241,8 @@ export function SessionSections({
           .filter((section) => !personal || section.id || section.rows.length)
           .map((section) => (
             <DropSection
-              key={section.id}
               sectionKey={DROP + section.id}
+              key={section.id}
               className={styles.section}
               data-project={personal && section.id ? "" : undefined}
               open={!collapsed.includes(section.id)}
@@ -248,6 +254,20 @@ export function SessionSections({
                 title={section.name}
                 className={styles.sectionHeader}
                 enabled={!!section.id}
+                trailing={
+                  <div className={styles.sectionActions}>
+                    {onNew && (
+                      <IconButton
+                        data-session-row-action=""
+                        size="compact"
+                        aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                        title={personal ? "New chat" : "New session"}
+                        icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                        onClick={() => onNew(section.id || undefined)}
+                      />
+                    )}
+                  </div>
+                }
                 content={
                   <>
                     <MenuItem onClick={() => setSettingsFor(section)}>
@@ -285,39 +305,14 @@ export function SessionSections({
                   aria-expanded={!collapsed.includes(section.id)}
                   onClick={(event) => setAnimate(event.detail > 0)}
                 >
-                  {section.id && (
-                    <span className={styles.sectionIcon} aria-hidden="true">
-                      <FolderSimpleIcon
-                        className={styles.folderGlyph}
-                        size={15}
-                      />
-                      <span className={styles.chevronGlyph}>
-                        <CaretDownIcon size={15} strokeWidth={2.5} />
-                      </span>
-                    </span>
-                  )}
-                  <span>{section.name}</span>
-                  {!section.id && (
-                    <span
-                      className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
-                      aria-hidden="true"
-                    >
-                      <CaretDownIcon size={15} strokeWidth={2.5} />
-                    </span>
-                  )}
+                  <span className={styles.sectionName}>{section.name}</span>
+                  <span
+                    className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
+                    aria-hidden="true"
+                  >
+                    <CaretDownIcon size={15} strokeWidth={2.5} />
+                  </span>
                 </Collapsible.Trigger>
-                <div className={styles.sectionActions}>
-                  {onNew && section.id && (
-                    <IconButton
-                      data-session-row-action=""
-                      size="compact"
-                      aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
-                      title={personal ? "New chat" : "New session"}
-                      icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                      onClick={() => onNew(section.id || undefined)}
-                    />
-                  )}
-                </div>
               </SessionActionsMenu>
               <Collapsible.Panel className={styles.sectionPanel}>
                 {section.rows.map((item) => (
@@ -445,13 +440,29 @@ export function SessionSections({
                     </DraggableChannel>
                   </SessionActionsMenu>
                 ))}
-                {!section.rows.length && section.id && (
-                  <p className={styles.listMessage}>
-                    {personal
-                      ? "No chats in this project."
-                      : "No sessions in this section."}
-                  </p>
-                )}
+                {!section.rows.length &&
+                  section.id &&
+                  (onNew ? (
+                    // An empty project offers its way out instead of an empty state.
+                    <NavigationItem
+                      variant="row"
+                      label={personal ? "New chat" : "New session"}
+                      aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                      title={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                      icon={
+                        <span className="shell-page-icon">
+                          <PlusIcon size={16} strokeWidth={2.5} />
+                        </span>
+                      }
+                      onClick={() => onNew(section.id)}
+                    />
+                  ) : (
+                    <p className={styles.listMessage}>
+                      {personal
+                        ? "No chats in this project."
+                        : "No sessions in this section."}
+                    </p>
+                  ))}
               </Collapsible.Panel>
             </DropSection>
           ))}
@@ -656,6 +667,7 @@ function SessionActionsMenu({
   children,
   content,
   enabled = true,
+  trailing,
 }: {
   id: string;
   title: string;
@@ -663,6 +675,8 @@ function SessionActionsMenu({
   children: ReactNode;
   content: ReactNode;
   enabled?: boolean;
+  /** Follows the overflow action, preserving header action keyboard order. */
+  trailing?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
@@ -670,7 +684,13 @@ function SessionActionsMenu({
     document.querySelector<HTMLElement>(
       `[data-session-menu-id="${id}"] button`,
     ) ?? false;
-  if (!enabled) return <div className={className}>{children}</div>;
+  if (!enabled)
+    return (
+      <div className={className}>
+        {children}
+        {trailing}
+      </div>
+    );
   return (
     <ContextMenuRoot
       open={open}
@@ -701,6 +721,7 @@ function SessionActionsMenu({
                 {...props}
                 data-session-row-action=""
                 size="compact"
+                data-session-overflow-action=""
                 aria-label={`Actions for ${title}`}
                 icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
               />
@@ -714,6 +735,7 @@ function SessionActionsMenu({
             {content}
           </MenuPopup>
         </MenuRoot>
+        {trailing}
       </ContextMenuTrigger>
       <MenuPopup
         aria-label={`Actions for ${title}`}

@@ -251,7 +251,7 @@ describe("GooseRuntime", () => {
     const { deliver, fake, placement, published } = setup();
     placement.state = { status: "error", error: "Recipe read failed" };
     await expect(deliver(message("1", "@Gander hi"))).rejects.toThrow(
-      "Couldn't read your Me chats to tell where to answer (Recipe read failed). Try again.",
+      "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
     );
     expect(placement.refresh).toHaveBeenCalledOnce();
     expect(fake.geese).toEqual([]);

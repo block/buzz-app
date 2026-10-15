@@ -235,7 +235,7 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
     within(content)
       .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent),
-  ).toEqual(["Communication3 plugins", "Agents1 plugins", "Other1 plugins"]);
+  ).toEqual(["Communication3 plugins", "Agents1 plugin", "Other1 plugin"]);
   const communication = within(content)
     .getByRole("heading", {
       name: /^Communication/,

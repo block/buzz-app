@@ -350,7 +350,11 @@ export function Settings({
                               <span>{group.label}</span>
                               <span className={styles.pluginCount}>
                                 {group.plugins.length}
-                                <span className="sr-only"> plugins</span>
+                                <span className="sr-only">
+                                  {group.plugins.length === 1
+                                    ? " plugin"
+                                    : " plugins"}
+                                </span>
                               </span>
                             </span>
                           }

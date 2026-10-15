@@ -1386,7 +1386,10 @@ function Composer({
   );
   const renderLeadingTools = (tools: ReactNode) => (
     <>
-      <div className={styles.composerLeadingTools}>
+      <div
+        className={styles.composerLeadingTools}
+        data-recipients={!!value.recipients.length || undefined}
+      >
         {tools}
         {!!value.recipients.length && (
           <RecipientAvatars
@@ -1442,6 +1445,12 @@ function Composer({
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}
+        data-conversation-controls={
+          (active && !editing.target && !!trailingTool) || undefined
+        }
+        data-attachments={
+          (!editing.target && attachments.items.length > 0) || undefined
+        }
         onKeyDown={(event) => {
           if (
             editing.target &&

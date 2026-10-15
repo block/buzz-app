@@ -497,3 +497,27 @@ it.each(["Collapse sessions in Alpha", "Plan, session in Alpha"])(
     }
   },
 );
+
+it("marks the row for ordinary unread and working agents", () => {
+  const state = owner();
+  const view = render(
+    <ChannelSidebarItem {...itemProps(state.session, true)} />,
+  );
+  const row = () => document.querySelector("[data-channel-sidebar-row]");
+  const select = () => document.querySelector('[data-channel-id="alpha"]');
+  const badges = () =>
+    document.querySelector("[data-channel-indicators]")?.parentElement;
+  expect(select()).toHaveAttribute("data-working");
+  expect(badges()).toHaveAttribute("data-working");
+  expect(row()).not.toHaveAttribute("data-ordinary");
+  // Protected attention alone keeps its dot; only ordinary backlog bolds the label.
+  act(() => state.unread(1, 1));
+  expect(row()).not.toHaveAttribute("data-ordinary");
+  act(() => state.unread(2, 1));
+  expect(row()).toHaveAttribute("data-ordinary");
+  act(() => state.unread(0, 0));
+  expect(row()).not.toHaveAttribute("data-ordinary");
+  view.rerender(<ChannelSidebarItem {...itemProps(state.session, false)} />);
+  expect(select()).not.toHaveAttribute("data-working");
+  expect(badges()).not.toHaveAttribute("data-working");
+});

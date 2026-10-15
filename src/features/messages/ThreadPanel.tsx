@@ -1285,6 +1285,7 @@ function ThreadMessages({
         aria-label="Thread messages"
         aria-busy={positioning}
         data-positioning={positioning || undefined}
+        data-jump-visible={showJumpToLatest || undefined}
         onScroll={(event) => {
           if (!positioned.current) return;
           const element = event.currentTarget;

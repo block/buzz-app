@@ -9,17 +9,12 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import styles from "./Channels.module.css";
 
-export function UnreadBadge({
-  session,
-  channelId,
-  dm = false,
-  label,
-}: {
-  session: RelaySession;
-  channelId: string;
-  dm?: boolean;
-  label?: ReactNode;
-}) {
+/** Unread evidence for one channel; the sidebar row and its badge share it. */
+export function useUnreadState(
+  session: RelaySession,
+  channelId: string,
+  dm: boolean,
+) {
   const target = useMemo(
     () => ({ kind: "channel" as const, channelId }),
     [channelId],
@@ -55,6 +50,22 @@ export function UnreadBadge({
     manual ||
     (dm ? (count ?? 0) > 0 : (count ?? 0) > (snapshot.attentionCount ?? 0));
   const threadCount = activity.items?.length ?? 0;
+  return { snapshot, activity, count, manual, unread, ordinary, threadCount };
+}
+
+export function UnreadBadge({
+  session,
+  channelId,
+  dm = false,
+  label,
+}: {
+  session: RelaySession;
+  channelId: string;
+  dm?: boolean;
+  label?: ReactNode;
+}) {
+  const { snapshot, activity, count, manual, unread, ordinary, threadCount } =
+    useUnreadState(session, channelId, dm);
   if (!unread && !threadCount && label === undefined) return null;
   const priority = dm || (snapshot.attentionCount ?? 0) > 0;
   const showUnreadDot = priority && threadCount === 0;

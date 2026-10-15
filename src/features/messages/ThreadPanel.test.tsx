@@ -838,10 +838,12 @@ it("transfers keyboard focus to the thread history before removing the jump butt
   h.render();
   h.scroll(500);
   const jump = screen.getByRole("button", { name: "Jump to latest" });
+  expect(h.element).toHaveAttribute("data-jump-visible");
   jump.focus();
   fireEvent.click(jump);
   expect(h.element).toHaveFocus();
   expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
+  expect(h.element).not.toHaveAttribute("data-jump-visible");
 });
 
 it("routes media in replies through the resolved root review workspace", () => {

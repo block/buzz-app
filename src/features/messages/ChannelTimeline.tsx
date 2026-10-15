@@ -745,6 +745,7 @@ function Timeline({
       className={styles.feed}
       data-channel-timeline={channelId}
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
+      data-jump-visible={showJumpToLatest || undefined}
       onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;

@@ -6882,3 +6882,36 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   expect(h.uploadCalls[0]?.file.name).toBe("draft-0.txt");
   expect(h.publish).not.toHaveBeenCalled();
 });
+
+it("marks the composer for conversation controls only while they render", () => {
+  const h = mount(
+    { trailingTool: <button type="button">Tool</button> },
+    undefined,
+    first.pubkey,
+  );
+  const form = () => h.container.querySelector("form");
+  expect(form()).toHaveAttribute("data-conversation-controls");
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(form()).toHaveAttribute("data-editing");
+  expect(form()).not.toHaveAttribute("data-conversation-controls");
+  h.unmount();
+});
+
+it("marks the leading tools while explicit recipients are shown", async () => {
+  const h = mount();
+  expect(h.container.querySelector("[data-recipients]")).toBeNull();
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  const region = screen.getByRole("region", { name: "Explicit mentions" });
+  expect(region.parentElement).toHaveAttribute("data-recipients");
+  h.unmount();
+});
+
+it("marks the composer with attachments only while items are listed", async () => {
+  const h = await mountUploadComposer();
+  expect(h.form()).not.toHaveAttribute("data-attachments");
+  attachByPaste(h.input(), attachmentFile("notes.txt"));
+  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.form()).not.toHaveAttribute("data-attachments"));
+});

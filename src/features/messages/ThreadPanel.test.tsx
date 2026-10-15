@@ -864,22 +864,26 @@ it("reserves the jump button's activity lane only for agents working in this thr
     });
   h.render();
   h.scroll(500);
-  const jump = screen
-    .getByRole("button", { name: "Jump to latest" })
-    .closest("[data-visible]");
-  expect(jump).not.toHaveAttribute("data-activity-lane");
+  const lane = () =>
+    screen
+      .getByRole("button", { name: "Jump to latest" })
+      .closest("[data-visible]");
+  const live = lane();
+  expect(live).not.toHaveAttribute("data-activity-lane");
   publish([{ pubkey: agent, channelId: "channel", threadRootId: row.id }]);
-  expect(jump).toHaveAttribute("data-activity-lane");
+  expect(live).toHaveAttribute("data-activity-lane");
   // Channel-level activity shows in the channel composer, not this thread's.
   publish([{ pubkey: agent, channelId: "channel" }]);
-  expect(jump).not.toHaveAttribute("data-activity-lane");
-  // A cached channel's composer mounts no TypingIndicator, so no lane.
+  expect(live).not.toHaveAttribute("data-activity-lane");
+  // A cached channel's composer mounts no TypingIndicator, so no lane. The
+  // gate flip swaps the button's component, so re-query after it.
   list = {
     status: "ready",
     channels: [{ id: "channel", name: "General", cached: true }],
   };
   publish([{ pubkey: agent, channelId: "channel", threadRootId: row.id }]);
-  expect(jump).not.toHaveAttribute("data-activity-lane");
+  expect(live).not.toBeInTheDocument();
+  expect(lane()).not.toHaveAttribute("data-activity-lane");
 });
 
 it("transfers keyboard focus to the thread history before removing the jump button", () => {

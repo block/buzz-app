@@ -410,14 +410,13 @@ export class AgentRunners {
       return CHAT_KINDS.includes(event.kind) && tagsAgent(event, agent.pubkey)
         ? [{ type: "mention", event }]
         : [];
-    // In a one-to-one DM the other member is talking to it, so no mention is
-    // needed unless the message names someone else instead. Only new messages:
-    // an edit p-tags just the recipients it adds, and a reaction is not
-    // conversation. A group DM still needs the mention.
+    // A one-to-one DM is always addressed to the other member, whoever else it
+    // names, so no mention is needed. Only new messages: an edit is not a new
+    // turn, and a reaction is not conversation. A group DM still needs the
+    // mention.
     if (
       event.kind === 9 &&
       event.pubkey !== agent.pubkey &&
-      !event.tags.some((tag) => tag[0] === "p") &&
       this.host.dm(agent, event)
     )
       return [{ type: "mention", event }];

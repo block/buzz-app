@@ -1550,14 +1550,13 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
   const auth = ["auth", viewer, "", "f".repeat(128)];
   emit({
     events: [
-      // Not conversation with it: a stream message, a group DM, DMs it is not
-      // known to be in, a message naming someone else, an edit, a reaction, its
-      // own message and a sibling agent's.
+      // Not conversation with it: a stream message, an unmentioned group DM,
+      // DMs it is not known to be in, an edit, a reaction, its own message and
+      // a sibling agent's.
       event("stream"),
       event("group", { tags: [["h", groupDm]] }),
       event("others", { tags: [["h", "dm-others"]] }),
       event("unknown", { tags: [["h", "dm-unknown"]] }),
-      inDm("elsewhere", { tags: [["p", other]] }),
       inDm("edit", { kind: 40003 }),
       inDm("like", { kind: 7, tags: [["e", "x".repeat(64)]] }),
       inDm("own", { pubkey: bot }),
@@ -1566,14 +1565,29 @@ it("wakes on an unmentioned message only in a one-to-one DM it is in", async () 
   });
   await settle();
   expect(run).not.toHaveBeenCalled();
+  // Naming someone else in a one-to-one DM still talks to the agent; a group
+  // DM wakes it only through the mention.
   emit({ events: [inDm("hello")] });
   emit({
     events: [inDm("more", { tags: [["e", "x".repeat(64), "", "reply"]] })],
   });
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  emit({ events: [inDm("about", { tags: [["p", other]] })] });
+  emit({
+    events: [
+      event("asked", {
+        tags: [
+          ["h", groupDm],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
   expect(run.mock.calls.map(([{ trigger }]) => trigger)).toMatchObject([
     { type: "mention", event: { id: "hello".padEnd(64, "0") } },
     { type: "mention", event: { id: "more".padEnd(64, "0") } },
+    { type: "mention", event: { id: "about".padEnd(64, "0") } },
+    { type: "mention", event: { id: "asked".padEnd(64, "0") } },
   ]);
 });
 

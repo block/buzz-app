@@ -223,15 +223,9 @@ function live(
 const same = (entry: Entry, next: Pick<Entry, "state" | "head">) =>
   entry.state === next.state && entry.head?.id === next.head?.id;
 
-/** One synced setting: free text, an agent folder (absolute or `~/…`), or one
- * of a fixed set. */
-export type SettingRule = "string" | "workspace" | readonly string[];
+/** One synced setting: free text or one of a fixed set. */
+export type SettingRule = "string" | readonly string[];
 export type SettingsSchema = Readonly<Record<string, SettingRule>>;
-
-const workspace = (value: string) =>
-  /^~(\/|$)/.test(value) ||
-  value.startsWith("/") ||
-  /^[A-Za-z]:[\\/]/.test(value);
 
 /** Strictly checks a settings object against a plugin's allowlist: unknown
  * keys, wrong types and out-of-set values are errors, never defaulted. */
@@ -242,8 +236,6 @@ export function settingsProblem(schema: SettingsSchema, value: unknown) {
     const rule = Object.hasOwn(schema, name) ? schema[name] : undefined;
     if (!rule) return `Unknown setting "${name}"`;
     if (typeof setting !== "string") return `Setting "${name}" is not text`;
-    if (rule === "workspace" && !workspace(setting.trim()))
-      return `Setting "${name}" is not an absolute or ~/ folder`;
     if (Array.isArray(rule) && !rule.includes(setting))
       return `Setting "${name}" has an unsupported value`;
   }

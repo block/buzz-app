@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { settingsProblem } from "../../features/agents/agent-config";
+import {
+  settingsProblem,
+  syncedSettings,
+} from "../../features/agents/agent-config";
 import {
   syncedSettings as claude,
   syncedSettingsSchema as claudeSchema,
@@ -15,7 +18,7 @@ import {
   withSyncedSettings,
 } from "./settings";
 
-it("syncs every agent setting except instructions, for each local agent type", () => {
+it("syncs every agent setting except instructions and the device-local folder", () => {
   const base = {
     model: "m",
     effort: "high",
@@ -26,20 +29,17 @@ it("syncs every agent setting except instructions, for each local agent type", (
   expect(claude(base)).toEqual({
     model: "m",
     effort: "high",
-    workspace: "~/w",
     scope: "thread",
   });
   expect(codex(base)).toEqual({
     model: "m",
     effort: "high",
-    workspace: "~/w",
     scope: "thread",
   });
   expect(goose({ ...gooseDefaults, provider: "p", instructions: "x" })).toEqual(
     {
       model: "",
       provider: "p",
-      workspace: "~/.buzz",
       scope: "thread",
     },
   );
@@ -59,5 +59,22 @@ it("applies only allowlisted synced fields over local config", () => {
       instructions: "theirs",
       workspace: "/srv",
     }),
-  ).toEqual({ ...local, model: "m2", workspace: "/srv" });
+  ).toEqual({ ...local, model: "m2" });
+});
+
+it("rejects a remote workspace setting as an unknown key for every agent type", () => {
+  for (const [agentType, schema] of [
+    ["claude-code", claudeSchema],
+    ["codex", codexSchema],
+    ["goose", gooseSchema],
+  ] as const) {
+    const content = JSON.stringify({
+      version: 1,
+      agentType,
+      settings: { workspace: "~/w" },
+    });
+    expect(syncedSettings(content, agentType, schema)).toEqual({
+      problem: 'Unknown setting "workspace"',
+    });
+  }
 });

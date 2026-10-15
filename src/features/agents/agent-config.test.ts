@@ -196,7 +196,6 @@ describe("persistence", () => {
 describe("synced settings", () => {
   const schema = {
     model: "string",
-    workspace: "workspace",
     scope: ["thread", "channel"],
   } as const;
 
@@ -204,13 +203,12 @@ describe("synced settings", () => {
     expect(
       settingsProblem(schema, {
         model: "m",
-        workspace: "~/x",
         scope: "channel",
       }),
     ).toBeUndefined();
   });
 
-  it("rejects unknown keys, wrong types, unsupported values and relative folders", () => {
+  it("rejects unknown keys, wrong types, and unsupported values", () => {
     expect(settingsProblem(schema, { token: "s" })).toMatch(/Unknown/);
     for (const name of ["constructor", "toString", "__proto__"])
       expect(
@@ -218,7 +216,6 @@ describe("synced settings", () => {
       ).toMatch(/Unknown/);
     expect(settingsProblem(schema, { model: 1 })).toMatch(/not text/);
     expect(settingsProblem(schema, { scope: "dm" })).toMatch(/unsupported/);
-    expect(settingsProblem(schema, { workspace: "work/x" })).toMatch(/folder/);
   });
 
   it("treats settings for another agent type as invalid", () => {

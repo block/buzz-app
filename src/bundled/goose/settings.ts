@@ -10,7 +10,6 @@ import type { Config } from "./runtime";
 export const syncedSettingsSchema = {
   model: "string",
   provider: "string",
-  workspace: "workspace",
   scope: ["thread", "channel"],
 } as const satisfies SettingsSchema;
 

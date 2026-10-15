@@ -16,8 +16,10 @@ const setup = (
     pool = new ServerPool(),
     serve,
     silent,
+    onChange,
   }: Readonly<{
     pool?: ServerPool;
+    onChange?: () => void;
     /** Wraps the fake's `serve`. */
     serve?: (serve: ServeMcp) => ServeMcp;
     silent?: readonly string[];
@@ -39,6 +41,7 @@ const setup = (
     tools,
     serve: serve ? serve(fake.serve) : fake.serve,
     pool,
+    ...(onChange && { onChange }),
     launch: async () => settings,
     processFingerprint: () =>
       JSON.stringify([settings.workspace, settings.env]),
@@ -59,6 +62,32 @@ const setup = (
 afterEach(() => {
   vi.useRealTimers();
 });
+
+/** A host that, like the app's, counts a server until its close finishes and
+ * refuses one past `cap`. Closes finish once `release` is called. */
+const host = (cap: number) => {
+  let running = 0;
+  let release!: () => void;
+  const stopping = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    release: () => release(),
+    serve:
+      (serve: ServeMcp): ServeMcp =>
+      async (handler) => {
+        if (running >= cap) throw "Too many MCP servers are running";
+        running++;
+        const server = await serve(handler);
+        const closed = server.closed
+          .then(() => stopping)
+          .then(() => {
+            running--;
+          });
+        return { ...server, closed };
+      },
+  };
+};
 
 describe("AgentSessions", () => {
   it("serves each conversation from its own session in one process", async () => {
@@ -426,23 +455,48 @@ describe("AgentSessions", () => {
     await working;
   });
 
-  it("makes room and tries once more when the host has no server free", async () => {
-    let full = false;
+  it("never closes a new session to make room before its first message is sent", async () => {
+    const pool = new ServerPool(1);
+    let evicted: unknown;
     const { fake, sessions } = setup({}, false, {
-      serve: (serve) => async (handler) => {
-        if (full) {
-          full = false;
-          throw "Too many MCP servers are running";
-        }
-        return serve(handler);
+      pool,
+      // Another conversation needs a server the moment this session opens.
+      onChange: () => {
+        evicted ??= pool.evict() ?? null;
       },
     });
-    await sessions.deliver("a", "one", 1);
-    full = true;
-    await expect(sessions.deliver("b", "two", 2)).resolves.toEqual({
+    await expect(sessions.deliver("a", "one", 1)).resolves.toEqual({
       ok: true,
     });
+    expect(evicted).toBeNull();
+    expect(fake.geese[0]?.turns.map((turn) => turn.text)).toEqual(["one"]);
+  });
+
+  it("asks for a server only once the session closed to make room has stopped", async () => {
+    const pool = new ServerPool(1);
+    const { release, serve } = host(1);
+    const { fake, sessions } = setup({}, false, { pool, serve });
+    await sessions.deliver("a", "one", 1);
+    const second = sessions.deliver("b", "two", 2);
+    await flush(30);
     expect(fake.geese[0]?.closed).toEqual(["session-1"]);
+    expect(fake.servers).toHaveLength(1);
+    release();
+    await expect(second).resolves.toEqual({ ok: true });
+    expect(sessions.snapshot().map((live) => live.key)).toEqual(["b"]);
+  });
+
+  it("makes room and tries once more when the host has no server free", async () => {
+    // Other plugins hold the host's other servers.
+    const { release, serve } = host(1);
+    const { fake, sessions } = setup({}, false, { serve });
+    await sessions.deliver("a", "one", 1);
+    const second = sessions.deliver("b", "two", 2);
+    await flush(30);
+    expect(fake.geese[0]?.closed).toEqual(["session-1"]);
+    expect(fake.servers).toHaveLength(1);
+    release();
+    await expect(second).resolves.toEqual({ ok: true });
     expect(sessions.snapshot().map((live) => live.key)).toEqual(["b"]);
   });
 

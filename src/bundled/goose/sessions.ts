@@ -42,10 +42,17 @@ export class ServerPool {
     return this.slots.size;
   }
   /** Holds a server for `slot`, first closing idle sessions to keep below the
-   * limit. Busy ones are never closed, so it can go over. */
+   * limit. Busy ones are never closed, so it can go over. Resolves once the
+   * closed sessions' servers have stopped: the host counts them until then. */
   take(slot: Slot) {
-    while (this.slots.size >= this.limit) if (!this.evict()) break;
+    const evicted: Promise<unknown>[] = [];
+    while (this.slots.size >= this.limit) {
+      const stopped = this.evict();
+      if (!stopped) break;
+      evicted.push(stopped);
+    }
     this.slots.add(slot);
+    return Promise.all(evicted);
   }
   /** Marks `slot` as used now. */
   touch(slot: Slot) {
@@ -339,7 +346,7 @@ export class AgentSessions {
     const { pool } = this.options;
     // Busy until it is adopted as a conversation's.
     const slot: Slot = { idle: () => false, evict: async () => undefined };
-    pool.take(slot);
+    const room = pool.take(slot);
     const start = () =>
       process.goose.open({
         cwd: process.cwd,
@@ -348,6 +355,7 @@ export class AgentSessions {
       });
     let session: GooseSession;
     try {
+      await room;
       session = await start().catch(async (error: unknown) => {
         // Other plugins hold servers too: make room once, and try again.
         const room = /too many mcp servers/i.test(message(error))
@@ -434,7 +442,11 @@ export class AgentSessions {
   private adopt(key: string, live: Live) {
     this.had.add(key);
     this.live.set(key, live);
-    live.slot.idle = () => !live.session.busy && this.live.get(key) === live;
+    // Not idle while the message it opened for is still on its way to it.
+    live.slot.idle = () =>
+      !live.session.busy &&
+      this.live.get(key) === live &&
+      !this.opening.has(key);
     live.slot.evict = async () => {
       this.drop(key, live);
       await live.session.server?.closed;

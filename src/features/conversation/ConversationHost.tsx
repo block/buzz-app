@@ -10,8 +10,7 @@ import {
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { buzzLinkTarget } from "../navigation/buzz-links";
 import { PanelView } from "../panels/PanelView";
-import type { RegisteredPanel } from "../panels/service";
-import type { MessageLinkOrigin } from "../messages/MessageRow";
+import { panelOpening, type PanelOpening } from "../panels/service";
 import type { ThreadPanelProps } from "../messages/ThreadPanel";
 import { useConversationPresentation } from "./ConversationPresentation";
 import type { MediaReview } from "./Conversation";
@@ -37,13 +36,7 @@ type ConversationHostProps = Pick<
 
 /** At most one modal surface: opening a panel or a media review replaces the other. */
 type Overlay =
-  | {
-      panel: RegisteredPanel;
-      target: string;
-      /** The opening message's thread; replacements keep it, like Channels. */
-      origin?: MessageLinkOrigin | undefined;
-      media?: undefined;
-    }
+  | (PanelOpening & { media?: undefined })
   | {
       media: Pick<
         MediaReview,
@@ -99,7 +92,8 @@ export function ConversationHost({
     );
   };
   const canOpen = (target: string) => !!host.panels.resolve(target);
-  const open = (url: string, origin?: MessageLinkOrigin) => {
+  /** Replacements stay in the opening message's thread, like Channels. */
+  const open = (url: string, rootId?: string) => {
     if (!active()) return false;
     const target = buzzLinkTarget(url, { viewer, communityOrigin: relayUrl });
     if (target) {
@@ -107,20 +101,20 @@ export function ConversationHost({
       void host.navigation.open(target);
       return true;
     }
-    const panel = host.panels.resolve(url);
-    if (!panel) return false;
+    const next = panelOpening(host.panels, channelId, url, rootId);
+    if (!next) return false;
     trigger.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    setOverlay({ panel, target: url, origin });
+    setOverlay(next);
     return true;
   };
   return (
     <>
       {children(
         {
-          onOpenLink: open,
+          onOpenLink: (url, origin) => open(url, origin?.rootId),
           canOpenLink: canOpen,
           onOpenMediaReview: (
             messageId,
@@ -176,12 +170,12 @@ export function ConversationHost({
             }}
             context={{
               channelId,
-              ...(overlay.origin && { rootId: overlay.origin.rootId }),
+              ...(overlay.rootId && { rootId: overlay.rootId }),
               canOpen,
               open: (target) =>
                 shown.current === overlay &&
                 host.panels.snapshot().includes(overlay.panel) &&
-                open(target, overlay.origin),
+                open(target, overlay.rootId),
             }}
           />
         </Dialog>

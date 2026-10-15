@@ -58,7 +58,7 @@ import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
-import type { Panels } from "../../features/panels/service";
+import { panelOpening, type Panels } from "../../features/panels/service";
 import type { PagesReader } from "../../features/pages/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
@@ -1017,9 +1017,9 @@ function ChannelWorkspace({
           return true;
         }
       }
-      const candidate = panels.resolve(url);
-      const context = linkContext.current;
-      if (context.channelId && candidate) {
+      const { channelId, routedThread } = linkContext.current;
+      const next = channelId && panelOpening(panels, channelId, url, rootId);
+      if (next) {
         setSettings(undefined);
         panelTrigger.current =
           returnFocus ??
@@ -1027,16 +1027,8 @@ function ChannelWorkspace({
             ? document.activeElement
             : null);
         // Thread-origin details cover the live thread instead of retiring it.
-        if (!fromThread && context.routedThread) select(context.channelId);
-        open(
-          {
-            channelId: context.channelId,
-            ...(rootId && { rootId }),
-            panel: candidate,
-            target: url,
-          },
-          fromThread,
-        );
+        if (!fromThread && routedThread) select(channelId);
+        open(next, fromThread);
         return true;
       }
       return false;

@@ -167,6 +167,7 @@ function fixture(
       </nav>
     ),
     sidebarVisible = true,
+    meEnabled = false,
   ) => (
     <ToastProvider>
       <ChannelNavigationProvider relay={relay}>
@@ -184,6 +185,7 @@ function fixture(
               },
             }}
             sessionsEnabled={sessionsEnabled}
+            meEnabled={meEnabled}
           >
             {pages}
           </ChannelSidebar>
@@ -993,6 +995,48 @@ it("a sidebar remount does not resubmit or redirect pending work", async () => {
   expect(h.run).toHaveBeenCalledOnce();
   expect(h.navigator.open).not.toHaveBeenCalled();
 });
+
+// The actual mounted caller owns the Me/Message visibility boundary.
+it.each([true, false])(
+  "Me placement keeps sessions hidden but ordinary streams visible (enabled=%s)",
+  async (enabled) => {
+    const h = fixture();
+    const entries = [
+      {
+        eventId: "placement",
+        createdAt: 1,
+        record: {
+          version: 1 as const,
+          community: "https://relay.test",
+          deleted: false,
+          value: {
+            type: "groups" as const,
+            id: "me" as const,
+            groups: [],
+            assignments: {},
+            channels: ["beta"],
+          },
+        },
+      },
+    ];
+    const placement = {
+      ...h.session.mePlacement.snapshot(),
+      status: "ready" as const,
+      entries,
+    };
+    h.session.mePlacement = {
+      ...h.session.mePlacement,
+      snapshot: () => placement,
+    };
+    h.publish("beta", { channelType: "session", private: true });
+    render(h.view("alpha", true, undefined, true, enabled));
+    await screen.findByRole("button", { name: "gamma" });
+    expect(!!screen.queryByRole("button", { name: "beta" })).toBe(!enabled);
+    h.publish("beta", { channelType: "stream" });
+    expect(await screen.findByRole("button", { name: "beta" })).toBeVisible();
+    expect(h.navigator.open).not.toHaveBeenCalled();
+  },
+);
 
 it("moves a saved group from its menu, rolls back a failed save, and retries it", async () => {
   const data: SidebarPreferences = {

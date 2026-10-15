@@ -4,6 +4,9 @@ import { useEffect, useEffectEvent, useState, type RefObject } from "react";
 export function useRejectUnclaimedFileDrops() {
   useEffect(() => {
     const reject = (event: DragEvent) => {
+      const { target } = event;
+      // A native file input accepts its own drop.
+      if (target instanceof HTMLInputElement && target.type === "file") return;
       if (!event.dataTransfer?.types.includes("Files")) return;
       if (!event.defaultPrevented) event.dataTransfer.dropEffect = "none";
       event.preventDefault();

@@ -107,6 +107,20 @@ it("the app rejects file drops outside every drop zone, leaving other drags alon
   expect(drag(sidebar, "drop", false).event.defaultPrevented).toBe(false);
 });
 
+it("a native file input outside every drop zone still accepts its own drop", () => {
+  render(
+    <StrictMode>
+      <Composer enabled={false} attach={vi.fn()} />
+      <input type="file" aria-label="Attach image" />
+    </StrictMode>,
+  );
+  const input = screen.getByLabelText("Attach image");
+  const over = drag(input, "dragOver");
+  expect(over.event.defaultPrevented).toBe(false);
+  expect(over.transfer.dropEffect).toBe("uninitialized");
+  expect(drag(input, "drop").event.defaultPrevented).toBe(false);
+});
+
 it("an available composer claims the drop once and preserves the copy cursor", () => {
   const attach = vi.fn();
   render(

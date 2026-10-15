@@ -419,7 +419,7 @@ export function createTabs(
     const efforts = [
       {
         value: "",
-        label: `${codexDefaultEffortLabel("", selected)} · Default`,
+        label: `Recommended · ${codexDefaultEffortLabel("", selected)}`,
       },
       ...(draft.effort &&
       !selected?.supportedReasoningEfforts.some(
@@ -501,6 +501,7 @@ export function createTabs(
             variant="preference"
             value={draft.model}
             disabled={checking || !data}
+            valueLabel={checking ? "Loading models…" : undefined}
             groups={[
               {
                 label: "",
@@ -508,8 +509,8 @@ export function createTabs(
                   {
                     value: "",
                     label: nativeModel
-                      ? `Codex default (${nativeModel.displayName})`
-                      : "Codex default",
+                      ? `Recommended · ${nativeModel.displayName}`
+                      : "Recommended",
                     description: nativeModel
                       ? "Following Codex's recommendation"
                       : undefined,
@@ -535,9 +536,6 @@ export function createTabs(
           />
           <Select
             label="Default thinking"
-            valueLabel={
-              draft.effort ? undefined : codexDefaultEffortLabel("", selected)
-            }
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
@@ -820,7 +818,7 @@ export function createTabs(
     const efforts = [
       {
         value: "",
-        label: `${codexDefaultEffortLabel(effective.effort, selected)} · Default`,
+        label: `Default · ${codexDefaultEffortLabel(effective.effort, selected)}`,
       },
       ...(draft.effort &&
       !supported.some((effort) => effort.reasoningEffort === draft.effort)
@@ -891,11 +889,6 @@ export function createTabs(
           />
           <Select
             label="Thinking"
-            valueLabel={
-              draft.effort
-                ? undefined
-                : codexDefaultEffortLabel(effective.effort, selected)
-            }
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}

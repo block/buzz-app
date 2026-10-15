@@ -1,4 +1,5 @@
 import { AgentTabs } from "../agents/AgentTabs";
+import { ProviderDialog } from "../agents/ProviderDialog";
 import type {
   Agents,
   RegisteredAgentType,
@@ -110,7 +111,7 @@ function applied({
   version?: string;
   files?: Record<string, string>;
   /** Whether Claude lists its models when asked. */
-  catalog?: { listed: boolean };
+  catalog?: { listed: boolean; ready?: Promise<void> };
 } = {}) {
   let type: AgentType<Config> | undefined;
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
@@ -194,6 +195,7 @@ function applied({
           request?: { subtype?: string };
         };
         if (message.request?.subtype !== "initialize") return;
+        await catalog.ready;
         queueMicrotask(() =>
           options.onStdout?.(
             `${JSON.stringify({
@@ -462,9 +464,9 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
   await waitFor(() =>
-    expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Claude default (Opus 5.5)",
-    ),
+    expect(
+      screen.getByRole("combobox", { name: "Default model" }),
+    ).toHaveTextContent("Recommended · Opus 5.5"),
   );
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -481,23 +483,74 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   ).toBeInTheDocument();
 });
 
+it("loads provider models inside a disabled picker without a loading subtitle", async () => {
+  let finish!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const Provider = providerSetup(
+    installed({ catalog: { listed: true, ready } }).type,
+  );
+  render(<Provider onClose={vi.fn()} />);
+  try {
+    const picker = await screen.findByRole("combobox", {
+      name: "Default model",
+    });
+    await waitFor(() => expect(picker).toHaveTextContent("Loading models…"));
+    expect(picker).toBeDisabled();
+    expect(picker).toContainElement(screen.getByText("Loading models…"));
+    expect(
+      screen.queryByText("Loading Claude's models…"),
+    ).not.toBeInTheDocument();
+    await userEvent.setup().click(picker);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    await act(async () => finish());
+    await waitFor(() => expect(picker).toBeEnabled());
+    expect(screen.getByRole("combobox", { name: "Default model" })).toBe(
+      picker,
+    );
+    expect(picker).toHaveTextContent("Recommended · Opus 5.5");
+    expect(screen.queryByText("Loading models…")).not.toBeInTheDocument();
+  } finally {
+    finish();
+  }
+});
+
 it("saves a provider model default explicitly and leaves blank agent config inherited", async () => {
   const installedType = installed().type;
-  const Provider = providerSetup(installedType);
   const onClose = vi.fn();
-  render(<Provider onClose={onClose} />);
+  render(
+    <ProviderDialog
+      type={installedType as unknown as RegisteredAgentType}
+      finalFocus={{ current: null }}
+      onClose={onClose}
+    />,
+  );
   await waitFor(() =>
-    expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Claude default (Opus 5.5)",
-    ),
+    expect(
+      screen.getByRole("combobox", { name: "Default model" }),
+    ).toHaveTextContent("Recommended · Opus 5.5"),
   );
   const user = userEvent.setup();
   const defaultModel = screen.getByRole("combobox", { name: "Default model" });
-  expect(defaultModel).toHaveTextContent("Claude default (Opus 5.5)");
+  const cancel = screen.getByRole("button", { name: "Cancel" });
+  const saveDefaults = screen.getByRole("button", { name: "Save defaults" });
+  const footer = saveDefaults.closest(".buzz-dialog-actions");
+  expect(footer).not.toBeNull();
+  expect(footer).toContainElement(cancel);
+  expect(within(footer as HTMLElement).getAllByRole("button")).toEqual([
+    cancel,
+    saveDefaults,
+  ]);
+  expect(saveDefaults).toHaveAttribute(
+    "form",
+    defaultModel.closest("form")?.id,
+  );
+  expect(defaultModel).toHaveTextContent("Recommended · Opus 5.5");
   await user.click(defaultModel);
   expect(
     await screen.findByRole("option", {
-      name: "Claude default (Opus 5.5)",
+      name: "Recommended · Opus 5.5",
     }),
   ).toHaveAccessibleDescription("Following Claude Code's recommendation");
   // Every model Claude lists is offered, not only the aliases.
@@ -519,6 +572,27 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
     ),
   );
   expect(save).not.toHaveBeenCalled();
+});
+
+it("cancels a provider defaults draft without saving", async () => {
+  const type = installed().type;
+  const onClose = vi.fn();
+  render(
+    <ProviderDialog
+      type={type as unknown as RegisteredAgentType}
+      finalFocus={{ current: null }}
+      onClose={onClose}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Default model" }),
+    ).toHaveTextContent("Recommended · Opus 5.5"),
+  );
+  await choose("Default model", "Fable 5.1");
+  await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(new ClaudeDefaults(localStorage).snapshot().model).toBe("");
 });
 
 it("says when Claude's models could not be loaded and tries again", async () => {
@@ -680,12 +754,12 @@ it("offers the model's thinking levels, dropping one the next model lacks", asyn
   await user.click(screen.getByRole("combobox", { name: "Thinking" }));
   expect(
     (await screen.findAllByRole("option")).map((option) => option.textContent),
-  ).toEqual(["Automatic · Default", "Low", "Medium", "High", "Extra high"]);
+  ).toEqual(["Default · Automatic", "Low", "Medium", "High", "Extra high"]);
   await user.click(screen.getByRole("option", { name: "Extra high" }));
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Haiku 4.5" }));
   const thinking = screen.getByRole("combobox", { name: "Thinking" });
-  expect(thinking).toHaveTextContent("Automatic");
+  expect(thinking).toHaveTextContent("Default · Automatic");
   await user.click(thinking);
   await user.click(await screen.findByRole("option", { name: "High" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -711,8 +785,9 @@ it("keeps a saved thinking level changeable without Claude's model list", async 
   expect(thinking).not.toHaveTextContent("unavailable");
   await user.click(thinking);
   await user.click(
-    await screen.findByRole("option", { name: "Automatic · Default" }),
+    await screen.findByRole("option", { name: "Default · Automatic" }),
   );
+  expect(thinking).toHaveTextContent("Default · Automatic");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
 });
@@ -771,7 +846,7 @@ it("starts a new agent with finite model choices and preserves its other setting
   ).not.toBeInTheDocument();
   await user.click(
     await screen.findByRole("option", {
-      name: "Opus 5.5 · Default",
+      name: "Default · Opus 5.5",
       description: "Best for everyday, complex tasks",
     }),
   );

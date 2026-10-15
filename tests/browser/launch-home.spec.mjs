@@ -156,10 +156,7 @@ test("launch retains plugin-configuration recovery without Home", async ({
   );
   await page.goto(app.origin);
   await expect(
-    page.getByRole("heading", {
-      name: "Couldn’t open Multiplayer",
-      exact: true,
-    }),
+    page.getByRole("heading", { name: "Couldn’t open Buzz", exact: true }),
   ).toBeVisible();
   const recoveryChoices = await pageChoices(page);
   await expect(

@@ -1511,10 +1511,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     });
     await worktree.click();
     await expect(worktree).toBeChecked();
-    const repository = dialog.getByRole("textbox", {
-      name: "Folder path",
-      exact: true,
-    });
+    const repository = dialog.getByRole("textbox", { name: /^Folders/ });
     const location = dialog.getByRole("textbox", {
       name: "Worktree location",
       exact: true,

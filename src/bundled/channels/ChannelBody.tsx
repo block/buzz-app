@@ -17,8 +17,11 @@ export const ChannelBody = memo(function ChannelBody({
   onOpenThread,
   navigation,
   onContentReady,
+  activityLane,
 }: {
   onContentReady?(channelId: string): void;
+  /** The channel composer follows this body and shows conversation activity. */
+  activityLane?: boolean | undefined;
   cached: boolean;
   viewer?: string | undefined;
   navigation?: PageNavigation | undefined;
@@ -109,6 +112,7 @@ export const ChannelBody = memo(function ChannelBody({
       {...(onOpenThread ? { onOpenThread } : {})}
       revealMessageId={revealMessageId}
       navigation={navigation}
+      activityLane={activityLane}
     />
   );
 });

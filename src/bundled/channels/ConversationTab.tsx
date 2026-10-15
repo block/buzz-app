@@ -130,6 +130,8 @@ export function ConversationTab({
             <ChannelBody
               viewer={session.viewer}
               cached={!!channel.cached}
+              // The composer below mounts TypingIndicator for a live channel.
+              activityLane={!channel.cached}
               onOpenThread={openThread}
               revealMessageId={sent}
             />

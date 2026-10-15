@@ -154,7 +154,7 @@ close button, body padding, or footer with feature-specific markup.
 
 | Task | Shared starting point | Scrolling |
 | --- | --- | --- |
-| Short form or confirmation | Content-sized Dialog, or AlertDialog for confirmation | Shared bounded body; keep actions reachable |
+| Short form or confirmation | Content-sized Dialog, or AlertDialog for confirmation | Dialog body scrolls with title/actions visible; AlertDialog retains its bounded flow |
 | Searchable list or changing catalog | `height="stable"`; `bodyLayout="flex"` when filters stay fixed | Fixed controls above one flexing results scrollport |
 | Two-column catalog | `size="wide"` | Bound both content and viewport; preserve a usable narrow arrangement |
 | Large diff or reading surface | `size="expanded"` | Content scrolls while title and Close stay available |
@@ -931,7 +931,13 @@ layers still use Dialog so Base UI owns their focus trap and dismissal order;
 `placement="right"` and explicit `dismissOnOutsideClick` suit inspector sheets.
 Use `size="wide"` for two-column catalogs such as Add harness. It caps the width
 at 56rem and preserves viewport gutters; `height="stable"` can reserve the body
-while changing catalog selection.
+while changing catalog selection. Content-sized dialogs also scroll only their
+body when viewport-capped, without reserving extra height; their title and
+actions stay outside that scrollport. If enlarged title/actions alone cannot fit
+the viewport, the outer dialog scrolls as a fallback so pointer access does not
+depend on focusing an offscreen control. Flow bodies retain at least one control
+height plus their padding, with scroll padding to reveal complete focused fields
+rather than only their text selection; bounded flex/expanded bodies keep their own sizing.
 Use `size="expanded"` for viewport-filling reading surfaces such as code diffs;
 the body scrolls while the shared title and close action remain available. This
 changes only size, not modal ownership or dismissal behavior.
@@ -945,6 +951,8 @@ on top of that body padding. Create/Edit channel forms opt into
 other dialog compositions retain their default spacing. Their privacy confirmation
 steps also opt into `footerGap="compact"` for 8px between the final checkbox row
 and the actions; returning to the form restores the normal body-bottom padding.
+Session settings uses content height and the default footer spacing, with one
+body scrollport and only the shared outer gutter below its actions.
 For a bounded dialog with fixed controls above a list, use `height="stable"`
 with `bodyLayout="flex"`. The body becomes a non-scrolling flex column; the
 feature supplies a `flex: 1; min-height: 0` composition with fixed controls and
@@ -1120,6 +1128,7 @@ they apply. Keep the same control recognizable across those states.
 
 - Pressed changes the fill without moving the control.
 - Loading preserves the label’s space and blocks repeated activation in behavior, not just CSS.
+- For non-blocking background checks, delay progress feedback for about one second to avoid flicker. User-triggered actions such as Save still show immediate loading feedback.
 - Hover adds contrast appropriate to the surface: a light row darkens, while a dark chip may lighten.
 - Selection remains visible after the pointer leaves. A selected toggle-group item does nothing when selected again and has no hover treatment.
 - Disabled means unavailable. Do not use it as a quieter text-emphasis level.

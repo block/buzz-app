@@ -1191,6 +1191,8 @@ function ChannelWorkspace({
             viewer={viewer}
             key={current.id}
             cached={cached}
+            // The composer below mounts TypingIndicator for members of a live channel.
+            activityLane={!current.readOnly && !current.cached}
             navigation={
               flatSession || !requestedMessage || exact?.inTimeline
                 ? navigation

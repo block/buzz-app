@@ -27,7 +27,6 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
-import { profileTarget } from "../features/profiles/target";
 import { setLaunchReady } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
@@ -137,9 +136,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
       close={launcher.close}
     />
   );
-  // Personal space has no community profile to view; the panel needs a session.
-  const ownProfile =
-    client.selected && client.viewer ? profileTarget(client.viewer) : undefined;
   const pageOwnsCompanion = !!route.page?.companion;
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
@@ -230,11 +226,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             onInviteClose={services.invites.clear}
             settingsCards={services.settingsCards}
             accountActions={services.accountActions}
-            onProfile={
-              ownProfile && launcher.canOpen(ownProfile)
-                ? (trigger) => launcher.open(ownProfile, trigger)
-                : undefined
-            }
+            appearance={services.appearance}
             searchServices={services}
             launchers={
               <PanelLaunchers

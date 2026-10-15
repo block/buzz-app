@@ -123,7 +123,7 @@
   width: 100%;
   border: 0;
   background: transparent;
-  color: var(--text-unavailable);
+  color: var(--text-subtle);
   min-height: var(--session-action-size, var(--size-control-sm));
   padding: var(--space-half) var(--session-row-inset, var(--space-2));
   font: inherit;
@@ -209,10 +209,6 @@
 .sectionHeader [data-session-row-action] {
   width: var(--session-action-size);
   height: var(--session-action-size);
-}
-.sectionHeader [data-session-row-action],
-.organizedRow [data-session-row-action] {
-  color: var(--text-unavailable);
 }
 .sectionHeader:is(
     :hover,
@@ -306,19 +302,6 @@
     (var(--space-5) - var(--section-icon-size)) /
     2
   );
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .sidebar [data-session-row-action]:hover:not(:disabled, [data-disabled]) {
-    color: var(--text-standard);
-  }
-}
-.sidebar
-  [data-session-row-action]:is(:focus-visible, [aria-expanded="true"]):not(
-    :disabled,
-    [data-disabled]
-  ) {
-  color: var(--text-standard);
 }
 
 /* Activity and the row menu share a fixed trailing slot. */

@@ -43,7 +43,14 @@ export function MeSidebar({ relay, navigator, target }: Props) {
             target={target}
           />
         ) : (
-          <p role="status">Connect to a community to see your conversations.</p>
+          <>
+            <div className={channelStyles.sidebarTop}>
+              <SidebarBrand mark="berd" />
+            </div>
+            <p role="status">
+              Connect to a community to see your conversations.
+            </p>
+          </>
         )}
       </SidebarFrame>
     </ResizableSidebar>

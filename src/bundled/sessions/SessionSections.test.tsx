@@ -21,9 +21,9 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function fixture() {
+function fixture(sectionName = "Work") {
   let saved: SidebarPreferences = {
-    sections: [{ id: "work", name: "Work", order: 0 }],
+    sections: [{ id: "work", name: sectionName, order: 0 }],
     assignments: {},
     starred: [],
     muted: [],
@@ -77,12 +77,15 @@ function fixture() {
   const view = (
     preferences: ReturnType<typeof store>["queries"],
     scope = "viewer:community",
+    personal = false,
   ) => (
     <SessionSections
+      personal={personal}
       onNew={onNew}
       session={
         {
           sidebarPreferences: preferences,
+          mePreferences: preferences,
           canvas: { available: false },
           channels: { list: () => channels, subscribeList: () => () => {} },
         } as unknown as RelaySession
@@ -313,6 +316,29 @@ it("tabs through a section's overflow before its trailing new-session action", a
     });
     await user.tab();
     expect(newSession).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+  } finally {
+    store.dispose();
+  }
+});
+
+it("keeps an empty project's New chat label short while naming and opening the exact project", async () => {
+  const projectName =
+    "A very long project name that should not become the new chat label";
+  const h = fixture(projectName);
+  const store = h.store();
+  const user = userEvent.setup();
+  render(h.view(store.queries, "empty-project", true));
+  try {
+    const choices = await screen.findAllByRole("button", {
+      name: `New chat in ${projectName}`,
+    });
+    const row = choices.find((choice) => choice.textContent === "New chat");
+    expect(row).toBeDefined();
+    if (!row) throw new Error("Missing empty project action");
+    expect(row).toHaveAttribute("title", `New chat in ${projectName}`);
+    row.focus();
     await user.keyboard("{Enter}");
     expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
   } finally {

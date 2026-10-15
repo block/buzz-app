@@ -442,18 +442,18 @@ export function SessionSections({
                 section.id &&
                 (onNew ? (
                   // An empty project offers its way out instead of an empty state.
-                  <div className={styles.organizedRow}>
-                    <NavigationItem
-                      variant="row"
-                      label={`${personal ? "New chat" : "New session"} in ${section.name}`}
-                      icon={
-                        <span className="shell-page-icon">
-                          <PlusIcon size={16} strokeWidth={2.5} />
-                        </span>
-                      }
-                      onClick={() => onNew(section.id)}
-                    />
-                  </div>
+                  <NavigationItem
+                    variant="row"
+                    label={personal ? "New chat" : "New session"}
+                    aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                    title={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                    icon={
+                      <span className="shell-page-icon">
+                        <PlusIcon size={16} strokeWidth={2.5} />
+                      </span>
+                    }
+                    onClick={() => onNew(section.id)}
+                  />
                 ) : (
                   <p className={styles.listMessage}>
                     {personal

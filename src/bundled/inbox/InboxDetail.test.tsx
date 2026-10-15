@@ -1,3 +1,5 @@
+import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
+const emptyPanels: never[] = [];
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { StrictMode, useState, useSyncExternalStore } from "react";
@@ -274,6 +276,23 @@ function Visit({ h }: { h: Awaited<ReturnType<typeof fixture>> }) {
       {visit > 0 && (
         <InboxDetail
           key={visit}
+          host={
+            {
+              relay: {
+                snapshot: () => ({
+                  status: "ready",
+                  session: h.session,
+                  scope: h.session.scope,
+                }),
+              },
+              navigation: navigator,
+              panels: {
+                subscribe: () => () => {},
+                snapshot: () => emptyPanels,
+                resolve: () => undefined,
+              },
+            } as unknown as ConversationHostServices
+          }
           item={h.item}
           target={{ channelId: "room", messageId: h.root.id }}
           session={h.session}
@@ -344,9 +363,7 @@ it.each([false, true])(
     fireEvent.click(
       screen.getByRole("button", { name: "Open video fullscreen" }),
     );
-    expect(
-      screen.getByRole("dialog", { name: "Video attachment" }),
-    ).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Video review" })).toBeVisible();
     const sender = screen.getByRole("combobox", {
       name: "Sender",
       hidden: true,
@@ -438,12 +455,10 @@ it("Escape dismisses a thread's fullscreen image without closing the detail", as
     name: "Open image attachment",
   });
   fireEvent.click(thumbnail, { detail: 1 });
-  const close = within(
-    screen.getByRole("dialog", { name: "Image attachment" }),
-  ).getByRole("button", { name: "Close fullscreen viewer" });
-  expect(close).toHaveFocus();
-  // The portal bubbles through ThreadPanel and InboxDetail in React.
-  fireEvent.keyDown(close, { key: "Escape" });
+  const viewer = screen.getByRole("dialog", { name: "Image viewer" });
+  expect(viewer).toHaveFocus();
+  // The shared review portal dismisses before the page's reader can close.
+  fireEvent.keyDown(viewer, { key: "Escape" });
   expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   expect(screen.getByRole("complementary", { name: "Thread" })).toBe(reader);
   expect(screen.getByRole("textbox")).toBe(editor);
@@ -1171,6 +1186,23 @@ it("uses the normal message link renderer in Inbox detail", async () => {
   const empty = { snapshot: () => noContributions, subscribe: () => () => {} };
   render(
     <InboxDetail
+      host={
+        {
+          relay: {
+            snapshot: () => ({
+              status: "ready",
+              session: h.session,
+              scope: h.session.scope,
+            }),
+          },
+          navigation: navigator,
+          panels: {
+            subscribe: () => () => {},
+            snapshot: () => emptyPanels,
+            resolve: () => undefined,
+          },
+        } as unknown as ConversationHostServices
+      }
       item={h.item}
       target={{ channelId: "room", messageId: h.root.id }}
       session={h.session}

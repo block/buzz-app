@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import type { RelaySession } from "../../features/relay/session";
-import type { ConversationExtensions } from "../../features/conversation/contracts";
+import {
+  ConversationComposer,
+  ConversationThread,
+  ConversationTimeline,
+  useConversation,
+} from "../../features/conversation/Conversation";
 import { useChannelWindow } from "../../features/relay/react";
-import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
-import { ThreadPanel } from "../../features/messages/ThreadPanel";
-import { MessageComposer } from "../../features/messages/MessageComposer";
 import { MessageEditScope } from "../../features/messages/MessageEditScope";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
@@ -14,22 +15,18 @@ import styles from "./Inbox.module.css";
 /** One selected conversation window and the same scoped composer used in Channels.
  * It preserves the canonical window and composer without owning a new reader. */
 export function ChannelPreview({
-  session,
-  channelId,
   channelName,
-  extensions,
   anchor,
   draft = false,
   onDraftSaved,
 }: {
-  session: RelaySession;
-  channelId: string;
+  /** The conversation's preview label, such as a DM's participants. */
   channelName: string;
-  extensions?: ConversationExtensions | undefined;
   anchor?: string | undefined;
   draft?: boolean;
   onDraftSaved?: () => void;
 }) {
+  const { session, channelId } = useConversation();
   const window = useChannelWindow(session.channels, channelId);
   const [sentId, setSentId] = useState<string>();
   const [inlineSignal, setInlineSignal] = useState<AbortSignal>();
@@ -72,16 +69,10 @@ export function ChannelPreview({
   }, [session, channelId, window.status]);
   if (anchor && opening?.anchor === anchor && !opening.inTimeline)
     return (
-      <ThreadPanel
-        session={session}
-        scope={session.scope}
-        extensions={extensions}
-        channelId={channelId}
+      <ConversationThread
         channelName={channelName}
         messageId={anchor}
-        sessionConversation={channel?.channelType === "session"}
         revealSelected
-        onOpenLink={() => false}
       />
     );
   return (
@@ -93,11 +84,7 @@ export function ChannelPreview({
       >
         <div className={styles.previewHistory}>
           {window.rows.length > 0 && (
-            <ChannelTimeline
-              extensions={extensions}
-              queries={session}
-              scope={session.scope}
-              channelId={channelId}
+            <ConversationTimeline
               window={window}
               {...(draft ? { transient: true } : {})}
               revealMessageId={sentId}
@@ -106,7 +93,6 @@ export function ChannelPreview({
                   ? { messageId: anchor, signal: inlineSignal }
                   : undefined
               }
-              onOpenLink={() => false}
             />
           )}
           {(window.status === "error" || window.error) && (
@@ -144,18 +130,13 @@ export function ChannelPreview({
               </p>
             )}
         </div>
-        <MessageComposer
-          session={session}
-          scope={session.scope}
-          extensions={extensions}
-          channelId={channelId}
+        <ConversationComposer
           channelName={channelName}
           label={
             channel?.channelType === "dm"
               ? `Message ${channelName}`
               : `Message #${channelName}`
           }
-          sessionConversation={channel?.channelType === "session"}
           onSend={setSentId}
           onDraftSaved={onDraftSaved}
         />

@@ -1,7 +1,7 @@
 //! Read-only acquisition. Preview owns immutable artifacts; installation never rereads a source.
 use crate::{
-    artifact_from_parts, err, hash, Catalog, Manager, Manifest, Release, ReloadSource, Result,
-    LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
+    artifact_from_parts, err, hash, icon_revision, Catalog, Manager, Manifest, Release,
+    ReloadSource, Result, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
 };
 use nostr::event::Event;
 use serde::Serialize;
@@ -28,7 +28,7 @@ pub struct Candidate {
     pub revision: String,
     pub publisher: Option<String>,
     pub readme_revision: Option<String>,
-    pub icon_revision: Option<String>,
+    pub icon_png_revision: Option<String>,
     pub icon_jpg_revision: Option<String>,
 }
 #[derive(Clone, Serialize)]
@@ -88,8 +88,8 @@ impl PreparedImport {
                     revision: hash(&release.bytes),
                     publisher: release.publisher(),
                     readme_revision: artifact.readme_revision(),
-                    icon_revision: artifact.icon_revision()?,
-                    icon_jpg_revision: artifact.jpg_revision()?,
+                    icon_png_revision: icon_revision(artifact.icon_png.as_deref()),
+                    icon_jpg_revision: icon_revision(artifact.icon_jpg.as_deref()),
                 });
                 self.artifacts.insert(path, release);
             }
@@ -274,6 +274,25 @@ fn read_optional_source_bytes(
     path: &Path,
     limit: usize,
 ) -> Result<Option<Vec<u8>>> {
+    // Directory entries preserve spelling even on case-insensitive filesystems.
+    // Only the conventional exact filename participates in the package.
+    let mut found = false;
+    for entry in directory
+        .read_dir(
+            path.parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+        )
+        .map_err(err)?
+    {
+        if entry.map_err(err)?.file_name() == path.file_name().ok_or("Missing asset filename")? {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Ok(None);
+    }
     match directory.symlink_metadata(path) {
         Ok(_) => read_source_bytes(directory, path, limit).map(Some),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -494,6 +513,7 @@ impl Git {
             2 * 1024 * 1024,
         )?;
         let mut blobs = BTreeMap::new();
+        let mut symlinks = std::collections::BTreeSet::new();
         for (index, entry) in tree
             .split(|b| *b == 0)
             .filter(|b| !b.is_empty())
@@ -509,6 +529,9 @@ impl Git {
             let mode = meta.next().unwrap_or_default();
             let kind = meta.next().unwrap_or_default();
             let oid = meta.next().unwrap_or_default();
+            if mode == "120000" {
+                symlinks.insert(path.to_string());
+            }
             // Never check out a working tree: symlinks, submodules, attributes/filters and
             // repository scripts cannot become executable acquisition steps.
             if kind == "blob" && (mode == "100644" || mode == "100755") {
@@ -573,6 +596,13 @@ impl Git {
                 continue;
             };
             let artifact = (|| {
+                for name in ["README.md", "icon.png", "icon.jpg"] {
+                    if symlinks.contains(&format!("{parent}{name}")) {
+                        return Err(format!(
+                            "{name} must be a regular file, not a symbolic link"
+                        ));
+                    }
+                }
                 let manifest = String::from_utf8(self.read_blob(manifest_oid)?)
                     .map_err(|_| "manifest.json must be UTF-8")?;
                 let code = String::from_utf8(self.read_blob(code_oid)?)
@@ -702,6 +732,14 @@ fn directory_size(root: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn decode_content_icon(encoded: Option<&str>) -> Option<Vec<u8>> {
+        use base64::Engine as _;
+        encoded.map(|value| {
+            base64::engine::general_purpose::STANDARD
+                .decode(value)
+                .unwrap()
+        })
+    }
     use image::{codecs::png::PngEncoder, ExtendedColorType, ImageEncoder as _};
     fn png() -> Vec<u8> {
         let mut bytes = vec![];
@@ -738,7 +776,7 @@ mod tests {
         assert_eq!(prepared.preview.candidates.len(), 2);
         assert_eq!(prepared.preview.candidates[0].path, "pages/one/dist");
         assert!(prepared.preview.candidates[0].readme_revision.is_some());
-        assert!(prepared.preview.candidates[0].icon_revision.is_some());
+        assert!(prepared.preview.candidates[0].icon_png_revision.is_some());
         assert_eq!(prepared.preview.warnings.len(), 1);
         let home = tempfile::tempdir().unwrap();
         let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
@@ -764,7 +802,10 @@ mod tests {
         assert!(!installed.enabled);
         let content = manager.content("example.one", &installed.revision).unwrap();
         assert_eq!(content.readme.as_deref(), Some("# One"));
-        assert_eq!(content.icon_png.as_deref(), Some(png().as_slice()));
+        assert_eq!(
+            decode_content_icon(content.icon_png.as_deref()).as_deref(),
+            Some(png().as_slice())
+        );
         manager.change("enable", "example.one").unwrap();
         assert!(manager
             .module("example.one", &installed.revision)
@@ -815,6 +856,53 @@ mod tests {
             paths(&root.path().join(".claude")),
             ["worktrees/feature", "worktrees/feature/dist"]
         );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn folder_and_git_optional_assets_require_exact_names_and_regular_files() {
+        let git = Git::new().unwrap();
+        git.run(&["init", "--template=", "repository"], LIMIT)
+            .unwrap();
+        let repo = git.scratch.path().join("repository");
+        let case = plugin(&repo, "case", "example.case");
+        fs::write(case.join("readme.md"), "not conventional").unwrap();
+        for (index, name) in ["README.md", "icon.png", "icon.jpg"].iter().enumerate() {
+            let linked = plugin(
+                &repo,
+                &format!("linked{index}"),
+                &format!("example.linked{index}"),
+            );
+            std::os::unix::fs::symlink("plugin.js", linked.join(name)).unwrap();
+        }
+        git.run(&["-C", "repository", "add", "."], LIMIT).unwrap();
+        git.run(
+            &[
+                "-C",
+                "repository",
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+            LIMIT,
+        )
+        .unwrap();
+        let folder = prepare_folder(&repo).unwrap();
+        let committed = git.read_plugins("fixture".into()).unwrap();
+        for prepared in [folder, committed] {
+            assert_eq!(prepared.preview.candidates.len(), 1);
+            assert_eq!(prepared.preview.warnings.len(), 3);
+            let candidate = &prepared.preview.candidates[0];
+            assert_eq!(candidate.path, "case");
+            assert!(candidate.readme_revision.is_none());
+            assert!(candidate.icon_png_revision.is_none());
+            assert!(candidate.icon_jpg_revision.is_none());
+        }
     }
     #[cfg(unix)]
     #[test]
@@ -991,7 +1079,7 @@ mod tests {
             .find(|candidate| candidate.path == "plugins/two")
             .unwrap();
         assert!(with_assets.readme_revision.is_some());
-        assert!(with_assets.icon_revision.is_some());
+        assert!(with_assets.icon_png_revision.is_some());
         assert!(with_assets.icon_jpg_revision.is_some());
         assert_eq!(prepared.preview.commit.as_ref().unwrap().len(), 40);
         let text = String::from_utf8(prepared.artifacts["plugins/one/dist"].bytes.clone()).unwrap();
@@ -1018,8 +1106,14 @@ mod tests {
         let content = manager
             .content("example.two", &with_assets.revision)
             .unwrap();
-        assert_eq!(content.icon_jpg.as_deref(), Some(jpg.as_slice()));
-        assert_eq!(content.icon_png.as_deref(), Some(png().as_slice()));
+        assert_eq!(
+            decode_content_icon(content.icon_jpg.as_deref()).as_deref(),
+            Some(jpg.as_slice())
+        );
+        assert_eq!(
+            decode_content_icon(content.icon_png.as_deref()).as_deref(),
+            Some(png().as_slice())
+        );
     }
     #[test]
     fn signed_folder_import_load_reload_and_publisher_continuity() {

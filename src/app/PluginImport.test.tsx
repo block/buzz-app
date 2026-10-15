@@ -26,7 +26,7 @@ it("shows exact declared access and changes before an enabled update", async () 
         path: "dist",
         revision: "two",
         readmeRevision: "readme-two",
-        iconRevision: null,
+        iconPngRevision: null,
         iconJpgRevision: "jpg-two",
         manifest: {
           id: "example.plugin",
@@ -73,7 +73,7 @@ it("shows exact declared access and changes before an enabled update", async () 
         reloadable: false,
         error: null,
         readmeRevision: "readme-one",
-        iconRevision: "icon-one",
+        iconPngRevision: "icon-one",
       },
     ],
   };
@@ -216,6 +216,9 @@ it.each([
       await screen.findByRole("region", { name: "Declared host access" }),
     );
     const grant = access.getByRole("listitem");
+    expect(
+      screen.queryByRole("region", { name: "Package content" }),
+    ).not.toBeInTheDocument();
     expect(grant).toHaveTextContent(allowance(next));
     if (changed) {
       expect(grant).toHaveTextContent("(new or changed)");

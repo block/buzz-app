@@ -635,7 +635,7 @@ local development.
 
 A build may also include conventional `README.md`, `icon.png`, and `icon.jpg` files beside
 those required files. README content must be UTF-8 and is limited to 256 KiB.
-Icons must match their PNG or JPEG filename and be fully decodable, each at most 1 MiB, no more than 4096 pixels on
+Icons must match their PNG or JPEG filename and have a decodable first image, each at most 1 MiB, no more than 4096 pixels on
 either side, and no more than 1,048,576 pixels total. Signing places their exact
 content in typed optional release-envelope fields, so the artifact hash and
 publisher signature cover them without changing plugin `apiVersion: 1`. Hosts
@@ -644,6 +644,20 @@ small content revisions for import/update comparison; a details surface reads th
 content through the integrity-checked native command on demand.
 Both icon formats may be packaged together and are returned independently; the
 client decides which format to prefer.
+Header parsing and image decoding use a 16 MiB allocation budget; the underlying
+decoder may discard optional metadata that exceeds that budget. Validation does
+not certify later animation frames or reject trailing bytes after the image.
+The native content response returns the stored base64 icon strings. Conventional
+asset filenames are case-sensitive in both folder and Git imports; a symbolic
+link at one of those filenames rejects an unsigned candidate.
+
+Older hosts can still read asset-free packages and registry entries. Packages
+with these new fields, and registry entries recording their content revisions,
+require a host that supports them; older hosts reject unknown fields and may
+offer settings recovery. Downgrading after installing such a package is not
+supported. This does not change the plugin runtime API version.
+Signing requires regular, non-symlink source files, using the same directory
+capability boundary as folder import.
 
 These files are publisher-supplied presentation content, not an endorsement or a
 runtime asset directory. Buzz-owned framing and fallback artwork remain

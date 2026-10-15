@@ -306,11 +306,11 @@ struct Installed {
     #[serde(default)]
     previous_source: Option<ReloadSource>,
     enabled: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     readme_revision: Option<String>,
-    #[serde(default)]
-    icon_revision: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon_png_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     icon_jpg_revision: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -363,24 +363,16 @@ impl Artifact {
     fn readme_revision(&self) -> Option<String> {
         self.readme.as_deref().map(|value| hash(value.as_bytes()))
     }
-    fn icon_bytes(&self) -> Result<Option<Vec<u8>>> {
-        self.icon_png
-            .as_deref()
-            .map(|value| BASE64.decode(value).map_err(err))
-            .transpose()
-    }
-    fn icon_revision(&self) -> Result<Option<String>> {
-        Ok(self.icon_bytes()?.as_deref().map(hash))
-    }
-    fn jpg_bytes(&self) -> Result<Option<Vec<u8>>> {
-        self.icon_jpg
-            .as_deref()
-            .map(|value| BASE64.decode(value).map_err(err))
-            .transpose()
-    }
-    fn jpg_revision(&self) -> Result<Option<String>> {
-        Ok(self.jpg_bytes()?.as_deref().map(hash))
-    }
+}
+// Revisions are opaque content identities. Hash the canonical base64 directly so
+// catalog/preview comparisons do not decode an already validated image again.
+fn icon_revision(encoded: Option<&str>) -> Option<String> {
+    encoded.map(|value| hash(value.as_bytes()))
+}
+fn decode_icon(encoded: Option<&str>) -> Result<Option<Vec<u8>>> {
+    encoded
+        .map(|value| BASE64.decode(value).map_err(err))
+        .transpose()
 }
 #[derive(Clone)]
 struct Release {
@@ -483,7 +475,7 @@ pub struct PluginInfo {
     pub error: Option<String>,
     pub publisher: Option<String>,
     pub readme_revision: Option<String>,
-    pub icon_revision: Option<String>,
+    pub icon_png_revision: Option<String>,
     pub icon_jpg_revision: Option<String>,
 }
 
@@ -491,8 +483,8 @@ pub struct PluginInfo {
 #[serde(rename_all = "camelCase")]
 pub struct PluginContent {
     pub readme: Option<String>,
-    pub icon_png: Option<Vec<u8>>,
-    pub icon_jpg: Option<Vec<u8>>,
+    pub icon_png: Option<String>,
+    pub icon_jpg: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -662,7 +654,7 @@ impl Manager {
                     error: None,
                     publisher: None,
                     readme_revision: None,
-                    icon_revision: None,
+                    icon_png_revision: None,
                     icon_jpg_revision: None,
                 }
             })
@@ -701,7 +693,7 @@ impl Manager {
                 error,
                 publisher,
                 readme_revision: p.readme_revision,
-                icon_revision: p.icon_revision,
+                icon_png_revision: p.icon_png_revision,
                 icon_jpg_revision: p.icon_jpg_revision,
             });
         }
@@ -720,8 +712,8 @@ impl Manager {
         let artifact = release.artifact()?;
         let manifest = artifact.manifest.clone();
         let readme_revision = artifact.readme_revision();
-        let icon_revision = artifact.icon_revision()?;
-        let icon_jpg_revision = artifact.jpg_revision()?;
+        let icon_png_revision = icon_revision(artifact.icon_png.as_deref());
+        let icon_jpg_revision = icon_revision(artifact.icon_jpg.as_deref());
         let revision = hash(bytes);
         {
             let _lock = self.lock()?;
@@ -763,7 +755,7 @@ impl Manager {
                     previous_source,
                     enabled,
                     readme_revision,
-                    icon_revision,
+                    icon_png_revision,
                     icon_jpg_revision,
                 },
             );
@@ -816,8 +808,8 @@ impl Manager {
                         std::mem::swap(&mut p.current_signature, &mut p.previous_signature);
                         p.current_source = previous_source;
                         p.readme_revision = a.readme_revision();
-                        p.icon_revision = a.icon_revision()?;
-                        p.icon_jpg_revision = a.jpg_revision()?;
+                        p.icon_png_revision = icon_revision(a.icon_png.as_deref());
+                        p.icon_jpg_revision = icon_revision(a.icon_jpg.as_deref());
                         p.manifest = a.manifest;
                     }
                     _ => return Err("Unknown management action".into()),
@@ -868,8 +860,8 @@ impl Manager {
         let artifact = release.artifact()?;
         let manifest = artifact.manifest.clone();
         let readme_revision = artifact.readme_revision();
-        let icon_revision = artifact.icon_revision()?;
-        let icon_jpg_revision = artifact.jpg_revision()?;
+        let icon_png_revision = icon_revision(artifact.icon_png.as_deref());
+        let icon_jpg_revision = icon_revision(artifact.icon_jpg.as_deref());
         if manifest.id != snapshot.2 {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
         }
@@ -930,7 +922,7 @@ impl Manager {
             plugin.previous_signature = previous_signature;
             plugin.previous_source = previous_source;
             plugin.readme_revision = readme_revision;
-            plugin.icon_revision = icon_revision;
+            plugin.icon_png_revision = icon_png_revision;
             plugin.icon_jpg_revision = icon_jpg_revision;
             self.save(&registry)?;
         }
@@ -954,12 +946,10 @@ impl Manager {
             return Err("Plugin was updated; refresh the catalog".into());
         }
         let artifact = self.artifact(id, revision, plugin.current_signature.as_ref())?;
-        let icon_png = artifact.icon_bytes()?;
-        let icon_jpg = artifact.jpg_bytes()?;
         Ok(PluginContent {
             readme: artifact.readme,
-            icon_png,
-            icon_jpg,
+            icon_png: artifact.icon_png,
+            icon_jpg: artifact.icon_jpg,
         })
     }
     pub fn host_grants(&self, id: &str, revision: &str) -> Result<HostGrants> {
@@ -1013,18 +1003,20 @@ impl Manager {
 }
 impl Release {
     fn artifact(&self) -> Result<Artifact> {
-        self.validate()?;
-        serde_json::from_slice(&self.bytes).map_err(err)
-    }
-    fn validate(&self) -> Result<Manifest> {
         if self.bytes.len() as u64 > LIMIT {
             return Err("Plugin artifact exceeds 8 MiB".into());
         }
         let artifact: Artifact = serde_json::from_slice(&self.bytes).map_err(err)?;
         artifact.manifest.validate()?;
         validate_readme(artifact.readme.as_deref())?;
-        validate_icon(artifact.icon_bytes()?.as_deref(), image::ImageFormat::Png)?;
-        validate_icon(artifact.jpg_bytes()?.as_deref(), image::ImageFormat::Jpeg)?;
+        validate_icon(
+            decode_icon(artifact.icon_png.as_deref())?.as_deref(),
+            image::ImageFormat::Png,
+        )?;
+        validate_icon(
+            decode_icon(artifact.icon_jpg.as_deref())?.as_deref(),
+            image::ImageFormat::Jpeg,
+        )?;
         if is_bundled(&artifact.manifest.id) || artifact.code.trim().is_empty() {
             return Err("Invalid plugin artifact".into());
         }
@@ -1035,7 +1027,10 @@ impl Release {
             }
             publisher(&self.bytes, signature)?;
         }
-        Ok(artifact.manifest)
+        Ok(artifact)
+    }
+    fn validate(&self) -> Result<Manifest> {
+        Ok(self.artifact()?.manifest)
     }
     fn publisher(&self) -> Option<String> {
         self.signature.as_ref().map(|event| event.pubkey.to_hex())
@@ -1129,17 +1124,25 @@ fn validate_readme(readme: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+fn icon_reader(
+    bytes: &[u8],
+    format: image::ImageFormat,
+) -> image::ImageReader<std::io::Cursor<&[u8]>> {
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_ICON_DIMENSION);
+    limits.max_image_height = Some(MAX_ICON_DIMENSION);
+    limits.max_alloc = Some(16 * 1024 * 1024);
+    reader.limits(limits);
+    reader
+}
+
 fn validate_icon(icon: Option<&[u8]>, format: image::ImageFormat) -> Result<()> {
     let Some(bytes) = icon else { return Ok(()) };
-    let name = if format == image::ImageFormat::Png {
-        "icon.png"
-    } else {
-        "icon.jpg"
-    };
-    let kind = if format == image::ImageFormat::Png {
-        "PNG"
-    } else {
-        "JPEG"
+    let (name, kind) = match format {
+        image::ImageFormat::Png => ("icon.png", "PNG"),
+        image::ImageFormat::Jpeg => ("icon.jpg", "JPEG"),
+        _ => return Err("Unsupported plugin icon format".into()),
     };
     if bytes.len() > MAX_ICON_BYTES {
         return Err(format!("{name} exceeds 1 MiB"));
@@ -1147,10 +1150,12 @@ fn validate_icon(icon: Option<&[u8]>, format: image::ImageFormat) -> Result<()> 
     if image::guess_format(bytes).ok() != Some(format) {
         return Err(format!("{name} must be a {kind} image"));
     }
-    let reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
-    let (width, height) = reader
-        .into_dimensions()
-        .map_err(|_| format!("{name} must be a valid {kind} image"))?;
+    // Apply limits before parsing even the header: compressed PNG metadata can
+    // expand independently of pixel dimensions.
+    let decoded = icon_reader(bytes, format).decode().map_err(|_| {
+        format!("{name} must be a valid {kind} image within dimensions and allocation limits")
+    })?;
+    let (width, height) = (decoded.width(), decoded.height());
     if width == 0
         || height == 0
         || width > MAX_ICON_DIMENSION
@@ -1161,9 +1166,6 @@ fn validate_icon(icon: Option<&[u8]>, format: image::ImageFormat) -> Result<()> 
             "{name} dimensions must be 1–4096 pixels per side and at most 1,048,576 pixels"
         ));
     }
-    // Dimensions bound decoded allocation before the full decode verifies the image body.
-    image::load_from_memory_with_format(bytes, format)
-        .map_err(|_| format!("{name} must be a valid {kind} image"))?;
     Ok(())
 }
 
@@ -1235,6 +1237,38 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
+
+    #[test]
+    fn compressed_png_profile_is_bounded_before_header_decode() {
+        use image::{ImageDecoder as _, ImageEncoder as _};
+        use std::io::Write as _;
+        let mut png = vec![];
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[0, 0, 0, 0], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        let mut compressed = flate2::write::ZlibEncoder::new(vec![], flate2::Compression::best());
+        for _ in 0..32 {
+            compressed.write_all(&[0; 1024 * 1024]).unwrap();
+        }
+        let mut profile = b"profile\0\0".to_vec();
+        profile.extend(compressed.finish().unwrap());
+        let mut chunk = (profile.len() as u32).to_be_bytes().to_vec();
+        chunk.extend(b"iCCP");
+        chunk.extend(profile);
+        let crc = crc32fast::hash(&chunk[4..]);
+        chunk.extend(crc.to_be_bytes());
+        png.splice(33..33, chunk); // Immediately after IHDR, before IDAT.
+        assert!(png.len() < super::MAX_ICON_BYTES);
+
+        // png ignores an over-budget optional profile. Verify it was discarded,
+        // rather than inflated and retained, by the same bounded reader used in
+        // validation. Removing the reader limits makes this assertion fail.
+        let mut decoder = super::icon_reader(&png, image::ImageFormat::Png)
+            .into_decoder()
+            .unwrap();
+        assert!(decoder.icc_profile().unwrap().is_none());
+        super::validate_icon(Some(&png), image::ImageFormat::Png).unwrap();
+    }
 
     #[test]
     fn native_catalog_matches_desktop_bundles() {

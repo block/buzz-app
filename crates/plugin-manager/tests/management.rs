@@ -21,6 +21,14 @@ fn install_error(manager: &Manager, source: &std::path::Path) -> String {
         Err(error) => error,
     }
 }
+fn decode_content_icon(encoded: Option<&str>) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    encoded.map(|value| {
+        base64::engine::general_purpose::STANDARD
+            .decode(value)
+            .unwrap()
+    })
+}
 
 fn jpg(width: u32, height: u32) -> Vec<u8> {
     let mut bytes = vec![];
@@ -52,9 +60,26 @@ fn both_signed_icon_formats_survive_reload_restart_and_rollback() {
         .find(|p| p.manifest.id == "example.page")
         .unwrap();
     let content = manager.content("example.page", &first.revision).unwrap();
-    assert_eq!(content.icon_png.as_deref(), Some(png_bytes.as_slice()));
-    assert_eq!(content.icon_jpg.as_deref(), Some(first_jpg.as_slice()));
+    assert_eq!(
+        decode_content_icon(content.icon_png.as_deref()).as_deref(),
+        Some(png_bytes.as_slice())
+    );
+    assert_eq!(
+        decode_content_icon(content.icon_jpg.as_deref()).as_deref(),
+        Some(first_jpg.as_slice())
+    );
     assert!(first.icon_jpg_revision.is_some());
+    let serialized = serde_json::to_value(&content).unwrap();
+    assert!(serialized["iconPng"].is_string());
+    assert!(serialized["iconJpg"].is_string());
+    let registry: serde_json::Value =
+        serde_json::from_slice(&fs::read(temp.path().join("profiles/test/registry.json")).unwrap())
+            .unwrap();
+    let entry = &registry["installed"]["example.page"];
+    assert!(entry.get("readmeRevision").is_none());
+    assert!(entry.get("iconRevision").is_none());
+    assert!(entry["iconPngRevision"].is_string());
+    assert!(entry["iconJpgRevision"].is_string());
 
     fs::write(source.join("icon.jpg"), jpg(1, 2)).unwrap();
     sign_release(&source, &key).unwrap();
@@ -66,7 +91,7 @@ fn both_signed_icon_formats_survive_reload_restart_and_rollback() {
         .find(|p| p.manifest.id == "example.page")
         .unwrap();
     assert_ne!(first.icon_jpg_revision, second.icon_jpg_revision);
-    assert_eq!(first.icon_revision, second.icon_revision);
+    assert_eq!(first.icon_png_revision, second.icon_png_revision);
     assert_eq!(first.publisher, second.publisher);
 
     // A different, valid JPEG still fails the signature check when substituted.
@@ -92,8 +117,14 @@ fn both_signed_icon_formats_survive_reload_restart_and_rollback() {
         .unwrap();
     assert_eq!(rolled_back.icon_jpg_revision, first.icon_jpg_revision);
     let content = reopened.content("example.page", &first.revision).unwrap();
-    assert_eq!(content.icon_jpg.as_deref(), Some(first_jpg.as_slice()));
-    assert_eq!(content.icon_png.as_deref(), Some(png_bytes.as_slice()));
+    assert_eq!(
+        decode_content_icon(content.icon_jpg.as_deref()).as_deref(),
+        Some(first_jpg.as_slice())
+    );
+    assert_eq!(
+        decode_content_icon(content.icon_png.as_deref()).as_deref(),
+        Some(png_bytes.as_slice())
+    );
 }
 
 #[test]
@@ -110,7 +141,10 @@ fn jpeg_only_packages_validate_type_decode_and_resource_bounds() {
         .unwrap();
     let content = manager.content("example.page", &plugin.revision).unwrap();
     assert!(content.icon_png.is_none());
-    assert_eq!(content.icon_jpg.as_deref(), Some(bytes.as_slice()));
+    assert_eq!(
+        decode_content_icon(content.icon_jpg.as_deref()).as_deref(),
+        Some(bytes.as_slice())
+    );
     for (bytes, expected) in [
         (png(1, 1), "JPEG"),
         (vec![0xff, 0xd8, 0xff, 0xe0], "valid JPEG"),
@@ -220,10 +254,13 @@ fn readme_and_icon_are_versioned_read_on_demand_and_preserved_by_rollback() {
         .find(|plugin| plugin.manifest.id == "example.page")
         .unwrap();
     assert!(first.readme_revision.is_some());
-    assert!(first.icon_revision.is_some());
+    assert!(first.icon_png_revision.is_some());
     let content = manager.content("example.page", &first.revision).unwrap();
     assert_eq!(content.readme.as_deref(), Some("# First\n"));
-    assert_eq!(content.icon_png.as_deref(), Some(first_icon.as_slice()));
+    assert_eq!(
+        decode_content_icon(content.icon_png.as_deref()).as_deref(),
+        Some(first_icon.as_slice())
+    );
 
     let second_icon = png(1, 2);
     fs::write(source.join("README.md"), "# Second\n").unwrap();
@@ -236,7 +273,7 @@ fn readme_and_icon_are_versioned_read_on_demand_and_preserved_by_rollback() {
         .find(|plugin| plugin.manifest.id == "example.page")
         .unwrap();
     assert_ne!(second.readme_revision, first.readme_revision);
-    assert_ne!(second.icon_revision, first.icon_revision);
+    assert_ne!(second.icon_png_revision, first.icon_png_revision);
     assert!(manager.content("example.page", &first.revision).is_err());
 
     let reopened = Manager::open(Some(temp.path().into()), "test", false).unwrap();
@@ -249,12 +286,15 @@ fn readme_and_icon_are_versioned_read_on_demand_and_preserved_by_rollback() {
         .unwrap();
     assert_eq!(rolled_back.revision, first.revision);
     assert_eq!(rolled_back.readme_revision, first.readme_revision);
-    assert_eq!(rolled_back.icon_revision, first.icon_revision);
+    assert_eq!(rolled_back.icon_png_revision, first.icon_png_revision);
     let content = reopened
         .content("example.page", &rolled_back.revision)
         .unwrap();
     assert_eq!(content.readme.as_deref(), Some("# First\n"));
-    assert_eq!(content.icon_png.as_deref(), Some(first_icon.as_slice()));
+    assert_eq!(
+        decode_content_icon(content.icon_png.as_deref()).as_deref(),
+        Some(first_icon.as_slice())
+    );
 }
 
 #[test]
@@ -267,10 +307,18 @@ fn package_assets_are_optional_and_reject_invalid_boundaries() {
         .find(|plugin| plugin.manifest.id == "example.page")
         .unwrap();
     assert_eq!(plugin.readme_revision, None);
-    assert_eq!(plugin.icon_revision, None);
+    assert_eq!(plugin.icon_png_revision, None);
     let content = manager.content("example.page", &plugin.revision).unwrap();
     assert!(content.readme.is_none());
     assert!(content.icon_png.is_none());
+    let registry: serde_json::Value = serde_json::from_slice(
+        &fs::read(_temp.path().join("profiles/test/registry.json")).unwrap(),
+    )
+    .unwrap();
+    let entry = &registry["installed"]["example.page"];
+    for key in ["readmeRevision", "iconPngRevision", "iconJpgRevision"] {
+        assert!(entry.get(key).is_none(), "{key}");
+    }
 
     fs::write(source.join("README.md"), [0xff]).unwrap();
     assert!(install_error(&manager, &source).contains("UTF-8"));
@@ -320,7 +368,7 @@ fn signed_asset_updates_keep_publisher_and_detect_tampering() {
         .unwrap();
     assert_eq!(second.publisher.as_deref(), Some(publisher.as_str()));
     assert_ne!(second.readme_revision, first.readme_revision);
-    assert_ne!(second.icon_revision, first.icon_revision);
+    assert_ne!(second.icon_png_revision, first.icon_png_revision);
 
     let mut artifact: serde_json::Value =
         serde_json::from_slice(&fs::read(source.join("plugin.artifact.json")).unwrap()).unwrap();

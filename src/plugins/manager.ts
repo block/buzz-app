@@ -185,8 +185,6 @@ export function createPluginManager(
     change: (action: ManagementAction, id: string) =>
       update(() => storage.changePlugin(action, id)),
     reload: (id: string) => update(() => storage.reloadPlugin(id), 120_000),
-    content: (id: string, revision: string) =>
-      storage.readContent(id, revision),
     retry: () => update(getCatalog),
     recover: () => update(storage.recoverSettings),
     dismissError: () => {

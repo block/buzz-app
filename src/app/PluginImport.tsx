@@ -38,8 +38,8 @@ function contentChange(
   previous: string | null | undefined,
   updating: boolean,
 ) {
-  if (!updating) return next ? `${name} included` : `${name} not included`;
-  if (!next) return previous ? `${name} removed` : `${name} not included`;
+  if (!updating) return next ? `${name} included` : null;
+  if (!next) return previous ? `${name} removed` : null;
   if (!previous) return `${name} included (new)`;
   return `${name} included (${next === previous ? "unchanged" : "changed"})`;
 }
@@ -131,6 +131,28 @@ export function PluginImport({
           : "There is no earlier revision to roll back to.";
   const declaredGrants = candidate ? hostGrants(candidate.manifest) : [];
   const previousGrants = existing ? hostGrants(existing.manifest) : [];
+  const packageContent = candidate
+    ? [
+        contentChange(
+          "README.md",
+          candidate.readmeRevision,
+          existing?.readmeRevision,
+          !!existing,
+        ),
+        contentChange(
+          "icon.png",
+          candidate.iconPngRevision,
+          existing?.iconPngRevision,
+          !!existing,
+        ),
+        contentChange(
+          "icon.jpg",
+          candidate.iconJpgRevision,
+          existing?.iconJpgRevision,
+          !!existing,
+        ),
+      ].filter((value) => value !== null)
+    : [];
   return (
     <div className="mb-4">
       <fieldset aria-label="Load plugins" className="m-0 min-w-0 border-0 p-0">
@@ -273,34 +295,13 @@ export function PluginImport({
                 </ul>
               </details>
             )}
-            {candidate && (
+            {packageContent.length > 0 && (
               <section aria-label="Package content" className="text-body-sm">
                 <p className="m-0 font-medium">Package content</p>
                 <ul className="m-0">
-                  <li>
-                    {contentChange(
-                      "README.md",
-                      candidate.readmeRevision,
-                      existing?.readmeRevision,
-                      !!existing,
-                    )}
-                  </li>
-                  <li>
-                    {contentChange(
-                      "icon.png",
-                      candidate.iconRevision,
-                      existing?.iconRevision,
-                      !!existing,
-                    )}
-                  </li>
-                  <li>
-                    {contentChange(
-                      "icon.jpg",
-                      candidate.iconJpgRevision,
-                      existing?.iconJpgRevision,
-                      !!existing,
-                    )}
-                  </li>
+                  {packageContent.map((description) => (
+                    <li key={description}>{description}</li>
+                  ))}
                 </ul>
                 <p className="m-0 text-caption text-muted">
                   Supplied by the plugin publisher; inclusion is not an

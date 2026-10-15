@@ -363,7 +363,7 @@ export function Settings({
                                 <span>{plugin.manifest.name}</span>
                                 {isEssentialPlugin(plugin) && (
                                   <span
-                                    className={styles.essentialBadge}
+                                    className="text-caption"
                                     role="img"
                                     aria-label="Essential"
                                     title="Essential"

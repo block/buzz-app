@@ -240,7 +240,7 @@ confirmedPresence(
       exact: true,
     });
     const viewProfile = account.getByRole("menuitem", {
-      name: "View your profile",
+      name: "Fixture Reader, edit profile",
       exact: true,
     });
     const statusEntry = account.getByRole("menuitem", {
@@ -268,7 +268,7 @@ confirmedPresence(
       await expect(account).toBeInViewport();
       await expect(avatar).toHaveAttribute("aria-expanded", "true");
       await expect(availability).toBeFocused();
-      await page.keyboard.press("ArrowDown");
+      await availability.press("Enter");
       await expect(
         page.getByRole("menuitemradio", { name: "Online", exact: true }),
       ).toBeFocused();
@@ -301,15 +301,23 @@ confirmedPresence(
       await page.keyboard.press("Enter");
       await expect(viewProfile).toBeFocused();
       await page.keyboard.press("End");
-      await expect(settings).toBeFocused();
+      await expect(feedback).toBeFocused();
       await page.keyboard.press("Home");
       await expect(viewProfile).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(statusEntry).toBeFocused();
       await page.keyboard.press("ArrowDown");
-      await expect(feedback).toBeFocused();
+      await expect(
+        account.getByRole("menuitem", { name: "Appearance", exact: true }),
+      ).toBeFocused();
+      await page.keyboard.press("ArrowDown");
+      await expect(
+        account.getByRole("menuitem", { name: "Plugins", exact: true }),
+      ).toBeFocused();
       await page.keyboard.press("ArrowDown");
       await expect(settings).toBeFocused();
+      await page.keyboard.press("ArrowDown");
+      await expect(feedback).toBeFocused();
       await page.keyboard.press("Home");
       await expect(viewProfile).toBeFocused();
       await tab(true);
@@ -322,7 +330,7 @@ confirmedPresence(
     await avatar.focus();
     await page.keyboard.press("Enter");
     await expect(viewProfile).toBeFocused();
-    await page.keyboard.press("End");
+    await settings.focus();
     await expect(settings).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(account).toBeHidden();

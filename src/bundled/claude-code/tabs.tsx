@@ -434,8 +434,11 @@ export function createTabs({
     const nativeModel = state.models.find(
       (candidate) => candidate.value === "default",
     );
-    const nativeLabel = nativeModel?.resolvedModel
-      ? `Recommended · ${resolvedModelName(nativeModel.resolvedModel)}`
+    const nativeName = nativeModel?.resolvedModel
+      ? resolvedModelName(nativeModel.resolvedModel)
+      : undefined;
+    const nativeLabel = nativeName
+      ? `${nativeName} · Recommended`
       : "Recommended";
     const listed = modelChoices(state.models);
     // A saved default Claude has not listed (yet) stays selectable.
@@ -570,7 +573,18 @@ export function createTabs({
               },
             ]}
             disabled={state.modelsChecking}
-            valueLabel={state.modelsChecking ? "Loading models…" : undefined}
+            valueLabel={
+              state.modelsChecking
+                ? "Loading models…"
+                : draftDefault
+                  ? undefined
+                  : nativeName
+            }
+            valueSuffix={
+              !state.modelsChecking && !draftDefault && nativeName
+                ? " · Recommended"
+                : undefined
+            }
             {...(state.modelsError
               ? { error: `Couldn't load Claude's models: ${state.modelsError}` }
               : {})}
@@ -841,7 +855,7 @@ export function createTabs({
       setupState.models,
     );
     const effortOptions = [
-      { value: "", label: "Default · Automatic" },
+      { value: "", label: "Automatic · Default" },
       // A saved level the model does not list; without Claude's list, it may.
       ...(draft.effort && !efforts.some((level) => level.id === draft.effort)
         ? [
@@ -891,6 +905,8 @@ export function createTabs({
         />
         <Select
           label="Thinking"
+          valueLabel={draft.effort ? undefined : "Automatic"}
+          valueSuffix={draft.effort ? undefined : " · Default"}
           variant="preference"
           value={draft.effort}
           groups={[{ label: "", options: effortOptions }]}

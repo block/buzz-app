@@ -156,12 +156,10 @@ export function ModelPicker({
       description: allowCustomModel ? "Custom model" : "Unavailable model",
     });
   const selected = items.find((model) => model.id === value) ?? fallback;
-  const selectedLabel =
-    includeDefault && selected.id === ""
-      ? `Default · ${selected.label}`
-      : selected.label;
-  const cardDefault =
-    compact && appearance === "subtle" && includeDefault && selected.id === "";
+  const inherited = includeDefault && selected.id === "";
+  const selectedLabel = inherited
+    ? `${selected.label} · Default`
+    : selected.label;
   const choices =
     allowCustomModel && !compact ? [...items, CUSTOM_MODEL_ACTION] : items;
   const openCustomDialog = () => {
@@ -175,14 +173,8 @@ export function ModelPicker({
         <Select
           label="Model"
           value={selected.id}
-          valueLabel={
-            loading
-              ? "Loading models…"
-              : cardDefault
-                ? selected.label
-                : selectedLabel
-          }
-          valueSuffix={!loading && cardDefault ? " · Default" : undefined}
+          valueLabel={loading ? "Loading models…" : selected.label}
+          valueSuffix={!loading && inherited ? " · Default" : undefined}
           valueTitle={loading ? "Loading models…" : selectedLabel}
           leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
           variant={compact ? "compact" : "preference"}
@@ -195,7 +187,7 @@ export function ModelPicker({
                 value: model.id,
                 label:
                   includeDefault && model.id === ""
-                    ? `Default · ${model.label}`
+                    ? `${model.label} · Default`
                     : model.label,
                 description: model.description,
                 leading: <ModelIcon model={`${model.id} ${model.label}`} />,

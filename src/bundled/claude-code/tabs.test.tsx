@@ -466,7 +466,7 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Default model" }),
-    ).toHaveTextContent("Recommended · Opus 5.5"),
+    ).toHaveTextContent("Opus 5.5 · Recommended"),
   );
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -509,7 +509,7 @@ it("loads provider models inside a disabled picker without a loading subtitle", 
     expect(screen.getByRole("combobox", { name: "Default model" })).toBe(
       picker,
     );
-    expect(picker).toHaveTextContent("Recommended · Opus 5.5");
+    expect(picker).toHaveTextContent("Opus 5.5 · Recommended");
     expect(screen.queryByText("Loading models…")).not.toBeInTheDocument();
   } finally {
     finish();
@@ -529,7 +529,7 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Default model" }),
-    ).toHaveTextContent("Recommended · Opus 5.5"),
+    ).toHaveTextContent("Opus 5.5 · Recommended"),
   );
   const user = userEvent.setup();
   const defaultModel = screen.getByRole("combobox", { name: "Default model" });
@@ -546,11 +546,11 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
     "form",
     defaultModel.closest("form")?.id,
   );
-  expect(defaultModel).toHaveTextContent("Recommended · Opus 5.5");
+  expect(defaultModel).toHaveTextContent("Opus 5.5 · Recommended");
   await user.click(defaultModel);
   expect(
     await screen.findByRole("option", {
-      name: "Recommended · Opus 5.5",
+      name: "Opus 5.5 · Recommended",
     }),
   ).toHaveAccessibleDescription("Following Claude Code's recommendation");
   // Every model Claude lists is offered, not only the aliases.
@@ -587,7 +587,7 @@ it("cancels a provider defaults draft without saving", async () => {
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Default model" }),
-    ).toHaveTextContent("Recommended · Opus 5.5"),
+    ).toHaveTextContent("Opus 5.5 · Recommended"),
   );
   await choose("Default model", "Fable 5.1");
   await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));
@@ -754,12 +754,12 @@ it("offers the model's thinking levels, dropping one the next model lacks", asyn
   await user.click(screen.getByRole("combobox", { name: "Thinking" }));
   expect(
     (await screen.findAllByRole("option")).map((option) => option.textContent),
-  ).toEqual(["Default · Automatic", "Low", "Medium", "High", "Extra high"]);
+  ).toEqual(["Automatic · Default", "Low", "Medium", "High", "Extra high"]);
   await user.click(screen.getByRole("option", { name: "Extra high" }));
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Haiku 4.5" }));
   const thinking = screen.getByRole("combobox", { name: "Thinking" });
-  expect(thinking).toHaveTextContent("Default · Automatic");
+  expect(thinking).toHaveTextContent("Automatic · Default");
   await user.click(thinking);
   await user.click(await screen.findByRole("option", { name: "High" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -785,9 +785,9 @@ it("keeps a saved thinking level changeable without Claude's model list", async 
   expect(thinking).not.toHaveTextContent("unavailable");
   await user.click(thinking);
   await user.click(
-    await screen.findByRole("option", { name: "Default · Automatic" }),
+    await screen.findByRole("option", { name: "Automatic · Default" }),
   );
-  expect(thinking).toHaveTextContent("Default · Automatic");
+  expect(thinking).toHaveTextContent("Automatic · Default");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
 });
@@ -846,7 +846,7 @@ it("starts a new agent with finite model choices and preserves its other setting
   ).not.toBeInTheDocument();
   await user.click(
     await screen.findByRole("option", {
-      name: "Default · Opus 5.5",
+      name: "Opus 5.5 · Default",
       description: "Best for everyday, complex tasks",
     }),
   );

@@ -222,12 +222,12 @@ it("lists the inherited default once with its catalog copy", async () => {
       onChange={onChange}
     />,
   );
-  expect(control()).toHaveTextContent("Default · Opus");
-  expect(screen.getByTitle("Default · Opus")).toBeVisible();
+  expect(control()).toHaveTextContent("Opus · Default");
+  expect(screen.getByTitle("Opus · Default")).toBeVisible();
   await user.click(control());
   const options = await screen.findAllByRole("option");
   expect(options).toHaveLength(2);
-  expect(options[0]).toHaveAccessibleName("Default · Opus");
+  expect(options[0]).toHaveAccessibleName("Opus · Default");
   expect(options[1]).toHaveAccessibleName("Sonnet");
   expect(options[0]).toHaveAccessibleDescription("Most capable");
   expect(options[0]).toHaveAttribute("aria-selected", "true");
@@ -250,7 +250,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
   expect(control()).not.toHaveTextContent("Default");
   await user.click(control());
   const inherited = await screen.findByRole("option", {
-    name: "Default · Opus",
+    name: "Opus · Default",
   });
   const pinned = screen.getByRole("option", { name: "Opus" });
   expect(pinned).toHaveAttribute("aria-selected", "true");
@@ -271,7 +271,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
   view.rerender(<ModelPicker {...props} />);
   await user.click(control());
   await user.click(
-    await screen.findByRole("option", { name: "Default · Opus" }),
+    await screen.findByRole("option", { name: "Opus · Default" }),
   );
   expect(onChange).toHaveBeenCalledExactlyOnceWith("");
   view.rerender(
@@ -282,10 +282,10 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
       defaultLabel="Sonnet"
     />,
   );
-  expect(control()).toHaveTextContent("Default · Sonnet");
+  expect(control()).toHaveTextContent("Sonnet · Default");
   await user.click(control());
   expect(
-    await screen.findByRole("option", { name: "Default · Sonnet" }),
+    await screen.findByRole("option", { name: "Sonnet · Default" }),
   ).toHaveAttribute("aria-selected", "true");
 });
 
@@ -311,10 +311,10 @@ it("keeps a Default suffix beside inherited card models as defaults change", asy
   expect(
     control().querySelector(".buzz-select-value-suffix"),
   ).toHaveTextContent("· Default");
-  expect(screen.getByTitle("Default · GPT-6.1-Sol")).toBeVisible();
+  expect(screen.getByTitle("GPT-6.1-Sol · Default")).toBeVisible();
   await user.click(control());
   expect(
-    await screen.findByRole("option", { name: "Default · GPT-6.1-Sol" }),
+    await screen.findByRole("option", { name: "GPT-6.1-Sol · Default" }),
   ).toHaveAttribute("aria-selected", "true");
   await user.keyboard("{Escape}");
 

@@ -208,7 +208,7 @@ it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", asy
   );
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Default · goose-claude",
+      "goose-claude · Default",
     ),
   );
   expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent(

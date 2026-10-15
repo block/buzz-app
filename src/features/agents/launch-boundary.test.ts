@@ -1,34 +1,32 @@
 // The launch boundary: a mention goes through the real agents service, its
-// runner and the start resolver into each real runtime. The config the
-// runtime actually uses comes from confirmed synced copies, the delivery
-// carries their revision IDs, and the relay transport underneath sees no
-// config request at start, online or offline.
+// runner and the start resolver into each real runtime, over a real relay
+// session. The config the runtime actually uses comes from confirmed synced
+// copies, the delivery carries their revision IDs, and the transport under
+// the session sees no request at start beyond a turn's conversation reads,
+// online or offline.
 import { Context } from "@deepseek-ai/cordis";
-import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import { finalizeEvent } from "nostr-tools";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Host, HostProcessOptions } from "../host/service";
-import type { RelayEvent } from "../relay/events";
+import type { ReadFilter, RelayEvent } from "../relay/events";
+import type { LiveCallbacks } from "../relay/live";
 import type { RelayData } from "../relay/service";
+import { createRelaySession } from "../relay/session";
+import { keypair, message, metadata, profile, roster } from "../relay/testing";
 import { AgentConfigStore, type Subject } from "./agent-config";
+import { artifactD, readHead } from "./agent-config-artifacts";
 import type { Mode } from "./agent-start";
 import { createLocalAgentActivity } from "./local-activity";
+import { type AgentReads, ownerReads } from "./reads";
 import {
+  type AgentCommunities,
   AgentsService,
   type AgentType,
   type ConfigBinding,
   type Delivery,
 } from "./service";
-import {
-  bot,
-  channel,
-  event,
-  fakeCommunities,
-  fakeNative,
-  fakeRelay,
-  viewer,
-} from "./service-testing";
+import { fakeNative } from "./service-testing";
 import { memoryStorage } from "./test-fakes";
-import { type AgentReads, ownerReads } from "./reads";
 import { claudeRun } from "../../bundled/claude-code/run";
 import { ClaudeRuntime } from "../../bundled/claude-code/runtime";
 import { fakeSpawn as fakeClaude } from "../../bundled/claude-code/claude-testing";
@@ -39,26 +37,24 @@ import { gooseRun } from "../../bundled/goose/run";
 import { GooseRuntime } from "../../bundled/goose/runtime";
 import { fakeSpawn as fakeGoose } from "../../bundled/goose/goose-testing";
 
-const key = generateSecretKey();
+const owner = keypair();
+const relayKey = keypair();
+const agentKey = keypair();
+const artifactKey = keypair();
+const origin = "https://relay.example.test";
+const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
+const configChannel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
 const base = {
-  owner: viewer,
-  community: "https://relay.example.test",
-  subject: bot,
-  channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
+  owner: owner.pubkey,
+  community: origin,
+  subject: agentKey.pubkey,
+  channel: configChannel,
 };
 const settingsSubject: Subject = { ...base, type: "buzz.agent.settings" };
 const instructionsSubject: Subject = {
   ...base,
   type: "buzz.agent.instructions",
 };
-const CLAUDE_LOCAL = {
-  model: "local-model",
-  effort: "",
-  instructions: "LOCAL INSTRUCTIONS",
-  workspace: "/this/device",
-  scope: "thread",
-};
-const CONFIG_KINDS = [45010, 45011, 39000, 39002, 9005];
 
 const revision = (body: object | null, op = "create") =>
   finalizeEvent(
@@ -66,9 +62,12 @@ const revision = (body: object | null, op = "create") =>
       kind: 45010,
       created_at: 1,
       content: body === null ? "" : JSON.stringify({ version: 1, ...body }),
-      tags: [["op", op]],
+      tags: [
+        ["op", op],
+        ["h", configChannel],
+      ],
     },
-    key,
+    artifactKey.secret,
   ) as RelayEvent;
 
 /** Confirmed copies in this device's storage, as a sync read installs them. */
@@ -81,45 +80,80 @@ function seed(storage: Storage, heads: [Subject, RelayEvent][]) {
     });
 }
 
-/** Every call into the relay session, by path, with its arguments. */
-function countCalls(target: Record<string, unknown>, path = "") {
-  const calls: { path: string; args: unknown[] }[] = [];
-  /** While set, every request fails as an unreachable relay's does. */
-  const transport = { offline: false };
-  const wrap = (object: Record<string, unknown>, prefix: string) => {
-    for (const [name, value] of Object.entries(object)) {
-      const at = prefix ? `${prefix}.${name}` : name;
-      if (typeof value === "function") {
-        object[name] = (...args: unknown[]) => {
-          calls.push({ path: at, args });
-          if (transport.offline && REQUESTS.has(at))
-            return Promise.reject(new Error("Relay unreachable"));
-          return (value as (...a: unknown[]) => unknown).apply(object, args);
-        };
-      } else if (value && typeof value === "object" && !Array.isArray(value))
-        wrap(value as Record<string, unknown>, at);
-    }
+/** One request the transport saw: a read's filters, or an encrypted memory
+ * listing (a request of its own, never a config read). */
+type Request = {
+  filters: readonly ReadFilter[];
+  memory?: { agent: string; slug: string | undefined };
+  failed: boolean;
+  /** Whether every mention sent so far had finished when it was made. */
+  afterRuns: boolean;
+};
+
+/** A turn's conversation reads (§4.3): messages and their edits, nothing else. */
+const CONVERSATION_KINDS = new Set([9, 40002]);
+const conversationRead = ({ filters, memory }: Request) =>
+  memory === undefined &&
+  filters.length > 0 &&
+  filters.every(
+    (filter) =>
+      !!filter.kinds?.length &&
+      filter.kinds.every((kind) => CONVERSATION_KINDS.has(kind)),
+  );
+
+/** A transport that answers from `records`, recording every request it sees.
+ * While `offline`, every request fails as an unreachable relay's does. */
+function countedTransport(records: RelayEvent[]) {
+  const requests: Request[] = [];
+  const state = { offline: false, afterRuns: () => false };
+  let live!: LiveCallbacks;
+  const transport = {
+    viewer: owner.pubkey,
+    relayAuthor: relayKey.pubkey,
+    scope: origin,
+    media: () => undefined,
+    async query(filters: readonly ReadFilter[]) {
+      const request = {
+        filters,
+        failed: state.offline,
+        afterRuns: state.afterRuns(),
+      };
+      requests.push(request);
+      if (state.offline) throw new Error("Relay unreachable");
+      return records.filter((event) =>
+        filters.some((filter) => filter.kinds?.includes(event.kind)),
+      );
+    },
+    async readAgentMemories(agent: string, _: AbortSignal, slug?: string) {
+      requests.push({
+        filters: [],
+        memory: { agent, slug },
+        failed: state.offline,
+        afterRuns: state.afterRuns(),
+      });
+      if (state.offline) throw new Error("Relay unreachable");
+      return { entries: [], partial: false };
+    },
+    subscribe(callbacks: LiveCallbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
   };
-  wrap(target, path);
-  return { calls, transport };
+  return { transport, requests, state, live: () => live };
 }
 
-/** Calls that ask the relay for something; reads of local state excluded. */
-const REQUESTS = new Set([
-  "read",
-  "snapshotRead",
-  "agentMemories.read",
-  "profiles.ensure",
-  "mePlacement.refresh",
-]);
-const configRequests = (calls: { path: string; args: unknown[] }[]) =>
-  calls
-    .filter((call) => REQUESTS.has(call.path))
-    .filter((call) =>
-      JSON.stringify(call.args).match(
-        new RegExp(`"kinds":\\[[^\\]]*\\b(${CONFIG_KINDS.join("|")})\\b`),
-      ),
-    );
+const disposals: (() => unknown)[] = [];
+afterEach(async () => {
+  for (const dispose of disposals.splice(0).reverse()) await dispose();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+// Listing the agent in its community is not under test here.
+vi.mock("./relay-removal", async (actual) => ({
+  ...(await actual<typeof import("./relay-removal")>()),
+  publishAgentRecord: vi.fn(async () => {}),
+}));
 
 async function setup<Config>(
   typeId: string,
@@ -137,37 +171,64 @@ async function setup<Config>(
 ) {
   const storage = memoryStorage();
   seed(storage, heads);
+  const counted = countedTransport([
+    metadata(relayKey, channel, "general"),
+    roster(relayKey, channel, [owner.pubkey, agentKey.pubkey]),
+    profile(owner, { name: "Owner" }),
+    profile(agentKey, { name: typeId, is_agent: true }),
+    ...heads.map(([, head]) => head),
+  ]);
+  const session = createRelaySession(counted.transport);
+  disposals.push(() => session.dispose());
+  const relayData = {
+    snapshot: () => ({
+      status: "ready",
+      generation: 1,
+      session: session.session,
+      scope: `${origin}:${owner.pubkey}`,
+      origin,
+      viewer: owner.pubkey,
+    }),
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  const communities = {
+    snapshot: () => ({
+      viewer: owner.pubkey,
+      selected: origin,
+      memberships: [{ id: origin, name: "Test" }],
+    }),
+    subscribe: () => () => {},
+    open: () => relayData,
+  } as unknown as AgentCommunities;
+  const native = fakeNative([
+    {
+      pubkey: agentKey.pubkey,
+      name: typeId,
+      owner: owner.pubkey,
+      relay: "wss://relay.example.test",
+      type: `buzz/${typeId}`,
+      deleted: false,
+    },
+  ]);
   const ctx = new Context();
   ctx.provide("pluginStatus", {
     isActive: () => true,
     subscribe: () => () => {},
   });
-  const fake = fakeRelay();
-  Object.assign(fake.session, {
-    snapshotRead: vi.fn(async () => []),
-    profiles: {
-      ensure: vi.fn(async () => {}),
-      snapshot: () => new Map(),
-      event: () => undefined,
-    },
-    names: { resolve: () => undefined },
-  });
-  const { calls, transport } = countCalls(
-    fake.session as unknown as Record<string, unknown>,
-  );
-  const client = fakeCommunities(fake);
-  const native = fakeNative();
   const activity = createLocalAgentActivity();
+  /** Each start's binding lookup: one per start attempt. */
+  const attempts = vi.fn(() => binding);
   const service = new AgentsService(
     ctx,
-    client.communities,
+    communities,
     native,
     storage,
-    async () => ["auth", viewer, "", "f".repeat(128)] as const,
+    undefined,
     activity,
     undefined,
-    () => binding,
+    attempts,
   );
+  disposals.push(() => ctx.fiber.dispose());
   const plugin = ctx.extend({
     pluginOwner: Object.freeze({ id: "buzz", revision: "one" }),
   });
@@ -188,36 +249,69 @@ async function setup<Config>(
     },
   });
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
-  await service.create({ type: `buzz/${typeId}`, name: typeId });
-  let id = 0;
+  // Settle every cache a start may consult before counting begins.
+  await session.session.channels.ensureList();
+  counted.live().state({ status: "connected", routes: [] });
+  await vi.waitFor(() =>
+    expect(service.snapshot().agents.map((agent) => agent.pubkey)).toContain(
+      agentKey.pubkey,
+    ),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await session.session.profiles.ensure([owner.pubkey, agentKey.pubkey]);
+  await service.core(agentKey.pubkey);
+  counted.requests.length = 0;
+  let at = Math.floor(Date.now() / 1000);
+  let mentions = 0;
+  counted.state.afterRuns = () =>
+    activity.reader
+      .work()
+      .filter((work) => !["waiting", "working"].includes(work.state)).length ===
+    mentions;
   /** A new top-level mention from the owner: a new conversation. */
   const mention = () => {
-    const sent = event(`m${++id}`, {
-      pubkey: viewer,
-      content: "@agent hello",
-      tags: [
-        ["h", channel],
-        ["p", bot],
-      ],
-    });
-    fake.emit({ events: [sent], channelId: channel });
+    mentions++;
+    const sent = message(owner, channel, "@agent hello", ++at, [
+      ["p", agentKey.pubkey],
+    ]);
+    counted.live().receive([sent], { phase: "live", channelId: channel });
     return sent;
   };
-  return { service, fake, calls, transport, deliveries, activity, mention };
+  return {
+    service,
+    session: session.session,
+    requests: counted.requests,
+    transport: counted.state,
+    deliveries,
+    activity,
+    attempts,
+    mention,
+  };
+}
+type Fixture = Awaited<ReturnType<typeof setup>>;
+
+/** The runner's refresh of the agent's `core` memory once its work has
+ * ended, for a later start that never waits on it (`runner.ts` `release`). */
+const postRunCoreRefresh = (request: Request) =>
+  request.afterRuns &&
+  request.memory?.agent === agentKey.pubkey &&
+  request.memory.slug === "core";
+
+/** Every recorded request is a turn's conversation read where `conversation`,
+ * or the post-run core refresh; anything else fails. */
+function expectOnlyAllowed(f: Fixture, conversation: boolean) {
+  const forbidden = f.requests.filter(
+    (request) =>
+      !postRunCoreRefresh(request) &&
+      !(conversation && conversationRead(request)),
+  );
+  expect(forbidden).toEqual([]);
 }
 
 const synced = (mode: Mode = "synced") => ({
   settings: { mode, subject: settingsSubject },
   instructions: { mode, subject: instructionsSubject },
 });
-
-afterEach(() => vi.restoreAllMocks());
-
-// Listing the agent in its community is not under test here.
-vi.mock("./relay-removal", async (actual) => ({
-  ...(await actual<typeof import("./relay-removal")>()),
-  publishAgentRecord: vi.fn(async () => {}),
-}));
 
 /** Synced copies for `agentType`: these settings, and instructions. */
 function heads(agentType: string, settings: Record<string, string>) {
@@ -232,19 +326,25 @@ function heads(agentType: string, settings: Record<string, string>) {
   };
 }
 
-/** The counter sees a config sync read when one is made: it counts. */
-async function expectCounterSeesSync(f: Awaited<ReturnType<typeof setup>>) {
+/** The same counter records a real config sync read once the relay is back. */
+async function expectCounterSeesSync(f: Fixture) {
   f.transport.offline = false;
-  const before = configRequests(f.calls).length;
-  await (
-    f.fake.session as unknown as {
-      snapshotRead(filters: object[]): Promise<unknown>;
-    }
-  ).snapshotRead([{ kinds: [45010], "#h": [base.channel], limit: 1 }]);
-  expect(configRequests(f.calls)).toHaveLength(before + 1);
+  f.requests.length = 0;
+  const read = f.session.snapshotRead;
+  if (!read) throw new Error("snapshotRead unavailable");
+  await readHead(
+    read,
+    configChannel,
+    await artifactD("buzz.agent.settings", configChannel),
+  );
+  expect(f.requests).toHaveLength(1);
+  expect(f.requests[0]?.filters[0]).toMatchObject({
+    kinds: [45010],
+    "#h": [configChannel],
+  });
 }
 
-it("starts Claude sessions from the synced copies, with no config request online or offline", async () => {
+it("starts Claude sessions from the synced copies, with no relay request online or offline", async () => {
   const claude = fakeClaude();
   const host = { spawn: claude.spawn, request: vi.fn() } as unknown as Host;
   const { revisions, seeded } = heads("buzz/claude-code", {
@@ -255,31 +355,41 @@ it("starts Claude sessions from the synced copies, with no config request online
     "claude-code",
     (_relay, reads, core) =>
       claudeRun(new ClaudeRuntime(host, reads, core, memoryStorage())),
-    { ...CLAUDE_LOCAL },
+    {
+      model: "local-model",
+      effort: "",
+      instructions: "LOCAL INSTRUCTIONS",
+      workspace: "/this/device",
+      scope: "thread",
+    },
     seeded,
     synced(),
   );
-  f.calls.length = 0;
+  const prompted = (index: number) =>
+    vi.waitFor(() =>
+      expect(JSON.stringify(claude.processes[index]?.received)).toContain(
+        "SYNCED INSTRUCTIONS",
+      ),
+    );
   f.mention();
-  await vi.waitFor(() => expect(claude.processes).toHaveLength(1));
+  await prompted(0);
   const [first] = claude.processes;
   expect(first?.model).toBe("synced-model");
   expect(first?.options.cwd).toBe("/this/device");
-  await vi.waitFor(() =>
-    expect(JSON.stringify(first?.received)).toContain("SYNCED INSTRUCTIONS"),
-  );
   expect(JSON.stringify(first?.received)).not.toContain("LOCAL INSTRUCTIONS");
   expect(f.deliveries[0]?.revisions).toEqual(revisions);
-  expect(configRequests(f.calls)).toEqual([]);
+  expectOnlyAllowed(f, false);
 
   // The relay goes away; the next conversation starts from the same copies.
   f.transport.offline = true;
-  f.calls.length = 0;
   f.mention();
-  await vi.waitFor(() => expect(claude.processes).toHaveLength(2));
+  await prompted(1);
   expect(claude.processes[1]?.model).toBe("synced-model");
+  expect(JSON.stringify(claude.processes[1]?.received)).not.toContain(
+    "LOCAL INSTRUCTIONS",
+  );
   expect(f.deliveries[1]?.revisions).toEqual(revisions);
-  expect(configRequests(f.calls)).toEqual([]);
+  expectOnlyAllowed(f, false);
   await expectCounterSeesSync(f);
 });
 
@@ -345,7 +455,7 @@ function fakeCodex() {
   return { spawn, sent };
 }
 
-it("starts a Codex thread and a turn from the synced copies, with no config request online or offline", async () => {
+it("starts a Codex thread and a turn from the synced copies; offline, only its conversation reads fail", async () => {
   const codex = fakeCodex();
   const { revisions, seeded } = heads("buzz/codex", {
     model: "synced-model",
@@ -368,9 +478,10 @@ it("starts a Codex thread and a turn from the synced copies, with no config requ
   );
   const starts = (method: string) =>
     codex.sent.filter((wire) => wire.method === method);
-  f.calls.length = 0;
-  f.mention();
-  await vi.waitFor(() => expect(starts("turn/start")).toHaveLength(1));
+  const outcome = (id: string) =>
+    f.activity.reader.work().find((work) => work.messageId === id);
+  const first = f.mention();
+  await vi.waitFor(() => expect(outcome(first.id)?.state).toBe("done"));
   const [thread] = starts("thread/start");
   expect(thread?.params).toMatchObject({
     model: "synced-model",
@@ -379,22 +490,33 @@ it("starts a Codex thread and a turn from the synced copies, with no config requ
   const sentToCodex = JSON.stringify(codex.sent);
   expect(sentToCodex).toContain("SYNCED INSTRUCTIONS");
   expect(sentToCodex).not.toContain("LOCAL INSTRUCTIONS");
+  expect(starts("turn/start")).toHaveLength(1);
   expect(starts("turn/start")[0]?.params).toMatchObject({ effort: "high" });
   expect(f.deliveries[0]?.revisions).toEqual(revisions);
-  expect(configRequests(f.calls)).toEqual([]);
+  expect(f.requests.filter(conversationRead)).not.toEqual([]);
+  expectOnlyAllowed(f, true);
 
+  // Offline until the second mention ends: the thread still opens from the
+  // copies, and the turn fails on its conversation reads alone (§4.3).
   f.transport.offline = true;
-  f.calls.length = 0;
-  f.mention();
-  // The thread still opens from the copies; its turn then needs the
-  // conversation itself, which an unreachable relay cannot give.
-  await vi.waitFor(() => expect(starts("thread/start")).toHaveLength(2));
+  f.requests.length = 0;
+  const second = f.mention();
+  await vi.waitFor(() => expect(outcome(second.id)?.state).toBe("error"));
+  expect(outcome(second.id)?.error).toBe("Relay unreachable");
+  expect(starts("thread/start")).toHaveLength(2);
   expect(starts("thread/start")[1]?.params).toMatchObject({
     model: "synced-model",
     cwd: "/this/device",
   });
+  expect(starts("turn/start")).toHaveLength(1);
   expect(f.deliveries[1]?.revisions).toEqual(revisions);
-  expect(configRequests(f.calls)).toEqual([]);
+  // Until the run ended, what failed was the turn's conversation reads alone.
+  const failed = f.requests.filter(
+    (request) => request.failed && !postRunCoreRefresh(request),
+  );
+  expect(failed).not.toEqual([]);
+  expect(failed.filter((request) => !conversationRead(request))).toEqual([]);
+  expectOnlyAllowed(f, true);
   await expectCounterSeesSync(f);
 });
 
@@ -417,7 +539,7 @@ function gooseHost() {
   return { goose, host };
 }
 
-it("starts Goose sessions from the synced copies, with no config request online or offline", async () => {
+it("starts Goose sessions from the synced copies, with no relay request online or offline", async () => {
   const { goose, host } = gooseHost();
   const { revisions, seeded } = heads("buzz/goose", {
     model: "synced-model",
@@ -431,7 +553,6 @@ it("starts Goose sessions from the synced copies, with no config request online 
     seeded,
     synced(),
   );
-  f.calls.length = 0;
   f.mention();
   const process = () => goose.geese[0];
   await vi.waitFor(() => expect(process()?.turns).toHaveLength(1));
@@ -440,23 +561,24 @@ it("starts Goose sessions from the synced copies, with no config request online 
   expect(used()).toContain("synced-provider");
   expect(used()).not.toContain("local-model");
   expect(process()?.opened[0]).toMatchObject({ cwd: "/this/device" });
-  const prompts = JSON.stringify([...(process()?.prompts.values() ?? [])]);
-  expect(prompts).toContain("SYNCED INSTRUCTIONS");
-  expect(prompts).not.toContain("LOCAL INSTRUCTIONS");
+  const prompts = () =>
+    JSON.stringify([...(process()?.prompts.values() ?? [])]);
+  expect(prompts()).toContain("SYNCED INSTRUCTIONS");
+  expect(prompts()).not.toContain("LOCAL INSTRUCTIONS");
   expect(f.deliveries[0]?.revisions).toEqual(revisions);
-  expect(configRequests(f.calls)).toEqual([]);
+  expectOnlyAllowed(f, false);
 
   f.transport.offline = true;
-  f.calls.length = 0;
   f.mention();
   await vi.waitFor(() => expect(process()?.turns).toHaveLength(2));
   expect(process()?.opened).toHaveLength(2);
   expect(f.deliveries[1]?.revisions).toEqual(revisions);
-  expect(configRequests(f.calls)).toEqual([]);
+  expectOnlyAllowed(f, false);
   await expectCounterSeesSync(f);
 });
 
-it("refuses to start from deleted synced settings: no launch, the reason on the mention, no retry", async () => {
+it("refuses to start from deleted synced settings once: no launch, the reason on the mention, no retry", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
   const { goose, host } = gooseHost();
   const deleted = revision(null, "delete");
   const { seeded } = heads("buzz/goose", { model: "synced-model" });
@@ -467,16 +589,22 @@ it("refuses to start from deleted synced settings: no launch, the reason on the 
     [[settingsSubject, deleted], seeded[1] as [Subject, RelayEvent]],
     synced(),
   );
-  f.calls.length = 0;
+  f.attempts.mockClear();
   const sent = f.mention();
-  await vi.waitFor(() =>
-    expect(JSON.stringify(f.activity.reader.work())).toContain(
-      "restore from History",
-    ),
-  );
-  expect(JSON.stringify(f.activity.reader.work())).toContain(sent.id);
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  const work = () =>
+    f.activity.reader.work().filter((item) => item.messageId === sent.id);
+  await vi.waitFor(() => expect(work()[0]?.state).toBe("error"));
+  expect(work()).toEqual([
+    expect.objectContaining({
+      state: "error",
+      error: "Settings were deleted — restore from History",
+    }),
+  ]);
+  // Past the service's next tick, which runs whatever is still queued.
+  await vi.advanceTimersByTimeAsync(6_000);
+  expect(f.attempts).toHaveBeenCalledTimes(1);
+  expect(work()).toHaveLength(1);
   expect(f.deliveries).toEqual([]);
   expect(goose.geese).toEqual([]);
-  expect(configRequests(f.calls)).toEqual([]);
+  expectOnlyAllowed(f, false);
 });

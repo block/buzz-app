@@ -38,6 +38,7 @@ export function ResizeHandle({
     startX: number;
     width: number;
     next: number;
+    moved?: boolean;
     style: CSSStyleDeclaration;
     previous: string;
     priority: string;
@@ -48,6 +49,7 @@ export function ResizeHandle({
   const nextWidth = useCallback((event: PointerEvent) => {
     const active = drag.current;
     if (!active) return;
+    active.moved ||= event.clientX !== active.startX;
     const { min, max, direction } = resize.current;
     active.next = Math.min(
       max,
@@ -89,7 +91,7 @@ export function ResizeHandle({
       else active.style.removeProperty(property);
       if (event?.type === "pointerup") {
         nextWidth(event as PointerEvent);
-        resize.current.setWidth(active.next);
+        if (active.moved) resize.current.setWidth(active.next);
       }
       drag.current = undefined;
       handle.current?.removeAttribute("data-resizing");

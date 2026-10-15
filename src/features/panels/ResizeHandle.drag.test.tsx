@@ -178,3 +178,29 @@ test.each(["pointercancel", "blur", "unmount"])(
     expect(document.body.style.userSelect).toBe("");
   },
 );
+
+test.each([1, -1] as const)(
+  "direction %s leaves width intent unchanged without horizontal movement",
+  (direction) => {
+    const w = workspace(direction);
+    w.pointer("pointerdown", 400);
+    w.pointer("pointerup", 400);
+    expect(w.commit).not.toHaveBeenCalled();
+    w.pointer("pointerdown", 400);
+    w.pointer("pointermove", 400);
+    w.frame();
+    w.pointer("pointerup", 400);
+    expect(w.commit).not.toHaveBeenCalled();
+    expect(w.target.style.getPropertyValue(w.property)).toBe("260px");
+  },
+);
+
+test.each([1, -1] as const)(
+  "direction %s commits horizontal movement first reported on release",
+  (direction) => {
+    const w = workspace(direction);
+    w.pointer("pointerdown", 400);
+    w.pointer("pointerup", 400 + direction * 30);
+    expect(w.commit).toHaveBeenCalledExactlyOnceWith(290);
+  },
+);

@@ -177,3 +177,35 @@ for (const name of [
     }
   });
 }
+
+// Real mouse input and viewport reflow prove a click preserves automatic sizing.
+test("clicking the thread divider preserves automatic sizing", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await open(page, app);
+  const channel = page.getByRole("region", { name: "Channel message history" });
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const row = channel.locator(`[data-message-id="${root.id}"]`);
+  await row.hover();
+  await row.getByRole("button", { name: /^View thread:/ }).click();
+  const handle = page.getByRole("separator", {
+    name: "Resize main and secondary panels",
+    exact: true,
+  });
+  await expect(handle).toBeVisible();
+  const width = () =>
+    handle.evaluate((el) => el.parentElement.getBoundingClientRect().width);
+  const initial = await width();
+  await page.setViewportSize({ width: 1380, height: 800 });
+  await expect.poll(width).toBeGreaterThan(initial + 30);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect.poll(width).toBeLessThan(initial + 2);
+  const box = await handle.boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.setViewportSize({ width: 1380, height: 800 });
+  await expect.poll(width).toBeGreaterThan(initial + 30);
+});

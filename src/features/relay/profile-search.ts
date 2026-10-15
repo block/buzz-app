@@ -1,12 +1,14 @@
 import { ReadError } from "./errors";
 import type { RelayEvent } from "./events";
 import type { RelayReader } from "./reader";
-import type { ReadTransport } from "./transport";
 
 /** The relay's `POST /profiles/search` page-size ceiling. */
 export const PROFILE_SEARCH_MAX = 100;
 /** The relay's highest page, the same as its NIP-50 search. */
 export const PROFILE_SEARCH_PAGES = 1000;
+/** The relay's longest accepted trimmed query, in Unicode code points (Rust
+ * `chars()`). A longer query goes to NIP-50 search, which has no such limit. */
+export const PROFILE_SEARCH_QUERY_MAX = 100;
 
 export type ProfileSearchOptions = {
   /** Results per page. */
@@ -31,12 +33,10 @@ export const PROFILE_SEARCH_RETRY_MS = 5 * 60_000;
  * the endpoint is tried again. A relay that loses the endpoint falls back the
  * same way.
  *
- * `begin` runs before each endpoint request. It returns a check that is true
- * when the session's access or cache changed, so the result is stale. */
+ * Both searches go through the given reader, which owns their deadline,
+ * cancellation and stale-result checks. */
 export function createProfileSearch(
-  search: ReadTransport["searchProfiles"] | undefined,
   fallback: RelayReader,
-  begin: () => () => boolean,
   now: () => number = Date.now,
 ) {
   let fallbackUntil = Number.NEGATIVE_INFINITY;
@@ -57,13 +57,17 @@ export function createProfileSearch(
           page > PROFILE_SEARCH_PAGES))
     )
       throw new Error("Invalid profile search.");
-    if (search && now() >= fallbackUntil) {
-      const stale = begin();
+    if (
+      reader.searchProfiles &&
+      [...text].length <= PROFILE_SEARCH_QUERY_MAX &&
+      now() >= fallbackUntil
+    ) {
       try {
-        const events = await search(text, limit, page ?? 1, signal, priority);
-        signal.throwIfAborted();
-        if (stale())
-          throw new DOMException("Stale profile search", "AbortError");
+        const events = await reader.searchProfiles(text, limit, page ?? 1, {
+          signal,
+          priority,
+          fresh: true,
+        });
         return events.filter((event) => event.kind === 0);
       } catch (error) {
         if (

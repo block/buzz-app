@@ -1,7 +1,12 @@
 import { expect, it, vi } from "vitest";
 import { ReadError } from "./errors";
 import type { ReadFilter, RelayEvent } from "./events";
-import { createProfileSearch, PROFILE_SEARCH_RETRY_MS } from "./profile-search";
+import {
+  createProfileSearch,
+  PROFILE_SEARCH_QUERY_MAX,
+  PROFILE_SEARCH_RETRY_MS,
+} from "./profile-search";
+import type { ReadOptions } from "./reader";
 import { keypair, signed } from "./testing";
 
 const profiles = Array.from({ length: 5 }, (_, index) =>
@@ -23,23 +28,23 @@ function setup(
     limit: number,
     page: number,
   ) => Promise<RelayEvent[]>,
-  stale = () => false,
 ) {
   const reads: ReadFilter[][] = [];
-  const endpoint = search ? vi.fn(search) : undefined;
+  const endpoint = search
+    ? vi.fn(
+        (query: string, limit: number, page: number, _options?: ReadOptions) =>
+          search(query, limit, page),
+      )
+    : undefined;
   const fallback = {
     read: vi.fn(async (filters: readonly ReadFilter[]) => {
       reads.push([...filters]);
       return [nip50];
     }),
+    ...(endpoint ? { searchProfiles: endpoint } : {}),
   };
   const clock = { now: 1_000_000 };
-  const searchProfiles = createProfileSearch(
-    endpoint,
-    fallback,
-    () => stale,
-    () => clock.now,
-  );
+  const searchProfiles = createProfileSearch(fallback, () => clock.now);
   return { searchProfiles, endpoint, fallback, reads, clock };
 }
 
@@ -50,13 +55,11 @@ it("asks the name-only endpoint and never sends NIP-50 search", async () => {
   expect(
     await searchProfiles(" wes ", { limit: 40, signal: signal() }),
   ).toEqual(profiles);
-  expect(endpoint).toHaveBeenCalledWith(
-    "wes",
-    40,
-    1,
-    expect.any(AbortSignal),
-    "foreground",
-  );
+  expect(endpoint).toHaveBeenCalledWith("wes", 40, 1, {
+    signal: expect.any(AbortSignal),
+    priority: "foreground",
+    fresh: true,
+  });
   expect(reads).toEqual([]);
 });
 
@@ -67,22 +70,18 @@ it("passes the requested page to the endpoint", async () => {
   expect(
     await searchProfiles("wes", { limit: 2, page: 2, signal: signal() }),
   ).toEqual(profiles.slice(2, 4));
-  expect(endpoint).toHaveBeenLastCalledWith(
-    "wes",
-    2,
-    2,
-    expect.any(AbortSignal),
-    "foreground",
-  );
+  expect(endpoint).toHaveBeenLastCalledWith("wes", 2, 2, {
+    signal: expect.any(AbortSignal),
+    priority: "foreground",
+    fresh: true,
+  });
   // No total cap: a page past the first hundred results still reaches the relay.
   await searchProfiles("wes", { limit: 30, page: 5, signal: signal() });
-  expect(endpoint).toHaveBeenLastCalledWith(
-    "wes",
-    30,
-    5,
-    expect.any(AbortSignal),
-    "foreground",
-  );
+  expect(endpoint).toHaveBeenLastCalledWith("wes", 30, 5, {
+    signal: expect.any(AbortSignal),
+    priority: "foreground",
+    fresh: true,
+  });
 });
 
 it.each([404, 405])(
@@ -152,14 +151,24 @@ it("falls back when a relay that served the endpoint loses it", async () => {
   ]);
 });
 
-it("drops a result from before an access or cache change", async () => {
-  const { searchProfiles } = setup(
-    async () => profiles,
-    () => true,
-  );
-  await expect(
-    searchProfiles("wes", { limit: 40, signal: signal() }),
-  ).rejects.toMatchObject({ name: "AbortError" });
+it("sends a query over the relay's character limit to NIP-50 search", async () => {
+  const { searchProfiles, endpoint, reads } = setup(async () => profiles);
+  // Code points, not UTF-16 units: 100 emoji are 200 units and still fit.
+  const longest = "😀".repeat(PROFILE_SEARCH_QUERY_MAX);
+  await searchProfiles(` ${longest} `, { limit: 40, signal: signal() });
+  expect(endpoint).toHaveBeenCalledTimes(1);
+  expect(endpoint).toHaveBeenLastCalledWith(longest, 40, 1, expect.anything());
+  const over = "w".repeat(PROFILE_SEARCH_QUERY_MAX + 1);
+  expect(await searchProfiles(over, { limit: 40, signal: signal() })).toEqual([
+    nip50,
+  ]);
+  expect(endpoint).toHaveBeenCalledTimes(1);
+  expect(reads).toEqual([
+    [{ kinds: [0], search: over, search_mode: "prefix", limit: 40 }],
+  ]);
+  // Not a missing endpoint: the next short query uses it right away.
+  await searchProfiles("wes", { limit: 40, signal: signal() });
+  expect(endpoint).toHaveBeenCalledTimes(2);
 });
 
 it("keeps non-profile events out of the result", async () => {

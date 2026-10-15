@@ -79,6 +79,7 @@ export function SearchResults({
   currentChannelId,
   onScopeChange,
   openConversation,
+  openAgentSession,
   usageScope,
 }: {
   session: RelaySession;
@@ -87,6 +88,9 @@ export function SearchResults({
   currentChannelId?: string | undefined;
   onScopeChange?: ((channelId?: string) => void) | undefined;
   openConversation: (channelId: string, messageId?: string) => void;
+  /** Open a new Solo session with one of the viewer's agents. Without it,
+   * choosing one of their agents opens a direct message, as for anyone else. */
+  openAgentSession?: ((pubkey: string) => void) | undefined;
   /** View-state partition whose visits and search choices rank results. */
   usageScope?: string | undefined;
 } & SearchInputProps) {
@@ -279,6 +283,17 @@ export function SearchResults({
     peopleActive,
   );
   useMentionArchives(session, showAuthorPicker || peopleActive);
+  // The viewer's own agents open a new session, not a direct message: the
+  // same agents the new-session composer accepts. Their earlier sessions
+  // still show as conversations.
+  const sessionSearch = !!openAgentSession && peopleActive;
+  const ownAgents = useAgentChoices(session, sessionSearch, sessionSearch);
+  const sessionAgents = new Map(
+    (sessionSearch ? ownAgents.selectable : []).map((agent) => [
+      agent.pubkey,
+      agent,
+    ]),
+  );
   const effectiveChannelId = scopedChannelId ?? operatorChannelId;
   useEffect(() => {
     if (!showAuthorPicker) return;
@@ -493,7 +508,7 @@ export function SearchResults({
         sources.set(pubkey, profile);
     for (const person of personDirectory.people)
       if (!sources.has(person.pubkey)) sources.set(person.pubkey, person);
-    for (const agent of managedAgents.values())
+    for (const agent of [...managedAgents.values(), ...sessionAgents.values()])
       if (!sources.has(agent.pubkey))
         sources.set(agent.pubkey, {
           name: agent.name,
@@ -501,17 +516,21 @@ export function SearchResults({
           isAgent: true,
         });
     for (const [pubkey, source] of sources) {
-      const agent = !!source.isAgent || knownAgents.has(pubkey);
+      const agent =
+        !!source.isAgent ||
+        knownAgents.has(pubkey) ||
+        sessionAgents.has(pubkey);
       // As in New message, an agent is a destination only when this
       // community's native control manages it.
       if (
         pubkey === session.viewer ||
-        (agent && !managedAgents.has(pubkey)) ||
+        (agent && !managedAgents.has(pubkey) && !sessionAgents.has(pubkey)) ||
         archiveHides(session.archives, pubkey, session.viewer)
       )
         continue;
       const dm = relationships.dm(pubkey);
-      const agentName = managedAgents.get(pubkey)?.name;
+      const agentName =
+        managedAgents.get(pubkey)?.name ?? sessionAgents.get(pubkey)?.name;
       people.push({
         pubkey,
         label: resolveName(pubkey, source.name),
@@ -523,7 +542,10 @@ export function SearchResults({
           profiles.get(pubkey)?.ownerPubkey === session.viewer,
         relationship: relationships.rank(pubkey),
         usageKeys: [personKey(pubkey), ...(dm ? [`channel:${dm}`] : [])],
-        picture: source.picture ?? managedAgents.get(pubkey)?.avatar,
+        picture:
+          source.picture ??
+          managedAgents.get(pubkey)?.avatar ??
+          sessionAgents.get(pubkey)?.avatar,
       });
     }
   }
@@ -570,7 +592,18 @@ export function SearchResults({
     ),
     channelRank,
   );
-  const matchingChannels = matchingAll.slice(0, 8);
+  // A DM with one of the viewer's own agents gives way to its "New session"
+  // row; the DM stays in the sidebar.
+  const matchingChannels = matchingAll
+    .filter(
+      (channel) =>
+        !(
+          channel.channelType === "dm" &&
+          channel.participants?.length === 1 &&
+          sessionAgents.has(channel.participants[0] ?? "")
+        ),
+    )
+    .slice(0, 8);
   const directMessageResults = matchingChannels.filter(
     (channel) => channel.channelType === "dm",
   );
@@ -690,6 +723,7 @@ export function SearchResults({
   } => {
     const matches = matchPerson(person.label, peopleNeedle)?.positions;
     const key = personKey(person.pubkey);
+    const newSession = !!openAgentSession && sessionAgents.has(person.pubkey);
     const dm = list.channels.some(
       (channel) =>
         channel.channelType === "dm" &&
@@ -703,7 +737,11 @@ export function SearchResults({
       ...(matches?.length ? { matches } : {}),
       detail: [
         person.username && `@${person.username}`,
-        dm ? "Direct message" : "Start a direct message",
+        newSession
+          ? "New session"
+          : dm
+            ? "Direct message"
+            : "Start a direct message",
       ]
         .filter(Boolean)
         .join(" · "),
@@ -713,9 +751,10 @@ export function SearchResults({
         shape: person.agent ? "squircle" : "circle",
       },
       order,
-      run: choose(
-        key,
-        () => void openPerson(person.pubkey, person.label, person.agent),
+      run: choose(key, () =>
+        newSession
+          ? openAgentSession(person.pubkey)
+          : void openPerson(person.pubkey, person.label, person.agent),
       ),
     };
   };

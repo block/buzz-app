@@ -288,3 +288,23 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
     await screen.findByRole("option", { name: "Default · Sonnet" }),
   ).toHaveAttribute("aria-selected", "true");
 });
+
+it("keeps compact card values readable with the inherited source in title and options", async () => {
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      compact
+      appearance="subtle"
+      models={[{ id: "gpt-6.1-sol", label: "GPT-6.1-Sol" }]}
+      value=""
+      defaultLabel="GPT-6.1-Sol"
+      onChange={vi.fn()}
+    />,
+  );
+  expect(control()).toHaveTextContent(/^GPT-6.1-Sol$/);
+  expect(screen.getByTitle("Default · GPT-6.1-Sol")).toBeVisible();
+  await user.click(control());
+  expect(
+    await screen.findByRole("option", { name: "Default · GPT-6.1-Sol" }),
+  ).toHaveAttribute("aria-selected", "true");
+});

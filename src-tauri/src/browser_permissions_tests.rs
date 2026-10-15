@@ -107,7 +107,6 @@ fn native_command_permissions_allow_only_main_webview() {
         "plugin_change",
         "plugin_reload",
         "plugin_module",
-        "plugin_content",
         "plugin_recover",
         "plugin_host_run_command",
         "plugin_host_request",

@@ -367,22 +367,16 @@ it("keeps a conversation's process through a turn Claude starts itself", async (
   expect(process?.killed).toBe(true);
 });
 
-it("keeps old settings for background work, and restarts on the next message after it", async () => {
+it("applies new settings over background work once no reply is running", async () => {
   const { pool, claudes, setModel } = sessions();
   await pool.deliver("c/root", "start a build", 1);
   const [process] = claudes();
   backgroundTasks(process, {});
   setModel("sonnet");
   pool.reconfigure();
-  await pool.deliver("c/root", "how is it going?", 2);
-  expect(process?.killed).toBe(false);
-  expect(process?.prompts).toEqual(["start a build", "how is it going?"]);
-  // Not between the work ending and the turn that reports it.
-  backgroundTasks(process);
   await flush();
-  expect(process?.killed).toBe(false);
-  await pool.deliver("c/root", "again", 3);
   expect(process?.killed).toBe(true);
+  await pool.deliver("c/root", "again", 2);
   expect(claudes().at(-1)?.options.args).toEqual(
     expect.arrayContaining(["--resume", "new-1", "--model", "sonnet"]),
   );

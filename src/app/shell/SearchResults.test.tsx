@@ -552,6 +552,15 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     const first = await request();
     expect(first.filters).toEqual([{ ...text, search_sort: "newest" }]);
     const page1 = hits(20, 1700000100);
+    const tail = page1.pop();
+    assert(tail);
+    // Order two signed hits instead of searching random hashes for a lower id.
+    const [tie, last] = [
+      tail,
+      message(viewer, "crew", "sortword tie", tail.created_at),
+    ].sort((a, b) => (a.id < b.id ? -1 : 1));
+    assert(tie && last);
+    page1.push(last);
     await act(async () => first.respond(page1));
     expect(screen.getByRole("group", { name: "Most recent" })).toBeVisible();
     expect(rows().at(-1)).toMatch(/Show more messages/);
@@ -572,13 +581,8 @@ it("sorts a conversation newest first across pages and restarts paging when the 
     expect(second.filters).toEqual([
       { ...text, search_sort: "newest", page: 2 },
     ]);
-    const last = page1.at(-1);
-    assert(last);
     // Offsets drift: a repeat, a backdated tie that sorts before it by id,
     // and an out-of-scope hit.
-    let tie = last;
-    for (let n = 0; tie.id >= last.id; n++)
-      tie = message(viewer, "crew", `sortword tie ${n}`, last.created_at);
     const older = hits(2, last.created_at - 1);
     await act(async () =>
       second.respond([

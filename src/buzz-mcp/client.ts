@@ -43,18 +43,17 @@ export type Memories = Readonly<{
   partial: boolean;
 }>;
 
-/** The owner's thread tabs on this device, in each channel's workspace. A
- * workspace may hold another channel's thread. `shown` is a tab the viewer
- * sees, which `close` leaves open. */
+/** The owner's tabs on this device for a channel's own threads, in that
+ * channel's workspace. `shown` is a tab the viewer sees, which `close` leaves
+ * open. */
 export type ThreadTabs = Readonly<{
   list(channel: string): readonly Readonly<{
-    channel: string;
     root: string;
     pane: string;
     shown: boolean;
   }>[];
   /** False when the thread already has a tab there. */
-  open(channel: string, root: string, threadChannel: string): boolean;
+  open(channel: string, root: string): boolean;
   close(channel: string, root: string): "closed" | "missing" | "shown";
 }>;
 export type Memory = Readonly<{

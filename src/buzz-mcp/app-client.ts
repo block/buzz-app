@@ -74,8 +74,7 @@ export function appClient(
     },
     tabs: {
       list: (channel) => tabs().list(channel),
-      open: (channel, root, threadChannel) =>
-        tabs().open(channel, root, threadChannel),
+      open: (channel, root) => tabs().open(channel, root),
       close: (channel, root) => tabs().close(channel, root),
     },
   };

@@ -130,9 +130,8 @@ export const TOOLS: readonly Tool[] = [
   ]),
   tool(
     "tabs",
-    "Your owner's open thread tabs in a channel (default: current), or open or close a thread's tab there. Opening never takes their focus.",
+    "Your owner's open tabs for this channel's threads, or open or close a thread's tab. Opening never takes their focus.",
     {
-      channel: str,
       action: { type: "string", enum: ["open", "close"] },
       thread: str,
     },
@@ -595,15 +594,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         "Tabs are kept in Buzz Desktop and are unavailable here.",
       );
+    // Only the channel the agent works in, so it never pulls the owner
+    // toward another conversation.
+    const channel = context.channel;
+    if (!channel) throw new Error("Tabs need a channel to work in.");
     if (args.action === undefined) {
-      const channel = text(args.channel) ?? context.channel;
-      if (!channel) throw new Error("channel is required here.");
       const open = tabs.list(channel);
       return open.length
         ? open
             .map(
-              (tab) =>
-                `${tab.root} ${tab.pane}${tab.channel === channel ? "" : ` (channel ${tab.channel})`}${tab.shown ? " (shown)" : ""}`,
+              (tab) => `${tab.root} ${tab.pane}${tab.shown ? " (shown)" : ""}`,
             )
             .join("\n")
         : "No thread tabs open.";
@@ -611,14 +611,11 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (args.action !== "open" && args.action !== "close")
       throw new Error("action must be open or close.");
     const event = await tools.event(required(args, "thread"));
-    const own = tag(event, "h");
-    if (!own) throw new Error(`${event.id} is not a channel message.`);
-    // A tab is under its thread's root, in the workspace of the channel the
-    // owner views it from.
-    const channel = text(args.channel) ?? context.channel ?? own;
+    if (tag(event, "h") !== channel)
+      throw new Error(`${event.id} is not in this channel.`);
     const root = rootOf(event);
     if (args.action === "open")
-      return tabs.open(channel, root, own) ? `opened ${root}` : "already open";
+      return tabs.open(channel, root) ? `opened ${root}` : "already open";
     const closed = tabs.close(channel, root);
     if (closed === "shown")
       throw new Error("Your owner is looking at that tab, so it stays open.");

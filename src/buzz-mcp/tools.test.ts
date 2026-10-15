@@ -1270,7 +1270,7 @@ it("keeps what it changed when a read after the change fails", async () => {
   ).rejects.toThrow("kind 39000 unavailable");
 });
 
-it("lists, opens and closes the owner's thread tabs by thread root", async () => {
+it("lists, opens and closes tabs for the working channel's threads", async () => {
   const reply = event({
     id: nested,
     tags: [
@@ -1278,46 +1278,61 @@ it("lists, opens and closes the owner's thread tabs by thread root", async () =>
       ["e", root, "", "reply"],
     ],
   });
-  const { client } = fake([event({ id: root }), reply]);
+  const elsewhere = event({ id: bob, tags: [["h", "other"]] });
+  const { client } = fake([event({ id: root }), reply, elsewhere]);
   await expect(
     callTool(client, { channel: "chan" }, "tabs", {}),
   ).rejects.toThrow("Tabs are kept in Buzz Desktop and are unavailable here.");
   const tabs = {
     list: vi.fn(() => [
-      { channel: "chan", root, pane: "side", shown: true },
-      { channel: "other", root: bob, pane: "main", shown: false },
+      { root, pane: "side", shown: true },
+      { root: alice, pane: "main", shown: false },
     ]),
     open: vi.fn(() => true),
     close: vi.fn((): "closed" | "missing" | "shown" => "shown"),
   };
   client.tabs = tabs;
+  await expect(callTool(client, {}, "tabs", {})).rejects.toThrow(
+    "Tabs need a channel to work in.",
+  );
   expect(await callTool(client, { channel: "chan" }, "tabs", {})).toBe(
-    `${root} side (shown)\n${bob} main (channel other)`,
+    `${root} side (shown)\n${alice} main`,
   );
   expect(tabs.list).toHaveBeenCalledWith("chan");
-  // A reply opens its thread's root, in the workspace the agent works in.
+  // A reply opens its thread's root.
   expect(
-    await callTool(client, { channel: "elsewhere" }, "tabs", {
+    await callTool(client, { channel: "chan" }, "tabs", {
       action: "open",
       thread: nested,
     }),
   ).toBe(`opened ${root}`);
-  expect(tabs.open).toHaveBeenCalledWith("elsewhere", root, "chan");
-  // Without a current channel, the thread's own workspace.
+  expect(tabs.open).toHaveBeenCalledWith("chan", root);
+  // Another channel's thread never gets a tab here.
   await expect(
-    callTool(client, {}, "tabs", { action: "close", thread: root }),
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "open",
+      thread: bob,
+    }),
+  ).rejects.toThrow(`${bob} is not in this channel.`);
+  expect(tabs.open).toHaveBeenCalledTimes(1);
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "close",
+      thread: root,
+    }),
   ).rejects.toThrow("Your owner is looking at that tab, so it stays open.");
   expect(tabs.close).toHaveBeenLastCalledWith("chan", root);
   tabs.close.mockReturnValue("missing");
   expect(
-    await callTool(client, {}, "tabs", {
-      channel: "elsewhere",
+    await callTool(client, { channel: "chan" }, "tabs", {
       action: "close",
       thread: root,
     }),
   ).toBe("not open");
-  expect(tabs.close).toHaveBeenLastCalledWith("elsewhere", root);
   await expect(
-    callTool(client, {}, "tabs", { action: "move", thread: root }),
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "move",
+      thread: root,
+    }),
   ).rejects.toThrow("action must be open or close.");
 });

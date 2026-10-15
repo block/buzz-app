@@ -518,31 +518,34 @@ test("agents open thread tabs in the background and never close a shown one", ()
   expect(tabs.open("alpha", "r1")).toBe(false);
   // Behind the closed pane it is not shown, so the agent can close it again.
   expect(tabs.list("alpha")).toEqual([
-    { channel: "alpha", root: "r1", pane: "side", shown: false },
+    { root: "r1", pane: "side", shown: false },
   ]);
-  // The viewer opens another thread; an agent's later tab, from another
-  // channel, leaves it selected.
+  // The viewer opens another thread and one from another channel; an agent's
+  // later tab leaves their selection, and agents never see the other channel's.
+  act(() => page.result.current.openThreadTab("beta", "r3", "r3"));
   act(() => page.result.current.openThreadTab("alpha", "r2", "r2"));
   act(() => {
-    tabs.open("alpha", "r3", "beta");
+    tabs.open("alpha", "r4");
   });
   expect(page.result.current).toMatchObject({
     paneOpen: true,
     selected: "thread:alpha:r2",
   });
   expect(tabs.list("alpha")).toEqual([
-    { channel: "alpha", root: "r1", pane: "side", shown: false },
-    { channel: "alpha", root: "r2", pane: "side", shown: true },
-    { channel: "beta", root: "r3", pane: "side", shown: false },
+    { root: "r1", pane: "side", shown: false },
+    { root: "r2", pane: "side", shown: true },
+    { root: "r4", pane: "side", shown: false },
   ]);
   expect(tabs.close("alpha", "r2")).toBe("shown");
+  expect(tabs.close("alpha", "r3")).toBe("missing");
   expect(tabs.close("alpha", "r9")).toBe("missing");
   act(() => {
     expect(tabs.close("alpha", "r1")).toBe("closed");
   });
   expect(page.result.current.tabs.map((tab) => tab.id)).toEqual([
-    "thread:alpha:r2",
     "thread:beta:r3",
+    "thread:alpha:r2",
+    "thread:alpha:r4",
   ]);
   expect(page.result.current.selected).toBe("thread:alpha:r2");
   // Other channels and the Me page keep their own tabs.
@@ -577,7 +580,7 @@ test("an agent's main-pane tab leaves the conversation showing", () => {
   });
   act(() => page.result.current.selectMain("thread:alpha:r1"));
   expect(tabs.list("alpha")).toEqual([
-    { channel: "alpha", root: "r1", pane: "main", shown: true },
+    { root: "r1", pane: "main", shown: true },
   ]);
   expect(tabs.close("alpha", "r1")).toBe("shown");
 });

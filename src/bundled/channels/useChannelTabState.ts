@@ -172,14 +172,16 @@ function storeOf(session: RelaySession) {
 const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
   tab.rootId ??
   (tab.id.slice(`thread:${tab.channelId}:`.length).split(":")[0] as string);
-/** The thread tabs of a channel's workspace, changed from outside the page.
+/** A channel's own thread tabs in its workspace, changed from outside the
+ * page. Tabs the viewer opened for other channels' threads are left alone.
  * Opening never moves the viewer's selection or focus, and closing refuses
  * the tab the viewer sees, so no selection needs repair. */
 export function channelTabs(session: RelaySession) {
   const store = storeOf(session);
   const stateOf = (channelId: string) =>
     store.snapshot()[keyOf("messages", channelId)] ?? empty;
-  const threads = (state: State) => {
+  const threads = (channelId: string) => {
+    const state = stateOf(channelId);
     const side = state.tabs.filter((tab) => tabPane(tab) === "side");
     // The pane shows its first tab when its selection names none of them.
     const sideShown = !state.paneOpen
@@ -190,11 +192,10 @@ export function channelTabs(session: RelaySession) {
           ? undefined
           : side[0]));
     return state.tabs.flatMap((tab) =>
-      tab.kind === "thread"
+      tab.kind === "thread" && tab.channelId === channelId
         ? [
             {
               tab,
-              channel: tab.channelId,
               root: rootOfTab(tab),
               pane: tabPane(tab),
               shown:
@@ -207,17 +208,17 @@ export function channelTabs(session: RelaySession) {
   };
   return {
     list: (channelId: string) =>
-      threads(stateOf(channelId)).map(({ tab: _, ...thread }) => thread),
-    /** Opens thread `rootId` of `threadChannel` in `channelId`'s workspace;
-     * false when it already has a tab there. */
-    open(channelId: string, rootId: string, threadChannel = channelId) {
-      if (threads(stateOf(channelId)).some((thread) => thread.root === rootId))
+      threads(channelId).map(({ tab: _, ...thread }) => thread),
+    /** Opens thread `rootId` of `channelId` in its workspace; false when it
+     * already has a tab there. */
+    open(channelId: string, rootId: string) {
+      if (threads(channelId).some((thread) => thread.root === rootId))
         return false;
       store.update(keyOf("messages", channelId), (state) => {
         const pane = threadPlacementPreference();
         const opened = withThread(
           state,
-          threadChannel,
+          channelId,
           rootId,
           rootId,
           undefined,
@@ -239,9 +240,7 @@ export function channelTabs(session: RelaySession) {
       return true;
     },
     close(channelId: string, rootId: string): "closed" | "missing" | "shown" {
-      const thread = threads(stateOf(channelId)).find(
-        (item) => item.root === rootId,
-      );
+      const thread = threads(channelId).find((item) => item.root === rootId);
       if (!thread) return "missing";
       if (thread.shown) return "shown";
       store.update(keyOf("messages", channelId), (state) => ({

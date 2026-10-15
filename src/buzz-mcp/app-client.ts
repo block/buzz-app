@@ -76,6 +76,7 @@ export function appClient(
       list: (channel) => tabs().list(channel),
       open: (channel, root) => tabs().open(channel, root),
       close: (channel, root) => tabs().close(channel, root),
+      rename: (channel, root, name) => tabs().rename(channel, root, name),
     },
   };
 }

@@ -586,6 +586,7 @@ export function useConversationTabs({
   );
   // Several open threads stay distinguishable by their original message.
   function threadLabel(tab: Extract<Tab, { kind: "thread" }>, name?: string) {
+    if (tab.name) return tab.name;
     const rootId = tab.rootId ?? tab.id.slice(tab.id.lastIndexOf(":") + 1);
     const root = queries.channels
       .window(tab.channelId)
@@ -619,6 +620,7 @@ export function useConversationTabs({
       ...(tab.kind === "thread" && {
         attentionRequest: tab.attentionRequest,
         move: (delta: -1 | 1) => moveBy(tab, delta),
+        rename: (name: string) => tabState.renameTab(tab.id, name),
       }),
       content:
         !usable || !target ? (

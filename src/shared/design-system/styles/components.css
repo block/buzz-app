@@ -647,10 +647,21 @@
     height: var(--space-4);
   }
   .buzz-tabs-item[data-closable] {
+    position: relative;
     display: inline-flex;
     gap: var(--space-1);
     align-items: center;
     flex-shrink: 0;
+  }
+  /* A tab's name is edited in place, over the tab and its close button. */
+  .buzz-tabs-rename {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+  }
+  .buzz-tabs-rename > .buzz-input {
+    width: 100%;
   }
   @media (hover: hover) {
     .buzz-tabs-item:not(:hover, :focus-within)

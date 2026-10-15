@@ -657,3 +657,56 @@ test.each(["missing", "readOnly", "archived", "cached"])(
     expect(tabs.list("alpha")).toEqual([]);
   },
 );
+
+test("an agent's tab name stays with the tab until cleared", () => {
+  const session = tabSession();
+  const tabs = channelTabs(session);
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => page.result.current.openThreadTab("alpha", "r1", "r1"));
+  expect(tabs.rename("alpha", "r9", "Missing")).toBe(false);
+  act(() => {
+    expect(tabs.rename("alpha", "r1", "Launch plan")).toBe(true);
+  });
+  expect(tabs.list("alpha")).toEqual([
+    { root: "r1", pane: "side", name: "Launch plan", shown: true },
+  ]);
+  // Reopening, moving and remounting keep the same tab and its name.
+  act(() => page.result.current.openThreadTab("alpha", "reply", "r1", "reply"));
+  act(() => page.result.current.moveTab("thread:alpha:r1", "main", 0));
+  page.unmount();
+  const remounted = renderHook(() => useChannelTabState(session, "alpha"));
+  expect(remounted.result.current.tabs).toMatchObject([
+    { id: "thread:alpha:r1", pane: "main", name: "Launch plan" },
+  ]);
+  // A provisional tab that resolves to the same root merges into the named one.
+  act(() => remounted.result.current.openThreadTab("alpha", "r2", "hint"));
+  act(() =>
+    remounted.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+  );
+  expect(remounted.result.current.tabs).toMatchObject([
+    { id: "thread:alpha:r1", name: "Launch plan" },
+  ]);
+  expect(remounted.result.current.tabs).toHaveLength(1);
+  act(() => {
+    tabs.rename("alpha", "r1", "  ");
+  });
+  expect(remounted.result.current.tabs[0]).toMatchObject({ name: undefined });
+});
+
+test.each(["foreground", "background"])(
+  "a renamed provisional tab keeps its name when it merges into an unnamed tab (%s)",
+  (branch) => {
+    const session = tabSession();
+    const page = renderHook(() => useChannelTabState(session, "alpha"));
+    act(() => page.result.current.openThreadTab("alpha", "r1", "r1"));
+    act(() => page.result.current.openThreadTab("alpha", "r2", "hint"));
+    act(() =>
+      page.result.current.renameTab("thread:alpha:hint", "Launch plan"),
+    );
+    if (branch === "background")
+      act(() => page.result.current.select("thread:alpha:r1"));
+    act(() => page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"));
+    expect(page.result.current.tabs).toHaveLength(1);
+    expect(page.result.current.tabs[0]).toMatchObject({ name: "Launch plan" });
+  },
+);

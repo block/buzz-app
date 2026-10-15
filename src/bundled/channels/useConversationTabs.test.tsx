@@ -143,11 +143,20 @@ it("retained offline tabs can close and open threads without activating connecte
   act(() =>
     h.result.current.state.resolveThreadRoot("thread:alpha:hint", "root"),
   );
-  expect(
+  const label = () =>
     h.result.current.workspace.items.find(
       (tab) => tab.id === "thread:alpha:hint",
-    )?.label,
-  ).toBe("Original message title");
+    )?.label;
+  expect(label()).toBe("Original message title");
+  // A given name replaces the root's text until it is cleared.
+  act(() => {
+    channelTabs(session).rename("alpha", "root", "Launch plan");
+  });
+  expect(label()).toBe("Launch plan");
+  act(() => {
+    channelTabs(session).rename("alpha", "root", "");
+  });
+  expect(label()).toBe("Original message title");
   const staleOpen = h.result.current.workspace.openConversationThread;
   h.unmount();
   act(() => staleOpen("beta", "another-root", "another-root"));

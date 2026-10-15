@@ -50,11 +50,14 @@ export type ThreadTabs = Readonly<{
   list(channel: string): readonly Readonly<{
     root: string;
     pane: string;
+    name?: string | undefined;
     shown: boolean;
   }>[];
   /** False when the thread already has a tab there. */
   open(channel: string, root: string): boolean;
   close(channel: string, root: string): "closed" | "missing" | "shown";
+  /** An empty name restores the automatic title; false when it has no tab. */
+  rename(channel: string, root: string, name: string): boolean;
 }>;
 export type Memory = Readonly<{
   slug: string;

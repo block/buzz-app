@@ -56,8 +56,11 @@ export function ConversationTab({
   onResolvedRoot,
   onDifferentThread,
 }: ConversationTabProps) {
-  // A saved reply intent belongs to the previous visit, not this restoration.
-  const restoredTab = useRef(focusOnMount ? undefined : tab);
+  // A saved reply intent belongs to the previous visit, not this restoration;
+  // a renamed or merged copy of the tab carries the same request.
+  const reply = tab.kind === "thread" ? tab.replyRequest : undefined;
+  const restoredReply = useRef(focusOnMount ? undefined : reply);
+  if (reply !== restoredReply.current) restoredReply.current = undefined;
   const sessionConversation = channel.channelType === "session";
   const [sent, setSent] = useState<string>();
   const media = useMediaReview();
@@ -94,9 +97,7 @@ export function ConversationTab({
             onRetryNavigation={onRetryNavigation}
             onResolvedRoot={onResolvedRoot}
             onDifferentThread={onDifferentThread}
-            replyRequest={
-              tab === restoredTab.current ? undefined : tab.replyRequest
-            }
+            replyRequest={reply === restoredReply.current ? undefined : reply}
             close={close}
           />
         ) : (

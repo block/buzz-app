@@ -1279,24 +1279,48 @@ it("lists, opens and closes tabs for the working channel's threads", async () =>
     ],
   });
   const elsewhere = event({ id: bob, tags: [["h", "other"]] });
-  const { client } = fake([event({ id: root }), reply, elsewhere]);
+  // The reader takes the last marked root and ignores case.
+  const remarked = event({
+    id: "3".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", alice, "", "root"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+  });
+  const uppercase = event({
+    id: "4".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", alice.toUpperCase(), "", "reply"],
+    ],
+  });
+  const { client } = fake([
+    event({ id: root }),
+    reply,
+    elsewhere,
+    remarked,
+    uppercase,
+  ]);
   await expect(
     callTool(client, { channel: "chan" }, "tabs", {}),
   ).rejects.toThrow("Tabs are kept in Buzz Desktop and are unavailable here.");
   const tabs = {
     list: vi.fn(() => [
       { root, pane: "side", shown: true },
-      { root: alice, pane: "main", shown: false },
+      { root: alice, pane: "main", name: "Launch plan", shown: false },
     ]),
     open: vi.fn(() => true),
     close: vi.fn((): "closed" | "missing" | "shown" => "shown"),
+    rename: vi.fn(() => true),
   };
   client.tabs = tabs;
   await expect(callTool(client, {}, "tabs", {})).rejects.toThrow(
     "Tabs need a channel to work in.",
   );
   expect(await callTool(client, { channel: "chan" }, "tabs", {})).toBe(
-    `${root} side (shown)\n${alice} main`,
+    `${root} side (shown)\n${alice} main "Launch plan"`,
   );
   expect(tabs.list).toHaveBeenCalledWith("chan");
   // A reply opens its thread's root.
@@ -1329,10 +1353,45 @@ it("lists, opens and closes tabs for the working channel's threads", async () =>
       thread: root,
     }),
   ).toBe("not open");
+  // A reply renames its thread's tab; no name restores the automatic title.
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: nested,
+      name: " Launch plan ",
+    }),
+  ).toBe("renamed");
+  expect(tabs.rename).toHaveBeenLastCalledWith("chan", root, "Launch plan");
+  for (const [message, expected] of [
+    [remarked, root],
+    [uppercase, alice],
+  ] as const) {
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: message.id,
+      name: "Plan",
+    });
+    expect(tabs.rename).toHaveBeenLastCalledWith("chan", expected, "Plan");
+  }
+  tabs.rename.mockReturnValue(false);
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: root,
+    }),
+  ).toBe("not open");
+  expect(tabs.rename).toHaveBeenLastCalledWith("chan", root, "");
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: root,
+      name: 1,
+    }),
+  ).rejects.toThrow("name must be text.");
   await expect(
     callTool(client, { channel: "chan" }, "tabs", {
       action: "move",
       thread: root,
     }),
-  ).rejects.toThrow("action must be open or close.");
+  ).rejects.toThrow("action must be open, close or rename.");
 });

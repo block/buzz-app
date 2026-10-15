@@ -22,6 +22,8 @@ export type ConversationTab =
       pane?: TabPane | undefined;
       /** The reader's verified root, which may differ from a link's hint. */
       rootId?: string | undefined;
+      /** A name given to the tab, shown instead of its root's text. */
+      name?: string | undefined;
     };
 export type TabPane = "main" | "side";
 export const tabPane = (tab: ConversationTab): TabPane =>
@@ -136,6 +138,7 @@ function withThread(
     // An already-open thread stays wherever it was placed.
     pane: prior ? tabPane(prior) : pane,
     rootId: prior?.rootId,
+    name: prior?.name,
   };
   const tabs = existing
     ? state.tabs.map((tab) => (tab.id === id ? next : tab))
@@ -190,6 +193,9 @@ function storeOf(session: RelaySession) {
   return store;
 }
 
+/** A blank name restores the tab's automatic title. */
+const named = (tab: ConversationTab, name: string): ConversationTab =>
+  tab.kind === "thread" ? { ...tab, name: name.trim() || undefined } : tab;
 // Until its reader verifies the root, a tab's id holds the root it was opened
 // with, before any disambiguating suffix.
 const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
@@ -214,6 +220,7 @@ export function channelTabs(session: RelaySession) {
               tab,
               root: rootOfTab(tab),
               pane: tabPane(tab),
+              name: tab.name,
               shown:
                 visible &&
                 (tabPane(tab) === "main"
@@ -271,6 +278,19 @@ export function channelTabs(session: RelaySession) {
         tabs: state.tabs.filter((tab) => tab !== thread.tab),
       }));
       return "closed";
+    },
+    /** Names thread `rootId`'s tab; an empty name restores its automatic
+     * title. False when it has no tab there. */
+    rename(channelId: string, rootId: string, name: string) {
+      const thread = threads(channelId).find((item) => item.root === rootId);
+      if (!thread) return false;
+      store.update(keyOf("messages", channelId), (state) => ({
+        ...state,
+        tabs: state.tabs.map((tab) =>
+          tab === thread.tab ? named(tab, name) : tab,
+        ),
+      }));
+      return true;
     },
   };
 }
@@ -471,9 +491,11 @@ export function useChannelTabState(
         // or retargets another reader after the user has left this provisional tab.
         const foreground =
           selected && (tabPane(tab) === "main" || state.paneOpen);
+        // A name given to the provisional tab survives an unnamed owner.
+        const name = owner.name ?? tab.name;
         const merged = foreground
-          ? { ...owner, messageId: tab.messageId, rootId }
-          : owner;
+          ? { ...owner, messageId: tab.messageId, rootId, name }
+          : { ...owner, name };
         const tabs = state.tabs
           .filter((item) => item !== tab)
           .map((item) => (item === owner ? merged : item));
@@ -547,6 +569,14 @@ export function useChannelTabState(
     (paneOpen: boolean) => update((s) => ({ ...s, paneOpen })),
     [update],
   );
+  const renameTab = useCallback(
+    (id: string, name: string) =>
+      update((s) => ({
+        ...s,
+        tabs: s.tabs.map((tab) => (tab.id === id ? named(tab, name) : tab)),
+      })),
+    [update],
+  );
   const setSidePanel = useCallback(
     (sidePanel: boolean) =>
       update((s) => (!!s.sidePanel === sidePanel ? s : { ...s, sidePanel })),
@@ -574,6 +604,7 @@ export function useChannelTabState(
       setSettings,
       setPaneOpen,
       setSidePanel,
+      renameTab,
     }),
     [
       state,
@@ -594,6 +625,7 @@ export function useChannelTabState(
       setSettings,
       setPaneOpen,
       setSidePanel,
+      renameTab,
     ],
   );
 }

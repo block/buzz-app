@@ -11,6 +11,7 @@ import {
   lifecycleTemplate,
 } from "../features/relay/channel-lifecycle-protocol";
 import { sessionMetadata } from "../features/sessions/metadata";
+import { threadReference } from "../features/relay/thread-reference";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
@@ -130,10 +131,11 @@ export const TOOLS: readonly Tool[] = [
   ]),
   tool(
     "tabs",
-    "Your owner's open tabs for this channel's threads, or open or close a thread's tab. Opening never takes their focus.",
+    "Your owner's open tabs for this channel's threads, or open, close or rename a thread's tab. Opening never takes their focus; no name clears a rename.",
     {
-      action: { type: "string", enum: ["open", "close"] },
+      action: { type: "string", enum: ["open", "close", "rename"] },
       thread: str,
+      name: str,
     },
   ),
 ];
@@ -603,19 +605,29 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       return open.length
         ? open
             .map(
-              (tab) => `${tab.root} ${tab.pane}${tab.shown ? " (shown)" : ""}`,
+              (tab) =>
+                `${tab.root} ${tab.pane}${tab.name ? ` ${JSON.stringify(tab.name)}` : ""}${tab.shown ? " (shown)" : ""}`,
             )
             .join("\n")
         : "No thread tabs open.";
     }
-    if (args.action !== "open" && args.action !== "close")
-      throw new Error("action must be open or close.");
+    if (
+      args.action !== "open" &&
+      args.action !== "close" &&
+      args.action !== "rename"
+    )
+      throw new Error("action must be open, close or rename.");
     const event = await tools.event(required(args, "thread"));
     if (tag(event, "h") !== channel)
       throw new Error(`${event.id} is not in this channel.`);
-    const root = rootOf(event);
+    // Resolve the root as the reader does, so the tab matched is the one shown.
+    const root = threadReference(event)?.rootId ?? event.id;
     if (args.action === "open")
       return tabs.open(channel, root) ? `opened ${root}` : "already open";
+    if (args.action === "rename")
+      return tabs.rename(channel, root, optional(args, "name") ?? "")
+        ? "renamed"
+        : "not open";
     const closed = tabs.close(channel, root);
     if (closed === "shown")
       throw new Error("Your owner is looking at that tab, so it stays open.");

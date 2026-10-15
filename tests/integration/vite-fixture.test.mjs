@@ -77,7 +77,7 @@ test("differently configured fixture servers start from the prepared dependencie
   }
 });
 
-test("an app build and preview earlier in the worker leave the prepared dependencies valid", async () => {
+test("app builds, previews and fixture servers in one worker do not change each other's mode", async () => {
   // Vite's dependency hash includes NODE_ENV. Unwrapped build() and preview()
   // leave it as production, and the next fixture server optimizes again.
   await placeMarker();
@@ -109,9 +109,22 @@ test("an app build and preview earlier in the worker leave the prepared dependen
     server = await createServer(config);
     assert.equal(process.env.NODE_ENV, nodeEnvBefore);
     await assertReusesPreparedCache(server);
-    // Tailwind's in-process cache must not hand the build's state to the server.
+    // postcss.config.js keeps Tailwind's in-process cache apart per mode.
     const css = await server.transformRequest("/src/shared/styles/globals.css");
     assert.match(css.code, /--duration-panel-enter/);
+    // A fixture server leaves NODE_ENV=development without the helper; a later
+    // app build must still be a production build.
+    const later = join(directory, "later.js");
+    await writeFile(later, "globalThis.dev = import.meta.env.DEV;");
+    const result = await build({
+      root,
+      configFile: false,
+      envFile: false,
+      logLevel: "silent",
+      build: { write: false, rollupOptions: { input: later } },
+    });
+    const [chunk] = [result].flat()[0].output;
+    assert.match(chunk.code, /globalThis\.dev\s*=\s*(!1|false)/);
   } finally {
     await server?.close();
     await previewServer?.close();

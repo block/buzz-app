@@ -501,4 +501,7 @@ Vite's cache match also includes `NODE_ENV`, and Vite's `build()`, `preview()`
 and `createServer()` set `NODE_ENV` for the rest of the worker when it is unset.
 Import `build` and `preview` from `vite-server.mjs`, not from `vite`: the helper
 restores `NODE_ENV` after each call. Without this, a production build earlier in
-the worker makes later fixture servers optimize again inside a test.
+the worker makes later fixture servers optimize again inside a test. Separately,
+`postcss.config.js` passes Tailwind's `optimize` option explicitly:
+Tailwind caches compiled CSS by the option it receives, not by `NODE_ENV`, so a
+dev server after a production build in one process would otherwise get empty CSS.

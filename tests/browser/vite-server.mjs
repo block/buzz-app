@@ -1,4 +1,3 @@
-import tailwindcss from "@tailwindcss/postcss";
 import react from "@vitejs/plugin-react";
 import {
   build as viteBuild,
@@ -52,11 +51,6 @@ function fixtureConfig({ plugins = [], optimizeDeps: custom, css, ...config }) {
       fixturePlugin(flat.filter((plugin) => !isReact(plugin))),
     ],
     optimizeDeps: fixtureOptimizeDeps,
-    // The same plugin as postcss.config.js, with optimize set explicitly.
-    // Tailwind caches compiled CSS per file and per *passed* optimize option,
-    // not per NODE_ENV. With the default, a production build earlier in the
-    // worker leaves a cached entry that a dev server then reads as empty CSS.
-    css: { postcss: { plugins: [tailwindcss({ optimize: false })] } },
   };
 }
 

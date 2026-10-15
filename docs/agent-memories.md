@@ -101,7 +101,7 @@ connects and when that connection recovers. A start uses the cached copy
 without a relay request; if neither read has finished, it waits up to five
 seconds on one by-address read. A successful `mem_set` of `core` updates the
 cache ahead of any read still under way, and each finished turn refreshes it in
-the background for the next start. A partial or failed read keeps the cached
-copy. The copy lives only in memory and is never saved to web storage or disk,
+the background for the next start. A failed read, or a partial read that
+misses `core`, keeps the cached copy. The copy lives only in memory and is never saved to web storage or disk,
 so a restart starts empty and reads `core` again. Leaving a community purges its
 cached copies and fences reads still under way; a disconnect alone keeps them.

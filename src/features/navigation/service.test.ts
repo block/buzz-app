@@ -1,5 +1,6 @@
 import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
+import { NAVIGATION_ABORTED } from "./controller";
 import { provideNavigation, type PresentationOwner } from "./service";
 import { provideRelay } from "../relay/service";
 const target = {
@@ -63,6 +64,8 @@ it.each(["complete", "resolve"] as const)(
         : request.resolve(settings),
     ).toBe(false);
     expect(request.signal.aborted).toBe(true);
+    // The visit is still live, so revocation falls back to the shared reason.
+    expect(request.signal.reason).toBe(NAVIGATION_ABORTED);
     t.change(true);
     expect(request.complete({ status: "opened" })).toBe(false);
     expect(request.resolve(settings)).toBe(false);

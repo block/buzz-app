@@ -5,6 +5,8 @@ import type { NavigationEntry, NavigationHistory } from "./history";
  * Shared abort reason. A reason-less abort() makes Blink mint a DOMException per
  * call, and V8 keeps its unformatted stack alive: that stack holds the start()
  * scope (so the next attempt) and the click dispatch (so the unmounted DOM).
+ * One instance captures no per-abort stack, so its .stack points at module
+ * evaluation, not the aborting site: do not use it for diagnostics.
  */
 export const NAVIGATION_ABORTED = new DOMException(
   "Navigation attempt aborted",

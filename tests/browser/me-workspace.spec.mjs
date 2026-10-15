@@ -236,20 +236,19 @@ test.describe("reading", () => {
     const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
     const beta = sidebar.locator(`[data-me-channel-id="${other}"]`);
     const bold = (row) => row.locator('[data-channel-unread-title="true"]');
-    await expect(bold(alpha)).toHaveCount(1);
+    // Startup shows Alpha in Multiplayer first, so read Beta, which only Solo shows.
     await expect(bold(beta)).toHaveCount(1);
-    await alpha.click();
+    await beta.click();
     // The dwell policy reads the visible bottom without any further input,
     // because selection hands focus to the chat's composer.
-    await expect(bold(alpha)).toHaveCount(0);
+    await expect(bold(beta)).toHaveCount(0);
     await expect(
       page.getByRole("textbox", { name: "Message your agents", exact: true }),
     ).toBeFocused();
-    await beta.click();
-    // Beta's own read is the barrier: Alpha's settled state shows without selection.
+    await alpha.click();
+    // Unselected, Beta's row shows its saved read state rather than selection.
+    await expect(alpha).toHaveAttribute("aria-current", "page");
     await expect(bold(beta)).toHaveCount(0);
-    await expect(alpha).not.toHaveAttribute("aria-current");
-    await expect(bold(alpha)).toHaveCount(0);
     expect(app.report.unexpected).toEqual([]);
   });
 });

@@ -401,7 +401,8 @@
   white-space: nowrap;
 }
 .sectionLabel [data-sidebar-group-icon] {
-  margin-inline-end: var(--space-2);
+  width: var(--space-5);
+  margin-inline-end: var(--space-1);
 }
 .sectionChevron {
   display: inline-grid;

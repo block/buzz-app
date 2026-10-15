@@ -4653,6 +4653,16 @@ it("leaves an agent already listed under its name and type as it is", async () =
   expect(service.snapshot().agents).toHaveLength(1);
 });
 
+it("never relists an agent being deleted whose record is already gone", async () => {
+  const { service } = await setup({
+    identities: [{ ...here(bot), name: "Echo", deleting: true }],
+    listed: [],
+  });
+  await vi.waitFor(() => expect(service.find(bot)?.deleting).toBe(true));
+  await settle();
+  expect(records.publish).not.toHaveBeenCalled();
+});
+
 it("shows the owner's agents on other devices without running them, and leaves earlier systems' records alone", async () => {
   const { service, emit, run, native } = await setup({
     listed: [

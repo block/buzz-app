@@ -1908,6 +1908,7 @@ export class AgentsService extends Service implements Agents {
     for (const identity of this.identities) {
       if (
         identity.deleted ||
+        identity.deleting ||
         identity.owner !== binding.viewer ||
         originOf(identity.relay) !== origin ||
         this.listing.has(identity.pubkey)
@@ -1944,12 +1945,14 @@ export class AgentsService extends Service implements Agents {
       );
     }
   }
-  /** Writes the agent's record and lists it so, without reading it back. */
+  /** Writes the agent's record and lists it so, without reading it back.
+   * Never relists an agent being deleted: its record may already be gone. */
   private async writeListing(
     origin: string,
     binding: Binding,
     entry: Listing & { runtime: string },
   ) {
+    if (this.isDeleting(entry.pubkey)) return;
     const prior = await publishAgentRecord(
       binding.session,
       entry,
@@ -1958,6 +1961,11 @@ export class AgentsService extends Service implements Agents {
     if (this.bound.get(origin)?.binding !== binding) return;
     this.setRow(origin, entry.pubkey, Object.freeze({ ...entry, prior }));
     this.update();
+  }
+  private isDeleting(pubkey: string) {
+    return this.identities.some(
+      (identity) => identity.pubkey === pubkey && identity.deleting,
+    );
   }
   private unlist(origin: string, pubkey: string) {
     this.setRow(origin, pubkey, null);

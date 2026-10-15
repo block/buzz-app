@@ -5212,6 +5212,42 @@ it("lists only an HTTPS picture of a hosted agent", async () => {
   expect(remote.profile).not.toHaveBeenCalled();
 });
 
+it("adds bundled plugins' tools to every session, each name once", async () => {
+  const { service, plugin, ctx } = await setup();
+  const tool = {
+    name: "tasks_create",
+    description: "Create a task.",
+    inputSchema: { type: "object" },
+    call: async () => "created",
+  };
+  // A tool acts as the agent, so an installed plugin cannot add one.
+  expect(() => plugin.agents.addTool(tool)).toThrow(/bundled plugins/);
+  const bundled = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
+  const tasks = bundled("buzz.tasks");
+  for (const bad of [
+    { ...tool, name: "send" },
+    { ...tool, name: "Tasks-Create" },
+    { ...tool, description: "" },
+    { ...tool, inputSchema: { type: "string" } },
+    { ...tool, inputSchema: { type: "object", default: 1n } },
+  ])
+    expect(() => tasks.agents.addTool(bad)).toThrow(/Agent tools need/);
+  expect(service.tools()).toEqual([]);
+  tasks.agents.addTool(tool);
+  expect(() =>
+    bundled("buzz.other").agents.addTool({
+      ...tool,
+      call: async () => "other",
+    }),
+  ).toThrow(/Another plugin/);
+  expect(service.tools()).toHaveLength(1);
+  expect(service.tools()[0]).toMatchObject({
+    name: "tasks_create",
+    pluginId: "buzz.tasks",
+  });
+});
+
 it("refuses a hosted type that also runs here", async () => {
   const { plugin } = await setup();
   const { type } = cloud();

@@ -12,6 +12,8 @@ import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
+import { config } from "./config";
+import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { Lanes } from "../../features/agent-harness/lanes";
 import { wake } from "../../features/agent-harness/wakes";
 import type { Wire } from "./rpc";
@@ -277,11 +279,15 @@ function fixture(
     ): Promise<string | null | undefined> =>
       memories.find((memory) => memory.slug === "core")?.body ?? null,
   );
+  /** The tools plugins add, as the runtime reads them at each use. */
+  const added: AddedTool[] = [];
   const runtime = new CodexRuntime(
     spawn,
     (pubkey) => ownerReads(relay, pubkey),
     core,
     store,
+    config,
+    () => added,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -399,6 +405,7 @@ function fixture(
         snapshot: () => ({ status: "ready", agents: [], running }),
         relay: () => relay,
         core,
+        tools: () => added,
         subscribe: (listener: () => void) => {
           listeners.push(listener);
           return () => {};
@@ -494,6 +501,7 @@ function fixture(
   };
   return {
     runtime,
+    added,
     wake: wakeTurn,
     tool,
     attention,
@@ -2605,6 +2613,65 @@ it("always offers the attention tools and guidance, keeps the thread when attent
   const off = await f.tool("interest_show", { id: "ops" }, 1);
   expect(JSON.stringify(off)).toContain("Attention is off");
   await f.complete(1);
+});
+
+it("offers the tools plugins add, runs them as the agent here, and starts a new thread when they change", async () => {
+  const f = fixture();
+  const call = vi.fn(async () => "created");
+  f.added.push({
+    name: "tasks_create",
+    description: "Create a task.",
+    inputSchema: { type: "object", properties: { title: { type: "string" } } },
+    call,
+  });
+  await f.runtime.run(f.delivery("@Codex make a task"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const names = (index: number) =>
+    (
+      f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as
+        | { dynamicTools: { tools: { name: string }[] }[] }
+        | undefined
+    )?.dynamicTools[0]?.tools.map((tool) => tool.name);
+  expect(names(0)).toEqual(expect.arrayContaining(["send", "tasks_create"]));
+  const reply = await f.tool("tasks_create", { title: "Ship it" });
+  expect(JSON.stringify(reply?.result)).toContain("created");
+  expect(call).toHaveBeenCalledWith(
+    expect.objectContaining({ pubkey }),
+    { channel: "channel", root },
+    { title: "Ship it" },
+  );
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // Unchanged, the thread resumes with the tools it has.
+  await f.runtime.run(f.delivery("@Codex again"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    1,
+  );
+  const saved = JSON.parse(
+    f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
+  );
+  expect(Object.values(saved)).toEqual([
+    expect.objectContaining({ tools: expect.any(String) }),
+  ]);
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // Removed, resuming would keep the old tool, so a new thread starts.
+  f.added.length = 0;
+  await f.runtime.run(f.delivery("@Codex once more"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    1,
+  );
+  expect(names(1)).not.toContain("tasks_create");
+  const gone = await f.tool("tasks_create", { title: "Late" });
+  expect(JSON.stringify(gone)).toContain("No active Buzz tool");
+  expect(call).toHaveBeenCalledTimes(1);
+  await f.complete();
 });
 
 it("runs a watch or timer as a one-off ephemeral turn with the attention tools, and saves nothing", async () => {

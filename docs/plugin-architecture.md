@@ -124,6 +124,12 @@ active registered types appear there; plugin activation remains owned by
 Settings → Plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
 
+A bundled plugin can add a tool to every agent session in the app with
+`ctx.agents.addTool({ name, description, inputSchema, call })`. `call` gets the
+agent's Buzz client and where it is working, so the tool acts as the agent;
+installed plugins cannot add tools. Names are lowercase and cannot be a Buzz
+tool's. The tool is removed when its plugin's scope ends.
+
 ```ts
 ctx.pages.register({
   id: "dashboard",

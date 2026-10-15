@@ -101,6 +101,7 @@ import {
 } from "./store";
 import { meChat } from "./me-chat";
 import { readCheckpoints, writeCheckpoints } from "./catch-up";
+import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -564,6 +565,13 @@ export type NewAgent = Readonly<{
 export type Agents = {
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
+  /** Adds a tool to every agent session in the app, beside the Buzz tools.
+   * Only bundled plugins may: the tool acts as the agent. A session lists
+   * the tools there are when it starts, and one that cannot take a changed
+   * list is replaced when it is next used. */
+  addTool(tool: AddedTool): void;
+  /** The tools plugins add now, each name once. */
+  tools(): readonly AddedTool[];
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** The agent of this pubkey in the selected community, if it is an agent. */
@@ -642,6 +650,15 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
+/** Whether `value` can be sent as JSON, as every session's tool list is. */
+const serializable = (value: unknown) => {
+  try {
+    JSON.stringify(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
 /** Bounds one cleanup attempt, whose relay steps otherwise wait on the outbox. */
 const CLEANUP_TIMEOUT_MS = 60_000;
 const TIMEOUT_LIMIT_MS = 30 * 60_000;
@@ -803,6 +820,7 @@ export class AgentsService extends Service implements Agents {
    * shown over the newer one. */
   private keyGeneration = 0;
   private readonly contributions;
+  private readonly addedTools;
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
@@ -873,6 +891,7 @@ export class AgentsService extends Service implements Agents {
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
+    this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     migrateAgentStorage(storage);
     this.records = readRecords(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
@@ -1038,6 +1057,33 @@ export class AgentsService extends Service implements Agents {
     this.contributions.register(this.ctx, type as unknown as AgentType);
   }
   types = () => this.contributions.snapshot();
+  addTool(tool: AddedTool) {
+    if (this.ctx.pluginOwner?.revision !== "bundled")
+      throw new Error("Only bundled plugins can add agent tools");
+    if (
+      !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
+      BUZZ_SESSION.tools.some((core) => core.name === tool.name) ||
+      !tool.description ||
+      tool.inputSchema?.type !== "object" ||
+      !serializable(tool.inputSchema) ||
+      typeof tool.call !== "function"
+    )
+      throw new Error(
+        "Agent tools need a lowercase name no Buzz tool has, a description, a JSON object inputSchema and call",
+      );
+    if (this.tools().some((added) => added.name === tool.name))
+      throw new Error(`Another plugin adds agent tool ${tool.name}`);
+    this.addedTools.register(this.ctx, { ...tool, id: tool.name });
+  }
+  tools = () => {
+    // Two plugins may name a tool alike; the first keeps it.
+    const names = new Set<string>();
+    return this.addedTools.snapshot().filter((tool) => {
+      if (names.has(tool.name)) return false;
+      names.add(tool.name);
+      return true;
+    });
+  };
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);

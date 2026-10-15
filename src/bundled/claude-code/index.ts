@@ -31,6 +31,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (pubkey, signal) => agents.core(pubkey, signal),
     localStorage,
     (raw) => providerDefaults.resolve(raw),
+    () => agents.tools(),
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */

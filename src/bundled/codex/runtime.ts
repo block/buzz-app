@@ -15,8 +15,10 @@ import { appClient } from "../../buzz-mcp/app-client";
 import { MemoryReads } from "../../features/agent-harness/core-memory";
 import type { Context } from "../../buzz-mcp/client";
 import {
-  BUZZ_SESSION,
+  type AddedTool,
+  addedKey,
   callSessionTool,
+  sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
 import {
@@ -69,8 +71,14 @@ type Request = {
   failActivity(reason: string): void;
 };
 /** `at` is when the binding last started a turn; bindings saved before it
- * existed have none. */
-type Saved = { threadId: string; workspace: string; at?: number };
+ * existed have none. `tools` is the `addedKey` of the thread's tools, absent
+ * when plugins added none. */
+type Saved = {
+  threadId: string;
+  workspace: string;
+  at?: number;
+  tools?: string;
+};
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
   rpc: AppServer;
@@ -166,6 +174,8 @@ export class CodexRuntime {
     private readonly core: Agents["core"],
     private readonly storage: Storage = localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
+    /** The tools plugins add to every thread now. */
+    private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -670,7 +680,11 @@ export class CodexRuntime {
       signal.throwIfAborted();
       const started = await rpc.request<{ thread: { id: string } }>(
         "thread/start",
-        { ...params, ephemeral: true, dynamicTools: DYNAMIC_TOOLS },
+        {
+          ...params,
+          ephemeral: true,
+          dynamicTools: dynamicTools(this.added()),
+        },
       );
       once.threadId = started.thread.id;
       server.threads.set(once.threadId, agent.pubkey);
@@ -805,7 +819,7 @@ export class CodexRuntime {
     if (
       !turn ||
       call.namespace !== "buzz" ||
-      !BUZZ_SESSION.tools.some((tool) => tool.name === call.tool)
+      !sessionTools(this.added()).some((tool) => tool.name === call.tool)
     )
       throw new Error("No active Buzz tool for this thread and turn");
     const check = () => {
@@ -847,7 +861,13 @@ export class CodexRuntime {
           ...(request.conversation.topLevel ? { topLevel: true } : {}),
         }
       : {};
-    const reply = await callSessionTool(client, context, call.tool, args);
+    const reply = await callSessionTool(
+      client,
+      context,
+      call.tool,
+      args,
+      this.added(),
+    );
     const final = call.tool === "send" && args.final === true;
     if (final) {
       for (const taken of answering) taken.answered();
@@ -1047,7 +1067,12 @@ export class CodexRuntime {
       );
       active.model = model;
       active.effort = effort;
-      const resuming = existing?.workspace === workspace;
+      // Resume restores the thread's tools, so one started with other added
+      // tools starts fresh.
+      const added = this.added();
+      const tools = addedKey(added);
+      const resuming =
+        existing?.workspace === workspace && (existing.tools ?? "") === tools;
       let started: { thread: { id: string; cwd: string } };
       try {
         started = await rpc.request<typeof started>(
@@ -1057,7 +1082,7 @@ export class CodexRuntime {
             ...(resuming
               ? { threadId: existing?.threadId, excludeTurns: true }
               : {
-                  dynamicTools: DYNAMIC_TOOLS,
+                  dynamicTools: dynamicTools(added),
                 }),
           },
         );
@@ -1070,7 +1095,7 @@ export class CodexRuntime {
           throw error;
         started = await rpc.request<typeof started>("thread/start", {
           ...params,
-          dynamicTools: DYNAMIC_TOOLS,
+          dynamicTools: dynamicTools(added),
         });
       }
       active.threadId = started.thread.id;
@@ -1102,6 +1127,7 @@ export class CodexRuntime {
         threadId: started.thread.id,
         workspace,
         at: Date.now(),
+        ...(tools ? { tools } : {}),
       });
       ready();
       this.status(agent.pubkey, key, "Working");
@@ -1220,13 +1246,13 @@ function follow(
     },
   };
 }
-/** The Buzz tools every new thread gets. */
-const DYNAMIC_TOOLS = [
+/** The Buzz tools, with those plugins add, that a new thread gets. */
+const dynamicTools = (added: readonly AddedTool[]) => [
   {
     type: "namespace",
     name: "buzz",
     description: "Read and act in Buzz as this agent.",
-    tools: BUZZ_SESSION.tools.map((tool) => ({
+    tools: sessionTools(added).map((tool) => ({
       type: "function",
       ...tool,
     })),

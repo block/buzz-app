@@ -15,7 +15,8 @@ import type { RelayData } from "../../features/relay/service";
 import type { MemoryEntry } from "../../features/agents/memory";
 import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import { ClaudeRuntime, DEFAULT_CONFIG, modelName } from "./runtime";
+import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
+import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { localSessions } from "./sessions";
 import { Lanes } from "../../features/agent-harness/lanes";
 import { wake } from "../../features/agent-harness/wakes";
@@ -116,11 +117,15 @@ function setup(
       _signal?: AbortSignal,
     ): Promise<string | null | undefined> => null,
   );
+  /** The tools plugins add, as the runtime reads them at each use. */
+  const added: AddedTool[] = [];
   const runtime = new ClaudeRuntime(
     host,
     (pubkey) => ownerReads(relay, pubkey),
     core,
     storage,
+    config,
+    () => added,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
@@ -208,6 +213,7 @@ function setup(
     fake.processes.filter((process) => process.id === "claude");
   return {
     runtime,
+    added,
     deliver,
     placement: session.mePlacement,
     published,
@@ -1214,6 +1220,67 @@ it("always offers attention tools and guidance, and says in each turn whether at
   })) as { isError?: boolean; content: { text: string }[] } | undefined;
   expect(refused?.isError).toBe(true);
   expect(refused?.content[0]?.text).toMatch(/^Attention is off/);
+});
+
+it("offers the tools plugins add, runs them as the agent, and replaces an idle session when they change", async () => {
+  const { runtime, claudes, deliver, added } = setup();
+  const call = vi.fn(async () => "created");
+  added.push({
+    name: "tasks_create",
+    description: "Create a task.",
+    inputSchema: { type: "object", properties: { title: { type: "string" } } },
+    call,
+  });
+  // Both in the thread the first starts, so one session answers them.
+  const root = "6".repeat(64);
+  const mention = (id: string) =>
+    deliver({
+      type: "mention",
+      event: message(id, `@Claude ${id}`, {
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ...(id === "6" ? [] : [["e", root, "", "reply"]]),
+        ],
+      }),
+    });
+  const asked = (id: string) =>
+    claudes().find((process) =>
+      process.prompts.some((prompt) =>
+        prompt.includes(`Content: @Claude ${id}`),
+      ),
+    );
+  const names = async (claude: FakeClaude | undefined, id: number) =>
+    (
+      ((await mcp(claude, id, "tools/list")) as unknown as {
+        tools: { name: string }[];
+      }) ?? { tools: [] }
+    ).tools.map((tool) => tool.name);
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await mention("6");
+  await flush(10);
+  const first = asked("6");
+  expect(await names(first, 1)).toEqual(
+    expect.arrayContaining(["send", "tasks_create"]),
+  );
+  const reply = (await mcp(first, 2, "tools/call", {
+    name: "tasks_create",
+    arguments: { title: "Ship it" },
+  })) as { content: { text: string }[] } | undefined;
+  expect(reply?.content[0]?.text).toBe("created");
+  expect(call).toHaveBeenCalledWith(
+    expect.objectContaining({ pubkey: self }),
+    { channel, root },
+    { title: "Ship it" },
+  );
+  // The process keeps the list it started with, so it is replaced.
+  added.length = 0;
+  await mention("7");
+  await flush(10);
+  const second = asked("7");
+  expect(first?.killed).toBe(true);
+  expect(second).not.toBe(first);
+  expect(await names(second, 3)).not.toContain("tasks_create");
 });
 
 it("keeps one spare for all its agents, and none once they are gone", async () => {

@@ -7,7 +7,11 @@
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
 import { respond } from "../../buzz-mcp/rpc";
-import { turnNote } from "../../buzz-mcp/session-tools";
+import {
+  type AddedTool,
+  addedKey,
+  turnNote,
+} from "../../buzz-mcp/session-tools";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
@@ -127,7 +131,9 @@ export class ClaudeRuntime {
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     (id, options) => this.spawn(id, options),
-    (_conversation, message) => respond(undefined, {}, message),
+    (_conversation, message) => respond(undefined, {}, message, this.added()),
+    undefined,
+    () => addedKey(this.added()),
   );
 
   constructor(
@@ -138,6 +144,8 @@ export class ClaudeRuntime {
     private readonly core: Agents["core"],
     private readonly storage: Storage = globalThis.localStorage,
     private readonly resolveConfig: (raw: unknown) => Config = config,
+    /** The tools plugins add to every session now. */
+    private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
 
   private get spawn(): Spawn {
@@ -605,7 +613,7 @@ export class ClaudeRuntime {
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message);
+        return respond(client, context, message, this.added());
       };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -621,6 +629,7 @@ export class ClaudeRuntime {
           entry.config.scope,
           entry.team,
           entry.name,
+          addedKey(this.added()),
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;

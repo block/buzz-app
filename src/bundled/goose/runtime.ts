@@ -14,7 +14,11 @@ import {
 } from "../../features/agent-harness/core-memory";
 import { respond } from "../../buzz-mcp/rpc";
 import { appClient } from "../../buzz-mcp/app-client";
-import { turnNote } from "../../buzz-mcp/session-tools";
+import {
+  type AddedTool,
+  addedKey,
+  turnNote,
+} from "../../buzz-mcp/session-tools";
 import {
   fromOwner,
   type Agent,
@@ -123,6 +127,8 @@ export class GooseRuntime {
     private readonly relay: (pubkey: string) => RelayData | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
+    /** The tools plugins add to every session now. */
+    private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
 
   private get spawn(): Spawn {
@@ -490,7 +496,7 @@ export class GooseRuntime {
         },
       };
       const context = (conversation && entry.contexts.get(conversation)) || {};
-      return respond(client, context, message);
+      return respond(client, context, message, this.added());
     };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -510,6 +516,7 @@ export class GooseRuntime {
           entry.config.scope,
           entry.team,
           entry.name,
+          addedKey(this.added()),
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;

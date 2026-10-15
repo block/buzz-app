@@ -211,6 +211,24 @@ second
     );
   });
 
+  it.each([
+    [
+      "<div><!<!-- hidden -->-- visible --></div>",
+      "<div><!-- visible --></div>",
+    ],
+    [
+      "<div><scr<!-- hidden -->ipt>alert(1)</script></div>",
+      "<div><script>alert(1)</script></div>",
+    ],
+  ])(
+    "renders syntax joined by comment removal as literal text: %s",
+    (source, text) => {
+      const { container } = renderDom(<MessageMarkdown {...props(source)} />);
+      expect(container.textContent).toBe(text);
+      expect(container.querySelector("script")).toBeNull();
+    },
+  );
+
   it("allows credential-free HTTP(S) links and makes other destinations non-clickable", () => {
     expect(safeLinkUrl("https://example.com/path?q=1")).toBe(
       "https://example.com/path?q=1",

@@ -1154,7 +1154,7 @@ test("unified session naming and lifetime retain host focus and save only explic
   await expect(canvas).toBeVisible();
   await canvas.fill("Keep this local draft");
   const draftName = settings.getByRole("textbox", {
-    name: "Session name",
+    name: "Session name (optional)",
     exact: true,
   });
   await draftName.fill("Make contrast meet accessibility standards");
@@ -1181,7 +1181,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     name: "Save changes",
     exact: true,
   });
-  const inspect = async (dialog, save, prefix) => {
+  const inspect = async (dialog, save, prefix, nameLabel) => {
     for (const mode of ["light", "dark"]) {
       await page.evaluate((value) => {
         document.documentElement.dataset.colorMode = value;
@@ -1189,7 +1189,7 @@ test("unified session naming and lifetime retain host focus and save only explic
       for (const width of [390, 950, 1280]) {
         await page.setViewportSize({ width, height: 850 });
         const name = dialog.getByRole("textbox", {
-          name: "Session name",
+          name: nameLabel,
           exact: true,
         });
         await name.scrollIntoViewIfNeeded();
@@ -1307,7 +1307,7 @@ test("unified session naming and lifetime retain host focus and save only explic
       await page.setViewportSize({ width, height });
       const close = dialog.getByRole("button", { name: "Close", exact: true });
       const name = dialog.getByRole("textbox", {
-        name: "Session name",
+        name: nameLabel,
       });
       await name.scrollIntoViewIfNeeded();
       await expect(close).toBeInViewport();
@@ -1419,7 +1419,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     await close.focus();
     await page.keyboard.press("Tab");
     const minimumName = dialog.getByRole("textbox", {
-      name: "Session name",
+      name: nameLabel,
       exact: true,
     });
     await expect(minimumName).toBeFocused();
@@ -1563,7 +1563,12 @@ test("unified session naming and lifetime retain host focus and save only explic
     await page.setViewportSize({ width: 1280, height: 850 });
     await save.focus();
   };
-  await inspect(settings, draftSave, "draft-lifetime");
+  await inspect(
+    settings,
+    draftSave,
+    "draft-lifetime",
+    "Session name (optional)",
+  );
   await expect(draftSave).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(settings).not.toBeVisible();
@@ -1606,7 +1611,7 @@ test("unified session naming and lifetime retain host focus and save only explic
   await page.keyboard.press("ArrowDown");
   await expect(temporary).toBeChecked();
   await lifetime.getByRole("button", { name: "Increase duration" }).click();
-  await inspect(lifetime, save, "session-lifetime");
+  await inspect(lifetime, save, "session-lifetime", "Session name");
   await expect(save).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Enter");

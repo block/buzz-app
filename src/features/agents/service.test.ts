@@ -5212,7 +5212,7 @@ it("lists only an HTTPS picture of a hosted agent", async () => {
   expect(remote.profile).not.toHaveBeenCalled();
 });
 
-it("adds bundled plugins' tools to every session, each name once", async () => {
+it("adds plugins' tools to every session, each name once", async () => {
   const { service, plugin, ctx } = await setup();
   const tool = {
     name: "tasks_create",
@@ -5220,8 +5220,11 @@ it("adds bundled plugins' tools to every session, each name once", async () => {
     inputSchema: { type: "object" },
     call: async () => "created",
   };
-  // A tool acts as the agent, so an installed plugin cannot add one.
-  expect(() => plugin.agents.addTool(tool)).toThrow(/bundled plugins/);
+  // Installed plugins add tools as bundled ones do.
+  plugin.agents.addTool({ ...tool, name: "notes_add" });
+  expect(service.tools()).toMatchObject([
+    { name: "notes_add", pluginId: "example" },
+  ]);
   const bundled = (id: string) =>
     ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
   const tasks = bundled("buzz.tasks");
@@ -5233,7 +5236,7 @@ it("adds bundled plugins' tools to every session, each name once", async () => {
     { ...tool, inputSchema: { type: "object", default: 1n } },
   ])
     expect(() => tasks.agents.addTool(bad)).toThrow(/Agent tools need/);
-  expect(service.tools()).toEqual([]);
+  expect(service.tools()).toHaveLength(1);
   tasks.agents.addTool(tool);
   expect(() =>
     bundled("buzz.other").agents.addTool({
@@ -5241,11 +5244,10 @@ it("adds bundled plugins' tools to every session, each name once", async () => {
       call: async () => "other",
     }),
   ).toThrow(/Another plugin/);
-  expect(service.tools()).toHaveLength(1);
-  expect(service.tools()[0]).toMatchObject({
-    name: "tasks_create",
-    pluginId: "buzz.tasks",
-  });
+  expect(service.tools()).toMatchObject([
+    { name: "notes_add", pluginId: "example" },
+    { name: "tasks_create", pluginId: "buzz.tasks" },
+  ]);
 });
 
 it("refuses a hosted type that also runs here", async () => {

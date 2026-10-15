@@ -1,7 +1,7 @@
 // What one agent session gets of the Buzz tools, whatever harness runs it:
 // the tools to list, the guidance for its system prompt, a note for the end of
 // each turn, and the handler for every call. The attention tools are among
-// them, and so are any tools bundled plugins add. A harness passes all of this
+// them, and so are any tools plugins add. A harness passes all of this
 // on without knowing what is in it.
 import {
   ATTENTION_OFF,
@@ -15,7 +15,7 @@ import {
 import type { BuzzClient, Context } from "./client";
 import { callTool, type Reply, TOOLS, type Tool } from "./tools";
 
-/** A tool a bundled plugin adds to every agent session in the app, listed
+/** A tool a plugin adds to every agent session in the app, listed
  * after the Buzz tools under the same server. */
 export type AddedTool = Readonly<{
   name: string;

@@ -47,7 +47,7 @@ note that it is off when it is off. `callSessionTool` dispatches each call and
 refuses attention calls while attention is off. A new shared tool needs no
 harness change.
 
-Bundled plugins add tools with `ctx.agents.addTool`, listed after the Buzz
+Plugins add tools with `ctx.agents.addTool`, listed after the Buzz
 tools under the same `buzz` server; the standalone server in
 `src/buzz-mcp/main.ts` stays without them. A harness reads `agents.tools()`
 and passes it to `respond` or `callSessionTool`. A session keeps the list it

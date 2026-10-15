@@ -566,7 +566,8 @@ export type Agents = {
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
-   * Only bundled plugins may: the tool acts as the agent. A session lists
+   * The tool acts as the agent, like the rest of a trusted plugin's code
+   * acts as its owner. A session lists
    * the tools there are when it starts, and one that cannot take a changed
    * list is replaced when it is next used. */
   addTool(tool: AddedTool): void;
@@ -1058,8 +1059,6 @@ export class AgentsService extends Service implements Agents {
   }
   types = () => this.contributions.snapshot();
   addTool(tool: AddedTool) {
-    if (this.ctx.pluginOwner?.revision !== "bundled")
-      throw new Error("Only bundled plugins can add agent tools");
     if (
       !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
       BUZZ_SESSION.tools.some((core) => core.name === tool.name) ||

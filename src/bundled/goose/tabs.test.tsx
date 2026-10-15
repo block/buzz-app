@@ -206,6 +206,14 @@ it("saves a key on Enter in Settings, and only an absolute or ~/ workspace", asy
       save={save}
     />,
   );
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "Default · goose-claude",
+    ),
+  );
+  expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent(
+    "Provider default",
+  );
   const user = userEvent.setup();
   await choose("Provider", "Anthropic");
   await user.type(await screen.findByLabelText("API key"), "sk-test{Enter}");

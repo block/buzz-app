@@ -403,8 +403,8 @@ test.describe("personal recipients", () => {
           name: `Remove mention ${agent.name} ${agent.pubkey}`,
           exact: true,
         });
-      await expect(tag(honey)).toBeVisible();
-      // Replace the automatic agent with another explicit owned recipient.
+      await expect(tag(honey)).toHaveCount(0);
+      // Existing chats do not seed the account default; choose an owned recipient.
       await composer.fill("");
       await workspace
         .getByRole("button", { name: "Mention a member", exact: true })
@@ -452,9 +452,9 @@ test.describe("personal recipients", () => {
       expect(sent.tags.filter(([key]) => key === "p")).toEqual([
         ["p", brain.pubkey],
       ]);
-      // After an explicit one-off choice, the next draft tags the account default.
-      await expect(tag(honey)).toBeVisible();
-      await expect(tag(brain)).toHaveCount(0);
+      // The next draft retains the last notified agent, not the account default.
+      await expect(tag(honey)).toHaveCount(0);
+      await expect(tag(brain)).toBeVisible();
       // A draft from the ordinary Messages reader may retain a channel member
       // who isn't in the owner's inventory. Me must reject that explicit recipient.
       await composer.fill("");

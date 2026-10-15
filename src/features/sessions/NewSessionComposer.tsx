@@ -2,8 +2,8 @@ import {
   canonicalDetailsName,
   detailsDraftErrors,
 } from "../relay/channel-details-protocol";
-import { readPending, type PendingStart } from "./pending-start";
 import { startingChatTitle } from "./chat-title";
+import { readPending, type PendingStart } from "./pending-start";
 import { DraftSessionSettings } from "./DraftSessionSettings";
 import { NewSessionView } from "./SessionPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -21,12 +21,14 @@ import type { ChannelSummary } from "../relay/contracts";
 import {
   readView,
   writeView,
+  replaceView,
   subscribeView,
   viewRevision,
 } from "../../shared/view-state";
 import { MessageComposer } from "../messages/MessageComposer";
 import { useDefaultAgent } from "./default-agent";
 import { SessionProjectControl } from "./SessionProjectControl";
+import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -104,9 +106,6 @@ export function NewSessionComposer({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft; an interrupted start keeps the
   // assistant its receipt was admitted with.
-  const [selectedAgent, setSelectedAgent] = useState(
-    () => readPending(scope, draftKey)?.agent ?? "",
-  );
   const defaultAgent = useDefaultAgent(session, scope);
   const [selectedProject, setSelectedProject] = useState(() => {
     const saved = readView<unknown>(
@@ -153,6 +152,7 @@ export function NewSessionComposer({
         ?.focus();
   }, [focusRequest]);
   const [pending, setPending] = useState(() => readPending(scope, draftKey));
+  const selectedAgent = pending?.agent;
   const available = pending?.messageId
     ? session.workSessions.available
     : personal
@@ -215,10 +215,7 @@ export function NewSessionComposer({
           name:
             typeof draftSettings.name === "string"
               ? canonicalDetailsName(draftSettings.name) ||
-                automaticTitle(
-                  composerMarkdown({ ...draft, sessionCards: [] }).trim() ||
-                    composerMarkdown(draft),
-                )
+                startingChatTitle(draft)
               : draftSettings.name,
           text: composerMarkdown(draft),
           draft,
@@ -241,7 +238,9 @@ export function NewSessionComposer({
         throw new Error("The saved session name could not be verified.");
       // Receipts from before optional naming have no frozen title.
       if (!current.name)
-        current.name = automaticTitle(pending?.text ?? current.text);
+        current.name = startingChatTitle(
+          pending?.draft ?? pending?.text ?? current.draft ?? current.text,
+        );
       const errors = detailsDraftErrors({
         name: current.name ?? "Session",
         description: "",
@@ -442,10 +441,21 @@ export function NewSessionComposer({
       }
       await session.workSessions.delivered(current.messageId);
       if (!mounted.current) return;
+      if (personal) {
+        // Never overwrite a draft already opened or edited in another window.
+        const next = rememberedMentions(
+          session,
+          mentionDraft(current.draft),
+          recipients,
+        );
+        if (replaceView(scope, `draft:${current.id}`, null, next) === "failed")
+          throw new Error(
+            "Your follow-up draft couldn’t be saved on this device. Retry to finish opening the chat.",
+          );
+      }
       writeView(scope, `${draftKey}:pending`, null);
       writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
-      writeView(scope, `${draftKey}:new-agent`, "");
       writeView(scope, `${draftKey}:new-project`, null);
       setPending(undefined);
       onStarted(current.id);
@@ -475,8 +485,6 @@ export function NewSessionComposer({
         if (failedId === next.invitationId) {
           delete next.invitationId;
           delete next.agent;
-          setSelectedAgent("");
-          writeView(scope, `${draftKey}:new-agent`, "");
         } else delete next.messageId;
         save(next);
       }
@@ -512,7 +520,11 @@ export function NewSessionComposer({
                 if (project === selectedProject) return;
                 setSelectedProject(project);
                 writeView(scope, `${draftKey}:new-project`, project);
-                const next = { ...draftSettings, canvas: undefined };
+                const next = {
+                  name: draftSettings.name,
+                  ttlSeconds: draftSettings.ttlSeconds,
+                  canvas: undefined,
+                };
                 setDraftSettings(next);
                 writeView(scope, `${draftKey}:settings`, next);
               }}
@@ -614,13 +626,5 @@ export function NewSessionComposer({
         />
       )}
     </NewSessionView>
-  );
-}
-
-function automaticTitle(text: string) {
-  return (
-    canonicalDetailsName(
-      [...text.trim().replace(/\s+/g, " ")].slice(0, 80).join(""),
-    ) || "Session"
   );
 }

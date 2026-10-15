@@ -1047,6 +1047,7 @@ async function mountUploadComposer(
     replyParentId?: string;
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
     emojiRead?: () => Promise<RelayEvent[]>;
+    profiles?: readonly RelayEvent[];
     editable?: boolean;
     media?: (url: string) => string | undefined;
     extensions?: MessageComposerProps["extensions"];
@@ -1091,6 +1092,8 @@ async function mountUploadComposer(
         return result.promise;
       },
       async query(filters) {
+        if (filters.some((filter) => filter.kinds?.includes(0)))
+          return [...(options.profiles ?? [])];
         if (
           filters.some((filter) => filter.kinds?.includes(30030)) &&
           options.emojiRead
@@ -1286,7 +1289,12 @@ it.each([false, true])(
     await waitFor(() =>
       expect(within(h.form()).getByText("metadata.txt")).toBeVisible(),
     );
-    await userEvent.type(h.input(), "caption");
+    // jsdom cannot place a pointer caret around the inserted chip. Exercise
+    // keyboard continuation at the editor's own end without a synthetic click.
+    const editor = screen.getByRole<ComposerInputElement>("textbox");
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    await userEvent.type(h.input(), "caption", { skipClick: true });
 
     fireEvent.click(h.send());
     await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
@@ -7461,3 +7469,139 @@ it("does not publish an unchanged inline session edit, including reverting a cap
   h.submit();
   expect(h.messages.edit).not.toHaveBeenCalled();
 });
+
+it("does not take focus when a default recipient arrives after mount", () => {
+  const h = mount();
+  const outside = document.createElement("input");
+  document.body.append(outside);
+  outside.focus();
+  try {
+    h.retarget({ defaultMention: second });
+    expect(h.input()).toHaveValue(`@${second.name} `);
+    expect(outside).toHaveFocus();
+  } finally {
+    outside.remove();
+  }
+});
+
+it("edits the last message from an untouched automatic tag and restores that tag on cancel", () => {
+  const h = mount({ defaultMention: second }, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  expect(h.input()).toHaveValue(`@${second.name} `);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveAccessibleName("Edit message");
+  fireEvent.keyDown(h.input(), { key: "Escape" });
+  expect(h.input()).toHaveValue(`@${second.name} `);
+  h.fill("my own draft");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+});
+
+it("keeps remembered agents while typing during upload without taking focus when publication finishes", async () => {
+  const key = keypair();
+  const agent = { pubkey: key.pubkey, name: "Honey" };
+  const h = await mountUploadComposer({
+    members: [agent.pubkey],
+    profiles: [
+      signed(key, {
+        kind: 0,
+        content: JSON.stringify({ name: "Honey", is_agent: true }),
+        tags: [],
+      }),
+    ],
+    defaultMention: agent,
+    requireMention: true,
+  });
+  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  await act(() => h.owner.session.profiles.ensure([agent.pubkey]));
+  attachByPaste(h.input(), attachmentFile());
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+  const editor = screen.getByRole<ComposerInputElement>("textbox");
+  editor.focus();
+  editor.setSelectionRange(editor.value.length, editor.value.length);
+  await userEvent.type(editor, "next", { skipClick: true });
+  const outside = document.createElement("input");
+  document.body.append(outside);
+  outside.focus();
+  try {
+    await act(async () => {
+      h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+    });
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+    expect(outside).toHaveFocus();
+    expect(h.input()).toHaveValue("@Honey next");
+    fireEvent.click(h.send());
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+    expect(h.publish.mock.calls[1]?.[0].tags).toContainEqual([
+      "p",
+      agent.pubkey,
+    ]);
+  } finally {
+    outside.remove();
+  }
+});
+
+it.each(["thread", "solo"])(
+  "%s follow-ups retain every selected agent, honor removal and share the opt-out",
+  async (surface) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setLibrary([first, second]);
+    h.setProfiles(
+      new Map([
+        [first.pubkey, { name: first.name, isAgent: true }],
+        [second.pubkey, { name: second.name, isAgent: true }],
+      ]),
+    );
+    const personal = surface === "solo";
+    h.retarget({
+      ...(personal
+        ? { personalConversation: true, requireMention: true }
+        : { threadRootId: "root" }),
+      session: {
+        ...h.session,
+        mePlacement: { has: () => true },
+        workSessions: {
+          refreshMembership: async () => ({
+            id: "channel",
+            members: [first.pubkey, second.pubkey],
+          }),
+          addAgents: vi.fn(),
+        },
+      } as unknown as RelaySession,
+    });
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertMention(second);
+      h.commands().insertText("hello");
+    });
+    h.submit();
+    const send = personal ? h.messages.send : h.messages.reply;
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    await waitFor(() => expect(h.input()).toHaveValue("@Honey @Honey "));
+    if (personal) {
+      h.setRows([editableMessage()]);
+      fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+      expect(h.input()).toHaveAccessibleName("Edit message");
+      fireEvent.keyDown(h.input(), { key: "Escape" });
+      expect(h.input()).toHaveValue("@Honey @Honey ");
+    }
+    // Keep only the second agent for the next send.
+    act(() => {
+      h.input().removeRecipient(first.pubkey);
+      h.commands().insertText("next");
+    });
+    h.submit();
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+    expect(send.mock.calls.at(-1)?.[personal ? 2 : 3]).toEqual([second.pubkey]);
+    setRememberAgentsPreference(false);
+    h.submit();
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(h.input()).toHaveValue(""));
+    setRememberAgentsPreference(true);
+    expect(h.input()).toHaveValue("");
+  },
+);

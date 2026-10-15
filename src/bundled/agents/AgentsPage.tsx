@@ -65,7 +65,7 @@ import { Input } from "../../shared/design-system/ui/Input";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
-  MenuCheckboxItem,
+  MenuNote,
   MenuPopup,
   MenuItem,
   MenuRoot,
@@ -582,9 +582,7 @@ function AgentQuickActions({
       />
       <MenuPopup aria-label={`Actions for ${name}`} anchor={anchor}>
         {isDefault ? (
-          <MenuCheckboxItem checked onCheckedChange={() => {}}>
-            Default agent
-          </MenuCheckboxItem>
+          <MenuNote>Default agent</MenuNote>
         ) : (
           <MenuItem disabled={!available} onClick={onMakeDefault}>
             Make default agent
@@ -677,7 +675,11 @@ function Inventory({
                 onBuild={() => onBuild(agent.pubkey)}
                 onRemoved={() => onSelect()}
                 role="gridcell"
-                aria-label={agent.name}
+                aria-label={
+                  agent.pubkey === defaultAgent
+                    ? `${agent.name}, Default agent`
+                    : agent.name
+                }
                 data-selected={active}
                 aria-selected={active}
                 tabIndex={active || (index < 0 && position === 0) ? 0 : -1}

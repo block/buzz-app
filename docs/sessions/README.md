@@ -61,11 +61,16 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   chat, including from the composer, after the menu's fresh permission read; it does
   nothing where the menu offers no Archive. Success returns to Me. Archived chats
   are restored from search and Channel Settings, as before.
-- Me (labelled **Berd** in navigation) uses the ordinary composer with explicit
-  owner-scoped agent tags. Empty new drafts start tagged with the device's default
+- Me (labelled **Solo** in navigation) uses the ordinary composer with explicit
+  owner-scoped agent tags. Empty new-chat drafts start tagged with the device's default
   agent for this account/community. **Agents → right-click → Make default agent**
   changes that choice; its card shows **Default agent**. An unavailable choice
-  falls back to the first managed agent, then the first selectable agent.
+  falls back to the first managed agent, then the first selectable agent, only
+  after agent evidence is complete and the requested archive read has settled.
+  An available explicitly chosen default does not wait for fallback evidence.
+  Follow-ups keep all exact agents notified by the previous send, just like
+  Multiplayer threads, including the shared Remember mentioned agents preference.
+  The account default never replaces recipients in an existing chat.
   Removing or replacing a tag is respected for that draft. Both Send and Enter
   require a tagged agent; existing signed-send recovery preserves its recipients.
   The removed per-chat assistant picker is no longer consulted. A legacy pending
@@ -73,10 +78,13 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   preference. The project control follows the editor tools on the same rail;
   model/effort controls read the explicitly tagged recipients.
   Saved placement must load before sending; unavailable evidence is not Messages.
-- Claude Code can name a Berd chat from its own generated session title after its
-  first successful turn. Only the first tagged agent can propose the title, and
-  the chat must still have its original first-message name. Human names are never
-  replaced. Codex title generation is intentionally not implemented. This reads
+- Claude Code can name a Solo chat from its own generated session title after its
+  first successful turn. Only the first tagged agent on the owner’s original
+  message can propose the title, even when a retry has different words or tag
+  order; the chat must still have its original first-message name. A bounded
+  verified read checks up to 100 owner messages through the triggering turn.
+  Full, missing, unsent or ambiguous same-second history leaves the title
+  unchanged. Human names are never replaced. Codex title generation is intentionally not implemented. This reads
   Claude Code's local history, adds no model request, and uses the owner's ordinary
   channel-details save with revision validation. Live/native title acceptance is
   a separate gate from unit tests.

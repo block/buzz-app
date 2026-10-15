@@ -1604,7 +1604,7 @@ it("a failed first Me turn releases naming so a successful retry can offer Claud
   expect(named).not.toHaveBeenCalled();
   await f.deliver({
     type: "mention",
-    event: message("2", "Name this chat", { created_at: 101 }),
+    event: message("2", "Try again", { created_at: 101 }),
   });
   await flush();
   const retry = f

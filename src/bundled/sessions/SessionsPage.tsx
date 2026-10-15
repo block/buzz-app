@@ -78,7 +78,6 @@ import {
 } from "../../features/conversation/Conversation";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
-import { useDefaultAgent } from "../../features/sessions/default-agent";
 import { SessionProjectControl } from "../../features/sessions/SessionProjectControl";
 import {
   SessionColumn,
@@ -398,7 +397,6 @@ function SessionWork({
   const [settingsOpen, setSettingsOpen] = useState<{
     visit: AbortSignal | undefined;
   }>();
-  const defaultAgent = useDefaultAgent(session, scope);
   const placement = useMePlacement(session);
   const inMe = placement.ids.includes(channel.id);
   const personalChat = inMe && channel.channelType === "session";
@@ -662,7 +660,6 @@ function SessionWork({
                 channel.channelType === "session" &&
                 (placement.status !== "ready" || inMe)
               }
-              defaultMention={personalChat ? defaultAgent : undefined}
               requireMention={personalChat}
               trailingTool={
                 personalChat ? (
@@ -670,8 +667,7 @@ function SessionWork({
                     session={session}
                     channelId={channel.id}
                     disabled={
-                      !!channel.archived ||
-                      placement.status !== "ready"
+                      !!channel.archived || placement.status !== "ready"
                     }
                   />
                 ) : undefined

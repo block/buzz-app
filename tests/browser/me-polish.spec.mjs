@@ -229,7 +229,9 @@ test.describe("Berd-style Me organization", () => {
   }) => {
     await page.goto(app.origin);
     await openPage(page, "Me");
-    const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
     // Stable identity: after reload an unread count joins the accessible label.
     const row = sidebar.locator(`[data-me-channel-id="${id}"]`);
     await row.click({ button: "right" });
@@ -279,6 +281,17 @@ test.describe("Berd-style Me organization", () => {
       name: `Remove mention ${agent.name} ${agent.pubkey}`,
       exact: true,
     });
+    await expect(tag).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Mention a member", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Mention a member or agent" })
+      .getByRole("button", {
+        name: `${agent.name} ${agent.pubkey}`,
+        exact: true,
+      })
+      .click();
     await expect(tag).toBeVisible();
     const composer = page.getByRole("textbox", {
       name: "Message your agents",

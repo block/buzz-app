@@ -4,8 +4,20 @@ import { webcrypto } from "node:crypto";
 import { sectionTemplateId } from "./workspace";
 import { composerDOMFixture } from "../messages/composer-testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type {
+  ComposerTool,
+  ConversationExtensions,
+} from "../conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
 import { NewSessionComposer, resetNewChatProject } from "./NewSessionComposer";
@@ -42,6 +54,7 @@ function setup(available = true) {
   ];
   const agents = {
     status: "ready",
+    complete: true,
     identities: rows,
     selectable: rows,
     archives: { status: "unavailable" as const, archived: [] },
@@ -916,12 +929,38 @@ it.each(["draft", "created", "placed"])(
       ...(stage !== "draft" ? { creationId: "c".repeat(64) } : {}),
       ...(stage === "placed" ? { placementDone: true } : {}),
     });
+    if (stage === "placed") await f.mePlacement.set(id, true);
+    const tools: readonly Contribution<ComposerTool>[] = [
+      {
+        id: "mention",
+        key: "test/mention",
+        pluginId: "test",
+        revision: "1",
+        title: "Mention",
+        component: ({ insertMention }) => (
+          <button
+            type="button"
+            onClick={() =>
+              insertMention({ pubkey: "a".repeat(64), name: "Member agent" })
+            }
+          >
+            Tag agent
+          </button>
+        ),
+      },
+    ];
+    const extensions: ConversationExtensions = {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: { snapshot: () => [], subscribe: () => () => {} },
+    };
+    const started = vi.fn();
     render(
       <NewSessionComposer
         personal
         session={f.session}
         scope={scope}
-        onStarted={vi.fn()}
+        extensions={extensions}
+        onStarted={started}
       />,
     );
     const editor = screen.getByRole("textbox") as HTMLTextAreaElement;
@@ -935,6 +974,17 @@ it.each(["draft", "created", "placed"])(
     fireEvent.input(editor);
     expect(editor).toHaveTextContent("Keep progress revised");
     expect(f.workSessions.create).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Tag agent" }));
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledWith(id));
+    expect(f.workSessions.create).toHaveBeenCalledTimes(
+      stage === "draft" ? 1 : 0,
+    );
+    expect(f.messages.send).toHaveBeenCalledExactlyOnceWith(
+      id,
+      expect.stringContaining("Keep progress revised"),
+      ["a".repeat(64)],
+    );
   },
 );
 
@@ -1361,7 +1411,8 @@ it.each([false, true])(
     if (submitted)
       writeView(scope, `${key}:pending`, {
         id: "22222222-2222-4222-8222-222222222222",
-        text: "Keep me",
+        text: "@Member agent Keep me",
+        draft: taggedDraft("Keep me"),
         setup: {
           sectionId: "other",
           agents: [],
@@ -1769,7 +1820,7 @@ it("allows changing an unavailable assistant before any remote creation", async 
   );
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await screen.findByText(
-    "Solo chats can only use your available agents. Check mentions and section defaults.",
+    "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
   );
   expect(f.workSessions.create).not.toHaveBeenCalled();
   cleanup();
@@ -1881,12 +1932,13 @@ it.each([
       agentChoices: { ...h.session.agentChoices, refresh: refreshAgents },
     });
     const key = "me:section:work";
-    writeView("test", `${key}:new-draft`, "Keep this draft");
+    writeView("test", `${key}:new-draft`, taggedDraft("Keep this draft"));
     if (source === "draft") writeView("test", `${key}:settings`, fields);
     else
       writeView("test", `${key}:pending`, {
         id: parent.id,
-        text: "Keep this draft",
+        text: "@Member agent Keep this draft",
+        draft: taggedDraft("Keep this draft"),
         ...fields,
       });
     render(
@@ -1946,7 +1998,13 @@ it.each(
       name: explicit ? "Chosen title" : "",
       ttlSeconds: 600,
     });
-    writeView("real-creation", `${namespace}:new-draft`, "Original prompt");
+    writeView(
+      "real-creation",
+      `${namespace}:new-draft`,
+      personal
+        ? taggedDraft("Original prompt", viewer.pubkey, "Me")
+        : "Original prompt",
+    );
     let observed = outbox.outbox.snapshot();
     let channelList = {
       status: "ready" as const,
@@ -1978,27 +2036,54 @@ it.each(
         return channelList;
       },
     };
+    const authority = keypair();
     const workSessions = createWorkSessions(
       outbox.outbox,
       channels,
-      { read: async () => [] },
+      {
+        read: async (filters) =>
+          filters.flatMap((filter) =>
+            filter.kinds?.includes(39002)
+              ? [
+                  signed(authority, {
+                    kind: 39002,
+                    content: "",
+                    created_at: 1,
+                    tags: [
+                      ["d", filter["#d"]?.[0] ?? ""],
+                      ["p", viewer.pubkey],
+                    ],
+                  }),
+                ]
+              : [],
+          ),
+      },
       lifetime.signal,
       undefined,
       undefined,
       undefined,
-      undefined,
+      authority.pubkey,
       undefined,
       true,
     );
+    const eligible = {
+      ...h.session.agentChoices.snapshot(),
+      selectable: [{ pubkey: viewer.pubkey, name: "Me", managed: true }],
+    };
     const session = {
       ...h.session,
+      agentChoices: { ...h.session.agentChoices, snapshot: () => eligible },
       viewer: viewer.pubkey,
       channels,
       workSessions,
       messages: {
         ...h.session.messages,
-        send: (id: string, text: string) =>
-          outbox.outbox.send({ kind: 9, content: text, tags: [["h", id]] }),
+        send: (id: string, text: string, recipients: readonly string[] = []) =>
+          outbox.outbox.send({
+            kind: 9,
+            content: text,
+            tags: [["h", id], ...recipients.map((key) => ["p", key])],
+          }),
       },
     } as RelaySession;
     const started = vi.fn();
@@ -2113,3 +2198,143 @@ it("names a captioned new chat from its caption before staged cards", async () =
     "Please review the fixes",
   );
 });
+
+it.each([false, true])(
+  "starting titles omit structured leading tags but retain literal @ text (literal=%s)",
+  async (literal) => {
+    const f = setup();
+    const content = literal ? "@Literal investigate this" : "Investigate this";
+    writeView("clean-title", "me:new-draft", taggedDraft(content));
+    render(
+      <NewSessionComposer
+        personal
+        session={f.session}
+        scope="clean-title"
+        onStarted={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(f.messages.send).toHaveBeenCalledOnce());
+    expect(f.workSessions.create.mock.calls[0]?.[1]).toBe(content);
+  },
+);
+
+it("discarding a failed legacy creation removes its invisible recipient", async () => {
+  const f = setup();
+  writeView("discard-agent", "me:pending", {
+    id: "22222222-2222-4222-8222-222222222222",
+    text: "Legacy thought",
+    agent: "b".repeat(64),
+    creationId: "c".repeat(64),
+  });
+  f.workSessions.failed = () => true;
+  f.workSessions.delivered.mockRejectedValueOnce(
+    new Error("Creation rejected"),
+  );
+  render(
+    <NewSessionComposer
+      personal
+      session={f.session}
+      scope="discard-agent"
+      onStarted={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Edit and retry" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByText(/Recovering an earlier send/)).toBeNull(),
+  );
+  expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  const form = screen.getByRole("textbox").closest("form");
+  if (!form) throw new Error("Missing composer form");
+  fireEvent.submit(form);
+  expect(f.workSessions.invite).not.toHaveBeenCalled();
+  expect(f.messages.send).not.toHaveBeenCalled();
+});
+
+it.each(["remember", "off", "existing", "storage-failure"])(
+  "first Solo send transfers all tagged agents into the saved chat draft (%s)",
+  async (mode) => {
+    const { readView } = await import("../../shared/view-state");
+    const { setRememberAgentsPreference } = await import(
+      "../messages/mention-preferences"
+    );
+    const { followupDraft } = await import("../messages/mention-draft");
+    const f = setup();
+    const recipients = [
+      { pubkey: "a".repeat(64), name: "Member agent" },
+      { pubkey: "b".repeat(64), name: "Outside agent" },
+    ];
+    const tags = followupDraft(recipients);
+    writeView("first-followup", "me:new-draft", {
+      ...tags,
+      text: `${tags.text}Start here`,
+    });
+    const create = f.workSessions.create.getMockImplementation();
+    if (!create) throw new Error("Missing creation fixture");
+    f.workSessions.create.mockImplementation((...args) => {
+      if (mode === "existing")
+        writeView(
+          "first-followup",
+          `draft:${args[0]}`,
+          "Another window's draft",
+        );
+      return create(...args);
+    });
+    if (mode === "off") setRememberAgentsPreference(false);
+    const setItem = Storage.prototype.setItem;
+    const storage = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key, value) {
+        if (mode === "storage-failure" && key.includes('"draft:'))
+          throw new Error("Storage unavailable");
+        setItem.call(this, key, value);
+      });
+    const started = vi.fn();
+    render(
+      <NewSessionComposer
+        personal
+        session={f.session}
+        scope="first-followup"
+        onStarted={started}
+      />,
+    );
+    try {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send message" }),
+      );
+      if (mode === "storage-failure") {
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+          "follow-up draft couldn’t be saved",
+        );
+        expect(started).not.toHaveBeenCalled();
+        storage.mockRestore();
+        await userEvent.click(
+          screen.getByRole("button", { name: "Send message" }),
+        );
+      }
+      await waitFor(() => expect(started).toHaveBeenCalledOnce());
+      expect(f.messages.send).toHaveBeenCalledOnce();
+      expect(f.workSessions.create).toHaveBeenCalledOnce();
+      const id = started.mock.calls[0]?.[0];
+      expect(readView("first-followup", `draft:${id}`, null)).toEqual(
+        mode === "existing"
+          ? "Another window's draft"
+          : mode === "off"
+            ? { text: "", recipients: [] }
+            : tags,
+      );
+      expect(f.messages.send.mock.calls[0]?.[2]).toEqual(
+        recipients.map((r) => r.pubkey),
+      );
+    } finally {
+      storage.mockRestore();
+      setRememberAgentsPreference(true);
+    }
+  },
+);

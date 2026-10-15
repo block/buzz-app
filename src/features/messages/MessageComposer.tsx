@@ -32,9 +32,8 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useNonmemberMentions } from "./useNonmemberMentions";
-import { knownAgentPubkeys } from "../agents/known";
 import { useKnownAgentPubkeys } from "../agents/use-known";
-import { rememberAgentsPreference } from "./mention-preferences";
+import { rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
 import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
@@ -78,7 +77,6 @@ import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
   mentionDraft,
-  followupDraft,
   type MentionDraft,
   type MentionRecipient,
 } from "./mention-draft";
@@ -203,7 +201,7 @@ export type MessageComposerProps = {
   placeholder?: string | undefined;
   sessionConversation?: boolean | undefined;
   personalConversation?: boolean | undefined;
-  /** Tagged into each new draft once, so a Me message always has an agent. */
+  /** Seeds an empty new-chat draft; follow-ups use remembered mentions. */
   defaultMention?: MentionRecipient | undefined;
   /** Sending needs at least one tagged recipient. */
   requireMention?: boolean | undefined;
@@ -875,6 +873,7 @@ function Composer({
     recipient?: MentionRecipient,
     range?: CompletionQuery,
     terminator?: ":",
+    focus = true,
   ) {
     if (
       !permitted.current ||
@@ -912,7 +911,7 @@ function Composer({
       return false;
     }
     completion.invalidate();
-    if (!input.current.insertText(text, recipient, range, terminator)) {
+    if (!input.current.insertText(text, recipient, range, terminator, focus)) {
       setError("Message is too long to insert text");
       return false;
     }
@@ -1048,21 +1047,21 @@ function Composer({
     session.channels.list().channels.find((item) => item.id === channelId)
       ?.parentChannelId === parentChannelId &&
     (!personalConversation || session.mePlacement.has(channelId));
-  // Each new draft starts tagged with the default agent. The tag is settled
-  // once the draft holds it or other content: a draft restored over it gets
-  // it again, while removing it or tagging someone else is respected until
-  // the next send re-arms it.
+  // Only a fresh chat is seeded with the default. Once it has content, respect
+  // edits and removals; accepted sends use the shared remembered-mention draft.
   const autoTagged = useRef<string | undefined>(undefined);
+  const automaticTag = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (
       !defaultMention ||
       !active ||
       sendPending ||
+      completion.composing.current ||
       editing.target ||
       autoTagged.current === draftKey
     )
       return;
-    if (draft.trim() || value.recipients.length) {
+    if (value.recipients.length || draft.trim()) {
       autoTagged.current = draftKey;
       return;
     }
@@ -1073,8 +1072,27 @@ function Composer({
         agentChoices,
         mentionRoster,
       )(defaultMention.pubkey)
-    )
-      insert(`@${defaultMention.name} `, defaultMention);
+    ) {
+      const empty = !draft.trim();
+      if (
+        insert(
+          `@${defaultMention.name} `,
+          defaultMention,
+          { start: 0, end: 0, query: "" },
+          undefined,
+          false,
+        )
+      ) {
+        automaticTag.current = empty
+          ? JSON.stringify(valueRef.current)
+          : undefined;
+        if (empty)
+          input.current?.setSelectionRange(
+            valueRef.current.text.length,
+            valueRef.current.text.length,
+          );
+      }
+    }
   });
   const untagged =
     requireMention && !editing.target && !value.recipients.length;
@@ -1275,20 +1293,7 @@ function Composer({
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
-      const agents = knownAgentPubkeys(
-        session.profiles.snapshot(),
-        session.agentChoices.snapshot(),
-      );
-      const next = followupDraft(
-        !personalConversation && rememberAgentsPreference()
-          ? captured.recipients.filter(
-              (item) =>
-                agents.has(item.pubkey) &&
-                recipients.includes(item.pubkey) &&
-                !archivedMention(session, item.pubkey),
-            )
-          : [],
-      );
+      const next = rememberedMentions(session, captured, recipients);
       // Only agents still notified by this message are asked for a model or effort.
       const sentPicks: MentionPicks = Object.fromEntries(
         Object.entries(capturedRunPicks).filter(([key]) =>
@@ -1334,7 +1339,6 @@ function Composer({
           capturedAttachments,
           (uploaded) => {
             const sent = publish(uploaded);
-            autoTagged.current = undefined;
             if (live.current) onSend?.(sent);
           },
           (files, preparationError) => {
@@ -1424,7 +1428,10 @@ function Composer({
       if (!changed)
         input.current?.setSelectionRange(next.text.length, next.text.length);
       setError(undefined);
-      autoTagged.current = undefined;
+      autoTagged.current = draftKey;
+      automaticTag.current = next.recipients.length
+        ? JSON.stringify(next)
+        : undefined;
       if (id) onSend?.(id);
       finishDraft(pending);
     } catch (reason) {
@@ -1679,6 +1686,7 @@ function Composer({
               extensions={extensions}
               emoji={emojiCatalog.entries}
               onDraftChange={(next) => {
+                if (!editing.target) automaticTag.current = undefined;
                 saveDraft(next);
                 completion.observe(true);
               }}
@@ -1757,8 +1765,10 @@ function Composer({
                   !editDisabled &&
                   !submission &&
                   !editing.target &&
-                  event.currentTarget.value === "" &&
-                  !valueRef.current.recipients.length &&
+                  ((event.currentTarget.value === "" &&
+                    !valueRef.current.recipients.length) ||
+                    automaticTag.current ===
+                      JSON.stringify(valueRef.current)) &&
                   !valueRef.current.sessionCards?.length &&
                   !attachments.items.length
                 ) {

@@ -34,10 +34,16 @@ export function useDefaultAgent(
   const chosen = useChosenAgent(scope);
   // The same evidence the Berd composer's mention roster reads.
   const choices = useAgentChoices(session, true, true);
+  const fallbackReady =
+    choices.complete &&
+    choices.archives.status !== "idle" &&
+    choices.archives.status !== "loading";
   const agent =
     choices.selectable.find((choice) => choice.pubkey === chosen) ??
-    choices.selectable.find((choice) => choice.managed) ??
-    choices.selectable[0];
+    (fallbackReady
+      ? (choices.selectable.find((choice) => choice.managed) ??
+        choices.selectable[0])
+      : undefined);
   return agent
     ? { pubkey: agent.pubkey, name: agent.managedName ?? agent.name }
     : undefined;

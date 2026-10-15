@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { RelaySession } from "../relay/session";
@@ -11,6 +12,7 @@ afterEach(() => {
 it("choosing a default updates new-chat routing only in its account/community scope", () => {
   const choices = {
     status: "ready",
+    complete: true,
     selectable: [
       { pubkey: "a".repeat(64), name: "First", managed: true },
       { pubkey: "b".repeat(64), name: "Second", managed: true },
@@ -48,4 +50,57 @@ it("choosing a default updates new-chat routing only in its account/community sc
     setDefaultAgent("one", "d".repeat(64));
   });
   expect(screen.getByLabelText("one").textContent).toBe("First");
+});
+
+it("waits for complete fallback and settled archive evidence, but honors an available explicit choice", () => {
+  const relay = { pubkey: "a".repeat(64), name: "Relay", managed: false };
+  const local = { pubkey: "b".repeat(64), name: "Local", managed: true };
+  let choices = {
+    status: "ready",
+    complete: false,
+    pending: true,
+    selectable: [relay],
+    archives: { status: "loading" },
+  };
+  const listeners = new Set<() => void>();
+  const session = {
+    agentChoices: {
+      snapshot: () => choices,
+      subscribe: (notify: () => void) => {
+        listeners.add(notify);
+        return () => listeners.delete(notify);
+      },
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as unknown as RelaySession;
+  function Selection() {
+    return (
+      <output aria-label="choice">
+        {useDefaultAgent(session, "loading")?.name}
+      </output>
+    );
+  }
+  render(<Selection />);
+  expect(screen.getByLabelText("choice")).toBeEmptyDOMElement();
+  act(() => {
+    setDefaultAgent("loading", relay.pubkey);
+  });
+  expect(screen.getByLabelText("choice")).toHaveTextContent("Relay");
+  act(() => {
+    setDefaultAgent("loading", "d".repeat(64));
+    choices = {
+      ...choices,
+      complete: true,
+      pending: false,
+      selectable: [relay, local],
+    };
+    for (const notify of listeners) notify();
+  });
+  expect(screen.getByLabelText("choice")).toBeEmptyDOMElement();
+  act(() => {
+    choices = { ...choices, archives: { status: "ready" } };
+    for (const notify of listeners) notify();
+  });
+  expect(screen.getByLabelText("choice")).toHaveTextContent("Local");
 });

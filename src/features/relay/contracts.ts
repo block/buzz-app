@@ -56,6 +56,8 @@ export type Profile = Readonly<{
   name: string;
   /** The name is an identity fragment, not a name supplied by kind-0 content. */
   nameIsFallback?: true;
+  /** The kind-0 `name` (handle), when `name` above is a different display name. */
+  username?: string;
   picture?: string;
   about?: string;
   /** Self-declared NIP-05 identifier; not proof of DNS verification. */

@@ -342,7 +342,12 @@ it("shows the real read failure, retains conversation choices, and retries to an
   const owner = createRelaySession({
     ...wire.transport,
     query(filters, signal) {
-      if (filters.some((filter) => filter.search !== undefined))
+      // Message search is scripted; the People directory finds nobody.
+      if (
+        filters.some(
+          (filter) => filter.search !== undefined && !filter.kinds?.includes(0),
+        )
+      )
         return wire.transport.query(filters, signal);
       return Promise.resolve(
         discovery.filter((event) =>
@@ -2901,3 +2906,224 @@ it.each([true, false])(
     }
   },
 );
+
+function peopleSession(
+  session: ReturnType<typeof createRelaySession>["session"],
+  directory: {
+    pubkey: string;
+    name: string;
+    username?: string;
+    isAgent?: true;
+  }[] = [],
+  agents: readonly { pubkey: string; name: string; managed: boolean }[] = [],
+) {
+  const people = vi.fn(async () => ({ people: directory, hasMore: false }));
+  const open = vi.fn(async (_pubkeys: readonly string[]) => "started-dm");
+  const source = session.agentChoices;
+  const choices = { ...source.snapshot(), identities: agents, selectable: [] };
+  return {
+    people,
+    open,
+    session: {
+      ...session,
+      directMessages: {
+        ...session.directMessages,
+        available: true,
+        people,
+        open,
+      },
+      agentChoices: {
+        ...source,
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+        ensure: () => {},
+      },
+    } as typeof session,
+  };
+}
+
+it("finds a person by username and starts a DM with them", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return filters.some((filter) => filter.kinds?.includes(0))
+        ? [profile(alice, { display_name: "Alice Chen", name: "achen" })]
+        : [];
+    },
+  });
+  const t = peopleSession(owner.session);
+  let started = (_id: string) => {};
+  t.open.mockImplementationOnce(
+    () => new Promise<string>((resolve) => (started = resolve)),
+  );
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="achen"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    // A profile already loaded elsewhere, read through the real kind-0 fold.
+    await waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    await act(async () => owner.session.profiles.ensure([alice.pubkey]));
+    const row = await within(
+      await screen.findByRole("group", { name: "People" }),
+    ).findByRole("option");
+    expect(row).toHaveTextContent("Alice Chen");
+    expect(row).toHaveTextContent("@achen · Start a direct message");
+    expect(row).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(
+      await screen.findByText("Opening your conversation with Alice Chen…"),
+    ).toBeVisible();
+    // A second choice while one is opening does not start another.
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(openConversation).not.toHaveBeenCalled();
+    await act(async () => started("started-dm"));
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("started-dm"),
+    );
+    expect(t.open).toHaveBeenCalledExactlyOnceWith(
+      [alice.pubkey],
+      expect.any(AbortSignal),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("opens an existing DM from a person row and reports a failed start", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair(),
+    bob = keypair();
+  const discovery = [
+    metadata(relay, "dm", "opaque", 1700000000, [
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, "dm", [viewer.pubkey, alice.pubkey]),
+    profile(alice, { display_name: "Alice Chen", name: "ally" }),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  // Alice's cached profile names her DM; Bob is only in the directory.
+  const t = peopleSession(owner.session, [
+    { pubkey: bob.pubkey, name: "Ally Bob" },
+  ]);
+  t.open.mockRejectedValueOnce(new Error("Relay refused the DM."));
+  const openConversation = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="ally"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={openConversation}
+      />,
+    );
+    const group = await screen.findByRole("group", { name: "People" });
+    // The existing DM is the closer relationship, so it leads.
+    await waitFor(() =>
+      expect(
+        within(group)
+          .getAllByRole("option")
+          .map((row) => row.querySelector(".text-caption")?.textContent),
+      ).toEqual(["@ally · Direct message", "Start a direct message"]),
+    );
+    fireEvent.click(within(group).getByRole("option", { name: /Alice Chen/ }));
+    expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm");
+    expect(t.open).not.toHaveBeenCalled();
+    fireEvent.click(within(group).getByRole("option", { name: /Ally Bob/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Relay refused the DM.",
+    );
+    expect(openConversation).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("lists directory people and managed agents, not agents this community cannot message", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair(),
+    carol = keypair(),
+    stray = keypair(),
+    keeper = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query() {
+      return [];
+    },
+  });
+  const t = peopleSession(
+    owner.session,
+    [
+      { pubkey: carol.pubkey, name: "Carol" },
+      { pubkey: stray.pubkey, name: "Carl Bot", isAgent: true },
+    ],
+    [{ pubkey: keeper.pubkey, name: "Caretaker", managed: true }],
+  );
+  const props = {
+    session: t.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation: () => {},
+  };
+  try {
+    const mounted = render(<SearchResults {...props} query="car" />);
+    // The managed agent is known locally before the directory answers.
+    expect(
+      within(screen.getByRole("group", { name: "Agents" })).getByRole("option"),
+    ).toHaveTextContent("Caretaker");
+    expect(t.people).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(180));
+    expect(t.people).toHaveBeenCalledExactlyOnceWith(
+      "car",
+      1,
+      expect.any(AbortSignal),
+    );
+    expect(
+      within(screen.getByRole("group", { name: "People" })).getByRole("option"),
+    ).toHaveTextContent("Carol");
+    expect(screen.queryByText("Carl Bot")).toBeNull();
+    // `#` asks for a channel and an operator for messages: no people.
+    for (const query of ["#car", "car in:general"]) {
+      mounted.rerender(<SearchResults {...props} query={query} />);
+      await act(async () => vi.advanceTimersByTimeAsync(180));
+      expect(screen.queryByRole("group", { name: "People" })).toBeNull();
+      expect(screen.queryByRole("group", { name: "Agents" })).toBeNull();
+    }
+    expect(t.people).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});

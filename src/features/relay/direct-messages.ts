@@ -60,9 +60,10 @@ export function createDirectMessages(
       return {
         people: [...foldProfiles(events)]
           .filter(([pubkey]) => pubkey !== transport?.viewer)
-          .map(([pubkey, { name, picture, isAgent }]) => ({
+          .map(([pubkey, { name, username, picture, isAgent }]) => ({
             pubkey,
             name,
+            ...(username ? { username } : {}),
             ...(picture ? { picture } : {}),
             ...(isAgent ? { isAgent } : {}),
           })),

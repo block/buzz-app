@@ -1103,6 +1103,42 @@ it("offers to install Codex from its card when Buzz has no copy", async () => {
   ).toHaveTextContent("Model A");
 });
 
+it("moves the card from Install Codex to Sign in once the install succeeds", async () => {
+  const f = fixture({ installed: false, signedIn: false });
+  // Stands in for the download, which setup.test.ts covers.
+  const download = deferred<void>();
+  vi.spyOn(
+    f.setup as unknown as { install(): Promise<void> },
+    "install",
+  ).mockImplementation(async () => {
+    await download.promise;
+    f.disk.installed = true;
+  });
+  render(
+    <f.tabs.CreateModel
+      config={defaults}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  const install = await screen.findByRole("button", { name: "Install Codex" });
+  install.focus();
+  fireEvent.click(install);
+  expect(await screen.findByRole("button", { name: "Cancel" })).toBeVisible();
+  download.resolve();
+  // The same button, so keyboard focus stays on it.
+  const signIn = await screen.findByRole("button", { name: "Sign in" });
+  expect(signIn).toBe(install);
+  expect(signIn).toHaveFocus();
+  fireEvent.click(signIn);
+  await waitFor(() => expect(f.logins).toHaveLength(1));
+  f.disk.signedIn = true;
+  f.logins[0]?.resolve(0);
+  expect(
+    await screen.findByRole("combobox", { name: "Model" }),
+  ).toHaveTextContent("Model A");
+});
+
 it("installs and signs in Buzz's copy of Codex from its provider settings", async () => {
   const f = fixture({ installed: false, signedIn: false });
   const provider = new CodexProvider(f.spawn, localStorage, f.setup);

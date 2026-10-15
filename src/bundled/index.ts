@@ -34,6 +34,8 @@ import codexManifest from "./codex/manifest.json";
 import * as codex from "./codex";
 import gooseManifest from "./goose/manifest.json";
 import * as goose from "./goose";
+import acpManifest from "./acp/manifest.json";
+import * as acp from "./acp";
 import channelsManifest from "./channels/manifest.json";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
@@ -190,6 +192,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...gooseManifest, apiVersion: 1 },
     module: goose,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...acpManifest, apiVersion: 1 },
+    module: acp,
+    // Off until its runtime lands: its agents can be set up but not run.
+    enabledByDefault: false,
   },
   {
     manifest: { ...workflowsManifest, apiVersion: 1 },

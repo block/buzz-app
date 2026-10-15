@@ -169,7 +169,8 @@ export function describe(failure: StaffFailure) {
  * request, `sending` state and last outcome live in the store, so a view
  * opened while the write is in flight, or after it settled, shows the truth.
  * `onDone` runs in whichever view is open when an attempt finishes (or the
- * next one to open), exactly once per attempt.
+ * next one to open), exactly once per attempt, unless a matching Cancel has
+ * already released the operation, in which case it never runs for that attempt.
  */
 export function useWrite<R extends StaffRequest, M = unknown>(
   key: string,

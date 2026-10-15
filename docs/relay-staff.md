@@ -110,7 +110,9 @@ outcome. Screens subscribe to it, so a reply that arrives after a screen was
 left, the card was closed and reopened, or access was lost and regained still
 shows up, and a write that is sending can't be sent again, discarded or
 replaced. Each finished attempt is handled once (its error shown, the view
-reloaded) by whichever screen is open when it lands, or by the next one to open.
+reloaded) by whichever screen is open when it lands, or by the next one to open,
+unless a matching Cancel has already released it, in which case it is dropped
+without being reported.
 Report writes are handled by the report page, not the action form, because a
 form disappears once its action changes the report's status.
 A held write is never offered or sent under another identity or admin

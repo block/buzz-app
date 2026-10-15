@@ -2165,16 +2165,14 @@ export function createRelaySession(
         throw new DOMException("Stale relay read", "AbortError");
       return result;
     },
-    /** Whether read() search filters may ask for `search_sort: "newest"`. */
-    searchSort: transport?.searchSort === true,
-    async read(
-      filters: readonly ReadFilter[],
-      settings?: ReadOptions,
-    ): Promise<readonly VisibleEvent[]> {
+    async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
       return (await session.readPage(filters, settings)).events;
     },
     /** Transport-page count precedes visibility filtering and local/live projection. */
-    async readPage(filters: readonly ReadFilter[], settings?: ReadOptions) {
+    async readPage(
+      filters: readonly ReadFilter[],
+      settings?: ReadOptions,
+    ): Promise<{ events: readonly VisibleEvent[]; relayCount: number }> {
       const began = revision;
       const epoch = accessEpoch;
       const { events: result, relayCount } = await readVerified(
@@ -2214,6 +2212,8 @@ export function createRelaySession(
         relayCount,
       };
     },
+    /** Whether read() search filters may ask for `search_sort: "newest"`. */
+    searchSort: transport?.searchSort === true,
     /** An owned retained event view, not a replacement query snapshot. Limits bound
      * requests, not retained results. Ranked search/feed filters require read().
      * Subscribe, refresh and dispose with the plugin's scope. */

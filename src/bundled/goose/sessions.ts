@@ -7,6 +7,7 @@
 import {
   GooseProcess,
   type ActivityReceipt,
+  type Choice,
   type GooseSession,
   type ServeMcp,
   type Settled,
@@ -24,8 +25,6 @@ export const ONCE_DEADLINE_MS = 5 * 60_000;
 export type Launch = Readonly<{
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
-  /** Added to the process's environment: its model and provider. */
-  env: Readonly<Record<string, string | null>>;
   systemPrompt: string;
 }>;
 
@@ -36,6 +35,8 @@ export type SessionsOptions = Readonly<{
   serve: ServeMcp;
   /** The agent's current settings, for a new session. */
   launch(): Promise<Launch>;
+  /** The agent's provider and model now, which each new turn runs on. */
+  choice(): Choice;
   /** Changes when a setting the process was started with has changed. */
   processFingerprint(): string;
   /** Changes when a setting a session was opened with has changed. */
@@ -239,6 +240,7 @@ export class AgentSessions {
       cwd: process.cwd,
       systemPrompt: launch.systemPrompt,
       ...(title ? { title } : {}),
+      choice: this.options.choice,
     });
     session.conversation = key;
     if (fingerprint === this.options.fingerprint() || this.disposed)
@@ -259,7 +261,6 @@ export class AgentSessions {
         const cwd = await absolute(this.options.spawn, launch.workspace);
         const goose = await GooseProcess.start(this.options.spawn, {
           cwd,
-          env: launch.env,
           tools: this.options.tools,
           serve: this.options.serve,
         });

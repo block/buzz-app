@@ -154,15 +154,14 @@ describe("GooseSetup", () => {
       await goose.test({ provider: "anthropic", model: "claude-opus-5-5" }),
     ).toEqual({ ok: true, message: "Connected" });
     const [tested] = fake.geese;
-    expect(tested?.env).toMatchObject({
-      GOOSE_MODE: "chat",
-      GOOSE_PROVIDER: "anthropic",
-      GOOSE_MODEL: "claude-opus-5-5",
-    });
+    expect(tested?.env).toMatchObject({ GOOSE_MODE: "chat" });
+    expect(tested?.env).not.toHaveProperty("GOOSE_PROVIDER");
+    expect(tested?.env).not.toHaveProperty("GOOSE_MODEL");
     expect(tested?.opened[0]).toMatchObject({
       mcpServers: [],
-      _meta: { enabledExtensions: [] },
+      _meta: { enabledExtensions: [], provider: "anthropic" },
     });
+    expect(tested?.configured).toEqual(["session-1 model=claude-opus-5-5"]);
     expect(tested?.turns.map((turn) => turn.text)).toEqual([
       "Reply with exactly: OK",
     ]);
@@ -173,13 +172,17 @@ describe("GooseSetup", () => {
   });
 
   it("fails a test with what goose replied instead", async () => {
-    const { setup: goose } = setup({
+    const { fake, setup: goose } = setup({
       reply: "Authentication failed: invalid x-api-key",
     });
     expect(await goose.test({ provider: "anthropic", model: "" })).toEqual({
       ok: false,
       message: "Authentication failed: invalid x-api-key",
     });
+    // The provider's default model, whatever goose's config names.
+    const [tested] = fake.geese;
+    expect(tested?.opened[0]?._meta).toMatchObject({ provider: "anthropic" });
+    expect(tested?.configured).toEqual([]);
   });
 
   it("says when the bundled goose-acp is missing", async () => {

@@ -64,6 +64,12 @@ export const ENV: Readonly<Record<string, string | null>> = {
   BUZZ_RELAY_URL: null,
 };
 
+/** The provider and model a session's turns run on; empty is what goose's
+ * config picks. */
+export type Choice = Readonly<{ provider: string; model: string }>;
+/** goose's provider id for the provider and model its config picks. */
+const CONFIGURED = "goose";
+
 const STDERR_LIMIT = 4_000;
 const STEP_KEYS = [
   "description",
@@ -171,15 +177,18 @@ export class GooseProcess {
   }
 
   /** Opens a new session in `cwd`, named `title`, whose system prompt has
-   * `systemPrompt` appended. A `bare` one has no tools at all. */
+   * `systemPrompt` appended. A `bare` one has no tools at all. Each turn runs
+   * on the provider and model `choice` gives as it starts. */
   async open(
     launch: Readonly<{
       cwd: string;
       systemPrompt: string;
       title?: string;
       bare?: boolean;
+      choice?: () => Choice;
     }>,
   ): Promise<GooseSession> {
+    const provider = launch.choice?.().provider ?? "";
     let server: HostMcpServer | undefined;
     // goose connects while it opens the session, before it is known here.
     let session: GooseSession | undefined;
@@ -217,13 +226,18 @@ export class GooseProcess {
             ? [DEVELOPER, { type: "mcp", server: buzz }]
             : [],
           ...(launch.title ? { sessionTitle: launch.title } : {}),
+          // On the provider's default model, whatever goose's config holds.
+          ...(provider ? { provider } : {}),
         },
       })) as { sessionId: string });
     } catch (error) {
       void server?.close();
       throw error;
     }
-    session = new GooseSession(this, sessionId, server);
+    session = new GooseSession(this, sessionId, server, launch.choice, {
+      provider,
+      model: "",
+    });
     this.sessions.set(sessionId, session);
     if (stopped) {
       void this.close(session);
@@ -401,6 +415,9 @@ export class GooseSession {
     readonly id: string,
     /** Serves this session's Buzz tools; closed with it. */
     readonly server?: HostMcpServer,
+    private readonly choice?: () => Choice,
+    /** The provider and model it runs on, as chosen here. */
+    private chosen: Choice = { provider: "", model: "" },
   ) {}
 
   get busy() {
@@ -514,6 +531,7 @@ export class GooseSession {
       while (this.queue.length && !this.closed) {
         const text = this.queue.shift() ?? "";
         try {
+          await this.select();
           const { stopReason } = (await this.goose.request("session/prompt", {
             sessionId: this.id,
             prompt: [{ type: "text", text }],
@@ -530,6 +548,51 @@ export class GooseSession {
       this.ranAs(undefined);
     }
     if (!this.steering && !this.closed) this.done();
+  }
+
+  /** Puts the session on the provider and model chosen now. A steer joins
+   * the running turn, so a change waits for the next. */
+  private async select() {
+    const want = this.choice?.();
+    if (!want) return;
+    if (
+      want.provider !== this.chosen.provider ||
+      (this.chosen.model && !want.model)
+    ) {
+      // goose keeps the model when the provider stays the same.
+      if (want.provider && want.provider === this.chosen.provider)
+        await this.configure("model", await this.defaultModel(want.provider));
+      else await this.configure("provider", want.provider || CONFIGURED);
+      this.chosen = { provider: want.provider, model: "" };
+    }
+    if (want.model !== this.chosen.model) {
+      await this.configure("model", want.model);
+      this.chosen = want;
+    }
+  }
+  private async configure(configId: string, value: string) {
+    try {
+      await this.goose.request("session/set_config_option", {
+        sessionId: this.id,
+        configId,
+        value,
+      });
+    } catch (error) {
+      throw new Error(
+        `goose could not switch its ${configId} to ${value}: ${errorMessage(error)}`,
+      );
+    }
+  }
+  private async defaultModel(provider: string) {
+    const { entries } = (await this.goose.request(
+      "_goose/unstable/providers/list",
+      { providerIds: [provider] },
+    )) as { entries: { providerId: string; defaultModel?: string }[] };
+    const model = entries.find(
+      (entry) => entry.providerId === provider,
+    )?.defaultModel;
+    if (!model) throw new Error(`goose has no default model for ${provider}`);
+    return model;
   }
 
   private ranAs(runId: string | undefined) {

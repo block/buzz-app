@@ -3,7 +3,7 @@
 // call runs a short-lived `goose-acp`; keys go to goose's secret store, never
 // into Buzz.
 import type { ModelChoice } from "../../features/agents/ModelPicker";
-import { GooseProcess, type Spawn } from "./goose";
+import { GooseProcess, type Choice, type Spawn } from "./goose";
 import { absolute } from "./sessions";
 
 export type ConfigKey = Readonly<{
@@ -140,14 +140,15 @@ export class GooseSetup {
 
   /** Asks the provider for one short reply, without tools. goose reports a
    * failed call as its reply, so only the expected answer passes. */
-  test(choice: Readonly<{ provider: string; model: string }>): Promise<Tested> {
-    const env = {
-      GOOSE_MODE: "chat",
-      ...(choice.provider ? { GOOSE_PROVIDER: choice.provider } : {}),
-      ...(choice.model ? { GOOSE_MODEL: choice.model } : {}),
-    };
+  test(choice: Choice): Promise<Tested> {
+    const env = { GOOSE_MODE: "chat" };
     return this.with(async (goose, cwd) => {
-      const session = await goose.open({ cwd, systemPrompt: "", bare: true });
+      const session = await goose.open({
+        cwd,
+        systemPrompt: "",
+        bare: true,
+        choice: () => choice,
+      });
       try {
         const settled = await Promise.race([
           session.send(TEST_PROMPT),

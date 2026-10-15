@@ -18,6 +18,7 @@ import {
 import { systemPrompt } from "../claude-code/prompt";
 import {
   GooseProcess,
+  type Choice,
   type ServeMcp,
   type Spawn,
   type ToolServer,
@@ -181,13 +182,18 @@ async function live() {
   const cwd = mkdtempSync(join(tmpdir(), "buzz-goose-"));
   const goose = await GooseProcess.start(spawn, { cwd, tools, serve });
   const requests: { method: string; ok?: boolean }[] = [];
+  /** What each request that succeeded answered, in order. */
+  const results: { method: string; result: unknown }[] = [];
   const request = goose.request.bind(goose);
   goose.request = (method, params) => {
     const record: { method: string; ok?: boolean } = { method };
     requests.push(record);
     const answer = request(method, params);
     answer.then(
-      () => (record.ok = true),
+      (result) => {
+        record.ok = true;
+        results.push({ method, result });
+      },
       () => (record.ok = false),
     );
     return answer;
@@ -197,7 +203,7 @@ async function live() {
       .filter((call) => call.method === "tools/call")
       .map((call) => call.params as Send)
       .filter((call) => call.name === "send");
-  return { goose, cwd, calls, requests, sends };
+  return { goose, cwd, calls, requests, results, sends };
 }
 
 describe.skipIf(!BIN)("goose-acp", () => {
@@ -296,6 +302,94 @@ describe.skipIf(!BIN)("goose-acp", () => {
       expect(sends().at(-1)?.arguments?.text?.toLowerCase()).toContain(
         "banana",
       );
+    } finally {
+      await goose.kill();
+    }
+  });
+
+  it("switches a session's provider and model between turns", {
+    timeout: 180_000,
+  }, async () => {
+    const { goose, cwd, requests, results } = await live();
+    try {
+      const [{ entries }, defaults] = (await Promise.all([
+        goose.request("_goose/unstable/providers/list", { providerIds: [] }),
+        goose.request("_goose/unstable/defaults/read", {}),
+      ])) as [
+        {
+          entries: {
+            providerId: string;
+            defaultModel?: string;
+            configured?: boolean;
+            acp?: boolean;
+            models?: { id: string }[];
+          }[];
+        },
+        { providerId?: string; modelId?: string },
+      ];
+      // A provider set up besides goose's config's, with a model besides its
+      // default: goose needs its key to switch the model.
+      const other = entries.find(
+        (entry) =>
+          entry.configured &&
+          !entry.acp &&
+          entry.defaultModel &&
+          entry.providerId !== defaults.providerId &&
+          entry.models?.some((model) => model.id !== entry.defaultModel),
+      );
+      const model = other?.models?.find(
+        (item) => item.id !== other.defaultModel,
+      )?.id;
+      if (!other || !model || !defaults.providerId)
+        throw new Error("goose's config names no provider to switch from");
+      /** The provider and model goose last said the session runs on. */
+      const current = (method: string) => {
+        const { configOptions = [] } = (results
+          .filter((item) => item.method === method)
+          .at(-1)?.result ?? {}) as {
+          configOptions?: { id: string; currentValue: string }[];
+        };
+        const value = (id: string) =>
+          configOptions.find((option) => option.id === id)?.currentValue;
+        return [value("provider"), value("model")];
+      };
+      let choice: Choice = { provider: other.providerId, model: "" };
+      const session = await goose.open({
+        cwd,
+        systemPrompt: "",
+        bare: true,
+        choice: () => choice,
+      });
+      // The provider's default model, though goose's config has none for it.
+      expect(current("session/new")).toEqual([
+        other.providerId,
+        other.defaultModel,
+      ]);
+      const ask = () => session.send("Reply with exactly: OK");
+      choice = { provider: other.providerId, model };
+      await ask();
+      expect(current("session/set_config_option")).toEqual([
+        other.providerId,
+        model,
+      ]);
+      choice = { provider: other.providerId, model: "" };
+      await ask();
+      expect(current("session/set_config_option")).toEqual([
+        other.providerId,
+        other.defaultModel,
+      ]);
+      choice = { provider: "", model: "" };
+      const settled = await ask();
+      expect(current("session/set_config_option")).toEqual([
+        defaults.providerId,
+        defaults.modelId,
+      ]);
+      expect(settled.text).toMatch(/^\W*ok\W*$/i);
+      expect(
+        requests.filter(
+          (item) => item.method === "session/set_config_option" && !item.ok,
+        ),
+      ).toEqual([]);
     } finally {
       await goose.kill();
     }

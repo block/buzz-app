@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import type { Delivery } from "../../features/agents/service";
+import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -134,6 +134,7 @@ function setup(
     goose,
     published,
     read,
+    runtime,
     placement: session.mePlacement,
   };
 }
@@ -232,6 +233,36 @@ describe("GooseRuntime", () => {
         ["e", "1".repeat(64), "", "reply"],
       ],
     ]);
+  });
+
+  it("switches a saved provider in the live session without restarting goose", async () => {
+    const { agent, deliver, fake, runtime } = setup();
+    const saved = (config: typeof DEFAULT_CONFIG) =>
+      runtime.sync([{ ...agent, config } as unknown as Agent]);
+    saved(DEFAULT_CONFIG);
+    const first = message("1", "@Gander which model?");
+    await deliver(first);
+    await flush(100);
+    saved({ ...DEFAULT_CONFIG, provider: "openai" });
+    await deliver(
+      message("2", "@Gander and now?", {
+        tags: [
+          ["h", channel],
+          ["e", first.id, "", "reply"],
+          ["p", self],
+        ],
+      }),
+    );
+    await flush(100);
+    expect(fake.geese).toHaveLength(1);
+    const [goose] = fake.geese;
+    expect(goose?.env).not.toHaveProperty("GOOSE_PROVIDER");
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+    ]);
+    expect(goose?.configured).toEqual(["session-1 provider=openai"]);
   });
 
   it("fails a session mention it cannot place until the placement can be read", async () => {

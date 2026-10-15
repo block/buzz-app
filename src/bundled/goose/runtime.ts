@@ -34,7 +34,8 @@ import type { ServeMcp, Spawn, ToolServer } from "./goose";
 import { AgentSessions } from "./sessions";
 
 export type Config = Readonly<{
-  /** A model the provider offers; empty uses the goose config's. */
+  /** A model the provider offers; empty uses the provider's default, or the
+   * goose config's when no provider is named. */
   model: string;
   /** A goose provider; empty uses the goose config's. */
   provider: string;
@@ -91,13 +92,6 @@ type Entry = {
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
 };
-
-/** The environment that picks the agent's model and provider over the goose
- * config's. */
-const env = ({ model, provider }: Config) => ({
-  ...(model.trim() ? { GOOSE_MODEL: model.trim() } : {}),
-  ...(provider.trim() ? { GOOSE_PROVIDER: provider.trim() } : {}),
-});
 
 export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
@@ -479,12 +473,12 @@ export class GooseRuntime {
       tools,
       serve: (handler) => this.serve(handler),
       onChange: () => this.notify(),
-      processFingerprint: () =>
-        JSON.stringify([
-          entry.config.workspace,
-          entry.config.model,
-          entry.config.provider,
-        ]),
+      processFingerprint: () => entry.config.workspace,
+      // Read as each turn starts, so a change needs no restart.
+      choice: () => ({
+        provider: entry.config.provider.trim(),
+        model: entry.config.model.trim(),
+      }),
       fingerprint: () =>
         JSON.stringify([
           entry.config.workspace,
@@ -498,7 +492,6 @@ export class GooseRuntime {
         const memory = await this.memory(pubkey, entry);
         return {
           workspace,
-          env: env(entry.config),
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,

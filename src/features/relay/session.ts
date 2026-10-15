@@ -1604,7 +1604,7 @@ export function createRelaySession(
               id: pending.id,
               name: pending.input.name,
               error:
-                "Channel confirmed. Saved setup was not continued; check its group, Canvas and members before finishing them manually.",
+                "Channel confirmed. Saved setup was not continued; check its sidebar placement, Canvas and members before finishing them manually.",
             },
           ];
           notifySetup();

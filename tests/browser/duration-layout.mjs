@@ -3,7 +3,7 @@ import { expect } from "./fixture.mjs";
 // Real text fragments catch overflow that a label's border box cannot reveal.
 export async function checkDurationLayout(
   dialog,
-  { alongside = false, selected = true } = {},
+  { alongside = false, selected = true, nextControl } = {},
 ) {
   const radio = dialog.getByRole("radio", { name: "Temporary", exact: true });
   await dialog
@@ -129,12 +129,14 @@ export async function checkDurationLayout(
     ).toHaveCount(0);
     await dialog.getByRole("radio", { name: "Ongoing", exact: true }).focus();
     await dialog.page().keyboard.press("Tab");
-    expect(
-      await dialog.evaluate(
-        (element) =>
-          !element.querySelector("[inert]").contains(document.activeElement),
-      ),
-    ).toBe(true);
+    await expect(
+      nextControl ??
+        dialog.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeFocused();
+    await dialog.page().keyboard.press("Shift+Tab");
+    await expect(
+      dialog.getByRole("radio", { name: "Ongoing", exact: true }),
+    ).toBeFocused();
     expect(
       await dialog.evaluate((element) => {
         const button = element.querySelector(
@@ -172,7 +174,11 @@ export async function checkDurationLayout(
 
 // Other consumers need representative integration, not another app-startup matrix.
 export async function checkDurationConsumer(page, dialog, prefix, testInfo) {
-  await checkDurationLayout(dialog, { selected: false });
+  const nextControl = dialog.getByRole("switch", {
+    name: "Private",
+    exact: true,
+  });
+  await checkDurationLayout(dialog, { selected: false, nextControl });
   await page.screenshot({
     path: testInfo.outputPath(`${prefix}-ongoing-wide.png`),
   });
@@ -186,7 +192,7 @@ export async function checkDurationConsumer(page, dialog, prefix, testInfo) {
       document.documentElement.style.setProperty("--buzz-text-scale", "2");
     }, mode);
     await page.setViewportSize({ width: 390, height: 850 });
-    await checkDurationLayout(dialog, { selected: false });
+    await checkDurationLayout(dialog, { selected: false, nextControl });
     await page.screenshot({
       path: testInfo.outputPath(`${prefix}-${mode}-ongoing-enlarged-390.png`),
     });

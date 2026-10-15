@@ -64,6 +64,8 @@ export function useSessionLifetime({
   const nameError =
     base && normalized
       ? detailsDraftErrors({ ...base, name: normalized }).name
+        ? "Use a session name of at most 120 characters."
+        : undefined
       : undefined;
   const invalid =
     nameError ||
@@ -166,7 +168,7 @@ export function useSessionLifetime({
             const metadata = sessionMetadata(current.description);
             if (!current.canEdit || !metadata || metadata.parentId)
               throw new Error(
-                "This conversation is no longer an editable standalone session. Reload session details before changing its lifetime.",
+                "This conversation is no longer an editable standalone session. Reload session details before changing its name or lifetime.",
               );
             const naming = metadata.naming;
             const description = nameChanged

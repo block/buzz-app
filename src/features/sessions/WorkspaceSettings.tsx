@@ -56,6 +56,7 @@ export function WorkspaceSettings({
   const [busy, setBusy] = useState(false);
   const [loadingCanvas, setLoadingCanvas] = useState(false);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
   const [canvasError, setCanvasError] = useState(false);
   const [reloadConfirmed, setReloadConfirmed] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState("");
@@ -176,18 +177,28 @@ export function WorkspaceSettings({
     inFlight.current = true;
     setBusy(true);
     setError("");
+    setStatus("");
     let canvasConfirmed = false;
     try {
       if (lifetime.checkOnly) {
         // Checking an uncertain details write never publishes pending Canvas edits.
         await lifetime.run("check");
         if (!active()) return;
-        if (
-          (canvasAvailable && !loaded) ||
-          (loaded &&
-            (raw ?? workspaceCanvas(workspace)) !== confirmedCanvas.current)
-        )
+        if (canvasAvailable && !loaded) {
+          setStatus(
+            "Session name and lifetime saved. Workspace and Canvas were not loaded; retry settings to review them.",
+          );
           return;
+        }
+        if (
+          loaded &&
+          (raw ?? workspaceCanvas(workspace)) !== confirmedCanvas.current
+        ) {
+          setStatus(
+            "Session name and lifetime saved. Workspace and Canvas still have unsaved changes.",
+          );
+          return;
+        }
       } else {
         // Validate both drafts before admitting either publication.
         const canvas = loaded
@@ -423,13 +434,14 @@ export function WorkspaceSettings({
             )}
             {lifetime.base && !lifetime.eligible && (
               <p role="status">
-                Only a standalone session you can edit can change its lifetime.
+                Only a standalone session you can edit can change its name or
+                lifetime.
               </p>
             )}
             {lifetime.unrelatedAttempt && (
               <p role="status">
-                Finish the existing channel details change before editing
-                lifetime.
+                Finish the existing channel details change before editing the
+                session name or lifetime.
               </p>
             )}
             {lifetime.error && !error.includes(lifetime.error) && (
@@ -452,6 +464,7 @@ export function WorkspaceSettings({
             )}
           </>
         )}
+        {status && <p role="status">{status}</p>}
         {error && <p role="alert">{error}</p>}
       </div>
       {canvasAvailable && loadingCanvas && !loaded && (

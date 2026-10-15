@@ -26,7 +26,7 @@ export type DialogProps = {
   /** Keep spacing beside scrolling content on the fixed header and footer. */
   chromeSpacing?: "default" | "padded";
   /** Keep a final body control close to its confirmation actions. */
-  footerGap?: "default" | "compact" | "roomy";
+  footerGap?: "default" | "compact";
   /** Replace a step inside this modal; scale defines its recessed/raised position. */
   step?: { key: string; scale: number };
   leadingActions?: ReactNode;
@@ -133,7 +133,6 @@ export function Dialog({
         <footer
           className="buzz-dialog-actions"
           data-chrome-spacing={chromeSpacing}
-          data-footer-gap={footerGap}
         >
           {leadingActions && (
             <div className="buzz-dialog-leading-actions">{leadingActions}</div>

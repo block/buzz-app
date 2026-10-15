@@ -445,6 +445,9 @@ it("remount checks uncertain lifetime without replaying confirmed Canvas; remain
   h.saved(undefined);
   fireEvent.click(check);
   await waitFor(() => expect(saveChanges()).toBeEnabled());
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Session name and lifetime saved. Workspace and Canvas still have unsaved changes.",
+  );
   expect(h.close).not.toHaveBeenCalled();
   expect(h.canvas.save).toHaveBeenCalledOnce();
   expect(h.sign).toHaveBeenCalledOnce();
@@ -459,6 +462,36 @@ it("remount checks uncertain lifetime without replaying confirmed Canvas; remain
     "revision-two",
   );
   expect(h.publish).toHaveBeenCalledTimes(2);
+});
+
+it("a confirmed details check does not claim unloaded Canvas has unsaved edits", async () => {
+  const h = combined();
+  h.publish.mockRejectedValueOnce(new Error("Lost ack"));
+  await editBoth();
+  fireEvent.click(saveChanges());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "may have been saved",
+  );
+  h.mounted.unmount();
+  h.canvas.read.mockRejectedValueOnce(new Error("Canvas unavailable"));
+  render(h.view());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Canvas unavailable",
+  );
+  const check = await screen.findByRole("button", {
+    name: "Check save status",
+  });
+  await waitFor(() => expect(check).toBeEnabled());
+  h.saved(undefined);
+  fireEvent.click(check);
+  await waitFor(() => expect(saveChanges()).toBeEnabled());
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Session name and lifetime saved. Workspace and Canvas were not loaded; retry settings to review them.",
+  );
+  expect(screen.queryByText(/still have unsaved changes/)).toBeNull();
+  expect(h.close).not.toHaveBeenCalled();
+  expect(h.canvas.save).toHaveBeenCalledOnce();
+  expect(h.publish).toHaveBeenCalledOnce();
 });
 
 it("rechecks standalone-session eligibility after recovery before saving another lifetime edit", async () => {
@@ -847,6 +880,17 @@ it("shared name validation blocks oversized names before either owner publishes"
   fireEvent.change(name, { target: { value: "🙂".repeat(121) } });
   expect(saveChanges()).toBeDisabled();
   expect(name).toBeEnabled();
+  expect(name).toHaveAccessibleDescription(
+    "Use a session name of at most 120 characters.",
+  );
+  expect(screen.getByRole("radio", { name: /^Temporary/ })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(screen.getByRole("radio", { name: /^Ongoing/ })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(h.canvas.save).not.toHaveBeenCalled();
   expect(h.sign).not.toHaveBeenCalled();
 });

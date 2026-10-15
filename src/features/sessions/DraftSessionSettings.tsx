@@ -52,6 +52,8 @@ export function DraftSessionSettings({
         description: "",
         visibility: "private",
       }).name
+      ? "Use a session name of at most 120 characters."
+      : undefined
     : undefined;
   const [ttl, setTtl] = useState(ttlSeconds);
   const [temporaryTtl, setTemporaryTtl] = useState(

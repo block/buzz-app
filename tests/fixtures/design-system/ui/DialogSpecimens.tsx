@@ -26,7 +26,6 @@ function Example({
   bodyLayout,
   chromeSpacing,
   size,
-  footerGap,
   children,
 }: {
   label: string;
@@ -40,7 +39,6 @@ function Example({
   chromeSpacing?: "default" | "padded";
   bodyLayout?: "flow" | "flex";
   size?: "default" | "wide" | "expanded";
-  footerGap?: "roomy";
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -64,7 +62,7 @@ const id = useId();
 <Dialog
   open={open}
   onOpenChange={setOpen}
-  title=${JSON.stringify(title)}${size ? `\n  size="${size}"` : ""}${height ? `\n  height="${height}"` : ""}${bodyLayout ? `\n  bodyLayout="${bodyLayout}"` : ""}${chromeSpacing ? `\n  chromeSpacing="${chromeSpacing}"` : ""}${footerGap ? `\n  footerGap="${footerGap}"` : ""}${intro ? `\n  description=${JSON.stringify(intro)}` : ""}
+  title=${JSON.stringify(title)}${size ? `\n  size="${size}"` : ""}${height ? `\n  height="${height}"` : ""}${bodyLayout ? `\n  bodyLayout="${bodyLayout}"` : ""}${chromeSpacing ? `\n  chromeSpacing="${chromeSpacing}"` : ""}${intro ? `\n  description=${JSON.stringify(intro)}` : ""}
   actions={${
     informational
       ? '<Button variant="prominent" onClick={() => setOpen(false)}>Done</Button>'
@@ -89,7 +87,6 @@ ${informational ? "" : `  <form id={id} className="space-y-section-gap" onSubmit
         {...(height ? { height } : {})}
         {...(bodyLayout ? { bodyLayout } : {})}
         {...(chromeSpacing ? { chromeSpacing } : {})}
-        {...(footerGap ? { footerGap } : {})}
         {...(intro ? { description: intro } : {})}
         actions={
           informational ? (
@@ -176,10 +173,9 @@ export function DialogSpecimens() {
       </Example>
       <Example
         label="Stable height"
-        description="Reserve space when content changes. The body scrolls while the title and actions stay in place; a roomy footer keeps separation above actions."
+        description="Reserve space when content changes. The body scrolls while the title and actions stay in place."
         title="Browse options"
         height="stable"
-        footerGap="roomy"
         informational
         code={`<Accordion
   items={[

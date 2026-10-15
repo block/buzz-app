@@ -1666,7 +1666,7 @@ test("unified session naming and lifetime retain host focus and save only explic
   ).toHaveLength(0);
   expect(
     app.report.publications.filter(({ event }) =>
-      [9, 9000, 9007, 30315].includes(event.kind),
+      [9, 9000, 9007, 30315, 40100].includes(event.kind),
     ),
   ).toHaveLength(0);
   await renamedRow.focus();

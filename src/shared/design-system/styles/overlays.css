@@ -194,9 +194,6 @@
     gap: var(--space-3);
     overflow-x: auto;
   }
-  .buzz-dialog-actions[data-footer-gap="roomy"] {
-    padding-block-start: var(--space-4);
-  }
   /* Keep ordinary title/actions outside the body scrollport. If enlarged chrome
      alone exceeds the viewport, allow pointer scrolling rather than clip it.
      AlertDialog has no height attribute and keeps its own flow. */

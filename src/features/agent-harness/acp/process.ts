@@ -127,28 +127,24 @@ export class AcpProcess {
     acp = new AcpProcess(process, hooks, launch.serve);
     for (const data of earlyErrors) acp.readError(data);
     for (const data of early) acp.read(data);
-    // A cancel rejects at once, whether or not the harness ever exits.
-    let cancel!: (reason: unknown) => void;
-    const cancelled = new Promise<never>((_, reject) => {
-      cancel = reject;
-    });
-    cancelled.catch(() => undefined);
-    const abort = () => cancel(signal?.reason);
+    // A cancel rejects the pending `initialize` at once, clearing its
+    // deadline, whether or not the harness ever exits.
+    const abort = () => {
+      for (const call of acp.calls.values()) call.reject(signal?.reason);
+      acp.calls.clear();
+    };
     signal?.addEventListener("abort", abort, { once: true });
     try {
       signal?.throwIfAborted();
-      const init = (await Promise.race([
-        acp.request(
-          "initialize",
-          {
-            protocolVersion: 1,
-            clientCapabilities: {},
-            clientInfo: { name: "buzz", version: "1" },
-          },
-          REQUEST_TIMEOUT_MS,
-        ),
-        cancelled,
-      ])) as {
+      const init = (await acp.request(
+        "initialize",
+        {
+          protocolVersion: 1,
+          clientCapabilities: {},
+          clientInfo: { name: "buzz", version: "1" },
+        },
+        REQUEST_TIMEOUT_MS,
+      )) as {
         agentCapabilities?: Record<string, unknown> & {
           mcpCapabilities?: { http?: boolean };
         };

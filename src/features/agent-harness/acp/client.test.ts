@@ -48,7 +48,11 @@ function fakeHarness(
     holdExit?: boolean;
   }> = {},
 ) {
-  const started: { options: HostProcessOptions; killed: boolean }[] = [];
+  const started: {
+    options: HostProcessOptions;
+    killed: boolean;
+    kills: number;
+  }[] = [];
   const received: Message[] = [];
   const turns: {
     sessionId: string;
@@ -75,7 +79,7 @@ function fakeHarness(
     let exit!: (code: number | null) => void;
     const exited = new Promise<number | null>((resolve) => (exit = resolve));
     let alive = true;
-    const record = { options: process, killed: false };
+    const record = { options: process, killed: false, kills: 0 };
     started.push(record);
     const send = (message: Record<string, unknown>) =>
       queueMicrotask(() => {
@@ -154,6 +158,7 @@ function fakeHarness(
       end: async () => undefined,
       kill: async () => {
         record.killed = true;
+        record.kills++;
         if (!options.holdExit) end(null);
       },
       exited,
@@ -247,6 +252,21 @@ describe("starting a harness", () => {
     controller.abort(new Error("Check was cancelled"));
     await expect(starting).rejects.toThrow("Check was cancelled");
     expect(harness.started[0]?.killed).toBe(true);
+  });
+
+  it("leaves no request deadline behind when cancelled while it starts", async () => {
+    vi.useFakeTimers();
+    const harness = fakeHarness({ silent: ["initialize"], holdExit: true });
+    const controller = new AbortController();
+    const starting = start(harness, { signal: controller.signal });
+    await vi.advanceTimersByTimeAsync(0);
+    controller.abort(new Error("Check was cancelled"));
+    await expect(starting).rejects.toThrow("Check was cancelled");
+    // Only the background stop's own wait is left.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    expect(harness.started[0]?.kills).toBe(1);
   });
 
   it("starts nothing when already cancelled", async () => {

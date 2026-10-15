@@ -1,6 +1,18 @@
-import { SessionShare } from "./SessionShare";
+import {
+  conversionLabel,
+  useSessionConversions,
+} from "../../features/sessions/conversion";
+import {
+  sessionShareAttempt,
+  useSessionShareAttempts,
+} from "../../features/sessions/share-attempt";
+import {
+  ConvertSession,
+  canConvertSession,
+} from "../../features/sessions/ConvertSession";
+import { SessionShare, SessionAccessIndicator } from "./SessionShare";
+import { canEditSessionLifetime } from "../../features/sessions/SessionLifetime";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
-import { RenameSession } from "../../features/sessions/RenameSession";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useDroppable } from "@dnd-kit/core";
 import {
@@ -41,10 +53,10 @@ import {
   DotsThreeIcon,
   FolderSimpleIcon,
   PlusIcon,
-  PencilSimpleIcon,
   CopyIcon,
   GearIcon,
 } from "../../shared/design-system/icons";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { SessionListItem } from "./SessionsWorkspace";
 import styles from "./SessionsWorkspace.module.css";
 import channelStyles from "../channels/Channels.module.css";
@@ -57,11 +69,14 @@ export function SessionSections({
   renderSession,
   onNew,
   personal = false,
-  onShared,
+  onConverted,
   visit,
+  header,
 }: {
+  /** Shown above the new-item actions, such as the sidebar's brand mark. */
+  header?: ReactNode;
   personal?: boolean;
-  onShared?: (id: string) => void;
+  onConverted?: ((id: string) => void) | undefined;
   visit?: AbortSignal;
   session: RelaySession;
   scope: string;
@@ -69,6 +84,12 @@ export function SessionSections({
   renderSession: (item: SessionListItem) => ReactNode;
   onNew?: (sectionId?: string) => void;
 }) {
+  useSessionConversions(session);
+  useSyncExternalStore(
+    session.mePlacement.subscribe,
+    session.mePlacement.snapshot,
+  );
+  const shareAttempts = useSessionShareAttempts(session);
   const [copyNotice, setCopyNotice] = useState<{
     text: string;
     error: boolean;
@@ -119,10 +140,16 @@ export function SessionSections({
   const sharingChannel = channels.channels.find(
     (channel) => channel.id === sharing?.id,
   );
+  const [converting, setConverting] = useState<{
+    id: string;
+    visit: AbortSignal | undefined;
+  }>();
   const currentVisit = useRef(visit);
   currentVisit.current = visit;
-  const [sessionSettings, setSessionSettings] = useState<SessionListItem>();
-  const [renaming, setRenaming] = useState<SessionListItem>();
+  const [sessionSettings, setSessionSettings] = useState<{
+    item: SessionListItem;
+    visit: AbortSignal | undefined;
+  }>();
   const [deleting, setDeleting] = useState<string>();
   const [deleteError, setDeleteError] = useState("");
   const [animate, setAnimate] = useState(false);
@@ -180,18 +207,23 @@ export function SessionSections({
     ) ?? [];
   return (
     <>
-      {onNew && (
-        <div className={`${styles.section} ${styles.sectionHeader}`}>
-          <button
-            type="button"
-            className={`${styles.sectionHeading} ${styles.newSessionHeading}`}
-            onClick={() => onNew(undefined)}
-          >
-            <span className={styles.sectionIcon} aria-hidden="true">
-              <PlusIcon size={15} strokeWidth={2.5} />
-            </span>
-            <span>{personal ? "New chat" : "New session"}</span>
-          </button>
+      {(header || onNew) && (
+        <div className={channelStyles.sidebarTop}>
+          {header}
+          {onNew && (
+            <div className={channelStyles.destinations}>
+              <NavigationItem
+                variant="row"
+                label={personal ? "New chat" : "New session"}
+                icon={
+                  <span className="shell-page-icon">
+                    <PlusIcon size={16} strokeWidth={2.5} />
+                  </span>
+                }
+                onClick={() => onNew(undefined)}
+              />
+            </div>
+          )}
         </div>
       )}
       {(snapshot.status === "idle" || snapshot.status === "loading") && (
@@ -211,9 +243,6 @@ export function SessionSections({
         <p role="alert" className={styles.listMessage}>
           {deleteError}
         </p>
-      )}
-      {personal && groups.length > 0 && (
-        <p className={styles.collectionHeading}>Projects</p>
       )}
       <ChannelSidebarDnd
         writable={preferences.writable}
@@ -235,8 +264,8 @@ export function SessionSections({
           .filter((section) => !personal || section.id || section.rows.length)
           .map((section) => (
             <DropSection
-              key={section.id}
               sectionKey={DROP + section.id}
+              key={section.id}
               className={styles.section}
               data-project={personal && section.id ? "" : undefined}
               open={!collapsed.includes(section.id)}
@@ -248,6 +277,20 @@ export function SessionSections({
                 title={section.name}
                 className={styles.sectionHeader}
                 enabled={!!section.id}
+                trailing={
+                  <div className={styles.sectionActions}>
+                    {onNew && (
+                      <IconButton
+                        data-session-row-action=""
+                        size="compact"
+                        aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                        title={personal ? "New chat" : "New session"}
+                        icon={<PlusIcon size={15} strokeWidth={2.5} />}
+                        onClick={() => onNew(section.id || undefined)}
+                      />
+                    )}
+                  </div>
+                }
                 content={
                   <>
                     <MenuItem onClick={() => setSettingsFor(section)}>
@@ -285,39 +328,14 @@ export function SessionSections({
                   aria-expanded={!collapsed.includes(section.id)}
                   onClick={(event) => setAnimate(event.detail > 0)}
                 >
-                  {section.id && (
-                    <span className={styles.sectionIcon} aria-hidden="true">
-                      <FolderSimpleIcon
-                        className={styles.folderGlyph}
-                        size={15}
-                      />
-                      <span className={styles.chevronGlyph}>
-                        <CaretDownIcon size={15} strokeWidth={2.5} />
-                      </span>
-                    </span>
-                  )}
-                  <span>{section.name}</span>
-                  {!section.id && (
-                    <span
-                      className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
-                      aria-hidden="true"
-                    >
-                      <CaretDownIcon size={15} strokeWidth={2.5} />
-                    </span>
-                  )}
+                  <span className={styles.sectionName}>{section.name}</span>
+                  <span
+                    className={`${channelStyles.sectionChevron} ${styles.genericChevron}`}
+                    aria-hidden="true"
+                  >
+                    <CaretDownIcon size={15} strokeWidth={2.5} />
+                  </span>
                 </Collapsible.Trigger>
-                <div className={styles.sectionActions}>
-                  {onNew && section.id && (
-                    <IconButton
-                      data-session-row-action=""
-                      size="compact"
-                      aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
-                      title={personal ? "New chat" : "New session"}
-                      icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                      onClick={() => onNew(section.id || undefined)}
-                    />
-                  )}
-                </div>
               </SessionActionsMenu>
               <Collapsible.Panel className={styles.sectionPanel}>
                 {section.rows.map((item) => (
@@ -325,6 +343,17 @@ export function SessionSections({
                     key={item.id}
                     id={item.id}
                     title={item.title}
+                    indicator={
+                      personal ? (
+                        <SessionAccessIndicator
+                          session={session}
+                          channel={channels.channels.find(
+                            (channel) => channel.id === item.id,
+                          )}
+                          onClick={() => setSharing({ id: item.id, visit })}
+                        />
+                      ) : undefined
+                    }
                     className={styles.organizedRow}
                     content={
                       <>
@@ -335,20 +364,23 @@ export function SessionSections({
                             Share…
                           </MenuItem>
                         )}
-                        <MenuItem
-                          disabled={
-                            !session.channelDetails?.available ||
-                            !!channels.channels.find(
+                        {personal &&
+                          canConvertSession(
+                            session,
+                            channels.channels.find(
                               (channel) => channel.id === item.id,
-                            )?.readOnly
-                          }
-                          onClick={() => setRenaming(item)}
-                        >
-                          <MenuIcon>
-                            <PencilSimpleIcon size={16} />
-                          </MenuIcon>
-                          Rename
-                        </MenuItem>
+                            ),
+                          ) && (
+                            <MenuItem
+                              disabled={shareAttempts.has(item.id)}
+                              onClick={() => {
+                                if (!sessionShareAttempt(session, item.id))
+                                  setConverting({ id: item.id, visit });
+                              }}
+                            >
+                              {conversionLabel(session, item.id)}
+                            </MenuItem>
+                          )}
                         <MenuSubmenu>
                           <MenuSubmenuTrigger disabled={!preferences.writable}>
                             <MenuIcon>
@@ -418,22 +450,26 @@ export function SessionSections({
                           </MenuSubmenuPopup>
                         </MenuSubmenu>
 
-                        {personal && (
-                          <MenuItem
-                            disabled={
-                              !session.canvas.available ||
-                              !!channels.channels.find(
-                                (channel) => channel.id === item.id,
-                              )?.readOnly
-                            }
-                            onClick={() => setSessionSettings(item)}
-                          >
-                            <MenuIcon>
-                              <GearIcon size={16} />
-                            </MenuIcon>
-                            Chat settings…
-                          </MenuItem>
-                        )}
+                        <MenuItem
+                          disabled={
+                            (!session.canvas.available &&
+                              !canEditSessionLifetime(
+                                session,
+                                channels.channels.find(
+                                  (channel) => channel.id === item.id,
+                                ),
+                              )) ||
+                            !!channels.channels.find(
+                              (channel) => channel.id === item.id,
+                            )?.readOnly
+                          }
+                          onClick={() => setSessionSettings({ item, visit })}
+                        >
+                          <MenuIcon>
+                            <GearIcon size={16} />
+                          </MenuIcon>
+                          Session settings…
+                        </MenuItem>
                       </>
                     }
                   >
@@ -445,48 +481,80 @@ export function SessionSections({
                     </DraggableChannel>
                   </SessionActionsMenu>
                 ))}
-                {!section.rows.length && section.id && (
-                  <p className={styles.listMessage}>
-                    {personal
-                      ? "No chats in this project."
-                      : "No sessions in this section."}
-                  </p>
-                )}
+                {!section.rows.length &&
+                  section.id &&
+                  (onNew ? (
+                    // An empty project offers its way out instead of an empty state.
+                    <NavigationItem
+                      variant="row"
+                      label={personal ? "New chat" : "New session"}
+                      aria-label={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                      title={`${personal ? "New chat" : "New session"} in ${section.name}`}
+                      icon={
+                        <span className="shell-page-icon">
+                          <PlusIcon size={16} strokeWidth={2.5} />
+                        </span>
+                      }
+                      onClick={() => onNew(section.id)}
+                    />
+                  ) : (
+                    <p className={styles.listMessage}>
+                      {personal
+                        ? "No chats in this project."
+                        : "No sessions in this section."}
+                    </p>
+                  ))}
               </Collapsible.Panel>
             </DropSection>
           ))}
       </ChannelSidebarDnd>
+      {converting && (
+        <ConvertSession
+          key={converting.id}
+          session={session}
+          id={converting.id}
+          signal={converting.visit}
+          onConverted={() => onConverted?.(converting.id)}
+          close={() => setConverting(undefined)}
+          finalFocus={() =>
+            document.querySelector<HTMLElement>(
+              `[data-session-menu-id="${converting.id}"] button`,
+            ) ?? false
+          }
+        />
+      )}
       {sharing && sharingChannel && (
         <SessionShare
           key={sharing.id}
           session={session}
           channel={sharingChannel}
+          signal={sharing.visit}
+          onConverted={() => onConverted?.(sharing.id)}
           finalFocus={() =>
             document.querySelector<HTMLElement>(
               `[data-session-menu-id="${sharing.id}"] button`,
             ) ?? false
           }
-          direct
           initialOpen
           renderTrigger={() => null}
           onClose={() => setSharing(undefined)}
-          onShared={() => {
-            const id = sharing.id;
-            const sameVisit =
-              sharing.visit === currentVisit.current && !sharing.visit?.aborted;
-            setSharing(undefined);
-            if (sameVisit) onShared?.(id);
-          }}
         />
       )}
       {sessionSettings && (
         <WorkspaceSettings
+          key={sessionSettings.item.id}
+          signal={sessionSettings.visit}
+          finalFocus={() =>
+            document.querySelector<HTMLElement>(
+              `[data-session-menu-id="${sessionSettings.item.id}"] button`,
+            ) ?? false
+          }
           session={session}
           scope={scope}
           target={{
             kind: "session",
-            id: sessionSettings.id,
-            name: sessionSettings.title,
+            id: sessionSettings.item.id,
+            name: sessionSettings.item.title,
           }}
           close={() => setSessionSettings(undefined)}
         />
@@ -531,15 +599,6 @@ export function SessionSections({
           scope={scope}
           target={{ kind: "section", ...settingsFor, personal }}
           close={() => setSettingsFor(undefined)}
-        />
-      )}
-      {renaming && (
-        <RenameSession
-          key={renaming.id}
-          session={session}
-          id={renaming.id}
-          name={renaming.title}
-          close={() => setRenaming(undefined)}
         />
       )}
       {creatingFor && (
@@ -655,14 +714,19 @@ function SessionActionsMenu({
   className,
   children,
   content,
+  indicator,
   enabled = true,
+  trailing,
 }: {
   id: string;
   title: string;
   className: string | undefined;
   children: ReactNode;
   content: ReactNode;
+  indicator?: ReactNode;
   enabled?: boolean;
+  /** Follows the overflow action, preserving header action keyboard order. */
+  trailing?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement>();
@@ -670,7 +734,13 @@ function SessionActionsMenu({
     document.querySelector<HTMLElement>(
       `[data-session-menu-id="${id}"] button`,
     ) ?? false;
-  if (!enabled) return <div className={className}>{children}</div>;
+  if (!enabled)
+    return (
+      <div className={className}>
+        {children}
+        {trailing}
+      </div>
+    );
   return (
     <ContextMenuRoot
       open={open}
@@ -694,6 +764,7 @@ function SessionActionsMenu({
         }}
       >
         {children}
+        {indicator}
         <MenuRoot>
           <MenuTrigger
             render={(props) => (
@@ -701,6 +772,7 @@ function SessionActionsMenu({
                 {...props}
                 data-session-row-action=""
                 size="compact"
+                data-session-overflow-action=""
                 aria-label={`Actions for ${title}`}
                 icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
               />
@@ -714,6 +786,7 @@ function SessionActionsMenu({
             {content}
           </MenuPopup>
         </MenuRoot>
+        {trailing}
       </ContextMenuTrigger>
       <MenuPopup
         aria-label={`Actions for ${title}`}

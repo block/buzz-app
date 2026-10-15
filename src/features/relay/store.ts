@@ -1127,6 +1127,9 @@ export function createChannelStore(
           system.push(...members);
           if (rosters.length < DISCOVERY_LIMIT) break;
           systemCursor = last;
+          // A roster can move ahead of this cursor mid-scan, as below, so a
+          // paged system read needs the same omission confirmation.
+          paged = true;
         }
       }
       // At most the retained roster budget plus its final exhaustion read.

@@ -118,7 +118,9 @@ export class AcpSession {
       if (typeof content?.text === "string")
         this.written = (this.written + content.text).slice(0, WRITTEN_LIMIT);
     }
-    const runId = this.acp.hooks.steering?.runId(update) ?? null;
+    // `undefined` from the hook means no run is active: keep it.
+    const { steering } = this.acp.hooks;
+    const runId = steering ? steering.runId(update) : null;
     if (runId !== null) {
       this.runId = runId;
       if (runId) this.ranAs(runId);

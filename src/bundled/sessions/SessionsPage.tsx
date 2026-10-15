@@ -11,6 +11,7 @@ import {
   canConvertSession,
 } from "../../features/sessions/ConvertSession";
 import { profileActivityViewTarget } from "../../features/profiles/target";
+import { canEditSessionLifetime } from "../../features/sessions/SessionLifetime";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { useConversationTabs } from "../channels/useConversationTabs";
 import { useChannelTabState } from "../channels/useChannelTabState";
@@ -27,7 +28,6 @@ import channelStyles from "../channels/Channels.module.css";
 import { SessionShare } from "./SessionShare";
 import { ChannelMembersButton } from "../channels/ChannelMembersDialog";
 import { pendingSessionDraft } from "../../features/sessions/pending-start";
-import { RenameSession } from "../../features/sessions/RenameSession";
 import { WorkspaceSettings } from "../../features/sessions/WorkspaceSettings";
 import { ChannelLifecycleMenu } from "../channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
@@ -37,13 +37,8 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
-  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
-import {
-  DotsThreeIcon,
-  GearIcon,
-  PencilSimpleIcon,
-} from "../../shared/design-system/icons";
+import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
@@ -340,11 +335,13 @@ function SessionWork({
   const window = useChannelWindow(session.channels, channel.id);
   const recoveryShown = useRecoveryShown(session.recovery);
   const [sent, setSent] = useState<string>();
-  const [renameOpen, setRenameOpen] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const shareAttempts = useSessionShareAttempts(session);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<{
+    visit: AbortSignal | undefined;
+  }>();
   const [selectedAgent, setSelectedAgent] = useState(() =>
     readSelectedAssistant(scope, channel.id),
   );
@@ -473,56 +470,49 @@ function SessionWork({
               signal={navigation?.signal}
               onConverted={() => openLink(`buzz://channel/${channel.id}`)}
             />
-            <MenuRoot>
-              <MenuTrigger
-                render={
-                  <IconButton
-                    ref={actionsTrigger}
-                    size="toolbar"
-                    aria-label="Session actions"
-                    title="Session actions"
-                    icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
-                  />
-                }
-              />
-              <MenuPopup aria-label="Session actions" align="end">
-                {canConvertSession(session, channel) && (
-                  <MenuItem
-                    disabled={shareAttempts.has(channel.id)}
-                    onClick={() => {
-                      if (!sessionShareAttempt(session, channel.id))
-                        setConvertOpen(true);
-                    }}
-                  >
-                    {conversionLabel(session, channel.id)}
-                  </MenuItem>
-                )}
-                <MenuItem
-                  disabled={
-                    !!channel.readOnly || !session.channelDetails?.available
+            <IconButton
+              ref={settingsTrigger}
+              size="toolbar"
+              aria-label="Session settings"
+              title="Session settings"
+              icon={<GearIcon size="1rem" aria-hidden="true" />}
+              disabled={
+                !!channel.readOnly ||
+                (!session.canvas.available &&
+                  !canEditSessionLifetime(session, channel))
+              }
+              onClick={() => setSettingsOpen({ visit: navigation?.signal })}
+            />
+            {!channel.readOnly && !channel.cached && !channel.archived && (
+              <MenuRoot>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      ref={actionsTrigger}
+                      size="toolbar"
+                      aria-label="Session actions"
+                      title="Session actions"
+                      icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
+                    />
                   }
-                  onClick={() => setRenameOpen(true)}
-                >
-                  <MenuIcon>
-                    <PencilSimpleIcon size={16} />
-                  </MenuIcon>
-                  Rename
-                </MenuItem>
-                <MenuItem
-                  disabled={!!channel.readOnly || !session.canvas.available}
-                  onClick={() => setSettingsOpen(true)}
-                >
-                  <MenuIcon>
-                    <GearIcon size={16} />
-                  </MenuIcon>
-                  {inMe ? "Chat settings…" : "Session settings…"}
-                </MenuItem>
-                {!channel.readOnly && !channel.cached && !channel.archived && (
+                />
+                <MenuPopup aria-label="Session actions" align="end">
+                  {canConvertSession(session, channel) && (
+                    <MenuItem
+                      disabled={shareAttempts.has(channel.id)}
+                      onClick={() => {
+                        if (!sessionShareAttempt(session, channel.id))
+                          setConvertOpen(true);
+                      }}
+                    >
+                      {conversionLabel(session, channel.id)}
+                    </MenuItem>
+                  )}
                   <ChannelLifecycleMenu
                     channelId={channel.id}
                     lifecycle={session.channelLifecycle}
                     disabled={false}
-                    separator
+                    separator={canConvertSession(session, channel)}
                     choose={(action) =>
                       chooseLifecycle(
                         action,
@@ -530,9 +520,9 @@ function SessionWork({
                       )
                     }
                   />
-                )}
-              </MenuPopup>
-            </MenuRoot>
+                </MenuPopup>
+              </MenuRoot>
+            )}
             {hasLocalPanel && !showingPanel && (
               <span className={panelStyles.paneToggle}>
                 <IconButton
@@ -559,22 +549,15 @@ function SessionWork({
               finalFocus={actionsTrigger}
             />
           )}
-          {renameOpen && (
-            <RenameSession
-              key={channel.id}
-              session={session}
-              id={channel.id}
-              name={channel.name}
-              close={() => setRenameOpen(false)}
-            />
-          )}
           {settingsOpen && (
             <WorkspaceSettings
+              signal={settingsOpen.visit}
+              finalFocus={settingsTrigger}
               key={channel.id}
               session={session}
               scope={scope}
               target={{ kind: "session", id: channel.id, name: channel.name }}
-              close={() => setSettingsOpen(false)}
+              close={() => setSettingsOpen(undefined)}
             />
           )}
           {placement.status === "error" && !placement.transient ? (

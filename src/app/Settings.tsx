@@ -33,6 +33,8 @@ import { OwnedContribution } from "../plugins/OwnedContribution";
 import type { Updates } from "../features/updates/updates";
 import { UpdateSettings } from "../features/updates/UpdateSettings";
 import { developerMode, settingsSections } from "./settings-sections";
+import { LanguageSettings } from "./LanguageSettings";
+import { useLocalization } from "../features/localization/service";
 
 export function Settings({
   agents,
@@ -65,6 +67,7 @@ export function Settings({
   onSection?: (section: string) => void;
   navigationPane?: boolean;
 }) {
+  const localized = useLocalization();
   useEffect(() => cards.retainVisibility(), [cards]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const client = useSyncExternalStore(
@@ -75,8 +78,8 @@ export function Settings({
     (membership) => membership.id === client.selected,
   );
   const { groups, sections, defaultSection } = useMemo(
-    () => settingsSections(contributed, selectedCommunity),
-    [contributed, selectedCommunity],
+    () => settingsSections(contributed, selectedCommunity, localized),
+    [contributed, selectedCommunity, localized],
   );
   const [selected, setSelected] = useState(defaultSection);
   const requestedSection =
@@ -114,16 +117,25 @@ export function Settings({
         <div className={styles.layout}>
           <aside className={styles.sidebar}>
             <div className={styles.sidebarHeader}>
-              <h1 id="settings-title" className="m-0 text-label">
-                Settings
+              <h1
+                id="settings-title"
+                lang={localized.lang}
+                className="m-0 text-label"
+              >
+                {localized.t("settings.title")}
               </h1>
             </div>
             <nav aria-label="Settings sections" className={styles.navigation}>
               {groups.map((group) => (
-                <NavigationSection key={group.id} label={group.label}>
-                  {group.sections.map(({ id, label, icon: Icon }) => (
+                <NavigationSection
+                  key={group.id}
+                  label={group.label}
+                  lang={group.lang}
+                >
+                  {group.sections.map(({ id, label, lang, icon: Icon }) => (
                     <NavigationItem
                       label={label}
+                      lang={lang}
                       icon={Icon && <Icon aria-hidden="true" size={18} />}
                       selected={selected === id}
                       type="button"
@@ -141,7 +153,11 @@ export function Settings({
             </nav>
           </aside>
           <div className={`${styles.detail} buzz-settings-page`}>
-            {navigationPane && <h1 className="sr-only">Settings</h1>}
+            {navigationPane && (
+              <h1 lang={localized.lang} className="sr-only">
+                {localized.t("settings.title")}
+              </h1>
+            )}
             <div hidden={selected !== "notifications"}>
               <NotificationSettings
                 notifications={notifications}
@@ -153,6 +169,9 @@ export function Settings({
                 appearance={appearance}
                 active={selected === "appearance"}
               />
+            </div>
+            <div hidden={selected !== "language"}>
+              <LanguageSettings active={selected === "language"} />
             </div>
             <div hidden={selected !== "shortcuts"}>
               <ShortcutSettings

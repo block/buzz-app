@@ -2437,6 +2437,48 @@ it("forgets records whose key is gone when identities load", async () => {
   expect(storage.getItem(`buzz.agent.v1:${bot}`)).toContain(bot);
 });
 
+it("starts with the old shared records when a full store refuses their move", async () => {
+  const storage = memoryStorage();
+  const shared = JSON.stringify({
+    version: 1,
+    agents: { [bot]: { pubkey: bot, attention: {}, config: {} } },
+  });
+  storage.setItem("buzz.agents.v1", shared);
+  const setItem = storage.setItem;
+  storage.setItem = (key, value) => {
+    if (key.startsWith("buzz.agent.v1:"))
+      throw new DOMException(
+        "The quota has been exceeded.",
+        "QuotaExceededError",
+      );
+    setItem(key, value);
+  };
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const { service } = await setup({
+    storage,
+    identities: [
+      {
+        pubkey: bot,
+        relay: "wss://relay.example.test",
+        owner: viewer,
+        type: "example/echo",
+        name: "Echo",
+        deleted: false,
+      },
+    ],
+  });
+  expect(error).toHaveBeenCalledWith(
+    "Agent records were not split",
+    expect.any(DOMException),
+  );
+  error.mockRestore();
+  expect(service.snapshot().agents.map((agent) => agent.name)).toEqual([
+    "Echo",
+  ]);
+  // The only saved copy stays for the next start to move.
+  expect(storage.getItem("buzz.agents.v1")).toBe(shared);
+});
+
 it("saving one agent leaves another program's changes to other agents", async () => {
   const storage = memoryStorage();
   for (const pubkey of [bot, sibling])
@@ -5315,6 +5357,29 @@ it("refuses to stop a hosted agent whose provider cannot", async () => {
       threadRootId: "m1",
     }),
   ).rejects.toThrow("This agent can't be stopped here");
+});
+
+it("keeps an unfinished hosted agent whose Delete agent storage could not save", async () => {
+  let failing = false;
+  const storage = fileBacked(new Map(), async (key) => {
+    if (failing && key === "buzz.agents.unfinished.v1")
+      throw new Error("disk full");
+  });
+  const { service, plugin } = await setup({ storage });
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow();
+  failing = true;
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(service.remove(hostedKey)).rejects.toThrow("disk full");
+  error.mockRestore();
+  // Still listed with what is saved, so a restart shows no other state and
+  // Delete can be tried again.
+  expect(service.find(hostedKey)?.unfinished).toBe(true);
+  expect(storage.getItem("buzz.agents.unfinished.v1")).toContain(hostedKey);
 });
 
 it("refuses to finish a hosted agent's setup while it is being deleted", async () => {

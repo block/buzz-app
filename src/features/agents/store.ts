@@ -181,7 +181,15 @@ export function splitLegacyRecords(
   records: Readonly<Record<string, AgentRecord>>,
 ) {
   if (storage.getItem(STORAGE_KEY) === null) return;
-  for (const record of Object.values(records)) writeRecord(storage, record);
+  try {
+    for (const record of Object.values(records)) writeRecord(storage, record);
+  } catch (error) {
+    // A full store must not stop startup: this runs before the app can show
+    // an error. The shared value stays, so the records are read from it and
+    // the move is tried again at the next start.
+    console.error("Agent records were not split", error);
+    return;
+  }
   // The shared value goes only once every record is saved: until then it is
   // the only saved copy, and a record of an agent's own wins when both are.
   afterSaved(

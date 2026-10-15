@@ -101,6 +101,7 @@ import {
   recordKey,
   readTeams,
   TEAMS_KEY,
+  UNFINISHED_KEY,
   readUnfinished,
   setAttention,
   writeArchiveUnchecked,
@@ -1498,7 +1499,7 @@ export class AgentsService extends Service implements Agents {
       [...this.bound.keys()].some((origin) => this.rowOf(origin, pubkey))
     )
       throw new Error("The provider returned a key that is already in use");
-    this.writeUnfinished([
+    await this.writeUnfinished([
       ...this.unfinished.filter((setup) => setup.pubkey !== pubkey),
       {
         pubkey,
@@ -1544,7 +1545,9 @@ export class AgentsService extends Service implements Agents {
       runtime: setup.type,
       prior: this.rowOf(origin, pubkey)?.prior,
     });
-    this.writeUnfinished(this.unfinished.filter((entry) => entry !== setup));
+    await this.writeUnfinished(
+      this.unfinished.filter((entry) => entry !== setup),
+    );
     const agent = this.find(pubkey);
     if (!agent) throw new Error("The agent was set up in another community");
     // Listed with its picture either way; its own profile is the provider's.
@@ -2099,7 +2102,7 @@ export class AgentsService extends Service implements Agents {
       // An unfinished one may have published its profile before setup failed.
       await removeRelayAgent(binding.session, binding.viewer, pubkey, signal);
       this.unlist(origin, pubkey);
-      this.writeUnfinished(
+      await this.writeUnfinished(
         this.unfinished.filter((setup) => setup.pubkey !== pubkey),
       );
     });
@@ -2191,11 +2194,22 @@ export class AgentsService extends Service implements Agents {
     this.unarchiving = next;
   }
 
-  /** Saves the unfinished setups; memory changes only once storage has them. */
+  /** Saves the unfinished setups; memory changes once storage has taken them,
+   * and the promise settles once they are saved. When the save fails, memory
+   * goes back to the setups storage still has. */
   private writeUnfinished(unfinished: readonly Unfinished[]) {
     writeUnfinished(this.storage, unfinished);
+    const shown = this.showUnfinished(unfinished);
+    return persisted(this.storage, UNFINISHED_KEY).catch((error) => {
+      if (this.unfinished === shown)
+        this.showUnfinished(readUnfinished(this.storage));
+      throw error;
+    });
+  }
+  private showUnfinished(unfinished: readonly Unfinished[]) {
     this.unfinished = Object.freeze(unfinished);
     this.update();
+    return this.unfinished;
   }
 
   /** Reads the viewer's agent records in the community, then lists each of

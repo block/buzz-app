@@ -509,6 +509,30 @@ it("keeps the provider dialog and its draft open while defaults could not be sav
   expect(storage.getItem("buzz.codex.provider-defaults.v1")).toContain("high");
 });
 
+it("holds the default thinking while it saves, so the dialog closes on what was saved", async () => {
+  let release = () => {};
+  const storage = fileBacked(
+    new Map(),
+    () => new Promise<void>((resolve) => (release = resolve)),
+  );
+  const f = fixture({ storage });
+  const onClose = vi.fn();
+  render(<f.tabs.ProviderDialogBody onClose={onClose} />);
+  await waitFor(() =>
+    expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByLabelText("Default thinking"));
+  await user.click(await screen.findByRole("option", { name: "High" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+  await waitFor(() =>
+    expect(screen.getByLabelText("Default thinking")).toBeDisabled(),
+  );
+  release();
+  await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  expect(f.provider.resolve(defaults).effort).toBe("high");
+});
+
 it("applies provider precedence without rewriting records and falls back for incompatible thinking", async () => {
   const f = fixture();
   await f.provider.check();

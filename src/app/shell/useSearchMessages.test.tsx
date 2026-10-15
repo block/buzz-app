@@ -12,9 +12,15 @@ import {
 } from "../../features/relay/testing";
 import { useSearchMessages } from "./useSearchMessages";
 
-it.each([0, 19, 20])(
-  "ends filter-only paging after %i relay hits while preserving queued messages",
-  async (count) => {
+it.each([
+  { count: 0, scope: "crew", dropped: false },
+  { count: 19, scope: "crew", dropped: false },
+  { count: 20, scope: "crew", dropped: false },
+  { count: 20, scope: undefined, dropped: true },
+  { count: 20, scope: "crew", dropped: true },
+])(
+  "pages $count relay hits with scope=$scope and dropped=$dropped while preserving queued messages",
+  async ({ count, scope, dropped }) => {
     const viewer = keypair();
     const relay = keypair();
     const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
@@ -51,7 +57,7 @@ it.each([0, 19, 20])(
         expect(owner.session.channels.get?.("crew")).toBeDefined(),
       );
       const { result } = renderHook(() =>
-        useSearchMessages(owner.session, "before:2026-10-01", "crew"),
+        useSearchMessages(owner.session, "before:2026-10-01", scope),
       );
       await waitFor(() => expect(wire.pending).toHaveLength(1));
       const first = wire.next();
@@ -59,28 +65,47 @@ it.each([0, 19, 20])(
         {
           kinds: [40002, 40008, 9],
           limit: 20,
-          "#h": ["crew"],
+          ...(scope ? { "#h": [scope] } : {}),
           until: expect.any(Number),
         },
       ]);
       await act(async () =>
-        first.respond(
-          Array.from({ length: count }, (_, index) =>
+        first.respond([
+          ...Array.from({ length: count - Number(dropped) }, (_, index) =>
             message(viewer, "crew", `remote ${index}`, 1700000000 + index),
           ),
-        ),
+          ...(dropped
+            ? [message(viewer, "ghost", "inaccessible", 1700000000)]
+            : []),
+        ]),
       );
       await waitFor(() => expect(result.current.loading).toBe(false));
-      expect(result.current.messages).toHaveLength(20 + count);
+      expect(result.current.messages).toHaveLength(
+        20 + count - Number(dropped),
+      );
+      expect(
+        result.current.messages.some(({ channelId }) => channelId === "ghost"),
+      ).toBe(false);
       expect(result.current.hasMore).toBe(count === 20);
       if (count === 20) {
         act(() => result.current.loadMore());
         await waitFor(() => expect(wire.pending).toHaveLength(1));
         const next = wire.next();
         expect(next.filters).toEqual([{ ...first.filters[0], page: 2 }]);
-        await act(async () => next.respond([]));
+        await act(async () =>
+          next.respond(
+            dropped
+              ? [message(viewer, "crew", "older page two hit", 1699999999)]
+              : [],
+          ),
+        );
         await waitFor(() => expect(result.current.loadingMore).toBe(false));
         expect(result.current.hasMore).toBe(false);
+        expect(result.current.messages).toHaveLength(20 + count);
+        if (dropped)
+          expect(result.current.messages.at(-1)?.preview).toBe(
+            "older page two hit",
+          );
       }
       expect(
         result.current.messages.filter(({ preview }) =>

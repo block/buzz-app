@@ -43,17 +43,7 @@ import type { Updates } from "../features/updates/updates";
 import { UpdateSettings } from "../features/updates/UpdateSettings";
 import { CommunityDepartureSettings } from "./CommunityDepartureSettings";
 import { developerMode, settingsSections } from "./settings-sections";
-
-const pluginCategoryDefinitions = [
-  { id: "communication", label: "Communication" },
-  { id: "productivity", label: "Productivity" },
-  { id: "agents", label: "Agents" },
-  {
-    id: "developer-tools-and-integrations",
-    label: "Developer tools & integrations",
-  },
-  { id: "people-and-communities", label: "People & communities" },
-] as const;
+import { pluginCategoryDefinitions } from "./plugin-categories";
 
 function isRequiredPlugin(plugin: PluginInfo) {
   return plugin.manifest.id === "buzz.channels";

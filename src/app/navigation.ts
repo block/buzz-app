@@ -225,7 +225,10 @@ export function useAppNavigation(services: AppServices) {
   }, [services, state.attempt, failure, scope, client, membership]);
   const select = (
     key: string,
-    options?: Pick<NavigationOpenOptions, "focus">,
+    options?: Pick<NavigationOpenOptions, "focus"> & {
+      /** Settings only: open at this section. */
+      section?: string;
+    },
   ) => {
     const selectedClient = services.communities.snapshot();
     let destination: OpenTarget;
@@ -233,6 +236,7 @@ export function useAppNavigation(services: AppServices) {
       destination = {
         version: 1,
         kind: "settings",
+        ...(options?.section ? { section: options.section } : {}),
         ...(selectedClient.viewer && selectedClient.selected
           ? {
               scope: {
@@ -262,7 +266,10 @@ export function useAppNavigation(services: AppServices) {
           : { scope: null }),
       };
     }
-    void navigation.open(destination, options);
+    void navigation.open(
+      destination,
+      options?.focus ? { focus: options.focus } : undefined,
+    );
   };
   return {
     state,

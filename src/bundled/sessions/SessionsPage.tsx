@@ -520,7 +520,7 @@ function SessionWork({
                 </MenuPopup>
               </MenuRoot>
             )}
-            {!showingPanel && (
+            {hasLocalPanel && !showingPanel && (
               <span className={panelStyles.paneToggle}>
                 <IconButton
                   ref={splitTrigger}
@@ -530,8 +530,6 @@ function SessionWork({
                   title={showingPanel ? "Close tab pane" : "Open tab pane"}
                   aria-expanded={!!showingPanel}
                   icon={<SidebarRightIcon size="1rem" />}
-                  disabled={!hasLocalPanel}
-                  focusableWhenDisabled
                   onClick={() => tabState.setPaneOpen(!showingPanel)}
                 />
               </span>

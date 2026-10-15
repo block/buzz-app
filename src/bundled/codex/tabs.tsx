@@ -31,6 +31,9 @@ import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
 import {
   config as readConfig,
+  defaults,
+  RECOMMENDED_MODEL,
+  resolveModel,
   effortName,
   validWorkspace,
   type Config,
@@ -48,7 +51,11 @@ type Read =
   | { status: "missing" }
   | { status: "error"; error: string };
 
-type Catalog = { models: Model[]; account: string };
+type Catalog = {
+  models: Model[];
+  account: string;
+  configuredModel: string | null | undefined;
+};
 type ProviderDefaults = Readonly<{ model: string; effort: string }>;
 type ProviderState = AgentProviderSnapshot &
   Readonly<{
@@ -70,14 +77,21 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
   signal.addEventListener("abort", abort, { once: true });
   try {
     signal.throwIfAborted();
-    await rpc.open(spawn);
+    await rpc.open(spawn, defaults.workspace);
     signal.throwIfAborted();
     const account = await rpc.request<{
       account: { type: string; email?: string } | null;
     }>("account/read");
     if (!account.account) throw new Error(SIGN_IN_ERROR);
     const models = await listModels(rpc);
-    return { models, account: account.account.email ?? account.account.type };
+    const normalized = await rpc.request<{
+      config: { model?: string | null };
+    }>("config/read");
+    return {
+      models,
+      configuredModel: normalized.config.model,
+      account: account.account.email ?? account.account.type,
+    };
   } finally {
     signal.removeEventListener("abort", abort);
     await rpc.close();
@@ -196,7 +210,10 @@ export class CodexProvider {
     const explicit = readConfig(raw);
     const inheritedModel = this.state.defaults.model;
     const unavailable = Boolean(
-      inheritedModel && this.state.data && !this.model(inheritedModel),
+      inheritedModel &&
+        inheritedModel !== RECOMMENDED_MODEL &&
+        this.state.data &&
+        !this.model(inheritedModel),
     );
     const model = explicit.model || (unavailable ? "" : inheritedModel);
     if (explicit.effort) return { ...explicit, model };
@@ -220,9 +237,7 @@ export class CodexProvider {
     this.abort = undefined;
   }
   private model(model: string) {
-    return model
-      ? this.state.data?.models.find((choice) => choice.model === model)
-      : this.state.data?.models.find((choice) => choice.isDefault);
+    return catalogModel(model, this.state.data);
   }
   private writeDefaults(defaults: ProviderDefaults) {
     this.storage.setItem(
@@ -273,17 +288,30 @@ const choices = (data?: Catalog) =>
     label: model.displayName,
     description: model.description,
   })) ?? [];
+const catalogModel = (model: string, data?: Catalog) => {
+  if (!data) return undefined;
+  const resolved = resolveModel(model, data.configuredModel, data.models);
+  return data.models.find((choice) => choice.model === resolved);
+};
 const providerDefaultLabel = (model: string, data?: Catalog) => {
-  if (model) {
-    const selected = data?.models.find(
-      (candidate) => candidate.model === model,
-    );
-    if (!data || selected)
-      return selected?.displayName || selected?.model || model;
-  }
-  const native = data?.models.find((candidate) => candidate.isDefault);
-  const name = native?.displayName || native?.model;
-  return name || "Model unavailable";
+  const selected = catalogModel(model, data);
+  const name = selected?.displayName || selected?.model;
+  return (
+    name ||
+    (model === RECOMMENDED_MODEL ? "Codex recommended" : model) ||
+    data?.configuredModel ||
+    "Model unavailable"
+  );
+};
+const policyLabel = (model: string, data?: Catalog) => {
+  const label =
+    model === RECOMMENDED_MODEL ? "Codex recommended" : "Codex configured";
+  const selected = catalogModel(model, data);
+  const name =
+    selected?.displayName ||
+    selected?.model ||
+    (model ? undefined : data?.configuredModel);
+  return name ? `${label} · ${name}` : label;
 };
 const codexDefaultEffortLabel = (effort: string, model?: Model) => {
   const resolved = effort || model?.defaultReasoningEffort;
@@ -376,12 +404,7 @@ export function createTabs(
         {...props}
         models={choices(data)}
         value={current.model}
-        defaultModel={
-          data?.models.find((model) => model.model === providerDefaults.model)
-            ?.model ??
-          data?.models.find((model) => model.isDefault)?.model ??
-          providerDefaults.model
-        }
+        defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}
         defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
         defaultDescription="Following the provider's model default"
         loading={checking}
@@ -413,9 +436,7 @@ export function createTabs(
           : undefined;
     useEffect(() => setDraft(state.defaults), [state.defaults]);
     const nativeModel = data?.models.find((model) => model.isDefault);
-    const selected = draft.model
-      ? data?.models.find((model) => model.model === draft.model)
-      : nativeModel;
+    const selected = catalogModel(draft.model, data);
     const efforts = [
       {
         value: "",
@@ -506,15 +527,18 @@ export function createTabs(
                 label: "",
                 options: [
                   {
+                    value: RECOMMENDED_MODEL,
+                    label: policyLabel(RECOMMENDED_MODEL, data),
+                    description: "Follows Codex's recommendation.",
+                    disabled: !nativeModel,
+                  },
+                  {
                     value: "",
-                    label: nativeModel
-                      ? `Codex default (${nativeModel.displayName})`
-                      : "Codex default",
-                    description: nativeModel
-                      ? "Following Codex's recommendation"
-                      : undefined,
+                    label: policyLabel("", data),
+                    description: "Follows your local Codex configuration.",
                   },
                   ...(draft.model &&
+                  draft.model !== RECOMMENDED_MODEL &&
                   !data?.models.some((model) => model.model === draft.model)
                     ? [
                         {
@@ -813,9 +837,7 @@ export function createTabs(
       setDraft(readConfig(agent.config));
     }, [agent.config]);
     const effective = provider.resolve({ ...draft, effort: "" });
-    const selected = effective.model
-      ? data?.models.find((model) => model.model === effective.model)
-      : data?.models.find((model) => model.isDefault);
+    const selected = catalogModel(effective.model, data);
     const supported = selected?.supportedReasoningEfforts ?? [];
     const efforts = [
       {

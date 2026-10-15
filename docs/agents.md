@@ -92,6 +92,18 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
+Codex's provider model menu separates **Codex recommended** (the catalog's
+recommendation, regardless of configured model), **Codex configured** (the model
+from Codex configuration, or its recommendation when unset), and specific models.
+Existing blank provider preferences retain configured behavior. This is a model
+choice only; thinking remains its separate setting. Configured discovery in the
+provider dialog uses the default `~/.buzz` workspace; an agent's effective model
+is resolved in its own workspace for both composer discovery and execution.
+Composer discovery shares concurrent reads but rereads on subsequent lookups so
+configuration changes are not hidden by a permanent preview cache. Each outgoing
+composer message carries the concrete displayed model and known effort for that
+turn; this does not rewrite the saved provider policy or the agent's overrides.
+
 Agent identity is evidence, never authority. Names, library rows, local agent rows,
 archive state and presence do not prove ownership, membership or runtime state.
 

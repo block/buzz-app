@@ -20,6 +20,7 @@ import {
 } from "../../buzz-mcp/session-tools";
 import {
   config,
+  resolveModel,
   defaults,
   absoluteWorkspace,
   effortName,
@@ -153,7 +154,7 @@ export class CodexRuntime {
   private stopping = new Map<string, Promise<void>>();
   private views = new Map<string, readonly SessionView[]>();
   private listeners = new Set<() => void>();
-  /** Read-only model discovery, kept per agent until its settings change. */
+  /** Share concurrent discovery; later lookups reread Codex's configuration. */
   private previews = new Map<string, { key: string; ready: Promise<Models> }>();
   private memoryReads = new MemoryReads();
   constructor(
@@ -189,10 +190,11 @@ export class CodexRuntime {
         config: { model?: string | null };
       }>("config/read", { cwd: workspace });
       const models = await listModels(rpc);
-      const model =
-        settings.model ||
-        normalized.config.model ||
-        models.find((row) => row.isDefault)?.model;
+      const model = resolveModel(
+        settings.model,
+        normalized.config.model,
+        models,
+      );
       const offered = models.map((row) => {
         const efforts = row.supportedReasoningEfforts.map(
           ({ reasoningEffort: id }) => ({ id, label: effortName(id) }),
@@ -219,10 +221,11 @@ export class CodexRuntime {
     })();
     const entry = { key, ready };
     this.previews.set(agent.pubkey, entry);
-    void ready.catch(() => {
+    const release = () => {
       if (this.previews.get(agent.pubkey) === entry)
         this.previews.delete(agent.pubkey);
-    });
+    };
+    void ready.then(release, release);
     return ready;
   }
 
@@ -955,10 +958,7 @@ export class CodexRuntime {
       };
     }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
-    const own =
-      settings.model ||
-      normalized.config.model ||
-      models.find((row) => row.isDefault)?.model;
+    const own = resolveModel(settings.model, normalized.config.model, models);
     // Model and effort are per turn, so a pick changes nothing after it.
     const picked = models.find((row) => row.model === pick.model);
     const selected = picked ?? models.find((row) => row.model === own);

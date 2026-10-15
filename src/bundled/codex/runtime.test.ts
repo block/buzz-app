@@ -16,6 +16,7 @@ import { CodexRuntime, codexStep, programs } from "./runtime";
 import { Lanes } from "../../features/agent-harness/lanes";
 import { wake } from "../../features/agent-harness/wakes";
 import type { Wire } from "./rpc";
+import { RECOMMENDED_MODEL } from "./config";
 
 // The plugin registers only in the Mac/Linux desktop app.
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
@@ -45,6 +46,7 @@ function fixture(
   remainingTerminals: unknown[] = [],
   termination?: Promise<void>,
   plugin = false,
+  configured: { model?: string } = {},
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -117,6 +119,7 @@ function fixture(
       if (request.method === "config/read")
         result = {
           config: {
+            ...configured,
             mcp_servers: {
               "company.tools": {
                 command: "secret-tool",
@@ -837,7 +840,9 @@ it("discovers models and efforts before any turn, sharing one read-only lookup",
   expect(f.starts()).toEqual([]);
   expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
   expect(f.process.end).not.toHaveBeenCalled();
-  expect(f.runtime.preview(agent)).toBe(one);
+  await expect(f.runtime.preview(agent)).resolves.toMatchObject({
+    current: "test-model",
+  });
   f.runtime.sync([]);
   f.spawn.mockRejectedValueOnce(new Error("offline"));
   await expect(f.runtime.preview(agent)).rejects.toThrow("offline");
@@ -855,6 +860,14 @@ it("shares model discovery with active turns and another agent", async () => {
   expect(f.process.end).not.toHaveBeenCalled();
   f.complete();
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+});
+it("rereads configured models when the composer asks again", async () => {
+  const configured = { model: "deep-model" };
+  const f = fixture([], undefined, false, configured);
+  const agent = { pubkey, config: { workspace: "/tmp/codex-test" } } as Agent;
+  expect((await f.runtime.preview(agent)).current).toBe("deep-model");
+  configured.model = "test-model";
+  expect((await f.runtime.preview(agent)).current).toBe("test-model");
 });
 it("still offers the listed models when the configured one is not listed", async () => {
   const f = fixture();
@@ -879,6 +892,31 @@ it("previews each model at the configured effort when it has it", async () => {
   const { models } = await f.runtime.preview(agent);
   expect(models.map((model) => model.effort)).toEqual(["low", "high"]);
 });
+it.each([
+  ["", "deep-model"],
+  [RECOMMENDED_MODEL, "test-model"],
+  ["test-model", "test-model"],
+])(
+  "resolves model policy %s consistently for preview and execution",
+  async (policy, expected) => {
+    const f = fixture([], undefined, false, { model: "deep-model" });
+    const delivery = {
+      ...f.delivery("work"),
+      config: { workspace: "/tmp/codex-test", model: policy },
+    };
+    const preview = await f.runtime.preview({
+      pubkey,
+      config: delivery.config,
+    } as Agent);
+    expect(preview.current).toBe(expected);
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.starts()[0]?.params).toMatchObject({ model: expected });
+    expect(
+      f.sent.find((wire) => wire.method === "thread/start")?.params,
+    ).toMatchObject({ model: expected });
+  },
+);
 it("starts a turn at the effort its owner picked when the model supports it", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });

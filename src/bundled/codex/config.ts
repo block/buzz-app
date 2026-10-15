@@ -13,6 +13,20 @@ export type Model = {
   defaultReasoningEffort: string;
   supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
 };
+/** Provider policy, never a model ID sent to Codex. Blank retains configured behavior. */
+export const RECOMMENDED_MODEL = "buzz:recommended";
+
+/** Resolve a provider policy in the same workspace used for the turn. */
+export function resolveModel(
+  selected: string,
+  configured: string | null | undefined,
+  models: readonly Model[],
+) {
+  const recommended = models.find((model) => model.isDefault)?.model;
+  return selected === RECOMMENDED_MODEL
+    ? recommended
+    : selected || configured || recommended;
+}
 export const defaults: Config = {
   model: "",
   effort: "",

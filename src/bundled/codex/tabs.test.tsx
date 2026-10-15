@@ -21,7 +21,7 @@ import type { AgentViewProps } from "../../features/agents/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import type { RelayData } from "../../features/relay/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
-import { defaults, type Config } from "./config";
+import { defaults, RECOMMENDED_MODEL, type Config } from "./config";
 import { sessionTag } from "./prompt";
 import { CodexProvider, createTabs } from "./tabs";
 import { CodexRuntime } from "./runtime";
@@ -56,12 +56,14 @@ function fixture({
   saved = {},
   turns = () => ({ result: { data: [] } }),
   threads = [],
+  configured = {},
 }: {
   signedIn?: boolean;
   installed?: boolean;
   saved?: Record<string, unknown>;
   turns?: (threadId: string) => Wire;
   threads?: { id: string; name: string; updatedAt: number }[] | string;
+  configured?: { model?: string };
 } = {}) {
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
   // Buzz's copy, as its launcher answers: `codex login` runs until it ends.
@@ -99,6 +101,7 @@ function fixture({
           return;
         }
         let result: unknown = {};
+        if (wire.method === "config/read") result = { config: configured };
         if (wire.method === "thread/list") {
           if (typeof threads === "string") {
             options?.onStdout?.(
@@ -439,8 +442,8 @@ it("keeps provider readiness quiet and shows recovery when needed", async () => 
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Default model" }));
   expect(
-    await screen.findByRole("option", { name: "Codex default (Model A)" }),
-  ).toHaveAccessibleDescription("Following Codex's recommendation");
+    await screen.findByRole("option", { name: "Codex recommended · Model A" }),
+  ).toHaveAccessibleDescription("Follows Codex's recommendation.");
   const model = await screen.findByRole("option", { name: "Model B" });
   expect(model).toHaveAccessibleDescription("Model B description.");
   await user.click(model);
@@ -513,6 +516,64 @@ it("applies provider precedence without rewriting records and falls back for inc
   localStorage.setItem("buzz.codex.provider-defaults.v1", "invalid");
   const invalid = new CodexProvider(f.spawn, localStorage);
   expect(invalid.resolve(defaults)).toEqual(defaults);
+});
+it("saves distinct configured and recommended policies and refreshes the configured label", async () => {
+  const configured = { model: "model-b" };
+  const f = fixture({ configured });
+  await f.provider.check();
+  const user = userEvent.setup();
+  const view = render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  expect(screen.getByLabelText("Default model")).toHaveTextContent(
+    "Codex configured · Model B",
+  );
+  await user.click(screen.getByLabelText("Default model"));
+  expect(
+    await screen.findByRole("option", { name: "Codex configured · Model B" }),
+  ).toHaveAccessibleDescription("Follows your local Codex configuration.");
+  await user.click(
+    await screen.findByRole("option", { name: "Codex recommended · Model A" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save defaults" }));
+  expect(f.provider.resolve(defaults).model).toBe(RECOMMENDED_MODEL);
+  expect(
+    (
+      await f.runtime.preview({
+        pubkey: "a".repeat(64),
+        config: { ...defaults, workspace: "/tmp/codex-test" },
+      } as Parameters<CodexRuntime["preview"]>[0])
+    ).current,
+  ).toBe("model-a");
+  const reopened = new CodexProvider(f.spawn, localStorage);
+  expect(reopened.resolve(defaults).model).toBe(RECOMMENDED_MODEL);
+  expect(f.provider.resolve({ ...defaults, model: "model-b" }).model).toBe(
+    "model-b",
+  );
+  view.unmount();
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  expect(screen.getByLabelText("Default model")).toHaveTextContent(
+    "Codex recommended · Model A",
+  );
+  await user.click(screen.getByLabelText("Default model"));
+  await user.click(
+    await screen.findByRole("option", { name: "Codex configured · Model B" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save defaults" }));
+  expect(f.provider.resolve(defaults).model).toBe("");
+  expect(
+    (
+      await f.runtime.preview({
+        pubkey: "a".repeat(64),
+        config: { ...defaults, workspace: "/tmp/codex-test" },
+      } as Parameters<CodexRuntime["preview"]>[0])
+    ).current,
+  ).toBe("model-b");
+  configured.model = "model-a";
+  await f.provider.check();
+  await waitFor(() =>
+    expect(screen.getByLabelText("Default model")).toHaveTextContent(
+      "Codex configured · Model A",
+    ),
+  );
 });
 it("falls back for an unavailable provider default and restores it when the catalog recovers", async () => {
   localStorage.setItem(

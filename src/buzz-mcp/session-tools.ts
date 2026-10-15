@@ -54,10 +54,13 @@ export const sessionTools = (
 
 /** Changes when the added tools change, so a session that keeps the list it
  * started with can be replaced; empty while plugins add none. A short hash,
- * since Codex saves it with each binding. */
+ * since Codex saves it with each binding. Sorted by name, so the order
+ * plugins start in does not change it. */
 export function addedKey(added: readonly AddedTool[]) {
   if (!added.length) return "";
-  const text = JSON.stringify(added.map(listed));
+  const text = JSON.stringify(
+    added.map(listed).sort((a, b) => (a.name < b.name ? -1 : 1)),
+  );
   // FNV-1a.
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i++)

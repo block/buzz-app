@@ -1,4 +1,10 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import type { ChannelSummary } from "../relay/contracts";
 import {
   ChannelTimeline,
@@ -12,6 +18,7 @@ import {
   MessageManagement,
   MessageManagementStatus,
 } from "../messages/MessageManagement";
+import { MediaReviewViewer } from "../messages/MediaReviewViewer";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
 import {
   ConversationHost,
@@ -29,6 +36,17 @@ type Shared = keyof Conversation;
 /** Pages supply only their own policy, and may relabel the channel. */
 type Own<P> = Omit<P, Shared> &
   Partial<Pick<P, Extract<keyof P, "channelName">>>;
+
+/** A page's open review; the scope supplies its conversation. */
+export type MediaReview = Pick<
+  ComponentProps<typeof MediaReviewViewer>,
+  | "messageId"
+  | "attachment"
+  | "initialTime"
+  | "hasComments"
+  | "restoreFocus"
+  | "close"
+>;
 
 const Context = createContext<Conversation | undefined>(undefined);
 export function useConversation() {
@@ -53,13 +71,19 @@ type ChannelProps = Pick<Conversation, "session" | "scope" | "extensions"> & {
   active?: boolean | undefined;
   children: ReactNode;
 } & (
-    | { interactions: ConversationInteractions; host?: undefined }
+    | {
+        interactions: ConversationInteractions;
+        /** The page owns when a review opens and retires. */
+        mediaReview?: MediaReview | undefined;
+        host?: undefined;
+      }
     | {
         /** Pages without their own placement use the shared dialog host. */
         host: ConversationHostServices;
         /** Overlays belong to one thread; recovery spans the channel. */
         threadId?: string | undefined;
         interactions?: undefined;
+        mediaReview?: undefined;
       }
   );
 
@@ -68,7 +92,10 @@ export function ConversationChannel(props: ChannelProps) {
   const { session, scope, extensions, channel, active, children } = props;
   const channelName = props.channelName ?? channel?.name ?? "";
   // One stable element, so selecting a channel never remounts the page below.
-  const provide = (interactions: ConversationInteractions) => (
+  const provide = (
+    interactions: ConversationInteractions,
+    review = props.mediaReview,
+  ) => (
     <Provider
       session={session}
       scope={scope}
@@ -78,6 +105,7 @@ export function ConversationChannel(props: ChannelProps) {
       interactions={interactions}
     >
       {children}
+      {review && <ConversationMediaReview {...review} />}
     </Provider>
   );
   return (
@@ -99,7 +127,6 @@ export function ConversationChannel(props: ChannelProps) {
               channelId={channel.id}
               channelName={channelName}
               threadId={props.threadId}
-              extensions={extensions}
             >
               {provide}
             </ConversationHost>
@@ -156,6 +183,22 @@ function Provider({
     ],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
+}
+
+function ConversationMediaReview(props: MediaReview) {
+  const { session, scope, channelId, channelName, extensions, onOpenLink } =
+    useConversation();
+  return (
+    <MediaReviewViewer
+      session={session}
+      scope={scope}
+      channelId={channelId}
+      channelName={channelName}
+      extensions={extensions}
+      onOpenLink={onOpenLink}
+      {...props}
+    />
+  );
 }
 
 export function ConversationThread(props: Own<ThreadPanelProps>) {

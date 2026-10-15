@@ -73,7 +73,6 @@ import {
   ConversationComposer,
 } from "../../features/conversation/Conversation";
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
-import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type {
   Attachment,
   ChannelSummary,
@@ -1528,22 +1527,6 @@ function ChannelWorkspace({
           )}
         </div>
       </Panel>
-      {showingMediaReview && (
-        <MediaReviewViewer
-          extensions={extensions}
-          attachment={showingMediaReview.attachment}
-          session={queries}
-          scope={scope}
-          channelId={showingMediaReview.channelId}
-          channelName={showingMediaReview.channelName}
-          messageId={showingMediaReview.messageId}
-          initialTime={showingMediaReview.initialTime}
-          hasComments={showingMediaReview.hasComments}
-          restoreFocus={mediaReviewTrigger}
-          onOpenLink={openLink}
-          close={() => setMediaReview(undefined)}
-        />
-      )}
       {secondary.drag.feedback}
       {secondary.hosts}
       <p role="status" className="sr-only">
@@ -1621,21 +1604,29 @@ function ChannelWorkspace({
     </div>
   );
   return (
-    <ConversationChannel
-      session={queries}
-      scope={scope}
-      extensions={extensions}
-      channel={current}
-      interactions={{
-        onOpenLink: openLink,
-        canOpenLink,
-        onOpenMediaReview: openMediaReview,
-      }}
-    >
-      <LinkThreadTabContext value={openLinkedThread}>
+    // The review reads thread-tab links like the workspace.
+    <LinkThreadTabContext value={openLinkedThread}>
+      <ConversationChannel
+        session={queries}
+        scope={scope}
+        extensions={extensions}
+        channel={current}
+        interactions={{
+          onOpenLink: openLink,
+          canOpenLink,
+          onOpenMediaReview: openMediaReview,
+        }}
+        mediaReview={
+          showingMediaReview && {
+            ...showingMediaReview,
+            restoreFocus: mediaReviewTrigger,
+            close: () => setMediaReview(undefined),
+          }
+        }
+      >
         {workspace}
-      </LinkThreadTabContext>
-    </ConversationChannel>
+      </ConversationChannel>
+    </LinkThreadTabContext>
   );
 }
 

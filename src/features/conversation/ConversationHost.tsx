@@ -5,18 +5,16 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type ComponentProps,
   type ReactNode,
 } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { buzzLinkTarget } from "../navigation/buzz-links";
 import { PanelView } from "../panels/PanelView";
 import type { RegisteredPanel } from "../panels/service";
-import { MediaReviewViewer } from "../messages/MediaReviewViewer";
 import type { MessageLinkOrigin } from "../messages/MessageRow";
 import type { ThreadPanelProps } from "../messages/ThreadPanel";
-import type { ConversationExtensions } from "./contracts";
 import { useConversationPresentation } from "./ConversationPresentation";
+import type { MediaReview } from "./Conversation";
 
 export type ConversationHostServices = Pick<
   Context,
@@ -30,9 +28,11 @@ type ConversationHostProps = Pick<
   "session" | "scope" | "channelId" | "channelName"
 > & {
   host: ConversationHostServices;
-  extensions?: ConversationExtensions | undefined;
   threadId?: string | undefined;
-  children(interactions: ConversationInteractions): ReactNode;
+  children(
+    interactions: ConversationInteractions,
+    mediaReview: MediaReview | undefined,
+  ): ReactNode;
 };
 
 /** At most one modal surface: opening a panel or a media review replaces the other. */
@@ -46,7 +46,7 @@ type Overlay =
     }
   | {
       media: Pick<
-        ComponentProps<typeof MediaReviewViewer>,
+        MediaReview,
         "messageId" | "attachment" | "initialTime" | "hasComments"
       >;
       panel?: undefined;
@@ -54,7 +54,6 @@ type Overlay =
 
 export function ConversationHost({
   host,
-  extensions,
   session,
   scope,
   channelId,
@@ -119,26 +118,35 @@ export function ConversationHost({
   };
   return (
     <>
-      {children({
-        onOpenLink: open,
-        canOpenLink: canOpen,
-        onOpenMediaReview: (
-          messageId,
-          attachment,
-          initialTime,
-          hasComments = false,
-        ) => {
-          if (active()) {
-            trigger.current =
-              document.activeElement instanceof HTMLElement
-                ? document.activeElement
-                : null;
-            setOverlay({
-              media: { messageId, attachment, initialTime, hasComments },
-            });
-          }
+      {children(
+        {
+          onOpenLink: open,
+          canOpenLink: canOpen,
+          onOpenMediaReview: (
+            messageId,
+            attachment,
+            initialTime,
+            hasComments = false,
+          ) => {
+            if (active()) {
+              trigger.current =
+                document.activeElement instanceof HTMLElement
+                  ? document.activeElement
+                  : null;
+              setOverlay({
+                media: { messageId, attachment, initialTime, hasComments },
+              });
+            }
+          },
         },
-      })}
+        presented && overlay?.media
+          ? {
+              ...overlay.media,
+              restoreFocus: trigger,
+              close: () => setOverlay(undefined),
+            }
+          : undefined,
+      )}
       {presented && overlay?.panel && (
         <Dialog
           open
@@ -177,19 +185,6 @@ export function ConversationHost({
             }}
           />
         </Dialog>
-      )}
-      {presented && overlay?.media && (
-        <MediaReviewViewer
-          {...overlay.media}
-          session={session}
-          scope={scope}
-          channelId={channelId}
-          channelName={channelName}
-          extensions={extensions}
-          onOpenLink={open}
-          restoreFocus={trigger}
-          close={() => setOverlay(undefined)}
-        />
       )}
     </>
   );

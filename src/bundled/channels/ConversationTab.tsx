@@ -12,7 +12,6 @@ import {
 } from "../../features/conversation/Conversation";
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
-import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import { ChannelBody } from "./ChannelBody";
 import {
@@ -66,21 +65,21 @@ export function ConversationTab({
   const [media, setMedia] = useState<{
     messageId: string;
     attachment: Attachment;
-    seconds: number;
+    initialTime: number;
     hasComments: boolean;
   }>();
   const mediaTrigger = useRef<HTMLElement | null>(null);
   const openMedia = (
     messageId: string,
     attachment: Attachment,
-    seconds: number,
+    initialTime: number,
     hasComments = false,
   ) => {
     mediaTrigger.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    setMedia({ messageId, attachment, seconds, hasComments });
+    setMedia({ messageId, attachment, initialTime, hasComments });
   };
   return (
     <ConversationChannel
@@ -94,6 +93,13 @@ export function ConversationTab({
         canOpenLink,
         onOpenMediaReview: openMedia,
       }}
+      mediaReview={
+        media && {
+          ...media,
+          restoreFocus: mediaTrigger,
+          close: () => setMedia(undefined),
+        }
+      }
     >
       <section
         data-attachment-drop-zone=""
@@ -132,22 +138,6 @@ export function ConversationTab({
               onSend={setSent}
             />
           </SessionColumn>
-        )}
-        {media && (
-          <MediaReviewViewer
-            session={session}
-            scope={scope}
-            channelId={channel.id}
-            channelName={channel.name}
-            extensions={extensions}
-            messageId={media.messageId}
-            attachment={media.attachment}
-            initialTime={media.seconds}
-            hasComments={media.hasComments}
-            restoreFocus={mediaTrigger}
-            onOpenLink={openLink}
-            close={() => setMedia(undefined)}
-          />
         )}
       </section>
     </ConversationChannel>

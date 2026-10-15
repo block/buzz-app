@@ -902,16 +902,18 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   margin-top: var(--space-2);
 }
 .fileAttachment {
+  text-align: start;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: min(24rem, 100%);
+  width: 21rem;
+  max-width: 100%;
   margin-top: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--surface-control);
-  color: var(--text);
+  border-radius: var(--radius-container);
+  background: var(--surface-inset);
+  color: var(--text-standard);
   text-decoration: none;
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
@@ -942,6 +944,7 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   margin-top: 0;
 }
 .fileAttachmentBody {
+  flex: 1;
   min-width: 0;
   max-width: 100%;
   display: grid;

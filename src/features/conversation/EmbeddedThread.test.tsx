@@ -69,10 +69,17 @@ vi.mock("../messages/MediaReviewViewer", () => ({
     </section>
   ),
 }));
+const dialog = vi.hoisted(() => ({
+  finalFocus: undefined as (() => HTMLElement | false) | undefined,
+}));
 vi.mock("../../shared/design-system/ui/Dialog", () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => (
-    <section>{children}</section>
-  ),
+  Dialog: (props: {
+    children: React.ReactNode;
+    finalFocus(): HTMLElement | false;
+  }) => {
+    dialog.finalFocus = props.finalFocus;
+    return <section>{props.children}</section>;
+  },
 }));
 afterEach(() => {
   cleanup();
@@ -232,6 +239,33 @@ it("a panel keeps the thread root it was opened from, like Channels", () => {
   });
   expect(h.panelProps()?.target).toBe("fixture:two");
   expect(h.panelProps()?.context?.rootId).toBe(h.props.messageId);
+});
+
+it.each([
+  ["a panel replaces itself", "Open linked panel"],
+  ["media review opens a panel", "Open media review"],
+] as const)("focus returns to the message when %s", (_, opener) => {
+  const h = fixture();
+  render(<EmbeddedThread {...h.props} />);
+  const button = screen.getByText(opener);
+  button.focus();
+  fireEvent.click(button);
+  if (opener === "Open media review") {
+    const inner = screen.getByText("Open panel from review");
+    inner.focus();
+    fireEvent.click(inner);
+  } else {
+    // A control inside the panel that the replacement unmounts.
+    const inner = document.createElement("button");
+    document.body.append(inner);
+    inner.focus();
+    act(() => {
+      h.panelProps()?.context?.open("fixture:two");
+    });
+    inner.remove();
+  }
+  expect(screen.getByText("Linked content")).toBeVisible();
+  expect(dialog.finalFocus?.()).toBe(button);
 });
 
 it("a panel opened from media review replaces the viewer, and media review replaces a panel", () => {

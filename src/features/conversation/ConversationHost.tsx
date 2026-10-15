@@ -91,6 +91,14 @@ export function ConversationHost({
       connection.scope === scope
     );
   };
+  // Focus returns to what opened the first overlay, not to a replaced one.
+  const enter = () => {
+    if (!shown.current)
+      trigger.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+  };
   const canOpen = (target: string) => !!host.panels.resolve(target);
   /** Replacements stay in the opening message's thread, like Channels. */
   const open = (url: string, rootId?: string) => {
@@ -103,10 +111,7 @@ export function ConversationHost({
     }
     const next = panelOpening(host.panels, channelId, url, rootId);
     if (!next) return false;
-    trigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
+    enter();
     setOverlay(next);
     return true;
   };
@@ -123,10 +128,7 @@ export function ConversationHost({
             hasComments = false,
           ) => {
             if (active()) {
-              trigger.current =
-                document.activeElement instanceof HTMLElement
-                  ? document.activeElement
-                  : null;
+              enter();
               setOverlay({
                 media: { messageId, attachment, initialTime, hasComments },
               });

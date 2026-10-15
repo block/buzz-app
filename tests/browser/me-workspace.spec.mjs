@@ -35,7 +35,7 @@ test("Me opens video review and Escape returns to its opener", async ({
   const opener = work.getByRole("button", { name: "Open video fullscreen" });
   await opener.click();
   const review = page.getByRole("dialog", { name: "Video review" });
-  await expect(review).toBeVisible();
+  await expect(review.locator("video")).toBeVisible();
   await review.getByRole("button", { name: "Close fullscreen viewer" }).focus();
   await page.keyboard.press("Escape");
   await expect(review).toHaveCount(0);

@@ -855,10 +855,12 @@ export const test = base.extend({
         } else expect(filter).toEqual({ kinds: [30617, 30621], limit: 100 });
         return [];
       }
+      // Me read state shares id lookups with the messages a review resolves.
       if (meChannels.length > 0 && filter.ids)
-        return [...readEvents.get(community).values()].filter((event) =>
-          filter.ids.includes(event.id),
-        );
+        return [
+          ...readEvents.get(community).values(),
+          ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
+        ].filter((event) => filter.ids.includes(event.id));
       if (filter.kinds?.includes(20001))
         return filter.authors.map((author) =>
           sign(

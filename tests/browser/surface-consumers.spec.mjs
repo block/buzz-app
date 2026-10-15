@@ -130,7 +130,7 @@ for (const mode of ["light", "dark"]) {
       await page.goto(app.origin);
       await openPage(page, "Me");
       const sidebar = page.getByRole("navigation", {
-        name: "Me conversations",
+        name: "Solo conversations",
       });
       const alpha = { name: /^Alpha(?: |$)/ };
       const session = sidebar.getByRole("button", alpha);

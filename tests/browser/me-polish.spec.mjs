@@ -14,13 +14,13 @@ test.use({
   historyCounts: { [id]: 2, [other]: 1 },
 });
 
-test("Me has a wide new chat, bounded conversation and matching actions", async ({
+test("Berd centers new and existing chats and keeps context actions usable", async ({
   page,
   app,
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
   await expect(row).toBeVisible();
   const composer = page.getByRole("textbox", {
@@ -73,13 +73,25 @@ test("Me has a wide new chat, bounded conversation and matching actions", async 
     );
     await expect
       .poll(() =>
-        composer.evaluate(
-          (el) =>
-            el.closest("form").getBoundingClientRect().width /
-            el.closest("section").getBoundingClientRect().width,
-        ),
+        composer.evaluate((el) => {
+          const form = el.closest("form").getBoundingClientRect();
+          const pane = el.closest("section").getBoundingClientRect();
+          const max =
+            52 *
+            Number.parseFloat(
+              getComputedStyle(document.documentElement).fontSize,
+            );
+          return (
+            form.width <= max &&
+            form.left >= pane.left &&
+            form.right <= pane.right &&
+            Math.abs(
+              (form.left + form.right) / 2 - (pane.left + pane.right) / 2,
+            ) < 1
+          );
+        }),
       )
-      .toBeGreaterThan(0.9);
+      .toBe(true);
   }
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "1"),
@@ -170,7 +182,9 @@ test.describe("Berd-style Me organization", () => {
   }) => {
     await page.goto(app.origin);
     await openPage(page, "Me");
-    const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
     const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
@@ -181,7 +195,7 @@ test.describe("Berd-style Me organization", () => {
     await expect(dialog).not.toBeVisible();
     await expect(sidebar.getByText("Saving project…")).not.toBeVisible();
     await expect(sidebar.getByRole("alert")).toHaveCount(0);
-    await expect(sidebar.getByText("Projects", { exact: true })).toBeVisible();
+    await expect(sidebar.getByText("Projects", { exact: true })).toHaveCount(0);
     const project = sidebar.getByRole("button", { name: "Work", exact: true });
     await expect(project).toBeVisible();
     await expect(project).toHaveAttribute("aria-expanded", "true");
@@ -201,11 +215,13 @@ test.describe("Berd-style Me organization", () => {
       .toBe(2);
     await expect(row).toBeVisible();
     await expect(beta).toBeVisible();
-    const projectBox = await project.boundingBox();
-    const chatBox = await row.boundingBox();
-    expect(projectBox).toBeTruthy();
-    expect(chatBox).toBeTruthy();
-    expect(chatBox.x).toBeGreaterThan(projectBox.x);
+    // Filing is demonstrated by disclosure behavior, not child indentation.
+    await project.click();
+    await expect(row).not.toBeVisible();
+    await expect(beta).not.toBeVisible();
+    await project.click();
+    await expect(row).toBeVisible();
+    await expect(beta).toBeVisible();
 
     await sidebar.getByText("Alpha", { exact: true }).click();
     await expect(
@@ -363,7 +379,7 @@ test("dragging a chat between a project and Chats saves and reloads like Move to
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   const chat = (name) => sidebar.getByRole("button", { name, exact: true });
   const inProject = (name) =>
     sidebar
@@ -429,7 +445,7 @@ test("Share promotes the same conversation and opens its preserved history in Me
 }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Me conversations" });
+  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
   await sidebar
     .getByRole("button", { name: "Alpha", exact: true })
     .click({ button: "right" });
@@ -460,4 +476,37 @@ test("Share promotes the same conversation and opens its preserved history in Me
   await expect(
     sidebar.getByRole("button", { name: "Beta", exact: true }),
   ).toBeVisible();
+});
+
+// Real shell layout and route remounts prove Me consumes the shared sidebar owner.
+test("Me and Messages share one resizable sidebar width", async ({
+  page,
+  app,
+}) => {
+  const width = (name) =>
+    page
+      .getByRole("complementary", { name, exact: true })
+      .evaluate(
+        (element) =>
+          element
+            .closest(".shell-sidebar, .shell-sidebar-default")
+            .getBoundingClientRect().width,
+      );
+  const handle = page.getByRole("separator", {
+    name: "Resize sidebar",
+    exact: true,
+  });
+  await page.goto(app.origin);
+  await openPage(page, "Me");
+  await expect.poll(() => width("Solo sidebar")).toBe(260);
+  await handle.press("End");
+  await expect.poll(() => width("Solo sidebar")).toBe(520);
+  await openPage(page, "Messages");
+  await expect.poll(() => width("Channel sidebar")).toBe(520);
+  await handle.press("Home");
+  await expect.poll(() => width("Channel sidebar")).toBe(220);
+  await openPage(page, "Me");
+  await expect.poll(() => width("Solo sidebar")).toBe(220);
+  await page.reload();
+  await expect.poll(() => width("Solo sidebar")).toBe(220);
 });

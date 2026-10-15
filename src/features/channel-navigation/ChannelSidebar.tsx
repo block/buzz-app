@@ -18,7 +18,7 @@ import type { RelaySession } from "../relay/session";
 import { useChannelList, useRelayConnection } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
-import { SidebarFrame } from "./SidebarFrame";
+import { SidebarBrand, SidebarFrame } from "./SidebarFrame";
 import { SidebarList } from "./SidebarList";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
@@ -83,7 +83,7 @@ import {
   useChannelNavigation,
 } from "./ChannelNavigationState";
 import { splitPartition } from "../relay/partition";
-import { ChannelSidebarResizeHandle } from "./ChannelSidebarResizeHandle";
+import { ResizableSidebar } from "./ResizableSidebar";
 import styles from "../../bundled/channels/Channels.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
@@ -146,13 +146,7 @@ export function ChannelSidebar(props: Props) {
 function SidebarNavigation({ children }: { children: ReactNode }) {
   return (
     <>
-      <div className={styles.sidebarBrand}>
-        <span
-          className={styles.sidebarBrandMark}
-          role="img"
-          aria-label="Buzz"
-        />
-      </div>
+      <SidebarBrand />
       {/* The shell passes null when no primary page is active; the wrapper's margin must not remain around nothing. */}
       {children != null && children !== false && (
         <div className={styles.destinations}>{children}</div>
@@ -807,7 +801,7 @@ function ReadySidebar({
           <MenuIcon>
             <MinusIcon size={14} />
           </MenuIcon>
-          Remove from Messages
+          Remove from Multiplayer
         </MenuItem>,
       );
     }
@@ -999,7 +993,7 @@ function ReadySidebar({
           }}
         />
       )}
-      <div className="shell-sidebar" style={{ width: sidebar.width }}>
+      <ResizableSidebar scope={scope} className="shell-sidebar">
         <SidebarFrame
           label="Channel sidebar"
           launchPending={
@@ -1485,11 +1479,7 @@ function ReadySidebar({
           initialGroup={initialGroup}
           groupsReady={preferences.writable}
         />
-      </div>
-      <ChannelSidebarResizeHandle
-        width={sidebar.width}
-        setWidth={sidebar.setWidth}
-      />
+      </ResizableSidebar>
     </>
   );
 }

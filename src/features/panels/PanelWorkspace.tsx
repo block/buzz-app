@@ -211,12 +211,16 @@ export function PanelWorkspace({
       if (event.defaultPrevented || !active?.close || (!owns() && !fallback))
         return;
       event.preventDefault();
+      const keptFocus = fallback ? document.activeElement : null;
       // Match the X button, including local detail tabs and focus recovery.
       // Commit before another native menu request can reuse this selection.
       flushSync(() => {
         closingTab.current = active.id;
         active.close?.();
       });
+      // Fallback closes another pane, not the editor the person is still using.
+      if (keptFocus instanceof HTMLElement && keptFocus.isConnected)
+        keptFocus.focus({ preventScroll: true });
     };
     // Ctrl+Tab and Ctrl+Shift+Tab, from the native menu or desktop shortcut.
     const step = (delta: -1 | 1) => (event: Event) => {

@@ -154,7 +154,7 @@ async function page(type: "stream" | "session" = "stream") {
   return { user, composer, open, session: owner.session };
 }
 
-const closeAll = () => {
+const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
   let handled = false;
   act(() => {
     handled =
@@ -164,7 +164,7 @@ const closeAll = () => {
         "Event",
         "tabEvent",
         `return eval(${JSON.stringify(closeRequest)})`,
-      )(window, document, Event, "buzz:close-all-tabs") === "handled";
+      )(window, document, Event, tabEvent) === "handled";
   });
   return handled;
 };
@@ -184,14 +184,14 @@ it.each(["stream", "session"] as const)(
     const modal = document.createElement("dialog");
     modal.open = true;
     document.body.append(modal);
-    closeAll();
+    closeTabs();
     modal.remove();
     expect(
       screen.getByRole("tab", {
         name: type === "session" ? "Channel settings" : "Notes",
       }),
     ).toBeInTheDocument();
-    expect(closeAll()).toBe(true);
+    expect(closeTabs()).toBe(true);
     expect(
       screen.queryByRole("tab", {
         name: type === "session" ? "Channel settings" : "Notes",
@@ -199,7 +199,7 @@ it.each(["stream", "session"] as const)(
     ).not.toBeInTheDocument();
     expect(h.composer).toHaveFocus();
     expect(h.composer).toHaveTextContent("Keep typing");
-    closeAll();
+    closeTabs();
     expect(h.composer).toHaveFocus();
     expect(h.composer).toHaveTextContent("Keep typing");
   },
@@ -273,7 +273,42 @@ it("close-all works while a main-pane thread covers the channel conversation", a
       "tab",
     ),
   ).toHaveLength(2);
-  expect(closeAll()).toBe(true);
+  expect(closeTabs()).toBe(true);
   expect(screen.getAllByRole("tab")).toHaveLength(1);
   expect(screen.getByRole("tab", { name: "Alpha" })).toHaveFocus();
 });
+
+it.each([false, true])(
+  "closing a side tab from the composer keeps typing and Enter there (another side tab=%s)",
+  async (anotherTab) => {
+    const h = await page();
+    if (anotherTab) {
+      const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+      const root = "b".repeat(64);
+      act(() =>
+        tabs.result.current.openThreadTab(
+          "alpha",
+          root,
+          root,
+          undefined,
+          "side",
+        ),
+      );
+    }
+    await h.open();
+    expect(screen.getByRole("tab", { name: "Notes" })).toBeInTheDocument();
+    h.composer.focus();
+    expect(closeTabs("buzz:close-active-tab")).toBe(true);
+    expect(
+      screen.queryByRole("tab", { name: "Notes" }),
+    ).not.toBeInTheDocument();
+    expect(h.composer).toHaveFocus();
+    await h.user.keyboard("{Enter}");
+    expect(
+      screen.queryByRole("tab", { name: "Notes" }),
+    ).not.toBeInTheDocument();
+    expect(h.composer).toHaveFocus();
+    await h.user.keyboard("Keep typing");
+    expect(h.composer).toHaveTextContent("Keep typing");
+  },
+);

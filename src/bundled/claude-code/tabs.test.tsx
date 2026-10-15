@@ -680,12 +680,12 @@ it("offers the model's thinking levels, dropping one the next model lacks", asyn
   await user.click(screen.getByRole("combobox", { name: "Thinking" }));
   expect(
     (await screen.findAllByRole("option")).map((option) => option.textContent),
-  ).toEqual(["Automatic · Default", "Low", "Medium", "High", "Extra high"]);
+  ).toEqual(["Default · Automatic", "Low", "Medium", "High", "Extra high"]);
   await user.click(screen.getByRole("option", { name: "Extra high" }));
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Haiku 4.5" }));
   const thinking = screen.getByRole("combobox", { name: "Thinking" });
-  expect(thinking).toHaveTextContent("Automatic · Default");
+  expect(thinking).toHaveTextContent("Default · Automatic");
   await user.click(thinking);
   await user.click(await screen.findByRole("option", { name: "High" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -711,9 +711,9 @@ it("keeps a saved thinking level changeable without Claude's model list", async 
   expect(thinking).not.toHaveTextContent("unavailable");
   await user.click(thinking);
   await user.click(
-    await screen.findByRole("option", { name: "Automatic · Default" }),
+    await screen.findByRole("option", { name: "Default · Automatic" }),
   );
-  expect(thinking).toHaveTextContent("Automatic · Default");
+  expect(thinking).toHaveTextContent("Default · Automatic");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
 });
@@ -772,7 +772,7 @@ it("starts a new agent with finite model choices and preserves its other setting
   ).not.toBeInTheDocument();
   await user.click(
     await screen.findByRole("option", {
-      name: "Opus 5.5 · Default",
+      name: "Default · Opus 5.5",
       description: "Best for everyday, complex tasks",
     }),
   );

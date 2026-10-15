@@ -638,7 +638,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent(/^High$/);
   await user.click(screen.getByLabelText("Default thinking"));
   await user.click(
-    await screen.findByRole("option", { name: "Low · Default" }),
+    await screen.findByRole("option", { name: "Default · Low" }),
   );
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
 
@@ -656,16 +656,16 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
     expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
   );
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
-    "Low · Default",
+    "Default · Low",
   );
 });
 it("shows the configured inherited model and thinking in the closed agent controls", async () => {
   const f = fixture({ configured: { model: "model-b" } });
   render(<f.tabs.SettingsTab {...f.props()} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
-  expect(screen.getByLabelText("Model")).toHaveTextContent("Model B · Default");
+  expect(screen.getByLabelText("Model")).toHaveTextContent("Default · Model B");
   expect(screen.getByLabelText("Thinking")).toHaveTextContent(
-    "Medium · Default",
+    "Default · Medium",
   );
 });
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {
@@ -675,12 +675,12 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(screen.queryByText("Model A description.")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low · Default");
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Default · Low");
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   expect(
     await screen.findByRole("option", {
-      name: "Model A · Default",
+      name: "Default · Model A",
       description: "Model A description.",
     }),
   ).toHaveAccessibleDescription("Model A description.");
@@ -758,7 +758,7 @@ it("renders provider, model, and thinking as direct settings inputs", async () =
   await user.click(modelControl);
   await user.click(
     await screen.findByRole("option", {
-      name: "Model A · Default",
+      name: "Default · Model A",
       description: "Model A description.",
     }),
   );
@@ -882,7 +882,7 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
   await user.click(await screen.findByRole("combobox", { name: "Model" }));
   await user.click(
     await screen.findByRole("option", {
-      name: "Model A · Default",
+      name: "Default · Model A",
       description: "Model A description.",
     }),
   );

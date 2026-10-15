@@ -440,7 +440,7 @@ export function createTabs(
     const efforts = [
       {
         value: "",
-        label: `${codexDefaultEffortLabel("", selected)} · Default`,
+        label: `Default · ${codexDefaultEffortLabel("", selected)}`,
       },
       ...(draft.effort &&
       !selected?.supportedReasoningEfforts.some(
@@ -839,7 +839,7 @@ export function createTabs(
     const efforts = [
       {
         value: "",
-        label: `${codexDefaultEffortLabel(effective.effort, selected)} · Default`,
+        label: `Default · ${codexDefaultEffortLabel(effective.effort, selected)}`,
       },
       ...(draft.effort &&
       !supported.some((effort) => effort.reasoningEffort === draft.effort)

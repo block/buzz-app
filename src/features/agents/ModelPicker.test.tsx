@@ -206,12 +206,12 @@ it("lists the inherited default once with its catalog copy", async () => {
       onChange={onChange}
     />,
   );
-  expect(control()).toHaveTextContent("Opus · Default");
-  expect(screen.getByTitle("Opus · Default")).toBeVisible();
+  expect(control()).toHaveTextContent("Default · Opus");
+  expect(screen.getByTitle("Default · Opus")).toBeVisible();
   await user.click(control());
   const options = await screen.findAllByRole("option");
   expect(options).toHaveLength(2);
-  expect(options[0]).toHaveAccessibleName("Opus · Default");
+  expect(options[0]).toHaveAccessibleName("Default · Opus");
   expect(options[1]).toHaveAccessibleName("Sonnet");
   expect(options[0]).toHaveAccessibleDescription("Most capable");
   expect(options[0]).toHaveAttribute("aria-selected", "true");
@@ -234,7 +234,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
   expect(control()).not.toHaveTextContent("Default");
   await user.click(control());
   const inherited = await screen.findByRole("option", {
-    name: "Opus · Default",
+    name: "Default · Opus",
   });
   const pinned = screen.getByRole("option", { name: "Opus" });
   expect(pinned).toHaveAttribute("aria-selected", "true");
@@ -255,7 +255,7 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
   view.rerender(<ModelPicker {...props} />);
   await user.click(control());
   await user.click(
-    await screen.findByRole("option", { name: "Opus · Default" }),
+    await screen.findByRole("option", { name: "Default · Opus" }),
   );
   expect(onChange).toHaveBeenCalledExactlyOnceWith("");
   view.rerender(
@@ -266,9 +266,9 @@ it("keeps a matching explicit pin distinct from inheritance as defaults change",
       defaultLabel="Sonnet"
     />,
   );
-  expect(control()).toHaveTextContent("Sonnet · Default");
+  expect(control()).toHaveTextContent("Default · Sonnet");
   await user.click(control());
   expect(
-    await screen.findByRole("option", { name: "Sonnet · Default" }),
+    await screen.findByRole("option", { name: "Default · Sonnet" }),
   ).toHaveAttribute("aria-selected", "true");
 });

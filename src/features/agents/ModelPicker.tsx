@@ -158,7 +158,7 @@ export function ModelPicker({
   const selected = items.find((model) => model.id === value) ?? fallback;
   const selectedLabel =
     includeDefault && selected.id === ""
-      ? `${selected.label} · Default`
+      ? `Default · ${selected.label}`
       : selected.label;
   const choices =
     allowCustomModel && !compact ? [...items, CUSTOM_MODEL_ACTION] : items;
@@ -186,7 +186,7 @@ export function ModelPicker({
                 value: model.id,
                 label:
                   includeDefault && model.id === ""
-                    ? `${model.label} · Default`
+                    ? `Default · ${model.label}`
                     : model.label,
                 description: model.description,
                 leading: <ModelIcon model={`${model.id} ${model.label}`} />,

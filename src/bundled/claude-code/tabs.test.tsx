@@ -466,7 +466,7 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Default model" }),
-    ).toHaveTextContent("Opus 5.5 · Recommended"),
+    ).toHaveTextContent("Opus 5.5 · Default"),
   );
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -509,7 +509,7 @@ it("loads provider models inside a disabled picker without a loading subtitle", 
     expect(screen.getByRole("combobox", { name: "Default model" })).toBe(
       picker,
     );
-    expect(picker).toHaveTextContent("Opus 5.5 · Recommended");
+    expect(picker).toHaveTextContent("Opus 5.5 · Default");
     expect(screen.queryByText("Loading models…")).not.toBeInTheDocument();
   } finally {
     finish();
@@ -529,7 +529,7 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Default model" }),
-    ).toHaveTextContent("Opus 5.5 · Recommended"),
+    ).toHaveTextContent("Opus 5.5 · Default"),
   );
   const user = userEvent.setup();
   const defaultModel = screen.getByRole("combobox", { name: "Default model" });
@@ -546,11 +546,11 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
     "form",
     defaultModel.closest("form")?.id,
   );
-  expect(defaultModel).toHaveTextContent("Opus 5.5 · Recommended");
+  expect(defaultModel).toHaveTextContent("Opus 5.5 · Default");
   await user.click(defaultModel);
   expect(
     await screen.findByRole("option", {
-      name: "Opus 5.5 · Recommended",
+      name: "Opus 5.5 · Default",
     }),
   ).toHaveAccessibleDescription("Following Claude Code's recommendation");
   // Every model Claude lists is offered, not only the aliases.
@@ -587,7 +587,7 @@ it("cancels a provider defaults draft without saving", async () => {
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Default model" }),
-    ).toHaveTextContent("Opus 5.5 · Recommended"),
+    ).toHaveTextContent("Opus 5.5 · Default"),
   );
   await choose("Default model", "Fable 5.1");
   await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));

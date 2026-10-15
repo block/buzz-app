@@ -419,7 +419,7 @@ export function createTabs(
     const efforts = [
       {
         value: "",
-        label: `${codexDefaultEffortLabel("", selected)} · Recommended`,
+        label: `${codexDefaultEffortLabel("", selected)} · Default`,
       },
       ...(draft.effort &&
       !selected?.supportedReasoningEfforts.some(
@@ -510,7 +510,7 @@ export function createTabs(
             }
             valueSuffix={
               !checking && !draft.model && nativeModel
-                ? " · Recommended"
+                ? " · Default"
                 : undefined
             }
             groups={[
@@ -520,8 +520,8 @@ export function createTabs(
                   {
                     value: "",
                     label: nativeModel
-                      ? `${nativeModel.displayName} · Recommended`
-                      : "Recommended",
+                      ? `${nativeModel.displayName} · Default`
+                      : "Default",
                     description: nativeModel
                       ? "Following Codex's recommendation"
                       : undefined,
@@ -550,7 +550,7 @@ export function createTabs(
             valueLabel={
               draft.effort ? undefined : codexDefaultEffortLabel("", selected)
             }
-            valueSuffix={draft.effort ? undefined : " · Recommended"}
+            valueSuffix={draft.effort ? undefined : " · Default"}
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}

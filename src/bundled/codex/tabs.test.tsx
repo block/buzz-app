@@ -438,15 +438,15 @@ it("keeps provider readiness quiet and shows recovery when needed", async () => 
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   expect(screen.getByLabelText("Default model")).toHaveTextContent(
-    "Model A · Recommended",
+    "Model A · Default",
   );
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
-    "Low · Recommended",
+    "Low · Default",
   );
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Default model" }));
   expect(
-    await screen.findByRole("option", { name: "Model A · Recommended" }),
+    await screen.findByRole("option", { name: "Model A · Default" }),
   ).toHaveAccessibleDescription("Following Codex's recommendation");
   const model = await screen.findByRole("option", { name: "Model B" });
   expect(model).toHaveAccessibleDescription("Model B description.");
@@ -582,7 +582,7 @@ it("shows a provider model recheck inside the disabled picker", async () => {
   await f.provider.check();
   render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
   const picker = screen.getByRole("combobox", { name: "Default model" });
-  expect(picker).toHaveTextContent("Model A · Recommended");
+  expect(picker).toHaveTextContent("Model A · Default");
   const spawn = f.spawn.getMockImplementation();
   if (!spawn) throw new Error("Missing host fixture");
   const listed = deferred<void>();
@@ -600,13 +600,13 @@ it("shows a provider model recheck inside the disabled picker", async () => {
   try {
     await waitFor(() => expect(picker).toHaveTextContent("Loading models…"));
     expect(picker).toBeDisabled();
-    expect(picker).not.toHaveTextContent("Recommended");
+    expect(picker).not.toHaveTextContent("Default");
   } finally {
     listed.resolve();
   }
   await act(() => checked);
   await waitFor(() => expect(picker).toBeEnabled());
-  expect(picker).toHaveTextContent("Model A · Recommended");
+  expect(picker).toHaveTextContent("Model A · Default");
 });
 it("keeps model-default provider thinking dynamic across save and reopen", async () => {
   const f = fixture();
@@ -619,7 +619,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent("High");
   await user.click(screen.getByLabelText("Default thinking"));
   await user.click(
-    await screen.findByRole("option", { name: "Low · Recommended" }),
+    await screen.findByRole("option", { name: "Low · Default" }),
   );
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
 
@@ -637,7 +637,7 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
     expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
   );
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
-    "Low · Recommended",
+    "Low · Default",
   );
 });
 it("loads model/effort choices and saves only after a validated workspace, holding the saving state", async () => {

@@ -437,9 +437,7 @@ export function createTabs({
     const nativeName = nativeModel?.resolvedModel
       ? resolvedModelName(nativeModel.resolvedModel)
       : undefined;
-    const nativeLabel = nativeName
-      ? `${nativeName} · Recommended`
-      : "Recommended";
+    const nativeLabel = nativeName ? `${nativeName} · Default` : "Default";
     const listed = modelChoices(state.models);
     // A saved default Claude has not listed (yet) stays selectable.
     const defaultChoices =
@@ -582,7 +580,7 @@ export function createTabs({
             }
             valueSuffix={
               !state.modelsChecking && !draftDefault && nativeName
-                ? " · Recommended"
+                ? " · Default"
                 : undefined
             }
             {...(state.modelsError

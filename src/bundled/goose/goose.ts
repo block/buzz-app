@@ -226,8 +226,10 @@ export class GooseProcess {
           _meta: {
             // The session's whole tool set: goose's developer tools and the
             // Buzz tools, so extensions in the owner's goose config and
-            // plugins never load into a Buzz agent. goose then ignores
-            // `mcpServers`.
+            // plugins never load into a Buzz agent. goose stores this list
+            // with the session. Since aaif-goose/goose#12908 it leaves out
+            // the Buzz entry and holds the `mcpServers` copy in memory, so
+            // the token stays out of sessions.db; older goose uses this one.
             enabledExtensions: buzz
               ? [DEVELOPER, { type: "mcp", server: buzz }]
               : [],

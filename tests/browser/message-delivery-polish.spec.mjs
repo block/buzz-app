@@ -70,9 +70,13 @@ appTest.describe("app delivery", () => {
           await page.evaluate((size) => {
             document.documentElement.style.fontSize = `${size}px`;
           }, fontSize);
-          // Responsive layout can remount the row before its geometry settles.
+          // Responsive remounts can detach a resolved element mid-scroll.
+          // Reacquire only for this idempotent action; geometry and activation
+          // assertions below are never retried.
           await settle(page);
-          await retry.scrollIntoViewIfNeeded();
+          await expect(async () => {
+            await retry.scrollIntoViewIfNeeded();
+          }).toPass({ timeout: 10000 });
           await settle(page);
           const geometry = await retry.evaluate((button) => {
             const rect = button.getBoundingClientRect();

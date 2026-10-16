@@ -2318,14 +2318,16 @@ it("keeps a settings change still being saved when a timer saves its progress", 
   let release = () => {};
   hold = new Promise((resolve) => (release = resolve));
   const saving = service.save(bot, { config: { reply: "edited" } });
-  // The timer comes due while the edit is still being saved.
+  // The timer comes due while the edit is still being saved: it waits.
   await vi.advanceTimersByTimeAsync(60_000);
-  expect(run).toHaveBeenCalledTimes(1);
+  expect(run).not.toHaveBeenCalled();
   // A form still compares its draft against the saved settings.
   expect(service.find(bot)?.config).toEqual({ reply: "ok" });
   release();
   await saving;
   expect(service.find(bot)?.config).toEqual({ reply: "edited" });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(1);
   const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
   expect(saved.config).toEqual({ reply: "edited" });
   expect(saved.timers["watch/tick"]).toMatchObject({ used: 1 });
@@ -2370,9 +2372,11 @@ it("keeps a timer rearm still being saved when another timer saves its progress"
     attention: { "watch/a": timer("a", 60, 1_070) },
   });
   await vi.advanceTimersByTimeAsync(30_000);
-  expect(run).toHaveBeenCalledTimes(2);
+  expect(run).toHaveBeenCalledTimes(1);
   release();
   await saving;
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(run).toHaveBeenCalledTimes(2);
   const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
   expect(saved.timers["watch/a"]).toEqual({
     armedAt: 1_070,
@@ -2381,6 +2385,49 @@ it("keeps a timer rearm still being saved when another timer saves its progress"
   });
   expect(saved.timers["watch/b"]).toMatchObject({ armedAt: 1_000, used: 1 });
   expect(service.find(bot)?.timers["watch/a"]).toEqual(saved.timers["watch/a"]);
+});
+
+it("runs no occurrence of a timer while its rearm is being saved, so the rearm keeps its budget", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  let hold: Promise<void> | undefined;
+  const storage = fileBacked(new Map(), async () => {
+    await hold;
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt: "a",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: armed,
+      max_occurrences: 2,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, { attention: { "watch/a": timer(1_000) } });
+  // It runs once at 1060; the next would be due at 1120.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(55_000);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // Rearmed at 1115, which keeps its used count; still saving past 1120.
+  const saving = service.save(bot, { attention: { "watch/a": timer(1_115) } });
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  release();
+  await saving;
+  expect(service.find(bot)?.timers["watch/a"]).toEqual({
+    armedAt: 1_115,
+    nextDue: 1_175,
+    used: 1,
+  });
+  // Its second and last occurrence comes from the rearm, and no third.
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(run).toHaveBeenCalledTimes(2);
 });
 
 it("runs no due timer whose progress storage refuses, until it can save it", async () => {

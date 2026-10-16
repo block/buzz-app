@@ -329,9 +329,12 @@ export type RunnerHost = {
   record(pubkey: string): AgentRecord;
   /** Saves one record; rejects when it was not saved. */
   write(record: AgentRecord): Promise<void>;
-  /** Saves the state of the timers whose progress changed, by slug, into its
-   * latest record, keeping any change to it still being saved. It stays in
-   * memory even if the save later fails, so a timer does not run again at
+  /** Whether a save of its record has not finished yet. Its timers wait for
+   * it, so they never run from, or save progress over, a record that a
+   * pending change replaces. */
+  saving(pubkey: string): boolean;
+  /** Saves the state of the timers whose progress changed, by slug. It stays
+   * in memory even if the save later fails, so a timer does not run again at
    * once; throws when storage refuses it. */
   progress(pubkey: string, changed: Readonly<Record<string, TimerState>>): void;
   /** The team sections of its prompt; empty without a team. */
@@ -1556,6 +1559,9 @@ export class AgentRunners {
   ): Job | undefined {
     // Off, timers keep their saved state; one overdue runs once when back on.
     if (!agent.attentionEnabled) return undefined;
+    // A pending change may rearm, restart or remove a timer: a later tick
+    // runs from the record it saves.
+    if (this.host.saving(agent.pubkey)) return undefined;
     const now = seconds();
     let changed: Record<string, TimerState> | undefined;
     let next:

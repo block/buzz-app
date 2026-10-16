@@ -840,31 +840,6 @@ const PRESENCE_MS = 60_000;
 /** The most agents one presence event names. */
 const PRESENCE_BATCH = 256;
 const EMPTY = Object.freeze({});
-const sameTimer = (a?: TimerState, b?: TimerState) =>
-  a === b ||
-  (!!a &&
-    !!b &&
-    a.armedAt === b.armedAt &&
-    a.nextDue === b.nextDue &&
-    a.used === b.used);
-
-/** `pending` with the timers' progress made from `saved`. A timer that the
- * pending change rearmed, restarted or removed keeps that change. */
-function withProgress(
-  pending: AgentRecord,
-  saved: AgentRecord,
-  changed: Readonly<Record<string, TimerState>>,
-): AgentRecord {
-  let timers = pending.timers ?? {};
-  for (const [slug, state] of Object.entries(changed))
-    if (
-      pending.attention[slug]?.value.type === "timer" &&
-      sameTimer(pending.timers?.[slug], saved.timers?.[slug])
-    )
-      timers = { ...timers, [slug]: state };
-  return { ...pending, timers };
-}
-
 const blank = (pubkey: string): AgentRecord => ({
   pubkey,
   attention: EMPTY,
@@ -1142,19 +1117,15 @@ export class AgentsService extends Service implements Agents {
         return this.recordOf(identity);
       },
       write: async (record) => this.write(record),
-      // Into the record being saved, if any, so a pending settings or
-      // attention change is saved with it; shown on the saved one, so a form
-      // still compares against what is saved. A refusal throws here, so the
-      // timer does not run; a failed save logs, and memory keeps the
-      // progress, so the timer does not run again at once.
+      // Timers wait while a save of the record is pending, so this record is
+      // the latest. A refusal throws here, so the timer does not run; a failed
+      // save logs, and memory keeps the progress, so the timer does not run
+      // again at once.
+      saving: (pubkey) => this.saving.has(pubkey),
       progress: (pubkey, changed) => {
         const saved = this.records[pubkey] ?? blank(pubkey);
-        const shown = { ...saved, timers: { ...saved.timers, ...changed } };
-        const pending = this.saving.get(pubkey);
-        void this.write(
-          pending ? withProgress(pending, saved, changed) : shown,
-          shown,
-        ).catch((error) =>
+        const record = { ...saved, timers: { ...saved.timers, ...changed } };
+        void this.write(record, record).catch((error) =>
           console.warn(`Agent ${pubkey} state was not saved`, error),
         );
       },

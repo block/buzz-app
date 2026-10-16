@@ -35,6 +35,7 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { knownAgentPubkeys } from "../agents/known";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberAgentsPreference } from "./mention-preferences";
+import { readSendKeystroke } from "./send-keystroke";
 import { useAgentChoices } from "../agents/use-choices";
 import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
@@ -1755,20 +1756,15 @@ function Composer({
                   }
                   return;
                 }
-                if (
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  !event.ctrlKey &&
-                  !event.metaKey
-                ) {
+                const sendKeystroke = readSendKeystroke(event.nativeEvent);
+                if (sendKeystroke.sends) {
                   event.preventDefault();
                   // Holding Enter must not send after an empty list item exits.
                   if (event.repeat) return;
-                  if (
+                  const inList =
                     activeFormats.includes("bullet_list") ||
-                    activeFormats.includes("ordered_list")
-                  ) {
+                    activeFormats.includes("ordered_list");
+                  if (inList && !sendKeystroke.sendsFromLists) {
                     event.currentTarget.insertLineBreak();
                     return;
                   }

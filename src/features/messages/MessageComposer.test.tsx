@@ -70,6 +70,7 @@ import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
+import { sendWithModEnterPreference } from "./send-keystroke";
 import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
 import { entityHref } from "../projects/routes";
 import type { Entity, ProjectHome } from "../projects/destinations";
@@ -2900,6 +2901,34 @@ it("exits an empty list item on Enter, then sends from ordinary prose", async ()
   );
 });
 
+it("sends on Mod+Enter and adds lines on Enter when that preference is on", async () => {
+  sendWithModEnterPreference.setEnabled(true);
+  const h = mount();
+  await h.user.type(h.input(), "first{Enter}second");
+  expect(h.input()).toHaveValue("first\nsecond");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.keyboard("{Control>}{Enter}{/Control}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "first\nsecond",
+    [],
+    [],
+  );
+});
+
+it("sends from inside a list on Mod+Enter when that preference is on", async () => {
+  sendWithModEnterPreference.setEnabled(true);
+  const h = mount();
+  await h.user.type(h.input(), "- first");
+  await h.user.keyboard("{Control>}{Enter}{/Control}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "- first",
+    [],
+    [],
+  );
+});
+
 it("uses Enter to leave a nested empty item without sending", async () => {
   const h = mount();
   await h.user.type(h.input(), "- first{Enter}nested{Tab}{Enter}{Enter}");
@@ -2909,6 +2938,25 @@ it("uses Enter to leave a nested empty item without sending", async () => {
   await h.user.keyboard("{Enter}");
   expect(h.input().querySelector(":scope > p")).not.toBeNull();
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("does not send on Mod+Enter while a completion is showing", async () => {
+  sendWithModEnterPreference.setEnabled(true);
+  const h = mount();
+  await h.user.type(h.input(), "!search");
+  expect(h.publish(h.completionRequests.length - 1)).not.toBe(false);
+  await h.user.keyboard("{Control>}{Enter}{/Control}");
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("!search");
+  await h.user.keyboard("{Enter}");
+  expect(h.input()).toHaveValue("chosen ");
+  await h.user.keyboard("{Control>}{Enter}{/Control}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "chosen ",
+    [],
+    [],
+  );
 });
 
 it("accepts a completion before handling list Enter", async () => {

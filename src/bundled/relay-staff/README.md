@@ -1,9 +1,9 @@
 # Moderation
 
-For authorized relay staff reviewing reports and feedback across communities on
-the connected relay.
-Community membership management belongs in **Membership**. Being a community
-owner or admin does not grant relay staff access. Only operators can manage staff.
+Review reports and feedback, investigate issues, and take action.
+
+Moderation appears in Settings when your account has staff access on the
+connected relay. Only operators can manage staff.
 
 ## Getting started
 

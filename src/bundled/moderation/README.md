@@ -1,10 +1,9 @@
 # Membership
 
-For owners and admins of the selected community. Your role determines which
-invitations, role changes and removals are available. Changes apply to that
-community.
+Invite people to your community and manage their roles and access.
 
-Being a community owner or admin does not grant relay staff access.
+Membership appears under **Administration** in Settings when you select a
+community where you are an owner or admin.
 
 ## Getting started
 

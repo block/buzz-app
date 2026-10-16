@@ -9,7 +9,7 @@
 // and is then saved, in order, to its key's file. Another program's later
 // writes reach this copy only when the app starts again.
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { CATCH_UP_KEY } from "./catch-up";
+import { CATCH_UP_KEY, CATCH_UP_PREFIX } from "./catch-up";
 import {
   ARCHIVE_UNCHECKED_KEY,
   RECORD_PREFIX,
@@ -26,6 +26,7 @@ export function isAgentKey(key: string) {
     key === UNFINISHED_KEY ||
     key === ARCHIVE_UNCHECKED_KEY ||
     key === CATCH_UP_KEY ||
+    key.startsWith(CATCH_UP_PREFIX) ||
     key.startsWith(RECORD_PREFIX) ||
     // The sessions the bundled agent types save.
     key.startsWith("buzz.claude-code.sessions.") ||

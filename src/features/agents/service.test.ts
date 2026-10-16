@@ -25,7 +25,7 @@ import {
   teamPrompt,
 } from "./service";
 import type { ClassifierNative } from "./classifier";
-import { CATCH_UP_KEY, readCheckpoints } from "./catch-up";
+import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileBacked } from "./state";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
@@ -4136,7 +4136,11 @@ it("wakes nothing for what came before a watch was first caught up, as after an 
     await settle();
     first.connect(false);
     // As a build from before catch-up leaves it: the watch, and no progress.
-    storage.removeItem(CATCH_UP_KEY);
+    const progress = Array.from({ length: storage.length }, (_, index) =>
+      storage.key(index),
+    ).filter((key) => key?.startsWith(CATCH_UP_PREFIX));
+    expect(progress).not.toHaveLength(0);
+    for (const key of progress) storage.removeItem(key as string);
     vi.setSystemTime((start + 60) * 1000);
     const second = await setup({
       storage,
@@ -4524,14 +4528,7 @@ it("waits for a confirmed roster before catching up, saving no progress past wha
     const reads = catchUpReads(session).length;
     expect(reads).toBe(20);
     expect(run).not.toHaveBeenCalled();
-    const saved = () =>
-      Object.values(
-        (
-          JSON.parse(storage.getItem(CATCH_UP_KEY) ?? "{}") as {
-            streams?: Record<string, { after?: unknown }>;
-          }
-        ).streams ?? {},
-      );
+    const saved = () => Object.values(readCheckpoints(storage));
     expect(saved().some((checkpoint) => checkpoint.after)).toBe(false);
     confirm("saved", [viewer, bot]);
     await vi.advanceTimersByTimeAsync(10 * 60_000);

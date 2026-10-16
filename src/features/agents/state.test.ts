@@ -24,6 +24,7 @@ it("moves agent state from localStorage, which replaces what agent storage has",
   local.setItem("buzz.claude-code.provider-defaults.v1", "claude defaults");
   local.setItem("buzz.agents.archive-unchecked.v1", "unchecked");
   local.setItem("buzz.agents.catch-up.v1", "checkpoints");
+  local.setItem("buzz.agents.catch-up.v1:aa", "agent checkpoints");
   local.setItem("buzz.theme", "dark");
   const native = files({
     "buzz.agents.teams.v1": "stale teams",
@@ -40,6 +41,7 @@ it("moves agent state from localStorage, which replaces what agent storage has",
     "buzz.claude-code.provider-defaults.v1": "claude defaults",
     "buzz.agents.archive-unchecked.v1": "unchecked",
     "buzz.agents.catch-up.v1": "checkpoints",
+    "buzz.agents.catch-up.v1:aa": "agent checkpoints",
     [MOVED_KEY]: "1",
   });
   expect(storage.getItem("buzz.agents.teams.v1")).toBe("new teams");

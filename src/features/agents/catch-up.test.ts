@@ -4,10 +4,15 @@ import {
   CATCH_UP_KEY,
   CATCH_UP_PAGE,
   CATCH_UP_PAGES,
+  catchUpKey,
   readCheckpoints,
   readWindow,
+  splitLegacyCheckpoints,
+  streamKey,
+  writeCheckpoints,
   type Stream,
 } from "./catch-up";
+import { fileBacked } from "./state";
 import { memoryStorage } from "./test-fakes";
 
 type Stored = { id: string; created_at: number; content: string };
@@ -119,12 +124,13 @@ it("goes on after the last event delivered when a window was cut short", async (
 
 it("keeps only valid live events heard past a saved checkpoint, and skips them", async () => {
   const storage = memoryStorage();
+  const k = streamKey(id(9), "watch/all");
   storage.setItem(
-    CATCH_UP_KEY,
+    catchUpKey(id(9)),
     JSON.stringify({
       version: 1,
       streams: {
-        k: {
+        [k]: {
           through: 10,
           heard: [
             { created_at: 11, id: id(1) },
@@ -137,7 +143,7 @@ it("keeps only valid live events heard past a saved checkpoint, and skips them",
       },
     }),
   );
-  const saved = readCheckpoints(storage).k;
+  const saved = readCheckpoints(storage)[k];
   expect(saved).toEqual({
     through: 10,
     heard: [{ created_at: 11, id: id(1) }],
@@ -148,4 +154,86 @@ it("keeps only valid live events heard past a saved checkpoint, and skips them",
   ]);
   const window = await readWindow(all, saved, 20, read);
   expect(window?.events.map(({ content }) => content)).toEqual(["missed"]);
+});
+
+/** Agent storage files that programs share: each program loads its own copy
+ * of them once, as the app does at start, and then saves into them. */
+function sharedFiles(initial: Record<string, string> = {}) {
+  const disk = new Map(Object.entries(initial));
+  const open = () =>
+    fileBacked(new Map(disk), async (key, value) => {
+      if (value === null) disk.delete(key);
+      else disk.set(key, value);
+    });
+  return { disk, open };
+}
+
+const a = streamKey(id(10), "watch/chat");
+const b = streamKey(id(11), "watch/chat");
+
+it("keeps the progress each program saves for its own agents", async () => {
+  const { disk, open } = sharedFiles();
+  const setup = open();
+  writeCheckpoints(setup, { [a]: { through: 100 }, [b]: { through: 100 } });
+  await setup.saved();
+  // Two programs start from the same files, each running one agent, and each
+  // keeps its own copy of every agent's progress.
+  const first = open();
+  const second = open();
+  const firstCopy = readCheckpoints(first);
+  const secondCopy = readCheckpoints(second);
+  writeCheckpoints(first, { ...firstCopy, [a]: { through: 200 } });
+  await first.saved();
+  writeCheckpoints(second, { ...secondCopy, [b]: { through: 300 } });
+  await second.saved();
+  // Neither wrote over the other's agent.
+  expect(readCheckpoints(open())).toEqual({
+    [a]: { through: 200 },
+    [b]: { through: 300 },
+  });
+  expect([...disk.keys()].sort()).toEqual(
+    [catchUpKey(id(10)), catchUpKey(id(11))].sort(),
+  );
+});
+
+it("moves the old shared progress into each agent's key, then removes it", async () => {
+  const { disk, open } = sharedFiles({
+    [CATCH_UP_KEY]: JSON.stringify({
+      version: 1,
+      streams: { [a]: { through: 100 }, [b]: { through: 100 } },
+    }),
+  });
+  // Both programs start before either move is saved.
+  const first = open();
+  const second = open();
+  splitLegacyCheckpoints(first);
+  splitLegacyCheckpoints(second);
+  const firstCopy = readCheckpoints(first);
+  const secondCopy = readCheckpoints(second);
+  await first.saved();
+  await second.saved();
+  expect(disk.has(CATCH_UP_KEY)).toBe(false);
+  writeCheckpoints(first, { ...firstCopy, [a]: { through: 200 } });
+  writeCheckpoints(second, { ...secondCopy, [b]: { through: 300 } });
+  await first.saved();
+  await second.saved();
+  expect(readCheckpoints(open())).toEqual({
+    [a]: { through: 200 },
+    [b]: { through: 300 },
+  });
+});
+
+it("keeps the old shared progress when the move cannot be saved", async () => {
+  const shared = JSON.stringify({
+    version: 1,
+    streams: { [a]: { through: 100 } },
+  });
+  const storage = fileBacked(new Map([[CATCH_UP_KEY, shared]]), async () => {
+    throw new Error("disk full");
+  });
+  splitLegacyCheckpoints(storage);
+  await storage.saved().catch(() => {});
+  await Promise.resolve();
+  expect(storage.getItem(CATCH_UP_KEY)).toBe(shared);
+  expect(readCheckpoints(storage)).toEqual({ [a]: { through: 100 } });
 });

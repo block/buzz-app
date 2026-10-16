@@ -578,3 +578,22 @@ it("stops between multi-session share messages before the authority row cap", as
     ),
   ).toBe(true);
 });
+
+it("bounds historical card associations without trapping older valid shares", async () => {
+  const f = fixture();
+  const oversized = Array.from({ length: 510 }, (_, i) =>
+    sessionLinkMessage(`old-${i}`),
+  ).join("\n\n");
+  f.add(event(9, [["h", "destination"]], oversized, 20), share(10));
+  const first = await listSharedSessions(f.reader, "destination");
+  expect(first.errors).toEqual([]);
+  expect(
+    sharedSessionIds(event(9, [["h", "destination"]], oversized)),
+  ).toHaveLength(32);
+  expect(first.cursor).toBeDefined();
+  const older = await listSharedSessions(f.reader, "destination", {
+    cursor: first.cursor,
+  });
+  expect(older.entries.map(({ id }) => id)).toEqual(["source"]);
+  expect(older.complete).toBe(true);
+});

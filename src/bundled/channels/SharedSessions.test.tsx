@@ -107,6 +107,13 @@ function fixture() {
           Parameters<RelaySession["subscribeLive"]>[0]
         >[0]);
     },
+    publicNonmemberSource() {
+      channels = channels.filter((channel) => channel.id !== "source");
+    },
+    renameDestination() {
+      channels = channels.map((channel) => ({ ...channel, name: "renamed" }));
+      for (const listener of rosterListeners) listener();
+    },
     revoke() {
       channels = channels.filter((channel) => channel.id !== "source");
       for (const listener of rosterListeners) listener();
@@ -470,4 +477,32 @@ it("retries the beginning after a partial-error first page", async () => {
   expect(screen.getByRole("listitem")).toBeVisible();
   await userEvent.click(retry);
   expect(list.mock.calls[1]?.[2]?.cursor).toBeUndefined();
+});
+
+it("retains a readable public nonmember source through an unrelated refresh failure", async () => {
+  const f = fixture();
+  f.publicNonmemberSource();
+  const gate = deferred<SharedSessionPage>();
+  list.mockResolvedValueOnce(page).mockReturnValueOnce(
+    gate.promise.then(() => {
+      throw new Error("Unavailable");
+    }),
+  );
+  render(
+    <SharedSessions
+      session={f.session}
+      channelId="destination"
+      open={vi.fn()}
+    />,
+  );
+  const row = await screen.findByRole("button", {
+    name: /Investigate duplicate notifications/,
+  });
+  act(() => f.renameDestination());
+  expect(row).toBeInTheDocument();
+  await act(async () =>
+    gate.resolve({ entries: [], errors: ["Unavailable"], complete: false }),
+  );
+  expect(row).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
 });

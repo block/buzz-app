@@ -117,6 +117,9 @@ export function SharedSessions({
           ])
           .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
       );
+    let knownChannels = new Set(
+      session.channels.list().channels.map(({ id }) => id),
+    );
     let evidence = fingerprint();
     const load = async (more = false) => {
       request.current?.abort();
@@ -221,12 +224,23 @@ export function SharedSessions({
       evidence = current;
       const previous = retained.current;
       if (previous) {
+        const currentChannels = new Set(
+          session.channels.list().channels.map(({ id }) => id),
+        );
         const entries = readable(channelId)
-          ? previous.entries.filter((entry) => readable(entry.id))
+          ? previous.entries.filter(
+              (entry) =>
+                (!knownChannels.has(entry.id) &&
+                  !currentChannels.has(entry.id)) ||
+                readable(entry.id),
+            )
           : [];
         retained.current = { ...previous, entries };
         setPage(retained.current);
       }
+      knownChannels = new Set(
+        session.channels.list().channels.map(({ id }) => id),
+      );
       void run();
     });
     const stopLive = session.subscribeLive(

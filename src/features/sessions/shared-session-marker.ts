@@ -60,5 +60,5 @@ export function sharedSessionIds(
         key === "s" && value ? [value] : [],
       )
     : sessionReferenceIds(event.content);
-  return [...new Set(original.filter((id) => actual.has(id)))];
+  return [...new Set(original)].slice(0, 32).filter((id) => actual.has(id));
 }

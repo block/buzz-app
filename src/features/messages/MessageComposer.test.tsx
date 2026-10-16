@@ -7502,3 +7502,20 @@ it("marks staged session cards in thread replies", async () => {
     ["session-id"],
   );
 });
+
+it.each(["A ||hidden|| caption", "Use `a || b` here"])(
+  "sends staged cards with an unrecognized caption without a marker: %s",
+  async (caption) => {
+    const link = "[Session: Work](buzz://channel/session-id)";
+    writeView("scope", "draft:channel", link);
+    const h = mount();
+    await h.user.type(h.input(), caption);
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledWith(
+      "channel",
+      `${link}\n\n${caption}`,
+      [],
+      [],
+    );
+  },
+);

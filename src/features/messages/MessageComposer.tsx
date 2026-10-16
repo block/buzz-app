@@ -1285,8 +1285,11 @@ function Composer({
         ),
       );
       const tuned = Object.keys(sentPicks).length > 0;
-      const sharedSessions = sessionReferenceIds(
-        (captured.sessionCards ?? []).join("\n\n"),
+      const stagedSessions = new Set(
+        sessionReferenceIds((captured.sessionCards ?? []).join("\n\n")),
+      );
+      const sharedSessions = sessionReferenceIds(content).filter((id) =>
+        stagedSessions.has(id),
       );
       // Destination and content are fixed here; a background send never retargets.
       const publish = (uploaded: readonly UploadedAttachment[]) => {

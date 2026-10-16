@@ -333,6 +333,47 @@ it("splits Settings as the profile does: choices under Identity, the rest apart"
   expect(screen.queryByLabelText("Instructions")).toBeNull();
 });
 
+it("says in Settings when goose cannot list providers, and tries again", async () => {
+  let installed = false;
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+  });
+  const { SettingsTab } = createTabs({
+    setup: new GooseSetup(async (id, options) => {
+      if (id === "goose" && !installed)
+        throw new Error("No such file or directory (os error 2)");
+      return fake.spawn(id, options);
+    }),
+    ...unused,
+  });
+  render(
+    <SettingsTab
+      agent={
+        {
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config: { ...DEFAULT_CONFIG, provider: "anthropic" },
+        } as Agent<Config>
+      }
+      save={vi.fn(async (_config: Config) => undefined)}
+      settingsSection="runtime"
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /goose-acp is missing/,
+  );
+  expect(screen.queryByLabelText("API key")).toBeNull();
+  installed = true;
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByLabelText("API key")).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 it("keeps the providers shown when reading them again fails", async () => {
   let setup!: GooseSetup;
   created({

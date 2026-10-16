@@ -251,6 +251,14 @@ export function createTabs({
     const provider = listing.value?.providers.find((item) => item.id === id);
     return (
       <>
+        {listing.status === "error" && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={reload}>Try again</Button>
+            <p role="alert" className="buzz-field-error m-0">
+              {listing.error}
+            </p>
+          </div>
+        )}
         {provider && (
           <ProviderKeys
             key={provider.id}

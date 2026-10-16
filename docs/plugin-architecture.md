@@ -1033,6 +1033,17 @@ The tab workspace belongs to Channels, which supplies it with
 slot. `ui.Tabs` is undefined while no enabled plugin provides it, so a page reads
 it at render and falls back to its own layout.
 
+`open({ channelId, messageId })` opens the conversation at that message. The
+shared `useMessageOpening` reader reads older pages until the message loads
+(at most 25 pages of 20 top-level posts) and mounts the list once, at the
+message; a reply, or a message it does not find, opens as its thread in the
+same tab. Each open asks again, even for the same message, but a tab restored
+when the page remounts does not jump back to it. With `threadId` too, the
+thread opens at that message. `open(target, { markRead: false })` makes a
+conversation tab mark nothing read, so a page such as For You can keep the
+posts beside the one it opened unread and mark that one itself; threads read
+as they do in Channels.
+
 ### Composer ownership and mention tools
 
 The standard composer is reusable host UI in `features/messages`, not a mandatory

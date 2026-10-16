@@ -25,7 +25,11 @@ vi.mock("./ConversationTab", () => ({
     tab: Tab;
     channel: { name: string };
   }) => (
-    <p>
+    <p
+      data-message={tab.messageId}
+      data-reveal={tab.kind === "conversation" ? tab.revealRequest : undefined}
+      data-mark-read={tab.kind === "conversation" ? tab.markRead : undefined}
+    >
       {tab.kind} in {channel.name}
     </p>
   ),
@@ -163,4 +167,31 @@ it("opens a thread moved to the main pane where it is", () => {
   expect(tabs("Switchboard tabs")).toEqual(["Switchboard", "Root text"]);
   expect(page.open({ channelId: "alpha", threadId: "root" })).toBe(true);
   expect(tabs("Switchboard tabs")).toEqual(["Switchboard", "Root text"]);
+});
+
+it("opens at a message, asking again on each open, with the page's read choice", () => {
+  const page = fixture();
+  expect(
+    page.open({ channelId: "beta", messageId: "post" }, { markRead: false }),
+  ).toBe(true);
+  const tab = () => screen.getByText("conversation in beta");
+  expect(tab()).toHaveAttribute("data-message", "post");
+  expect(tab()).toHaveAttribute("data-reveal", "1");
+  expect(tab()).toHaveAttribute("data-mark-read", "false");
+  // The same message again reveals it again; a later open sets the read choice.
+  page.open({ channelId: "beta", messageId: "post" }, { markRead: false });
+  expect(tab()).toHaveAttribute("data-reveal", "2");
+  page.open({ channelId: "beta" });
+  expect(tab()).not.toHaveAttribute("data-message");
+  expect(tab()).not.toHaveAttribute("data-mark-read");
+  expect(side()).toEqual(["beta"]);
+});
+
+it("opens a thread at one of its messages", () => {
+  const page = fixture();
+  page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
+  expect(screen.getByText("thread in alpha")).toHaveAttribute(
+    "data-message",
+    "reply",
+  );
 });

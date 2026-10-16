@@ -9,7 +9,16 @@ import type { RelaySession } from "../../features/relay/session";
 import type { PanelOpening } from "../../features/panels/service";
 
 export type ConversationTab =
-  | { id: string; kind: "conversation"; channelId: string }
+  | {
+      id: string;
+      kind: "conversation";
+      channelId: string;
+      /** The message the tab opens at, revealed once per `revealRequest`. */
+      messageId?: string | undefined;
+      revealRequest?: number | undefined;
+      /** False: seeing messages here marks none read; the opener decides. */
+      markRead?: false | undefined;
+    }
   | {
       id: string;
       kind: "thread";

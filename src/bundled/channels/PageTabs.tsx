@@ -22,7 +22,11 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SidebarRightIcon } from "../../shared/design-system/icons";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { useChannelLabels } from "./useChannelLabels";
-import { threadTab, useChannelTabState } from "./useChannelTabState";
+import {
+  threadTab,
+  useChannelTabState,
+  type ConversationTab,
+} from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
 import styles from "./Channels.module.css";
 
@@ -102,7 +106,10 @@ export function PageTabs({
     (target: PageTabTarget, options?: PageTabOptions) => boolean
   >(() => false);
   useLayoutEffect(() => {
-    opening.current = ({ channelId, threadId }, { keep } = {}) => {
+    opening.current = (
+      { channelId, threadId, messageId },
+      { keep, markRead } = {},
+    ) => {
       if (!mounted.current || !secondary.canOpenConversation(channelId))
         return false;
       const known = new Set(tabState.tabs.map((tab) => tab.id));
@@ -110,14 +117,30 @@ export function PageTabs({
       const existing =
         threadId && threadTab(tabState.tabs, channelId, threadId)?.id;
       if (threadId)
-        secondary.openConversationThread(channelId, threadId, threadId);
+        secondary.openConversationThread(
+          channelId,
+          messageId ?? threadId,
+          threadId,
+        );
       else {
         const tab = `conversation:${channelId}`;
-        tabState.setTabs((tabs) =>
-          tabs.some((item) => item.id === tab)
-            ? tabs
-            : [...tabs, { id: tab, kind: "conversation", channelId }],
-        );
+        tabState.setTabs((tabs) => {
+          const previous = tabs.find((item) => item.id === tab);
+          // Each open at a message asks again, even for the same message.
+          const asked =
+            previous?.kind === "conversation" ? previous.revealRequest : 0;
+          const next: ConversationTab = {
+            id: tab,
+            kind: "conversation",
+            channelId,
+            ...(messageId && { messageId }),
+            revealRequest: (asked ?? 0) + (messageId ? 1 : 0),
+            ...(markRead === false && { markRead: false }),
+          };
+          return previous
+            ? tabs.map((item) => (item === previous ? next : item))
+            : [...tabs, next];
+        });
         tabState.select(tab);
       }
       // A plain open replaces the tab the last one added; a kept or

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -9,6 +9,7 @@ import {
   useMediaReview,
 } from "../../features/conversation/Conversation";
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
+import { useMessageOpening } from "../../features/messages/use-message-opening";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { ChannelBody } from "./ChannelBody";
 import {
@@ -61,6 +62,35 @@ export function ConversationTab({
   const restoredReply = useRef(focusOnMount ? undefined : reply);
   if (reply !== restoredReply.current) restoredReply.current = undefined;
   const sessionConversation = channel.channelType === "session";
+  // Likewise a saved reveal belongs to the opening that asked for it.
+  const opening = tab.kind === "conversation" ? tab : undefined;
+  const restoredReveal = useRef(
+    focusOnMount ? undefined : opening?.revealRequest,
+  );
+  if (opening?.revealRequest !== restoredReveal.current)
+    restoredReveal.current = undefined;
+  const target =
+    opening?.messageId && opening.revealRequest !== restoredReveal.current
+      ? opening.messageId
+      : undefined;
+  const revealRequest = target ? opening?.revealRequest : undefined;
+  const inTimeline = useMessageOpening(
+    session.channels,
+    channel.id,
+    target,
+    revealRequest,
+  );
+  const [reveal, setReveal] = useState<{
+    key: string;
+    signal: AbortSignal;
+  }>();
+  const revealKey = target && JSON.stringify([target, revealRequest]);
+  useEffect(() => {
+    if (!revealKey) return;
+    const request = new AbortController();
+    setReveal({ key: revealKey, signal: request.signal });
+    return () => request.abort();
+  }, [revealKey]);
   const [sent, setSent] = useState<string>();
   const media = useMediaReview();
   return (
@@ -97,6 +127,15 @@ export function ConversationTab({
             replyRequest={reply === restoredReply.current ? undefined : reply}
             close={close}
           />
+        ) : target && inTimeline === false ? (
+          <ConversationThread
+            active={active}
+            messageId={target}
+            retainThread
+            tabbed
+            revealSelected
+            close={close}
+          />
         ) : (
           <SessionColumn enabled={sessionConversation}>
             <ChannelBody
@@ -106,6 +145,17 @@ export function ConversationTab({
               activityLane={!channel.cached}
               onOpenThread={openThread}
               revealMessageId={sent}
+              // Mount the list once, at the message, not while it is sought.
+              holding={!!target && inTimeline === undefined}
+              inlineTarget={
+                target &&
+                reveal &&
+                reveal.key === revealKey &&
+                !reveal.signal.aborted
+                  ? { messageId: target, signal: reveal.signal }
+                  : undefined
+              }
+              marksRead={opening?.markRead !== false}
             />
             <ConversationComposer
               label={sessionConversation ? "Message this session" : undefined}

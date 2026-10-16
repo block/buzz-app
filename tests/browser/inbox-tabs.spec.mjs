@@ -71,17 +71,21 @@ test("Inbox rows open their conversation in one side tab beside the list", async
   await expect(page.getByRole("region", { name: "Channels" })).toHaveCount(0);
 
   await reply.fill("Thread root 1 draft");
-  await rows
-    .filter({ hasText: "Broadcast reply" })
-    .getByRole("button", { name: /^Open / })
-    .click();
+  // Thread root 0's row shows whichever of its replies loaded as newest.
+  const other = rows
+    .filter({ hasText: "#Alpha" })
+    .filter({ hasNotText: "Unread reply 1" });
+  const shown = (await other.textContent()).includes("Broadcast reply")
+    ? "Broadcast reply"
+    : "Unread reply 0";
+  await other.getByRole("button", { name: /^Open / }).click();
   // A plain open replaces the previous tab, so one tab follows the clicks.
   await expect(side.getByRole("tab")).toHaveText(["Thread root 0"]);
   await expect(
     thread.locator(`[data-message-id="${root("Thread root 0").id}"]`),
   ).toBeVisible();
   await expect(
-    thread.locator("[data-message-id]").filter({ hasText: "Broadcast reply" }),
+    thread.locator("[data-message-id]").filter({ hasText: shown }),
   ).toBeInViewport();
   await expect(thread.getByText("Unread reply 1", { exact: true })).toHaveCount(
     0,

@@ -374,12 +374,14 @@ export function createRelaySession(
   const localViews = writes
     ? { snapshot: local, subscribe: writes.local.subscribe }
     : undefined;
-  function revokeAccess(commit: () => void) {
+  function revokeAccess(commit: () => void, ids?: readonly string[]) {
     revoking++;
     try {
       accessEpoch++;
       cancelUploads();
-      lifecycle.cancel();
+      // Lifecycle work is keyed by channel and rechecks access after every
+      // read; with known ids, other channels' permission reads need not die.
+      lifecycle.cancel(ids);
       details.cancel();
       memberAdministration.clear();
       typing.clear();
@@ -2816,6 +2818,8 @@ export function createRelaySession(
       stopActivityPreferences();
       sidebarPreferences.dispose();
       mePreferences.dispose();
+      // Before requests.dispose(): lifecycle rereads retired shared reads
+      // until its own controllers abort.
       lifecycle.dispose();
       details.dispose();
       memberAdministration.dispose();

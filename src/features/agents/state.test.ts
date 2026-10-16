@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { fileBacked, loadAgentStorage, MOVED_KEY } from "./state";
+import { fileStore, loadAgentStorage, MOVED_KEY } from "./state";
 import { memoryStorage } from "./test-fakes";
 
 const files = (items: Record<string, string> = {}) => {
@@ -44,7 +44,7 @@ it("moves agent state from localStorage, which replaces what agent storage has",
     "buzz.agents.catch-up.v1:aa": "agent checkpoints",
     [MOVED_KEY]: "1",
   });
-  expect(storage.getItem("buzz.agents.teams.v1")).toBe("new teams");
+  expect(storage.get("buzz.agents.teams.v1")).toBe("new teams");
   // Moved keys leave localStorage; other keys stay.
   expect(local.length).toBe(1);
   expect(local.getItem("buzz.theme")).toBe("dark");
@@ -61,25 +61,23 @@ it("uses localStorage for a start where a copy fails, and keeps its state throug
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const first = await loadAgentStorage(local, native);
   error.mockRestore();
-  expect(first).toBe(local);
-  expect(first.getItem("buzz.agents.v1")).toBe("records");
-  expect(first.getItem("buzz.agents.teams.v1")).toBe("teams");
+  expect(first.get("buzz.agents.v1")).toBe("records");
+  expect(first.get("buzz.agents.teams.v1")).toBe("teams");
   // The owner saves while the app uses localStorage.
-  first.setItem("buzz.agents.v1", "saved records");
+  await first.set("buzz.agents.v1", "saved records");
+  expect(local.getItem("buzz.agents.v1")).toBe("saved records");
 
   // The disk recovers: the next start moves everything, the newer records too.
   const second = await loadAgentStorage(local, native);
-  expect(second).not.toBe(local);
   expect(local.getItem("buzz.agents.v1")).toBeNull();
-  second.setItem("buzz.agent.v1:aa", "saved again");
-  await vi.waitFor(() =>
-    expect(native.saved.get("buzz.agent.v1:aa")).toBe("saved again"),
-  );
+  await second.set("buzz.agent.v1:aa", "saved again");
+  expect(native.saved.get("buzz.agent.v1:aa")).toBe("saved again");
+  expect(local.getItem("buzz.agent.v1:aa")).toBeNull();
 
   const third = await loadAgentStorage(local, native);
-  expect(third.getItem("buzz.agents.teams.v1")).toBe("teams");
-  expect(third.getItem("buzz.agents.v1")).toBe("saved records");
-  expect(third.getItem("buzz.agent.v1:aa")).toBe("saved again");
+  expect(third.get("buzz.agents.teams.v1")).toBe("teams");
+  expect(third.get("buzz.agents.v1")).toBe("saved records");
+  expect(third.get("buzz.agent.v1:aa")).toBe("saved again");
 });
 
 it("keeps the moved state when a later start without agent storage saves", async () => {
@@ -95,18 +93,17 @@ it("keeps the moved state when a later start without agent storage saves", async
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const fallback = await loadAgentStorage(local, native);
   error.mockRestore();
-  expect(fallback).toBe(local);
-  fallback.setItem("buzz.claude-code.sessions.v1", "one new session");
-  fallback.setItem("buzz.agent.v1:bb", "new agent");
+  await fallback.set("buzz.claude-code.sessions.v1", "one new session");
+  await fallback.set("buzz.agent.v1:bb", "new agent");
+  expect(local.getItem("buzz.agent.v1:bb")).toBe("new agent");
 
   // The next start keeps the full copy, and adds only the new key.
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const next = await loadAgentStorage(local, native);
   warn.mockRestore();
-  expect(next).not.toBe(local);
-  expect(next.getItem("buzz.agents.v1")).toBe("all records");
-  expect(next.getItem("buzz.claude-code.sessions.v1")).toBe("all sessions");
-  expect(next.getItem("buzz.agent.v1:bb")).toBe("new agent");
+  expect(next.get("buzz.agents.v1")).toBe("all records");
+  expect(next.get("buzz.claude-code.sessions.v1")).toBe("all sessions");
+  expect(next.get("buzz.agent.v1:bb")).toBe("new agent");
   expect(native.saved.get("buzz.claude-code.sessions.v1")).toBe("all sessions");
   expect(local.length).toBe(0);
 });
@@ -116,8 +113,14 @@ it("uses localStorage when agent storage cannot be read", async () => {
   const native = files();
   native.load.mockRejectedValueOnce(new Error("denied"));
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  expect(await loadAgentStorage(local, native)).toBe(local);
-  expect(await loadAgentStorage(local, undefined)).toBe(local);
+  for (const storage of [
+    await loadAgentStorage(local, native),
+    await loadAgentStorage(local, undefined),
+  ]) {
+    await storage.set("buzz.agents.v1", "here");
+    expect(local.getItem("buzz.agents.v1")).toBe("here");
+  }
+  expect(native.set).not.toHaveBeenCalled();
   error.mockRestore();
 });
 
@@ -133,7 +136,8 @@ it("uses localStorage when agent storage does not answer, and leaves it as it wa
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const started = loadAgentStorage(local, native, 1_000);
   await vi.advanceTimersByTimeAsync(1_000);
-  expect(await started).toBe(local);
+  const storage = await started;
+  expect(storage.get("buzz.agents.v1")).toBe("records");
   // A late answer moves nothing: the app is using localStorage.
   answer();
   await vi.runAllTimersAsync();
@@ -145,15 +149,17 @@ it("uses localStorage when agent storage does not answer, and leaves it as it wa
 
 it("saves each write in order, and a failed write does not stop later ones", async () => {
   const native = files();
-  const storage = fileBacked(new Map(), native.set);
+  const storage = fileStore(new Map(), native.set);
   native.set.mockRejectedValueOnce(new Error("busy"));
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  storage.setItem("a", "1");
-  storage.setItem("a", "2");
-  storage.setItem("b", "3");
-  storage.removeItem("b");
-  storage.removeItem("missing");
-  await storage.saved();
+  const writes = [
+    storage.set("a", "1"),
+    storage.set("a", "2"),
+    storage.set("b", "3"),
+    storage.set("b", null),
+  ];
+  await expect(writes[0]).rejects.toThrow("busy");
+  await Promise.all(writes.slice(1));
   error.mockRestore();
   expect(native.set.mock.calls).toEqual([
     ["a", "1"],
@@ -162,25 +168,24 @@ it("saves each write in order, and a failed write does not stop later ones", asy
     ["b", null],
   ]);
   expect(Object.fromEntries(native.saved)).toEqual({ a: "2" });
-  expect(storage.getItem("a")).toBe("2");
-  expect(storage.length).toBe(1);
+  expect(storage.get("a")).toBe("2");
+  expect(storage.keys()).toEqual(["a"]);
 });
 
 it("puts back a key whose write failed, so it is not taken as saved and can be set again", async () => {
   const native = files({ a: "old" });
-  const storage = fileBacked(new Map([["a", "old"]]), native.set);
+  const storage = fileStore(new Map([["a", "old"]]), native.set);
   native.set.mockRejectedValueOnce(new Error("disk full"));
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  storage.setItem("a", "new");
-  storage.setItem("b", "kept");
-  await expect(storage.saved("a")).rejects.toThrow("disk full");
-  await expect(storage.saved()).rejects.toThrow("disk full");
-  await expect(storage.saved("b")).resolves.toBeUndefined();
+  const a = storage.set("a", "new");
+  const b = storage.set("b", "kept");
+  expect(storage.get("a")).toBe("new");
+  await expect(a).rejects.toThrow("disk full");
+  await expect(b).resolves.toBeUndefined();
   error.mockRestore();
-  expect(storage.getItem("a")).toBe("old");
+  expect(storage.get("a")).toBe("old");
   // The same value again is a new write, not a no-op.
-  storage.setItem("a", "new");
-  await storage.saved();
+  await storage.set("a", "new");
   expect(native.saved.get("a")).toBe("new");
-  expect(storage.getItem("a")).toBe("new");
+  expect(storage.get("a")).toBe("new");
 });

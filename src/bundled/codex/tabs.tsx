@@ -24,7 +24,7 @@ import type {
   AgentProviderSnapshot,
   AgentViewProps,
 } from "../../features/agents/service";
-import { persisted } from "../../features/agents/store";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import { PanelSubview } from "../../features/panels/PanelSubview";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -103,7 +103,7 @@ export class CodexProvider {
 
   constructor(
     private readonly spawn: Spawn,
-    private readonly storage: Storage = localStorage,
+    private readonly storage: AgentStore = localStore(),
     private readonly setup?: CodexSetup,
   ) {
     this.state = Object.freeze({
@@ -200,11 +200,10 @@ export class CodexProvider {
         ? next.effort
         : (selected?.defaultReasoningEffort ?? "");
     const defaults = Object.freeze({ model: next.model, effort });
-    this.storage.setItem(
+    await this.storage.set(
       STORAGE_KEY,
       JSON.stringify({ version: 1, ...defaults }),
     );
-    await persisted(this.storage, STORAGE_KEY);
     this.set({ defaults });
   }
   resolve(raw: unknown): Config {
@@ -240,7 +239,7 @@ export class CodexProvider {
   private readDefaults(): ProviderDefaults {
     try {
       const value: unknown = JSON.parse(
-        this.storage.getItem(STORAGE_KEY) ?? "null",
+        this.storage.get(STORAGE_KEY) ?? "null",
       );
       if (
         value &&

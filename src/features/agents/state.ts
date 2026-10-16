@@ -9,14 +9,19 @@
 // and is then saved, in order, to its key's file. Another program's later
 // writes reach this copy only when the app starts again.
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { CONFIG_STORAGE_KEY } from "./agent-config";
 import { CATCH_UP_KEY, CATCH_UP_PREFIX } from "./catch-up";
 import {
+  localStore,
+  type AgentStore,
   ARCHIVE_UNCHECKED_KEY,
   RECORD_PREFIX,
   STORAGE_KEY,
   TEAMS_KEY,
   UNFINISHED_KEY,
 } from "./store";
+
+export { localStore, type AgentStore } from "./store";
 
 /** The localStorage keys of agent state, moved into agent storage once. */
 export function isAgentKey(key: string) {
@@ -31,6 +36,8 @@ export function isAgentKey(key: string) {
     // The sessions the bundled agent types save.
     key.startsWith("buzz.claude-code.sessions.") ||
     key.startsWith("buzz.codex.sessions.") ||
+    // The relay-synced copies of agent settings that starts use.
+    key === CONFIG_STORAGE_KEY ||
     // The device-wide defaults that blank agent settings inherit.
     key === "buzz.claude-code.provider-defaults.v1" ||
     key === "buzz.codex.provider-defaults.v1" ||
@@ -39,12 +46,12 @@ export function isAgentKey(key: string) {
   );
 }
 
-let loaded: Storage | undefined;
+let loaded: AgentStore | undefined;
 
 /** Agent storage, once `loadAgentStorage` has read it; localStorage before
  * that, and outside the desktop app. */
-export function agentStorage(): Storage {
-  return loaded ?? globalThis.localStorage;
+export function agentStorage(): AgentStore {
+  return loaded ?? localStore();
 }
 
 type Native = Readonly<{
@@ -81,11 +88,11 @@ export async function loadAgentStorage(
   local: Storage = globalThis.localStorage,
   files: Native | undefined = isTauri() ? native : undefined,
   timeoutMs = 15_000,
-): Promise<Storage> {
-  if (!files) return local;
+): Promise<AgentStore> {
+  if (!files) return localStore(local);
   let late = false;
   const move = async () => {
-    const storage = fileBacked(
+    const storage = fileStore(
       new Map(Object.entries(await files.load())),
       files.set,
       files.add,
@@ -95,27 +102,28 @@ export async function loadAgentStorage(
       const key = local.key(index);
       if (key && isAgentKey(key)) moved.push(key);
     }
-    const finished = storage.getItem(MOVED_KEY) !== null;
+    const finished = storage.get(MOVED_KEY) !== null;
+    const copies: Promise<void>[] = [];
     for (const key of moved) {
       const value = local.getItem(key);
-      if (value === null || storage.getItem(key) === value) continue;
-      if (finished && storage.getItem(key) !== null) {
+      if (value === null || storage.get(key) === value) continue;
+      if (finished && storage.get(key) !== null) {
         console.warn(
           `Agent state ${key} from a start without agent storage was not kept`,
         );
         continue;
       }
-      storage.setItem(key, value);
+      copies.push(storage.set(key, value));
     }
-    await storage.saved();
-    if (!finished) {
-      storage.setItem(MOVED_KEY, "1");
-      await storage.saved(MOVED_KEY);
-    }
+    await Promise.all(copies);
+    if (!finished) await storage.set(MOVED_KEY, "1");
     // Too late: the app already started with localStorage, which keeps them.
     // So this start's keys are again the newer copy.
     if (late) {
-      if (!finished) storage.removeItem(MOVED_KEY);
+      if (!finished)
+        void storage.set(MOVED_KEY, null).catch(() => {
+          // Logged by the store; the next start copies the keys again.
+        });
       throw new Error("Agent storage took too long");
     }
     for (const key of moved) local.removeItem(key);
@@ -136,88 +144,70 @@ export async function loadAgentStorage(
       "Agent storage could not be used; using this window's",
       error,
     );
-    return local;
+    return localStore(local);
   } finally {
     clearTimeout(timer);
   }
 }
 
-type FileBacked = Storage & {
-  /** Settles once `key`'s value, or without a key every value, is saved;
-   * rejects while the last write of one failed. */
-  saved(key?: string): Promise<void>;
-  /** Sets `key` only if neither this copy nor its file holds it. When another
-   * program saved it first, the copy takes that program's value. */
-  addItem(key: string, value: string): void;
-};
-
-/** A Storage held in memory and saved through `save`, one key at a time. A
- * failed write puts back the key's saved value, so the copy never holds what
- * is not saved and the same value can be set again. */
-export function fileBacked(
+/** Agent storage held in memory and saved through `save`, one write at a
+ * time, in order. A failed write puts back the key's saved value, so the
+ * copy never keeps what is not saved and the same value can be set again. */
+export function fileStore(
   items: Map<string, string>,
   save: Native["set"],
   add: NonNullable<Native["add"]> = async (key, value) => {
     await save(key, value);
     return null;
   },
-): FileBacked {
+): AgentStore {
   /** What each key's file holds, as far as this program saved it. */
   const durable = new Map(items);
   /** Each key's last write, until it is saved. */
   const pending = new Map<string, Promise<unknown>>();
-  let queue: Promise<void> = Promise.resolve();
+  let queue: Promise<unknown> = Promise.resolve();
   const write = (key: string, value: string | null, absent = false) => {
     const next = queue.then(async () =>
       absent && value !== null ? add(key, value) : save(key, value),
     );
     pending.set(key, next);
-    queue = next.then(
+    const done = next.then(
       (held) => {
         const kept = held ?? value;
         if (kept === null) durable.delete(key);
         else durable.set(key, kept);
-        if (pending.get(key) !== next) return;
+        if (pending.get(key) !== next) return kept;
         pending.delete(key);
         if (kept !== null) items.set(key, kept);
+        return kept;
       },
-      (error) => {
+      (error: unknown) => {
         console.error(`Agent state ${key} was not saved`, error);
-        if (pending.get(key) !== next) return;
-        const kept = durable.get(key);
-        if (kept === undefined) items.delete(key);
-        else items.set(key, kept);
+        if (pending.get(key) === next) {
+          pending.delete(key);
+          const kept = durable.get(key);
+          if (kept === undefined) items.delete(key);
+          else items.set(key, kept);
+        }
+        throw error;
       },
     );
+    queue = done.catch(() => {});
+    return done;
   };
-  return {
-    get length() {
-      return items.size;
+  return Object.freeze({
+    keys: () => [...items.keys()],
+    get: (key: string) => items.get(key) ?? null,
+    set: async (key: string, value: string | null) => {
+      if (value === null) items.delete(key);
+      else items.set(key, value);
+      await write(key, value);
     },
-    key: (index) => [...items.keys()][index] ?? null,
-    getItem: (key) => items.get(key) ?? null,
-    setItem(key, value) {
-      items.set(key, String(value));
-      write(key, String(value));
+    add: async (key: string, value: string) => {
+      const held = items.get(key);
+      if (held !== undefined) return held;
+      items.set(key, value);
+      return (await write(key, value, true)) ?? value;
     },
-    removeItem(key) {
-      if (!items.delete(key)) return;
-      write(key, null);
-    },
-    addItem(key, value) {
-      if (items.has(key)) return;
-      items.set(key, String(value));
-      write(key, String(value), true);
-    },
-    clear() {
-      for (const key of [...items.keys()]) this.removeItem(key);
-    },
-    async saved(key) {
-      // Writes settle in order, so after the queue each pending one is done.
-      await queue;
-      const failed =
-        key === undefined ? [...pending.values()] : [pending.get(key)];
-      await Promise.all(failed);
-    },
-  };
+  });
 }

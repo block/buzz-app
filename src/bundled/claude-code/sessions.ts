@@ -16,7 +16,7 @@ import {
   type TurnPick,
 } from "./claude";
 import { STANDALONE_DEADLINE_MS } from "../../features/agent-harness/standalone";
-import { afterSaved } from "../../features/agents/store";
+import type { AgentStore } from "../../features/agents/store";
 
 /** A conversation's process stops after this long without a message or its
  * own activity, such as background work. */
@@ -525,7 +525,7 @@ export const LEGACY_SESSIONS = "buzz.claude-code.sessions.v1";
 /** Sessions saved in agent storage, one key per agent, by conversation. Each
  * agent's own key lets programs that run different agents share the storage. */
 export function localSessions(
-  storage: Storage,
+  storage: AgentStore,
   agent: string,
   name = LEGACY_SESSIONS,
 ): SessionStore & {
@@ -542,9 +542,9 @@ export function localSessions(
     }
   };
   const read = (): Record<string, SavedSession> => {
-    const own = storage.getItem(key);
+    const own = storage.get(key);
     return own === null
-      ? (object(storage.getItem(name))[agent] ?? {})
+      ? (object(storage.get(name))[agent] ?? {})
       : object(own);
   };
   const update = (change: (sessions: Record<string, SavedSession>) => void) => {
@@ -553,32 +553,26 @@ export function localSessions(
     const kept = Object.entries(sessions)
       .sort(([, a], [, b]) => b.at - a.at)
       .slice(0, SAVED_LIMIT);
-    try {
-      storage.setItem(key, JSON.stringify(Object.fromEntries(kept)));
-    } catch (error) {
+    const warn = (error: unknown) =>
       console.warn("Claude sessions were not saved", error);
-      return;
-    }
+    const own = storage.set(key, JSON.stringify(Object.fromEntries(kept)));
     // The old shared value drops this agent once its own key is saved: until
     // then it holds the only saved copy.
-    if (!(agent in object(storage.getItem(name)))) return;
-    afterSaved(
-      storage,
-      [key],
-      () => {
-        const legacy = object(storage.getItem(name));
+    if (!(agent in object(storage.get(name)))) {
+      void own.catch(warn);
+      return;
+    }
+    void own
+      .then(() => {
+        const legacy = object(storage.get(name));
         if (!(agent in legacy)) return;
         delete legacy[agent];
-        try {
-          if (Object.keys(legacy).length)
-            storage.setItem(name, JSON.stringify(legacy));
-          else storage.removeItem(name);
-        } catch (error) {
-          console.warn("Claude sessions were not saved", error);
-        }
-      },
-      (error) => console.warn("Claude sessions were not saved", error),
-    );
+        return storage.set(
+          name,
+          Object.keys(legacy).length ? JSON.stringify(legacy) : null,
+        );
+      })
+      .catch(warn);
   };
   return {
     list: () =>

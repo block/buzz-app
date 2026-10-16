@@ -1,8 +1,11 @@
-import { fileBacked } from "./state";
+import { fileStore } from "./state";
+import { localStore, type AgentStore } from "./store";
 
-export function memoryStorage(): Storage {
+/** Storage held in memory. It is also agent storage over the same items,
+ * which saves as it is set, so a test can seed and read it either way. */
+export function memoryStorage(): Storage & AgentStore {
   const items = new Map<string, string>();
-  return {
+  const storage: Storage = {
     get length() {
       return items.size;
     },
@@ -12,6 +15,7 @@ export function memoryStorage(): Storage {
     removeItem: (key) => void items.delete(key),
     setItem: (key, value) => void items.set(key, String(value)),
   };
+  return Object.assign(storage, localStore(storage));
 }
 
 /** Agent storage files that programs share. Each program loads its own copy
@@ -21,7 +25,7 @@ export function memoryStorage(): Storage {
 export function sharedFiles(initial: Record<string, string> = {}) {
   const disk = new Map(Object.entries(initial));
   const open = (hold?: Promise<void>) =>
-    fileBacked(
+    fileStore(
       new Map(disk),
       async (key, value) => {
         await hold;

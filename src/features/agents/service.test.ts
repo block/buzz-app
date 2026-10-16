@@ -26,7 +26,7 @@ import {
 } from "./service";
 import type { ClassifierNative } from "./classifier";
 import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
-import { fileBacked } from "./state";
+import { fileStore, type AgentStore } from "./state";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
@@ -76,7 +76,7 @@ const UNFINISHED =
 
 type Config = { reply: string };
 async function setup({
-  storage = memoryStorage(),
+  storage = memoryStorage() as AgentStore,
   identities = [] as AgentIdentity[],
   listed = [] as RelayEvent[],
   history = [] as RelayEvent[],
@@ -458,10 +458,10 @@ it("imports a team with the members that came, names the rest, and leaves later 
   expect(result.teamError).toBeUndefined();
   // Imported on its own afterwards, it never joins the team.
   native.port.mockImplementation(port);
-  const stored = storage.getItem("buzz.agents.teams.v1");
+  const stored = storage.get("buzz.agents.teams.v1");
   await importOld(service, birch);
   expect(service.find(birch)).toBeDefined();
-  expect(storage.getItem("buzz.agents.teams.v1")).toBe(stored);
+  expect(storage.get("buzz.agents.teams.v1")).toBe(stored);
   expect(service.snapshot().teams).toEqual([savedShift([alder, carrow])]);
 });
 
@@ -853,7 +853,7 @@ it("keeps a team's imported members when the team cannot be saved, and changes n
   expect(result.team).toBeUndefined();
   expect(service.find(carrow)).toBeDefined();
   expect(storage.getItem("buzz.agents.teams.v1")).toBe(stored);
-  expect(service.snapshot().teams).toBe(teams);
+  expect(service.snapshot().teams).toEqual(teams);
 });
 
 it("delivers mentions and matching watches once, and never the agent's own events", async () => {
@@ -929,7 +929,7 @@ it("gives each member its teams' roster and instructions, and drops a deleted ag
       [],
     ]),
   );
-  expect(storage.getItem("buzz.agents.teams.v1")).not.toContain(sibling);
+  expect(storage.get("buzz.agents.teams.v1")).not.toContain(sibling);
   await service.removeTeam(team.id);
   expect(service.snapshot().teams.map((saved) => saved.name)).toEqual(["Solo"]);
 });
@@ -1901,9 +1901,9 @@ it("changes an agent's type between turns, carrying what the new type adopts", a
   expect(native.setType).not.toHaveBeenCalled();
   finish();
   await settle();
-  vi.spyOn(storage, "setItem").mockImplementationOnce(() => {
-    throw new Error("QuotaExceededError");
-  });
+  vi.spyOn(storage, "set").mockRejectedValueOnce(
+    new Error("QuotaExceededError"),
+  );
   await expect(
     service.retype(bot, "other/relay", {
       config: { prompt: "Reviewed target", model: "large" },
@@ -2260,7 +2260,7 @@ it("shows an agent whose settings could not be saved with its type's defaults", 
 it("rejects a save that agent storage could not write, and saves it on retry", async () => {
   const disk = new Map<string, string>();
   let failing = false;
-  const storage = fileBacked(new Map(), async (key, value) => {
+  const storage = fileStore(new Map(), async (key, value) => {
     if (failing) throw new Error("disk full");
     if (value === null) disk.delete(key);
     else disk.set(key, value);
@@ -2306,7 +2306,7 @@ it("keeps a settings change still being saved when a timer saves its progress", 
   vi.useFakeTimers({ now: 1_000_000 });
   const disk = new Map<string, string>();
   let hold: Promise<void> | undefined;
-  const storage = fileBacked(new Map(), async (key, value) => {
+  const storage = fileStore(new Map(), async (key, value) => {
     await hold;
     if (value === null) disk.delete(key);
     else disk.set(key, value);
@@ -2337,7 +2337,7 @@ it("keeps a timer rearm still being saved when another timer saves its progress"
   vi.useFakeTimers({ now: 1_000_000 });
   const disk = new Map<string, string>();
   let hold: Promise<void> | undefined;
-  const storage = fileBacked(new Map(), async (key, value) => {
+  const storage = fileStore(new Map(), async (key, value) => {
     await hold;
     if (value === null) disk.delete(key);
     else disk.set(key, value);
@@ -2390,7 +2390,7 @@ it("keeps a timer rearm still being saved when another timer saves its progress"
 it("runs no occurrence of a timer while its rearm is being saved, so the rearm keeps its budget", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   let hold: Promise<void> | undefined;
-  const storage = fileBacked(new Map(), async () => {
+  const storage = fileStore(new Map(), async () => {
     await hold;
   });
   const { service, run } = await setup({ storage });
@@ -2428,9 +2428,62 @@ it("runs no occurrence of a timer while its rearm is being saved, so the rearm k
   // Its second and last occurrence comes from the rearm, and no third.
   await vi.advanceTimersByTimeAsync(600_000);
   expect(run).toHaveBeenCalledTimes(2);
+  expect(
+    JSON.parse(storage.get(`buzz.agent.v1:${bot}`) ?? "{}").timers["watch/a"],
+  ).toMatchObject({ armedAt: 1_115, used: 2 });
 });
 
-it("runs no due timer whose progress storage refuses, until it can save it", async () => {
+it("keeps the occurrence a timer used while its progress saves, when the owner rearms it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const disk = new Map<string, string>();
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async (key, value) => {
+    await hold;
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt: "a",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: armed,
+      max_occurrences: 2,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, { attention: { "watch/a": timer(1_000) } });
+  // It runs once at 1060.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // Its second and last occurrence runs at 1120; that progress is saving
+  // when the owner rearms it at 1121.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1_000);
+  const saving = service.save(bot, { attention: { "watch/a": timer(1_121) } });
+  release();
+  await saving;
+  // The rearm applies after the progress: a new deadline, the used count kept.
+  const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.timers["watch/a"]).toEqual({
+    armedAt: 1_121,
+    nextDue: 1_181,
+    used: 2,
+  });
+  expect(service.find(bot)?.timers["watch/a"]).toEqual(saved.timers["watch/a"]);
+  // Its budget is spent: no third occurrence.
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it("runs a timer whose progress storage refuses only when due, and saves its count once it can", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const storage = memoryStorage();
   const { service, run } = await setup({ storage });
@@ -2445,20 +2498,25 @@ it("runs no due timer whose progress storage refuses, until it can save it", asy
     setItem(key, value);
   });
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  // Due, and due again after each drain: still refused, it never runs.
+  // Due at 1060, 1120 and 1180. Its unsaved progress stays in memory, so it
+  // runs once each time it is due, never again at once after a run.
   await vi.advanceTimersByTimeAsync(180_000);
-  expect(run).not.toHaveBeenCalled();
+  expect(run).toHaveBeenCalledTimes(3);
+  expect(warn).toHaveBeenCalledWith(
+    `Agent ${bot} timer state was not saved`,
+    expect.objectContaining({ message: "QuotaExceededError" }),
+  );
   refusing = false;
   await vi.advanceTimersByTimeAsync(60_000);
   warn.mockRestore();
-  expect(run).toHaveBeenCalledTimes(1);
+  expect(run).toHaveBeenCalledTimes(4);
   const saved = JSON.parse(storage.getItem(`buzz.agent.v1:${bot}`) ?? "{}");
-  expect(saved.timers["watch/tick"]).toMatchObject({ used: 1 });
+  expect(saved.timers["watch/tick"]).toMatchObject({ used: 4 });
 });
 
 it("shows the saved teams after a team save agent storage could not write", async () => {
   let failing = false;
-  const storage = fileBacked(new Map(), async () => {
+  const storage = fileStore(new Map(), async () => {
     if (failing) throw new Error("disk full");
   });
   const { service } = await setup({ storage });
@@ -2812,8 +2870,7 @@ it("fires a due timer once, then again an interval after it ran", async () => {
   await vi.advanceTimersByTimeAsync(120_000);
   expect(run).toHaveBeenCalledTimes(2);
   // Its run state lives in the agent's record and goes when the timer does.
-  const stored = () =>
-    JSON.parse(storage.getItem(`buzz.agent.v1:${bot}`) ?? "{}");
+  const stored = () => JSON.parse(storage.get(`buzz.agent.v1:${bot}`) ?? "{}");
   expect(stored().timers["watch/tick"]).toMatchObject({ used: 2 });
   expect(stored().timers["watch/stale"]).toMatchObject({ used: 16 });
   await service.save(bot, { attention: { "watch/tick": null } });
@@ -3037,7 +3094,7 @@ it("stops it first, and deletes its key only after it left its channels and was 
     "forget",
   ]);
   expect(service.snapshot().agents).toEqual([]);
-  expect(storage.getItem(`buzz.agent.v1:${bot}`)).toBeNull();
+  expect(storage.get(`buzz.agent.v1:${bot}`)).toBeNull();
   expect(leaveChannels).toHaveBeenCalledWith(
     expect.objectContaining({ archives }),
     bot,
@@ -5246,7 +5303,7 @@ it("creates a hosted agent through its provider, attesting the key it returns", 
   expect(agent.unfinished).toBeUndefined();
   expect(native.create).not.toHaveBeenCalled();
   expect(native.claim).not.toHaveBeenCalledWith(hostedKey);
-  expect(storage.getItem("buzz.agents.unfinished.v1")).toContain('"agents":[]');
+  expect(storage.get("buzz.agents.unfinished.v1")).toContain('"agents":[]');
 });
 
 it("keeps a hosted agent whose setup failed, and finishes it without making another", async () => {
@@ -5525,7 +5582,7 @@ it("refuses to stop a hosted agent whose provider cannot", async () => {
 
 it("keeps an unfinished hosted agent whose Delete agent storage could not save", async () => {
   let failing = false;
-  const storage = fileBacked(new Map(), async (key) => {
+  const storage = fileStore(new Map(), async (key) => {
     if (failing && key === "buzz.agents.unfinished.v1")
       throw new Error("disk full");
   });
@@ -5543,7 +5600,7 @@ it("keeps an unfinished hosted agent whose Delete agent storage could not save",
   // Still listed with what is saved, so a restart shows no other state and
   // Delete can be tried again.
   expect(service.find(hostedKey)?.unfinished).toBe(true);
-  expect(storage.getItem("buzz.agents.unfinished.v1")).toContain(hostedKey);
+  expect(storage.get("buzz.agents.unfinished.v1")).toContain(hostedKey);
 });
 
 it("refuses to finish a hosted agent's setup while it is being deleted", async () => {
@@ -6115,7 +6172,7 @@ it("lets a run read and write its attention with expected-state tokens", async (
 
 it("fails an agent's attention write that agent storage could not save, and keeps the saved value", async () => {
   let failing = false;
-  const storage = fileBacked(new Map(), async () => {
+  const storage = fileStore(new Map(), async () => {
     if (failing) throw new Error("disk full");
   });
   const { service, run, emit } = await setup({ storage });

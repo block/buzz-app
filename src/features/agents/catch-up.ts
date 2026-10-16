@@ -4,7 +4,7 @@
 // Only the progress is saved, never an event.
 import type { Agent } from "./service";
 import type { EventData, ReadFilter } from "../relay/events";
-import { addItem, afterSaved } from "./store";
+import type { AgentStore } from "./store";
 
 export const CATCH_UP_KEY = "buzz.agents.catch-up.v1";
 /** Events in one read, as Janet's catch-up pages are. */
@@ -142,14 +142,13 @@ const serialize = (checkpoints: Checkpoints) =>
   });
 
 /** Every agent's progress: its own key's, or else the old shared value's. */
-export function readCheckpoints(storage: Storage): Checkpoints {
-  const legacy = parseStreams(storage.getItem(CATCH_UP_KEY));
+export function readCheckpoints(storage: AgentStore): Checkpoints {
+  const legacy = parseStreams(storage.get(CATCH_UP_KEY));
   const own: Record<string, Checkpoints> = {};
-  for (let index = 0; index < storage.length; index++) {
-    const key = storage.key(index);
-    if (!key?.startsWith(CATCH_UP_PREFIX)) continue;
+  for (const key of storage.keys()) {
+    if (!key.startsWith(CATCH_UP_PREFIX)) continue;
     const pubkey = key.slice(CATCH_UP_PREFIX.length);
-    own[pubkey] = parseStreams(storage.getItem(key), pubkey);
+    own[pubkey] = parseStreams(storage.get(key), pubkey);
   }
   return Object.assign(
     Object.fromEntries(
@@ -180,22 +179,23 @@ function byAgent(checkpoints: Checkpoints) {
  * this program's last save or read, in its own key, and removes the key of
  * an agent with none left. An agent this program did not move is never
  * written, so it keeps what the program that runs it saved, even when this
- * program's copy of it is older. */
-export function writeCheckpoints(
-  storage: Storage,
+ * program's copy of it is older. Settles once every write is saved. */
+export async function writeCheckpoints(
+  storage: AgentStore,
   checkpoints: Checkpoints,
   saved: Checkpoints,
 ) {
   const next = byAgent(checkpoints);
   const last = byAgent(saved);
+  const writes: Promise<void>[] = [];
   for (const pubkey of new Set([...next.keys(), ...last.keys()])) {
     const streams = next.get(pubkey);
     const before = last.get(pubkey);
     const text = streams && serialize(streams);
     if (text === (before && serialize(before))) continue;
-    if (text === undefined) storage.removeItem(catchUpKey(pubkey));
-    else storage.setItem(catchUpKey(pubkey), text);
+    writes.push(storage.set(catchUpKey(pubkey), text ?? null));
   }
+  await Promise.all(writes);
 }
 
 /** Moves progress from the old value that held every agent's into one key
@@ -203,24 +203,21 @@ export function writeCheckpoints(
  * is only added where none is saved: a program that starts from the old
  * value after another moved it, and ran its agents on, keeps their newer
  * progress. */
-export function splitLegacyCheckpoints(storage: Storage) {
-  if (storage.getItem(CATCH_UP_KEY) === null) return;
+export async function splitLegacyCheckpoints(storage: AgentStore) {
+  if (storage.get(CATCH_UP_KEY) === null) return;
   const agents = byAgent(readCheckpoints(storage));
   try {
-    for (const [pubkey, streams] of agents)
-      addItem(storage, catchUpKey(pubkey), serialize(streams));
+    await Promise.all(
+      [...agents].map(([pubkey, streams]) =>
+        storage.add(catchUpKey(pubkey), serialize(streams)),
+      ),
+    );
+    await storage.set(CATCH_UP_KEY, null);
   } catch (error) {
-    // A full store must not stop startup. The shared value stays, so the
-    // progress is read from it and the move is tried again at the next start.
+    // This must not stop startup. The shared value stays, so the progress is
+    // read from it and the move is tried again at the next start.
     console.error("Agent catch-up progress was not split", error);
-    return;
   }
-  afterSaved(
-    storage,
-    [...agents.keys()].map(catchUpKey),
-    () => storage.removeItem(CATCH_UP_KEY),
-    (error) => console.error("Agent catch-up progress was not split", error),
-  );
 }
 
 /** The agent's streams: one for each channel of each event watch whose kinds

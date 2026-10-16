@@ -18,7 +18,11 @@ import { StrictMode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Agent, AgentType } from "../../features/agents/service";
-import { fileBacked } from "../../features/agents/state";
+import {
+  fileStore,
+  localStore,
+  type AgentStore,
+} from "../../features/agents/state";
 import type { HostProcessOptions } from "../../features/host/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { apply, inject } from "./index";
@@ -112,7 +116,7 @@ function applied({
   storage,
 }: {
   /** Agent storage; this page's localStorage without it. */
-  storage?: Storage;
+  storage?: AgentStore;
   loggedIn?: boolean;
   available?: boolean;
   version?: string;
@@ -518,7 +522,7 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
 
 it("keeps the saved default and shows the error while a default could not be saved", async () => {
   let failing = true;
-  const storage = fileBacked(new Map(), async () => {
+  const storage = fileStore(new Map(), async () => {
     if (failing) throw new Error("disk full");
   });
   const Control = installed({ storage }).type.provider?.DefaultControl;
@@ -540,7 +544,7 @@ it("keeps the saved default and shows the error while a default could not be sav
   expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
   error.mockRestore();
   expect(control).toHaveTextContent("Opus 5.5");
-  expect(storage.getItem("buzz.claude-code.provider-defaults.v1")).toBeNull();
+  expect(storage.get("buzz.claude-code.provider-defaults.v1")).toBeNull();
   // The same choice can be saved again.
   failing = false;
   await pick();
@@ -548,14 +552,14 @@ it("keeps the saved default and shows the error while a default could not be sav
     expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
   );
   expect(control).toHaveTextContent("Fable 5.1");
-  expect(storage.getItem("buzz.claude-code.provider-defaults.v1")).toContain(
+  expect(storage.get("buzz.claude-code.provider-defaults.v1")).toContain(
     "fable",
   );
 });
 
 it("preserves native behavior for invalid defaults and keeps explicit agent models", async () => {
   localStorage.setItem("buzz.claude-code.provider-defaults.v1", "not json");
-  const defaults = new ClaudeDefaults(localStorage);
+  const defaults = new ClaudeDefaults(localStore());
   expect(defaults.resolve(DEFAULT_CONFIG)).toEqual(DEFAULT_CONFIG);
   await defaults.save({ model: "sonnet" });
   const inherited = { ...DEFAULT_CONFIG };
@@ -1122,7 +1126,7 @@ it("saves model-specific default effort from the nested menu and inherits it", a
     ),
   );
 
-  const reopened = new ClaudeDefaults(localStorage);
+  const reopened = new ClaudeDefaults(localStore());
   expect(reopened.resolve(DEFAULT_CONFIG)).toMatchObject({
     model: "sonnet",
     effort: "high",
@@ -1137,7 +1141,7 @@ it("saves model-specific default effort from the nested menu and inherits it", a
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Use Claude default" }),
   );
-  expect(new ClaudeDefaults(localStorage).snapshot().model).toBe("");
+  expect(new ClaudeDefaults(localStore()).snapshot().model).toBe("");
 });
 
 it("retries failed model discovery from the defaults row", async () => {
@@ -1170,7 +1174,7 @@ it("keeps the model inherited when changing the default model's effort", async (
     await screen.findByRole("menuitemradio", { name: "Opus 5.5" }),
   );
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
-  expect(new ClaudeDefaults(localStorage).snapshot()).toMatchObject({
+  expect(new ClaudeDefaults(localStore()).snapshot()).toMatchObject({
     model: "",
     effort: "high",
   });

@@ -1,9 +1,8 @@
 import { expect, it, vi } from "vitest";
-import { fileBacked } from "./state";
+import { fileStore } from "./state";
 import {
   STORAGE_KEY,
   TEAMS_KEY,
-  readOne,
   readRecords,
   recordKey,
   readTeams,
@@ -23,7 +22,7 @@ const record: AgentRecord = {
   config: { word: "hi" },
 };
 
-it("round-trips records and drops attention objects a reader would ignore", () => {
+it("round-trips records and drops attention objects a reader would ignore", async () => {
   const storage = memoryStorage();
   const saved = setAttention(
     record,
@@ -31,7 +30,7 @@ it("round-trips records and drops attention objects a reader would ignore", () =
     { type: "interest", instructions: "Be brief." },
     7,
   );
-  writeRecord(storage, saved);
+  await writeRecord(storage, saved);
   expect(readRecords(storage)).toEqual({ [pubkey]: saved });
   const stored = JSON.parse(storage.getItem(recordKey(pubkey)) as string);
   stored.attention["watch/bad"] = {
@@ -49,7 +48,7 @@ it("round-trips records and drops attention objects a reader would ignore", () =
     value: { type: "event" },
     problem: expect.stringMatching(/Missing/),
   });
-  writeRecord(storage, read[pubkey] as AgentRecord);
+  await writeRecord(storage, read[pubkey] as AgentRecord);
   expect(
     JSON.parse(storage.getItem(recordKey(pubkey)) as string).attention[
       "watch/bad"
@@ -60,7 +59,7 @@ it("round-trips records and drops attention objects a reader would ignore", () =
   expect(fixed.skipped).toEqual({});
 });
 
-it("keeps each agent's record under its own key and moves the old shared value", () => {
+it("keeps each agent's record under its own key and moves the old shared value", async () => {
   const storage = memoryStorage();
   const other = "b".repeat(64);
   storage.setItem(
@@ -71,40 +70,43 @@ it("keeps each agent's record under its own key and moves the old shared value",
     }),
   );
   expect(Object.keys(readRecords(storage)).sort()).toEqual([pubkey, other]);
-  expect(readOne(storage, other)?.pubkey).toBe(other);
+  expect(readRecords(storage)[other]?.pubkey).toBe(other);
   // Saved records win over the old shared value.
-  writeRecord(storage, { ...record, config: { word: "new" } });
+  await writeRecord(storage, { ...record, config: { word: "new" } });
   expect(readRecords(storage)[pubkey]?.config).toEqual({ word: "new" });
-  splitLegacyRecords(storage, readRecords(storage));
+  await splitLegacyRecords(storage, readRecords(storage));
   expect(storage.getItem(STORAGE_KEY)).toBeNull();
-  expect(readOne(storage, other)?.pubkey).toBe(other);
+  expect(readRecords(storage)[other]?.pubkey).toBe(other);
   // Writing one record leaves another program's record alone.
   storage.setItem(recordKey(other), "sentinel");
-  writeRecord(storage, { ...record, config: { word: "newer" } });
+  await writeRecord(storage, { ...record, config: { word: "newer" } });
   expect(storage.getItem(recordKey(other))).toBe("sentinel");
   // A record that did not change is not written again.
   const writes: string[] = [];
-  const watched = Object.assign(Object.create(storage), {
-    setItem: (key: string, value: string) => {
+  const watched = {
+    get: storage.get,
+    keys: storage.keys,
+    add: storage.add,
+    set: (key: string, value: string | null) => {
       writes.push(key);
-      storage.setItem(key, value);
+      return storage.set(key, value);
     },
-  });
-  writeRecord(watched, { ...record, config: { word: "newer" } });
+  };
+  await writeRecord(watched, { ...record, config: { word: "newer" } });
   expect(writes).toEqual([]);
   // A removed record is gone.
-  removeRecord(storage, other);
+  await removeRecord(storage, other);
   expect(storage.getItem(recordKey(other))).toBeNull();
 });
 
-it("saves attention only as on; absent or anything else reads as off", () => {
+it("saves attention only as on; absent or anything else reads as off", async () => {
   const storage = memoryStorage();
   for (const saved of [
     { ...record, attentionEnabled: true },
     { ...record, pubkey: "b".repeat(64) },
     { ...record, pubkey: "c".repeat(64), attentionEnabled: false },
   ] as AgentRecord[])
-    writeRecord(storage, saved);
+    await writeRecord(storage, saved);
   const read = readRecords(storage);
   expect(read[pubkey]?.attentionEnabled).toBe(true);
   expect(read["b".repeat(64)]).not.toHaveProperty("attentionEnabled");
@@ -247,14 +249,13 @@ it("reads nothing from missing or malformed storage", () => {
   storage.setItem(STORAGE_KEY, "{");
   storage.setItem(recordKey(pubkey), "{");
   expect(readRecords(storage)).toEqual({});
-  expect(readOne(storage, pubkey)).toBeUndefined();
 });
 
-it("round-trips teams and skips any that is not one", () => {
+it("round-trips teams and skips any that is not one", async () => {
   const storage = memoryStorage();
   expect(readTeams(storage)).toEqual([]);
   const team = { id: "t", name: "Crew", instructions: "Hi", members: [pubkey] };
-  writeTeams(storage, [team]);
+  await writeTeams(storage, [team]);
   expect(readTeams(storage)).toEqual([team]);
   storage.setItem(
     TEAMS_KEY,
@@ -276,26 +277,22 @@ it("keeps the old shared value until every record from it is saved", async () =>
     if (value === null) disk.delete(key);
     else disk.set(key, value);
   });
-  const storage = fileBacked(new Map(disk), save);
+  const storage = fileStore(new Map(disk), save);
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  splitLegacyRecords(storage, readRecords(storage));
-  await storage.saved().catch(() => {});
-  await new Promise((resolve) => setTimeout(resolve));
+  await splitLegacyRecords(storage, readRecords(storage));
   error.mockRestore();
   expect(save).not.toHaveBeenCalledWith(STORAGE_KEY, null);
   // The next start still has the agent.
-  const restarted = fileBacked(new Map(disk), save);
+  const restarted = fileStore(new Map(disk), save);
   expect(readRecords(restarted)[pubkey]?.config).toEqual(record.config);
   // Once its record saves, the split finishes.
   save.mockImplementation(async (key, value) => {
     if (value === null) disk.delete(key);
     else disk.set(key, value);
   });
-  splitLegacyRecords(restarted, readRecords(restarted));
-  await restarted.saved();
-  await new Promise((resolve) => setTimeout(resolve));
+  await splitLegacyRecords(restarted, readRecords(restarted));
   expect(disk.has(STORAGE_KEY)).toBe(false);
-  expect(readRecords(fileBacked(new Map(disk), save))[pubkey]?.config).toEqual(
+  expect(readRecords(fileStore(new Map(disk), save))[pubkey]?.config).toEqual(
     record.config,
   );
 });
@@ -307,14 +304,11 @@ it("keeps a record saved since, when a late move from the old shared value lands
   let release = () => {};
   const first = open();
   const second = open(new Promise((resolve) => (release = resolve)));
-  splitLegacyRecords(first, readRecords(first));
-  splitLegacyRecords(second, readRecords(second));
-  await first.saved();
-  writeRecord(first, { ...record, config: { word: "newer" } });
-  await first.saved();
+  await splitLegacyRecords(first, readRecords(first));
+  const late = splitLegacyRecords(second, readRecords(second));
+  await writeRecord(first, { ...record, config: { word: "newer" } });
   release();
-  await second.saved();
-  await new Promise((resolve) => setTimeout(resolve));
+  await late;
   expect(readRecords(open())[pubkey]?.config).toEqual({ word: "newer" });
   expect(readRecords(second)[pubkey]?.config).toEqual({ word: "newer" });
 });

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { fileBacked } from "../../features/agents/state";
+import { fileStore, localStore } from "../../features/agents/state";
 import {
   backgroundTasks,
   fakeSpawn,
@@ -599,13 +599,23 @@ it("starts no spare for a conversation that starts after its agents are gone", a
   expect(live()).toEqual([]);
 });
 
-it("keeps saved sessions per agent in storage", () => {
-  const data = new Map<string, string>();
-  const storage = {
+/** Agent storage over `data`, which saves as it is set. */
+const mapStore = (data: Map<string, string>) =>
+  localStore({
+    get length() {
+      return data.size;
+    },
+    key: (index: number) => [...data.keys()][index] ?? null,
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
     removeItem: (key: string) => void data.delete(key),
-  } as Storage;
+  } as Storage);
+/** Waits for the saves already started. */
+const settled = () => new Promise((resolve) => setTimeout(resolve));
+
+it("keeps saved sessions per agent in storage", () => {
+  const data = new Map<string, string>();
+  const storage = mapStore(data);
   const one = localSessions(storage, "one");
   const two = localSessions(storage, "two");
   one.set("c/root", { id: "s1", seen: 3, at: 1 });
@@ -623,7 +633,7 @@ it("keeps saved sessions per agent in storage", () => {
   expect(one.get("c/root")).toBeUndefined();
 });
 
-it("reads an agent's sessions from the shared value until it saves its own", () => {
+it("reads an agent's sessions from the shared value until it saves its own", async () => {
   const data = new Map<string, string>([
     [
       "buzz.claude-code.sessions.v1",
@@ -633,17 +643,14 @@ it("reads an agent's sessions from the shared value until it saves its own", () 
       }),
     ],
   ]);
-  const storage = {
-    getItem: (key: string) => data.get(key) ?? null,
-    setItem: (key: string, value: string) => void data.set(key, value),
-    removeItem: (key: string) => void data.delete(key),
-  } as Storage;
+  const storage = mapStore(data);
   const one = localSessions(storage, "one");
   expect(one.get("c/root")?.id).toBe("s1");
   one.delete("c/root");
   expect(one.get("c/root")).toBeUndefined();
   expect(localSessions(storage, "two").get("c/root")?.id).toBe("s2");
   localSessions(storage, "two").set("c/other", { id: "s3", seen: 1, at: 3 });
+  await settled();
   expect(data.has("buzz.claude-code.sessions.v1")).toBe(false);
   expect(localSessions(storage, "two").get("c/root")?.id).toBe("s2");
 });
@@ -659,17 +666,20 @@ it("keeps an agent in the shared sessions value until its own is saved", async (
     if (value === null) disk.delete(key);
     else disk.set(key, value);
   });
-  const storage = fileBacked(new Map(disk), save);
+  const storage = fileStore(new Map(disk), save);
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   localSessions(storage, "one").set("c/other", { id: "s2", seen: 1, at: 2 });
-  await storage.saved().catch(() => {});
-  await new Promise((resolve) => setTimeout(resolve));
+  await settled();
   error.mockRestore();
+  expect(warn).toHaveBeenCalledWith(
+    "Claude sessions were not saved",
+    expect.objectContaining({ message: "disk full" }),
+  );
   warn.mockRestore();
   expect(disk.get(name)).toBe(shared);
   // The next start still resumes the saved session.
-  const restarted = fileBacked(new Map(disk), save);
+  const restarted = fileStore(new Map(disk), save);
   expect(localSessions(restarted, "one").get("c/root")?.id).toBe("s1");
 });
 

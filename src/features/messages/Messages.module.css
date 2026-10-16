@@ -324,8 +324,11 @@
   margin-bottom: var(--space-1);
 }
 .reactionPreviewEmoji .reactionNativeEmoji {
-  max-width: var(--space-16);
+  max-width: 100%;
+  padding: var(--space-1);
   font-size: var(--reaction-preview-size);
+  /* Color glyph ink extends beyond its em square, especially on macOS. */
+  line-height: 1.25;
 }
 .reactionPreviewEmoji .reactionCustomEmoji {
   width: calc(var(--space-6) * 2);
@@ -349,6 +352,19 @@
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
   ) {
+  html:not([data-keyboard-navigation]) .reactionPreviewEmoji {
+    transform-origin: center bottom;
+    transition:
+      transform var(--duration-state) var(--easing-enter),
+      opacity var(--duration-state) var(--easing-enter);
+  }
+  html:not([data-keyboard-navigation])
+    .reactionPreview[data-starting-style]
+    .reactionPreviewEmoji {
+    opacity: 0;
+    transform: translateY(6%) scale(0.9)
+      rotate(var(--reaction-preview-tilt, 0deg));
+  }
   .reactionPreviewSlideLeft,
   .reactionPreviewSlideRight {
     transition-duration: 160ms;
@@ -371,6 +387,10 @@
   align-items: center;
   width: 1.75rem;
   height: 1.75rem;
+}
+/* Give the icon a stable backing layer across neighboring hover animations. */
+.inlineReactionTool svg {
+  transform: translateZ(0);
 }
 .inlineReactionTool [data-icon-variant] {
   width: 1.75rem;
@@ -1854,6 +1874,29 @@ html[data-keyboard-input] .quickReactionGlyph {
   }
 }
 
+@media (hover: hover) and (pointer: fine) and (
+    prefers-reduced-motion: no-preference
+  ) {
+  html:not([data-keyboard-navigation]) .messageActions[popover]:popover-open {
+    animation: message-actions-in calc(var(--duration-state) / 2)
+      var(--easing-enter);
+  }
+}
+@keyframes message-actions-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-half)) scale(0.98);
+    filter: blur(0.5px);
+    gap: calc(var(--space-half) / 2);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+    gap: var(--space-half);
+  }
+}
+
 .replyBranch {
   position: relative;
   --reply-spine-start: 100%;
@@ -2566,6 +2609,20 @@ html[data-keyboard-navigation] .channelJoinSurface {
   background: var(--surface-message);
   color: var(--text-standard);
   overflow-wrap: anywhere;
+}
+/* Reuse the toolbar state so the target stays marked during pointer travel. */
+@media (hover: hover) and (pointer: fine) {
+  .message[data-actions-revealed]
+    > .messageBody
+    > .messageContent
+    .messageBubble:not([data-emoji-only])::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--affordance-backdrop-hover);
+    pointer-events: none;
+  }
 }
 .message[data-layout="continuation"] .messageBubble {
   margin-top: 0;

@@ -438,7 +438,8 @@ export class AgentSessions {
       this.drop(key, live);
       await live.session.server?.closed;
     };
-    this.touch(key, live);
+    // Not saved until a message is handed to it: its own may have given up.
+    this.countdown(key, live);
     this.options.onChange?.();
   }
   private async answer(

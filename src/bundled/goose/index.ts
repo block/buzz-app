@@ -75,21 +75,28 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     sessions: {
       list: (pubkey) => {
-        const busy = new Map(
-          runtime.sessions(pubkey).map((view) => [view.key, view.busy]),
+        const live = runtime.sessions(pubkey);
+        const busy = new Map(live.map((view) => [view.key, view.busy]));
+        const used = new Map(
+          runtime.conversations(pubkey).map(({ key, at }) => [key, at]),
         );
-        return runtime.conversations(pubkey).map(({ key, at }) => {
-          const [channelId = key, root] = key.split("/");
-          const working = busy.get(key);
-          return {
-            channelId,
-            ...(root && { root }),
-            at,
-            ...(working !== undefined && {
-              status: working ? "Working" : "Idle",
-            }),
-          };
-        });
+        // Open ones are listed even when saving them failed. A one-off turn
+        // joins no conversation.
+        for (const { key, at } of live) if (at !== undefined) used.set(key, at);
+        return [...used]
+          .sort(([, a], [, b]) => b - a)
+          .map(([key, at]) => {
+            const [channelId = key, root] = key.split("/");
+            const working = busy.get(key);
+            return {
+              channelId,
+              ...(root && { root }),
+              at,
+              ...(working !== undefined && {
+                status: working ? "Working" : "Idle",
+              }),
+            };
+          });
       },
       subscribe: (listener) => runtime.subscribe(listener),
     },

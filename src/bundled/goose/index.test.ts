@@ -17,6 +17,8 @@ it("observes saved conversations with the status of open sessions", () => {
   vi.spyOn(GooseRuntime.prototype, "sessions").mockReturnValue([
     { key: "room/r", busy: true, sessionId: "s1", at: 3 },
     { key: "dm", busy: false, sessionId: "s2", at: 2 },
+    // Open, though saving it failed.
+    { key: "new", busy: true, sessionId: "s3", at: 4 },
     // A one-off turn joins no conversation.
     { key: "timer/x #1", busy: true },
   ]);
@@ -33,6 +35,7 @@ it("observes saved conversations with the status of open sessions", () => {
     effect: vi.fn(),
   } as never);
   expect(type?.sessions?.list("a".repeat(64))).toEqual([
+    { channelId: "new", at: 4, status: "Working" },
     { channelId: "room", root: "r", at: 3, status: "Working" },
     { channelId: "dm", at: 2, status: "Idle" },
     // A conversation whose session closed is unobserved, not idle.

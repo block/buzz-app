@@ -407,6 +407,40 @@ describe("AgentSessions", () => {
     expect(fake.geese[1]?.opened).toHaveLength(2);
   });
 
+  it("saves no conversation whose first message gave up before the session opened", async () => {
+    const fake = fakeSpawn();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const store = new Map<string, SavedConversation>();
+    const sessions = new AgentSessions({
+      spawn: fake.spawn,
+      tools,
+      process: new SharedProcess(fake.spawn, fake.serve),
+      pool: new ServerPool(),
+      store: { set: (key, saved) => void store.set(key, saved) },
+      launch: async () => {
+        await held;
+        return { workspace: "/w", systemPrompt: "" };
+      },
+      choice: () => ({ provider: "", model: "" }),
+      fingerprint: () => "",
+    });
+    const abort = new AbortController();
+    const late = sessions.deliver("a", "one", 1, { signal: abort.signal });
+    await flush(30);
+    abort.abort();
+    await expect(late).resolves.toMatchObject({ ok: false });
+    release();
+    await flush(30);
+    expect(sessions.snapshot()).toMatchObject([{ key: "a" }]);
+    expect(store.size).toBe(0);
+    await sessions.deliver("a", "two", 2);
+    expect(store.has("a")).toBe(true);
+    sessions.dispose();
+  });
+
   it("reports why goose could not start", async () => {
     const fake = fakeSpawn({ http: false });
     const sessions = new AgentSessions({

@@ -72,6 +72,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const { model, provider } = config(agent.config);
       return [provider, model].filter(Boolean).join(" · ") || "Goose";
     },
+    sessions: {
+      list: (pubkey) =>
+        runtime.sessions(pubkey).flatMap(({ key, busy, at }) => {
+          // A one-off turn joins no conversation.
+          if (at === undefined) return [];
+          const [channelId = key, root] = key.split("/");
+          return [
+            {
+              channelId,
+              ...(root && { root }),
+              at,
+              status: busy ? "Working" : "Idle",
+            },
+          ];
+        }),
+      subscribe: (listener) => runtime.subscribe(listener),
+    },
     tabs: [
       {
         id: "settings",

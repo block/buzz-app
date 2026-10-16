@@ -350,6 +350,22 @@ describe("AgentSessions", () => {
     expect(sessions.seen("a")).toBe(0);
   });
 
+  it("dates a session by the messages it takes in and the turns it ends, not by a long turn keeping it open", async () => {
+    vi.useFakeTimers();
+    const { fake, sessions } = setup({}, true);
+    const at = () => sessions.snapshot()[0]?.at ?? 0;
+    const done = sessions.deliver("a", "one", 1);
+    await vi.advanceTimersByTimeAsync(10);
+    const started = at();
+    expect(started).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(IDLE_MS + 1);
+    expect(sessions.snapshot()).toMatchObject([{ key: "a", busy: true }]);
+    expect(at()).toBe(started);
+    fake.geese[0]?.turns[0]?.finish();
+    await done;
+    expect(at()).toBeGreaterThan(started);
+  });
+
   it("drops every agent's sessions when goose exits, and starts it again", async () => {
     const { fake, sessions, agent } = setup();
     const other = agent();
@@ -508,7 +524,7 @@ describe("AgentSessions", () => {
       ["session-2", "three"],
     ]);
     expect(sessions.snapshot()).toEqual([
-      { key: "a", busy: false, sessionId: "session-2" },
+      { key: "a", busy: false, sessionId: "session-2", at: Date.now() },
     ]);
     // Nothing is left open once the conversation goes quiet.
     await vi.advanceTimersByTimeAsync(IDLE_MS);

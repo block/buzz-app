@@ -652,9 +652,18 @@ export function useConversationTabs({
   }
 
   // Close all tabs and Close other tabs: one store update for both panes,
-  // including hidden tabs. False when the visit ended or nothing would close.
+  // including hidden tabs. False when the visit ended or nothing would
+  // change: nothing to close and the kept tab already selected.
   const closeTabsExcept = (keep?: string) => {
     const closing = tabState.tabs.filter((tab) => tab.id !== keep);
+    const kept = tabState.tabs.find((tab) => tab.id === keep);
+    const unselected =
+      kept && tabPane(kept) === "main"
+        ? tabState.mainSelected !== keep
+        : (!!kept ||
+            tabState.entries.some((entry) => panelTabId(entry) === keep) ||
+            (!!tabState.settings && keep === "settings")) &&
+          !(tabState.paneOpen && selectedTab === keep);
     if (
       !currentVisit() ||
       navigationSignal?.aborted ||
@@ -662,7 +671,8 @@ export function useConversationTabs({
         closing.length ||
         tabState.entries.some((entry) => panelTabId(entry) !== keep) ||
         (tabState.settings && keep !== "settings") ||
-        tabState.thread
+        tabState.thread ||
+        unselected
       )
     )
       return false;

@@ -1172,5 +1172,18 @@ it.each([
       ).toBe(false),
     );
     expect(state).toBe(closedSnapshot);
+    if (kept !== "First") return;
+    // With nothing else to close, an inactive kept thread is still selected.
+    act(() => state.selectMain(undefined));
+    expect(tab).toHaveAttribute("aria-selected", "false");
+    fireEvent.contextMenu(tab);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Close other tabs" }),
+    );
+    expect(screen.getByRole("tab", { name: kept })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: kept })).toHaveFocus();
   },
 );

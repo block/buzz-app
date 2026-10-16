@@ -517,6 +517,8 @@ external JSX plugins declare `inject = ["react"]` to use the shared instance. Th
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
 
+### Discovery metadata
+
 Plugin manifests may include display-only discovery metadata:
 
 ```json
@@ -524,7 +526,7 @@ Plugin manifests may include display-only discovery metadata:
   "id": "example.invoices",
   "name": "Invoices",
   "apiVersion": 1,
-  "description": "Reconcile invoices from the Invoices page.",
+  "description": "Reconcile invoices without leaving Buzz.",
   "discovery": {
     "category": "productivity",
     "tags": ["Accounting", "Invoice Management"]
@@ -567,50 +569,65 @@ categories are defined in [`src/app/plugin-categories.ts`](../src/app/plugin-cat
 
 These are host-recognized choices, not a closed manifest enum. Omitted or
 unrecognized categories appear under Other. For bundled plugins, the catalog test
-checks that every category is one of the recognized IDs. External authors can use
-other valid slugs, but should use a recognized one when it fits.
+requires a non-empty description and a recognized category. External authors can
+use other valid slugs, but should use a recognized one when it fits.
 
-Write the description as **what the plugin does and where to find it**. Name the
-primary entry point when it is not obvious, using the labels people see in Buzz:
-"Record voice notes from the message composer and play them in conversations."
-For a plugin spanning several surfaces, cover the main action and result here;
-leave the walkthrough to its README. Avoid feature inventories, implementation
-details and repeating an obvious page name just to fill the byte budget.
+Write the description around **what the plugin does**. For example, Voice Notes
+uses "Record voice notes and play them in conversations." Name an entry point
+only when it is not obvious, using the labels people see in Buzz. Leave the
+walkthrough to the README. Avoid feature inventories, implementation details and
+repeating an obvious page name just to fill the byte budget.
 
-Use readable tags for useful topics or search terms that the category and
-description do not already explain. Categories describe purpose; they do not list
-every UI surface a plugin touches. Discovery tags must not claim host-curated
-status, permissions, signing, provenance or runtime health; the host owns those
-decisions and states.
+Use tags for useful topics or search terms that the category and description do
+not already explain. Both plain-text terms and slugs are valid; the schema does
+not require one naming style. Categories describe purpose; they do not list every
+UI surface a plugin touches. Keep `Essentials` and `Core` for host-curated bundled
+metadata; external plugins should not use them. This is authoring guidance, not a
+manifest validation rule. Discovery tags must not claim permissions, signing,
+provenance or runtime health; the host owns those decisions and states.
+
+The pending [catalog update](https://github.com/block/buzz-app/pull/1246) adds
+`agent-tools` (Agent tools), separates agent utilities from agent management,
+reorders the categories and adds the bundled `Core` tag. The table above reflects
+current main; update it from `plugin-categories.ts` when that change lands.
 
 ### Writing the plugin README
 
-Use `README.md` to explain the experience beyond the short description. Include:
+Keep the user guide short and positive: `# <plugin name>`, a couple of sentences
+about what it adds, then one `## Getting started` heading with basic steps. Put
+entry points and any required setup in those steps. Focus on using the plugin;
+skip default-enabled status and descriptions of what turning it off removes.
+For bundled plugins, the pending Settings change enforces this heading structure
+in `src/bundled/readmes.test.ts`. Contributor specifications may follow a `---`
+separator after the user guide.
 
-- **What it does:** a short overview of the user benefit.
-- **Where you'll find it:** the entry points and visible labels, such as a
-  composer action, page, side panel or Settings section. Explain multiple surfaces
-  here rather than turning the category into a surface list.
-- **Setup and requirements:** configuration, supported hosts and required host
-  services; explain what is unavailable on an unsupported host.
-- **How to use it and its limits:** the main workflow, relevant data storage or
-  network behavior, and what resets on navigation, disable or reload.
-
-For example, a voice-note plugin's location section could read:
+For example, the bundled Voice Notes guide uses:
 
 ```markdown
-## Where you'll find it
+# Voice Notes
 
-Record from the microphone button in the message composer. Voice notes appear
-as playable attachments in conversations.
+Record a voice note when talking is easier than typing.
+
+## Getting started
+
+1. Choose **Record voice note** (the microphone) in the composer.
+2. Choose **Finish voice note** to attach it, then send.
+3. Play voice notes in conversations, and change their speed if you like.
 ```
 
-Use ordinary Markdown and links; do not rely on raw HTML, remote images or
-embedded data URLs. Put the README beside `manifest.json` and `plugin.js` in the
-built plugin folder; a repository-level README is not automatically included.
+README packaging and display are separate. Current main does not display plugin
+READMEs. The pending [Settings details surface](https://github.com/block/buzz-app/pull/1176)
+displays only READMEs shipped with Buzz for bundled plugins; it does not display
+packaged READMEs from external installations. External authors can still package
+a README, but should not promise that it will appear in Settings.
+
+For that bundled renderer, use ordinary Markdown and external HTTPS links.
+Credential-free HTTP links are also accepted; relative and in-page links render
+as text. Raw HTML is skipped and images render as alt text rather than loading
+remote media or data URLs. Put an external build's README beside `manifest.json`
+and `plugin.js`; a repository-level README is not automatically included.
 The [packaging rules below](#loading-from-folders-and-repositories) cover the
-README/icon size limits, reserved filenames and signature coverage. Packaging
-content does not guarantee that every host version displays it.
+README/icon size limits, reserved filenames and signature coverage.
 See the [example authoring walkthrough](../examples/plugins/README.md#add-discovery-metadata-and-a-readme)
 for a manifest with these optional fields.
 

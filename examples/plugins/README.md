@@ -44,35 +44,33 @@ you can extend `counter/manifest.json` like this:
   "id": "example.counter",
   "name": "Counter playground",
   "apiVersion": 1,
-  "description": "Try a local click counter on the Counter playground page.",
+  "description": "Try a click counter to explore plugin pages.",
   "discovery": {
     "category": "developer-tools-and-integrations",
-    "tags": ["Examples", "Offline"]
+    "tags": ["Examples", "React"]
   }
 }
 ```
 
 Choose the category from the [recognized Settings categories](../../docs/plugin-architecture.md#writing-plugin-discovery-metadata).
-The description explains both the behavior and entry point; tags add useful
-search terms. These optional fields do not change the runtime API version.
+The description explains the behavior; tags add useful search terms. These
+optional fields do not change the runtime API version.
 Older hosts reject `description` and `discovery`, so omit both when targeting them.
 
-Add `counter/README.md` beside its manifest and prebuilt module, for example:
+You can package `counter/README.md` beside its manifest and prebuilt module.
+Settings does not display external plugin READMEs, including this one. Keep the
+guide in the same short shape used for bundled plugins, for example:
 
 ```markdown
 # Counter playground
 
-Try a local counter without network access or saved data.
+Explore a plugin page with a simple click counter.
 
-## Where you'll find it
+## Getting started
 
-Enable the plugin in Settings → Plugins, then open Counter playground from
-page navigation.
-
-## Use and limits
-
-Click the counter button to increment. The count resets when you leave the page.
-Disabling the plugin removes its page from navigation.
+1. Enable the plugin in Settings → Plugins, then open **Counter playground**
+   from page navigation.
+2. Click the counter button to increment the count.
 ```
 
 See [plugin README guidance](../../docs/plugin-architecture.md#writing-the-plugin-readme)

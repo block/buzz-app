@@ -298,6 +298,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             ) : settings ? (
               <Settings
                 agents={services.agents}
+                decisions={services.decisions}
                 plugins={plugins}
                 cards={services.settingsCards}
                 communities={services.communities}

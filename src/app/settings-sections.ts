@@ -2,6 +2,7 @@
 // route classification. Visibility and authorization stay with settingsCards.
 import {
   BellIcon,
+  BrainIcon,
   ChatCircleIcon,
   DownloadIcon,
   KeyboardIcon,
@@ -45,6 +46,7 @@ const app: readonly SettingsSection[] = [
   { id: "notifications", label: "Notifications", icon: BellIcon },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
   { id: "agents", label: "Agents", icon: RobotIcon },
+  { id: "decisions", label: "Decisions", icon: BrainIcon },
   { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
   { id: "updates", label: "Updates", icon: DownloadIcon },
 ];

@@ -1250,7 +1250,8 @@ is over 128 KiB (`input_limit`), or the call times out, fails, or returns
 answers that do not fit the questions. A failed call is not retried and never
 falls back to another backend.
 
-The device's backend, from `ctx.decisions.backend()`:
+The device's backend, from `ctx.decisions.backend()`. The user chooses it in
+Settings > Decisions, which also holds the TypeSafe key:
 
 | Backend | Service | Credentials |
 |---------|---------|-------------|

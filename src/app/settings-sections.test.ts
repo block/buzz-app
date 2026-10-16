@@ -35,6 +35,7 @@ const app = [
   "notifications",
   "shortcuts",
   "agents",
+  "decisions",
   "plugins",
   "updates",
 ];

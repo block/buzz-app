@@ -131,7 +131,8 @@ export type SessionsOptions = Readonly<{
   choice(): Choice;
   /** Changes when a setting a session was opened with has changed. */
   fingerprint(): string;
-  /** Called when a conversation's session opens or closes. */
+  /** Called when a conversation's session opens, is sent a message, or
+   * closes. */
   onChange?(): void;
 }>;
 
@@ -435,7 +436,10 @@ export class AgentSessions {
     activity: ActivityReceipt,
     model: string | undefined,
   ) {
-    const settled = await live.session.send(text, activity, model);
+    const sent = live.session.send(text, activity, model);
+    // Sending made it busy; a snapshot read when it opened is not.
+    this.options.onChange?.();
+    const settled = await sent;
     if (this.live.get(key) === live) {
       this.touch(key, live);
       if (!live.session.busy && this.stale(live)) this.drop(key, live);

@@ -32,7 +32,7 @@ export function DeliveryNotice({
       </span>
       {canRetry && (
         <Button
-          size="xs"
+          size="inline"
           variant="ghost"
           title={feedback}
           onClick={() => retry(row.id)}

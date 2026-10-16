@@ -4,8 +4,7 @@ For owners and admins of the selected community. Your role determines which
 invitations, role changes and removals are available. Changes apply to that
 community.
 
-Moderation is a separate plugin for authorized relay staff working across
-communities. Being a community owner or admin does not grant relay staff access.
+Being a community owner or admin does not grant relay staff access.
 
 ## Getting started
 

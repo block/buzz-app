@@ -1626,3 +1626,202 @@ it("reads users by id without the name search", async () => {
   );
   expect(client.searchProfiles).not.toHaveBeenCalled();
 });
+
+const note = (
+  pubkey: string,
+  name: string,
+  created_at: number,
+  extra: string[][] = [],
+  content = `${name} by ${pubkey.slice(0, 1)}`,
+) =>
+  event({
+    id: `${pubkey.slice(0, 1)}${created_at}`.padEnd(64, "0"),
+    kind: 30023,
+    pubkey,
+    created_at,
+    content,
+    tags: [["d", name], ["title", `${name} title`], ...extra],
+  });
+
+it("reads a shared note by name, from whichever author has it", async () => {
+  const { client } = fake([
+    ...community,
+    note(alice, "pr-recipe", 200, [
+      ["summary", "how to open a PR"],
+      ["t", "git"],
+    ]),
+    note(alice, "pr-recipe", 150),
+  ]);
+  await expect(
+    callTool(client, {}, "notes_get", { name: "pr-recipe" }),
+  ).resolves.toBe(
+    [
+      `30023:${alice}:pr-recipe by Alice Smith, 1970-01-01T00:03Z`,
+      "title: pr-recipe title",
+      "summary: how to open a PR",
+      "tags: git",
+      "",
+      "pr-recipe by a",
+    ].join("\n"),
+  );
+  await expect(
+    callTool(client, {}, "notes_get", { name: "missing" }),
+  ).resolves.toBe("No note missing.");
+  await expect(
+    callTool(client, {}, "notes_get", { name: "Bad Name" }),
+  ).rejects.toThrow("Bad note name Bad Name");
+});
+
+it("asks which author's note when several share a name", async () => {
+  const { client } = fake([
+    ...community,
+    note(alice, "recipe", 200),
+    note(bob, "recipe", 300),
+  ]);
+  await expect(
+    callTool(client, {}, "notes_get", { name: "recipe" }),
+  ).rejects.toThrow(
+    `2 authors have a note recipe; give author or latest.\n${bob} Bob`,
+  );
+  await expect(
+    callTool(client, {}, "notes_get", { name: "recipe", latest: true }),
+  ).resolves.toMatch(/\nrecipe by b$/);
+  // An author by display name, pubkey or npub.
+  await expect(
+    callTool(client, {}, "notes_get", {
+      name: "recipe",
+      author: "alice smith",
+    }),
+  ).resolves.toMatch(/\nrecipe by a$/);
+  await expect(
+    callTool(client, {}, "notes_get", { name: "recipe", author: bob }),
+  ).resolves.toMatch(/\nrecipe by b$/);
+  await expect(
+    callTool(client, {}, "notes_get", { name: "recipe", author: "Carol" }),
+  ).rejects.toThrow("No one is named Carol.");
+  await expect(
+    callTool(client, {}, "notes_get", {
+      name: "recipe",
+      author: bob,
+      latest: true,
+    }),
+  ).rejects.toThrow("Give author or latest, not both.");
+});
+
+it("lists your notes by default, or everyone's, newest first", async () => {
+  const { client } = fake([
+    ...community,
+    note(me, "mine", 200, [["t", "ops"]]),
+    note(me, "older", 100),
+    note(alice, "hers", 300, [["t", "ops"]]),
+  ]);
+  await expect(callTool(client, {}, "notes_get", {})).resolves.toBe(
+    `mine ${me}  1970-01-01T00:03Z mine title\nolder ${me}  1970-01-01T00:01Z older title`,
+  );
+  await expect(
+    callTool(client, {}, "notes_get", { author: "all", tag: "ops" }),
+  ).resolves.toBe(
+    `hers ${alice} Alice Smith 1970-01-01T00:05Z hers title\nmine ${me}  1970-01-01T00:03Z mine title`,
+  );
+  expect(vi.mocked(client.query).mock.calls.at(-2)?.[0]).toEqual([
+    { kinds: [30023], "#t": ["ops"], limit: 50 },
+  ]);
+  const { client: empty } = fake(community);
+  await expect(callTool(empty, {}, "notes_get", {})).resolves.toBe("No notes.");
+});
+
+it("publishes a note in the CLI's shape, keeping what an update leaves out", async () => {
+  const { client, published } = fake(community);
+  await expect(
+    callTool(client, {}, "notes_set", { name: "plan", text: "draft" }),
+  ).rejects.toThrow("title is required for a new note.");
+  await expect(
+    callTool(client, {}, "notes_set", {
+      name: "plan",
+      title: "Plan",
+      text: " ",
+    }),
+  ).rejects.toThrow("A note needs text.");
+  await expect(
+    callTool(client, {}, "notes_set", {
+      name: "plan",
+      title: "Plan",
+      summary: "the plan",
+      tags: ["ops", "q4"],
+      path: "plan.md",
+    }),
+  ).resolves.toBe(`saved 30023:${me}:plan`);
+  expect(published).toEqual([
+    {
+      kind: 30023,
+      content: "# plan.md",
+      tags: [
+        ["d", "plan"],
+        ["title", "Plan"],
+        ["summary", "the plan"],
+        ["t", "ops"],
+        ["t", "q4"],
+        ["published_at", expect.stringMatching(/^\d+$/)],
+      ],
+    },
+  ]);
+
+  const prior = note(me, "plan", 100, [
+    ["summary", "the plan"],
+    ["t", "ops"],
+    ["published_at", "90"],
+  ]);
+  const { client: again, published: updates } = fake([...community, prior]);
+  await callTool(again, {}, "notes_set", { name: "plan", text: "v2" });
+  await callTool(again, {}, "notes_set", {
+    name: "plan",
+    text: "v3",
+    title: "New",
+    summary: "",
+    tags: [],
+  });
+  expect(updates).toEqual([
+    {
+      kind: 30023,
+      content: "v2",
+      tags: [
+        ["d", "plan"],
+        ["title", "plan title"],
+        ["summary", "the plan"],
+        ["t", "ops"],
+        ["published_at", "90"],
+      ],
+    },
+    {
+      kind: 30023,
+      content: "v3",
+      tags: [
+        ["d", "plan"],
+        ["title", "New"],
+        ["summary", ""],
+        ["published_at", "90"],
+      ],
+    },
+  ]);
+  // Only your own note is the one an update replaces.
+  expect(vi.mocked(again.query).mock.calls[0]?.[0]).toEqual([
+    { kinds: [30023], authors: [me], "#d": ["plan"], limit: 1 },
+  ]);
+});
+
+it("deletes only your own note, by its address", async () => {
+  const { client, published } = fake([
+    ...community,
+    note(me, "plan", 100),
+    note(alice, "hers", 100),
+  ]);
+  await expect(
+    callTool(client, {}, "notes_rm", { name: "hers" }),
+  ).rejects.toThrow("You have no note hers.");
+  await expect(
+    callTool(client, {}, "notes_rm", { name: "plan" }),
+  ).resolves.toBe(`deleted 30023:${me}:plan`);
+  expect(published).toEqual([
+    { kind: 5, content: "", tags: [["a", `30023:${me}:plan`]] },
+  ]);
+});

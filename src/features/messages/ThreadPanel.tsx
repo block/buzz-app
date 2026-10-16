@@ -1142,6 +1142,7 @@ function ThreadMessages({
         : undefined;
       const message = (
         <MessageRow
+          viewer={session.viewer}
           extensions={extensions}
           session={session}
           scope={scope}
@@ -1254,12 +1255,6 @@ function ThreadMessages({
   };
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
-  // Match the channel's relay summary total. Without a positive total,
-  // stay neutral: visible rows and reader state cannot prove empty history.
-  const replyCount = snapshot.root?.replyCount ?? 0;
-  const replyLabel = replyCount
-    ? `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`
-    : "Replies";
   const showOlderPageStatus =
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
@@ -1386,6 +1381,7 @@ function ThreadMessages({
         <div data-thread-rows="" inert={positioning}>
           {snapshot.root ? (
             <MessageRow
+              viewer={session.viewer}
               extensions={extensions}
               session={session}
               scope={scope}
@@ -1414,11 +1410,6 @@ function ThreadMessages({
           ) : snapshot.status !== "loading" ? (
             <p className={styles.empty}>Original message unavailable.</p>
           ) : null}
-          {snapshot.root && snapshot.replies.length > 0 && (
-            <div className={styles.replyDivider}>
-              <span>{replyLabel}</span>
-            </div>
-          )}
           <ol>
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>

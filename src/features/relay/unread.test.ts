@@ -2635,7 +2635,7 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
     latestMessageId: newer.id,
     mentioned: true,
     unreadCount: 2,
-    preview: "First reply",
+    preview: "Mentioned reply",
   });
   expect(before.items[0]).toMatchObject({
     channelId: "dm",

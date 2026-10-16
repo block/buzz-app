@@ -134,7 +134,7 @@ it.each(["reply", "message", "message after reply"])(
     await chooseFilter("DMs");
     await waitFor(() => expect(rows()).toHaveLength(1));
     expect(rows()[0]).toHaveAttribute("data-inbox-row", "dm-room:dm-room");
-    expect(rows()[0]).toHaveTextContent("A direct reply");
+    expect(rows()[0]).toHaveTextContent("Fresh explicit DM mention");
   },
 );
 
@@ -930,7 +930,9 @@ it.each(["reply", "unrelated", "mention"] as const)(
         expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
       );
       expect(
-        rows().some((row) => row.textContent?.includes("A thread update")),
+        rows().some((row) =>
+          row.textContent?.includes(`Intervening ${update}`),
+        ),
       ).toBe(true);
       await chooseFilter("Archived", "Show");
       expect(rows()).toHaveLength(0);
@@ -2476,7 +2478,7 @@ it.each([false, true])(
     h.events.push(root, child);
     h.emit([root, child]);
     render(h.view);
-    await screen.findByText("Two-step root");
+    await screen.findByText("Two-step reply");
     await waitFor(() =>
       expect(
         screen.queryByText("Checking recent activity…"),
@@ -2499,7 +2501,7 @@ it.each([false, true])(
     const release = h.holdSave();
     try {
       const target = rows().find((row) =>
-        row.textContent?.includes("Two-step root"),
+        row.textContent?.includes("Two-step reply"),
       );
       if (!target) throw Error("Missing two-step row");
       fireEvent.click(within(target).getByRole("button", { name: /^Open / }));
@@ -2548,7 +2550,7 @@ it("two-step read access loss during its first save stops before the second step
   h.events.push(root, child);
   h.emit([root, child]);
   render(h.view);
-  await screen.findByText("Cancelled root");
+  await screen.findByText("Cancelled reply");
   await waitFor(() =>
     expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
   );
@@ -2560,7 +2562,7 @@ it("two-step read access loss during its first save stops before the second step
   const release = h.holdSave();
   try {
     const row = rows().find((row) =>
-      row.textContent?.includes("Cancelled root"),
+      row.textContent?.includes("Cancelled reply"),
     );
     if (!row) throw Error("Missing two-step row");
     await user.click(within(row).getByRole("button", { name: /^Open / }));
@@ -3421,14 +3423,14 @@ it("a two-step read retries its rejected thread prefix without losing the saved 
   h.events.push(root, child);
   h.emit([root, child]);
   render(h.view);
-  await screen.findByText("Partial root");
+  await screen.findByText("Partial reply");
   await waitFor(() =>
     expect(
       screen.queryByText("Checking recent activity…"),
     ).not.toBeInTheDocument(),
   );
   h.failThreadSave();
-  const row = rows().find((row) => row.textContent?.includes("Partial root"));
+  const row = rows().find((row) => row.textContent?.includes("Partial reply"));
   if (!row) throw Error("Missing two-step row");
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -3595,9 +3597,9 @@ it("freezes the top-level origin coordinate when read-state switches representat
   h.addEvent(reply);
   h.emit([root, reply]);
   render(h.view);
-  await screen.findByText("New root mention");
+  await screen.findByText("New reply mention");
   const row = rows().find((item) =>
-    item.textContent?.includes("New root mention"),
+    item.textContent?.includes("New reply mention"),
   );
   if (!row) throw Error("Missing root mention");
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
@@ -3725,14 +3727,14 @@ it("retries the remaining captured prefix after a harmless new reply while the s
   h.addEvent(child);
   h.emit([root, child]);
   render(h.view);
-  await screen.findByText("Retry root");
+  await screen.findByText("Retry reply");
   await waitFor(() =>
     expect(
       screen.queryByText("Checking recent activity…"),
     ).not.toBeInTheDocument(),
   );
   h.failThreadSave();
-  const row = rows().find((item) => item.textContent?.includes("Retry root"));
+  const row = rows().find((item) => item.textContent?.includes("Retry reply"));
   if (!row) throw Error("Missing retry row");
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
   expect(await screen.findByRole("alert")).toHaveTextContent(

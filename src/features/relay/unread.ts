@@ -1009,14 +1009,11 @@ export function createUnread({
               ...(representative.rootId
                 ? { rootId: representative.rootId }
                 : {}),
-              authorId: representative.event.pubkey,
-              workflowOwnerId: workflowOwner(
-                representative.event,
-                workflowAuthority,
-              ),
-              preview:
-                content.get(representative.event.id) ??
-                representative.event.content,
+              // The row shows its newest message, matching its time; opening
+              // still resumes at the representative.
+              authorId: latest.event.pubkey,
+              workflowOwnerId: workflowOwner(latest.event, workflowAuthority),
+              preview: content.get(latest.event.id) ?? latest.event.content,
               createdAt: latest.event.created_at,
               mentioned: entries.some((entry) => entry.mentioned),
               messages: Object.freeze(

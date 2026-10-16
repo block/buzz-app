@@ -461,6 +461,15 @@ export const ImageIcon = defineIcon("tabler", TablerImageIcon);
 
 import TablerOpenAILogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandOpenai.mjs";
 export const OpenAILogoIcon = defineIcon("tabler", TablerOpenAILogoIcon);
+import TablerGoogleLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandGoogle.mjs";
+export const GoogleLogoIcon = defineIcon("tabler", TablerGoogleLogoIcon);
+import TablerDatabricksLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandDatabricks.mjs";
+export const DatabricksLogoIcon = defineIcon(
+  "tabler",
+  TablerDatabricksLogoIcon,
+);
+import TablerAwsLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandAws.mjs";
+export const AwsLogoIcon = defineIcon("tabler", TablerAwsLogoIcon);
 import TablerMicrophoneIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophone.mjs";
 export const MicrophoneIcon = defineIcon("tabler", TablerMicrophoneIcon);
 

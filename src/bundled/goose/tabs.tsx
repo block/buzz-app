@@ -17,6 +17,15 @@ import type {
   AgentViewProps,
 } from "../../features/agents/service";
 import { PanelSubview } from "../../features/panels/PanelSubview";
+import {
+  AwsLogoIcon,
+  ClaudeLogoIcon,
+  DatabricksLogoIcon,
+  type DefinedIcon,
+  GoogleLogoIcon,
+  GooseLogoIcon,
+  OpenAILogoIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -58,6 +67,20 @@ const SCOPES = [
 ];
 
 type Choice = Readonly<{ provider: string; model: string }>;
+
+/** Marks for goose's most-used providers, by goose's provider ID. */
+const PROVIDER_ICONS: ReadonlyMap<string, DefinedIcon> = new Map([
+  ["anthropic", ClaudeLogoIcon],
+  ["openai", OpenAILogoIcon],
+  ["google", GoogleLogoIcon],
+  ["databricks", DatabricksLogoIcon],
+  ["aws_bedrock", AwsLogoIcon],
+]);
+/** The provider's mark, or undefined for one without a mark. */
+const providerIcon = (id: string | undefined) => {
+  const Icon = id ? PROVIDER_ICONS.get(id) : undefined;
+  return Icon && <Icon size={18} aria-hidden="true" />;
+};
 type Read<T> = (
   | { status: "loading"; value?: T }
   | { status: "ready"; value: T }
@@ -171,6 +194,7 @@ export function createTabs({
           label="Provider"
           variant="field"
           value={value.provider}
+          leading={providerIcon(id)}
           disabled={disabled || !providers}
           {...(listing.status === "error"
             ? { error: listing.error }
@@ -190,6 +214,7 @@ export function createTabs({
                 ...(providers?.providers ?? []).map((item) => ({
                   value: item.id,
                   label: item.name,
+                  leading: providerIcon(item.id),
                   description: item.configured ? "Set up" : item.description,
                 })),
               ],
@@ -674,6 +699,7 @@ export function createTabs({
     const fallback = [named(defaults?.provider), defaults?.model]
       .filter(Boolean)
       .join(" · ");
+    const providerMark = providerIcon(current.provider || defaults?.provider);
     const label =
       choiceLabel(current, named) ??
       (fallback ? `goose default (${fallback})` : "goose default");
@@ -683,12 +709,23 @@ export function createTabs({
         <div className="buzz-select" data-variant="compact">
           <Button
             size="sm"
-            variant={modelAppearance === "subtle" ? "ghost" : "outline"}
+            variant={modelAppearance === "subtle" ? "subtle" : "outline"}
             disabled={disabled}
-            title="Choose provider and model"
             onClick={() => setOpen(true)}
           >
-            <span className="buzz-select-value">{label}</span>
+            <span className="buzz-select-value-content">
+              <span className="buzz-select-leading" aria-hidden="true">
+                <GooseLogoIcon size={18} />
+              </span>
+              {providerMark && (
+                <span className="buzz-select-leading" aria-hidden="true">
+                  {providerMark}
+                </span>
+              )}
+              <span className="buzz-select-value" title={label}>
+                {label}
+              </span>
+            </span>
           </Button>
         </div>
         {open && (

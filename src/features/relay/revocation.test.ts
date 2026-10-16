@@ -170,6 +170,22 @@ it("denying one channel retires another's permission read, which rereads until a
   expect(h.session.channels.list().channels.map((ch) => ch.id)).toEqual([c]);
 });
 
+it("session dispose aborts an in-flight permission read without rereading", async () => {
+  const h = setup();
+  const c = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  h.emit([roster(relay, c, [viewer.pubkey], 10)]);
+  const load = h.session.channelLifecycle.load(c);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const rejected = expect(load).rejects.toMatchObject({ name: "AbortError" });
+  // Disposal retires the shared read without the lifecycle rereading it:
+  // the closed lifecycle rejects before it reaches the closed reader, which
+  // would otherwise reject each reread synchronously.
+  h.dispose();
+  await rejected;
+  expect(h.pending).toHaveLength(1);
+  expect(h.pending[0]?.signal?.aborted).toBe(true);
+});
+
 it("a complete roster omitting a generic-only channel purges it; partial live discovery does not", async () => {
   const h = setup();
   h.emit([message(alice, "a", "private", 10)]);

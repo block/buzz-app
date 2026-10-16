@@ -71,7 +71,6 @@ import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
-import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import {
   ConversationChannel,
   ConversationComposer,
@@ -1407,7 +1406,6 @@ function ChannelWorkspace({
         />
       )}
       <Panel as="article" aria-label="Conversation">
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: file-drop fallback; the composer also provides a keyboard-accessible picker. */}
         <div
           className={`${styles.conversation}${flatSession ? ` ${styles.sessionConversation}` : ""}`}
           style={
@@ -1419,8 +1417,6 @@ function ChannelWorkspace({
             } as React.CSSProperties
           }
           data-attachment-drop-zone=""
-          onDragOver={rejectUnhandledFileDrop}
-          onDrop={rejectUnhandledFileDrop}
         >
           {composingMessage ? (
             <NewMessage

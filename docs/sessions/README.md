@@ -61,20 +61,38 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   chat, including from the composer, after the menu's fresh permission read; it does
   nothing where the menu offers no Archive. Success returns to Me. Archived chats
   are restored from search and Channel Settings, as before.
-- Me uses the ordinary composer with a visible selected assistant plus explicit
-  owner-scoped mentions. The selected assistant is device-local view intent keyed
-  by account, community and chat; it is not Canvas, group data or channel metadata.
-  A plain send targets that assistant, while explicit authored mentions override
-  it. Clearing the selection allows an unaddressed message. Me does not apply the
-  global automatic remembered-mention prefill; Messages retains that behavior.
-  The empty picker says “Choose follow-up assistant” so a one-off mention is not
-  mistaken for persistent routing; trials should select the picker before testing
-  an unmentioned follow-up.
-  The selected assistant is revalidated before every send, and a failure keeps the
-  draft. Model and effort controls appear only when the selected or mentioned
-  agent exposes those existing capabilities. Saved placement must load before the
-  Me reader enables sending; an unavailable preference read is not evidence of
-  Messages.
+- Me (labelled **Solo** in navigation) uses the ordinary composer with explicit
+  owner-scoped agent tags. Empty new-chat drafts start tagged with the device's default
+  agent for this account/community. **Agents → right-click → Make default agent**
+  changes that choice; its card shows **Default agent**. An unavailable choice
+  falls back to the first managed agent, then the first selectable agent, only
+  after agent evidence is complete and the requested archive read has settled.
+  An available explicitly chosen default does not wait for fallback evidence.
+  Follow-ups keep all exact agents notified by the previous send, just like
+  Multiplayer threads, including the shared Remember mentioned agents preference.
+  The account default never replaces recipients in an existing chat.
+  Removing or replacing a tag is respected for that draft. Both Send and Enter
+  require a tagged agent; existing signed-send recovery preserves its recipients.
+  On upgrade, the retired per-chat assistant choice seeds an empty Solo draft
+  once, only with that exact eligible agent and remembering enabled. Existing
+  prose, attachments, edited drafts and opt-out consume the old choice without
+  replacing current intent. Failed draft persistence preserves it for retry.
+  It is never a continuing routing fallback. A legacy pending creation keeps
+  the exact recipient admitted in its receipt; after delivery, that eligible
+  recipient can seed its follow-up without modifying or resending signed bytes.
+  A blocked Enter submission shows “Tag an agent to send” inline. The project control follows the editor tools on the same rail;
+  model/effort controls read the explicitly tagged recipients.
+  Saved placement must load before sending; unavailable evidence is not Messages.
+- Claude Code can name a Solo chat from its own generated session title after its
+  first successful turn. Only the first tagged agent on the owner’s original
+  message can propose the title, even when a retry has different words or tag
+  order; the chat must still have its original first-message name. A bounded
+  verified read checks up to 100 owner messages through the triggering turn.
+  Full, missing, unsent or ambiguous same-second history leaves the title
+  unchanged. Human names are never replaced. Codex title generation is intentionally not implemented. This reads
+  Claude Code's local history, adds no model request, and uses the owner's ordinary
+  channel-details save with revision validation. Live/native title acceptance is
+  a separate gate from unit tests.
 - Me reuses Messages' sidebar working-agent signal, animated indicator and activity
   popover, including owned-agent typing in threads and unread-thread actions.
   Agent activity opens the agent's profile in Me's per-conversation panel workspace;

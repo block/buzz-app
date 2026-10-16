@@ -388,6 +388,8 @@ export type RunnerHost = {
   remembered(pubkey: string, slug: string, body: string): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(pubkey: string): void;
+  /** A harness's title for the conversation a mention started; may name a Me chat. */
+  named(agent: Agent, event: RelayEvent, title: string): void;
 };
 
 export class AgentRunners {
@@ -1781,6 +1783,11 @@ export class AgentRunners {
       attention: this.attention(agent.pubkey),
     });
     const working = this.working(runner, job, agent);
+    const trigger = job.trigger;
+    const named =
+      trigger.type === "mention"
+        ? (title: string) => this.host.named(agent, trigger.event, title)
+        : undefined;
     const completion = Promise.resolve().then(async () => {
       const pick = await pickFor(job.trigger, agent, type);
       const start = this.host.start(agent);
@@ -1801,6 +1808,7 @@ export class AgentRunners {
         ignored: () => job.work?.remove(),
         acknowledged: () => job.work?.started(),
         superseded: () => job.work?.supersede(),
+        ...(named ? { named } : {}),
         step: (tool: string, target?: string) => job.work?.step(tool, target),
         current: () => !lifetime.aborted && this.stillCurrent(runner, job),
       });

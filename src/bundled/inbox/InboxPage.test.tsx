@@ -3255,9 +3255,18 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),
   ).not.toBeInTheDocument();
-  // Archiving the regrouped row still closes the tab it opened.
   const [row] = rows();
   if (!row) throw Error("Missing regrouped row");
+  // Reselecting the regrouped row keeps its session timeline.
+  fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
+  await act(async () => {});
+  expect(
+    screen.getByRole("textbox", { name: "Message this session" }),
+  ).toHaveValue("Draft in progress");
+  expect(
+    screen.queryByRole("textbox", { name: "Reply to thread" }),
+  ).not.toBeInTheDocument();
+  // Archiving the regrouped row still closes the tab it opened.
   fireEvent.click(within(row).getByRole("button", { name: /^Archive / }));
   await waitFor(() => expect(queryReader()).not.toBeInTheDocument());
   expect(sideTabs()).toEqual([]);

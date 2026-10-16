@@ -1115,7 +1115,15 @@ function InboxList({
                             }
                             onClick={() => {
                               if (busy.current) return;
-                              if (!openRow(item, channel))
+                              // The selected row reselects its captured tab, even
+                              // after regrouping would open it differently.
+                              const reselect =
+                                selectedId === item.id ? opened : undefined;
+                              if (
+                                reselect
+                                  ? !openTab(reselect)
+                                  : !openRow(item, channel)
+                              )
                                 void navigator.open({
                                   version: 1,
                                   kind: "conversation",

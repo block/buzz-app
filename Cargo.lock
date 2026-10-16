@@ -725,11 +725,15 @@ dependencies = [
 name = "buzzodz-plugins"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bech32 0.11.1",
  "buzz-credential-store",
  "cap-std",
+ "crc32fast",
  "dirs 6.0.0",
  "dotenvy",
+ "flate2",
+ "image",
  "libc",
  "nostr 0.45.5",
  "serde",

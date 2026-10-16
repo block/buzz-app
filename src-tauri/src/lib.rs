@@ -37,6 +37,7 @@ mod notifications;
 mod os_idle;
 mod window_controls;
 mod window_state;
+mod workspace_folder;
 use os_idle::get_os_idle_seconds;
 mod relay;
 mod relay_admin;
@@ -253,19 +254,32 @@ async fn prepare_import(
 #[tauri::command]
 async fn workspace_pick_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    title: Option<String>,
+    start: Option<String>,
 ) -> Result<Option<String>, String> {
+    // Open at the current choice, or its nearest existing parent ("~" is home).
+    let home = app.path().home_dir().ok();
+    let start = start.and_then(|path| {
+        let path = workspace_folder::expand(&path, home.as_deref());
+        path.ancestors()
+            .find(|dir| dir.is_dir())
+            .map(|dir| dir.to_path_buf())
+    });
     tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
+        let dialog = app
+            .dialog()
             .file()
-            .set_title("Choose a source repository")
-            .blocking_pick_folder()
-            .map(|folder| {
-                folder
-                    .into_path()
-                    .map(|path| path.to_string_lossy().into_owned())
-                    .map_err(|error| error.to_string())
-            })
-            .transpose()
+            .set_title(title.as_deref().unwrap_or("Choose a folder"));
+        match start {
+            Some(dir) => dialog.set_directory(dir),
+            None => dialog,
+        }
+        .blocking_pick_folder()
+        .map(|folder| {
+            let path = folder.into_path().map_err(|error| error.to_string())?;
+            workspace_folder::display(&path, home.as_deref())
+        })
+        .transpose()
     })
     .await
     .map_err(|error| error.to_string())?
@@ -488,10 +502,12 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_set_picture,
         app_agents::app_agent_set_type,
         app_agents::app_agent_delete,
+        app_agents::app_agent_begin_delete,
         app_agents::app_agent_forget,
         app_agents::app_agent_publish,
         app_agents::app_agent_publish_profile,
         app_agents::app_agent_query,
+        app_agents::app_agent_search_profiles,
         app_agents::app_agent_upload,
         app_agents::app_agent_media,
         app_agents::app_agent_remember,

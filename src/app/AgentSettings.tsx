@@ -28,7 +28,7 @@ export function AgentSettings({
       <Header id="agent-settings-title" title="Agent setup" />
       {agents && active && <AgentDefaults agents={agents} />}
       <div className="mt-section-gap">
-        <InlineHeader title="Conversations" />
+        <InlineHeader title="Agent behavior" />
         <SettingsGroup>
           <SwitchPreferenceRow
             label="Remember mentioned agents"

@@ -320,7 +320,7 @@ or the shared agent-choice projection (library and local agents), not a new look
 permission grant. Human recipients and
 plain typed names are not carried forward. The prefill is an ordinary scoped draft:
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
-**Settings → Buzz → Agent setup → Conversations → Remember mentioned agents** defaults on and is saved on this
+**Settings → Buzz → Agent setup → Agent behavior → Remember mentioned agents** defaults on and is saved on this
 device. Turning it off stops future prefills without changing the current draft;
 turning it back on does not restore old recipients. Solo chat auto-recipient rules are
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof

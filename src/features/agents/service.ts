@@ -108,6 +108,7 @@ import {
 import { meChat } from "./me-chat";
 import { readCheckpoints, writeCheckpoints } from "./catch-up";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
+import { nameMeChat } from "./me-chat-name";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -357,6 +358,9 @@ export type Delivery<Config = unknown> = Readonly<{
   /** A newer acknowledged request owns this turn's activity; hide this message's
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
+  /** The harness's own title for this mention's conversation. The host may
+   * name a Me chat with it once; the type need not know whether it did. */
+  named?(title: string): void;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
    * attention was turned off or its object disabled or removed; and for a
@@ -1039,6 +1043,14 @@ export class AgentsService extends Service implements Agents {
       remembered: (pubkey, slug, body) =>
         this.coreMemory.wrote(pubkey, slug, body),
       finished: (pubkey) => void this.coreMemory.refresh(pubkey),
+      named: (agent, event, title) =>
+        void nameMeChat(
+          this.relay(agent.pubkey),
+          agent.owner,
+          agent.pubkey,
+          event,
+          title,
+        ).catch((error) => console.warn("Couldn't name the Me chat", error)),
     });
     ctx.effect(() => {
       const stops = [
@@ -1185,8 +1197,14 @@ export class AgentsService extends Service implements Agents {
       agents: Object.freeze(
         identities
           .filter((identity) => !identity.deleted)
-          .map(({ pubkey, name, relay, owner }) =>
-            Object.freeze({ pubkey, name, relayUrl: relay, owner }),
+          .map(({ pubkey, name, relay, owner, picture }) =>
+            Object.freeze({
+              pubkey,
+              name,
+              relayUrl: relay,
+              owner,
+              ...(picture ? { picture } : {}),
+            }),
           ),
       ),
       ...(state.error ? { error: state.error } : {}),

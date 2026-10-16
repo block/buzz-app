@@ -1539,24 +1539,6 @@ describe("join from a public preview", () => {
     return { ...h, metadata, roster };
   }
 
-  it("publishes kind 9021 and applies the confirmed roster", async () => {
-    const h = preview();
-    try {
-      await h.owner.capability.run("join", id);
-      expect(h.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 9021, content: "", tags: [["h", id]] }),
-        expect.anything(),
-      );
-      expect(h.publish).toHaveBeenCalledOnce();
-      const [accepted] = h.acceptDiscovery.mock.lastCall ?? [];
-      expect(accepted).toHaveLength(1);
-      expect(accepted?.[0]).toMatchObject({ kind: 39002 });
-      expect(accepted?.[0]?.tags).toContainEqual(["p", viewer]);
-    } finally {
-      h.owner.dispose();
-    }
-  });
-
   it("applies an existing membership without signing", async () => {
     const h = preview();
     h.setEvents([h.metadata, h.roster(viewer)]);

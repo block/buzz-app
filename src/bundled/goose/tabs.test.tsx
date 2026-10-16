@@ -62,6 +62,13 @@ const PROVIDERS = [
       { name: "DATABRICKS_TOKEN", required: false, secret: true },
     ],
   },
+  // A provider Buzz has no mark for.
+  {
+    providerId: "openrouter",
+    providerName: "OpenRouter",
+    visibleInSetup: true,
+    configKeys: [],
+  },
 ];
 
 function created(
@@ -126,6 +133,35 @@ it("keeps New agent's card to instructions; the model field shows goose's defaul
       "goose default (Databricks · goose-claude)",
     ),
   );
+});
+
+it("marks the model field with goose, and with the provider's mark when Buzz has one", async () => {
+  created();
+  const user = userEvent.setup();
+  // goose's default provider, Databricks, has a mark.
+  await waitFor(() =>
+    expect(
+      modelButton().querySelector(".tabler-icon-brand-databricks"),
+    ).not.toBeNull(),
+  );
+  expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
+
+  const dialog = await openChoices();
+  await user.click(within(dialog).getByRole("combobox", { name: "Provider" }));
+  const databricks = await screen.findByRole("option", { name: "Databricks" });
+  expect(
+    databricks.querySelector(".tabler-icon-brand-databricks"),
+  ).not.toBeNull();
+  const openRouter = screen.getByRole("option", { name: "OpenRouter" });
+  expect(openRouter.querySelector("svg")).toBeNull();
+  await user.click(openRouter);
+  await user.click(within(dialog).getByRole("button", { name: "Use" }));
+
+  // Only goose's own mark stays.
+  const field = await screen.findByRole("button", {
+    name: "OpenRouter · default model",
+  });
+  expect(field.querySelectorAll("svg")).toHaveLength(1);
 });
 
 it("chooses a provider in its dialog, saves its key into goose, and tests it", async () => {

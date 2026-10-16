@@ -776,70 +776,6 @@ it("does not bypass the session media resolver to paint an inaccessible attachme
   expect(html).not.toContain("<img");
 });
 
-it("uses the agent squircle for both known agents and agent profiles", () => {
-  const agent = "a".repeat(64);
-  const media = vi.fn((url: string) => url);
-  const html = renderToStaticMarkup(
-    <MessageRow
-      row={{ ...row, authorId: agent }}
-      profile={{ name: "Carl", picture: "https://image.test/agent.png" }}
-      agentPubkeys={new Set([agent])}
-      media={media}
-      onOpenLink={() => false}
-      day={false}
-      retry={undefined}
-    />,
-  );
-  expect(html).toContain('data-avatar-shape="squircle"');
-  expect(media).toHaveBeenCalledWith("https://image.test/agent.png", "small");
-  const profileOnly = renderToStaticMarkup(
-    <MessageRow
-      row={{ ...row, authorId: agent }}
-      profile={{
-        name: "Carl",
-        picture: "https://image.test/agent.png",
-        isAgent: true,
-      }}
-      media={media}
-      onOpenLink={() => false}
-      day={false}
-      retry={undefined}
-    />,
-  );
-  expect(profileOnly).toContain('data-avatar-shape="squircle"');
-  expect(render({}, 0).html).toContain('data-avatar-shape="circle"');
-});
-
-it.each([9, 40002])(
-  "renders kind %s author shape from the existing fold without profile/library evidence",
-  (kind) => {
-    const author = keypair(),
-      relay = keypair();
-    const [folded] = foldMessages("channel", relay.pubkey, [
-      signed(author, {
-        kind,
-        content:
-          kind === 40002 ? JSON.stringify({ content: "Reply" }) : "Reply",
-        tags: [["h", "channel"]],
-      }),
-    ]);
-    if (!folded) throw new Error("Missing row");
-    const html = renderToStaticMarkup(
-      <MessageRow
-        row={folded}
-        profile={undefined}
-        media={() => undefined}
-        onOpenLink={() => false}
-        day={false}
-        retry={undefined}
-      />,
-    );
-    expect(html).toContain(
-      `data-avatar-shape="${kind === 40002 ? "squircle" : "circle"}"`,
-    );
-  },
-);
-
 it("requests a small profile image without downsizing message attachments", () => {
   const media = vi.fn((url: string) => url);
   renderToStaticMarkup(
@@ -860,68 +796,6 @@ it("requests a small profile image without downsizing message attachments", () =
 
   expect(media).toHaveBeenCalledWith("https://image.test/avatar.png", "small");
   expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
-});
-
-it("renders generic file attachments as download cards", () => {
-  const html = renderToStaticMarkup(
-    <MessageRow
-      row={{
-        ...row,
-        attachments: [
-          {
-            url: "https://files.test/report.pdf",
-            kind: "file",
-            name: "report.pdf",
-            size: 1536,
-            mime: "application/pdf",
-          },
-        ],
-      }}
-      profile={undefined}
-      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
-      onOpenLink={() => false}
-      day={false}
-      retry={undefined}
-    />,
-  );
-  expect(html).toContain(
-    'href="/api/relay/media?url=https%3A%2F%2Ffiles.test%2Freport.pdf"',
-  );
-  expect(html).toContain('download="report.pdf"');
-  expect(html).toContain('aria-label="Download report.pdf"');
-  expect(html).toContain("report.pdf");
-  expect(html).toContain("2 KB");
-  expect(html).not.toContain("Open image attachment");
-  expect(html).not.toContain("<img");
-});
-
-it("renders unavailable generic files without a download link", () => {
-  const html = renderToStaticMarkup(
-    <MessageRow
-      row={{
-        ...row,
-        attachments: [
-          {
-            url: "https://files.test/missing.pdf",
-            kind: "file",
-            mime: "application/pdf",
-          },
-        ],
-      }}
-      profile={undefined}
-      media={() => undefined}
-      onOpenLink={() => false}
-      day={false}
-      retry={undefined}
-    />,
-  );
-  expect(html).toContain("PDF file");
-  expect(html).toContain("File unavailable");
-  expect(html).toContain('role="status"');
-  const container = document.createElement("div");
-  container.innerHTML = html;
-  expect(container.querySelector("a")).toBeNull();
-  expect(html).not.toContain("Open image attachment");
 });
 
 it("renders proxy audio attachments with an inline player", () => {

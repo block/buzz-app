@@ -1873,3 +1873,36 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(field).toHaveValue("Unsaved reply");
   expect(agents.save).not.toHaveBeenCalled();
 });
+
+it("announces the default agent and presents its menu status without a fake toggle", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
+    archives: { status: "unavailable" },
+  };
+  const connection = {
+    status: "ready",
+    scope: "default-card",
+    session: {
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = screen.getByRole("gridcell", { name: "Ada, Default agent" });
+  fireEvent.keyDown(card, { key: "F10", shiftKey: true });
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  expect(within(menu).getByText("Default agent")).toBeVisible();
+  expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
+});

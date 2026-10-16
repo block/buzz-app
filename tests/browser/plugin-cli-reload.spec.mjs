@@ -17,22 +17,7 @@ test("CLI reload replaces an enabled folder plugin without a Settings action", a
   let server;
   try {
     const bridge = nativeFixture();
-    run("cargo", [
-      "build",
-      "--locked",
-      "-p",
-      "buzzodz-plugins",
-      "--bin",
-      "buzzodz",
-    ]);
-    const metadata = JSON.parse(
-      run("cargo", ["metadata", "--no-deps", "--format-version=1"]),
-    );
-    const cli = join(
-      metadata.target_directory,
-      "debug",
-      process.platform === "win32" ? "buzzodz.exe" : "buzzodz",
-    );
+    const cli = nativeFixture("buzzodz");
     const home = join(temp, "home");
     const source = join(temp, "dist");
     await mkdir(source);
@@ -114,9 +99,7 @@ test("CLI reload replaces an enabled folder plugin without a Settings action", a
       }),
     );
     await writeFile(join(source, "plugin.js"), code("After access change"));
-    expect(command("reload", "test.reload")).toContain(
-      "Updated host access",
-    );
+    expect(command("reload", "test.reload")).toContain("Updated host access");
     await expect(
       navigation.getByRole("button", {
         name: "After access change",

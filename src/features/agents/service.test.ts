@@ -2578,6 +2578,7 @@ it("reads the list again on refresh and clears the error a failed read left", as
     owner: viewer,
     type: "example/echo",
     name: "Echo",
+    picture: "https://cdn.example.test/echo.png",
     deleted: false,
   };
   const native = fakeNative([identity]);
@@ -2607,6 +2608,7 @@ it("reads the list again on refresh and clears the error a failed read left", as
         name: "Echo",
         relayUrl: "wss://relay.example.test",
         owner: viewer,
+        picture: "https://cdn.example.test/echo.png",
       },
     ],
   });

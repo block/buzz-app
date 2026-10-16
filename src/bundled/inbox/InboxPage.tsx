@@ -1115,10 +1115,16 @@ function InboxList({
                             }
                             onClick={() => {
                               if (busy.current) return;
-                              // The selected row reselects its captured tab, even
-                              // after regrouping would open it differently.
+                              // The selected row reveals its current message in
+                              // its captured tab, even after regrouping would
+                              // open a whole conversation as a thread.
                               const reselect =
-                                selectedId === item.id ? opened : undefined;
+                                selectedId === item.id &&
+                                opened &&
+                                !opened.threadId !==
+                                  !tabTarget(item, channel).threadId
+                                  ? opened
+                                  : undefined;
                               if (
                                 reselect
                                   ? !openTab(reselect)

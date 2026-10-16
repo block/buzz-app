@@ -1185,8 +1185,14 @@ export class AgentsService extends Service implements Agents {
       agents: Object.freeze(
         identities
           .filter((identity) => !identity.deleted)
-          .map(({ pubkey, name, relay, owner }) =>
-            Object.freeze({ pubkey, name, relayUrl: relay, owner }),
+          .map(({ pubkey, name, relay, owner, picture }) =>
+            Object.freeze({
+              pubkey,
+              name,
+              relayUrl: relay,
+              owner,
+              ...(picture ? { picture } : {}),
+            }),
           ),
       ),
       ...(state.error ? { error: state.error } : {}),

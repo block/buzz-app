@@ -49,7 +49,8 @@ export type SessionsOptions = Readonly<{
   fingerprint(): string;
   now?(): number;
   newId?(): string;
-  /** Called when a conversation's process starts or stops. */
+  /** Called when a conversation's process starts, is sent a message, or
+   * stops. */
   onChange?(): void;
 }>;
 
@@ -356,7 +357,10 @@ export class AgentSessions {
     text: string,
     activity: TurnPick & ActivityReceipt,
   ) {
-    const settled = await live.process.send(text, activity);
+    const sent = live.process.send(text, activity);
+    // Sending made it busy; a snapshot read when it started is not.
+    this.options.onChange?.();
+    const settled = await sent;
     if (this.live.get(key) === live) {
       this.touch(key, live);
       if (live.fingerprint !== this.options.fingerprint() && !live.process.busy)

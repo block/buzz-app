@@ -21,12 +21,16 @@ vi.mock("./ConversationTab", () => ({
   ConversationTab: ({
     tab,
     channel,
+    visit,
   }: {
     tab: Tab;
     channel: { name: string };
+    visit: boolean;
   }) => (
     <p>
       {tab.kind} in {channel.name}
+      {tab.kind === "thread" && tab.reveal && ` at ${tab.messageId}`}
+      {!visit && " unvisited"}
     </p>
   ),
 }));
@@ -46,7 +50,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function fixture() {
+function fixture(visits?: boolean) {
   const channels = [
     { id: "alpha", name: "alpha" },
     { id: "beta", name: "beta" },
@@ -78,6 +82,8 @@ function fixture() {
   } as unknown as ConversationHostServices;
   let open: (target: PageTabTarget, options?: PageTabOptions) => boolean = () =>
     false;
+  let close: (target: PageTabTarget) => boolean = () => false;
+  let isOpen: (target: PageTabTarget) => boolean = () => false;
   const openers = new Set<typeof open>();
   render(
     <PageTabs
@@ -87,9 +93,12 @@ function fixture() {
       label="Switchboard"
       host={host}
       extensions={{} as ConversationExtensions}
+      visits={visits}
     >
-      {(next) => {
+      {(next, closer, opened) => {
         open = next;
+        close = closer;
+        isOpen = opened;
         openers.add(next);
         return <p>Session list</p>;
       }}
@@ -103,6 +112,14 @@ function fixture() {
         opened = open(target, options);
       });
       return opened;
+    },
+    isOpen: (target: PageTabTarget) => isOpen(target),
+    close(target: PageTabTarget) {
+      let closed = false;
+      act(() => {
+        closed = close(target);
+      });
+      return closed;
     },
   };
 }
@@ -163,4 +180,33 @@ it("opens a thread moved to the main pane where it is", () => {
   expect(tabs("Switchboard tabs")).toEqual(["Switchboard", "Root text"]);
   expect(page.open({ channelId: "alpha", threadId: "root" })).toBe(true);
   expect(tabs("Switchboard tabs")).toEqual(["Switchboard", "Root text"]);
+  // The next plain open does not replace it.
+  expect(page.open({ channelId: "beta" })).toBe(true);
+  expect(tabs("Switchboard tabs")).toEqual(["Switchboard", "Root text"]);
+  expect(side()).toEqual(["beta"]);
+});
+
+it("reveals a message in its thread, without visiting when the page asks", () => {
+  const page = fixture(false);
+  expect(
+    page.open({ channelId: "alpha", threadId: "root", messageId: "reply" }),
+  ).toBe(true);
+  expect(screen.getByText("thread in alpha at reply unvisited")).toBeVisible();
+  // Opening the thread itself follows its latest reply again.
+  expect(page.open({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(side()).toEqual(["Root text"]);
+  expect(screen.getByText("thread in alpha unvisited")).toBeVisible();
+});
+
+it("closes a conversation's tab only when one is open", () => {
+  const page = fixture();
+  expect(page.close({ channelId: "alpha", threadId: "root" })).toBe(false);
+  expect(page.open({ channelId: "beta" }, { keep: true })).toBe(true);
+  expect(page.open({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.isOpen({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.close({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.isOpen({ channelId: "alpha", threadId: "root" })).toBe(false);
+  expect(side()).toEqual(["beta"]);
+  expect(page.close({ channelId: "beta" })).toBe(true);
+  expect(screen.getAllByRole("tablist")).toHaveLength(1);
 });

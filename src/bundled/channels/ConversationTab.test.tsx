@@ -21,11 +21,17 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
   ThreadPanel: ({
     active,
     replyRequest,
+    revealSelected,
   }: {
     active: boolean;
     replyRequest?: number;
+    revealSelected?: boolean;
   }) => (
-    <aside data-active={active} data-reply-request={replyRequest}>
+    <aside
+      data-active={active}
+      data-reply-request={replyRequest}
+      data-reveal={revealSelected}
+    >
       Thread content
     </aside>
   ),
@@ -193,6 +199,47 @@ it.each(["thread", "conversation"] as const)(
     expect(enterChannel).toHaveBeenCalledTimes(2);
     mounted.unmount();
     expect(leaveChannel).toHaveBeenCalledTimes(2);
+  },
+);
+
+it.each(["thread", "conversation"] as const)(
+  "%s tabs that only reveal never visit their channel",
+  (kind) => {
+    const channel = { id: "beta", name: "Beta", members: ["viewer"] };
+    const snapshot = { status: "ready", channels: [channel] };
+    const enterChannel = vi.fn(async () => {});
+    const session = {
+      viewer: "viewer",
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      unread: { enterChannel, leaveChannel: vi.fn() },
+    } as unknown as RelaySession;
+    render(
+      <ConversationTab
+        tab={{
+          id: "beta-tab",
+          kind,
+          channelId: "beta",
+          messageId: "a".repeat(64),
+          reveal: true,
+        }}
+        channel={channel}
+        session={session}
+        scope="reveal-test"
+        openLink={() => false}
+        canOpenLink={() => false}
+        openThread={() => {}}
+        close={() => {}}
+        active
+        visit={false}
+      />,
+    );
+    expect(screen.getByLabelText("Conversation in Beta")).toBeVisible();
+    expect(enterChannel).not.toHaveBeenCalled();
+    if (kind === "thread")
+      expect(screen.getByText("Thread content")).toHaveAttribute(
+        "data-reveal",
+        "true",
+      );
   },
 );
 

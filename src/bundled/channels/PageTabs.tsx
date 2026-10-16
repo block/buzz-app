@@ -22,7 +22,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SidebarRightIcon } from "../../shared/design-system/icons";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { useChannelLabels } from "./useChannelLabels";
-import { threadTab, useChannelTabState } from "./useChannelTabState";
+import { tabPane, threadTab, useChannelTabState } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
 import styles from "./Channels.module.css";
 
@@ -41,9 +41,12 @@ export function PageTabs({
   children,
   host,
   extensions,
+  visits,
 }: PageTabsProps & {
   host: ConversationHostServices;
-  extensions: ConversationExtensions;
+  extensions?: ConversationExtensions | undefined;
+  /** Whether showing a tab visits its conversation, as Channels does. */
+  visits?: boolean | undefined;
 }) {
   const tabState = useChannelTabState(session, undefined, `page:${id}`);
   const list = useChannelList(session.channels);
@@ -91,6 +94,7 @@ export function PageTabs({
     anyMainThread: true,
     // The page stays in view; a thread reaches the main pane only when moved.
     threadPane: "side",
+    visits,
     conversationIcon: (item) => {
       const Icon = channelIcon(item);
       return <Icon size="1rem" />;
@@ -101,17 +105,46 @@ export function PageTabs({
   const opening = useRef<
     (target: PageTabTarget, options?: PageTabOptions) => boolean
   >(() => false);
+  const closing = useRef<(target: PageTabTarget) => boolean>(() => false);
+  // A thread opened at a reply keeps its tab once its root resolves.
+  const tabOf = ({ channelId, threadId }: PageTabTarget) =>
+    (threadId && threadTab(tabState.tabs, channelId, threadId)) ||
+    tabState.tabs.find(
+      (item) =>
+        item.id ===
+        (threadId
+          ? `thread:${channelId}:${threadId}`
+          : `conversation:${channelId}`),
+    );
+  const isOpen = (target: PageTabTarget) => !!tabOf(target);
   useLayoutEffect(() => {
-    opening.current = ({ channelId, threadId }, { keep } = {}) => {
+    closing.current = (target) => {
+      const tab = tabOf(target);
+      if (!mounted.current || !tab) return false;
+      tabState.setTabs((tabs) => tabs.filter((item) => item.id !== tab.id));
+      return true;
+    };
+    opening.current = ({ channelId, threadId, messageId }, { keep } = {}) => {
       if (!mounted.current || !secondary.canOpenConversation(channelId))
         return false;
       const known = new Set(tabState.tabs.map((tab) => tab.id));
       // An open thread keeps its tab in whichever pane it was moved to.
       const existing =
         threadId && threadTab(tabState.tabs, channelId, threadId)?.id;
-      if (threadId)
-        secondary.openConversationThread(channelId, threadId, threadId);
-      else {
+      if (threadId) {
+        secondary.openConversationThread(
+          channelId,
+          messageId ?? threadId,
+          threadId,
+        );
+        if (messageId)
+          tabState.setTabs((tabs) => {
+            const tab = threadTab(tabs, channelId, threadId);
+            return tabs.map((item) =>
+              item === tab ? { ...tab, reveal: true } : item,
+            );
+          });
+      } else {
         const tab = `conversation:${channelId}`;
         tabState.setTabs((tabs) =>
           tabs.some((item) => item.id === tab)
@@ -120,7 +153,7 @@ export function PageTabs({
         );
         tabState.select(tab);
       }
-      // A plain open replaces the tab the last one added; a kept or
+      // A plain open replaces the tab the last one added; a kept, moved or
       // already-open tab stays.
       const page = previews.get(session) ?? new Map<string, string>();
       previews.set(session, page);
@@ -130,7 +163,9 @@ export function PageTabs({
         if (keep && opened === preview) page.delete(id);
       } else if (!keep) {
         if (preview && known.has(preview))
-          tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== preview));
+          tabState.setTabs((tabs) =>
+            tabs.filter((tab) => tab.id !== preview || tabPane(tab) === "main"),
+          );
         page.set(id, opened);
       }
       return true;
@@ -139,6 +174,10 @@ export function PageTabs({
   const open = useCallback(
     (target: PageTabTarget, options?: PageTabOptions) =>
       opening.current(target, options),
+    [],
+  );
+  const close = useCallback(
+    (target: PageTabTarget) => closing.current(target),
     [],
   );
   const focusPage = useRef(false);
@@ -238,7 +277,12 @@ export function PageTabs({
                 )
               }
               items={[
-                { id: "conversation", label, icon, content: children(open) },
+                {
+                  id: "conversation",
+                  label,
+                  icon,
+                  content: children(open, close, isOpen),
+                },
                 ...secondary.mainItems,
               ]}
             />

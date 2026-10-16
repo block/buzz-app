@@ -66,6 +66,7 @@ export function useConversationTabs({
   mainPane = false,
   anyMainThread = false,
   threadPane,
+  visits = true,
   routed,
   onCloseThread,
   onRetryNavigation,
@@ -94,6 +95,8 @@ export function useConversationTabs({
   anyMainThread?: boolean | undefined;
   /** Where new thread tabs open; by default, per the thread placement setting. */
   threadPane?: TabPane | undefined;
+  /** Showing a tab visits its conversation; a page may only reveal it. */
+  visits?: boolean | undefined;
   /** The route's thread request, handed only to the tab that matches it. */
   routed?:
     | { channelId: string; messageId: string; navigation: PageNavigation }
@@ -640,6 +643,7 @@ export function useConversationTabs({
           <ConversationTab
             focusOnMount={continuingVisit}
             active={tabState.paneOpen && selectedTab === tab.id}
+            visit={visits}
             tab={tab}
             channel={target}
             session={queries}
@@ -767,6 +771,7 @@ export function useConversationTabs({
             <ConversationTab
               focusOnMount={continuingVisit}
               active={active}
+              visit={visits}
               tab={tab}
               channel={target}
               session={queries}

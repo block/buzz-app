@@ -22,6 +22,8 @@ import styles from "./ChannelTabs.module.css";
 type ConversationTabProps = {
   tab: Tab;
   active: boolean;
+  /** Showing the tab visits its conversation, as Channels does. */
+  visit?: boolean | undefined;
   focusOnMount?: boolean;
   channel: ChannelSummary;
   session: RelaySession;
@@ -41,6 +43,7 @@ type ConversationTabProps = {
 export function ConversationTab({
   tab,
   active,
+  visit = true,
   focusOnMount = true,
   channel,
   session,
@@ -69,7 +72,7 @@ export function ConversationTab({
       scope={scope}
       extensions={extensions}
       channel={channel}
-      active={active}
+      active={active && visit}
       interactions={{
         onOpenLink: openLink,
         canOpenLink,
@@ -88,6 +91,7 @@ export function ConversationTab({
           <ConversationThread
             active={active}
             messageId={tab.messageId}
+            revealSelected={tab.reveal}
             navigation={navigation}
             retainThread
             tabbed

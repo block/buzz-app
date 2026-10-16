@@ -24,6 +24,8 @@ export type ConversationTab =
       rootId?: string | undefined;
       /** A name given to the tab, shown instead of its root's text. */
       name?: string | undefined;
+      /** Opened at `messageId` in its thread, which stays revealed. */
+      reveal?: boolean | undefined;
     };
 export type TabPane = "main" | "side";
 export const tabPane = (tab: ConversationTab): TabPane =>

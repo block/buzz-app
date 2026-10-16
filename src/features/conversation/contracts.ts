@@ -257,7 +257,12 @@ export type ComposerCompletion = Readonly<{
 }>;
 
 /** A conversation a page opens in a tab beside its own. */
-export type PageTabTarget = { channelId: string; threadId?: string };
+/** `messageId` is a message in the thread to reveal. */
+export type PageTabTarget = {
+  channelId: string;
+  threadId?: string;
+  messageId?: string;
+};
 /** `keep` opens a tab beside the others instead of in place of the last. */
 export type PageTabOptions = { keep?: boolean };
 export type PageTabsProps = {
@@ -270,5 +275,7 @@ export type PageTabsProps = {
   /** The page's own first tab. `open` shows a joined conversation in a host tab. */
   children(
     open: (target: PageTabTarget, options?: PageTabOptions) => boolean,
+    close: (target: PageTabTarget) => boolean,
+    isOpen: (target: PageTabTarget) => boolean,
   ): ReactNode;
 };

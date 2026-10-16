@@ -5,6 +5,8 @@
 #   run [ARGS...]                  runs the copy in use with ARGS, in Buzz's home
 #   install VERSION TARGET SHA256  downloads a release and checks it
 #   use VERSION                    makes a downloaded release the one in use
+#   adopt THREAD                   copies a thread Buzz saved in the user's
+#                                  Codex home into Buzz's
 set -eu
 
 # Shared by every Buzz build on this computer, so there is one download.
@@ -13,7 +15,6 @@ if [ "$(uname)" = Darwin ]; then
 else
   dir="${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex"
 fi
-
 # Versions name folders, so only digits and dots: no `..` or `/` escapes.
 valid() {
   case "$1" in "" | [!0-9]* | *[!0-9.]*) return 1 ;; esac
@@ -31,9 +32,10 @@ newer() {
 command="$1"
 shift
 # Buzz keeps its own Codex home, beside the releases, so its conversations stay
-# out of the user's Codex history. It links in only the settings, sign-in and
-# instructions, and never replaces a file in the way.
-if [ "$command" = run ]; then
+# out of the user's Codex history, and the Codex app, which holds a writer lock
+# on each recent thread it reopens, can't block them. It links in only the
+# settings, sign-in and instructions, and never replaces a file in the way.
+if [ "$command" = run ] || [ "$command" = adopt ]; then
   mkdir -p "${CODEX_HOME:-$HOME/.codex}"
   shared=$(cd "${CODEX_HOME:-$HOME/.codex}" && pwd -P)
   # Codex can't make its skills folder through a link to nothing. Something
@@ -50,11 +52,11 @@ if [ "$command" = run ]; then
       { echo "Buzz's Codex setup conflicts with $home/$name" >&2; exit 1; }
   done
   export CODEX_HOME="$home"
-  # Even a shared `sqlite_home` setting must not lead back to the user's history.
-  set -- -c "sqlite_home=$home" "$@"
 fi
 case "$command" in
 run)
+  # Even a shared `sqlite_home` setting must not lead back to the user's history.
+  set -- -c "sqlite_home=$home" "$@"
   # A failed exec returns (execfail, without errexit), so the launcher can
   # look again when a release it read was pruned before it started.
   set +e
@@ -124,6 +126,27 @@ use)
     folder=$(basename "$folder")
     [ "$folder" = "$version" ] || [ "$folder" = "$previous" ] ||
       newer "$folder" "$version" || rm -rf "${dir:?}/$folder"
+  done
+  ;;
+adopt)
+  # Threads Buzz saved before it had its own home stay in the user's, which
+  # keeps them; Buzz continues from a copy. Codex names each rollout with its
+  # thread id.
+  thread="$1"
+  case "$thread" in "" | *[!0-9A-Za-z-]*) echo "Invalid thread" >&2; exit 2 ;; esac
+  for rollout in "$shared"/sessions/*/*/*/rollout-*-"$thread".jsonl; do
+    [ -f "$rollout" ] || continue
+    copy="$home/${rollout#"$shared"/}"
+    # Never over a copy Buzz already continued, here or in another build.
+    [ -e "$copy" ] && continue
+    mkdir -p "$(dirname "$copy")"
+    cp -p "$rollout" "$copy.$$"
+    # The Codex app may be writing the thread now. A line it has not finished
+    # is skipped when read, and must not join the next line Buzz writes.
+    [ -z "$(tail -c 1 "$copy.$$")" ] || echo >>"$copy.$$"
+    # A hard link publishes the whole copy, and fails if one is already there.
+    ln "$copy.$$" "$copy" 2>/dev/null || true
+    rm -f "$copy.$$"
   done
   ;;
 *)

@@ -262,3 +262,22 @@ it("keeps Buzz's conversations when switching releases", async () => {
   );
   expect(await readlink(join(f.own, "skills"))).toBe(join(f.codex, "skills"));
 });
+
+it("copies a saved thread from the user's home once, never over Buzz's copy", async () => {
+  const { home, dir, step } = await disk([]);
+  const day = "sessions/2026/10/14";
+  const name = "rollout-2026-10-14T14-32-19-thread-1.jsonl";
+  await mkdir(join(home, ".codex", day), { recursive: true });
+  // The Codex app is mid-write: the last line has no end yet.
+  await writeFile(join(home, ".codex", day, name), '{"a":1}\n{"b"');
+  await step("adopt", "thread-1");
+  const copy = join(`${dir}-home`, day, name);
+  expect(await readFile(copy, "utf8")).toBe('{"a":1}\n{"b"\n');
+  await writeFile(copy, "continued in Buzz\n");
+  await step("adopt", "thread-1");
+  expect(await readFile(copy, "utf8")).toBe("continued in Buzz\n");
+  // Nothing to copy is not an error.
+  await step("adopt", "thread-2");
+  await expect(step("adopt", "../thread-1")).rejects.toThrow("Invalid thread");
+  expect(await readdir(join(`${dir}-home`, day))).toEqual([name]);
+});

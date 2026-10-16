@@ -71,6 +71,7 @@ disconnecting from its community interrupts its turns and asks Codex to end
 shells they left running; the server ends when no
 Codex agent that has worked is still running, or when the plugin is disabled.
 If a saved Codex thread no longer exists, the next mention starts a fresh one.
+Threads live in Buzz's own Codex home; see [Conversation storage](#conversation-storage).
 To inspect a saved session, see [View a Codex session](../../../docs/view-codex-session.md).
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
@@ -88,9 +89,9 @@ follow-up before its final reply.
 
 ## Conversation storage
 
-Buzz keeps its own Codex home, so its conversations stay out of Codex desktop's history: `~/Library/Application Support/Buzz/codex-home` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex-home` on Linux. [`codex.sh`](codex.sh) links `config.toml`, `auth.json`, `AGENTS.md`, `rules` and `skills` there from the shared Codex home (`CODEX_HOME`, default `~/.codex`), so settings and file-based sign-in stay shared and nothing is copied. Relative paths in `config.toml` resolve against Buzz's home, so use absolute ones. Codex hooks aren't shared: their trust is keyed by the path of `hooks.json`, so Buzz agents run without them. To sign Buzz out, sign out of Codex desktop or the terminal: signing out inside Buzz's home only removes its link, which the next run restores. Keyring sign-in is scoped to the home, so it needs a separate Buzz sign-in. The launcher also overrides `sqlite_home`, so a shared setting can't lead back to desktop's database. A file already in the way of a link stops setup rather than being replaced.
+Buzz keeps its own Codex home, so its conversations stay out of Codex desktop's history, and desktop, which holds a writer lock on each recent thread it reopens, can't block their turns: `~/Library/Application Support/Buzz/codex-home` on macOS, or `${XDG_DATA_HOME:-$HOME/.local/share}/buzz/codex-home` on Linux. [`codex.sh`](codex.sh) links `config.toml`, `auth.json`, `AGENTS.md`, `rules` and `skills` there from the shared Codex home (`CODEX_HOME`, default `~/.codex`), so settings and file-based sign-in stay shared. Relative paths in `config.toml` resolve against Buzz's home, so use absolute ones. Codex hooks aren't shared: their trust is keyed by the path of `hooks.json`, so Buzz agents run without them. To sign Buzz out, sign out of Codex desktop or the terminal: signing out inside Buzz's home only removes its link, which the next run restores. Keyring sign-in is scoped to the home, so it needs a separate Buzz sign-in. The launcher also overrides `sqlite_home`, so a shared setting can't lead back to desktop's database. A file already in the way of a link stops setup rather than being replaced.
 
-Conversations saved before Buzz had its own home start afresh: their Codex thread isn't in Buzz's home, so the runtime starts a new one. Buzz still sends each turn's conversation from the relay. The old threads stay in `~/.codex`.
+A conversation saved before Buzz had its own home continues from a copy: when its thread isn't in Buzz's home, the runtime has `codex.sh adopt` copy the rollout from `~/.codex` once, then resumes it. The copy never replaces one Buzz already continued, and the original stays in `~/.codex`. If there's no rollout to copy, the runtime starts a new thread.
 
 ## Checks
 
@@ -100,7 +101,7 @@ bin/node src/bundled/codex/isolation-live.mjs
 bin/node src/bundled/codex/live.mjs
 ```
 
-The isolation check runs the installed Codex through `codex.sh` with disposable homes, a synthetic file-based account and a loopback model. It checks shared sign-in and settings, a private database despite a shared `sqlite_home`, resuming after a restart and a release switch, and that neither home lists the other's threads. It sends no external model or relay requests.
+The isolation check runs the installed Codex through `codex.sh` with disposable homes, a synthetic file-based account and a loopback model. It checks shared sign-in and settings, a private database despite a shared `sqlite_home`, resuming after a restart and a release switch, continuing an older thread from a copy that leaves the original alone, and that neither home lists the other's new threads. It sends no external model or relay requests.
 
 The opt-in live check uses the installed Codex CLI/account in a disposable
 workspace and a simulated relay. It sends no Buzz messages. It checks native shell

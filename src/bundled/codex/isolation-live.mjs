@@ -144,6 +144,25 @@ requires_openai_auth = false
     });
     return rpc;
   };
+  const turn = async (rpc, id, text) => {
+    let complete;
+    const finished = new Promise((resolve) => {
+      complete = resolve;
+    });
+    const off = rpc.onMessage((wire) => {
+      if (wire.method === "turn/completed" && wire.params.threadId === id)
+        complete(wire.params.turn);
+    });
+    try {
+      await rpc.request("turn/start", {
+        threadId: id,
+        input: [{ type: "text", text, text_elements: [] }],
+      });
+      assert.equal((await finished).status, "completed");
+    } finally {
+      off();
+    }
+  };
   const create = async (rpc, text) => {
     const { thread } = await rpc.request("thread/start", {
       cwd: root,
@@ -151,26 +170,7 @@ requires_openai_auth = false
       model: "fixture-model",
       modelProvider: "fixture",
     });
-    let complete;
-    const finished = new Promise((resolve) => {
-      complete = resolve;
-    });
-    const off = rpc.onMessage((wire) => {
-      if (
-        wire.method === "turn/completed" &&
-        wire.params.threadId === thread.id
-      )
-        complete(wire.params.turn);
-    });
-    try {
-      await rpc.request("turn/start", {
-        threadId: thread.id,
-        input: [{ type: "text", text, text_elements: [] }],
-      });
-      assert.equal((await finished).status, "completed");
-    } finally {
-      off();
-    }
+    await turn(rpc, thread.id, text);
     return thread.id;
   };
   const has = async (rpc, id) => {
@@ -179,6 +179,14 @@ requires_openai_auth = false
       modelProviders: ["fixture"],
     });
     return data.some((thread) => thread.id === id);
+  };
+  const rollout = async (home, id) => {
+    const sessions = join(home, "sessions");
+    const [name] = (await readdir(sessions, { recursive: true })).filter(
+      (name) => name.endsWith(`-${id}.jsonl`),
+    );
+    assert.ok(name, `no rollout for ${id} in ${home}`);
+    return join(sessions, name);
   };
   const desktop = await open(true);
   const desktopId = await create(desktop, "Desktop fixture stays in desktop");
@@ -209,11 +217,24 @@ requires_openai_auth = false
   );
   assert.equal(await has(restarted, newId), true);
   assert.equal(await has(restarted, desktopId), false);
-  // A conversation saved before Buzz had its own home starts afresh, through
-  // the runtime's missing-thread fallback.
+  // A conversation saved before Buzz had its own home is missing until the
+  // runtime has `codex.sh adopt` copy it, then continues from the copy.
   await assert.rejects(
     restarted.request("thread/resume", { threadId: desktopId }),
     { message: `no rollout found for thread id ${desktopId}` },
+  );
+  const original = await readFile(await rollout(shared, desktopId));
+  execFileSync("bash", ["-c", script, "codex.sh", "adopt", desktopId], { env });
+  assert.equal(
+    (await restarted.request("thread/resume", { threadId: desktopId })).thread
+      .id,
+    desktopId,
+  );
+  await turn(restarted, desktopId, "Copied fixture continues in Buzz");
+  assert.deepEqual(await readFile(await rollout(shared, desktopId)), original);
+  assert.ok(
+    (await readFile(await rollout(isolated, desktopId))).length >
+      original.length,
   );
   await restarted.close();
   const reopened = await open(true);
@@ -231,7 +252,7 @@ requires_openai_auth = false
     ),
   );
   console.log(
-    "PASS: shared synthetic sign-in/config, private SQLite/history, restart/update resume, and no threads shared with desktop; local fixture model only; no external model or relay calls",
+    "PASS: shared synthetic sign-in/config, private SQLite/history, restart/update resume, an older thread continued from a copy, and no new threads shared with desktop; local fixture model only; no external model or relay calls",
   );
 } finally {
   await Promise.all(servers.map((rpc) => rpc.close()));

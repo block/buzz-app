@@ -1,3 +1,4 @@
+import { ActivityExpansion } from "./ActivityExpansion";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
@@ -1097,6 +1098,10 @@ export const MessageRow = memo(function AudienceMessageRow(
 function AgentsMessageRow(props: MessageRowProps) {
   const { row, session, media, participantProfiles, agentPubkeys } = props;
   const [open, setOpen] = useState(false);
+  const keepMounted = props.keepMounted;
+  useEffect(() => {
+    if (open) return keepMounted?.(row.id);
+  }, [open, keepMounted, row.id]);
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const directory = useReferenceDirectory(session, participantProfiles);
   const { recipients, body } = useMemo(
@@ -1189,18 +1194,10 @@ function AgentsMessageRow(props: MessageRowProps) {
               {to.map(avatar)}
             </>
           )}
-          {!open && (
-            <>
-              <span className={styles.audiencePreview}>{preview}</span>
-              <MessageTimestamp createdAt={row.createdAt} />
-            </>
-          )}
+          {!open && <span className={styles.audiencePreview}>{preview}</span>}
         </button>
-        {open && (
-          <div className={styles.audienceBody}>
-            <div className="text-caption">
-              <MessageTimestamp createdAt={row.createdAt} />
-            </div>
+        <ActivityExpansion open={open} className={styles.audienceBody}>
+          <div className={styles.audienceContent}>
             <FullMessageRow
               {...props}
               shownRow={body}
@@ -1210,7 +1207,10 @@ function AgentsMessageRow(props: MessageRowProps) {
               stackNext
             />
           </div>
-        )}
+        </ActivityExpansion>
+        <span className={styles.audienceTime}>
+          <MessageTimestamp createdAt={row.createdAt} />
+        </span>
       </div>
     </div>
   );

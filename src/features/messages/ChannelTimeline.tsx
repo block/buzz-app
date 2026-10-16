@@ -1,11 +1,17 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
-import { ChatCircleIcon } from "../../shared/design-system/icons";
+import {
+  CaretDownIcon,
+  ChatCircleIcon,
+} from "../../shared/design-system/icons";
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
+import { activityGroups, RECENT_ACTIVITY_COUNT } from "./activity-groups";
+import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import {
@@ -198,15 +204,40 @@ function Timeline({
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
   const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
+    () => new Set(initialPosition?.anchor ? [initialPosition.anchor.id] : []),
+  );
+  const activity = useMemo(
+    () => (chatPresentation ? activityGroups(rows) : []),
+    [rows, chatPresentation],
+  );
+  const disclosures = new Map(
+    activity.map((group) => [
+      group.ids[0],
+      {
+        ...group,
+        expanded: group.ids
+          .slice(0, -RECENT_ACTIVITY_COUNT)
+          .some((id) => expandedActivity.has(id)),
+      },
+    ]),
+  );
+  const hiddenActivity = new Set(
+    [...disclosures.values()].flatMap((group) =>
+      group.expanded ? [] : group.ids.slice(0, -RECENT_ACTIVITY_COUNT),
+    ),
+  );
   const resolveName = useChannelIdentityNames(queries, channelId);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const [geometry] = useState(() => geometryFor(queries.channels));
   const signature = useMemo(
-    () => geometrySignature(window.rows, profiles, resolveName),
-    [window.rows, profiles, resolveName],
+    () =>
+      `${geometrySignature(window.rows, profiles, resolveName)}:${JSON.stringify([...expandedActivity].sort())}`,
+    [window.rows, profiles, resolveName, expandedActivity],
   );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
+  const [focusedActivityId, setFocusedActivityId] = useState<string>();
   // Holders are counted per row: a report notice and an image viewer can hold
   // the same row, and releasing one must not drop the other's pin.
   const [pinnedIds, setPinnedIds] = useState<ReadonlyMap<string, number>>(
@@ -224,7 +255,11 @@ function Timeline({
       });
   }, []);
   const keptIndices = rows.flatMap((row, index) =>
-    row.id === focusedMessageId || pinnedIds.has(row.id) ? [index] : [],
+    row.id === focusedMessageId ||
+    row.id === focusedActivityId ||
+    pinnedIds.has(row.id)
+      ? [index]
+      : [],
   );
   const scroller = useRef<HTMLElement>(null);
   const edge = useRef<HTMLDivElement>(null);
@@ -400,6 +435,26 @@ function Timeline({
     handle.current.scrollToIndex(targetIndex, { align: "center" });
   }, [targetIndex]);
   const targetSignal = inlineSignal ?? navigation?.signal;
+  const activityReveal = useRef<AbortSignal | string | undefined>(undefined);
+  useLayoutEffect(() => {
+    const id = targetId ?? revealMessageId;
+    const request = targetSignal ?? revealMessageId;
+    if (!id || !request || request === activityReveal.current) return;
+    const group = activity.find((group) => group.ids.includes(id));
+    if (!group) return;
+    activityReveal.current = request;
+    if (
+      !group.ids
+        .slice(0, -RECENT_ACTIVITY_COUNT)
+        .some((id) => expandedActivity.has(id))
+    )
+      setExpandedActivity(
+        new Set([
+          ...expandedActivity,
+          ...group.ids.slice(0, -RECENT_ACTIVITY_COUNT),
+        ]),
+      );
+  }, [activity, targetId, targetSignal, revealMessageId, expandedActivity]);
   // Positioning waits for the exact reveal, then must run again: a reveal that
   // leaves the reader at the bottom keeps following late row measurement.
   const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
@@ -779,14 +834,20 @@ function Timeline({
         upwardGesture.current = false;
       }}
       onFocus={(event) => {
+        setFocusedActivityId(
+          event.target.closest<HTMLElement>("[data-activity-group-id]")?.dataset
+            .activityGroupId,
+        );
         setFocusedMessageId(
           event.target.closest<HTMLElement>("[data-message-id]")?.dataset
             .messageId,
         );
       }}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget))
+        if (!event.currentTarget.contains(event.relatedTarget)) {
           setFocusedMessageId(undefined);
+          setFocusedActivityId(undefined);
+        }
       }}
       tabIndex={0}
       aria-label="Channel message history"
@@ -862,6 +923,11 @@ function Timeline({
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
           {rows.map((row, index) => {
+            const disclosure = disclosures.get(row.id);
+            const hidden =
+              hiddenActivity.has(row.id) &&
+              row.id !== focusedMessageId &&
+              !pinnedIds.has(row.id);
             const nextRow = rows[index + 1];
             const day =
               index === 0
@@ -872,42 +938,91 @@ function Timeline({
                   new Date(row.createdAt * 1000).toDateString();
             return (
               <Fragment key={row.id}>
-                {row.membership ? (
-                  <MembershipRow
-                    resolveName={resolveName}
-                    names={queries.names}
-                    row={row}
-                    profiles={profiles}
-                    viewer={viewer}
-                    media={queries.media}
-                    agentPubkeys={agentPubkeys}
-                    day={day}
-                    onOpenLink={onOpenLink}
-                    canOpenLink={canOpenLink}
-                  />
-                ) : (
-                  <MessageRow
-                    stackPrevious={continuesMessageGroup(rows[index - 1], row)}
-                    stackNext={!!nextRow && continuesMessageGroup(row, nextRow)}
-                    alignViewer={chatPresentation}
-                    session={queries}
-                    scope={scope}
-                    row={row}
-                    unread={queries.unread}
-                    extensions={extensions}
-                    profile={profiles.get(row.authorId)}
-                    participantProfiles={profiles}
-                    agentPubkeys={agentPubkeys}
-                    media={queries.media}
-                    onOpenLink={onOpenLink}
-                    canOpenLink={canOpenLink}
-                    onOpenThread={onOpenThread}
-                    {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
-                    retry={queries.outbox?.retry}
-                    keepMounted={keepRowMounted}
-                    day={day}
-                  />
+                {disclosure && (
+                  <div
+                    className={styles.activityDisclosure}
+                    data-activity-group-id={row.id}
+                  >
+                    {day && <DayDivider createdAt={row.createdAt} />}
+                    <Button
+                      variant="plain"
+                      size="inline"
+                      shape="control"
+                      aria-expanded={disclosure.expanded}
+                      onClick={(event) => {
+                        event.currentTarget.focus({ preventScroll: true });
+                        // Opening history is explicit reading intent, even at
+                        // the bottom: new activity must not pull it away.
+                        intent.current++;
+                        follow.current = false;
+                        userScrolled.current = true;
+                        restoredAnchor.current = undefined;
+                        const next = new Set(expandedActivity);
+                        for (const id of disclosure.expanded
+                          ? disclosure.ids
+                          : disclosure.ids.slice(0, -RECENT_ACTIVITY_COUNT)) {
+                          if (disclosure.expanded) next.delete(id);
+                          else next.add(id);
+                        }
+                        setExpandedActivity(next);
+                      }}
+                    >
+                      {disclosure.expanded
+                        ? "Show fewer"
+                        : `Show ${disclosure.ids.length - RECENT_ACTIVITY_COUNT} previous ${disclosure.ids.length - RECENT_ACTIVITY_COUNT === 1 ? "step" : "steps"}`}
+                      <CaretDownIcon
+                        className={styles.activityChevron}
+                        aria-hidden="true"
+                      />
+                    </Button>
+                  </div>
                 )}
+                <ActivityExpansion
+                  open={!hidden}
+                  enabled={row.audience === "agents"}
+                >
+                  {row.membership ? (
+                    <MembershipRow
+                      resolveName={resolveName}
+                      names={queries.names}
+                      row={row}
+                      profiles={profiles}
+                      viewer={viewer}
+                      media={queries.media}
+                      agentPubkeys={agentPubkeys}
+                      day={day}
+                      onOpenLink={onOpenLink}
+                      canOpenLink={canOpenLink}
+                    />
+                  ) : (
+                    <MessageRow
+                      stackPrevious={continuesMessageGroup(
+                        rows[index - 1],
+                        row,
+                      )}
+                      stackNext={
+                        !!nextRow && continuesMessageGroup(row, nextRow)
+                      }
+                      alignViewer={chatPresentation}
+                      session={queries}
+                      scope={scope}
+                      row={row}
+                      unread={queries.unread}
+                      extensions={extensions}
+                      profile={profiles.get(row.authorId)}
+                      participantProfiles={profiles}
+                      agentPubkeys={agentPubkeys}
+                      media={queries.media}
+                      onOpenLink={onOpenLink}
+                      canOpenLink={canOpenLink}
+                      onOpenThread={onOpenThread}
+                      {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
+                      retry={queries.outbox?.retry}
+                      keepMounted={keepRowMounted}
+                      day={day && !disclosure}
+                    />
+                  )}
+                </ActivityExpansion>
                 {index === rows.length - 1 && (
                   <div className={styles.timelineEnd} aria-hidden="true" />
                 )}

@@ -2449,6 +2449,9 @@ it("shows a message for agents as one line from its author to whom it addresses"
       name: "Morgarita to Rivet: **run** the suite…",
     });
     expect(line).toHaveAttribute("aria-expanded", "false");
+    const timestamp = line.parentElement?.querySelector("time");
+    const timestampSlot = timestamp?.parentElement;
+    expect(timestamp).toBeVisible();
     expect(
       screen.getByText(/(?:1969|1970) at /, {
         selector: 'time > span[aria-hidden="true"]',
@@ -2461,6 +2464,16 @@ it("shows a message for agents as one line from its author to whom it addresses"
     expect(screen.queryByText(/Then report back/)).toBeNull();
     fireEvent.click(line);
     expect(line).toHaveAttribute("aria-expanded", "true");
+    // Expanding preserves the timestamp node and its trailing slot, rather
+    // than remounting it above the body and moving it to the opposite edge.
+    expect(
+      line.parentElement?.querySelectorAll("time:not(.sr-only)"),
+    ).toHaveLength(1);
+    expect(line.parentElement?.querySelector("time:not(.sr-only)")).toBe(
+      timestamp,
+    );
+    expect(timestamp?.parentElement).toBe(timestampSlot);
+    expect(line.parentElement?.lastElementChild).toBe(timestampSlot);
     expect(
       screen.getByText(/(?:1969|1970) at /, {
         selector: 'time > span[aria-hidden="true"]',

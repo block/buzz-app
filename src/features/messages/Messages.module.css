@@ -2742,20 +2742,55 @@ html[data-keyboard-navigation] .channelJoinSurface {
   display: none;
 }
 
-/* Messages between agents: one quiet line each, in time order, on a rail
-   that joins adjacent lines. */
+/* Agent coordination shares the conversation's measure. Avatars and quiet
+   type distinguish it without a second rail or a full message bubble. */
+.activityDisclosure {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
+  padding-block: var(--space-1);
+}
+.activityChevron {
+  transform: rotate(-90deg);
+}
+.activityDisclosure [aria-expanded="true"] .activityChevron {
+  transform: rotate(0deg);
+}
+.activityExpansionRoot {
+  display: contents;
+}
+.activityExpansion {
+  display: grid;
+  grid-template-rows: minmax(var(--activity-reveal-min, 0px), 1fr);
+}
+.activityExpansionContent {
+  min-height: 0;
+  overflow: clip;
+}
+.activityExpansion:is([data-starting-style], [data-ending-style]) {
+  grid-template-rows: minmax(var(--activity-reveal-min, 0px), 0fr);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .activityExpansion {
+    transition: grid-template-rows var(--duration-settle) var(--easing-enter);
+  }
+  .activityChevron {
+    transition: transform var(--duration-state) var(--easing-enter);
+  }
+}
 .audienceRow {
-  margin-inline-start: calc(var(--size-control-sm) / 2);
-  padding-inline-start: var(--space-2);
-  border-inline-start: 1px solid var(--border-standard);
+  container: audience-row / inline-size;
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
+  padding-block: var(--space-1);
 }
 .audienceLine {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: var(--space-1h);
   inline-size: 100%;
   min-inline-size: 0;
-  padding: var(--space-half) var(--space-1);
+  padding: var(--space-1);
   border: 0;
   border-radius: var(--radius-control);
   background: none;
@@ -2767,7 +2802,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
   letter-spacing: var(--text-caption--letter-spacing);
   text-align: start;
 }
-.audienceLine:hover {
+.audienceEntry:has(.audienceLine:hover) {
   background: var(--affordance-subtle-hover);
 }
 html[data-keyboard-navigation] .audienceLine:focus-visible {
@@ -2779,35 +2814,61 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   align-items: flex-start;
   border-radius: var(--radius-control);
 }
-.audienceRow[data-open] .audienceEntry {
+.audienceTime {
+  flex: none;
+  padding: var(--space-2) var(--space-1);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  white-space: nowrap;
+}
+.audienceRow:has(.audienceBody) .audienceEntry {
   cursor: pointer;
   background: var(--affordance-subtle);
 }
-.audienceRow[data-open] .audienceEntry:hover {
+.audienceRow:has(.audienceBody) .audienceEntry:hover {
   background: var(--affordance-subtle-hover);
 }
-.audienceRow[data-open] .audienceLine {
+.audienceRow:has(.audienceBody) .audienceLine {
   flex: none;
   inline-size: auto;
+  padding-inline-end: var(--space-1h);
   background: none;
 }
 /* Open, the text keeps the line's size and colour and starts where its
    preview was, so expanding only lets it run on. */
 .audienceBody {
-  flex: 1;
-  min-inline-size: 0;
-  padding-block-start: calc(
+  --activity-content-inset: calc(
     (
       var(--size-control-sm) *
       0.75 -
       var(--text-caption) *
       var(--text-caption--line-height)
     ) /
-    2
+    2 +
+    var(--space-1)
   );
+  /* The preview hands off to a readable first line immediately. Only the
+     additional space expands, avoiding a blank frame at either endpoint. */
+  --activity-reveal-min: calc(
+    var(--activity-content-inset) +
+    var(--text-caption) *
+    var(--text-caption--line-height)
+  );
+  flex: 1;
+  min-inline-size: 0;
+  color: var(--text-subtle);
+}
+.audienceContent {
+  padding-block-end: var(--space-2);
+  padding-block-start: var(--activity-content-inset);
   color: var(--text-subtle);
 }
 .audienceBody .message[data-layout="continuation"] {
+  width: 100%;
+  margin: 0;
+  padding-block: 0;
   padding-inline-end: var(--space-1);
 }
 .audienceBody .message[data-layout="continuation"] .text {
@@ -2817,6 +2878,12 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
 }
 .audienceBody .message[data-layout="continuation"] .messageGutter {
   display: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  /* Activity has no bubble padding for the toolbar to overlap. */
+  .audienceBody .messageActions {
+    scroll-margin-block-start: 0;
+  }
 }
 .audienceAvatar {
   display: grid;
@@ -2834,6 +2901,31 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Retain the expanded columns during exit, so wrapping and the preview do
+   not replace the closing details before their space has folded away. */
+.audienceRow:has(.audienceBody) .audiencePreview {
+  display: none;
+}
+
+/* At narrow widths or enlarged text, give the details the full reading width
+   while keeping the avatars and clock on their original header line. */
+@container audience-row (max-width: 28rem) {
+  .audienceRow:has(.audienceBody) .audienceEntry {
+    flex-wrap: wrap;
+  }
+  .audienceBody {
+    --activity-content-inset: var(--space-1);
+    order: 1;
+    flex-basis: 100%;
+  }
+  .audienceContent {
+    padding: var(--space-1) var(--space-1) var(--space-2);
+  }
+  .audienceTime {
+    margin-inline-start: auto;
+  }
 }
 
 /* Returning from a thread only paints its already-visible origin. The wash

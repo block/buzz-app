@@ -619,7 +619,10 @@ is called complete; token math alone cannot validate the CSS cascade.
 
 Button and IconButton share prominent, subtle, ghost, inverted, destructive,
 outline and link emphasis. Inverted is for an inverse surface; link keeps its
-background clear and underlines on interaction. Their 32 / 40 / 52px sizes are sm / md /
+background clear and underlines on interaction. Button’s plain variant keeps the background clear
+without underlining, for text disclosures whose label and chevron communicate
+expansion. It retains shared disabled, loading, and keyboard-focus behavior;
+pair it with `size="inline"` for quiet history labels. Their 32 / 40 / 52px sizes are sm / md /
 lg at the default scale, with minimum
 heights that accommodate larger text. Text buttons use `--radius-capsule`
 (1.625rem / 26px): capsule-shaped through the default 52px large size,

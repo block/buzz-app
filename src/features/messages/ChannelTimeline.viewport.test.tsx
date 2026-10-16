@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChannelTimeline } from "./ChannelTimeline";
 import { createRelaySession } from "../relay/session";
+import { writeView } from "../../shared/view-state";
 import { foldMessages } from "../relay/fold";
 import { keypair, message } from "../relay/testing";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
@@ -51,6 +52,165 @@ afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
 });
+
+function activityFixture() {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal(
+    "requestAnimationFrame",
+    vi.fn(() => 1),
+  );
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const owner = createRelaySession({
+    viewer: keypair().pubkey,
+    relayAuthor: keypair().pubkey,
+    media: () => undefined,
+    query: async () => [],
+  });
+  const updates = (count: number): ChannelMessage[] =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `activity-${index}`,
+      channelId: "alpha",
+      authorId: "agent",
+      audience: "agents",
+      createdAt: 100 + index,
+      content: `Update ${index}`,
+      mentions: [],
+      attachments: [],
+      reactions: [],
+      participants: [],
+      replyCount: 0,
+    }));
+  const content = (
+    rows: ChannelMessage[],
+    inlineTarget?: { messageId: string; signal: AbortSignal },
+    chatPresentation = true,
+  ) => (
+    <ChannelTimeline
+      channelId="alpha"
+      scope="activity-folding"
+      queries={owner.session}
+      chatPresentation={chatPresentation}
+      inlineTarget={inlineTarget}
+      window={{
+        channelId: "alpha",
+        rows,
+        status: "ready",
+        hasMore: false,
+        loadingOlder: false,
+        freshness: "verified",
+        error: undefined,
+      }}
+      onOpenLink={() => false}
+    />
+  );
+  return { owner, updates, content };
+}
+
+it("keeps the last five updates, retains expanded history through appends, and folds back", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const view = render(content(updates(9)));
+    expect(screen.queryByText("Update 3")).toBeNull();
+    expect(screen.getByText("Update 4")).toBeVisible();
+    const toggle = screen.getByRole("button", {
+      name: "Show 4 previous steps",
+    });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Update 0")).toBeVisible();
+    view.rerender(content(updates(11)));
+    expect(screen.getByRole("button", { name: "Show fewer" })).toBe(toggle);
+    expect(screen.getByText("Update 0")).toBeVisible();
+    expect(screen.getByText("Update 10")).toBeVisible();
+    fireEvent.click(toggle);
+    expect(screen.queryByText("Update 5")).toBeNull();
+    expect(screen.getByText("Update 6")).toBeVisible();
+    expect(toggle).toHaveTextContent("Show 6 previous steps");
+    expect(toggle).toHaveFocus();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("reveals an older folded message for an exact visit, then permits folding it again", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const rows = updates(9);
+    const view = render(content(rows));
+    expect(screen.queryByText("Update 0")).toBeNull();
+    view.rerender(
+      content(rows, {
+        messageId: "activity-0",
+        signal: new AbortController().signal,
+      }),
+    );
+    expect(screen.getByText("Update 0")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(screen.queryByText("Update 0")).toBeNull();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("does not fold short runs, normal replies, or non-Solo timelines", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const rows = updates(9);
+    const view = render(content(rows, undefined, false));
+    expect(screen.getByText("Update 0")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /previous steps/ })).toBeNull();
+    const middle = rows[4];
+    if (!middle) throw new Error("Missing fixture reply");
+    const { audience: _audience, ...publicReply } = middle;
+    view.rerender(
+      content([
+        ...rows.slice(0, 4),
+        { ...publicReply, content: "Main reply" },
+        ...rows.slice(5),
+      ]),
+    );
+    expect(screen.getByText("Update 0")).toBeVisible();
+    expect(screen.getByText("Main reply")).toBeVisible();
+    expect(screen.getByText("Update 5")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /previous steps/ })).toBeNull();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it.each([
+  { anchor: "activity-8", expanded: false },
+  { anchor: "activity-0", expanded: true },
+])(
+  "restores $anchor without unnecessarily expanding recent activity",
+  ({ anchor, expanded }) => {
+    const { owner, updates, content } = activityFixture();
+    writeView("activity-folding", "scroll:alpha", {
+      offset: 0,
+      bottom: false,
+      anchor: { id: anchor, y: 0 },
+    });
+    try {
+      render(content(updates(9)));
+      const toggle = screen.getByRole("button", {
+        name: expanded ? "Show fewer" : "Show 4 previous steps",
+      });
+      expect(toggle).toHaveAttribute("aria-expanded", String(expanded));
+      if (expanded) expect(screen.getByText("Update 0")).toBeVisible();
+      else expect(screen.queryByText("Update 0")).toBeNull();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 
 it("keeps membership notices visible in personal chats", () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);

@@ -433,6 +433,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "attention (proposed): light dashed danger outline with slow marching ants",
       "inverted",
       "link",
+      "plain: unfilled text disclosure without an underline",
       "size: inline | xs | sm | md (default) | lg",
       "shape: capsule (default) | control (12px)",
       "SurfaceButton: artwork layout with shared activation and focus (proposed)",

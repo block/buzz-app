@@ -3221,6 +3221,12 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),
   ).not.toBeInTheDocument();
+  // Archiving the regrouped row still closes the tab it opened.
+  const [row] = rows();
+  if (!row) throw Error("Missing regrouped row");
+  fireEvent.click(within(row).getByRole("button", { name: /^Archive / }));
+  await waitFor(() => expect(queryReader()).not.toBeInTheDocument());
+  expect(sideTabs()).toEqual([]);
 });
 
 it.each(["preview", "name", "history"])(

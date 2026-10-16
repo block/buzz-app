@@ -315,6 +315,14 @@ function InboxList({
     () => archiveIndex(readArchives(archiveRevision)),
     [archiveRevision],
   );
+  // Archive closes the tab a row opened, even after its row regroups.
+  const opened = useRef<PageTabTarget>(undefined);
+  const openRow = (item: InboxItem, channel?: { channelType?: string }) => {
+    const tab = tabTarget(item, channel);
+    if (!openTab(tab)) return false;
+    opened.current = tab;
+    return true;
+  };
   const [selectedTarget, setSelectedTarget] = useState<{
     channelId: string;
     messageId: string;
@@ -665,9 +673,10 @@ function InboxList({
           value &&
           current.selected?.channelId === item.channelId &&
           current.selected.messageIds.includes(item.messageId) &&
-          closeTab(tabTarget(item, channelOf(item)))
+          opened.current &&
+          closeTab(opened.current)
         ) {
-          if (next && openTab(tabTarget(next, channelOf(next)))) {
+          if (next && openRow(next, channelOf(next))) {
             advanced = next;
             setSelectedTarget(targetOf(next));
             return;
@@ -1087,7 +1096,7 @@ function InboxList({
                             }
                             onClick={() => {
                               if (busy.current) return;
-                              if (!openTab(tabTarget(item, channel)))
+                              if (!openRow(item, channel))
                                 void navigator.open({
                                   version: 1,
                                   kind: "conversation",

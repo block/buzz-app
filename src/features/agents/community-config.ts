@@ -62,6 +62,7 @@ import {
   teamCommunity,
 } from "./team-config";
 import {
+  established,
   type RunnerDeps,
   type TeamIntent,
   type TeamOp,
@@ -214,7 +215,7 @@ export type CommunityConfigInput = Readonly<{
   /** Reports each binding change, so starts and the UI re-resolve. */
   changed(): void;
   /** Removes a local team's row once its move onto the relay is done. */
-  retire(localTeamId: string): void;
+  retire(localTeamId: string): Promise<void>;
   enabled?: boolean;
 }>;
 
@@ -287,7 +288,7 @@ export function agentConfigs(
     communityId?: string | undefined;
     strip(pubkey: string, side: Side, accepted?: RelayEvent): void;
     changed(): void;
-    retire(localTeamId: string): void;
+    retire(localTeamId: string): Promise<void>;
     dispose?(): void;
   }>,
 ) {
@@ -338,9 +339,16 @@ export function agentConfigs(
     ops: input.ops,
     owner,
     community,
-    done(op) {
+    async done(op) {
+      // A move whose relay team holds the prompt retires its local row
+      // first: if that can't be saved, the record and its handover stay.
+      const target = teams?.find((team) => team.id === op.teamId);
+      if (
+        op.local &&
+        (established(op) || target?.archived || target?.unreadable)
+      )
+        await input.retire(op.local);
       if (op.confirmedHead) finishedAt.set(op.id, op.confirmedHead);
-      if (op.local) input.retire(op.local);
     },
     changed: () => input.changed(),
   });
@@ -663,7 +671,7 @@ export function agentConfigs(
       const op = runner.records().find((record) => record.id === id);
       if (!op) throw new Error("Nothing to resubmit");
       const team = teams?.find((t) => t.id === op.teamId);
-      return finished(runner.resubmit(id, team?.head ?? null).done);
+      return finished((await runner.resubmit(id, team?.head ?? null)).done);
     },
     /** Moves each local team whose members are all in this community onto
      * the relay, at its UUIDv5 id. Its row goes once the move is done. */
@@ -730,7 +738,7 @@ export function agentConfigs(
       const after = await done;
       await refreshTeams().catch(() => {});
       if (after?.stop === "archived" && !after.candidate) {
-        runner.dismiss(after.id);
+        await runner.dismiss(after.id);
         return { teamId, archived: true as const, missing: [] };
       }
       const confirmed = new Set(

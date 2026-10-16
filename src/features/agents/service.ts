@@ -842,8 +842,10 @@ export type TeamChangeView = Readonly<{
   id: string;
   teamId: string;
   kind: TeamOp["kind"];
-  /** The team's name as submitted. */
+  /** The team as submitted. */
   name: string;
+  instructions: string;
+  members: readonly string[];
   problem: string;
   /** Whether automatic work stopped: it waits for Resubmit or Dismiss. */
   stopped: boolean;
@@ -2743,7 +2745,7 @@ export class AgentsService extends Service implements Agents {
       throw new Error("This team's community isn't available; try again");
     if (action === "check") await config.checkTeamOp(id);
     else if (action === "resubmit") await config.resubmitTeamOp(id);
-    else if (action === "dismiss") config.dismissTeamOp(id);
+    else if (action === "dismiss") await config.dismissTeamOp(id);
     else config.discardTeamOp(id);
     this.showTeams();
   }
@@ -2837,6 +2839,8 @@ export class AgentsService extends Service implements Agents {
               teamId: op.teamId,
               kind: op.kind,
               name: op.intent.name,
+              instructions: op.intent.instructions,
+              members: op.intent.members,
               problem: teamOpProblem(op),
               stopped: op.mode === "reconcile-only",
               unresolved: unresolved(op),

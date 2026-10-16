@@ -529,7 +529,6 @@ it("starts a Codex thread and a turn from the synced copies; offline, only its c
 });
 
 const GOOSE_LOCAL = {
-  effort: "",
   model: "local-model",
   provider: "local-provider",
   effort: "",

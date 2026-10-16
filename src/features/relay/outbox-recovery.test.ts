@@ -296,3 +296,168 @@ it("retires roster-confirmed member recovery without inventing a delivery receip
   expect(h.publish).toHaveBeenCalledOnce();
   expect(restored.publish).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "atomically completes confirmed recovery (seen: %s)",
+  async (seen) => {
+    const store = memory();
+    const save = vi.fn(store.save);
+    const h = setup({ ...store, save });
+    await h.outbox.ready();
+    const id = h.outbox.send(input, recovery);
+    await vi.waitFor(() => expect(store.load()[0]?.delivery).toBe("accepted"));
+    if (seen) {
+      const operation = h.outbox.snapshot()[0];
+      assert.exists(operation);
+      h.observe([signed(viewer, operation.event)]);
+      await vi.waitFor(() => expect(store.load()[0]?.delivery).toBe("seen"));
+    }
+    save.mockClear();
+    await h.outbox.complete(id);
+    expect(save).toHaveBeenCalledExactlyOnceWith([]);
+    expect(h.outbox.snapshot()).toEqual([]);
+    expect(h.local.snapshot()).toEqual([]);
+    await h.outbox.complete(id);
+    expect(save).toHaveBeenCalledOnce();
+    h.dispose();
+    const restored = setup(store);
+    await restored.outbox.ready();
+    expect(restored.local.snapshot()).toEqual([]);
+    expect(() => restored.outbox.send(input, recovery)).not.toThrow();
+  },
+);
+
+it.each([false, true])(
+  "preserves atomic completion across an echo and queued save (failure: %s)",
+  async (fail) => {
+    const store = memory();
+    const save = vi.fn(async (records: readonly OutgoingEvent[]) =>
+      store.save(records),
+    );
+    const h = setup({ ...store, save });
+    await h.outbox.ready();
+    const id = h.outbox.send(input, recovery);
+    await vi.waitFor(() => expect(store.load()[0]?.delivery).toBe("accepted"));
+    const operation = h.outbox.snapshot()[0];
+    assert.exists(operation);
+    const event = signed(viewer, operation.event);
+    let release: () => void = () => {};
+    save.mockImplementationOnce(async (records) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (fail) throw new Error("Disk full");
+      store.save(records);
+    });
+    const completion = h.outbox.complete(id);
+    const result = fail
+      ? expect(completion).rejects.toThrow("Disk full")
+      : completion;
+    await vi.waitFor(() => expect(save.mock.calls.at(-1)?.[0]).toEqual([]));
+    try {
+      expect(h.outbox.snapshot()[0]?.recovery).toEqual(recovery);
+      const before = setup(store);
+      await before.outbox.ready();
+      expect(before.outbox.snapshot()[0]).toMatchObject({
+        event: { id },
+        recovery,
+      });
+      before.dispose();
+      expect(() => h.outbox.send(input, recovery)).toThrow(
+        "Recover the earlier",
+      );
+      await expect(h.outbox.recover(id, recovery)).rejects.toThrow(
+        "unavailable",
+      );
+      h.observe([event]);
+    } finally {
+      release();
+    }
+    await result;
+    // This save is queued after the echo's save, making it a completion barrier.
+    await h.outbox.dismiss("missing");
+    if (fail) {
+      expect(store.load()[0]).toMatchObject({ delivery: "seen", recovery });
+      expect(h.outbox.snapshot()[0]).toMatchObject({
+        delivery: "seen",
+        recovery,
+      });
+      await h.outbox.complete(id);
+    }
+    expect(store.load()).toEqual([]);
+    expect(h.local.snapshot()).toEqual([]);
+    h.observe([event]);
+    await h.outbox.dismiss("missing");
+    expect(store.load()).toEqual([]);
+    h.dispose();
+    const restored = setup(store);
+    await restored.outbox.ready();
+    expect(restored.local.snapshot()).toEqual([]);
+  },
+);
+
+it("rejects completion during publication and without confirmed delivery", async () => {
+  const store = memory();
+  let release: () => void = () => {};
+  const publish = vi.fn(
+    async () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const h = setup(store, publish);
+  await h.outbox.ready();
+  const id = h.outbox.send(input, recovery);
+  await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+  try {
+    await expect(h.outbox.complete(id)).rejects.toThrow("Wait for delivery");
+  } finally {
+    release();
+  }
+  await vi.waitFor(() => expect(store.load()[0]?.delivery).toBe("accepted"));
+  h.dispose();
+  const restored = setup(store);
+  await restored.outbox.ready();
+  await expect(restored.outbox.complete(id)).rejects.toThrow(
+    "Confirm delivery",
+  );
+  expect(restored.outbox.snapshot()[0]?.recovery).toEqual(recovery);
+});
+
+it("waits for hydration and shares completion through disposal", async () => {
+  const event = signed(viewer, input);
+  const record = { event, signed: event, recovery, delivery: "seen" as const };
+  const store = memory();
+  store.save([record]);
+  let hydrate: (records: readonly OutgoingEvent[]) => void = () => {};
+  let release: () => void = () => {};
+  const save = vi.fn(async (records: readonly OutgoingEvent[]) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    store.save(records);
+  });
+  const h = setup({
+    ...store,
+    load: () =>
+      new Promise((resolve) => {
+        hydrate = resolve;
+      }),
+    save,
+  });
+  const first = h.outbox.complete(event.id);
+  const second = h.outbox.complete(event.id);
+  hydrate([record]);
+  await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
+  try {
+    h.dispose();
+    expect(store.load()).toEqual(structuredClone([record]));
+  } finally {
+    release();
+  }
+  await Promise.all([first, second]);
+  expect(save).toHaveBeenCalledExactlyOnceWith([]);
+  const restored = setup(store);
+  await restored.outbox.ready();
+  expect(restored.local.snapshot()).toEqual([]);
+});

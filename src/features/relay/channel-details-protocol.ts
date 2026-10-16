@@ -242,6 +242,15 @@ function detailsLabels(tags: readonly (readonly string[])[]): string[] {
   return values;
 }
 
+/** Display-only TTL for summaries; malformed metadata shows no lifetime instead of failing the list. */
+export function channelTtl(event: RelayEvent): number | undefined {
+  try {
+    return parseDetailsTtl(exactLifecycleTag(event, "ttl"));
+  } catch {
+    return undefined;
+  }
+}
+
 /** A relay metadata TTL must be an unambiguous positive i32; only absence is ongoing. */
 function parseDetailsTtl(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;

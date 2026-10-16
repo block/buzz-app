@@ -247,6 +247,7 @@ export function createChannelStore(
         old.parentChannelId === channel.parentChannelId &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
+        old.ttlSeconds === channel.ttlSeconds &&
         old.readOnly === channel.readOnly &&
         old.cached === channel.cached &&
         old.members?.length === channel.members?.length &&

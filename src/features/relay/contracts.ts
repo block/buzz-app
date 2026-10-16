@@ -38,6 +38,8 @@ export type ChannelSummary = Readonly<{
   /** Metadata update time used for stable work-history ordering. */
   updatedAt?: number;
   archived?: true;
+  /** Signed metadata cleanup interval in seconds; absent means ongoing or unknown. */
+  ttlSeconds?: number;
   /** Exact members from the relay-signed roster; absent means unknown. */
   members?: readonly string[];
   /** Relay-published NIP-CL labels. Any channel admin can set them: grouping, never trust. */

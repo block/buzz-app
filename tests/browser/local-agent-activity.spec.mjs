@@ -406,7 +406,7 @@ test("finishing a zero-reply summary hands focus back only when it owns focus", 
       created_at: Math.floor(Date.now() / 1000),
       tags: [
         ["h", "alpha"],
-        ["p", "b".repeat(64)],
+        ["p", localAgentKey],
       ],
     });
     app.relay.publish("primary", request);

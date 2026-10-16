@@ -70,8 +70,8 @@ type Request = {
   superseded?: () => void;
   failActivity(reason: string): void;
 };
-/** `at` is when the binding last started a turn; bindings saved before it
- * existed have none. `tools` is the `addedKey` of the thread's tools, absent
+/** `at` is when the binding last took in a message or ended a turn; bindings
+ * saved before it existed have none. `tools` is the `addedKey` of the thread's tools, absent
  * when plugins added none. */
 type Saved = {
   threadId: string;
@@ -463,6 +463,13 @@ export class CodexRuntime {
       );
     }
   }
+  /** Dates the binding now, when it takes in a message or ends a turn. */
+  private touch(request: Request, entry: Entry, key: string) {
+    const saved = entry.saved[key];
+    if (!saved) return;
+    this.save(request, entry, key, { ...saved, at: Date.now() });
+    for (const listener of this.listeners) listener();
+  }
   async run(delivery: Delivery) {
     delivery.signal.throwIfAborted();
     const { trigger, agent } = delivery;
@@ -589,6 +596,7 @@ export class CodexRuntime {
           });
           active.reply = request;
           active.requests.push(request);
+          this.touch(request, entry, key);
           this.acknowledgeActivity(active, request);
         } catch (error) {
           if (entry.abort.signal.aborted) {
@@ -1178,6 +1186,9 @@ export class CodexRuntime {
       for (const taken of active.requests)
         taken.failActivity("Codex ended without a final reply");
       followed.stop();
+      // A turn Codex took in has ended, however it ended.
+      if (active.turnId && !entry.abort.signal.aborted)
+        this.touch(request, entry, key);
       turnAbort.abort(new Error("The Codex turn has ended"));
       // Release the subscription before the next resume: loaded-thread rejoin
       // ignores instruction/config overrides while a client is subscribed.

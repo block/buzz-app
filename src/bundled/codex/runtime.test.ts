@@ -1093,6 +1093,20 @@ it("steers a mid-turn message whose pick matches the running turn, or has none",
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.starts()).toHaveLength(1);
 });
+it("dates a binding by the latest message it took in or turn it ended", async () => {
+  let now = 1_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const f = fixture();
+  const at = () => f.runtime.conversations(pubkey)[0]?.at;
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(at()).toBe(1_000));
+  now = 2_000;
+  await f.runtime.run(f.delivery("steered"));
+  await vi.waitFor(() => expect(at()).toBe(2_000));
+  now = 3_000;
+  f.complete();
+  await vi.waitFor(() => expect(at()).toBe(3_000));
+});
 it("serializes owner follow-ups and routes tool replies to the latest accepted request", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("first"));

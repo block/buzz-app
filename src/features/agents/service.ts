@@ -206,10 +206,10 @@ export type AgentTab<Config = unknown> = Readonly<{
 }>;
 /** One of an agent's conversation sessions on this device. Without `root` it
  * is the channel's one session: a channel-scoped agent's, a DM's or a Me
- * chat's; with it, the thread's. `at` is its latest activity, in
- * milliseconds. `status` is the type's latest observation of it while
- * running here, such as "Working", "Idle" or a failed turn's outcome; absent
- * means unobserved, not idle. */
+ * chat's; with it, the thread's. `at` is when it last took in a message
+ * or ended a turn, in milliseconds. `status` is the type's latest
+ * observation of it while running here, such as "Working", "Idle" or a
+ * failed turn's outcome; absent means unobserved, not idle. */
 export type AgentSession = Readonly<{
   channelId: string;
   root?: string;

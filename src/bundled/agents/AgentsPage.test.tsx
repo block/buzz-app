@@ -748,11 +748,11 @@ it("saves a reviewed provider change with the destination settings", async () =>
   await user.keyboard("{Enter}");
   const rail = screen.getByRole("complementary", { name: "Ada identity" });
   expect(
-    within(rail).queryByRole("button", { name: "Change provider from Echo" }),
+    within(rail).queryByRole("button", { name: "Change harness from Echo" }),
   ).not.toBeInTheDocument();
   agents.retype.mockRejectedValueOnce(new Error("Ada is answering"));
   const typeTrigger = screen.getByRole("button", {
-    name: "Change provider from Echo",
+    name: "Change harness from Echo",
   });
   expect(typeTrigger.querySelectorAll("svg")).toHaveLength(2);
   await user.click(typeTrigger);
@@ -798,7 +798,7 @@ it("saves a reviewed provider change with the destination settings", async () =>
   await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(agents.retype).not.toHaveBeenCalled();
   expect(
-    screen.getByRole("button", { name: "Change provider from Relay" }),
+    screen.getByRole("button", { name: "Change harness from Relay" }),
   ).toBeVisible();
   expect(screen.queryByText("Provider settings")).not.toBeInTheDocument();
   expect(
@@ -823,7 +823,7 @@ it("saves a reviewed provider change with the destination settings", async () =>
     config: { endpoint: "wss://custom.example" },
   });
   expect(
-    screen.getByRole("button", { name: "Change provider from Relay" }),
+    screen.getByRole("button", { name: "Change harness from Relay" }),
   ).toBeVisible();
 });
 
@@ -1578,7 +1578,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
   await user.click(screen.getByRole("gridcell", { name: "Ada" }));
   const choose = async () => {
     await user.click(
-      screen.getByRole("button", { name: "Change provider from Echo" }),
+      screen.getByRole("button", { name: "Change harness from Echo" }),
     );
     await user.click(
       await screen.findByRole("menuitemradio", { name: "Destination" }),
@@ -1592,7 +1592,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
   expect(agents.retype).not.toHaveBeenCalled();
   await user.click(within(setupDialog).getByRole("button", { name: "Close" }));
   expect(
-    screen.getByRole("button", { name: "Change provider from Echo" }),
+    screen.getByRole("button", { name: "Change harness from Echo" }),
   ).toBeInTheDocument();
   await choose();
   await user.click(screen.getByRole("button", { name: "Install and connect" }));
@@ -1600,7 +1600,7 @@ it("opens provider setup before staging an unready provider, and leaves the swit
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
   expect(
-    screen.getByRole("button", { name: "Change provider from Destination" }),
+    screen.getByRole("button", { name: "Change harness from Destination" }),
   ).toBeInTheDocument();
   expect(agents.retype).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Save" }));

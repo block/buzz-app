@@ -170,7 +170,8 @@ internal preparation or already dispatched write. No atomic rollback or composit
 app-restart journal is added. Native GUI, packaged/live-relay and renewed human
 acceptance remain separate gates.
 
-The session edit wire command is exact `h,name[,ttl]`; it never rewrites `about`,
+The session edit wire command is `h,name[,ttl][,t…]`; trailing `t` tags preserve
+existing channel labels and record a chosen name as described below. It never rewrites `about`,
 so the legacy session marker and optional parent/personal lines stay unchanged.
 Unchanged lifetime omits `ttl`; a changed positive canonical decimal
 (1–2147483647) sets it, and an empty value removes it. Lifetime-only changes
@@ -194,7 +195,13 @@ New session `about` metadata uses only the existing marker, optional parent line
 and the `personal` line for Solo chats, exactly as recognized by older Buzz clients.
 Custom creation and subsequent renames do not append a `naming:` extension.
 Name/lifetime edits leave that metadata unchanged; only explicit Convert to channel
-clears `personal`. Persisted naming provenance and automatic-name reset are deferred.
+clears `personal`. Chosen names are recorded using the existing NIP-CL channel label
+`buzz.session.named`, added on explicitly named creation or an actual saved name
+change. Existing labels are preserved. This requires relay channel-label support;
+unsupported chosen-name writes fail before signing. Automatic-name reset remains
+deferred. Older sessions without this marker use a short ID in shared cards until
+a name change records the chosen name; the app does not infer provenance from a
+prompt or historical title.
 Clearing a saved name silently preserves the last confirmed title without a name
 write or validation error. Other settings can still save. Old pending receipts without a frozen name derive it from their original first
 prompt, not an edited retry draft.
@@ -215,11 +222,19 @@ The parser remains identical to the pre-feature parser. Source compatibility and
 synthetic signed create/rename/readback coverage are not live cross-version-client
 acceptance.
 
-Generated sharing messages and recovery receipts retain their original numeric
-`Session · short ID` labels and signed bytes, including after a rename. Dynamic
-explicit-only share-link titles are deferred together with naming provenance; no
-local title inference, metadata protocol, repost or authored-byte rewrite is added.
-Arbitrary authored labels, raw URLs, navigation and access rules are unchanged.
+Generated sharing messages use `[Session: <chosen name or short ID>](buzz://channel/<id>)`.
+Only names carrying `buzz.session.named` replace the ID. Existing signed messages
+and recovery receipts keep their original bytes, including legacy `Session ·` labels;
+retry matching uses the original session destination rather than regenerating the
+current name. Authorized viewers can see the current chosen name in the card.
+
+Session references render as document cards outside the message bubble, before
+any caption, with the fixed `Session:` label. In the composer, references are staged
+above the caption editor with a remove control and saved in the same draft. Sending
+serializes the references before the caption as ordinary Markdown links. Selected
+mention identities remain bound to caption text; quoted, list, code and hidden
+references stay in their original context. Replies, reactions, copy and actions
+remain owned by the original message. Navigation and access rules are unchanged.
 
 ## Owners and validation limits
 

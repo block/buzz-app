@@ -118,7 +118,8 @@ export function createChannelStore(
         /** Explicit NIP-11 self; only it may attribute messages to others. */
         archiveAuthority?: string | undefined;
         media(url: string, size?: "small"): string | undefined;
-        revokeAccess(commit: () => void): void;
+        /** `ids` names the channels that lost access when known; omitted means any. */
+        revokeAccess(commit: () => void, ids?: readonly string[]): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
@@ -247,6 +248,7 @@ export function createChannelStore(
         old.parentChannelId === channel.parentChannelId &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
+        old.ttlSeconds === channel.ttlSeconds &&
         old.readOnly === channel.readOnly &&
         old.cached === channel.cached &&
         old.members?.length === channel.members?.length &&
@@ -521,7 +523,7 @@ export function createChannelStore(
       );
       void persistence?.remove(channelId).catch(() => {});
       saveDiscovery();
-    });
+    }, [channelId]);
   }
   const isSession = (channelId: string) => !!discovery?.isSession(channelId);
   async function readPage(
@@ -954,7 +956,11 @@ export function createChannelStore(
         discovery.canAccess(channel.id),
     );
     const channels = Object.freeze(discovery.channels());
-    const nextAllowed = new Set(channels.map((channel) => channel.id));
+    // A system channel never lists but stays readable: its saved history is
+    // kept and restored like any other channel's.
+    const nextAllowed = new Set(
+      discovery.readable().map((channel) => channel.id),
+    );
     const known = new Set([
       ...(allowed ?? []),
       ...windows.keys(),
@@ -1060,6 +1066,78 @@ export function createChannelStore(
       let complete: Set<string> | undefined;
       let retainedComplete = false;
       let paged = false;
+      // NIP-CL: the relay leaves system channels out of the `#p` roster read
+      // below, so a NIP-CL pass also reads them through their opt-in filter.
+      // Their ids join the same complete set, which proves their loss like any
+      // other channel's. They apply with the first roster page, never before
+      // it: applying commits the list as ready.
+      let system: RelayEvent[] = [];
+      if (transport.channelIdentity) {
+        let systemCursor: RelayEvent | undefined;
+        for (let page = 0; ; page++) {
+          if (page > discovery.capacity / DISCOVERY_LIMIT)
+            throw new ReadError(
+              "invalid-response",
+              "System channel discovery exceeded its read budget",
+            );
+          const rosters = await transport.read(
+            [
+              {
+                kinds: [39002],
+                ...consistency,
+                "#p": [transport.viewer],
+                "#t": ["system"],
+                limit: DISCOVERY_LIMIT,
+                ...(systemCursor
+                  ? {
+                      until: systemCursor.created_at,
+                      before_id: systemCursor.id,
+                    }
+                  : {}),
+              },
+            ],
+            { signal: controller.signal },
+          );
+          if (disposed || generation !== epoch) return;
+          const members = rosters
+            .filter(
+              (event) =>
+                event.kind === 39002 &&
+                event.pubkey === transport.relayAuthor &&
+                hasTag(event, "p", transport.viewer) &&
+                hasTag(event, "t", "system") &&
+                tag(event, "d"),
+            )
+            .sort(
+              (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+            );
+          const last = members.at(-1);
+          if (
+            !members.every(
+              (event) =>
+                !systemCursor ||
+                event.created_at < systemCursor.created_at ||
+                (event.created_at === systemCursor.created_at &&
+                  event.id > systemCursor.id),
+            ) ||
+            (rosters.length >= DISCOVERY_LIMIT && !last)
+          )
+            throw new ReadError(
+              "invalid-response",
+              "System channel discovery cursor did not advance",
+            );
+          for (const event of members) {
+            const id = tag(event, "d");
+            if (id) ids.add(id);
+          }
+          system.push(...members);
+          if (rosters.length < DISCOVERY_LIMIT) break;
+          systemCursor = last;
+          // A roster can move ahead of this cursor mid-scan, as below, so a
+          // paged system read needs the same omission confirmation.
+          paged = true;
+        }
+      }
       // At most the retained roster budget plus its final exhaustion read.
       // This also bounds a relay returning repeated coordinates with new versions.
       for (let page = 0; page <= discovery.capacity / DISCOVERY_LIMIT; page++) {
@@ -1107,9 +1185,11 @@ export function createChannelStore(
           (rosters.length < DISCOVERY_LIMIT || !!last);
         const shortPage = advances && rosters.length < DISCOVERY_LIMIT;
         const pageComplete = shortPage ? ids : undefined;
+        const evidence = system.length ? [...system, ...rosters] : rosters;
+        system = [];
         if (
           !applyDiscovery(
-            rosters,
+            evidence,
             pageComplete && !paged ? pageComplete : undefined,
             started,
           )
@@ -2520,7 +2600,7 @@ export function createChannelStore(
       let changed = false;
       for (const id of ids)
         changed = (discovery?.suspend(id) ?? false) || changed;
-      if (changed) transport?.revokeAccess(() => setList(list, true));
+      if (changed) transport?.revokeAccess(() => setList(list, true), ids);
     },
     suspendedPreviews: () => discovery?.suspendedChannels() ?? [],
     acceptDiscovery: applyDiscovery,

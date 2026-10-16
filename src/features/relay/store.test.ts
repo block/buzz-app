@@ -398,6 +398,45 @@ it("projects explicit visibility and replaces description-only changes without e
   }
 });
 
+it("projects the signed metadata lifetime and replaces lifetime-only changes", async () => {
+  const { store, queries, next } = setup();
+  try {
+    queries.ensureList();
+    next().respond([
+      roster(relay, "work", [viewer.pubkey]),
+      metadata(relay, "work", "Work"),
+    ]);
+    await flush();
+    expect(queries.list().channels[0]).not.toHaveProperty("ttlSeconds");
+    // Malformed metadata keeps the channel listed without inventing a lifetime.
+    for (const [index, [ttl, expected, replaced]] of (
+      [
+        [["ttl", "604800"], 604800, true],
+        [["ttl", "86400"], 86400, true],
+        [["ttl", "01"], undefined, true],
+        [[], undefined, false],
+      ] as const
+    ).entries()) {
+      const old = queries.list().channels[0];
+      queries.refreshList?.();
+      next().respond([
+        roster(relay, "work", [viewer.pubkey]),
+        metadata(relay, "work", "Work", 1_700_000_001 + index, [
+          ...(ttl.length ? [[...ttl]] : []),
+          ["t", "stream"],
+        ]),
+      ]);
+      await flush();
+      const channel = queries.list().channels[0];
+      expect(channel?.name).toBe("Work");
+      expect(channel?.ttlSeconds).toBe(expected);
+      expect(channel === old).toBe(!replaced);
+    }
+  } finally {
+    store.dispose();
+  }
+});
+
 /** Two joined channels discovered in one short page, so the list is ready. */
 async function discovered(test: ReturnType<typeof setup>) {
   test.queries.ensureList();

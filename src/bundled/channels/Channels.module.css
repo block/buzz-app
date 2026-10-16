@@ -876,6 +876,12 @@ html[data-keyboard-navigation]
   height: 100%;
 }
 
+.temporaryMarker {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-subtle);
+}
+
 .indicatorStack {
   display: inline-grid;
   flex-shrink: 0;

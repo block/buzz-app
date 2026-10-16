@@ -1,3 +1,5 @@
+import { stageSessionCards } from "./composer-session-cards";
+import { ComposerSessionCards } from "./ComposerSessionCards";
 import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { messageButtonStyle } from "../../shared/theme/bubble-color";
@@ -59,6 +61,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useMemo,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -390,12 +393,21 @@ function Composer({
   const [conflict, setConflict] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
   const [value, updateDraft] = useState(() =>
-    mentionDraft(
-      accepted?.next ??
-        submission?.recoveredDraft ??
-        readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+    stageSessionCards(
+      mentionDraft(
+        accepted?.next ??
+          submission?.recoveredDraft ??
+          readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+      ),
+      list.channels,
     ),
   );
+  const sessionCards = value.sessionCards;
+  const editorDraft = useMemo(() => {
+    if (!value.sessionCards) return value;
+    const { sessionCards: _cards, ...caption } = value;
+    return caption;
+  }, [value]);
   const draft = value.text;
   const valueRef = useRef(value);
   // Model and effort picked for mentioned agents' next run; cleared by each send.
@@ -491,6 +503,18 @@ function Composer({
     [],
   );
   const saveDraft = (next: MentionDraft) => {
+    next = stageSessionCards(
+      {
+        ...next,
+        ...((next.sessionCards ?? valueRef.current.sessionCards)
+          ? {
+              sessionCards:
+                next.sessionCards ?? valueRef.current.sessionCards ?? [],
+            }
+          : {}),
+      },
+      list.channels,
+    );
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
     updateDraft(next);
@@ -627,7 +651,10 @@ function Composer({
   function loadSaved(raw: string | null) {
     let next: MentionDraft;
     try {
-      next = mentionDraft(JSON.parse(raw ?? "null"));
+      next = stageSessionCards(
+        mentionDraft(JSON.parse(raw ?? "null")),
+        list.channels,
+      );
     } catch {
       next = mentionDraft("");
     }
@@ -811,7 +838,16 @@ function Composer({
       value: valueRef.current,
       restore: input.current.checkpoint(),
     };
-    const next = mentionDraft(editing.start(current));
+    const next = stageSessionCards(
+      mentionDraft(
+        editing.start(current, (body) =>
+          composerMarkdown(
+            stageSessionCards(mentionDraft(body), list.channels),
+          ),
+        ),
+      ),
+      list.channels,
+    );
     valueRef.current = next;
     updateDraft(next);
     input.current.reset(next);
@@ -1078,7 +1114,10 @@ function Composer({
     if (!permitted.current || voice.isCapturing()) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
-      if (!valueRef.current.text.trim()) {
+      if (
+        !valueRef.current.text.trim() &&
+        !valueRef.current.sessionCards?.length
+      ) {
         if (editing.target.attachments.length) {
           setError(
             "Keep attachment links unchanged. To remove this message, use Delete message.",
@@ -1108,7 +1147,7 @@ function Composer({
       admission.current ||
       submission?.disabled ||
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
-      (!draft.trim() && !attachments.items.length) ||
+      (!draft.trim() && !sessionCards?.length && !attachments.items.length) ||
       attachments.blocked ||
       sendPending ||
       sendAttempt.current ||
@@ -1308,7 +1347,9 @@ function Composer({
               !cleared(JSON.stringify(valueRef.current)) &&
               (valueRef.current.text !== next.text ||
                 JSON.stringify(valueRef.current.recipients) !==
-                  JSON.stringify(next.recipients)) &&
+                  JSON.stringify(next.recipients) ||
+                JSON.stringify(valueRef.current.sessionCards ?? []) !==
+                  JSON.stringify(next.sessionCards ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
             )
               return "conflict";
@@ -1325,7 +1366,9 @@ function Composer({
                 current === JSON.stringify(valueRef.current) &&
                 valueRef.current.text === next.text &&
                 JSON.stringify(valueRef.current.recipients) ===
-                  JSON.stringify(next.recipients)
+                  JSON.stringify(next.recipients) &&
+                JSON.stringify(valueRef.current.sessionCards ?? []) ===
+                  JSON.stringify(next.sessionCards ?? [])
               )
             )
               return "conflict";
@@ -1591,13 +1634,31 @@ function Composer({
               }}
             />
           )}
+          <ComposerSessionCards
+            cards={sessionCards ?? []}
+            session={session}
+            scope={scope}
+            channelId={channelId}
+            extensions={extensions}
+            disabled={editingDisabled}
+            remove={(index) => {
+              saveDraft({
+                ...valueRef.current,
+                sessionCards:
+                  valueRef.current.sessionCards?.filter(
+                    (_, i) => i !== index,
+                  ) ?? [],
+              });
+              input.current?.focus();
+            }}
+          />
           <div className={styles.composerInput}>
             <RichComposerInput
               ref={input}
               id={inputId}
               disabled={editingDisabled}
               value={draft}
-              draft={value}
+              draft={editorDraft}
               session={session}
               scope={scope}
               channelId={channelId}
@@ -1631,7 +1692,14 @@ function Composer({
               }
               // Choosing this conversation's tab resumes typing here.
               data-tab-focus=""
-              maxLength={16000}
+              maxLength={Math.max(
+                0,
+                16000 -
+                  (sessionCards?.reduce(
+                    (size, card) => size + card.length + 2,
+                    0,
+                  ) ?? 0),
+              )}
               aria-label={label}
               placeholder={placeholder ?? label}
               onFocus={() => completion.observe(true)}
@@ -1677,6 +1745,7 @@ function Composer({
                   !editing.target &&
                   event.currentTarget.value === "" &&
                   !valueRef.current.recipients.length &&
+                  !valueRef.current.sessionCards?.length &&
                   !attachments.items.length
                 ) {
                   const target = lastEditableMessage(session, editableRows());
@@ -1783,7 +1852,9 @@ function Composer({
               )}
             <IconButton
               variant={
-                draft.trim() || attachments.items.length ? "primary" : "ghost"
+                draft.trim() || sessionCards?.length || attachments.items.length
+                  ? "primary"
+                  : "ghost"
               }
               size="toolbar"
               type="submit"
@@ -1799,6 +1870,7 @@ function Composer({
                 submission?.disabled ||
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
+                  !sessionCards?.length &&
                   !attachments.items.length &&
                   !(
                     editing.target &&

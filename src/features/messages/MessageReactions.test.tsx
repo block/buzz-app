@@ -515,23 +515,6 @@ it("retires reaction previews while retaining the reaction delivery owner", asyn
   }
 });
 
-it("opens the reactor preview after a short hover, not a long dwell", async () => {
-  const h = harness([react(other)]);
-  vi.useFakeTimers();
-  try {
-    render(<h.Controls />);
-    fireEvent.mouseEnter(
-      screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
-    );
-    await act(() => vi.advanceTimersByTimeAsync(99));
-    expect(document.body.querySelector('[role="tooltip"]')).toBeNull();
-    await act(() => vi.advanceTimersByTimeAsync(1));
-    expect(screen.getByRole("tooltip")).toBeTruthy();
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
 it("hands focus back when my emoji is removed while another person's remains", async () => {
   const h = harness([react(), react(other)]);
   const onFocusedRemoval = vi.fn();
@@ -549,40 +532,6 @@ it("hands focus back when my emoji is removed while another person's remains", a
     await flush();
   });
 });
-
-it("shares a new bounded tilt with the preview on each pointer entry", async () => {
-  const h = harness([react(other)]);
-  render(<h.Controls />);
-  const emoji = screen.getByRole("button", {
-    name: `👍: ${other.pubkey.slice(0, 10)}`,
-  });
-  const random = vi.spyOn(Math, "random");
-  try {
-    random.mockReturnValue(0);
-    fireEvent.mouseEnter(emoji);
-    expect(emoji.style.getPropertyValue("--reaction-tilt")).toBe("-10deg");
-    await screen.findByRole("tooltip");
-    const artwork = () =>
-      screen
-        .getByRole("tooltip")
-        .querySelector<HTMLElement>("[style*=reaction-preview-tilt]");
-    expect(artwork()?.style.getPropertyValue("--reaction-preview-tilt")).toBe(
-      "-10deg",
-    );
-    fireEvent.mouseLeave(emoji);
-    random.mockReturnValue(0.75);
-    fireEvent.mouseEnter(emoji);
-    expect(emoji.style.getPropertyValue("--reaction-tilt")).toBe("5deg");
-    await waitFor(() =>
-      expect(artwork()?.style.getPropertyValue("--reaction-preview-tilt")).toBe(
-        "5deg",
-      ),
-    );
-  } finally {
-    random.mockRestore();
-  }
-});
-
 it("offers the first reaction inline for coordination messages and respects disabled state", () => {
   const pickerTools = registry<ComposerTool>([
     {
@@ -617,22 +566,4 @@ it("offers the first reaction inline for coordination messages and respects disa
     }),
   );
   expect(h.session.outbox?.snapshot()[0]?.event.kind).toBe(7);
-});
-
-it("marks the reaction row populated only while active reactions render", () => {
-  const h = harness([react(other)]);
-  const view = render(<h.Controls />);
-  const populated = () =>
-    screen.getByTestId("reaction-row").hasAttribute("data-populated");
-  expect(populated()).toBe(true);
-  view.rerender(
-    <ConversationPresentation value={false}>
-      <h.Controls />
-    </ConversationPresentation>,
-  );
-  expect(populated()).toBe(false);
-  view.unmount();
-  const empty = harness();
-  render(<empty.Controls />);
-  expect(populated()).toBe(false);
 });

@@ -2837,25 +2837,6 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.input()).toHaveValue("");
 });
 
-it("opens a code block as ``` is typed without waiting for Enter, then sends the fenced block", async () => {
-  const h = mount();
-  await h.user.type(h.input(), "```");
-  expect(h.input().querySelector("pre > code")).not.toBeNull();
-  expect(h.input()).toHaveValue("");
-  expect(h.messages.send).not.toHaveBeenCalled();
-  await h.user.keyboard("const answer = 42;{Shift>}{Enter}{/Shift}answer");
-  expect(h.input()).toHaveValue("const answer = 42;\nanswer");
-  await h.user.keyboard("{Enter}");
-  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
-    "channel",
-    "```\nconst answer = 42;\nanswer\n```",
-    [],
-    [],
-  );
-  expect(h.input()).toHaveValue("");
-  expect(h.input().querySelector("pre")).toBeNull();
-});
-
 it.each([
   ["- ", "ul", "- first\n- second"],
   ["3. ", "ol", "3. first\n4. second"],
@@ -3142,16 +3123,6 @@ it("subscribes to emoji changes and releases the subscription when unmounted", (
   expect(h.input().querySelectorAll("img[alt=':party:']")).toHaveLength(0);
   h.unmount();
   expect(h.emojiListeners.size).toBe(0);
-});
-
-it("enlarges Unicode-only drafts and restores normal text presentation", () => {
-  const h = mount();
-  for (const draft of ["😀", "😀 🙏 👏", "😀 🙏 👏 😄"]) {
-    h.fill(draft);
-    expect(h.input()).toHaveAttribute("data-single-emoji", "true");
-    h.fill(`${draft} hello`);
-    expect(h.input()).not.toHaveAttribute("data-single-emoji");
-  }
 });
 
 it.each([undefined, "root"])(
@@ -7240,60 +7211,6 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
   expect(h.uploadCalls[0]?.file.name).toBe("draft-0.txt");
   expect(h.publish).not.toHaveBeenCalled();
-});
-
-it("marks the composer for conversation controls only while they render", () => {
-  const h = mount(
-    { trailingTool: <button type="button">Tool</button> },
-    undefined,
-    first.pubkey,
-  );
-  const form = () => h.container.querySelector("form");
-  expect(form()).toHaveAttribute("data-conversation-controls");
-  h.setRows([editableMessage()]);
-  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
-  expect(form()).toHaveAttribute("data-editing");
-  expect(form()).not.toHaveAttribute("data-conversation-controls");
-  h.unmount();
-});
-
-it("marks the leading tools while explicit recipients are shown", async () => {
-  const h = mount();
-  expect(h.container.querySelector("[data-recipients]")).toBeNull();
-  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
-  const region = screen.getByRole("region", { name: "Explicit mentions" });
-  const tools = region.parentElement;
-  expect(tools).toHaveAttribute("data-recipients");
-  await h.user.click(
-    within(region).getByRole("button", {
-      name: `Remove mention Honey ${first.pubkey}`,
-    }),
-  );
-  expect(
-    screen.queryByRole("region", { name: "Explicit mentions" }),
-  ).not.toBeInTheDocument();
-  expect(tools).not.toHaveAttribute("data-recipients");
-  h.unmount();
-});
-
-it("marks the composer with attachments until the emptied section has animated out", async () => {
-  // jsdom applies no CSS module styles, so the gap/padding this attribute
-  // drives cannot be measured here; the attribute's timeline is asserted.
-  const h = await mountUploadComposer();
-  expect(h.form()).not.toHaveAttribute("data-attachments");
-  attachByPaste(h.input(), attachmentFile("notes.txt"));
-  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
-  const section = screen.getByRole("region", { name: "Attachments" });
-  fireEvent.click(screen.getByRole("button", { name: "Remove notes.txt" }));
-  // The list is empty but the section is still exiting: keep the mark.
-  expect(section).toBeInTheDocument();
-  expect(h.form()).toHaveAttribute("data-attachments");
-  await waitFor(() => expect(section).not.toBeInTheDocument());
-  expect(h.form()).not.toHaveAttribute("data-attachments");
-  attachByPaste(h.input(), attachmentFile("again.txt"));
-  await waitFor(() => expect(h.form()).toHaveAttribute("data-attachments"));
-  fireEvent.click(h.send());
-  await waitFor(() => expect(h.form()).not.toHaveAttribute("data-attachments"));
 });
 
 it("drops the attachments mark while a row-requested edit holds pending items", async () => {

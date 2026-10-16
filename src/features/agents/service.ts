@@ -22,6 +22,7 @@ import { ownerReads } from "./reads";
 // records with its type as the `runtime` tag, so every device of the owner's
 // can show it: as here, hosted, or on another device.
 import { migrateAgentStorage } from "./migrate-storage";
+import { migrateWatchFilters } from "./migrate-filter";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
@@ -933,6 +934,7 @@ export class AgentsService extends Service implements Agents {
     this.contributions = createContributions<AgentType>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     migrateAgentStorage(storage);
+    migrateWatchFilters(storage);
     this.records = readRecords(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);

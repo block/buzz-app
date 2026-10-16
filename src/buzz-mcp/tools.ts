@@ -1,7 +1,7 @@
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
-import { decode } from "nostr-tools/nip19";
+import { decode, npubEncode } from "nostr-tools/nip19";
 import {
   canonicalDetailsName,
   detailsDraftErrors,
@@ -179,7 +179,7 @@ export const TOOLS: readonly Tool[] = [
   ]),
   tool(
     "notes_get",
-    "Read a shared note (team runbooks and skills) by name; without name, list notes. author: me (default for lists), all, a pubkey or a display name.",
+    "Read a shared note (team runbooks and skills) by name; without name, list notes. author: me (default for lists), all, an npub, a hex pubkey or a display name.",
     {
       name: str,
       author: str,
@@ -1337,7 +1337,9 @@ class Tools {
     );
     if (found.length > 1)
       throw new Error(
-        `${found.length} people are named ${value}; give their pubkey.`,
+        `${found.length} people are named ${value}; give their npub.\n${found
+          .map((event) => npubEncode(event.pubkey))
+          .join("\n")}`,
       );
     if (!found[0]) throw new Error(`No one is named ${value}.`);
     return found[0].pubkey;

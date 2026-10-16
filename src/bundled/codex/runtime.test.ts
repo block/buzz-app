@@ -4,6 +4,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { ownerReads } from "../../features/agents/reads";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -969,6 +970,18 @@ it.each([
     ).toMatchObject({ model: expected });
   },
 );
+it("tells a turn a reload stopped to carry on where it left off", async () => {
+  const f = fixture();
+  const fresh = f.delivery("@Codex fix the build");
+  await f.runtime.run({
+    ...fresh,
+    trigger: { ...fresh.trigger, resumed: true } as Delivery["trigger"],
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toContain("fix the build");
+  expect(params.input[0]?.text).toContain(RESUMED_PROMPT);
+});
 it("starts a turn at the effort its owner picked when the model supports it", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });

@@ -7,6 +7,7 @@ import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
+import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
@@ -258,6 +259,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             }
           >
             <UpdateNotice updates={services.updates} />
+            <InterruptedNotice agents={services.agents} />
             {startup === "recovery" && !settings ? (
               <RecoveryScreen plugins={plugins} />
             ) : (!route.state.ingress && route.failure) ||

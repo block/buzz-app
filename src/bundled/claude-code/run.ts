@@ -12,7 +12,10 @@ const HANDOVER_MS = 2 * 60_000;
 export const claudeRun = (
   runtime: ClaudeRuntime,
   ready?: (signal: AbortSignal) => Promise<void>,
-): Pick<AgentType<Config>, "models" | "run" | "runOnce" | "timeoutMs"> => ({
+): Pick<
+  AgentType<Config>,
+  "models" | "run" | "runOnce" | "timeoutMs" | "resumes"
+> => ({
   models: (agent) => runtime.models(agent.pubkey),
   run: async (delivery) => {
     await ready?.(delivery.signal);
@@ -23,4 +26,7 @@ export const claudeRun = (
     return runtime.runOnce(turn);
   },
   timeoutMs: HANDOVER_MS,
+  // Closing or reloading the app stops its turns; each resumed one carries on
+  // in its saved session.
+  resumes: true,
 });

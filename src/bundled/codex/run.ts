@@ -14,7 +14,10 @@ const HANDOVER_MS = 2 * 60_000;
 export const codexRun = (
   runtime: CodexRuntime,
   ready?: (signal: AbortSignal) => Promise<void>,
-): Pick<AgentType<Config>, "models" | "run" | "runOnce" | "timeoutMs"> => ({
+): Pick<
+  AgentType<Config>,
+  "models" | "run" | "runOnce" | "timeoutMs" | "resumes"
+> => ({
   models: (agent) => runtime.preview(agent),
   run: async (delivery) => {
     await ready?.(delivery.signal);
@@ -25,4 +28,7 @@ export const codexRun = (
     return runtime.runOnce(turn);
   },
   timeoutMs: HANDOVER_MS,
+  // Closing or reloading the app stops its turns; each resumed one carries on
+  // in its saved session.
+  resumes: true,
 });

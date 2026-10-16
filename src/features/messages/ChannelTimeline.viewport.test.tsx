@@ -9,7 +9,7 @@ import { foldMessages } from "../relay/fold";
 import { keypair, message } from "../relay/testing";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 
-const viewport = vi.hoisted(() => ({ size: 0 }));
+const viewport = vi.hoisted(() => ({ size: 0, caches: [] as unknown[] }));
 // Control the independent virtualizer's public measurement/shift contract.
 // React itself owns the real timeline's refs, render and effect ordering.
 vi.mock("virtua", async () => {
@@ -19,9 +19,15 @@ vi.mock("virtua", async () => {
       {
         children,
         shift,
-      }: { children: import("react").ReactNode; shift: boolean },
+        cache,
+      }: {
+        children: import("react").ReactNode;
+        shift: boolean;
+        cache?: unknown;
+      },
       ref,
     ) {
+      viewport.caches.push(cache);
       useImperativeHandle(
         ref,
         () => ({
@@ -43,7 +49,24 @@ vi.mock("virtua", async () => {
   };
 });
 vi.mock("./MessageRow", () => ({
-  MessageRow: ({ row }: { row: ChannelMessage }) => <li>{row.content}</li>,
+  MessageRow: ({
+    row,
+    stackPrevious,
+    stackNext,
+    keepMounted,
+  }: {
+    row: ChannelMessage;
+    stackPrevious: boolean;
+    stackNext: boolean;
+    keepMounted: (id: string) => () => void;
+  }) => (
+    <li data-stacked={stackPrevious} data-stack-next={stackNext}>
+      {row.content}
+      <button type="button" onClick={() => keepMounted(row.id)}>
+        Retain {row.id}
+      </button>
+    </li>
+  ),
 }));
 
 afterEach(() => {
@@ -206,6 +229,165 @@ it.each([
       expect(toggle).toHaveAttribute("aria-expanded", String(expanded));
       if (expanded) expect(screen.getByText("Update 0")).toBeVisible();
       else expect(screen.queryByText("Update 0")).toBeNull();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+it("starts visible and retained steps with author artwork after a hidden predecessor", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    render(content(updates(9)));
+    expect(screen.getByText("Update 4")).toHaveAttribute(
+      "data-stacked",
+      "false",
+    );
+    expect(screen.getByText("Update 5")).toHaveAttribute(
+      "data-stacked",
+      "true",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show 4 previous steps" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retain activity-2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(screen.getByText("Update 2")).toHaveAttribute(
+      "data-stacked",
+      "false",
+    );
+    expect(screen.getByText("Update 2")).toHaveAttribute(
+      "data-stack-next",
+      "false",
+    );
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("consumes a visit to a visible step without expanding it later on append", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const target = {
+      messageId: "activity-4",
+      signal: new AbortController().signal,
+    };
+    const view = render(content(updates(9), target));
+    expect(
+      screen.getByRole("button", { name: /previous steps/ }),
+    ).toHaveAttribute("aria-expanded", "false");
+    view.rerender(content(updates(10), target));
+    expect(
+      screen.getByRole("button", { name: /previous steps/ }),
+    ).toHaveAttribute("aria-expanded", "false");
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("does not expand history when visiting a retained visible step", () => {
+  const { owner, updates, content } = activityFixture();
+  try {
+    const rows = updates(9);
+    const view = render(content(rows));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show 4 previous steps" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retain activity-2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(screen.getByText("Update 2")).toBeVisible();
+    view.rerender(
+      content(rows, {
+        messageId: "activity-2",
+        signal: new AbortController().signal,
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: /previous steps/ }),
+    ).toHaveAttribute("aria-expanded", "false");
+  } finally {
+    owner.dispose();
+  }
+});
+
+it.each([false, true])(
+  "does not expand a previously visible restore anchor after append (bottom: %s)",
+  (bottom) => {
+    const { owner, updates, content } = activityFixture();
+    writeView("activity-folding", "scroll:alpha", {
+      offset: 0,
+      bottom,
+      anchor: { id: "activity-4", y: 0 },
+    });
+    try {
+      const view = render(content(updates(9)));
+      view.rerender(content(updates(10)));
+      expect(
+        screen.getByRole("button", { name: /previous steps/ }),
+      ).toHaveAttribute("aria-expanded", "false");
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
+it("ignores a hidden reading anchor when restoring the bottom", () => {
+  const { owner, updates, content } = activityFixture();
+  writeView("activity-folding", "scroll:alpha", {
+    offset: 0,
+    bottom: true,
+    anchor: { id: "activity-0", y: 0 },
+  });
+  try {
+    render(content(updates(9)));
+    expect(
+      screen.getByRole("button", { name: /previous steps/ }),
+    ).toHaveAttribute("aria-expanded", "false");
+  } finally {
+    owner.dispose();
+  }
+});
+
+it.each([
+  {
+    solo: false,
+    bottom: false,
+    firstAnchor: "activity-0",
+    nextAnchor: "activity-1",
+  },
+  {
+    solo: true,
+    bottom: false,
+    firstAnchor: "activity-0",
+    nextAnchor: "activity-1",
+  },
+  {
+    solo: true,
+    bottom: true,
+    firstAnchor: "activity-4",
+    nextAnchor: "activity-5",
+  },
+])(
+  "reuses unchanged geometry across saved anchors (Solo: $solo, bottom: $bottom)",
+  ({ solo, bottom, firstAnchor, nextAnchor }) => {
+    const { owner, updates, content } = activityFixture();
+    const rows = updates(9);
+    // Observe the actual session-owned cache, not serialized reading state.
+    try {
+      writeView("activity-folding", "scroll:alpha", {
+        offset: 0,
+        bottom,
+        anchor: { id: firstAnchor, y: 0 },
+      });
+      const first = render(content(rows, undefined, solo));
+      first.unmount();
+      writeView("activity-folding", "scroll:alpha", {
+        offset: 0,
+        bottom,
+        anchor: { id: nextAnchor, y: 0 },
+      });
+      render(content(rows, undefined, solo));
+      expect(viewport.caches.at(-1)).toEqual([[], 40]);
     } finally {
       owner.dispose();
     }

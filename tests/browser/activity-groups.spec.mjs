@@ -142,7 +142,7 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
       name: /Activity update 0/,
     });
     await detailsToggle.click();
-    await expect(step).toHaveAttribute("data-open", "true");
+    await expect(detailsToggle).toHaveAttribute("aria-expanded", "true");
     await expect
       .poll(() =>
         page.evaluate(() =>

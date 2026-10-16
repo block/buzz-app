@@ -205,12 +205,25 @@ function Timeline({
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
   const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
-    () => new Set(initialPosition?.anchor ? [initialPosition.anchor.id] : []),
+    () => new Set(),
   );
   const activity = useMemo(
     () => (chatPresentation ? activityGroups(rows) : []),
     [rows, chatPresentation],
   );
+  // Resolve a saved anchor once, before measuring initial geometry. A bottom
+  // restore ignores it; an already-visible anchor must not expand on append.
+  const [activityRestore, setActivityRestore] = useState(
+    initialPosition?.bottom ? undefined : initialPosition?.anchor?.id,
+  );
+  if (activityRestore && rows.some((row) => row.id === activityRestore)) {
+    setActivityRestore(undefined);
+    const older = activity
+      .find((group) => group.ids.includes(activityRestore))
+      ?.ids.slice(0, -RECENT_ACTIVITY_COUNT);
+    if (older?.includes(activityRestore))
+      setExpandedActivity((expanded) => new Set([...expanded, ...older]));
+  }
   const disclosures = new Map(
     activity.map((group) => [
       group.ids[0],
@@ -231,11 +244,6 @@ function Timeline({
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const [geometry] = useState(() => geometryFor(queries.channels));
-  const signature = useMemo(
-    () =>
-      `${geometrySignature(window.rows, profiles, resolveName)}:${JSON.stringify([...expandedActivity].sort())}`,
-    [window.rows, profiles, resolveName, expandedActivity],
-  );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const [focusedActivityId, setFocusedActivityId] = useState<string>();
   // Holders are counted per row: a report notice and an image viewer can hold
@@ -254,6 +262,17 @@ function Timeline({
         return next;
       });
   }, []);
+  // Folding, stacking, and cached measurements share the same visibility.
+  const foldedActivity = new Set(
+    [...hiddenActivity].filter(
+      (id) => id !== focusedMessageId && !pinnedIds.has(id),
+    ),
+  );
+  const contentSignature = useMemo(
+    () => geometrySignature(window.rows, profiles, resolveName),
+    [window.rows, profiles, resolveName],
+  );
+  const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
   const keptIndices = rows.flatMap((row, index) =>
     row.id === focusedMessageId ||
     row.id === focusedActivityId ||
@@ -440,21 +459,14 @@ function Timeline({
     const id = targetId ?? revealMessageId;
     const request = targetSignal ?? revealMessageId;
     if (!id || !request || request === activityReveal.current) return;
-    const group = activity.find((group) => group.ids.includes(id));
-    if (!group) return;
+    if (!rows.some((row) => row.id === id)) return;
     activityReveal.current = request;
-    if (
-      !group.ids
-        .slice(0, -RECENT_ACTIVITY_COUNT)
-        .some((id) => expandedActivity.has(id))
-    )
-      setExpandedActivity(
-        new Set([
-          ...expandedActivity,
-          ...group.ids.slice(0, -RECENT_ACTIVITY_COUNT),
-        ]),
-      );
-  }, [activity, targetId, targetSignal, revealMessageId, expandedActivity]);
+    const older = activity
+      .find((group) => group.ids.includes(id))
+      ?.ids.slice(0, -RECENT_ACTIVITY_COUNT);
+    if (older?.includes(id) && foldedActivity.has(id))
+      setExpandedActivity((expanded) => new Set([...expanded, ...older]));
+  }, [activity, rows, targetId, targetSignal, revealMessageId, foldedActivity]);
   // Positioning waits for the exact reveal, then must run again: a reveal that
   // leaves the reader at the bottom keeps following late row measurement.
   const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
@@ -936,10 +948,8 @@ function Timeline({
         >
           {rows.map((row, index) => {
             const disclosure = disclosures.get(row.id);
-            const hidden =
-              hiddenActivity.has(row.id) &&
-              row.id !== focusedMessageId &&
-              !pinnedIds.has(row.id);
+            const hidden = foldedActivity.has(row.id);
+            const previousRow = rows[index - 1];
             const nextRow = rows[index + 1];
             const day =
               index === 0
@@ -1008,12 +1018,15 @@ function Timeline({
                     />
                   ) : (
                     <MessageRow
-                      stackPrevious={continuesMessageGroup(
-                        rows[index - 1],
-                        row,
-                      )}
+                      stackPrevious={
+                        !!previousRow &&
+                        !foldedActivity.has(previousRow.id) &&
+                        continuesMessageGroup(previousRow, row)
+                      }
                       stackNext={
-                        !!nextRow && continuesMessageGroup(row, nextRow)
+                        !!nextRow &&
+                        !foldedActivity.has(nextRow.id) &&
+                        continuesMessageGroup(row, nextRow)
                       }
                       session={queries}
                       scope={scope}

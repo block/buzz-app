@@ -1,7 +1,8 @@
 import {
+  ArrowUpRightIcon,
   DownloadIcon,
-  FileTextIcon,
 } from "../../shared/design-system/icons/index";
+import { FileTypeIcon } from "./FileTypeIcon";
 import type { Attachment } from "../relay/contracts";
 import {
   isNativeMediaSource,
@@ -44,11 +45,16 @@ export function FileAttachment({
   const proxySource = source ? isProxySource(source) || nativeSource : false;
   const externalSource = !!source && safeOpenUrl(source) && !proxySource;
   if (source && !proxySource && !externalSource)
-    return <UnavailableFileAttachment displayName={displayName} />;
+    return (
+      <UnavailableFileAttachment
+        displayName={displayName}
+        attachment={attachment}
+      />
+    );
 
   const content = (
     <>
-      <FileTextIcon size={24} aria-hidden="true" />
+      <FileTypeIcon name={attachment.name} mime={attachment.mime} />
       <span className={styles.fileAttachmentBody}>
         <span className={styles.fileAttachmentName}>{displayName}</span>
         <span className={styles.fileAttachmentMeta}>
@@ -61,10 +67,20 @@ export function FileAttachment({
             : "File unavailable"}
         </span>
       </span>
-      {proxySource && <DownloadIcon size={20} aria-hidden="true" />}
+      {proxySource ? (
+        <DownloadIcon size={20} aria-hidden="true" />
+      ) : (
+        <ArrowUpRightIcon size={20} aria-hidden="true" />
+      )}
     </>
   );
-  if (!source) return <UnavailableFileAttachment displayName={displayName} />;
+  if (!source)
+    return (
+      <UnavailableFileAttachment
+        displayName={displayName}
+        attachment={attachment}
+      />
+    );
   if (externalSource)
     return (
       <a
@@ -115,10 +131,16 @@ export function FileAttachment({
   );
 }
 
-function UnavailableFileAttachment({ displayName }: { displayName: string }) {
+function UnavailableFileAttachment({
+  displayName,
+  attachment,
+}: {
+  displayName: string;
+  attachment: Attachment;
+}) {
   return (
     <span className={styles.fileAttachment} role="status" title={displayName}>
-      <FileTextIcon size={24} aria-hidden="true" />
+      <FileTypeIcon name={attachment.name} mime={attachment.mime} />
       <span className={styles.fileAttachmentBody}>
         <span className={styles.fileAttachmentName}>{displayName}</span>
         <span className={styles.fileAttachmentMeta}>File unavailable</span>

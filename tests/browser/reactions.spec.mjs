@@ -46,6 +46,12 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     name: "Copy link",
     exact: true,
   });
+  // Visibility precedes the toolbar's entrance animation settling.
+  await root
+    .getByRole("group", { name: "Message actions" })
+    .evaluate((bar) =>
+      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
+    );
   const shortcutBox = await shortcut.boundingBox();
   const neighborBox = await neighbor.boundingBox();
   expect(shortcutBox.width).toBeCloseTo(neighborBox.width, 1);
@@ -186,17 +192,17 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
   expect(removal.tags).toContainEqual(["e", event.id]);
   await expect(
     root.getByRole("button", {
-      name: ":party:: 1 person, including you",
+      name: ":party:: You",
       exact: true,
     }),
   ).toHaveCount(0);
   // Joining an old custom-emoji group retains its event-local URL, not the new palette URL.
   await root
-    .getByRole("button", { name: ":party:: 1 person", exact: true })
+    .getByRole("button", { name: ":party:: Fixture Member", exact: true })
     .click();
   await expect(
     root.getByRole("button", {
-      name: ":party:: 2 people, including you",
+      name: ":party:: You",
       exact: true,
     }),
   ).toBeVisible();
@@ -243,7 +249,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
   await expect(emptyRow.getByRole("status")).toHaveCSS("overflow", "visible");
   await firstRetry.click();
   const sole = emptyRow.getByRole("button", {
-    name: `${chosen}: 1 person, including you`,
+    name: `${chosen}: You`,
     exact: true,
   });
   await expect(sole).toBeEnabled();

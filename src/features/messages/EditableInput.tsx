@@ -62,6 +62,7 @@ import {
 import { composerMarkdown } from "./composer-markdown";
 import {
   buzzCopyMarkdown,
+  externalLinkMarkdown,
   composerClipboard,
   identityLink,
 } from "./composer-clipboard";
@@ -488,6 +489,7 @@ export function EditableInput({
       recipient?: MentionRecipient | readonly MentionRecipient[],
       range?: { start: number; end: number },
       terminator?: ":",
+      focus = true,
     ) => {
       if (!editable() || composing.current || editor.composing) return false;
       if (terminator) {
@@ -511,7 +513,7 @@ export function EditableInput({
         if (editor.state === previous) return false;
         range = { start: range.start, end: range.end + terminator.length };
         openTokens(range.start, range.end);
-      } else if (range) setRange(range.start, range.end);
+      } else if (range && focus) setRange(range.start, range.end);
       const source = projection();
       // Do not select the shortcode in a separate transaction: undo must retain
       // the collapsed caret following the colon, not the replacement range.
@@ -557,7 +559,9 @@ export function EditableInput({
         tr.replaceWith(from, to, composerSchema.text(text, marks));
       else tr.delete(from, to);
       tr.setSelection(
-        Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
+        focus || !source.draft.text
+          ? Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1)
+          : editor.state.selection.map(tr.doc, tr.mapping),
       );
       if (
         Array.isArray(recipient) &&
@@ -575,9 +579,9 @@ export function EditableInput({
       )
         return !!terminator; // The typed colon landed even if conversion cannot.
       const unconverted = editor.state;
-      editor.dispatch(tr.scrollIntoView());
+      editor.dispatch(focus ? tr.scrollIntoView() : tr);
       if (terminator && editor.state !== unconverted) separateHistory = true;
-      editor.focus();
+      if (focus) editor.focus();
       return true;
     };
     /** True, or the reason shown by the host. The link must survive its context. */
@@ -1393,6 +1397,15 @@ export function EditableInput({
           return false;
         },
         handleDOMEvents: {
+          // A caret key moves the native caret, and ProseMirror adopts it on
+          // the next selectionchange or keydown. Focus can leave first, for
+          // example to a tab chosen right after the key, and ProseMirror skips
+          // a selectionchange that arrives after blur. Adopt the caret now, so
+          // a later return to the editor resumes where it was left.
+          blur() {
+            syncNativeSelection();
+            return false;
+          },
           click(_view, event) {
             // Composer links are editable text, never navigation targets.
             if (event.target instanceof Element && event.target.closest("a"))
@@ -1482,14 +1495,16 @@ export function EditableInput({
             )
               return true;
             const code = editor.state.selection.$from.parent.type.spec.code;
-            // Code takes visible text verbatim. Outside code, only this app's
-            // own payload is read as HTML; other apps paste as text.
+            // Code takes visible text verbatim; prose preserves copied web links.
+            const html = event.clipboardData?.getData("text/html") ?? "";
+            const plain = event.clipboardData?.getData("text/plain") ?? "";
+            const hasPlain =
+              !!plain || event.clipboardData?.types?.includes("text/plain");
             let text =
               (!code &&
-                buzzCopyMarkdown(
-                  event.clipboardData?.getData("text/html") ?? "",
-                )) ||
-              event.clipboardData?.getData("text/plain") ||
+                (buzzCopyMarkdown(html) ??
+                  externalLinkMarkdown(html, hasPlain ? plain : undefined))) ||
+              plain ||
               "";
             if (!text) return true;
             let link = false;

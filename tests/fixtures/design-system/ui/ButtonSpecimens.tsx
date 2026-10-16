@@ -28,6 +28,7 @@ const variants = [
   "inverted",
   "destructive",
   "outline",
+  "attention",
   "link",
 ] as const;
 const sizes = ["sm", "md", "lg"] as const;
@@ -38,6 +39,8 @@ const descriptions = {
   inverted: "An action on an inverse surface.",
   destructive: "An action that removes or destroys something.",
   outline: "A supporting action with a visible boundary.",
+  attention:
+    "An overdue action with a light red dashed stroke and slow marching ants (proposed).",
   link: "An action that underlines on interaction.",
 };
 
@@ -142,6 +145,21 @@ export function ButtonSpecimen() {
         <Button>Continue</Button>
       </ExamplePreview>
       <ButtonMatrix kind="text" />
+      <ExamplePreview
+        code={`<Button size="inline" variant="plain" aria-expanded={expanded}>Previous steps <CaretDownIcon aria-hidden="true" /></Button>`}
+      >
+        <Button
+          size="inline"
+          variant="plain"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          Previous steps <CaretDownIcon aria-hidden="true" />
+        </Button>
+        <Button size="inline" variant="plain" disabled>
+          Previous steps <CaretDownIcon aria-hidden="true" />
+        </Button>
+      </ExamplePreview>
       <ExamplePreview
         code={`<Button size="inline" variant="ghost">Model <CaretDownIcon aria-hidden="true" /></Button>`}
       >
@@ -314,6 +332,19 @@ export function IconButtonSpecimen() {
         Icon actions default to small: a 32px control with 16px artwork.
         Labelled buttons stay medium; choose a larger icon size explicitly.
       </p>
+      <ExamplePreview
+        label="Squircle avatar action"
+        code={
+          '<IconButton variant="prominent" shape="squircle" aria-label="Add item" icon={<PlusIcon />} />'
+        }
+      >
+        <IconButton
+          variant="prominent"
+          shape="squircle"
+          aria-label="Add item"
+          icon={<PlusIcon />}
+        />
+      </ExamplePreview>
       <ExamplePreview
         className="justify-center"
         code={`<IconButton

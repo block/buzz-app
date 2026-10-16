@@ -1,5 +1,6 @@
 import { useConversationPresentation } from "./ConversationPresentation";
 import {
+  useContext,
   useRef,
   useState,
   useSyncExternalStore,
@@ -19,8 +20,10 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import {
   BrowserIcon,
+  ChatCircleIcon,
   CopyIcon,
   FileTextIcon,
+  LockIcon,
 } from "../../shared/design-system/icons";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
@@ -30,10 +33,12 @@ import {
   LinkChannelPrivateContext,
   LinkLabelContext,
   LinkContentContext,
+  LinkThreadTabContext,
 } from "./LinkLabelContext";
 import { BuzzLinkPreview, ChannelLinkPreview } from "./BuzzLinkPreview";
 import { useChannelReference } from "./channel-reference";
 import { messageViewKey } from "../messages/view-key";
+import { sessionLinkName } from "../sessions/metadata";
 import styles from "./LinkPreview.module.css";
 
 const empty: readonly Contribution<LinkRenderer>[] = [];
@@ -96,6 +101,35 @@ export function MessageLink({
       ? destination.channelId
       : undefined;
   const reference = useChannelReference(session?.channels, referenced);
+  // Subscribe to the session's presentation, including chosen-name provenance.
+  // A string snapshot stays stable when unrelated channel activity changes.
+  const sessionName = useSyncExternalStore(
+    session?.channels.subscribeList ?? subscribe,
+    () => {
+      if (!destination || destination.messageId || destination.threadRootId)
+        return "";
+      const channel = session?.channels
+        .list()
+        .channels.find((item) => item.id === destination.channelId);
+      return channel?.channelType === "session" && !channel.cached
+        ? sessionLinkName(channel)
+        : "";
+    },
+    () => "",
+  );
+  // Authored Session labels survive access loss; they are presentation only.
+  const sentSessionName = label?.match(/^Session(?::| ·)\s+(.+)$/s)?.[1];
+  const sessionChip = !!(
+    destination &&
+    !destination.messageId &&
+    !destination.threadRootId &&
+    (sessionName ||
+      (reference.state === "found" && reference.channelType === "session") ||
+      (reference.state !== "found" && sentSessionName))
+  );
+  const chipName =
+    sessionName || sentSessionName || destination?.channelId.slice(0, 8);
+  const sessionLabel = sessionChip ? `Session: ${chipName}` : undefined;
   // DMs and sessions keep their existing presentation.
   const named =
     reference.state === "found" &&
@@ -120,6 +154,16 @@ export function MessageLink({
   if (!active && menuOpen) setMenuOpen(false);
   if (!active && notice) setNotice(undefined);
   const external = /^https?:\/\//i.test(url);
+  const openThreadTab = useContext(LinkThreadTabContext);
+  const thread =
+    openThreadTab && destination?.messageId
+      ? {
+          channelId: destination.channelId,
+          messageId: destination.messageId,
+          rootId: destination.threadRootId ?? destination.messageId,
+        }
+      : undefined;
+  const menu = active && interactive && (external || !!thread);
   async function copy() {
     if (!active || busy.current) return;
     busy.current = true;
@@ -138,25 +182,17 @@ export function MessageLink({
       setCopying(false);
     }
   }
-  const sessionChip =
-    !!session &&
-    !!destination &&
-    !destination.messageId &&
-    !!session.channels
-      .list()
-      .channels.find(
-        (item) =>
-          item.id === destination.channelId &&
-          item.channelType === "session" &&
-          !item.cached &&
-          !item.readOnly &&
-          item.members?.includes(session.viewer ?? ""),
-      ) &&
-    label === `Session · ${destination.channelId.slice(0, 8)}`;
   const preview =
     session && destination?.messageId
       ? { channelId: destination.channelId, messageId: destination.messageId }
       : undefined;
+  const openInternal = () => {
+    if (trigger.current?.isConnected)
+      trigger.current.focus({ preventScroll: true });
+    const opened = onOpenLink(url);
+    setUnavailable(!opened);
+    if (opened) setPreviewOpen(false);
+  };
   const navigation = {
     target: "_blank",
     rel: "noopener noreferrer",
@@ -167,11 +203,7 @@ export function MessageLink({
       }
       if (internal) {
         event.preventDefault();
-        if (trigger.current?.isConnected)
-          trigger.current.focus({ preventScroll: true });
-        const opened = onOpenLink(url);
-        setUnavailable(!opened);
-        if (opened) setPreviewOpen(false);
+        openInternal();
         return;
       }
       if (
@@ -191,11 +223,7 @@ export function MessageLink({
           }
           if (event.button === 1) {
             event.preventDefault();
-            if (trigger.current?.isConnected)
-              trigger.current.focus({ preventScroll: true });
-            const opened = onOpenLink(url);
-            setUnavailable(!opened);
-            if (opened) setPreviewOpen(false);
+            openInternal();
           }
         }
       : undefined,
@@ -205,9 +233,20 @@ export function MessageLink({
     const content =
       sessionChip && destination ? (
         <span className={styles.sessionChip}>
-          <FileTextIcon size="1em" aria-hidden="true" />
-          <span className="text-subtle">Session</span>
-          <span>· {destination.channelId.slice(0, 8)}</span>
+          <span className={styles.sessionIcon}>
+            <FileTextIcon size={16} aria-hidden="true" />
+          </span>
+          <span className={styles.sessionPrefix}>Session:</span>
+          <span className={styles.sessionName}>{chipName}</span>
+          {(withheld ||
+            channelPrivate ||
+            (reference.state === "found" && reference.private)) && (
+            <LockIcon
+              className={styles.sessionLock}
+              size={12}
+              aria-hidden="true"
+            />
+          )}
         </span>
       ) : Content ? (
         <Content url={url} />
@@ -219,14 +258,30 @@ export function MessageLink({
       <a
         ref={trigger}
         href={url}
-        aria-label={display}
+        aria-label={
+          sessionLabel
+            ? withheld
+              ? `${sessionLabel}, unavailable`
+              : `Open ${sessionLabel}`
+            : display
+        }
+        aria-description={
+          sessionChip && withheld
+            ? "Session unavailable. You don’t have access, or it no longer exists."
+            : undefined
+        }
         data-link-label={label ?? ""}
+        data-session-link={sessionChip ? "" : undefined}
         title={
-          withheld
-            ? "Private channel. You aren’t a member, or it no longer exists."
-            : !preview && !named
-              ? url
-              : undefined
+          sessionLabel
+            ? withheld
+              ? `${sessionLabel}. Session unavailable. You don’t have access, or it no longer exists.`
+              : sessionLabel
+            : withheld
+              ? "Private channel. You aren’t a member, or it no longer exists."
+              : !preview && !named
+                ? url
+                : undefined
         }
         className={sessionChip ? styles.sessionLink : entry?.className}
         data-link-renderer={entry?.key}
@@ -235,50 +290,32 @@ export function MessageLink({
         {content}
       </a>
     ) : (
-      <span className={entry?.className} data-link-renderer={entry?.key}>
+      <span
+        className={sessionChip ? styles.sessionLink : entry?.className}
+        data-link-renderer={entry?.key}
+      >
         {content}
       </span>
     );
-    if (active && interactive && external) {
-      return (
-        <ContextMenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
-          <ContextMenuTrigger
-            render={element}
-            onContextMenu={() => setMenuAnchor(undefined)}
-            onTouchStart={() => setMenuAnchor(undefined)}
-            onKeyDown={(event) => {
-              if (
-                event.key === "ContextMenu" ||
-                (event.shiftKey && event.key === "F10")
-              ) {
-                event.preventDefault();
-                setMenuAnchor(trigger.current ?? undefined);
-                setMenuOpen(true);
-              }
-            }}
-          />
-          <MenuPopup size="compact" anchor={menuAnchor} finalFocus={trigger}>
-            <MenuLinkItem
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              closeOnClick
-            >
-              <MenuIcon>
-                <BrowserIcon size={16} />
-              </MenuIcon>
-              Open in browser
-            </MenuLinkItem>
-            <MenuItem disabled={copying} onClick={() => void copy()}>
-              <MenuIcon>
-                <CopyIcon size={16} />
-              </MenuIcon>
-              Copy link
-            </MenuItem>
-          </MenuPopup>
-        </ContextMenuRoot>
-      );
-    }
+    const menuTrigger = menu ? (
+      <ContextMenuTrigger
+        render={element}
+        onContextMenu={() => setMenuAnchor(undefined)}
+        onTouchStart={() => setMenuAnchor(undefined)}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ContextMenu" ||
+            (event.shiftKey && event.key === "F10")
+          ) {
+            event.preventDefault();
+            setMenuAnchor(trigger.current ?? undefined);
+            setMenuOpen(true);
+          }
+        }}
+      />
+    ) : (
+      element
+    );
     const card =
       !active || !interactive || !session
         ? undefined
@@ -307,11 +344,11 @@ export function MessageLink({
       (active && interactive && session && referenced
         ? { label: "Channel preview", body: null }
         : undefined);
-    return root ? (
+    const linked = root ? (
       <PreviewCard
-        trigger={element}
+        trigger={menuTrigger}
         link={<a href={url} {...navigation} />}
-        open={previewOpen && !!card}
+        open={previewOpen && !!card && !menuOpen}
         onOpenChange={setPreviewOpen}
         side="top"
         className={styles.popup ?? ""}
@@ -320,7 +357,58 @@ export function MessageLink({
         {root.body}
       </PreviewCard>
     ) : (
-      element
+      menuTrigger
+    );
+    if (!menu) return linked;
+    return (
+      <ContextMenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+        {linked}
+        <MenuPopup size="compact" anchor={menuAnchor} finalFocus={trigger}>
+          {thread ? (
+            <MenuItem
+              onClick={() => {
+                if (!active) return;
+                // The host records the focused link as the tab's return target.
+                if (trigger.current?.isConnected)
+                  trigger.current.focus({ preventScroll: true });
+                // A workspace that cannot show the thread opens it as a click would.
+                if (
+                  openThreadTab?.(
+                    thread.channelId,
+                    thread.messageId,
+                    thread.rootId,
+                  )
+                )
+                  setUnavailable(false);
+                else openInternal();
+              }}
+            >
+              <MenuIcon>
+                <ChatCircleIcon size={16} />
+              </MenuIcon>
+              Open link
+            </MenuItem>
+          ) : (
+            <MenuLinkItem
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              closeOnClick
+            >
+              <MenuIcon>
+                <BrowserIcon size={16} />
+              </MenuIcon>
+              Open in browser
+            </MenuLinkItem>
+          )}
+          <MenuItem disabled={copying} onClick={() => void copy()}>
+            <MenuIcon>
+              <CopyIcon size={16} />
+            </MenuIcon>
+            Copy link
+          </MenuItem>
+        </MenuPopup>
+      </ContextMenuRoot>
     );
   };
   const link = renderer ? (

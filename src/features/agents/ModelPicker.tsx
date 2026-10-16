@@ -108,6 +108,7 @@ export function ModelPicker({
   allowCustomModel = false,
   value,
   defaultLabel,
+  defaultModel,
   defaultDescription,
   onChange,
   loading = false,
@@ -125,6 +126,7 @@ export function ModelPicker({
   includeDefault?: boolean;
   value: string;
   defaultLabel: string;
+  defaultModel?: string | undefined;
   defaultDescription?: string;
   onChange(value: string): void;
   loading?: boolean;
@@ -133,13 +135,19 @@ export function ModelPicker({
 }) {
   const [customModel, setCustomModel] = useState<string | null>(null);
   const control = useRef<HTMLDivElement>(null);
+  const defaultChoice = models.find((model) => model.id === defaultModel);
   const fallback: ModelChoice = {
     id: "",
-    label: defaultLabel,
-    description: defaultDescription,
+    label: defaultChoice?.label ?? defaultLabel,
+    description: defaultChoice?.description ?? defaultDescription,
   };
   const items: ModelChoice[] = includeDefault
-    ? [fallback, ...models]
+    ? [
+        fallback,
+        ...models.filter(
+          (model) => model.id !== defaultModel || model.id === value,
+        ),
+      ]
     : [...models];
   if (value && !items.some((model) => model.id === value))
     items.push({
@@ -148,6 +156,10 @@ export function ModelPicker({
       description: allowCustomModel ? "Custom model" : "Unavailable model",
     });
   const selected = items.find((model) => model.id === value) ?? fallback;
+  const inherited = includeDefault && selected.id === "";
+  const selectedLabel = inherited
+    ? `${selected.label} · Default`
+    : selected.label;
   const choices =
     allowCustomModel && !compact ? [...items, CUSTOM_MODEL_ACTION] : items;
   const openCustomDialog = () => {
@@ -161,10 +173,11 @@ export function ModelPicker({
         <Select
           label="Model"
           value={selected.id}
-          valueLabel={selected.label}
-          valueTitle={selected.label}
+          valueLabel={loading ? "Loading models…" : selected.label}
+          valueSuffix={!loading && inherited ? " · Default" : undefined}
+          valueTitle={loading ? "Loading models…" : selectedLabel}
           leading={<ModelIcon model={`${selected.id} ${selected.label}`} />}
-          variant={compact ? "compact" : "field"}
+          variant={compact ? "compact" : "preference"}
           appearance={appearance}
           align={compact ? "end" : "start"}
           groups={[
@@ -172,7 +185,10 @@ export function ModelPicker({
               label: "",
               options: choices.map((model) => ({
                 value: model.id,
-                label: model.label,
+                label:
+                  includeDefault && model.id === ""
+                    ? `${model.label} · Default`
+                    : model.label,
                 description: model.description,
                 leading: <ModelIcon model={`${model.id} ${model.label}`} />,
               })),
@@ -185,7 +201,6 @@ export function ModelPicker({
             else onChange(model);
           }}
         />
-        {loading && <p className="buzz-field-description">Loading models…</p>}
       </div>
       {allowCustomModel && customModel !== null && (
         <CustomModelDialog

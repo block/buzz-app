@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import type { Profile } from "../relay/contracts";
 import styles from "./Messages.module.css";
+import { avatarMedia } from "../../shared/avatar-source";
 
 /** Shared summary contents for channel threads and collapsed reply branches. */
 export function ReplySummary({
@@ -12,7 +14,11 @@ export function ReplySummary({
   media,
   unreadLabel,
   unreadCount,
+  workingParticipants = [],
+  activity,
 }: {
+  workingParticipants?: readonly string[];
+  activity?: ReactNode;
   count: number;
   participants: readonly string[];
   profiles?: ReadonlyMap<string, Profile> | undefined;
@@ -26,18 +32,23 @@ export function ReplySummary({
     <>
       <AvatarStack
         size="small"
-        items={participants.map((id) => {
-          const profile = profiles?.get(id);
-          return {
-            id,
-            name: resolveName(id, profile?.name ?? id.slice(0, 10)),
-            src: profile?.picture ? media(profile.picture, "small") : undefined,
-            shape: agentPubkeys?.has(id) ? "squircle" : "circle",
-          };
-        })}
+        items={[...new Set(participants)]
+          .filter((id) => !workingParticipants.includes(id))
+          .map((id) => {
+            const profile = profiles?.get(id);
+            return {
+              id,
+              name: resolveName(id, profile?.name ?? id.slice(0, 10)),
+              src: avatarMedia(profile?.picture, media),
+              shape: agentPubkeys?.has(id) ? "squircle" : "circle",
+            };
+          })}
       />
+      {activity}
       <span>
-        {count} {count === 1 ? "reply" : "replies"}
+        {count > 0
+          ? `${count} ${count === 1 ? "reply" : "replies"}`
+          : "View thread"}
       </span>
       {unreadCount ? (
         <span>({unreadCount} new)</span>

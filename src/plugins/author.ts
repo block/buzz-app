@@ -39,6 +39,8 @@ export type {
   InlineRenderer,
   LinkRenderer,
   MessageRenderer,
+  MessageAction,
+  TargetOpener,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
 
@@ -82,3 +84,10 @@ export type {
 } from "../features/notifications/service";
 
 export type { VoiceRecording } from "../features/relay/voice-media";
+
+export type {
+  Agents,
+  AgentType,
+  AgentSession,
+  AgentSessions,
+} from "../features/agents/service";

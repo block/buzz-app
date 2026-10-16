@@ -51,6 +51,7 @@ export function validChannelCommand(event) {
     const ttl = optional.find(([name]) => name === "ttl");
     const aboutValue = about?.[1];
     const ttlValue = ttl?.[1];
+    const session = sessionMetadata(aboutValue);
     return (
       event.content === "" &&
       tags.length >= expected.length &&
@@ -63,17 +64,17 @@ export function validChannelCommand(event) {
       !!tags[1][1].trim() &&
       [...tags[1][1]].length <= 120 &&
       ["open", "private"].includes(tags[2][1]) &&
-      tags[3][1] === "stream" &&
+      ["stream", "system"].includes(tags[3][1]) &&
       (!about ||
         (about.length === 2 &&
           [...aboutValue].length <= 1000 &&
-          (sessionMetadata(aboutValue) !== undefined ||
-            !aboutValue.includes("Buzz session (")))) &&
+          (session !== undefined || !aboutValue.includes("Buzz session (")))) &&
       (!ttl ||
         (ttl.length === 2 &&
           /^(?:[1-9]\d*)$/.test(ttlValue) &&
           Number(ttlValue) <= 2_147_483_647 &&
-          sessionMetadata(aboutValue) === undefined))
+          String(Number(ttlValue)) === ttlValue &&
+          !session?.parentId))
     );
   }
   if (event.kind === 9000)

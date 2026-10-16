@@ -9,6 +9,140 @@ test.use({
   historyCounts: { alpha: 3, beta: 1 },
 });
 
+// Browser-only: layout clipping can blank both the preview and expanded prose
+// between React states even when the height transition itself runs correctly.
+test("coordination keeps its first line visible throughout expansion and collapse", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.append("primary", "alpha", "Coordination motion check");
+  const original = page.locator(
+    `[data-channel-timeline] [data-message-id="${root.id}"]`,
+  );
+  await original.hover();
+  await original.getByRole("button", { name: "Reply", exact: true }).click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const event = app.append(
+    "primary",
+    "alpha",
+    "Three café names:\n\n1. Corner Cup: Friendly and local.\n2. Common Grounds: A gathering place.\n3. Porchlight Café: Warm and welcoming.\n\n[Nested destination](https://example.com/context)",
+    true,
+    true,
+    root.id,
+    undefined,
+    [["audience", "agents"]],
+  );
+  const row = thread.locator(`[data-message-id="${event.id}"]`);
+  const toggle = row.getByRole("button", { name: /Three café names:/ });
+  await expect(toggle).toBeVisible();
+  await settle(page, thread.getByRole("region", { name: "Thread messages" }));
+  const result = await row.evaluate(async (row) => {
+    const button = row.querySelector("button[aria-expanded]");
+    const preview = row.querySelector('[class*="audiencePreview"]');
+    if (!preview) throw new Error("Coordination preview is missing");
+    const textEdge = preview.getBoundingClientRect().left;
+    const failures = [];
+    let animated = false;
+    const sample = (opening) => {
+      const panel = row.querySelector('[class*="audiencePanel"]');
+      const preview = row.querySelector('[class*="audiencePreview"]');
+      const text = panel?.querySelector("p");
+      const panelBox = panel?.getBoundingClientRect();
+      const textBox = text?.getBoundingClientRect();
+      const previewVisible =
+        !!preview && preview.getBoundingClientRect().height > 0;
+      const firstLineVisible =
+        !!textBox &&
+        !!panelBox &&
+        Math.min(textBox.bottom, panelBox.bottom) -
+          Math.max(textBox.top, panelBox.top) >=
+          Number.parseFloat(getComputedStyle(text).lineHeight) / 2;
+      if (!previewVisible && !firstLineVisible)
+        failures.push(opening ? "opening" : "closing");
+      if (textBox && Math.abs(textBox.left - textEdge) > 0.5)
+        failures.push(
+          opening ? "opening shifted text" : "closing shifted text",
+        );
+      const running = panel
+        ?.getAnimations()
+        .some((animation) => animation.playState === "running");
+      animated ||= !!running;
+      return { panel, running };
+    };
+    for (const opening of [true, false]) {
+      const start = performance.now();
+      button.click();
+      await new Promise((resolve, reject) => {
+        let settled = 0;
+        const tick = () => {
+          const { panel, running } = sample(opening);
+          settled = (
+            opening
+              ? panel && !panel.hasAttribute("data-starting-style") && !running
+              : !panel
+          )
+            ? settled + 1
+            : 0;
+          if (settled >= 2) resolve();
+          else if (performance.now() - start > 5000)
+            reject(new Error("Coordination transition did not settle"));
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+    }
+    return { failures, animated };
+  });
+  expect(result).toEqual({ failures: [], animated: true });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  const addReaction = row.getByRole("button", {
+    name: "Add reaction",
+    exact: true,
+  });
+  await expect(addReaction).toBeVisible();
+  await addReaction.click();
+  await expect(addReaction).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByRole("dialog", { name: "Emoji picker" }),
+  ).toBeVisible();
+  await page.getByRole("dialog", { name: "Emoji picker" }).press("Escape");
+  await expect(addReaction).toBeFocused();
+  // A real nested link owns its handled keyboard gesture; the row still owns
+  // the same gesture on its disclosure. Verify each portal's focus return.
+  const link = row.getByRole("link", {
+    name: "Nested destination",
+    exact: true,
+  });
+  await link.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Open in browser", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("menu", { includeHidden: true })).toHaveCount(1);
+  await expect(page.getByRole("menu")).toBeFocused();
+  await expect(
+    page.getByRole("menuitem", { name: "Copy message", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(link).toBeFocused();
+  await toggle.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Copy message", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("menu", { includeHidden: true })).toHaveCount(1);
+  await expect(page.getByRole("menu")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(toggle).toBeFocused();
+});
+
 // Native Tab must discover deferred controls before the browser chooses focus;
 // continuation rows have no avatar that could activate them on the way in.
 for (const direction of ["forward", "backward"]) {
@@ -27,18 +161,10 @@ for (const direction of ["forward", "backward"]) {
       "[Before](https://example.com/before)",
     );
     const target = app.append("primary", "alpha", "Untouched continuation");
-    const after = app.append(
-      "primary",
-      "alpha",
-      "Following author",
-      true,
-      false,
-    );
+    const after = app.append("primary", "alpha", "Following continuation");
     const row = (event) =>
       page.locator(`[data-channel-timeline] [data-message-id="${event.id}"]`);
-    await expect(
-      row(target).locator('[data-layout="continuation"]'),
-    ).toBeVisible();
+    await expect(row(target).locator("[data-stack-previous]")).toBeVisible();
     await expect(row(after)).toBeVisible();
     await settle(page);
     const actions = row(target).getByRole("group", {
@@ -68,6 +194,7 @@ for (const direction of ["forward", "backward"]) {
         exact: true,
       }),
     ).toBeFocused();
+    await expect(actions.locator("[data-message-keyboard-time]")).toBeVisible();
     await page.keyboard.press(direction === "forward" ? "Tab" : "Shift+Tab");
     await expect(
       actions.getByRole("button", {
@@ -206,21 +333,23 @@ test("message actions reveal, copy, restore focus and reply across responsive la
     .click();
   await expect(
     root.getByRole("button", {
-      name: "👍: 1 person, including you",
+      name: "👍: You",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
     row.getByRole("button", {
-      name: "👍: 1 person, including you",
+      name: "👍: You",
       exact: true,
     }),
   ).toBeVisible();
-  await root
-    .getByRole("button", { name: "👍: 1 person, including you", exact: true })
-    .click();
-  await expect(root.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
-  await expect(row.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
+  await root.getByRole("button", { name: "👍: You", exact: true }).click();
+  await expect(
+    root.getByRole("button", { name: "👍: You", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    row.getByRole("button", { name: "👍: You", exact: true }),
+  ).toHaveCount(0);
   await expect
     .poll(
       () =>
@@ -385,14 +514,14 @@ test("DM actions open the correct reply thread", async ({ page, app }) => {
   await row.getByRole("button", { name: "React with 👍", exact: true }).click();
   await expect(
     row.getByRole("button", {
-      name: "👍: 1 person, including you",
+      name: "👍: You",
       exact: true,
     }),
   ).toBeVisible();
-  await row
-    .getByRole("button", { name: "👍: 1 person, including you", exact: true })
-    .click();
-  await expect(row.getByRole("button", { name: /👍: 1/ })).toHaveCount(0);
+  await row.getByRole("button", { name: "👍: You", exact: true }).click();
+  await expect(
+    row.getByRole("button", { name: "👍: You", exact: true }),
+  ).toHaveCount(0);
   await expect
     .poll(
       () =>
@@ -467,30 +596,16 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   const following = page.locator(
     `[data-channel-timeline] [data-message-id="${next.id}"]`,
   );
-  await expect(row.locator('[data-layout="continuation"]')).toBeVisible();
+  await expect(row.locator("[data-stack-previous]")).toBeVisible();
   await expect(following).toBeVisible();
   const actions = row.getByRole("group", { name: "Message actions" });
   const link = row.getByRole("link", { name: /this reference/ });
   await page.mouse.move(0, 0);
   await expect(actions).toHaveCSS("opacity", "0");
   await settle(page);
-  const expectClockAligned = async () => {
-    // The caption-sized clock is centered beside the first prose line, including
-    // when interface scaling changes their independently owned type roles.
-    await expect
-      .poll(() =>
-        row.evaluate((element) => {
-          const clock = element
-            .querySelector('time > span[aria-hidden="true"]')
-            .getBoundingClientRect();
-          const prose = element.querySelector("p");
-          const firstLineCenter =
-            prose.getBoundingClientRect().top +
-            Number.parseFloat(getComputedStyle(prose).lineHeight) / 2;
-          return Math.abs(clock.top + clock.height / 2 - firstLineCenter);
-        }),
-      )
-      .toBeLessThan(0.5);
+  const expectClockHidden = async () => {
+    await expect(row.locator("time")).toHaveClass(/sr-only/);
+    await expect(row.locator("time")).toHaveCSS("position", "absolute");
   };
   const baseline = await following.boundingBox();
   for (const mode of ["hover", "focus"]) {
@@ -502,10 +617,13 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
     await expect(actions).toHaveCSS("opacity", "1");
     const prose = await row.locator("p").first().boundingBox();
     const toolbar = await actions.boundingBox();
-    expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(prose.y);
+    expect(
+      toolbar.y + toolbar.height <= prose.y ||
+        toolbar.x + toolbar.width <= prose.x,
+    ).toBe(true);
     await expect(actions).toHaveCSS("position", "fixed");
     expect((await following.boundingBox()).y).toBe(baseline.y);
-    await expectClockAligned();
+    await expectClockHidden();
     await expect
       .poll(() =>
         link.evaluate((node) => {
@@ -525,7 +643,12 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   );
   await row.scrollIntoViewIfNeeded();
   await settle(page);
-  await expectClockAligned();
+  await expectClockHidden();
+  await row.locator("[data-message-action-anchor]").hover();
+  const timestampHint = page.getByRole("tooltip").filter({ hasText: "2023" });
+  await expect(timestampHint).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(timestampHint).toHaveCount(0);
 });
 
 test("historical single-day DMs and their threads expose dates without hover", async ({
@@ -562,5 +685,73 @@ test("historical single-day DMs and their threads expose dates without hover", a
     name: "Thread",
     exact: true,
   });
-  await expect(thread.locator(`[data-day="${day}"]`)).toBeVisible();
+  // The original's byline names its day; the thread has no leading day divider.
+  const original = thread.locator(`[data-message-id="${event.id}"]`);
+  const timestamp = original.locator('time > span[aria-hidden="true"]');
+  await expect(timestamp).toHaveText(/ at /);
+  await expect(timestamp).toBeVisible();
+  await expect(original.locator("[data-day]")).toHaveCount(0);
+});
+
+// Browser-only: live timeline/thread grouping must preserve real native focus
+// and Tab's next destination while the focused avatar retires on blur.
+test("live grouped appends preserve avatar focus in channel and thread", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((event) => event.content === "Thread root 0");
+  for (const mode of ["channel", "thread"]) {
+    let container = page.locator("[data-channel-timeline]");
+    let composer = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    if (mode === "thread") {
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      const panel = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      container = panel;
+      composer = panel.getByRole("textbox", {
+        name: "Reply to thread",
+        exact: true,
+      });
+    }
+    const append = (text) =>
+      app.append(
+        "primary",
+        "alpha",
+        text,
+        true,
+        true,
+        mode === "thread" ? root.id : undefined,
+      );
+    const first = append(`Focused ${mode} message`);
+    const row = container.locator(`[data-message-id="${first.id}"]`);
+    const avatar = row
+      .getByRole("button", { name: /^View .* profile$/ })
+      .first();
+    await avatar.focus();
+    const second = append(`Next ${mode} message`);
+    await expect(row.locator("[data-stack-next]")).toBeVisible();
+    await expect(avatar).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(
+      row.getByRole("button", { name: "React with 👍", exact: true }),
+    ).toBeFocused();
+    await expect(avatar).toHaveCount(0);
+    await composer.focus();
+    append(`Another ${mode} message`);
+    await expect(
+      container.locator(`[data-message-id="${second.id}"] [data-stack-next]`),
+    ).toBeVisible();
+    await expect(composer).toBeFocused();
+  }
 });

@@ -1,10 +1,5 @@
 // @vitest-environment jsdom
 import { expect, it } from "vitest";
-import {
-  ChatCircleIcon,
-  UserIcon,
-  UsersIcon,
-} from "../shared/design-system/icons/index";
 import type { SettingsCard } from "../features/settings/service";
 import type { Contribution } from "../plugins/contributions";
 import {
@@ -59,7 +54,11 @@ it.each([
     primary,
     "profile",
     [
-      ["community", "Primary", ["profile", "example/groups", "other/groups"]],
+      [
+        "community",
+        "Primary",
+        ["profile", "example/groups", "other/groups", "leave-community"],
+      ],
       ["administration", "Administration", ["example/membership"]],
       ["group:Communities", "Communities", ["example/hosted"]],
       ["app", "App", app],
@@ -88,23 +87,8 @@ it.each([
   },
 );
 
-it("leaves contributed group icons to each presentation", () => {
-  const icons = Object.fromEntries(
-    settingsSections(cards, primary).sections.map((section) => [
-      section.id,
-      section.icon,
-    ]),
-  );
-  expect(icons).toMatchObject({
-    profile: UserIcon,
-    "example/groups": ChatCircleIcon,
-    "example/membership": UsersIcon,
-    "example/hosted": undefined,
-  });
-});
-
 it("classifies built-in sections apart from plugin card keys", () => {
-  for (const id of ["profile", ...app])
+  for (const id of ["profile", "leave-community", ...app])
     expect(isBuiltInSettingsSection(id)).toBe(true);
   expect(isBuiltInSettingsSection("developer")).toBe(developerMode);
   for (const id of ["example/groups", "Profile", "", "administration"])

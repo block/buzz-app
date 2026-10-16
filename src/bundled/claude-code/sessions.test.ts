@@ -80,7 +80,10 @@ function sessions(
 }
 
 /** Sessions with a spare, spawned like their own processes. */
-function withSpare(options: Parameters<typeof sessions>[0] = {}) {
+function withSpare(
+  options: Parameters<typeof sessions>[0] = {},
+  toolsKey?: () => string,
+) {
   let ids = 0;
   let parts: ReturnType<typeof sessions> | undefined;
   const spare = new Spare(
@@ -90,6 +93,7 @@ function withSpare(options: Parameters<typeof sessions>[0] = {}) {
     },
     async (_conversation, message) => ({ from: "spare", message }),
     () => `spare-${++ids}`,
+    toolsKey,
   );
   parts = sessions({ ...options, spare });
   return { ...parts, spare };
@@ -156,6 +160,24 @@ it("hands the spare's tools to the agent that takes it", async () => {
   expect(answered(process, "later")).toMatchObject({
     response: { mcp_response: { from: "agent" } },
   });
+});
+
+it("hands over no spare that lists other tools than there are now", async () => {
+  let key = "";
+  const { pool, spare, claudes } = withSpare({}, () => key);
+  spare.warm({ cwd: "/work", model: "opus" });
+  await flush();
+  const [stale] = claudes();
+  // A plugin added a tool after the spare listed the tools.
+  key = "tasks";
+  await pool.deliver("c/root", "hi", 1);
+  await flush();
+  expect(stale?.killed).toBe(true);
+  expect(stale?.prompts).toEqual([]);
+  const next = claudes().find((process) =>
+    process.options.args?.includes("spare-2"),
+  );
+  expect(next?.killed).toBe(false);
 });
 
 it("serves whichever agent starts the next conversation", async () => {
@@ -289,6 +311,23 @@ it("resumes a saved conversation after its process stops", async () => {
   expect(resumed?.options.args).toContain("new-1");
   expect(resumed?.prompts).toEqual(["later"]);
   expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 5 });
+});
+
+it("saves when a session takes in a message or ends a turn, not while a long turn keeps it open", async () => {
+  vi.useFakeTimers();
+  const store = memoryStore();
+  const { pool, claudes } = sessions({ store, hold: true });
+  const at = () => store.get("c/root")?.at ?? 0;
+  const done = pool.deliver("c/root", "work", 1);
+  await vi.advanceTimersByTimeAsync(10);
+  const started = at();
+  expect(started).toBeGreaterThan(0);
+  await vi.advanceTimersByTimeAsync(IDLE_MS + 1);
+  expect(claudes()[0]?.killed).toBe(false);
+  expect(at()).toBe(started);
+  claudes()[0]?.finish();
+  await done;
+  expect(at()).toBeGreaterThan(started);
 });
 
 it("starts over when a saved session no longer loads", async () => {

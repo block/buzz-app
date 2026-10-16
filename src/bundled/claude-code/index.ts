@@ -28,8 +28,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const runtime = new ClaudeRuntime(
     spawn ? { spawn } : {},
     (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
+    (pubkey, signal) => agents.core(pubkey, signal),
     localStorage,
     (raw) => providerDefaults.resolve(raw),
+    () => agents.tools(),
   );
   /** A Claude agent is running, so Buzz's copy is needed; unknown until the
    * agents have loaded. */
@@ -122,11 +124,33 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
       DialogBody: ProviderDialogBody,
     },
+    sessions: {
+      list: (pubkey) => {
+        const busy = new Map(
+          runtime.sessions(pubkey).map((view) => [view.key, view.busy]),
+        );
+        return runtime
+          .conversations(pubkey)
+          .map(({ key, channelId, root, at }) => {
+            const working = busy.get(key);
+            return {
+              channelId,
+              ...(root && { root }),
+              at,
+              ...(working !== undefined && {
+                status: working ? "Working" : "Idle",
+              }),
+            };
+          });
+      },
+      subscribe: (listener) => runtime.subscribe(listener),
+    },
     tabs: [
       {
         id: "settings",
         title: "Settings",
         role: "settings",
+        splitSettings: true,
         component: SettingsTab,
       },
       {

@@ -10,6 +10,9 @@ export type PendingStart = {
   invitationId?: string;
   creationId?: string;
   messageId?: string;
+  ttlSeconds?: number | undefined;
+  name?: string;
+  named?: boolean;
   setup?: SessionSetup;
   setupDone?: boolean;
   placementDone?: boolean;
@@ -27,6 +30,7 @@ export function readPending(
   );
   if (
     !value ||
+    (value.named !== undefined && typeof value.named !== "boolean") ||
     typeof value.id !== "string" ||
     !sessionId.test(value.id) ||
     typeof value.text !== "string" ||

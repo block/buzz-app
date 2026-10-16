@@ -106,7 +106,15 @@ function harness(
   owners.push(owner);
   owner.session.channels.ensure("c");
   live.receive([roster(relay, "c", [viewer.pubkey], 1), root, ...events]);
-  function Controls({ disabled = false }: { disabled?: boolean }) {
+  function Controls({
+    disabled = false,
+    onFocusedRemoval,
+    audience,
+  }: {
+    audience?: "agents";
+    disabled?: boolean;
+    onFocusedRemoval?: () => void;
+  }) {
     const state = useSyncExternalStore(
       (fn) => owner.session.channels.subscribeWindow("c", fn),
       () => owner.session.channels.window("c"),
@@ -116,7 +124,7 @@ function harness(
       row && (
         <>
           <MessageReactionControls
-            row={row}
+            row={audience ? { ...row, audience } : row}
             session={owner.session}
             scope="test"
             disabled={disabled}
@@ -124,7 +132,8 @@ function harness(
             inline={inline}
           />
           <MessageReactions
-            row={row}
+            {...(onFocusedRemoval ? { onFocusedRemoval } : {})}
+            row={audience ? { ...row, audience } : row}
             session={owner.session}
             scope="test"
             disabled={disabled}
@@ -137,7 +146,7 @@ function harness(
   }
   return { ...owner, live, wire, publish, Controls };
 }
-it("shows three shortcuts and groups distinct people while removing all own duplicates", async () => {
+it("shows one emoji per person and three shortcuts while removing all own duplicates", async () => {
   const mine = react(),
     duplicate = react(viewer, 3),
     theirs = react(other);
@@ -146,11 +155,14 @@ it("shows three shortcuts and groups distinct people while removing all own dupl
   expect(
     screen.getAllByRole("button", { name: /React with|Remove/ }),
   ).toHaveLength(3);
-  const grouped = screen.getByRole("button", {
-    name: "👍: 2 people, including you",
+  expect(
+    screen.getByTestId("reaction-row").querySelectorAll("[data-reaction]"),
+  ).toHaveLength(2);
+  const own = screen.getByRole("button", {
+    name: "👍: You",
   });
-  expect(grouped.getAttribute("aria-pressed")).toBe("true");
-  fireEvent.click(grouped);
+  expect(own.getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(own);
   const operation = h.session.outbox?.snapshot()[0];
   expect(operation?.event).toMatchObject({
     kind: 5,
@@ -162,7 +174,7 @@ it("shows three shortcuts and groups distinct people while removing all own dupl
   expect(operation?.event.tags).not.toContainEqual(["e", theirs.id]);
   expect(
     screen
-      .getByRole("button", { name: "👍: 1 person" })
+      .getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` })
       .getAttribute("aria-pressed"),
   ).toBe("false");
   await act(async () => {
@@ -181,7 +193,7 @@ it("keeps failed first-reaction delivery visible and retries the same event", as
     await flush();
     await flush();
   });
-  expect(screen.queryByRole("button", { name: /❤️: 1/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: "❤️: You" })).toBeNull();
   const original = publish.mock.calls[0]?.[0];
   publish.mockImplementation(async () => undefined as never);
   fireEvent.click(screen.getByRole("button", { name: "Retry reaction" }));
@@ -207,7 +219,7 @@ it("prevents duplicate submissions and unavailable-message actions", async () =>
   });
 });
 
-it("keeps pills visually active but rejects another click while delivery is pending or failed", async () => {
+it("keeps emojis visually active but rejects another click while delivery is pending or failed", async () => {
   let release!: () => void;
   const publish = vi.fn(
     () =>
@@ -217,10 +229,12 @@ it("keeps pills visually active but rejects another click while delivery is pend
   );
   const h = harness([react(other)], publish);
   render(<h.Controls />);
-  fireEvent.click(screen.getByRole("button", { name: "👍: 1 person" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
+  );
   await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
   const pill = screen.getByRole("button", {
-    name: "👍: 2 people, including you",
+    name: "👍: You",
   });
   expect(pill.getAttribute("aria-disabled")).toBe("true");
   expect(pill.hasAttribute("disabled")).toBe(false);
@@ -241,14 +255,16 @@ it("keeps pills visually active but rejects another click while delivery is pend
   );
   const failedView = render(<failed.Controls />);
   fireEvent.click(
-    within(failedView.container).getByRole("button", { name: "👍: 1 person" }),
+    within(failedView.container).getByRole("button", {
+      name: `👍: ${other.pubkey.slice(0, 10)}`,
+    }),
   );
   await act(async () => {
     await flush();
     await flush();
   });
   const failedPill = within(failedView.container).getByRole("button", {
-    name: "👍: 1 person",
+    name: `👍: ${other.pubkey.slice(0, 10)}`,
   });
   expect(failedPill.getAttribute("aria-disabled")).toBe("true");
   fireEvent.click(failedPill);
@@ -299,7 +315,7 @@ it("uses the picker catalog URL even when an old URL has my reaction", async () 
   expect(operation?.event.kind).toBe(7);
   expect(operation?.event.tags).toContainEqual(["emoji", "party", newUrl]);
   const parties = screen.getAllByRole("button", {
-    name: ":party:: 1 person, including you",
+    name: ":party:: You",
   });
   expect(parties).toHaveLength(2);
   expect(parties[0]?.querySelector("img")?.getAttribute("src")).toBe(oldUrl);
@@ -310,7 +326,7 @@ it("uses the picker catalog URL even when an old URL has my reaction", async () 
   });
 });
 
-it("uses the original animated emoji in reaction pills and previews", async () => {
+it("uses the original animated emoji in reaction emojis and previews", async () => {
   const url = "https://a.test/eyes-intensifies.gif";
   const media = vi.fn((source: string, size?: "small") =>
     size === "small" ? source.replace(/\.gif$/, ".thumb.jpg") : source,
@@ -323,7 +339,7 @@ it("uses the original animated emoji in reaction pills and previews", async () =
   );
   render(<h.Controls />);
   const pill = screen.getByRole("button", {
-    name: ":eyes-intensifies:: 1 person",
+    name: `:eyes-intensifies:: ${other.pubkey.slice(0, 10)}`,
   });
   expect(pill.querySelector("img")?.getAttribute("src")).toBe(url);
   fireEvent.mouseEnter(pill);
@@ -335,7 +351,9 @@ it("uses the original animated emoji in reaction pills and previews", async () =
 it("loads names for people who only reacted after a preview opens", async () => {
   const h = harness([react(other)]);
   render(<h.Controls />);
-  const pill = screen.getByRole("button", { name: "👍: 1 person" });
+  const pill = screen.getByRole("button", {
+    name: `👍: ${other.pubkey.slice(0, 10)}`,
+  });
   fireEvent.mouseEnter(pill);
   await screen.findByText(other.pubkey.slice(0, 10), {}, { timeout: 2500 });
   await waitFor(() =>
@@ -358,7 +376,7 @@ it("loads names for people who only reacted after a preview opens", async () => 
   });
 });
 
-it("shows custom shortcodes in pills and previews when media is refused or fails", async () => {
+it("shows custom shortcodes in emojis and previews when media is refused or fails", async () => {
   const h = harness(
     [
       customReaction(other, "denied", "https://a.test/denied.png"),
@@ -369,8 +387,12 @@ it("shows custom shortcodes in pills and previews when media is refused or fails
     (url) => (url.includes("denied") ? undefined : url),
   );
   render(<h.Controls />);
-  const denied = screen.getByRole("button", { name: ":denied:: 1 person" });
-  const broken = screen.getByRole("button", { name: ":broken:: 1 person" });
+  const denied = screen.getByRole("button", {
+    name: `:denied:: ${other.pubkey.slice(0, 10)}`,
+  });
+  const broken = screen.getByRole("button", {
+    name: `:broken:: ${other.pubkey.slice(0, 10)}`,
+  });
   expect(denied.textContent).toContain(":denied:");
   const image = broken.querySelector("img");
   if (!image) throw new Error("Custom reaction image missing");
@@ -421,7 +443,7 @@ it("forwards the contributed picker into true toggles and releases confirmed wri
     await flush();
   });
   expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("accepted");
-  expect(screen.queryByRole("button", { name: /👍: 1/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: "👍: You" })).toBeNull();
   fireEvent.click(picker);
   expect(h.session.outbox?.snapshot().map((item) => item.event.kind)).toEqual([
     5, 7,
@@ -438,17 +460,13 @@ it("rolls back a failed last-reaction removal and retries it after remount", asy
   });
   const h = harness([react()], publish);
   const view = render(<h.Controls />);
-  fireEvent.click(
-    screen.getByRole("button", { name: "👍: 1 person, including you" }),
-  );
-  expect(screen.queryByRole("button", { name: /👍: 1/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "👍: You" }));
+  expect(screen.queryByRole("button", { name: "👍: You" })).toBeNull();
   await act(async () => {
     await flush();
     await flush();
   });
-  expect(
-    screen.getByRole("button", { name: "👍: 1 person, including you" }),
-  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "👍: You" })).toBeTruthy();
   view.unmount();
   render(<h.Controls />);
   expect(
@@ -462,7 +480,7 @@ it("rolls back a failed last-reaction removal and retries it after remount", asy
     await flush();
   });
   expect(publish.mock.calls[1]?.[0]).toEqual(original);
-  expect(screen.queryByRole("button", { name: /👍: 1/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: "👍: You" })).toBeNull();
 });
 
 it("retires reaction previews while retaining the reaction delivery owner", async () => {
@@ -477,8 +495,12 @@ it("retires reaction previews while retaining the reaction delivery owner", asyn
       </ConversationPresentation>
     );
     const view = render(tree(true));
-    fireEvent.mouseEnter(screen.getByRole("button", { name: "👍: 1 person" }));
-    await act(() => vi.advanceTimersByTimeAsync(REACTION_PREVIEW_DELAY_MS));
+    fireEvent.mouseEnter(
+      screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(REACTION_PREVIEW_DELAY_MS - 1));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(1));
     expect(screen.getByRole("tooltip")).toBeTruthy();
     const reactions = screen.getByTestId("reaction-row");
     view.rerender(tree(false));
@@ -493,17 +515,55 @@ it("retires reaction previews while retaining the reaction delivery owner", asyn
   }
 });
 
-it("opens the reactor preview after a short hover, not a long dwell", async () => {
-  const h = harness([react(other)]);
-  vi.useFakeTimers();
-  try {
-    render(<h.Controls />);
-    fireEvent.mouseEnter(screen.getByRole("button", { name: "👍: 1 person" }));
-    await act(() => vi.advanceTimersByTimeAsync(99));
-    expect(document.body.querySelector('[role="tooltip"]')).toBeNull();
-    await act(() => vi.advanceTimersByTimeAsync(1));
-    expect(screen.getByRole("tooltip")).toBeTruthy();
-  } finally {
-    vi.useRealTimers();
-  }
+it("hands focus back when my emoji is removed while another person's remains", async () => {
+  const h = harness([react(), react(other)]);
+  const onFocusedRemoval = vi.fn();
+  render(<h.Controls onFocusedRemoval={onFocusedRemoval} />);
+  const own = screen.getByRole("button", { name: "👍: You" });
+  act(() => own.focus());
+  fireEvent.click(own);
+  expect(onFocusedRemoval).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("button", { name: "👍: You" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: `👍: ${other.pubkey.slice(0, 10)}` }),
+  ).toBeTruthy();
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+});
+it("offers the first reaction inline for coordination messages and respects disabled state", () => {
+  const pickerTools = registry<ComposerTool>([
+    {
+      key: "picker",
+      pluginId: "picker",
+      revision: "one",
+      id: "picker",
+      title: "Picker",
+      component: () => null,
+      reactionComponent: ({ select }: ReactionToolProps) => (
+        <button type="button" onClick={() => select("👍")}>
+          Choose reaction
+        </button>
+      ),
+    },
+  ]);
+  const h = harness([], undefined, pickerTools);
+  const view = render(<h.Controls audience="agents" />);
+  expect(
+    within(screen.getByTestId("inline-add-reaction")).getByRole("button", {
+      name: "Choose reaction",
+    }),
+  ).toBeTruthy();
+  view.rerender(<h.Controls audience="agents" disabled />);
+  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+  view.rerender(<h.Controls />);
+  expect(screen.queryByTestId("inline-add-reaction")).toBeNull();
+  view.rerender(<h.Controls audience="agents" />);
+  fireEvent.click(
+    within(screen.getByTestId("inline-add-reaction")).getByRole("button", {
+      name: "Choose reaction",
+    }),
+  );
+  expect(h.session.outbox?.snapshot()[0]?.event.kind).toBe(7);
 });

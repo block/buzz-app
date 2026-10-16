@@ -15,6 +15,131 @@ const shown = (actions) =>
     .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
     .toBe(true);
 
+// Browser-only: measured space, real top-layer hit testing, and responsive
+// placement cannot be established in a DOM emulator.
+for (const own of [true, false]) {
+  test(`actions sit flat beside ${own ? "own" : "received"} bubbles when they fit and lift above in tight panes`, async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const first = app.append("primary", "alpha", "Short", true, own);
+    const event = app.append("primary", "alpha", "Room for actions", true, own);
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${event.id}"]`,
+    );
+    const actions = actionsFor(row);
+    await expect(row.locator("[data-stack-previous]")).toBeVisible();
+    await settle(page);
+    // The first row's wider byline must not pull its short bubble off the
+    // continuation's edge. This needs rendered layout, not DOM-only coverage.
+    await expect
+      .poll(async () => {
+        const firstBubble = await page
+          .locator(
+            `[data-channel-timeline] [data-message-id="${first.id}"] [data-message-action-anchor]`,
+          )
+          .boundingBox();
+        const nextBubble = await row
+          .locator("[data-message-action-anchor]")
+          .boundingBox();
+        return Math.abs(
+          own
+            ? firstBubble.x +
+                firstBubble.width -
+                nextBubble.x -
+                nextBubble.width
+            : firstBubble.x - nextBubble.x,
+        );
+      })
+      .toBeLessThan(1);
+    for (const mode of ["light", "dark"]) {
+      await page.locator("html").evaluate((node, mode) => {
+        node.dataset.colorMode = mode;
+      }, mode);
+      for (const direction of ["ltr", "rtl"]) {
+        await row.evaluate((node, direction) => {
+          node.dir = direction;
+        }, direction);
+        await row.getByText("Room for actions", { exact: true }).hover();
+        await expect(actions).toHaveAttribute("data-placement", "beside");
+        await expect(actions).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+        await expect(actions).toHaveCSS("box-shadow", "none");
+        await expect
+          .poll(() =>
+            actions.evaluate((bar, own) => {
+              const row = bar.closest("[data-layout]");
+              const bubble = row
+                .querySelector("[data-message-action-anchor]")
+                .getBoundingClientRect();
+              const rect = bar.getBoundingClientRect();
+              const rtl = getComputedStyle(row).direction === "rtl";
+              return {
+                gap: Math.round(
+                  rtl !== own
+                    ? bubble.left - rect.right
+                    : rect.left - bubble.right,
+                ),
+                centered:
+                  Math.abs(
+                    rect.top + rect.height / 2 - bubble.top - bubble.height / 2,
+                  ) < 1,
+              };
+            }, own),
+          )
+          .toEqual({ gap: 8, centered: true });
+        await actions
+          .getByRole("button", { name: "React with 👍", exact: true })
+          .hover();
+        await shown(actions);
+        if (direction === "ltr")
+          await page.screenshot({
+            path: test.info().outputPath(`message-actions-beside-${mode}.png`),
+          });
+      }
+    }
+    await row.evaluate((node) => {
+      node.dir = "ltr";
+    });
+    await page.setViewportSize({ width: 390, height: 950 });
+    await settle(page);
+    await row.getByText("Room for actions", { exact: true }).hover();
+    await expect(actions).toHaveAttribute("data-placement", "above");
+    await expect(actions).not.toHaveCSS("box-shadow", "none");
+    await page.setViewportSize({ width: 1000, height: 1200 });
+    await page.locator("html").evaluate((node) => {
+      node.style.setProperty("--buzz-text-scale", "2");
+    });
+    await settle(page);
+    await row.getByText("Room for actions", { exact: true }).hover();
+    await expect(actions).toHaveAttribute("data-placement", "above");
+    await expect
+      .poll(() =>
+        actions.evaluate((bar) => {
+          const rect = bar.getBoundingClientRect();
+          return (
+            rect.left >= 0 && rect.right <= document.documentElement.clientWidth
+          );
+        }),
+      )
+      .toBe(true);
+    const menu = actions.getByRole("button", { name: "More message actions" });
+    await menu.focus();
+    await menu.press("Enter");
+    await expect(page.getByRole("menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeFocused();
+    await page.screenshot({
+      path: test.info().outputPath("message-actions-raised-enlarged.png"),
+    });
+    await page.locator("html").evaluate((node) => {
+      node.style.removeProperty("--buzz-text-scale");
+    });
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await expect(actions).toHaveAttribute("data-placement", "beside");
+  });
+}
+
 // Browser-only: top-layer painting/hit testing across containment, real scrolling,
 // and stable header geometry cannot be established in jsdom.
 test("thread actions and growing reactions paint beyond the scroller without moving text", async ({
@@ -52,10 +177,12 @@ test("thread actions and growing reactions paint beyond the scroller without mov
   // Leave the author line across the bottom edge, with the lifted toolbar
   // crossing it and the start of the message still reachable by pointer.
   await actions.evaluate((bar) => {
-    const slot = bar.parentElement;
+    const anchor = bar
+      .closest("[data-layout]")
+      .querySelector("[data-message-action-anchor]");
     const scroller = bar.closest("[data-message-scroller]");
     scroller.scrollTop +=
-      slot.getBoundingClientRect().top -
+      anchor.getBoundingClientRect().top -
       scroller.getBoundingClientRect().bottom +
       -14;
   });
@@ -68,14 +195,22 @@ test("thread actions and growing reactions paint beyond the scroller without mov
   await expect
     .poll(() =>
       actions.evaluate((bar) => {
-        const slot = bar.parentElement.getBoundingClientRect();
+        const anchor = bar
+          .closest("[data-layout]")
+          .querySelector("[data-message-action-anchor]")
+          .getBoundingClientRect();
         const rect = bar.getBoundingClientRect();
         const edge = bar
           .closest("[data-message-scroller]")
           .getBoundingClientRect().bottom;
         const button = bar.querySelector("button").getBoundingClientRect();
         return {
-          anchored: slot.height === 0 && Math.abs(slot.top - rect.bottom) < 1,
+          anchored:
+            Math.abs(
+              anchor.top +
+                parseFloat(getComputedStyle(bar).scrollMarginBlockStart) -
+                rect.bottom,
+            ) < 1,
           crosses: rect.top < edge && rect.bottom > edge + 4,
           hit: bar.contains(
             document.elementFromPoint(button.x + button.width / 2, edge + 4),
@@ -127,19 +262,27 @@ test("thread actions and growing reactions paint beyond the scroller without mov
   await page.screenshot({
     path: test.info().outputPath("thread-floating-actions.png"),
   });
+  // Native top-layer controls must retain the owning history's wheel behavior.
+  const beforeWheel = await scroller.evaluate((node) => node.scrollTop);
+  await wheel(page, -100, scroller);
+  await expect
+    .poll(() => scroller.evaluate((node) => node.scrollTop))
+    .toBeLessThan(beforeWheel);
   await page.mouse.move(0, 0);
   await expect(actions).toHaveCSS("opacity", "0");
 });
 
-test("timeline actions escape the top edge, track scrolling and preserve keyboard order", async ({
+test("compact timeline actions escape the top edge, track scrolling and preserve keyboard order", async ({
   page,
   app,
   browserName,
 }) => {
+  // Exercise the raised fallback with a full-width bubble in a compact pane.
+  await page.setViewportSize({ width: 1000, height: 850 });
   const target = app.append(
     "primary",
     "alpha",
-    "Floating timeline target\n\nMore text\n\nLast paragraph",
+    `Floating timeline target\n\n${"A longer message fills this reading column. ".repeat(8)}\n\nLast paragraph`,
     false,
     true,
   );
@@ -148,6 +291,7 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
       "primary",
       "alpha",
       `Following ${i}\n\nExtra space\n\nAnother paragraph\n\nLast paragraph`,
+      false,
       false,
     );
   await open(page, app);
@@ -175,7 +319,10 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
   await actions.evaluate((bar) => {
     const scroller = bar.closest("[data-message-scroller]");
     scroller.scrollTop +=
-      bar.parentElement.getBoundingClientRect().top -
+      bar
+        .closest("[data-layout]")
+        .querySelector("[data-message-action-anchor]")
+        .getBoundingClientRect().top -
       scroller.getBoundingClientRect().top +
       -10;
   });
@@ -215,7 +362,7 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
   await wheel(page, -300, scroller);
   await row.getByText("Floating timeline target", { exact: true }).hover();
   await shown(actions);
-  // Resize and RTL both preserve the same slot edge.
+  // RTL follows the bubble's leading edge while retaining the pane gutter.
   await row.evaluate((node) => {
     node.dir = "rtl";
   });
@@ -223,12 +370,20 @@ test("timeline actions escape the top edge, track scrolling and preserve keyboar
   await row.getByText("Floating timeline target", { exact: true }).hover();
   await expect
     .poll(() =>
-      actions.evaluate((bar) =>
-        Math.abs(
+      actions.evaluate((bar) => {
+        const row = bar.closest("[data-layout]");
+        const bubble = row.querySelector("[data-message-action-anchor]");
+        const gap = parseFloat(getComputedStyle(bar).scrollMarginInlineEnd);
+        return Math.abs(
           bar.getBoundingClientRect().left -
-            bar.parentElement.getBoundingClientRect().left,
-        ),
-      ),
+            Math.max(
+              bubble.getBoundingClientRect().left -
+                parseFloat(getComputedStyle(bar).scrollMarginBlockStart),
+              row.closest("[data-message-scroller]").getBoundingClientRect()
+                .left + gap,
+            ),
+        );
+      }),
     )
     .toBeLessThan(1);
 });
@@ -385,4 +540,49 @@ test("menus and pickers retain actions, but modal dialogs cover them", async ({
   await confirmation
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
+});
+
+// Both speakers must leave the opposite avatar column clear at real pane widths.
+test("long bubbles stay inside the opposite speaker's starting edge", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const received = app.append(
+    "primary",
+    "alpha",
+    "Received long message. ".repeat(30),
+    true,
+    false,
+  );
+  const sent = app.append(
+    "primary",
+    "alpha",
+    "Sent long message. ".repeat(30),
+    true,
+    true,
+  );
+  const bubble = (event) =>
+    page.locator(
+      `[data-channel-timeline] [data-message-id="${event.id}"] [data-message-action-anchor]`,
+    );
+  for (const width of [1200, 390]) {
+    await page.setViewportSize({ width, height: 1200 });
+    await expect(bubble(sent)).toBeVisible();
+    await expect(bubble(received)).toBeVisible();
+    await settle(page);
+    await expect
+      .poll(async () => {
+        const left = await bubble(received).boundingBox();
+        const right = await bubble(sent).boundingBox();
+        return (
+          left !== null &&
+          right !== null &&
+          right.x >= left.x - 1 &&
+          left.x + left.width <= right.x + right.width + 1 &&
+          right.x > left.x + 8
+        );
+      })
+      .toBe(true);
+  }
 });

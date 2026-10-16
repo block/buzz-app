@@ -28,16 +28,6 @@ function setup(value = "", props: { allowCustomModel?: boolean } = {}) {
 
 const control = () => screen.getByRole("combobox", { name: "Model" });
 
-it("shows the default's label when no model is chosen", () => {
-  setup("");
-  expect(control()).toHaveTextContent("Default model");
-});
-
-it("shows the chosen model's label", () => {
-  setup("opus");
-  expect(control()).toHaveTextContent("Opus");
-});
-
 it("picks a listed model", async () => {
   const { onChange, user } = setup("");
   await user.click(control());
@@ -152,19 +142,35 @@ it("is disabled as a whole", () => {
   expect(control()).toBeDisabled();
 });
 
-it("shows that models are loading", () => {
-  render(
+it("keeps loading inside the disabled picker and restores the selected value", () => {
+  const onChange = vi.fn();
+  const view = render(
     <ModelPicker
       models={[]}
       allowCustomModel={false}
       value=""
       defaultLabel="Default model"
-      onChange={vi.fn()}
+      onChange={onChange}
       loading
     />,
   );
-  expect(control()).toBeDisabled();
-  expect(screen.getByText("Loading models…")).toBeVisible();
+  const picker = control();
+  expect(picker).toBeDisabled();
+  expect(picker).toContainElement(screen.getByText("Loading models…"));
+  view.rerender(
+    <ModelPicker
+      models={models}
+      allowCustomModel={false}
+      value="opus"
+      defaultLabel="Default model"
+      onChange={onChange}
+    />,
+  );
+  expect(control()).toBe(picker);
+  expect(picker).toBeEnabled();
+  expect(picker).toHaveTextContent("Opus");
+  expect(screen.queryByText("Loading models…")).not.toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalled();
 });
 
 it("keeps compact choices finite and includes rich model descriptions", async () => {
@@ -192,4 +198,125 @@ it("keeps compact choices finite and includes rich model descriptions", async ()
   expect(opus).toHaveAccessibleDescription("Most capable");
   await user.click(opus);
   expect(onChange).toHaveBeenCalledExactlyOnceWith("opus");
+});
+
+it("lists the inherited default once with its catalog copy", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      models={models}
+      value=""
+      defaultModel="opus"
+      defaultLabel="Opus"
+      onChange={onChange}
+    />,
+  );
+  expect(control()).toHaveTextContent("Opus · Default");
+  expect(screen.getByTitle("Opus · Default")).toBeVisible();
+  await user.click(control());
+  const options = await screen.findAllByRole("option");
+  expect(options).toHaveLength(2);
+  expect(options[0]).toHaveAccessibleName("Opus · Default");
+  expect(options[1]).toHaveAccessibleName("Sonnet");
+  expect(options[0]).toHaveAccessibleDescription("Most capable");
+  expect(options[0]).toHaveAttribute("aria-selected", "true");
+  expect(onChange).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("option", { name: "Sonnet" }));
+  expect(onChange).toHaveBeenCalledWith("sonnet");
+});
+
+it("keeps a matching explicit pin distinct from inheritance as defaults change", async () => {
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  const props = {
+    models,
+    value: "opus",
+    defaultModel: "opus",
+    defaultLabel: "Opus",
+    onChange,
+  };
+  const view = render(<ModelPicker {...props} />);
+  expect(control()).not.toHaveTextContent("Default");
+  await user.click(control());
+  const inherited = await screen.findByRole("option", {
+    name: "Opus · Default",
+  });
+  const pinned = screen.getByRole("option", { name: "Opus" });
+  expect(pinned).toHaveAttribute("aria-selected", "true");
+  expect(pinned).toHaveAccessibleDescription("Most capable");
+  expect(inherited).toHaveAttribute("aria-selected", "false");
+  expect(onChange).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  view.rerender(
+    <ModelPicker {...props} defaultModel="sonnet" defaultLabel="Sonnet" />,
+  );
+  expect(control()).toHaveTextContent("Opus");
+  await user.click(control());
+  expect(await screen.findByRole("option", { name: "Opus" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await user.keyboard("{Escape}");
+  view.rerender(<ModelPicker {...props} />);
+  await user.click(control());
+  await user.click(
+    await screen.findByRole("option", { name: "Opus · Default" }),
+  );
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("");
+  view.rerender(
+    <ModelPicker
+      {...props}
+      value=""
+      defaultModel="sonnet"
+      defaultLabel="Sonnet"
+    />,
+  );
+  expect(control()).toHaveTextContent("Sonnet · Default");
+  await user.click(control());
+  expect(
+    await screen.findByRole("option", { name: "Sonnet · Default" }),
+  ).toHaveAttribute("aria-selected", "true");
+});
+
+it("keeps a Default suffix beside inherited card models as defaults change", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  const props = {
+    compact: true,
+    appearance: "subtle" as const,
+    models: [
+      { id: "gpt-6.1-sol", label: "GPT-6.1-Sol" },
+      { id: "gpt-6.1-astra", label: "GPT-6.1-Astra" },
+    ],
+    value: "",
+    defaultLabel: "GPT-6.1-Sol",
+    onChange,
+  };
+  const view = render(<ModelPicker {...props} />);
+  expect(control()).toHaveTextContent(/^GPT-6.1-Sol · Default$/);
+  expect(control().querySelector(".buzz-select-value")).toHaveTextContent(
+    /^GPT-6.1-Sol$/,
+  );
+  expect(
+    control().querySelector(".buzz-select-value-suffix"),
+  ).toHaveTextContent("· Default");
+  expect(screen.getByTitle("GPT-6.1-Sol · Default")).toBeVisible();
+  await user.click(control());
+  expect(
+    await screen.findByRole("option", { name: "GPT-6.1-Sol · Default" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Escape}");
+
+  view.rerender(<ModelPicker {...props} defaultLabel="GPT-6.1-Astra" />);
+  expect(control()).toHaveTextContent(/^GPT-6.1-Astra · Default$/);
+  expect(onChange).not.toHaveBeenCalled();
+
+  view.rerender(<ModelPicker {...props} value="gpt-6.1-sol" />);
+  expect(control()).toHaveTextContent(/^GPT-6.1-Sol$/);
+  expect(control().querySelector(".buzz-select-value-suffix")).toBeNull();
+
+  view.rerender(<ModelPicker {...props} loading />);
+  expect(control()).toHaveTextContent("Loading models…");
+  expect(control().querySelector(".buzz-select-value-suffix")).toBeNull();
 });

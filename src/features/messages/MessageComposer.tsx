@@ -416,7 +416,15 @@ function Composer({
       // Disabling after the handoff ends it; re-enabling must not refocus.
       if (focusOnMount.current === input.current)
         focusOnMount.current = undefined;
-      return;
+      if (!focusOnMount.current) return;
+      // Focus moved while the composer waits also ends it, even if that control
+      // later unmounts: restoring an archived channel must not pull focus back.
+      const moved = (event: FocusEvent) => {
+        if (event.target !== focusOnMount.current)
+          focusOnMount.current = undefined;
+      };
+      document.addEventListener("focusin", moved, true);
+      return () => document.removeEventListener("focusin", moved, true);
     }
     if (!focusOnMount.current) return;
     const focus = () => {

@@ -23,7 +23,8 @@ export const SEEK_PAGES = 25;
  * How a reader opens at one message: true in the channel timeline, false as
  * its thread, undefined while it decides. A top-level message opens in the
  * timeline once verified history holds it, reading older pages until it loads;
- * a reply, or a message not found, opens as its thread. Each request decides
+ * a reply, or a message not found, opens as its thread. Cached history alone
+ * decides nothing; a failed read decides on what it has. Each request decides
  * once, so later arrivals do not switch it. `request` asks again for the same
  * message.
  */
@@ -55,11 +56,17 @@ export function useMessageOpening(
   }>();
   const pages = useRef({ key, count: 0 });
   if (pages.current.key !== key) pages.current = { key, count: 0 };
+  // Cached rows may be stale: wait for verified history or a settled failure.
   const deciding =
     !!key &&
     decided?.key !== key &&
     window.status !== "idle" &&
-    window.status !== "loading";
+    window.status !== "loading" &&
+    !(
+      window.status === "ready" &&
+      window.freshness === "cached" &&
+      !window.error
+    );
   const verified = window.status === "ready" && window.freshness !== "cached";
   const row = verified
     ? window.rows.find((row) => row.id === messageId)

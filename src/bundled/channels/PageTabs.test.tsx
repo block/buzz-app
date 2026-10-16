@@ -27,7 +27,7 @@ vi.mock("./ConversationTab", () => ({
   }) => (
     <p
       data-message={tab.messageId}
-      data-reveal={tab.kind === "conversation" ? tab.revealRequest : undefined}
+      data-reveal={tab.revealRequest}
       data-mark-read={tab.kind === "conversation" ? tab.markRead : undefined}
     >
       {tab.kind} in {channel.name}
@@ -190,8 +190,14 @@ it("opens at a message, asking again on each open, with the page's read choice",
 it("opens a thread at one of its messages", () => {
   const page = fixture();
   page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
-  expect(screen.getByText("thread in alpha")).toHaveAttribute(
-    "data-message",
-    "reply",
-  );
+  const thread = () => screen.getByText("thread in alpha");
+  expect(thread()).toHaveAttribute("data-message", "reply");
+  expect(thread()).toHaveAttribute("data-reveal", "1");
+  // Each open at a message asks the reader to show it again.
+  page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
+  expect(thread()).toHaveAttribute("data-reveal", "2");
+  // Opening the thread itself asks for no reveal.
+  page.open({ channelId: "alpha", threadId: "root" });
+  expect(thread()).toHaveAttribute("data-message", "root");
+  expect(thread()).toHaveAttribute("data-reveal", "2");
 });

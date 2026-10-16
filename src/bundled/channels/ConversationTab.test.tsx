@@ -22,11 +22,20 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
   ThreadPanel: ({
     active,
     replyRequest,
+    revealSelected,
+    revealRequest,
   }: {
     active: boolean;
     replyRequest?: number;
+    revealSelected?: boolean;
+    revealRequest?: number;
   }) => (
-    <aside data-active={active} data-reply-request={replyRequest}>
+    <aside
+      data-active={active}
+      data-reply-request={replyRequest}
+      data-reveal-selected={revealSelected}
+      data-reveal-request={revealRequest}
+    >
       Thread content
     </aside>
   ),
@@ -374,8 +383,36 @@ it("a conversation tab opens a reply at its message as the thread", () => {
     />,
   );
   c.settle();
-  expect(screen.getByText("Thread content")).toBeInTheDocument();
+  const thread = screen.getByText("Thread content");
+  expect(thread).toHaveAttribute("data-reveal-selected", "true");
+  expect(thread).toHaveAttribute("data-reveal-request", "1");
   expect(screen.queryByText("Conversation content")).toBeNull();
+});
+
+it("a thread tab asks its reader to reveal for each open at a message, not on restore", () => {
+  const c = openingAt([]);
+  const tab = {
+    id: "thread:beta:root",
+    kind: "thread" as const,
+    channelId: "beta",
+    messageId: "reply",
+    revealRequest: 1,
+  };
+  const mounted = render(
+    <ConversationTab {...c.props} tab={tab} focusOnMount={false} />,
+  );
+  const thread = screen.getByText("Thread content");
+  expect(thread).toHaveAttribute("data-reveal-selected", "false");
+  expect(thread).not.toHaveAttribute("data-reveal-request");
+  mounted.rerender(
+    <ConversationTab
+      {...c.props}
+      tab={{ ...tab, revealRequest: 2 }}
+      focusOnMount={false}
+    />,
+  );
+  expect(thread).toHaveAttribute("data-reveal-selected", "true");
+  expect(thread).toHaveAttribute("data-reveal-request", "2");
 });
 
 it("markRead false reaches the reader, and a restored tab does not reveal again", () => {

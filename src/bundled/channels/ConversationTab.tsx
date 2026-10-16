@@ -63,17 +63,17 @@ export function ConversationTab({
   if (reply !== restoredReply.current) restoredReply.current = undefined;
   const sessionConversation = channel.channelType === "session";
   // Likewise a saved reveal belongs to the opening that asked for it.
-  const opening = tab.kind === "conversation" ? tab : undefined;
-  const restoredReveal = useRef(
-    focusOnMount ? undefined : opening?.revealRequest,
-  );
-  if (opening?.revealRequest !== restoredReveal.current)
+  const restoredReveal = useRef(focusOnMount ? undefined : tab.revealRequest);
+  if (tab.revealRequest !== restoredReveal.current)
     restoredReveal.current = undefined;
-  const target =
-    opening?.messageId && opening.revealRequest !== restoredReveal.current
-      ? opening.messageId
+  const asked =
+    tab.revealRequest !== restoredReveal.current
+      ? tab.revealRequest
       : undefined;
-  const revealRequest = target ? opening?.revealRequest : undefined;
+  const opening = tab.kind === "conversation" ? tab : undefined;
+  const target = opening?.messageId && asked ? opening.messageId : undefined;
+  const revealRequest = target ? asked : undefined;
+  const threadReveal = tab.kind === "thread" ? asked : undefined;
   const inTimeline = useMessageOpening(
     session.channels,
     channel.id,
@@ -125,6 +125,8 @@ export function ConversationTab({
             onResolvedRoot={onResolvedRoot}
             onDifferentThread={onDifferentThread}
             replyRequest={reply === restoredReply.current ? undefined : reply}
+            revealSelected={threadReveal !== undefined}
+            revealRequest={threadReveal}
             close={close}
           />
         ) : target && inTimeline === false ? (
@@ -134,6 +136,7 @@ export function ConversationTab({
             retainThread
             tabbed
             revealSelected
+            revealRequest={revealRequest}
             close={close}
           />
         ) : (

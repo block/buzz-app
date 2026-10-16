@@ -44,6 +44,18 @@ function channel(pages: string[][], replies: Record<string, string> = {}) {
   return {
     queries,
     loadOlder,
+    /** A cached window: readable rows, not yet verified against the relay. */
+    cached(ids: string[], error?: string) {
+      act(() =>
+        set({
+          status: "ready",
+          freshness: "cached",
+          rows: ids.map(row),
+          hasMore: true,
+          error,
+        }),
+      );
+    },
     head() {
       act(() =>
         set({
@@ -116,6 +128,25 @@ it(`stops after ${SEEK_PAGES} older pages and opens the thread`, () => {
   for (let page = 0; page < SEEK_PAGES; page += 1) c.deliver();
   expect(view.result.current).toBe(false);
   expect(c.loadOlder).toHaveBeenCalledTimes(SEEK_PAGES);
+});
+
+it("waits through a cached window and opens what verified history shows", () => {
+  const c = channel([["old"], ["new", "target"]]);
+  const view = renderHook(() => useMessageOpening(c.queries, "c", "target"));
+  // The cached head predates the target: not yet evidence that it is missing.
+  c.cached(["old"]);
+  expect(view.result.current).toBeUndefined();
+  expect(c.loadOlder).not.toHaveBeenCalled();
+  c.head();
+  expect(view.result.current).toBe(true);
+  expect(c.loadOlder).not.toHaveBeenCalled();
+});
+
+it("a failed revalidation of a cached window opens the thread", () => {
+  const c = channel([["new", "target"]]);
+  const view = renderHook(() => useMessageOpening(c.queries, "c", "target"));
+  c.cached(["new"], "offline");
+  expect(view.result.current).toBe(false);
 });
 
 it("reads no window without a message", () => {

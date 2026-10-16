@@ -117,10 +117,12 @@ export function PageTabs({
       const existing =
         threadId && threadTab(tabState.tabs, channelId, threadId)?.id;
       if (threadId)
+        // Each open at a message asks the thread reader to show it again.
         secondary.openConversationThread(
           channelId,
           messageId ?? threadId,
           threadId,
+          messageId ? "reveal" : undefined,
         );
       else {
         const tab = `conversation:${channelId}`;

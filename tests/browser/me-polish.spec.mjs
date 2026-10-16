@@ -841,7 +841,7 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
   expect(links[0].event.tags).toContainEqual(["h", destination]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
   expect(links[0].event.content).toBe(
-    `[Session · 33333333](buzz://channel/${id})`,
+    `[Session: 33333333](buzz://channel/${id})`,
   );
 });
 
@@ -1653,6 +1653,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     ["h", id],
     ["name", "Make contrast meet accessibility standards"],
     ["ttl", "1209600"],
+    ["t", "buzz.session.named"],
   ]);
   const saved = readbacks.find((entry) =>
     entry.tags.some(([key, value]) => key === "ttl" && value === "1209600"),
@@ -1664,6 +1665,10 @@ test("unified session naming and lifetime retain host focus and save only explic
     "Buzz session (buzz.sessions/v1)",
   ]);
   expect(saved.tags).toContainEqual(["private"]);
+  expect(saved.tags.filter(([key]) => key === "t")).toEqual([
+    ["t", "stream"],
+    ["t", "buzz.session.named"],
+  ]);
   expect(saved.tags).not.toContainEqual(["public"]);
   expect(
     (app.report.sidebarPublications ?? []).filter((entry) =>

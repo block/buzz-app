@@ -226,6 +226,7 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     undefined,
     undefined,
     false,
+    false,
   );
 });
 
@@ -1545,6 +1546,7 @@ it.each(
       undefined,
       600,
       true,
+      true,
     );
   },
 );
@@ -1888,6 +1890,12 @@ it.each(
       channels,
       { read: async () => [] },
       lifetime.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
     );
     const session = {
       ...h.session,
@@ -1968,8 +1976,47 @@ it.each([
       undefined,
       undefined,
       false,
+      false,
     );
     expect(h.workSessions.create).toHaveBeenCalledOnce();
     expect(h.messages.send).toHaveBeenCalledOnce();
   },
 );
+
+it("starts a new chat with a session card and no caption", async () => {
+  const h = setup(),
+    started = vi.fn(),
+    user = userEvent.setup();
+  const link = "[Session: Fix](buzz://channel/session-id)";
+  writeView("test", "sessions:new-draft", link);
+  render(
+    <NewSessionComposer session={h.session} scope="test" onStarted={started} />,
+  );
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toBeEnabled();
+  await user.click(send);
+  await waitFor(() => expect(started).toHaveBeenCalled());
+  expect(h.workSessions.create).toHaveBeenCalledOnce();
+  expect(h.messages.send).toHaveBeenCalledWith(
+    h.workSessions.create.mock.calls[0]?.[0],
+    link,
+    ["a".repeat(64)],
+  );
+});
+
+it("names a captioned new chat from its caption before staged cards", async () => {
+  const h = setup(),
+    started = vi.fn(),
+    user = userEvent.setup();
+  const link =
+    "[Session: Fix](buzz://channel/11111111-1111-4111-8111-111111111111)";
+  writeView("test", "sessions:new-draft", `${link}\n\nPlease review the fixes`);
+  render(
+    <NewSessionComposer session={h.session} scope="test" onStarted={started} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalled());
+  expect(h.workSessions.create.mock.calls[0]?.[1]).toBe(
+    "Please review the fixes",
+  );
+});

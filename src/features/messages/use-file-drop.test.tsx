@@ -11,7 +11,7 @@ import { StrictMode, useRef, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { ThreadPanel } from "./ThreadPanel";
-import { useFileDrop, useRejectUnclaimedFileDrops } from "./use-file-drop";
+import { useFileDrop, useRejectUnclaimedDrops } from "./use-file-drop";
 
 afterEach(cleanup);
 
@@ -26,7 +26,7 @@ function Composer({
 }) {
   const ref = useRef<HTMLFormElement>(null);
   const dragging = useFileDrop(ref, enabled, attach);
-  useRejectUnclaimedFileDrops();
+  useRejectUnclaimedDrops();
   return (
     <div data-attachment-drop-zone="">
       <form ref={ref} aria-label="Main composer">
@@ -40,11 +40,11 @@ function Composer({
 function drag(
   target: HTMLElement,
   kind: "dragEnter" | "dragOver" | "drop",
-  file = true,
+  type = "Files",
 ) {
   const transfer = {
-    types: file ? ["Files"] : ["text/plain"],
-    files: file ? [new File(["notes"], "notes.txt")] : [],
+    types: [type],
+    files: type === "Files" ? [new File(["notes"], "notes.txt")] : [],
     dropEffect: "uninitialized",
   };
   const event = createEvent[kind](target, {
@@ -89,7 +89,7 @@ it("unavailable real thread pane rejects files without attaching to the main com
   expect(screen.getByRole("textbox", { name: "Draft" })).toHaveValue(
     "Keep my draft",
   );
-  expect(drag(pane, "drop", false).event.defaultPrevented).toBe(false);
+  expect(drag(pane, "drop", "text/plain").event.defaultPrevented).toBe(false);
 });
 
 it("the app rejects file drops outside every drop zone, leaving other drags alone", () => {
@@ -104,7 +104,33 @@ it("the app rejects file drops outside every drop zone, leaving other drags alon
   expect(over.event.defaultPrevented).toBe(true);
   expect(over.transfer.dropEffect).toBe("none");
   expect(drag(sidebar, "drop").event.defaultPrevented).toBe(true);
-  expect(drag(sidebar, "drop", false).event.defaultPrevented).toBe(false);
+  expect(drag(sidebar, "drop", "text/plain").event.defaultPrevented).toBe(
+    false,
+  );
+});
+
+it("the app rejects link drops outside editable text", () => {
+  render(
+    <StrictMode>
+      <Composer enabled={false} attach={vi.fn()} />
+      <nav aria-label="Sidebar" />
+      <textarea aria-label="Notes" />
+    </StrictMode>,
+  );
+  const sidebar = screen.getByRole("navigation", { name: "Sidebar" });
+  const over = drag(sidebar, "dragOver", "text/uri-list");
+  expect(over.event.defaultPrevented).toBe(true);
+  expect(over.transfer.dropEffect).toBe("none");
+  expect(drag(sidebar, "drop", "text/uri-list").event.defaultPrevented).toBe(
+    true,
+  );
+  const notes = screen.getByRole("textbox", { name: "Notes" });
+  expect(drag(notes, "dragOver", "text/uri-list").event.defaultPrevented).toBe(
+    false,
+  );
+  expect(drag(notes, "drop", "text/uri-list").event.defaultPrevented).toBe(
+    false,
+  );
 });
 
 it("a native file input outside every drop zone still accepts its own drop", () => {

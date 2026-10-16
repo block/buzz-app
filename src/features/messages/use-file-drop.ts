@@ -1,14 +1,22 @@
 import { useEffect, useEffectEvent, useState, type RefObject } from "react";
 
-/** An unclaimed file drop would navigate the webview to the file, so the app rejects it. */
-export function useRejectUnclaimedFileDrops() {
+/** An unclaimed file or link drop would navigate the webview to it, so the app rejects it. */
+export function useRejectUnclaimedDrops() {
   useEffect(() => {
     const reject = (event: DragEvent) => {
-      const { target } = event;
-      // A native file input accepts its own drop.
-      if (target instanceof HTMLInputElement && target.type === "file") return;
-      if (!event.dataTransfer?.types.includes("Files")) return;
-      if (!event.defaultPrevented) event.dataTransfer.dropEffect = "none";
+      const { target, dataTransfer } = event;
+      if (!dataTransfer) return;
+      const files = dataTransfer.types.includes("Files");
+      if (!files && !dataTransfer.types.includes("text/uri-list")) return;
+      // The browser itself accepts files into a file input and links into editable text.
+      if (
+        target instanceof HTMLElement &&
+        (files
+          ? target instanceof HTMLInputElement && target.type === "file"
+          : target.isContentEditable || target.matches(":read-write"))
+      )
+        return;
+      if (!event.defaultPrevented) dataTransfer.dropEffect = "none";
       event.preventDefault();
     };
     window.addEventListener("dragover", reject);

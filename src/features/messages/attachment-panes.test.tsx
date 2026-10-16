@@ -22,7 +22,7 @@ import { keypair, message, roster, signed } from "../relay/testing";
 import { MessageComposer } from "./MessageComposer";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { composerDOMFixture } from "./composer-testing";
-import { useFileDrop, useRejectUnclaimedFileDrops } from "./use-file-drop";
+import { useFileDrop, useRejectUnclaimedDrops } from "./use-file-drop";
 
 composerDOMFixture();
 
@@ -161,7 +161,7 @@ function OuterComposer({
 }) {
   const ref = useRef<HTMLFormElement>(null);
   useFileDrop(ref, true, attach);
-  useRejectUnclaimedFileDrops();
+  useRejectUnclaimedDrops();
   return (
     <div data-attachment-drop-zone="">
       <form ref={ref} aria-label="Other composer" />

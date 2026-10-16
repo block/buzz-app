@@ -517,7 +517,6 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         jev::jev_classifier_status,
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
-        jev::jev_classify,
         decisions::decide,
         title_bar_double_click,
         notification_show,

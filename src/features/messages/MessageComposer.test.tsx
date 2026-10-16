@@ -608,6 +608,23 @@ it("does not reclaim startup focus after another control takes it", async () => 
   }
 });
 
+it("does not reclaim startup focus after a control that took focus unmounts", async () => {
+  document.body.setAttribute("inert", "");
+  try {
+    const h = mount({ autoFocus: true });
+    const other = document.createElement("button");
+    document.body.append(other);
+    other.focus();
+    other.remove();
+    expect(document.activeElement).toBe(document.body);
+    document.body.removeAttribute("inert");
+    await act(async () => {}); // Observer callback runs as a microtask.
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    document.body.removeAttribute("inert");
+  }
+});
+
 it("does not take focus from a modal when the conversation mounts behind it", () => {
   const dialog = document.createElement("div");
   dialog.setAttribute("role", "dialog");

@@ -73,9 +73,14 @@ The earlier [channel-space proposal](spaces.md) is superseded design history.
   The account default never replaces recipients in an existing chat.
   Removing or replacing a tag is respected for that draft. Both Send and Enter
   require a tagged agent; existing signed-send recovery preserves its recipients.
-  The removed per-chat assistant picker is no longer consulted. A legacy pending
-  creation keeps the exact recipient admitted in its receipt, not an old picker
-  preference. The project control follows the editor tools on the same rail;
+  On upgrade, the retired per-chat assistant choice seeds an empty Solo draft
+  once, only with that exact eligible agent and remembering enabled. Existing
+  prose, attachments, edited drafts and opt-out consume the old choice without
+  replacing current intent. Failed draft persistence preserves it for retry.
+  It is never a continuing routing fallback. A legacy pending creation keeps
+  the exact recipient admitted in its receipt; after delivery, that eligible
+  recipient can seed its follow-up without modifying or resending signed bytes.
+  A blocked Enter submission shows “Tag an agent to send” inline. The project control follows the editor tools on the same rail;
   model/effort controls read the explicitly tagged recipients.
   Saved placement must load before sending; unavailable evidence is not Messages.
 - Claude Code can name a Solo chat from its own generated session title after its

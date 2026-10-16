@@ -2338,3 +2338,61 @@ it.each(["remember", "off", "existing", "storage-failure"])(
     }
   },
 );
+
+it.each(["remember", "off", "unavailable", "existing"])(
+  "recovered signed legacy recipient carries into the follow-up without resending (%s)",
+  async (mode) => {
+    const { readView } = await import("../../shared/view-state");
+    const { setRememberAgentsPreference } = await import(
+      "../messages/mention-preferences"
+    );
+    const f = setup();
+    const id = "22222222-2222-4222-8222-222222222222";
+    writeView("legacy-next", "me:pending", {
+      id,
+      text: "Original plain request",
+      agent: "b".repeat(64),
+      creationId: "c".repeat(64),
+      messageId: "d".repeat(64),
+    });
+    if (mode === "existing")
+      writeView("legacy-next", `draft:${id}`, "Keep another draft");
+    if (mode === "off") setRememberAgentsPreference(false);
+    if (mode === "unavailable") {
+      const choices = f.session.agentChoices.snapshot();
+      vi.spyOn(f.session.agentChoices, "snapshot").mockReturnValue({
+        ...choices,
+        selectable: [],
+      });
+    }
+    const started = vi.fn();
+    render(
+      <NewSessionComposer
+        personal
+        session={f.session}
+        scope="legacy-next"
+        onStarted={started}
+      />,
+    );
+    try {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Send message" }),
+      );
+      await waitFor(() => expect(started).toHaveBeenCalledWith(id));
+      expect(f.messages.send).not.toHaveBeenCalled();
+      expect(f.workSessions.create).not.toHaveBeenCalled();
+      const saved = readView("legacy-next", `draft:${id}`, null);
+      if (mode === "existing") expect(saved).toBe("Keep another draft");
+      else
+        expect(saved).toMatchObject({
+          text: mode === "remember" ? "@Outside agent " : "",
+          recipients:
+            mode === "remember"
+              ? [{ pubkey: "b".repeat(64), name: "Outside agent" }]
+              : [],
+        });
+    } finally {
+      setRememberAgentsPreference(true);
+    }
+  },
+);

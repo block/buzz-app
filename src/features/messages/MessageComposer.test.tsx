@@ -421,9 +421,12 @@ function mount(
         for (const listener of profileListeners) listener();
       });
     },
-    setLibrary(identities: AgentLibrarySnapshot["identities"]) {
+    setLibrary(
+      identities: AgentLibrarySnapshot["identities"],
+      status: AgentLibrarySnapshot["status"] = "ready",
+    ) {
       act(() => {
-        library = { ...library, identities };
+        library = { ...library, identities, status };
         for (const listener of libraryListeners) listener();
       });
     },
@@ -4417,11 +4420,15 @@ it("tags a Berd draft with the default agent once and needs a tag to send", asyn
   // The default agent arrives in the empty draft as an ordinary tag.
   await waitFor(() => expect(h.input()).toHaveValue("@Selected "));
   const send = screen.getByRole("button", { name: "Send message" });
-  // Removing the tag is respected: no re-tag, and Send explains what's missing.
+  // Removing the tag is respected: no re-tag, and Enter explains even an empty draft.
+  h.fill("");
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(screen.getByRole("alert")).toHaveTextContent("Tag an agent to send");
   h.fill("no agent here");
   expect(h.input()).toHaveValue("no agent here");
   // Enter and native form submission obey the same rule, not just the button.
   fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(screen.getByRole("alert")).toHaveTextContent("Tag an agent to send");
   h.submit();
   expect(submit).not.toHaveBeenCalled();
   expect(h.input()).toHaveValue("no agent here");
@@ -7603,5 +7610,69 @@ it.each(["thread", "solo"])(
     await waitFor(() => expect(h.input()).toHaveValue(""));
     setRememberAgentsPreference(true);
     expect(h.input()).toHaveValue("");
+  },
+);
+
+it.each([
+  "empty",
+  "draft",
+  "off",
+  "unavailable",
+  "typed-while-loading",
+  "storage-failure",
+  "archived",
+])(
+  "upgrades the exact legacy Solo assistant once without replacing authored intent (%s)",
+  async (mode) => {
+    writeView("scope", "me:assistant:channel", second.pubkey);
+    if (mode === "draft") writeView("scope", "draft:channel", "Keep my draft");
+    if (mode === "off") setRememberAgentsPreference(false);
+    const h = mount();
+    h.setLibrary([], "loading");
+    h.retarget({ personalConversation: true, requireMention: true });
+    if (mode === "typed-while-loading") h.fill("Started typing");
+    if (mode === "archived")
+      h.retarget({
+        session: {
+          ...h.session,
+          archives: { state: () => "archived" },
+        } as unknown as RelaySession,
+      });
+    const setItem = Storage.prototype.setItem;
+    const storage = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key, value) {
+        if (mode === "storage-failure" && key.includes('"draft:channel"'))
+          throw new Error("Storage unavailable");
+        setItem.call(this, key, value);
+      });
+    h.setLibrary(mode === "unavailable" ? [first] : [first, second]);
+    const expected =
+      mode === "empty"
+        ? "@Honey "
+        : mode === "draft"
+          ? "Keep my draft"
+          : mode === "typed-while-loading"
+            ? "Started typing"
+            : "";
+    await waitFor(() => expect(h.input()).toHaveValue(expected));
+    if (mode === "empty") {
+      h.fill("");
+      h.retarget({ channelId: "other" });
+      h.retarget({ channelId: "channel" });
+      expect(h.input()).toHaveValue("");
+      expect(readView("scope", "me:assistant:channel", null)).toBe("");
+    }
+    if (mode === "storage-failure") {
+      expect(h.input()).toHaveValue("");
+      expect(readView("scope", "me:assistant:channel", null)).toBe(
+        second.pubkey,
+      );
+      storage.mockRestore();
+      h.setLibrary([first, second]);
+      await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
+    }
+    storage.mockRestore();
+    setRememberAgentsPreference(true);
   },
 );

@@ -1,5 +1,7 @@
 import { stageSessionCards } from "./composer-session-cards";
 import { ComposerSessionCards } from "./ComposerSessionCards";
+import { legacyAssistantDraft } from "../sessions/legacy-assistant";
+import { rememberAgentsPreference } from "./mention-preferences";
 import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { messageButtonStyle } from "../../shared/theme/bubble-color";
@@ -1051,6 +1053,49 @@ function Composer({
   // edits and removals; accepted sends use the shared remembered-mention draft.
   const autoTagged = useRef<string | undefined>(undefined);
   const automaticTag = useRef<string | undefined>(undefined);
+  // One-time upgrade of the retired per-chat picker. The editor owns the live
+  // draft, so delayed evidence cannot overwrite typing or restore a removed tag.
+  useEffect(() => {
+    if (
+      !personalConversation ||
+      submission ||
+      threadRootId ||
+      !active ||
+      editingDisabled ||
+      editing.target ||
+      sendPending
+    )
+      return;
+    const legacyKey = `me:assistant:${channelId}`;
+    const legacy = readView<unknown>(scope, legacyKey, "");
+    if (typeof legacy !== "string" || !/^[0-9a-f]{64}$/.test(legacy)) return;
+    if (
+      dirty.current ||
+      valueRef.current.text.trim() ||
+      valueRef.current.recipients.length ||
+      attachments.items.length ||
+      !rememberAgentsPreference()
+    ) {
+      writeView(scope, legacyKey, "");
+      return;
+    }
+    const choices = session.agentChoices.snapshot();
+    if (
+      choices.archives.status === "idle" ||
+      choices.archives.status === "loading"
+    )
+      return;
+    const next = legacyAssistantDraft(session, legacy);
+    if (!next.recipients.length && !choices.complete) return;
+    if (next.recipients.length) {
+      if (persist(next) !== "saved") return;
+      valueRef.current = next;
+      updateDraft(next);
+      input.current?.reset(next);
+      automaticTag.current = JSON.stringify(next);
+    }
+    writeView(scope, legacyKey, "");
+  });
   useEffect(() => {
     if (
       !defaultMention ||
@@ -1073,7 +1118,6 @@ function Composer({
         mentionRoster,
       )(defaultMention.pubkey)
     ) {
-      const empty = !draft.trim();
       if (
         insert(
           `@${defaultMention.name} `,
@@ -1083,14 +1127,11 @@ function Composer({
           false,
         )
       ) {
-        automaticTag.current = empty
-          ? JSON.stringify(valueRef.current)
-          : undefined;
-        if (empty)
-          input.current?.setSelectionRange(
-            valueRef.current.text.length,
-            valueRef.current.text.length,
-          );
+        automaticTag.current = JSON.stringify(valueRef.current);
+        input.current?.setSelectionRange(
+          valueRef.current.text.length,
+          valueRef.current.text.length,
+        );
       }
     }
   });
@@ -1181,15 +1222,18 @@ function Composer({
       conflict ||
       admission.current ||
       submission?.disabled ||
-      (requireMention && !valueRef.current.recipients.length) ||
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
-      (!draft.trim() && !sessionCards?.length && !attachments.items.length) ||
       attachments.blocked ||
       sendPending ||
       sendAttempt.current ||
       !outbox
     )
       return;
+    if (requireMention && !valueRef.current.recipients.length) {
+      setError("Tag an agent to send");
+      return;
+    }
+    if (!draft.trim() && !sessionCards?.length && !attachments.items.length) return;
     const recovering = !submission && recoveryFor(session).get(recoveryKey);
     if (recovering) {
       setAccepted(recovering);

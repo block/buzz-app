@@ -28,6 +28,7 @@ import {
 import { MessageComposer } from "../messages/MessageComposer";
 import { useDefaultAgent } from "./default-agent";
 import { SessionProjectControl } from "./SessionProjectControl";
+import { legacyAssistantDraft } from "./legacy-assistant";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
@@ -443,11 +444,15 @@ export function NewSessionComposer({
       if (!mounted.current) return;
       if (personal) {
         // Never overwrite a draft already opened or edited in another window.
-        const next = rememberedMentions(
-          session,
-          mentionDraft(current.draft),
-          recipients,
-        );
+        const source = mentionDraft(current.draft);
+        if (current.agent && !source.recipients.length) {
+          await session.agentChoices.refresh();
+          if (!mounted.current) return;
+        }
+        const next =
+          current.agent && !source.recipients.length
+            ? legacyAssistantDraft(session, current.agent)
+            : rememberedMentions(session, source, recipients);
         if (replaceView(scope, `draft:${current.id}`, null, next) === "failed")
           throw new Error(
             "Your follow-up draft couldn’t be saved on this device. Retry to finish opening the chat.",

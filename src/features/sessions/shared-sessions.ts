@@ -310,26 +310,11 @@ export async function listSharedSessions(
   }
   const finalDestination = accessRecord(io, destination, records);
   if (!finalDestination) throw unavailable();
-  const allowed =
-    options.audience && groups.size
-      ? await authorizeAudience(
-          io,
-          destination,
-          [...groups.keys()],
-          options.signal,
-        )
-      : undefined;
   const checked: SharedSessionEntry[] = [];
-  // No asynchronous reads after the current server audience decision.
   for (const [id, shares] of groups) {
     try {
       const source = accessRecord(io, id, records);
-      if (
-        !source ||
-        !sessionChannelMetadata(source.metadata) ||
-        (allowed && !allowed.has(id))
-      )
-        continue;
+      if (!source || !sessionChannelMetadata(source.metadata)) continue;
       const title = metadataName(source.metadata)?.trim() || id.slice(0, 8);
       if (
         options.query &&
@@ -346,11 +331,22 @@ export async function listSharedSessions(
       errors.add("Some shared sessions could not be loaded. Retry.");
     }
   }
+  // Ineligible historical links must not poison the strict authority request.
+  const allowed =
+    options.audience && checked.length
+      ? await authorizeAudience(
+          io,
+          destination,
+          checked.map(({ id }) => id),
+          options.signal,
+        )
+      : undefined;
+  // Release only after the current decision, without another asynchronous read.
   options.signal?.throwIfAborted();
   checked.sort((a, b) => b.sharedAt - a.sharedAt || a.id.localeCompare(b.id));
   return {
     scanned,
-    entries: checked,
+    entries: allowed ? checked.filter(({ id }) => allowed.has(id)) : checked,
     ...(cursor ? { cursor } : {}),
     complete: !cursor && !errors.size,
     errors: [...errors],

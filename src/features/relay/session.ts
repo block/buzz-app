@@ -2085,7 +2085,16 @@ export function createRelaySession(
         fresh: true,
       });
       signal.throwIfAborted();
-      if (closed || epoch !== accessEpoch)
+      // Applying discovery can revoke access itself. As with read(), let
+      // authority-only reads finish; mixed/content reads must remain fenced.
+      const discoveryOnly =
+        filters.length > 0 &&
+        filters.every(
+          (filter) =>
+            !!filter.kinds?.length &&
+            filter.kinds.every((kind) => [39000, 39002].includes(kind)),
+        );
+      if (closed || (epoch !== accessEpoch && !discoveryOnly))
         throw new DOMException("Stale relay read", "AbortError");
       return result;
     },

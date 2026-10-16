@@ -1,3 +1,6 @@
+import { appClient } from "../../buzz-mcp/app-client";
+import type { AgentHandle } from "../agents/service";
+import { audienceAuthorityFilter } from "./audience-authority";
 import { describe, expect, it, vi } from "vitest";
 import { finalizeEvent } from "nostr-tools";
 import { matchesEvent } from "../relay/projection";
@@ -720,3 +723,78 @@ it("uses remote page evidence rather than the projected local outbox adapter", a
     owner.dispose();
   }
 });
+
+it.each([false, true])(
+  "skips ineligible historical sources before the strict agent boundary (paged: %s)",
+  async (paged) => {
+    const f = fixture();
+    const destination = "22222222-2222-4222-8222-222222222222";
+    const source = "33333333-3333-4333-8333-333333333333";
+    const ordinary = "44444444-4444-4444-8444-444444444444";
+    const revoked = "55555555-5555-4555-8555-555555555555";
+    const community = "11111111-1111-4111-8111-111111111111";
+    f.setAccess(destination);
+    f.setAccess(source);
+    f.setAccess(ordinary, undefined, true);
+    f.setAccess(revoked, [other]);
+    f.add(
+      event(
+        9,
+        [["h", destination]],
+        ["general", ordinary, revoked]
+          .map((id) => sessionLinkMessage(id))
+          .join("\n\n"),
+        30,
+      ),
+      event(9, [["h", destination]], sessionLinkMessage(source), 20),
+    );
+    const audienceAuthority = vi.fn(
+      async (dest: string, sources: readonly string[]) => {
+        audienceAuthorityFilter(dest, sources);
+        return {
+          audience_authority: 1,
+          complete: true,
+          community_id: community,
+          pubkey: viewer,
+          destination: dest,
+          sources: sources.map((id) => ({ id, allowed: true })),
+        };
+      },
+    );
+    const client = appClient(
+      {
+        pubkey: viewer,
+        query: f.query,
+        audienceAuthority,
+      } as unknown as AgentHandle,
+      {
+        cwd: "/workspace",
+        spawn: vi.fn(),
+        memories: async () => ({ entries: [], partial: false }),
+        relayAuthor: authority,
+        audienceAuthorityCommunity: community,
+      },
+    );
+    let result = await listSharedSessions(client, destination, {
+      audience: destination,
+      limit: paged ? 1 : 20,
+    });
+    if (paged) {
+      expect(result.entries).toEqual([]);
+      expect(result.errors).toEqual([]);
+      expect(result.complete).toBe(false);
+      expect(result.cursor).toBeDefined();
+      expect(audienceAuthority).not.toHaveBeenCalled();
+      result = await listSharedSessions(client, destination, {
+        audience: destination,
+        cursor: result.cursor,
+      });
+    }
+    expect(result.entries.map(({ id }) => id)).toEqual([source]);
+    expect(result.errors).toEqual([]);
+    expect(result.complete).toBe(true);
+    expect(audienceAuthority).toHaveBeenCalledExactlyOnceWith(destination, [
+      source,
+    ]);
+  },
+);

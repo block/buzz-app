@@ -243,3 +243,38 @@ it("does not complete a held remote page across a membership revocation", async 
     held.resolve([]);
   }
 });
+
+it.each([false, true])(
+  "applies a returned revoking roster while fencing mixed content (%s)",
+  async (mixed) => {
+    const channel = "returned-revocation";
+    let members = [viewer.pubkey];
+    let time = 1700000000;
+    const owner = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      query: async (filters) =>
+        [
+          metadata(relay, channel, "Private channel", time, [["private"]]),
+          roster(relay, channel, members, time),
+          message(viewer, channel, "formerly accessible", time),
+        ].filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        ),
+    });
+    owners.push(owner);
+    await owner.session.read([{ kinds: [39000, 39002], limit: 10 }]);
+    expect(owner.session.channels.get?.(channel)?.members).toContain(
+      viewer.pubkey,
+    );
+    members = [];
+    time++;
+    const result = owner.session.readRemote([
+      { kinds: mixed ? [39000, 39002, 9] : [39000, 39002], limit: 10 },
+    ]);
+    if (mixed) await expect(result).rejects.toThrow(/cancel|abort|stale/i);
+    else await expect(result).resolves.toEqual([]);
+    expect(owner.session.channels.get?.(channel)).toBeUndefined();
+  },
+);

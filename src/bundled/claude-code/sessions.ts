@@ -364,14 +364,11 @@ export class AgentSessions {
     }
     return settled;
   }
-  /** Saves the session and restarts its idle countdown. */
+  /** Saves the session as used now, when it takes in a message or ends a
+   * turn, and restarts its idle countdown. */
   private touch(key: string, live: Live, seen?: number) {
     live.used = this.now();
-    clearTimeout(live.timer);
-    live.timer = setTimeout(() => {
-      if (live.process.busy) this.touch(key, live);
-      else if (this.live.get(key) === live) this.drop(key, live);
-    }, IDLE_MS);
+    this.countdown(key, live);
     const id = live.process.sessionId;
     if (!id) return;
     const prior = this.options.store.get(key);
@@ -380,6 +377,15 @@ export class AgentSessions {
       seen: Math.max(seen ?? 0, prior?.id === id ? prior.seen : 0),
       at: live.used,
     });
+  }
+  /** Stops the process after IDLE_MS, or waits again while it is busy: a
+   * long turn is not new use. */
+  private countdown(key: string, live: Live) {
+    clearTimeout(live.timer);
+    live.timer = setTimeout(() => {
+      if (live.process.busy) this.countdown(key, live);
+      else if (this.live.get(key) === live) this.drop(key, live);
+    }, IDLE_MS);
   }
   private drop(key: string, live: Live) {
     clearTimeout(live.timer);

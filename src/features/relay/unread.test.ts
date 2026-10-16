@@ -2719,6 +2719,42 @@ it("inbox groups a Solo chat's top-level timeline into one conversation, keeping
   expect(chat().map((item) => item.unreadCount)).toEqual([1, 0]);
 });
 
+it("inbox describes a Solo chat row by its newest top-level message, not only its Inbox evidence", () => {
+  const h = setup();
+  h.grant("chat");
+  h.emit([
+    metadata(h.relay, "chat", "Solo chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
+  ]);
+  const ping = message(h.alice, "chat", "Ping", 20, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const update = message(h.alice, "chat", "Later update", 21);
+  h.emit([
+    ping,
+    update,
+    message(h.viewer, "chat", "My answer", 22),
+    message(h.alice, "chat", "Side reply", 23, [
+      ["e", ping.id, "", "reply"],
+    ]),
+  ]);
+  const item = h.session.unread
+    .inbox()
+    .items.find((item) => item.id === "chat:chat");
+  expect(item).toMatchObject({
+    messageId: ping.id,
+    messageIds: [ping.id],
+    unreadCount: 1,
+    authorId: h.alice.pubkey,
+    preview: "Later update",
+    createdAt: 21,
+  });
+  expect(item?.mention).toMatchObject({ preview: "Ping", createdAt: 20 });
+});
+
 it("inbox keeps a mentioned Solo chat root with its thread so reading the thread clears it", async () => {
   const h = setup();
   h.grant("chat");

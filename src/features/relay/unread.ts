@@ -935,11 +935,24 @@ export function createUnread({
           groups.set(id, group);
         }
         if (!groups.size) continue;
-        const content = new Map(
-          foldMessages(channel.id, "", [...events.values()], {
-            includeReplies: true,
-          }).map((row) => [row.id, row.content]),
-        );
+        const rows = foldMessages(channel.id, "", [...events.values()], {
+          includeReplies: true,
+        });
+        const content = new Map(rows.map((row) => [row.id, row.content]));
+        // A session's top-level row shows its newest message from someone
+        // else, even one that is not Inbox evidence.
+        const newest = session
+          ? rows.reduce<RelayEvent | undefined>((best, row) => {
+              const event = events.get(row.id);
+              return event &&
+                !row.threadRootId &&
+                !row.membership &&
+                row.authorId !== viewer &&
+                (!best || event.created_at > best.created_at)
+                ? event
+                : best;
+            }, undefined)
+          : undefined;
         for (const [id, entries] of groups) {
           entries.sort(
             (a, b) =>
@@ -948,9 +961,16 @@ export function createUnread({
           );
           const project = (
             entries: readonly Evidence[],
+            timeline = false,
           ): InboxItem | undefined => {
             const latest = entries[entries.length - 1];
             if (!latest) return;
+            // The row shows its newest message, matching its time; opening
+            // still resumes at the representative.
+            const shown =
+              timeline && newest && newest.created_at >= latest.event.created_at
+                ? newest
+                : latest.event;
             const unread = entries.filter((entry) =>
               isUnread(entry, state, dm),
             );
@@ -1009,12 +1029,10 @@ export function createUnread({
               ...(representative.rootId
                 ? { rootId: representative.rootId }
                 : {}),
-              // The row shows its newest message, matching its time; opening
-              // still resumes at the representative.
-              authorId: latest.event.pubkey,
-              workflowOwnerId: workflowOwner(latest.event, workflowAuthority),
-              preview: content.get(latest.event.id) ?? latest.event.content,
-              createdAt: latest.event.created_at,
+              authorId: shown.pubkey,
+              workflowOwnerId: workflowOwner(shown, workflowAuthority),
+              preview: content.get(shown.id) ?? shown.content,
+              createdAt: shown.created_at,
               mentioned: entries.some((entry) => entry.mentioned),
               messages: Object.freeze(
                 entries.map(({ event, mentioned }) =>
@@ -1042,7 +1060,7 @@ export function createUnread({
               ),
             });
           };
-          const item = project(entries);
+          const item = project(entries, id === channel.id && session);
           if (item)
             items.push(
               Object.freeze({

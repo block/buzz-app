@@ -859,6 +859,8 @@ export type TeamChange = Omit<Team, "id"> &
     /** The open form's id: each Save of the same `creation` revises one
      * change (for a new team, one team). Absent: every Save is another. */
     creation?: string;
+    /** The stored change a reopened editor shows: Save revises it. */
+    operation?: string;
   }>;
 /** What `port` imports: an identity an earlier agent system saved on this
  * machine, or an agent a community member shared. */
@@ -2659,6 +2661,7 @@ export class AgentsService extends Service implements Agents {
   async saveTeam({
     id,
     creation,
+    operation,
     name,
     instructions,
     members,
@@ -2679,7 +2682,7 @@ export class AgentsService extends Service implements Agents {
       const form = creation ?? crypto.randomUUID();
       const saved = id
         ? await synced.editTeam(id, change, base, form).then(() => id)
-        : await synced.createTeam(change, form);
+        : await synced.createTeam(change, form, operation);
       return Object.freeze({
         id: saved,
         ...change,

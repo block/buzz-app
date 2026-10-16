@@ -23,6 +23,7 @@ import { SidebarRightIcon } from "../../shared/design-system/icons";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { useChannelLabels } from "./useChannelLabels";
 import {
+  tabPane,
   threadTab,
   useChannelTabState,
   type ConversationTab,
@@ -158,7 +159,7 @@ export function PageTabs({
         });
         tabState.select(tab);
       }
-      // A plain open replaces the tab the last one added; a kept or
+      // A plain open replaces the tab the last one added; a kept, moved or
       // already-open tab stays.
       const page = previews.get(session) ?? new Map<string, string>();
       previews.set(session, page);
@@ -168,7 +169,9 @@ export function PageTabs({
         if (keep && opened === preview) page.delete(id);
       } else if (!keep) {
         if (preview && known.has(preview))
-          tabState.setTabs((tabs) => tabs.filter((tab) => tab.id !== preview));
+          tabState.setTabs((tabs) =>
+            tabs.filter((tab) => tab.id !== preview || tabPane(tab) === "main"),
+          );
         page.set(id, opened);
       }
       return true;

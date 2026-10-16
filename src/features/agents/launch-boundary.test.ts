@@ -90,16 +90,16 @@ type Request = {
   afterRuns: boolean;
 };
 
-/** A turn's conversation reads (§4.3): messages and their edits, nothing else. */
-const CONVERSATION_KINDS = new Set([9, 40002]);
-const conversationRead = ({ filters, memory }: Request) =>
-  memory === undefined &&
-  filters.length > 0 &&
-  filters.every(
-    (filter) =>
-      !!filter.kinds?.length &&
-      filter.kinds.every((kind) => CONVERSATION_KINDS.has(kind)),
-  );
+/** The one read a Codex turn makes of its conversation (§4.3): the mention
+ * and its thread's replies, messages and their edits, in its channel, up to
+ * the mention. */
+const conversationRead = (sent: RelayEvent): readonly ReadFilter[] => {
+  const window = { kinds: [40002, 9], "#h": [channel], until: sent.created_at };
+  return [
+    { ...window, ids: [sent.id], limit: 1 },
+    { ...window, "#e": [sent.id], limit: 50 },
+  ];
+};
 
 /** A transport that answers from `records`, recording every request it sees.
  * While `offline`, every request fails as an unreachable relay's does. */
@@ -250,14 +250,21 @@ async function setup<Config>(
   });
   await vi.waitFor(() => expect(service.snapshot().status).toBe("ready"));
   // Settle every cache a start may consult before counting begins.
-  await session.session.channels.ensureList();
+  session.session.channels.ensureList();
   counted.live().state({ status: "connected", routes: [] });
   await vi.waitFor(() =>
     expect(service.snapshot().agents.map((agent) => agent.pubkey)).toContain(
       agentKey.pubkey,
     ),
   );
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // Discovery lists the channel only once it has applied its access change,
+  // which would cancel reads still in flight.
+  await vi.waitFor(() =>
+    expect(session.session.channels.list()).toMatchObject({
+      status: "ready",
+      channels: [expect.objectContaining({ id: channel })],
+    }),
+  );
   await session.session.profiles.ensure([owner.pubkey, agentKey.pubkey]);
   await service.core(agentKey.pubkey);
   counted.requests.length = 0;
@@ -297,15 +304,18 @@ const postRunCoreRefresh = (request: Request) =>
   request.memory?.agent === agentKey.pubkey &&
   request.memory.slug === "core";
 
-/** Every recorded request is a turn's conversation read where `conversation`,
- * or the post-run core refresh; anything else fails. */
-function expectOnlyAllowed(f: Fixture, conversation: boolean) {
-  const forbidden = f.requests.filter(
-    (request) =>
-      !postRunCoreRefresh(request) &&
-      !(conversation && conversationRead(request)),
-  );
-  expect(forbidden).toEqual([]);
+/** Apart from the post-run core refresh, the recorded requests are exactly
+ * one conversation read for each of `conversations`, in order: an extra, a
+ * wider or a different read fails. */
+function expectOnlyAllowed(
+  f: Fixture,
+  conversations: readonly RelayEvent[] = [],
+) {
+  expect(
+    f.requests
+      .filter((request) => !postRunCoreRefresh(request))
+      .map((request) => request.filters),
+  ).toEqual(conversations.map(conversationRead));
 }
 
 const synced = (mode: Mode = "synced") => ({
@@ -378,7 +388,7 @@ it("starts Claude sessions from the synced copies, with no relay request online 
   expect(first?.options.cwd).toBe("/this/device");
   expect(JSON.stringify(first?.received)).not.toContain("LOCAL INSTRUCTIONS");
   expect(f.deliveries[0]?.revisions).toEqual(revisions);
-  expectOnlyAllowed(f, false);
+  expectOnlyAllowed(f);
 
   // The relay goes away; the next conversation starts from the same copies.
   f.transport.offline = true;
@@ -389,7 +399,7 @@ it("starts Claude sessions from the synced copies, with no relay request online 
     "LOCAL INSTRUCTIONS",
   );
   expect(f.deliveries[1]?.revisions).toEqual(revisions);
-  expectOnlyAllowed(f, false);
+  expectOnlyAllowed(f);
   await expectCounterSeesSync(f);
 });
 
@@ -493,8 +503,7 @@ it("starts a Codex thread and a turn from the synced copies; offline, only its c
   expect(starts("turn/start")).toHaveLength(1);
   expect(starts("turn/start")[0]?.params).toMatchObject({ effort: "high" });
   expect(f.deliveries[0]?.revisions).toEqual(revisions);
-  expect(f.requests.filter(conversationRead)).not.toEqual([]);
-  expectOnlyAllowed(f, true);
+  expectOnlyAllowed(f, [first]);
 
   // Offline until the second mention ends: the thread still opens from the
   // copies, and the turn fails on its conversation reads alone (§4.3).
@@ -510,13 +519,12 @@ it("starts a Codex thread and a turn from the synced copies; offline, only its c
   });
   expect(starts("turn/start")).toHaveLength(1);
   expect(f.deliveries[1]?.revisions).toEqual(revisions);
-  // Until the run ended, what failed was the turn's conversation reads alone.
-  const failed = f.requests.filter(
-    (request) => request.failed && !postRunCoreRefresh(request),
-  );
-  expect(failed).not.toEqual([]);
-  expect(failed.filter((request) => !conversationRead(request))).toEqual([]);
-  expectOnlyAllowed(f, true);
+  // Until the run ended, the turn's conversation read was all it asked, and
+  // it failed.
+  expectOnlyAllowed(f, [second]);
+  expect(
+    f.requests.filter((request) => !postRunCoreRefresh(request)),
+  ).toMatchObject([{ failed: true }]);
   await expectCounterSeesSync(f);
 });
 
@@ -566,14 +574,14 @@ it("starts Goose sessions from the synced copies, with no relay request online o
   expect(prompts()).toContain("SYNCED INSTRUCTIONS");
   expect(prompts()).not.toContain("LOCAL INSTRUCTIONS");
   expect(f.deliveries[0]?.revisions).toEqual(revisions);
-  expectOnlyAllowed(f, false);
+  expectOnlyAllowed(f);
 
   f.transport.offline = true;
   f.mention();
   await vi.waitFor(() => expect(process()?.turns).toHaveLength(2));
   expect(process()?.opened).toHaveLength(2);
   expect(f.deliveries[1]?.revisions).toEqual(revisions);
-  expectOnlyAllowed(f, false);
+  expectOnlyAllowed(f);
   await expectCounterSeesSync(f);
 });
 
@@ -606,5 +614,5 @@ it("refuses to start from deleted synced settings once: no launch, the reason on
   expect(work()).toHaveLength(1);
   expect(f.deliveries).toEqual([]);
   expect(goose.geese).toEqual([]);
-  expectOnlyAllowed(f, false);
+  expectOnlyAllowed(f);
 });

@@ -382,3 +382,57 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
     await expect(section).toHaveCount(0);
   });
 }
+
+// Real browser focus must survive removal of the decorated host button/portal.
+test("finishing a zero-reply summary hands focus back only when it owns focus", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  for (const focusOn of ["summary", "popup", "composer"]) {
+    const request = app.sign({
+      kind: 9,
+      content: `Finish zero-reply activity: ${focusOn}`,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ["h", "alpha"],
+        ["p", "b".repeat(64)],
+      ],
+    });
+    app.relay.publish("primary", request);
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${request.id}"]`,
+    );
+    const summary = row.getByRole("button", { name: /^View thread:/ });
+    const popup = page.getByRole("dialog", {
+      name: "Agent activity",
+      exact: true,
+    });
+    await expect(summary).toBeVisible();
+    if (focusOn === "popup") {
+      await summary.hover();
+      await popup
+        .getByRole("button", { name: "View activity for Local tester" })
+        .focus();
+    } else if (focusOn === "summary") await summary.focus();
+    else await composer.focus();
+    await page.evaluate(
+      (id) => window.localAgentFixture.finish(id, true),
+      request.id,
+    );
+    await expect(summary).toHaveCount(0);
+    await expect(popup).toHaveCount(0);
+    await expect(
+      focusOn === "composer"
+        ? composer
+        : row.getByRole("button", { name: "More message actions" }),
+    ).toBeFocused();
+  }
+});

@@ -527,3 +527,36 @@ it("moves focus out when dismissing the last error removes the bubble", () => {
     f.dispose();
   }
 });
+
+it("keeps an idle reply summary mounted without advertising an activity popup", () => {
+  const f = fixture();
+  const navigate = vi.fn();
+  const view = render(
+    <ActivityAccessory
+      {...f.props}
+      renderMessageSummary={(activity) => (
+        <button type="button" ref={activity?.ref} onClick={navigate}>
+          View thread{activity ? `: ${activity.label}` : ""}
+        </button>
+      )}
+    />,
+  );
+  try {
+    const summary = screen.getByRole("button", { name: "View thread" });
+    expect(summary).not.toHaveAttribute("aria-haspopup");
+    expect(summary).not.toHaveAttribute("aria-expanded");
+    f.send(A, "here", 1, "turn_started", { triggeringEventIds: [root] });
+    expect(screen.getByRole("button", { name: /View thread/ })).toBe(summary);
+    expect(summary).toHaveAttribute("aria-haspopup", "dialog");
+    f.send(A, "here", 2, "turn_completed");
+    expect(screen.getByRole("button", { name: "View thread" })).toBe(summary);
+    expect(summary).not.toHaveAttribute("aria-haspopup");
+    expect(summary).not.toHaveAttribute("aria-expanded");
+    fireEvent.click(summary);
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});

@@ -635,6 +635,9 @@ function MessageRowContent({
     const remainingThreadAgents = threadAgents.filter(
       (agent) => !activity?.participants.includes(agent.pubkey),
     );
+    const remainingWorkingLabel = remainingThreadAgents.length
+      ? `${remainingThreadAgents.map(({ pubkey, name }) => resolveName(pubkey, name)).join(", ")} ${threadWaiting ? "waiting" : "working"}`
+      : undefined;
     return (
       ((row.replyCount > 0 ||
         (!row.threadRootId && threadAgents.length > 0) ||
@@ -655,7 +658,7 @@ function MessageRowContent({
             aria-label={
               row.replyCount > 0
                 ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}`
-                : `View thread: ${activity?.label ?? threadWorkingLabel}`
+                : `View thread: ${activity ? [remainingWorkingLabel, activity.label].filter(Boolean).join(". ") : threadWorkingLabel}`
             }
             onClick={(event) => {
               event.currentTarget.focus();

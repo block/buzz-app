@@ -161,7 +161,7 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
         ))}
         <ActivityBubble
           {...props}
-          entries={shown}
+          entries={bubble}
           interactive={shown.length > 0}
         />
       </>
@@ -311,7 +311,14 @@ function ActivityBubble({
       onOpenChange={(open) => setExpanded(interactive && open)}
     >
       <PopoverTrigger
-        openOnHover
+        openOnHover={interactive}
+        {...(!interactive
+          ? {
+              "aria-haspopup": undefined,
+              "aria-expanded": undefined,
+              "aria-controls": undefined,
+            }
+          : {})}
         onClick={(event) => {
           if (!interactive) {
             event.preventBaseUIHandler();

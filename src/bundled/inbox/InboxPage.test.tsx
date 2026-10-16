@@ -2045,9 +2045,43 @@ it.each(["Please review", "A thread update"])(
       within(restored).getByRole("img", { name: "Unread" }),
     ).toBeInTheDocument();
     expect(restored).not.toHaveAttribute("data-selected");
+    // Unarchiving the channel does not reopen its conversation.
+    expect(queryReader()).not.toBeInTheDocument();
     expect(h.journal()).toEqual(journal);
   },
 );
+
+it("reads a reopened row again after its tab closes", async () => {
+  const h = fixture();
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  const row = () => {
+    const item = rows().find((item) =>
+      item.textContent?.includes("Please review"),
+    );
+    if (!item) throw new Error("Missing fixture conversation");
+    return item;
+  };
+  const open = () =>
+    fireEvent.click(within(row()).getByRole("button", { name: /^Open / }));
+  const unread = () => within(row()).queryByRole("img", { name: "Unread" });
+  open();
+  await findReader();
+  await waitFor(() => expect(unread()).not.toBeInTheDocument());
+  fireEvent.contextMenu(within(row()).getByRole("button", { name: /^Open / }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Mark unread" }));
+  await waitFor(() => expect(unread()).toBeInTheDocument());
+  const side = screen
+    .getAllByRole("tablist")
+    .find((item) => item.getAttribute("aria-label") !== "Inbox tabs");
+  if (!side) throw new Error("Missing side tabs");
+  fireEvent.click(within(side).getByRole("button", { name: /^Close / }));
+  await waitFor(() => expect(queryReader()).not.toBeInTheDocument());
+  expect(row()).not.toHaveAttribute("data-selected");
+  open();
+  await findReader();
+  await waitFor(() => expect(unread()).not.toBeInTheDocument());
+});
 
 it.each([false, true])(
   "retires selected visits only on explicit archive during a held unread refresh (archive=%s)",

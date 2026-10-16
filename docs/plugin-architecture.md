@@ -1022,14 +1022,14 @@ Exact message links still navigate to Channels rather than the page's route.
 
 `conversation.ui.Tabs({ id, session, scope, label, icon, children })` makes the
 page's content the first main tab of the host's conversation tab workspace.
-`children(open, close)` renders that tab; `open({ channelId, threadId?, messageId? }, { keep? })`
+`children(open, close, isOpen)` renders that tab; `open({ channelId, threadId?, messageId? }, { keep? })`
 shows a joined conversation in a host tab and returns false for any other. A
 thread opened with `messageId` reveals that message and keeps it in view. A
 thread opens as a side-pane thread tab and a whole conversation as a side-pane
 conversation tab, each with the same reader and composer as Channels tabs, so
 the page stays in view; any thread can then move to the main pane. A plain open
 replaces the tab the previous one added, and `keep: true` adds a tab beside it;
-an already-open conversation's tab is selected wherever it is. `close(target)` closes that conversation's tab and returns false when none is open. `id` keys the page's tabs, which last for its community session as
+an already-open conversation's tab is selected wherever it is. `close(target)` closes that conversation's tab and returns false when none is open; `isOpen(target)` says whether it has one, and a thread opened at a reply keeps its tab once its root resolves. `id` keys the page's tabs, which last for its community session as
 Channels tabs do; they keep no Back/Forward visits.
 The tab workspace belongs to Channels, which supplies it with
 `conversation.registerTabs(component)`; the conversation service only holds that

@@ -243,7 +243,9 @@ export function InboxView(props: InboxViewProps) {
       // Opening reveals a conversation; reading is earned as it is seen.
       visits={false}
     >
-      {(open, close) => <InboxList {...props} open={open} close={close} />}
+      {(open, close, isOpen) => (
+        <InboxList {...props} open={open} close={close} isOpen={isOpen} />
+      )}
     </PageTabs>
   );
 }
@@ -257,9 +259,11 @@ function InboxList({
   archive: archiveShortcut,
   open: openTab,
   close: closeTab,
+  isOpen,
 }: InboxViewProps & {
   open(target: PageTabTarget): boolean;
   close(target: PageTabTarget): boolean;
+  isOpen(target: PageTabTarget): boolean;
 }) {
   const split = usePanelSplit(undefined, 316, {
     defaultWidth: 420,
@@ -315,14 +319,16 @@ function InboxList({
     () => archiveIndex(readArchives(archiveRevision)),
     [archiveRevision],
   );
-  // Archive closes the tab a row opened, even after its row regroups.
-  const opened = useRef<PageTabTarget>(undefined);
+  // The tab a row opened, which archive closes even after its row regroups.
+  // Selection lasts as long as that tab.
+  const [opened, setOpened] = useState<PageTabTarget>();
   const openRow = (item: InboxItem, channel?: { channelType?: string }) => {
     const tab = tabTarget(item, channel);
-    if (!openTab(tab)) return false;
-    opened.current = tab;
-    return true;
+    const shown = openTab(tab);
+    setOpened(shown ? tab : undefined);
+    return shown;
   };
+  const showing = !!opened && isOpen(opened);
   const [selectedTarget, setSelectedTarget] = useState<{
     channelId: string;
     messageId: string;
@@ -438,16 +444,29 @@ function InboxList({
   useEffect(() => {
     if (
       selectedTarget &&
-      (selectedArchived || (!selected && inbox.status !== "loading"))
+      (selectedArchived ||
+        !showing ||
+        (!selected && inbox.status !== "loading"))
     ) {
-      if (selectedArchived) {
+      // Unarchiving the channel does not reopen its conversation.
+      if (selectedArchived && opened) closeTab(opened);
+      // A closed tab ends its visit, so reopening the row reads it again.
+      if (selectedArchived || !showing) {
         intentRevision.current++;
         failedMutation.current = undefined;
         setError(undefined);
       }
       setSelectedTarget(undefined);
     }
-  }, [selectedTarget, selected, selectedArchived, inbox.status]);
+  }, [
+    selectedTarget,
+    selected,
+    selectedArchived,
+    showing,
+    opened,
+    closeTab,
+    inbox.status,
+  ]);
   useEffect(() => {
     if (menu && !items.some((item) => item.id === menu.id)) setMenu(undefined);
   }, [items, menu]);
@@ -501,9 +520,9 @@ function InboxList({
           item.messageIds.includes(selectedTarget?.messageId ?? ""))),
   );
   const visible = matching;
-  const archiveView = useRef({ show, visible, selected });
+  const archiveView = useRef({ show, visible, selected, opened });
   useLayoutEffect(() => {
-    archiveView.current = { show, visible, selected };
+    archiveView.current = { show, visible, selected, opened };
   });
   const profileKey = [
     ...new Set([
@@ -673,8 +692,8 @@ function InboxList({
           value &&
           current.selected?.channelId === item.channelId &&
           current.selected.messageIds.includes(item.messageId) &&
-          opened.current &&
-          closeTab(opened.current)
+          current.opened &&
+          closeTab(current.opened)
         ) {
           if (next && openRow(next, channelOf(next))) {
             advanced = next;

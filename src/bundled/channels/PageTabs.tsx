@@ -111,11 +111,20 @@ export function PageTabs({
     (target: PageTabTarget, options?: PageTabOptions) => boolean
   >(() => false);
   const closing = useRef<(target: PageTabTarget) => boolean>(() => false);
+  // A thread opened at a reply keeps its tab once its root resolves.
+  const tabOf = ({ channelId, threadId }: PageTabTarget) =>
+    (threadId && threadTab(tabState.tabs, channelId, threadId)) ||
+    tabState.tabs.find(
+      (item) =>
+        item.id ===
+        (threadId
+          ? `thread:${channelId}:${threadId}`
+          : `conversation:${channelId}`),
+    );
+  const isOpen = (target: PageTabTarget) => !!tabOf(target);
   useLayoutEffect(() => {
-    closing.current = ({ channelId, threadId }) => {
-      const tab = threadId
-        ? threadTab(tabState.tabs, channelId, threadId)
-        : tabState.tabs.find((item) => item.id === `conversation:${channelId}`);
+    closing.current = (target) => {
+      const tab = tabOf(target);
       if (!mounted.current || !tab) return false;
       tabState.setTabs((tabs) => tabs.filter((item) => item.id !== tab.id));
       return true;
@@ -287,7 +296,7 @@ export function PageTabs({
                   id: "conversation",
                   label,
                   icon,
-                  content: children(open, close),
+                  content: children(open, close, isOpen),
                 },
                 ...secondary.mainItems,
               ]}

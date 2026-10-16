@@ -86,6 +86,7 @@ function fixture(visits?: boolean) {
   let open: (target: PageTabTarget, options?: PageTabOptions) => boolean = () =>
     false;
   let close: (target: PageTabTarget) => boolean = () => false;
+  let isOpen: (target: PageTabTarget) => boolean = () => false;
   const openers = new Set<typeof open>();
   render(
     <PageTabs
@@ -97,9 +98,10 @@ function fixture(visits?: boolean) {
       extensions={{} as ConversationExtensions}
       visits={visits}
     >
-      {(next, closer) => {
+      {(next, closer, opened) => {
         open = next;
         close = closer;
+        isOpen = opened;
         openers.add(next);
         return <p>Chat list</p>;
       }}
@@ -114,6 +116,7 @@ function fixture(visits?: boolean) {
       });
       return opened;
     },
+    isOpen: (target: PageTabTarget) => isOpen(target),
     close(target: PageTabTarget) {
       let closed = false;
       act(() => {
@@ -237,7 +240,9 @@ it("closes a conversation's tab only when one is open", () => {
   expect(page.close({ channelId: "alpha", threadId: "root" })).toBe(false);
   expect(page.open({ channelId: "beta" }, { keep: true })).toBe(true);
   expect(page.open({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.isOpen({ channelId: "alpha", threadId: "root" })).toBe(true);
   expect(page.close({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.isOpen({ channelId: "alpha", threadId: "root" })).toBe(false);
   expect(side()).toEqual(["beta"]);
   expect(page.close({ channelId: "beta" })).toBe(true);
   expect(screen.getAllByRole("tablist")).toHaveLength(1);

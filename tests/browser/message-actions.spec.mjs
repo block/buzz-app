@@ -124,6 +124,7 @@ test("coordination keeps its first line visible throughout expansion and collaps
     page.getByRole("menuitem", { name: "Open in browser", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("menu", { includeHidden: true })).toHaveCount(1);
+  await expect(page.getByRole("menu")).toBeFocused();
   await expect(
     page.getByRole("menuitem", { name: "Copy message", exact: true }),
   ).toHaveCount(0);
@@ -136,6 +137,7 @@ test("coordination keeps its first line visible throughout expansion and collaps
     page.getByRole("menuitem", { name: "Copy message", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("menu", { includeHidden: true })).toHaveCount(1);
+  await expect(page.getByRole("menu")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toHaveCount(0);
   await expect(toggle).toBeFocused();

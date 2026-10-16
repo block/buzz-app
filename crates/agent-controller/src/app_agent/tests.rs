@@ -420,12 +420,10 @@ fn signs_uploads_and_memory_for_its_own_community_and_owner() {
     );
     assert_eq!(agent.media_url(&media).unwrap(), media);
     assert_eq!(agent.media_url(&format!("{sha}.png")).unwrap(), media);
-    assert!(agent.verify_media_hash(&media, bytes).is_ok());
-    assert!(agent.verify_media_hash(&media, b"different body").is_err());
+    assert!(agent.verify_media_hash(&media, &sha).is_ok());
+    assert!(agent.verify_media_hash(&media, &"0".repeat(64)).is_err());
     let thumbnail = format!("{}/media/{sha}.thumb.jpg", agent.endpoint(""));
-    assert!(agent
-        .verify_media_hash(&thumbnail, b"derived thumbnail")
-        .is_ok());
+    assert!(agent.verify_media_hash(&thumbnail, &"0".repeat(64)).is_ok());
     for input in [
         format!("https://elsewhere.test/media/{sha}.png"),
         format!("{media}?x=1"),

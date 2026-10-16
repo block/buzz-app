@@ -114,7 +114,7 @@ test("CLI reload replaces an enabled folder plugin without a Settings action", a
       }),
     );
     await writeFile(join(source, "plugin.js"), code("After access change"));
-    expect(command("reload", "test.reload", "--accept-permissions")).toContain(
+    expect(command("reload", "test.reload")).toContain(
       "Updated host access",
     );
     await expect(

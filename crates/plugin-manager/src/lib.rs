@@ -879,18 +879,17 @@ impl Manager {
         self.catalog()
     }
     pub fn reload(&self, id: &str) -> Result<Catalog> {
-        self.reload_with_commit_hook(id, false, false, || {})
+        self.reload_with_commit_hook(id, false, || {})
     }
     /// Reload a folder installation without changing its enabled state.
     /// An enabled plugin is replaced by the app's catalog observer.
-    pub fn reload_live(&self, id: &str, accept_permissions: bool) -> Result<Catalog> {
-        self.reload_with_commit_hook(id, true, accept_permissions, || {})
+    pub fn reload_live(&self, id: &str) -> Result<Catalog> {
+        self.reload_with_commit_hook(id, true, || {})
     }
     fn reload_with_commit_hook(
         &self,
         id: &str,
         live: bool,
-        accept_permissions: bool,
         before_commit: impl FnOnce(),
     ) -> Result<Catalog> {
         valid_id(id)?;
@@ -938,11 +937,11 @@ impl Manager {
             }
             grants
         };
-        if !accept_permissions
+        if !live
             && effective_grants(manifest.host.clone().unwrap_or_default())
                 != effective_grants(snapshot.3)
         {
-            return Err(if live { "Host access changed; inspect the new manifest and use plugin reload ID --accept-permissions to accept it" } else { "Host access changed; use Load from folder to review it" }.into());
+            return Err("Host access changed; use Load from folder to review it".into());
         }
         let revision = hash(&release.bytes);
         before_commit();
@@ -2120,7 +2119,7 @@ mod tests {
             .clone();
         fs::write(source.join("plugin.js"), "export const reloaded = true;").unwrap();
 
-        let error = match manager.reload_with_commit_hook("example.page", false, false, || {
+        let error = match manager.reload_with_commit_hook("example.page", false, || {
             manager.change("enable", "example.page").unwrap();
         }) {
             Ok(_) => panic!("reload should reject an enabled plugin at commit"),

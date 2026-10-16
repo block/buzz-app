@@ -157,19 +157,7 @@ test("scaffold builds through pnpm and installs a usable standalone JSX page", a
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     manifest.host = { processes: [{ id: "extra", program: "echo" }] };
     await writeFile(manifestPath, JSON.stringify(manifest));
-    const refused = cli("--home", directory, "plugin", "reload", "test.page");
-    assert.equal(refused.status, 1);
-    assert.match(refused.stderr, /Host access changed/);
-    assert.deepEqual(await installedPlugin(), second);
-    assert.match(refused.stderr, /--accept-permissions/);
-    const accepted = cli(
-      "--home",
-      directory,
-      "plugin",
-      "reload",
-      "test.page",
-      "--accept-permissions",
-    );
+    const accepted = cli("--home", directory, "plugin", "reload", "test.page");
     assert.equal(accepted.status, 0, accepted.stderr);
     assert.match(accepted.stdout, /Previous host access/);
     assert.match(accepted.stdout, /Updated host access/);
@@ -187,14 +175,7 @@ test("scaffold builds through pnpm and installs a usable standalone JSX page", a
     delete manifest.host;
     await writeFile(manifestPath, JSON.stringify(manifest));
     assert.equal(
-      cli(
-        "--home",
-        directory,
-        "plugin",
-        "reload",
-        "test.page",
-        "--accept-permissions",
-      ).status,
+      cli("--home", directory, "plugin", "reload", "test.page").status,
       0,
     );
     assert.equal((await installedPlugin()).enabled, false);

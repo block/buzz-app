@@ -434,7 +434,7 @@ fn live_reload_preserves_enabled_state_and_rejects_stale_module_reads() {
         .unwrap();
     fs::write(source.join("plugin.js"), "export const reloaded = true;").unwrap();
     let next = manager
-        .reload_live("example.page", false)
+        .reload_live("example.page")
         .unwrap()
         .plugins
         .into_iter()
@@ -459,7 +459,7 @@ fn accepting_reload_permissions_does_not_accept_a_different_publisher() {
     fs::write(source.join("plugin.js"), "export const changed = true;").unwrap();
     sign_release(&source, &SecretKey::generate().to_secret_hex()).unwrap();
     assert!(manager
-        .reload_live("example.page", true)
+        .reload_live("example.page")
         .err()
         .unwrap()
         .contains("Publisher changed"));

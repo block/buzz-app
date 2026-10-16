@@ -752,9 +752,8 @@ folder plugin while preserving its enabled state. The running desktop observes t
 shared profile catalog every second and disposes the previous revision before
 activating the new one. Use the same `--home` and `--profile` as the app. Reloading
 identical build bytes does not restart the plugin. CLI reload applies the same
-manifest ID and publisher checks as Settings. Changed host access requires
-`buzzodz plugin reload ID --accept-permissions`, which reports the previous and
-updated declarations. Without that opt-in, changed access is refused. Rejected builds leave
+manifest ID and publisher checks as Settings. CLI reload accepts changed host
+access and reports the previous and updated declarations. Rejected builds leave
 the installed revision unchanged. Replacing an active plugin ends its in-memory
 work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.

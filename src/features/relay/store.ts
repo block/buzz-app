@@ -954,7 +954,11 @@ export function createChannelStore(
         discovery.canAccess(channel.id),
     );
     const channels = Object.freeze(discovery.channels());
-    const nextAllowed = new Set(channels.map((channel) => channel.id));
+    // A system channel never lists but stays readable: its saved history is
+    // kept and restored like any other channel's.
+    const nextAllowed = new Set(
+      discovery.readable().map((channel) => channel.id),
+    );
     const known = new Set([
       ...(allowed ?? []),
       ...windows.keys(),

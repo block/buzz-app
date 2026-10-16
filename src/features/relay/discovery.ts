@@ -302,15 +302,21 @@ export class DiscoveryState {
       return metadata ? [roster, metadata] : [roster];
     });
   }
-  /** The channel list. System channels (NIP-CL) hold app data, not
-   * conversation: they stay readable through get() but never list here. */
-  channels(): ChannelSummary[] {
+  /** Every roster channel get() serves, system channels included. Membership,
+   * not listing, decides what the device may keep. */
+  readable(): ChannelSummary[] {
     return [...this.rosters.keys()]
       .filter((id) => this.authorized(id))
       .flatMap((id) => {
         const channel = this.get(id);
-        return channel && channel.channelType !== "system" ? [channel] : [];
-      })
+        return channel ? [channel] : [];
+      });
+  }
+  /** The channel list. System channels (NIP-CL) hold app data, not
+   * conversation: they stay readable through get() but never list here. */
+  channels(): ChannelSummary[] {
+    return this.readable()
+      .filter((channel) => channel.channelType !== "system")
       .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   }
 }

@@ -258,3 +258,37 @@ it("confirms a scan-start system membership that moved ahead of a paged system c
     owner.dispose();
   }
 });
+
+it("keeps a confirmed system channel's saved history when a full pass completes", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const retained: string[][] = [];
+  const removed: string[] = [];
+  const persistence: HeadPersistence = {
+    read: async () => [],
+    writeStartup: async () => {},
+    write: async () => {},
+    remove: async (id) => {
+      removed.push(id);
+    },
+    retain: async (ids) => {
+      retained.push([...ids].sort());
+    },
+    clear: async () => {},
+    close: () => {},
+  };
+  const owner = createRelaySession(
+    { ...wire.transport, channelIdentity: true },
+    { persistence, prepared: true },
+  );
+  const channels = owner.session.channels;
+  try {
+    channels.ensureList();
+    await pass(owner, wire, [systemRoster()]);
+    expect(channels.get?.(system)).toMatchObject({ channelType: "system" });
+    // The list hides the system channel, but the device keeps its history.
+    expect(retained.at(-1)).toEqual([other, system].sort());
+    expect(removed).not.toContain(system);
+  } finally {
+    owner.dispose();
+  }
+});

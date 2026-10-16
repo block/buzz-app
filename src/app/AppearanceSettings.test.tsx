@@ -15,10 +15,6 @@ import { createAppearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
 
 import {
-  rememberAgentsPreference,
-  setRememberAgentsPreference,
-} from "../features/messages/mention-preferences";
-import {
   setThreadPlacementPreference,
   threadPlacementPreference,
 } from "../features/messages/thread-preferences";
@@ -35,7 +31,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   for (const appearance of preferenceAppearances.splice(0))
     appearance.dispose();
-  setRememberAgentsPreference(true);
   setThreadPlacementPreference("side");
   localStorage.clear();
 });
@@ -307,60 +302,6 @@ it("chooses how much of the app the accent colors with a named step slider", asy
   expect(vibe).toHaveAttribute("aria-valuetext", "Swarmin’");
   expect(appearance.snapshot().colorLevel).toBe("more");
   appearance.dispose();
-});
-
-it("defaults on, persists opt-out, and follows another window's preference", async () => {
-  const user = userEvent.setup();
-  render(preferencesPage(), {
-    wrapper: ToastProvider,
-  });
-  const toggle = () =>
-    screen.getByRole("switch", { name: "Remember mentioned agents" });
-  expect(toggle()).toBeChecked();
-  await user.click(toggle());
-  expect(rememberAgentsPreference()).toBe(false);
-  cleanup();
-  render(preferencesPage(), {
-    wrapper: ToastProvider,
-  });
-  expect(toggle()).not.toBeChecked();
-  act(() => {
-    localStorage.removeItem("buzz-remember-mentioned-agents.v1");
-    window.dispatchEvent(
-      new StorageEvent("storage", { key: "buzz-remember-mentioned-agents.v1" }),
-    );
-  });
-  expect(toggle()).toBeChecked();
-});
-
-it("keeps an unsaved opt-out effective and offers retry without changing the choice", async () => {
-  const user = userEvent.setup();
-  render(preferencesPage(), {
-    wrapper: ToastProvider,
-  });
-  const write = vi
-    .spyOn(Storage.prototype, "setItem")
-    .mockImplementation(() => {
-      throw new Error("storage unavailable");
-    });
-  await user.click(
-    screen.getByRole("switch", { name: "Remember mentioned agents" }),
-  );
-  expect(rememberAgentsPreference()).toBe(false);
-  expect(screen.getByRole("dialog")).toHaveTextContent("could not be saved");
-  write.mockRestore();
-  await user.click(
-    screen.getByRole("button", { name: "Retry saving mentioned agents" }),
-  );
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(localStorage.getItem("buzz-remember-mentioned-agents.v1")).toBe("off");
-});
-
-it("does not prefill when storage cannot be read", () => {
-  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-    throw new Error("storage unavailable");
-  });
-  expect(rememberAgentsPreference()).toBe(false);
 });
 
 it("saves new-thread placement, restores it, and follows another window", async () => {

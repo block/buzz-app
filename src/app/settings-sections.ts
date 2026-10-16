@@ -46,7 +46,7 @@ const app: readonly SettingsSection[] = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "notifications", label: "Notifications", icon: BellIcon },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
-  { id: "agents", label: "AI providers", icon: RobotIcon },
+  { id: "agents", label: "Agent setup", icon: RobotIcon },
   { id: "updates", label: "Software updates", icon: DownloadIcon },
 ];
 const plugins: SettingsSection = {
@@ -77,7 +77,6 @@ const archive: SettingsSection = {
 // Keep frequent destinations first, regardless of plugin activation order.
 // Other community contributions stay together before archive and pairing.
 const communityOrder: Readonly<Record<string, number>> = {
-  "buzz.channels/templates": 0,
   "buzz.emoji/custom-emoji": 1,
   "local-archive": 3,
   "buzz.pairing/mobile": 4,

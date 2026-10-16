@@ -20,21 +20,15 @@ import {
   useCallback,
   useLayoutEffect,
   useRef,
-  useState,
   useSyncExternalStore,
 } from "react";
 import type { Appearance } from "../shared/theme/service";
 
 import {
-  setRememberAgentsPreference,
-  useRememberAgentsPreference,
-} from "../features/messages/mention-preferences";
-import {
   setThreadPlacementPreference,
   useThreadPlacementPreference,
 } from "../features/messages/thread-preferences";
 import { Select } from "../shared/design-system/ui/Select";
-import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 
 const COLOR_LEVEL_LABELS: Record<ColorLevel, string> = {
   neutral: "Snoozin’",
@@ -54,11 +48,7 @@ export function AppearanceSettings({
   appearance: Appearance;
   active?: boolean;
 }) {
-  const rememberAgents = useRememberAgentsPreference();
-  const [mentionError, setMentionError] = useState<string | null>(null);
   const { placement, unsaved } = useThreadPlacementPreference();
-  const changeRememberAgents = (enabled: boolean) =>
-    setMentionError(setRememberAgentsPreference(enabled));
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
   const resetRef = useCallback((node: HTMLButtonElement | null) => {
@@ -235,12 +225,6 @@ export function AppearanceSettings({
               />
             }
           />
-          <SwitchPreferenceRow
-            label="Remember mentioned agents"
-            description="Keep the same agents selected for your next message in this channel or thread."
-            checked={rememberAgents}
-            onCheckedChange={changeRememberAgents}
-          />
         </SettingsGroup>
         {active && unsaved && (
           <ToastNotice
@@ -253,20 +237,6 @@ export function AppearanceSettings({
               onClick={() => setThreadPlacementPreference(placement)}
             >
               Retry saving thread placement
-            </Button>
-          </ToastNotice>
-        )}
-        {active && mentionError && (
-          <ToastNotice
-            title="Agent preference wasn’t saved"
-            description={mentionError}
-          >
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => changeRememberAgents(rememberAgents)}
-            >
-              Retry saving mentioned agents
             </Button>
           </ToastNotice>
         )}

@@ -27,7 +27,7 @@ const cards = [
   // Plugin activation/re-enable order must not determine community navigation.
   card("buzz.pairing/mobile"),
   card("buzz.emoji/custom-emoji"),
-  card("buzz.channels/templates"),
+  card("buzz.channels/templates", { group: "App" }),
   card("example/groups"),
   card("other/groups"),
   card("example/membership", { section: "administration" }),
@@ -52,6 +52,7 @@ const app = [
   "notifications",
   "shortcuts",
   "agents",
+  "buzz.channels/templates",
   "updates",
   ...(developerMode ? ["developer"] : []),
 ];
@@ -79,7 +80,6 @@ it.each([
         "Primary",
         [
           "profile",
-          "buzz.channels/templates",
           "buzz.emoji/custom-emoji",
           "example/groups",
           "other/groups",
@@ -123,10 +123,16 @@ it("classifies built-in sections apart from plugin card keys", () => {
     "plugins",
     "local-archive",
     "leave-community",
-    ...app,
+    ...app.filter((id) => id !== "buzz.channels/templates"),
   ])
     expect(isBuiltInSettingsSection(id)).toBe(true);
   expect(isBuiltInSettingsSection("developer")).toBe(developerMode);
-  for (const id of ["example/groups", "Profile", "", "administration"])
+  for (const id of [
+    "example/groups",
+    "buzz.channels/templates",
+    "Profile",
+    "",
+    "administration",
+  ])
     expect(isBuiltInSettingsSection(id)).toBe(false);
 });

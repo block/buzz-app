@@ -46,9 +46,9 @@ Consent, app signing and update behavior require attended native verification.
 ## UI and sensitive data
 
 Settings exposes Profile in Personal space as well as in a selected community.
-Identity details remains available if the community profile cannot load. The full
-npub and hex public key can be copied. The nsec is absent from the rendered field
-until Reveal; Copy can fetch it without revealing it. Hide, leaving Profile,
+Identity details are separate under **Buzz → Identity**, so they remain available
+if the community profile cannot load. The full npub and hex public key can be
+copied. The nsec is absent from the rendered field until Reveal; Copy can fetch it without revealing it. Hide, leaving Identity,
 window blur and document hiding retire pending reveals and clear the displayed
 secret. Failed private-key actions report fixed errors. Copy deliberately leaves
 the key on the OS clipboard; the UI warns about that.
@@ -65,7 +65,7 @@ command permission is not proof of a human gesture.
 
 ## Sign out of Buzz
 
-Settings → Profile → **Sign out of Buzz** removes the private key from this
+Settings → Buzz → Identity → **Sign out of Buzz** removes the private key from this
 device only; the npub and its history stay on relays. The dialog presents two
 layers: the key always goes, and settings, agents and other Buzz data stay unless
 the user erases them. It embeds the private-key controls above. Confirm stays

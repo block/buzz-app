@@ -13,7 +13,7 @@ an explicit failure with retry instead of silently selecting another page.
 Browser controls, host shortcuts and toolbar arrows traverse the same visit history.
 Settings sections are destinations. Personal-space page visits use explicit null
 scope, distinct from a plugin's unspecified community scope. Focus-only skip links
-do not add visits. Plugin recovery remains available in Settings → Plugins without
+do not add visits. Plugin recovery remains available in Settings → Plugins → Manage plugins without
 blocking Profile or Appearance.
 
 See [design system and appearance](design-system.md) for Light/Dark settings,

@@ -126,6 +126,13 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         "buzz.pairing",
       ],
     );
+    // The device-local template library remains reachable without a selected community.
+    assert.equal(
+      services.settingsCards
+        .snapshot()
+        .find((card) => card.key === "buzz.channels/templates")?.group,
+      "App",
+    );
     // Conversation presentation is host-owned in Appearance, not a second plugin page.
     assert.equal(services.settingsCards.has("buzz.channels/messages"), false);
     const pairingCard = services.settingsCards

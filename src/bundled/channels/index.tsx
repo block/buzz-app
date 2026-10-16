@@ -68,6 +68,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.settingsCards.register({
     id: "templates",
     title: "Channel templates",
+    group: "App",
     icon: CopyIcon,
     component: ({ active }) => (
       <ChannelTemplateSettings agents={agents} active={active} />

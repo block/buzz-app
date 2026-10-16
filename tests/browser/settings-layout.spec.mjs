@@ -65,7 +65,7 @@ test("settings share a centered, bounded column and keep controls contained acro
         "Appearance",
         "Notifications",
         "Shortcuts",
-        "AI providers",
+        "Agent setup",
         "Manage plugins",
         "Software updates",
       ]) {
@@ -157,7 +157,7 @@ test("settings share a centered, bounded column and keep controls contained acro
   await expect(page.getByRole("status", { name: "Interface size" })).toHaveText(
     "200%",
   );
-  for (const name of ["Appearance", "AI providers"]) {
+  for (const name of ["Appearance", "Agent setup"]) {
     await selectSettingsSection(page, name);
     const agents = page.getByRole("region", {
       name,

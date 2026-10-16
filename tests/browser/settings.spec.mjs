@@ -470,25 +470,29 @@ confirmedPresence(
     await profile.click();
     // Exercise the real shell's destination allowlist, not just the settings component.
     const providers = sections.getByRole("button", {
-      name: "AI providers",
+      name: "Agent setup",
       exact: true,
     });
     await providers.click();
     await expect(providers).toHaveAttribute("aria-current", "page");
     await expect(
-      page.getByRole("region", { name: "AI providers", exact: true }),
+      page.getByRole("region", { name: "Agent setup", exact: true }),
     ).toBeVisible();
-    const appearance = sections.getByRole("button", {
-      name: "Appearance",
-      exact: true,
-    });
-    await appearance.click();
     const remember = page.getByRole("switch", {
       name: "Remember mentioned agents",
     });
     await expect(remember).toBeChecked();
     await remember.click();
     await expect(remember).not.toBeChecked();
+    await profile.click();
+    await providers.click();
+    await expect(remember).not.toBeChecked();
+    const appearance = sections.getByRole("button", {
+      name: "Appearance",
+      exact: true,
+    });
+    await appearance.click();
+    await expect(remember).toHaveCount(0);
     const placement = page.getByRole("combobox", {
       name: "Open threads in",
       exact: true,
@@ -498,7 +502,6 @@ confirmedPresence(
     await expect(placement).toHaveText("Main pane");
     await profile.click();
     await appearance.click();
-    await expect(remember).not.toBeChecked();
     await expect(placement).toHaveText("Main pane");
     await profile.click();
     for (const width of [1280, 390]) {
@@ -514,7 +517,6 @@ confirmedPresence(
       await expect(settingsSidebar).toBeVisible();
       await profile.focus();
       for (const name of [
-        "Channel templates",
         "Custom emoji",
         "Local archive",
         "Pair mobile",
@@ -584,7 +586,6 @@ confirmedPresence(
         await profile.focus();
       }
       for (const name of [
-        "Channel templates",
         "Custom emoji",
         "Local archive",
         "Pair mobile",
@@ -593,7 +594,8 @@ confirmedPresence(
         "Appearance",
         "Notifications",
         "Shortcuts",
-        "AI providers",
+        "Agent setup",
+        "Channel templates",
         "Software updates",
         "Manage plugins",
         "Builderlab agents",

@@ -450,8 +450,8 @@ it("opens removed Messages settings links at Appearance without adding a navigat
     screen.getByRole("combobox", { name: "Open threads in" }),
   ).toBeVisible();
   expect(
-    screen.getByRole("switch", { name: "Remember mentioned agents" }),
-  ).toBeVisible();
+    screen.queryByRole("switch", { name: "Remember mentioned agents" }),
+  ).not.toBeInTheDocument();
   await waitFor(() =>
     expect(services?.navigation.snapshot().status).toBe("opened"),
   );

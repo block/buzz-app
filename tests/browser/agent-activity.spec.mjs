@@ -1011,7 +1011,9 @@ test.describe("host archive durability", () => {
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Agents", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Local archive", exact: true })
+      .click();
     const archive = page.getByRole("region", { name: /Saved agent activity/ });
     await expect(archive.getByText(/not in this browser/)).toBeVisible();
     await archive

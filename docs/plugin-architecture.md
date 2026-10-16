@@ -265,6 +265,13 @@ overrides. Default-on does not promise platform support: Terminal contributes UI
 only on macOS/Linux desktop; Hosted communities needs either the desktop app or
 the live development broker. Disabling Membership removes its Invite to community shortcut.
 
+Membership and Moderation share app-owned access controllers composed in
+`app/services.ts` (`bundled/admin-access.ts`). Their navigation entries and the
+Plugins catalog use the same verified roster or native staff probe, including
+while either plugin is disabled. The catalog leaves details readable, gates only
+Enable on current access, and always permits Disable. These UI checks do not grant
+permissions; relay and native enforcement still apply.
+
 Projects
 is enabled by default and owns versioned, validated entity page routes. It resolves
 signed metadata through the session reader and reports navigation completion only

@@ -626,7 +626,9 @@ it("opens each plugin's existing metadata and controls in a detail aside", () =>
 });
 
 // These fixtures exercise catalog updates through the same subscription as the host.
-function reviewPluginFixture() {
+function reviewPluginFixture(
+  extra: Partial<Parameters<typeof Settings>[0]> = {},
+) {
   const listeners = new Set<() => void>();
   const external = {
     manifest: {
@@ -698,7 +700,7 @@ function reviewPluginFixture() {
     }),
   } as unknown as Parameters<typeof Settings>[0]["plugins"];
   const { cards } = registry([]);
-  render(<Settings {...host} cards={cards} plugins={manager} />);
+  render(<Settings {...host} cards={cards} plugins={manager} {...extra} />);
   fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
   return { external, snapshot, publish, manager };
 }
@@ -1671,3 +1673,96 @@ it("restores a selected row remounted by clearing search", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));
   expect(restored).toHaveFocus();
 });
+
+it.each(["buzz.moderation", "buzz.relay-staff"])(
+  "keeps %s details openable while access gates only Enable",
+  async (id) => {
+    const listeners = new Set<() => void>();
+    let state: import("../bundled/admin-access").AdminAccessState = "checking";
+    const release = vi.fn();
+    const retry = vi.fn();
+    const adminAccess = {
+      subscribe(f: () => void) {
+        listeners.add(f);
+        return () => {
+          listeners.delete(f);
+        };
+      },
+      ensure: () => release,
+      status: () => state,
+      retry,
+    };
+    const f = reviewPluginFixture({ adminAccess });
+    const restricted = {
+      ...f.external,
+      source: "bundled",
+      enabled: false,
+      manifest: { ...f.external.manifest, id, name: "Restricted plugin" },
+    };
+    act(() => {
+      f.snapshot.configuration.catalog.plugins = [restricted];
+      f.publish();
+    });
+    const user = userEvent.setup();
+    const action = screen.getByRole("button", {
+      name: "Enable Restricted plugin",
+    });
+    expect(action).toHaveAttribute("aria-disabled", "true");
+    expect(action).toHaveAccessibleDescription("Checking access…");
+    await user.click(action);
+    action.focus();
+    await user.keyboard("{Enter}");
+    expect(f.manager.change).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole("button", { name: "View Restricted plugin details" }),
+    );
+    const pane = screen.getByRole("complementary", {
+      name: "Restricted plugin details",
+    });
+    const enable = within(pane).getByRole("button", {
+      name: /^Enable$/,
+    });
+    expect(enable).toHaveAttribute("aria-disabled", "true");
+    for (const next of [
+      "denied",
+      "no-community",
+      "unavailable",
+      "error",
+    ] as const) {
+      act(() => {
+        state = next;
+        for (const listener of listeners) listener();
+      });
+      expect(enable).toHaveAttribute("aria-disabled", "true");
+      expect(action).toHaveAttribute("aria-disabled", "true");
+      await user.click(enable);
+      expect(f.manager.change).not.toHaveBeenCalled();
+    }
+    await user.click(
+      within(pane).getByRole("button", { name: "Check access again" }),
+    );
+    expect(retry).toHaveBeenCalledWith(id);
+    expect(enable).toHaveFocus();
+    act(() => {
+      state = "allowed";
+      for (const listener of listeners) listener();
+    });
+    expect(enable).not.toHaveAttribute("aria-disabled", "true");
+    await user.click(enable);
+    expect(f.manager.change).toHaveBeenCalledWith("enable", id);
+    act(() => {
+      restricted.enabled = true;
+      state = "denied";
+      f.publish();
+      for (const listener of listeners) listener();
+    });
+    const disable = within(pane).getByRole("button", {
+      name: /^Disable$/,
+    });
+    expect(disable).not.toHaveAttribute("aria-disabled", "true");
+    await user.click(disable);
+    expect(f.manager.change).toHaveBeenLastCalledWith("disable", id);
+    cleanup();
+    expect(release).toHaveBeenCalledTimes(1);
+  },
+);

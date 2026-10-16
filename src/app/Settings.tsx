@@ -1,3 +1,7 @@
+import type {
+  AdminAccessReader,
+  AdminAccessState,
+} from "../bundled/admin-access";
 import {
   AnimatePresence,
   motion,
@@ -199,6 +203,35 @@ function PluginProvenance({
   );
 }
 
+const noAccessSubscription = () => () => {};
+
+function restrictedPlugin(plugin: PluginInfo) {
+  return (
+    plugin.source === "bundled" &&
+    (plugin.manifest.id === "buzz.moderation" ||
+      plugin.manifest.id === "buzz.relay-staff")
+  );
+}
+
+function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
+  switch (state) {
+    case "allowed":
+      return null;
+    case "checking":
+      return "Checking access…";
+    case "no-community":
+      return "Select a community to check access.";
+    case "error":
+      return "Could not check access. Open details to try again.";
+    case "unavailable":
+      return "Access is unavailable in this build or on this relay.";
+    case "denied":
+      return plugin.manifest.id === "buzz.moderation"
+        ? "Requires owner or admin access in this community."
+        : "Requires staff access on this relay.";
+  }
+}
+
 function PluginDetails({
   plugin,
   failure,
@@ -206,6 +239,8 @@ function PluginDetails({
   plugins,
   onToggle,
   onClose,
+  access,
+  onCheckAccess,
 }: {
   plugin: PluginInfo;
   failure: string | null;
@@ -213,8 +248,14 @@ function PluginDetails({
   plugins: PluginManager;
   onToggle(): void;
   onClose(): void;
+  access: AdminAccessState;
+  onCheckAccess(): void;
 }) {
+  const accessReason = restrictedPlugin(plugin)
+    ? accessMessage(plugin, access)
+    : null;
   const close = useRef<HTMLButtonElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
     close.current?.focus();
   }, []);
@@ -289,14 +330,41 @@ function PluginDetails({
           <Button
             variant={plugin.enabled ? "subtle" : "prominent"}
             size="sm"
-            disabled={busy}
+            disabled={
+              busy ||
+              (!plugin.enabled &&
+                restrictedPlugin(plugin) &&
+                access !== "allowed")
+            }
+            aria-describedby={accessReason ? "plugin-detail-access" : undefined}
             focusableWhenDisabled
+            ref={toggle}
             onClick={onToggle}
           >
             {plugin.enabled ? "Disable" : "Enable"}
           </Button>
         )}
       </div>
+      {accessReason && (
+        <div className={styles.pluginAccess}>
+          <p id="plugin-detail-access" className="text-body-sm">
+            {access === "error"
+              ? "Could not check access. Try again."
+              : accessReason}
+          </p>
+          {access === "error" && (
+            <Button
+              size="sm"
+              onClick={() => {
+                onCheckAccess();
+                toggle.current?.focus();
+              }}
+            >
+              Check access again
+            </Button>
+          )}
+        </div>
+      )}
       {readme && (
         <section
           className={styles.pluginAsideSection}
@@ -400,6 +468,7 @@ export function Settings({
   agents,
   cards,
   plugins,
+  adminAccess,
   communities,
   identity,
   appearance,
@@ -415,6 +484,7 @@ export function Settings({
   agents?: Agents | undefined;
   cards: SettingsCards;
   plugins: PluginManager;
+  adminAccess?: AdminAccessReader;
   communities: Communities;
   identity?: Identity | undefined;
   appearance: Appearance;
@@ -430,6 +500,19 @@ export function Settings({
   onDeparturePending?: (pending: boolean) => void;
 }) {
   useEffect(() => cards.retainVisibility(), [cards]);
+  useEffect(() => adminAccess?.ensure(), [adminAccess]);
+  const membershipAccess = useSyncExternalStore(
+    adminAccess?.subscribe ?? noAccessSubscription,
+    () => adminAccess?.status("buzz.moderation") ?? "unavailable",
+  );
+  const moderationAccess = useSyncExternalStore(
+    adminAccess?.subscribe ?? noAccessSubscription,
+    () => adminAccess?.status("buzz.relay-staff") ?? "unavailable",
+  );
+  const pluginAccess = (plugin: PluginInfo) =>
+    plugin.manifest.id === "buzz.moderation"
+      ? membershipAccess
+      : moderationAccess;
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -510,7 +593,13 @@ export function Settings({
       ? attemptedRunning?.error
       : null;
   const togglePlugin = (plugin: PluginInfo) => {
-    if (busy) return;
+    if (
+      busy ||
+      (!plugin.enabled &&
+        restrictedPlugin(plugin) &&
+        adminAccess?.status(plugin.manifest.id) !== "allowed")
+    )
+      return;
     setActivationAttempt(
       plugin.enabled
         ? undefined
@@ -638,6 +727,10 @@ export function Settings({
             {group.plugins.map((plugin) => {
               const id = plugin.manifest.id;
               const active = id === selectedPluginId;
+              const access = pluginAccess(plugin);
+              const accessReason = restrictedPlugin(plugin)
+                ? accessMessage(plugin, access)
+                : null;
               const running = activation[id];
               const failure =
                 plugin.error ??
@@ -754,7 +847,15 @@ export function Settings({
                           variant={plugin.enabled ? "subtle" : "prominent"}
                           size="sm"
                           aria-label={`${plugin.enabled ? "Disable" : "Enable"} ${plugin.manifest.name}`}
-                          disabled={busy}
+                          disabled={
+                            busy ||
+                            (!plugin.enabled &&
+                              restrictedPlugin(plugin) &&
+                              access !== "allowed")
+                          }
+                          aria-describedby={
+                            accessReason ? `plugin-access-${id}` : undefined
+                          }
                           focusableWhenDisabled
                           onClick={() => togglePlugin(plugin)}
                         >
@@ -763,6 +864,14 @@ export function Settings({
                       )}
                     </div>
                   </article>
+                  {accessReason && (
+                    <p
+                      id={`plugin-access-${id}`}
+                      className={`${styles.pluginAccess} text-body-sm`}
+                    >
+                      {accessReason}
+                    </p>
+                  )}
                   {failure && (
                     <p
                       className={`${styles.pluginRowError} error text-body-sm`}
@@ -1099,6 +1208,10 @@ export function Settings({
               plugin={selectedPlugin}
               failure={selectedFailure}
               busy={busy}
+              access={pluginAccess(selectedPlugin)}
+              onCheckAccess={() =>
+                adminAccess?.retry(selectedPlugin.manifest.id)
+              }
               plugins={plugins}
               onToggle={() => togglePlugin(selectedPlugin)}
               onClose={closePluginDetails}

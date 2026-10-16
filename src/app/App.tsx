@@ -300,6 +300,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 agents={services.agents}
                 plugins={plugins}
                 cards={services.settingsCards}
+                adminAccess={services.adminAccess}
                 communities={services.communities}
                 identity={services.identity}
                 appearance={services.appearance}

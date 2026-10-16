@@ -727,3 +727,14 @@
   align-self: center;
   padding: 0 var(--space-4) var(--space-5);
 }
+
+.pluginAccess {
+  margin: 0;
+  padding: var(--space-2) var(--settings-group-inset) var(--space-3);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.pluginAccess p {
+  margin: 0 0 var(--space-2);
+}

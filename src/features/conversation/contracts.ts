@@ -278,5 +278,6 @@ export type PageTabsProps = {
   /** The page's own first tab. `open` shows a joined conversation in a host tab. */
   children(
     open: (target: PageTabTarget, options?: PageTabOptions) => boolean,
+    close: (target: PageTabTarget) => boolean,
   ): ReactNode;
 };

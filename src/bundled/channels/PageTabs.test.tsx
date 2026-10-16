@@ -85,6 +85,7 @@ function fixture(visits?: boolean) {
   } as unknown as ConversationHostServices;
   let open: (target: PageTabTarget, options?: PageTabOptions) => boolean = () =>
     false;
+  let close: (target: PageTabTarget) => boolean = () => false;
   const openers = new Set<typeof open>();
   render(
     <PageTabs
@@ -96,8 +97,9 @@ function fixture(visits?: boolean) {
       extensions={{} as ConversationExtensions}
       visits={visits}
     >
-      {(next) => {
+      {(next, closer) => {
         open = next;
+        close = closer;
         openers.add(next);
         return <p>Chat list</p>;
       }}
@@ -111,6 +113,13 @@ function fixture(visits?: boolean) {
         opened = open(target, options);
       });
       return opened;
+    },
+    close(target: PageTabTarget) {
+      let closed = false;
+      act(() => {
+        closed = close(target);
+      });
+      return closed;
     },
   };
 }
@@ -217,4 +226,15 @@ it("opens a page's tabs without visiting their conversations when it asks", () =
   );
   expect(page.open({ channelId: "beta" })).toBe(true);
   expect(screen.getByText("conversation in beta unvisited")).toBeVisible();
+});
+
+it("closes a conversation's tab only when one is open", () => {
+  const page = fixture();
+  expect(page.close({ channelId: "alpha", threadId: "root" })).toBe(false);
+  expect(page.open({ channelId: "beta" }, { keep: true })).toBe(true);
+  expect(page.open({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.close({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(side()).toEqual(["beta"]);
+  expect(page.close({ channelId: "beta" })).toBe(true);
+  expect(screen.getAllByRole("tablist")).toHaveLength(1);
 });

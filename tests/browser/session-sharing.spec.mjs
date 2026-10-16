@@ -35,13 +35,16 @@ test("a session chip opens the same authorized conversation in the channel side 
           kind: event.kind,
           created_at: event.created_at,
           content: event.content,
-          tags: event.tags.map((tag) =>
-            tag[0] === "name"
-              ? ["name", title]
-              : tag[0] === "about"
-                ? ["about", "Buzz session (buzz.sessions/v1)"]
-                : tag,
-          ),
+          tags: [
+            ...event.tags.map((tag) =>
+              tag[0] === "name"
+                ? ["name", title]
+                : tag[0] === "about"
+                  ? ["about", "Buzz session (buzz.sessions/v1)"]
+                  : tag,
+            ),
+            ["t", "buzz.session.named"],
+          ],
         });
       }),
     });
@@ -57,9 +60,12 @@ test("a session chip opens the same authorized conversation in the channel side 
     "[Session · beta](buzz://channel/beta)",
   );
   const row = destination.locator(`[data-message-id="${link.id}"]`);
-  const chip = row.getByRole("link", { name: "Session · beta" });
+  const chip = row.getByRole("link", {
+    name: `Open Session: ${title}`,
+    exact: true,
+  });
   await expect(chip).toBeVisible();
-  await expect(chip.locator("svg")).toBeVisible();
+  await expect(chip.locator("svg.tabler-icon-file-text")).toBeVisible();
   await chip.click();
   const panel = page.locator("[data-panel-workspace]");
   await expect(panel.getByRole("tab", { name: title })).toHaveAttribute(
@@ -421,7 +427,7 @@ test("Share dialog keeps actions reachable across themes, viewports and enlarged
   const links = app.report.publications.filter(({ event }) => event.kind === 9);
   expect(links).toHaveLength(1);
   expect(links[0].event.id).toBe(failedId);
-  expect(links[0].event.content).toBe("[Session · beta](buzz://channel/beta)");
+  expect(links[0].event.content).toBe("[Session: beta](buzz://channel/beta)");
   expect(links[0].event.tags).toContainEqual(["h", "alpha"]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
   // Reload proves real app wiring to this account/community's device-local history.
@@ -483,13 +489,8 @@ test("People search holds loading, scrolls portalled results and restores keyboa
     name: "Morgan agent",
     is_agent: true,
   });
-  await page.route("**/api/relay/**/query", async (route) => {
-    const filters = route.request().postDataJSON();
-    if (
-      filters.some(
-        (filter) => filter.kinds?.includes(0) && filter.search === "Morgan",
-      )
-    ) {
+  await page.route("**/api/relay/**/profile-search", async (route) => {
+    if (route.request().postDataJSON().query === "Morgan") {
       signal();
       await held;
       return route.fulfill({ json: [...humans, bot] });
@@ -644,21 +645,8 @@ test.describe("Messages Share navigation", () => {
     page,
     app,
   }) => {
-    const aria = app.serveProfile(generateSecretKey(), { name: "Aria" });
-    await page.route("**/api/relay/**/query", async (route) => {
-      const filters = route.request().postDataJSON();
-      if (
-        filters.some(
-          (filter) => filter.kinds?.includes(0) && filter.search === "Aria",
-        )
-      ) {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify([aria]),
-        });
-      } else await route.continue();
-    });
+    // The fixture relay's name search finds the served profile.
+    app.serveProfile(generateSecretKey(), { name: "Aria" });
     await page.goto(app.origin);
     await openSession(page, app, "alpha");
     await page.getByRole("button", { name: "Share", exact: true }).click();

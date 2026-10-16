@@ -303,9 +303,11 @@ const modelChange = (model: string, data?: Catalog) => ({
 
 function CodexSignIn({
   login,
+  step,
   disabled,
 }: {
   login: CodexSetup;
+  step: "install" | "login";
   disabled: boolean;
 }) {
   const { running, output } = useSyncExternalStore(
@@ -320,9 +322,9 @@ function CodexSignIn({
           size="sm"
           disabled={disabled}
           loading={Boolean(running)}
-          onClick={() => void login.run("login")}
+          onClick={() => void login.run(step)}
         >
-          Sign in
+          {step === "install" ? "Install Codex" : "Sign in"}
         </Button>
         {running && (
           <Button size="sm" onClick={() => void login.cancel()}>
@@ -333,7 +335,7 @@ function CodexSignIn({
       {output && (
         <pre
           role="log"
-          aria-label="Sign-in output"
+          aria-label="Setup output"
           className="m-0 max-h-40 max-w-sm overflow-auto whitespace-pre-wrap break-all text-caption"
         >
           {output}
@@ -371,10 +373,24 @@ export function createTabs(
   }: AgentCreateProps<Config>) {
     const current = readConfig(config);
     const { data, checking, error, defaults: providerDefaults } = useProvider();
-    const signedOut = error === SIGN_IN_ERROR;
+    // The setup's status holds through the provider's next check, so the
+    // button, and its focus, stays put as Install Codex becomes Sign in.
+    const { status } = useSyncExternalStore(
+      login.subscribe,
+      login.snapshot,
+      login.snapshot,
+    );
     const retry = () => void provider.check();
-    if (signedOut)
-      return <CodexSignIn login={login} disabled={props.disabled} />;
+    const step =
+      status?.state === "missing" || error === NOT_INSTALLED
+        ? "install"
+        : status?.state === "signed-out" || error === SIGN_IN_ERROR
+          ? "login"
+          : undefined;
+    if (step)
+      return (
+        <CodexSignIn login={login} step={step} disabled={props.disabled} />
+      );
     return (
       <CreateModelChoices
         {...props}

@@ -1,3 +1,5 @@
+import { stageSessionCards } from "./composer-session-cards";
+import { ComposerSessionCards } from "./ComposerSessionCards";
 import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { messageButtonStyle } from "../../shared/theme/bubble-color";
@@ -59,6 +61,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useMemo,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -390,12 +393,21 @@ function Composer({
   const [conflict, setConflict] = useState(false);
   const [storageFailed, setStorageFailed] = useState(false);
   const [value, updateDraft] = useState(() =>
-    mentionDraft(
-      accepted?.next ??
-        submission?.recoveredDraft ??
-        readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+    stageSessionCards(
+      mentionDraft(
+        accepted?.next ??
+          submission?.recoveredDraft ??
+          readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+      ),
+      list.channels,
     ),
   );
+  const sessionCards = value.sessionCards;
+  const editorDraft = useMemo(() => {
+    if (!value.sessionCards) return value;
+    const { sessionCards: _cards, ...caption } = value;
+    return caption;
+  }, [value]);
   const draft = value.text;
   const valueRef = useRef(value);
   // Model and effort picked for mentioned agents' next run; cleared by each send.
@@ -404,13 +416,31 @@ function Composer({
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
   const focusOnMount = useRef(
-    autoFocus && !disabled && typeof document !== "undefined"
+    autoFocus && typeof document !== "undefined"
       ? document.activeElement
       : undefined,
   );
   useEffect(() => {
     // A navigation/dialog owner may restore focus during this commit. Let that
-    // explicit handoff win over the conversation's default initial focus.
+    // explicit handoff win over the conversation's default initial focus. A
+    // loading conversation defers it until its composer is first enabled.
+    // Focus moved while the composer waits also ends it, even if that control
+    // later unmounts: restoring an archived channel must not pull focus back.
+    const endOnFocusMove = () => {
+      const moved = (event: FocusEvent) => {
+        if (event.target !== focusOnMount.current)
+          focusOnMount.current = undefined;
+      };
+      document.addEventListener("focusin", moved, true);
+      return () => document.removeEventListener("focusin", moved, true);
+    };
+    if (disabled) {
+      // Disabling after the handoff ends it; re-enabling must not refocus.
+      if (focusOnMount.current === input.current)
+        focusOnMount.current = undefined;
+      if (!focusOnMount.current) return;
+      return endOnFocusMove();
+    }
     if (!focusOnMount.current) return;
     const focus = () => {
       const previous = focusOnMount.current;
@@ -424,9 +454,10 @@ function Composer({
       if (!editor || editor.closest("[inert]")) return;
       // A conversation can finish loading behind an already-focused dialog,
       // menu, or open popup trigger. Its default focus must not interrupt that
-      // explicit owner: moving focus away also dismisses non-modal menus.
+      // explicit owner: moving focus away also dismisses non-modal menus. A
+      // hover preview is transient and owns no focus.
       const owner = document.activeElement?.closest(
-        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]',
+        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
       );
       if (owner && !owner.contains(editor)) return;
       const end = editor.value.length;
@@ -438,9 +469,11 @@ function Composer({
     };
     const inertAncestor = input.current?.closest("[inert]");
     if (inertAncestor) {
+      const stopWatching = endOnFocusMove();
       const observer = new MutationObserver(() => {
         if (!inertAncestor.hasAttribute("inert")) {
           observer.disconnect();
+          stopWatching();
           focus();
         }
       });
@@ -448,10 +481,13 @@ function Composer({
         attributes: true,
         attributeFilter: ["inert"],
       });
-      return () => observer.disconnect();
+      return () => {
+        observer.disconnect();
+        stopWatching();
+      };
     }
     focus();
-  }, []);
+  }, [disabled]);
   const nonmembers = useNonmemberMentions(session, channelId, () => {
     if (permitted.current) input.current?.focus();
   });
@@ -467,6 +503,18 @@ function Composer({
     [],
   );
   const saveDraft = (next: MentionDraft) => {
+    next = stageSessionCards(
+      {
+        ...next,
+        ...((next.sessionCards ?? valueRef.current.sessionCards)
+          ? {
+              sessionCards:
+                next.sessionCards ?? valueRef.current.sessionCards ?? [],
+            }
+          : {}),
+      },
+      list.channels,
+    );
     if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
     valueRef.current = next;
     updateDraft(next);
@@ -603,7 +651,10 @@ function Composer({
   function loadSaved(raw: string | null) {
     let next: MentionDraft;
     try {
-      next = mentionDraft(JSON.parse(raw ?? "null"));
+      next = stageSessionCards(
+        mentionDraft(JSON.parse(raw ?? "null")),
+        list.channels,
+      );
     } catch {
       next = mentionDraft("");
     }
@@ -787,7 +838,16 @@ function Composer({
       value: valueRef.current,
       restore: input.current.checkpoint(),
     };
-    const next = mentionDraft(editing.start(current));
+    const next = stageSessionCards(
+      mentionDraft(
+        editing.start(current, (body) =>
+          composerMarkdown(
+            stageSessionCards(mentionDraft(body), list.channels),
+          ),
+        ),
+      ),
+      list.channels,
+    );
     valueRef.current = next;
     updateDraft(next);
     input.current.reset(next);
@@ -1054,7 +1114,10 @@ function Composer({
     if (!permitted.current || voice.isCapturing()) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
-      if (!valueRef.current.text.trim()) {
+      if (
+        !valueRef.current.text.trim() &&
+        !valueRef.current.sessionCards?.length
+      ) {
         if (editing.target.attachments.length) {
           setError(
             "Keep attachment links unchanged. To remove this message, use Delete message.",
@@ -1084,7 +1147,7 @@ function Composer({
       admission.current ||
       submission?.disabled ||
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
-      (!draft.trim() && !attachments.items.length) ||
+      (!draft.trim() && !sessionCards?.length && !attachments.items.length) ||
       attachments.blocked ||
       sendPending ||
       sendAttempt.current ||
@@ -1284,7 +1347,9 @@ function Composer({
               !cleared(JSON.stringify(valueRef.current)) &&
               (valueRef.current.text !== next.text ||
                 JSON.stringify(valueRef.current.recipients) !==
-                  JSON.stringify(next.recipients)) &&
+                  JSON.stringify(next.recipients) ||
+                JSON.stringify(valueRef.current.sessionCards ?? []) !==
+                  JSON.stringify(next.sessionCards ?? [])) &&
               JSON.stringify(valueRef.current) !== capturedRevision
             )
               return "conflict";
@@ -1301,7 +1366,9 @@ function Composer({
                 current === JSON.stringify(valueRef.current) &&
                 valueRef.current.text === next.text &&
                 JSON.stringify(valueRef.current.recipients) ===
-                  JSON.stringify(next.recipients)
+                  JSON.stringify(next.recipients) &&
+                JSON.stringify(valueRef.current.sessionCards ?? []) ===
+                  JSON.stringify(next.sessionCards ?? [])
               )
             )
               return "conflict";
@@ -1567,13 +1634,31 @@ function Composer({
               }}
             />
           )}
+          <ComposerSessionCards
+            cards={sessionCards ?? []}
+            session={session}
+            scope={scope}
+            channelId={channelId}
+            extensions={extensions}
+            disabled={editingDisabled}
+            remove={(index) => {
+              saveDraft({
+                ...valueRef.current,
+                sessionCards:
+                  valueRef.current.sessionCards?.filter(
+                    (_, i) => i !== index,
+                  ) ?? [],
+              });
+              input.current?.focus();
+            }}
+          />
           <div className={styles.composerInput}>
             <RichComposerInput
               ref={input}
               id={inputId}
               disabled={editingDisabled}
               value={draft}
-              draft={value}
+              draft={editorDraft}
               session={session}
               scope={scope}
               channelId={channelId}
@@ -1607,7 +1692,14 @@ function Composer({
               }
               // Choosing this conversation's tab resumes typing here.
               data-tab-focus=""
-              maxLength={16000}
+              maxLength={Math.max(
+                0,
+                16000 -
+                  (sessionCards?.reduce(
+                    (size, card) => size + card.length + 2,
+                    0,
+                  ) ?? 0),
+              )}
               aria-label={label}
               placeholder={placeholder ?? label}
               onFocus={() => completion.observe(true)}
@@ -1653,6 +1745,7 @@ function Composer({
                   !editing.target &&
                   event.currentTarget.value === "" &&
                   !valueRef.current.recipients.length &&
+                  !valueRef.current.sessionCards?.length &&
                   !attachments.items.length
                 ) {
                   const target = lastEditableMessage(session, editableRows());
@@ -1759,7 +1852,9 @@ function Composer({
               )}
             <IconButton
               variant={
-                draft.trim() || attachments.items.length ? "primary" : "ghost"
+                draft.trim() || sessionCards?.length || attachments.items.length
+                  ? "primary"
+                  : "ghost"
               }
               size="toolbar"
               type="submit"
@@ -1775,6 +1870,7 @@ function Composer({
                 submission?.disabled ||
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
+                  !sessionCards?.length &&
                   !attachments.items.length &&
                   !(
                     editing.target &&

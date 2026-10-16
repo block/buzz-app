@@ -6,13 +6,12 @@ import { isTauri } from "@tauri-apps/api/core";
 import type { PluginModule } from "../../plugins/api";
 import { GooseLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, GooseRuntime } from "./runtime";
+import { gooseRun } from "./run";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
 
 export const TYPE_ID = "goose";
-/** A turn's run returns once goose has it, so this bounds only the hand-over. */
-const HANDOVER_MS = 2 * 60_000;
 
 export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -21,7 +20,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
   const { agents, host } = ctx;
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.goose"}/${TYPE_ID}`;
-  const runtime = new GooseRuntime(host, agents.relay);
+  const runtime = new GooseRuntime(
+    host,
+    agents.relay,
+    (pubkey, signal) => agents.core(pubkey, signal),
+    () => agents.tools(),
+  );
   const spawn = host.spawn?.bind(host);
   const setup = new GooseSetup(spawn);
   const { Create, CreateModel, SettingsTab, ActivityTab } = createTabs({
@@ -83,8 +87,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     models: (agent) => setup.picks(config(agent.config)),
-    run: (delivery) => runtime.run(delivery),
-    runOnce: (turn) => runtime.runOnce(turn),
-    timeoutMs: HANDOVER_MS,
+    ...gooseRun(runtime),
   });
 };

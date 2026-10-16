@@ -539,6 +539,47 @@ it("autofocuses each selected conversation once without stealing focus on update
   }
 });
 
+it("defers initial focus until a loading conversation enables its composer", () => {
+  const h = mount({ autoFocus: true, disabled: true });
+  expect(h.input()).not.toHaveFocus();
+  h.retarget({ disabled: false });
+  expect(h.input()).toHaveFocus();
+});
+
+it("does not redo initial focus when a focused composer is disabled and enabled again", () => {
+  writeView("scope", "draft:channel", "Saved draft");
+  const h = mount({ autoFocus: true });
+  act(() => h.input().setSelectionRange(1, 4));
+  h.retarget({ disabled: true });
+  h.retarget({ disabled: false });
+  expect(h.input().selectionStart).toBe(1);
+  expect(h.input().selectionEnd).toBe(4);
+});
+
+it("does not take focus when the composer is enabled after another control takes it", () => {
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    const h = mount({ autoFocus: true, disabled: true });
+    other.focus();
+    h.retarget({ disabled: false });
+    expect(other).toHaveFocus();
+  } finally {
+    other.remove();
+  }
+});
+
+it("does not take focus when the composer is enabled after a control that took focus unmounts", () => {
+  const h = mount({ autoFocus: true, disabled: true });
+  const other = document.createElement("button");
+  document.body.append(other);
+  other.focus();
+  other.remove();
+  expect(document.activeElement).toBe(document.body);
+  h.retarget({ disabled: false });
+  expect(h.input()).not.toHaveFocus();
+});
+
 it("defers initial focus until an inert startup ancestor is revealed", async () => {
   document.body.setAttribute("inert", "");
   try {
@@ -564,6 +605,23 @@ it("does not reclaim startup focus after another control takes it", async () => 
   } finally {
     document.body.removeAttribute("inert");
     other.remove();
+  }
+});
+
+it("does not reclaim startup focus after a control that took focus unmounts", async () => {
+  document.body.setAttribute("inert", "");
+  try {
+    const h = mount({ autoFocus: true });
+    const other = document.createElement("button");
+    document.body.append(other);
+    other.focus();
+    other.remove();
+    expect(document.activeElement).toBe(document.body);
+    document.body.removeAttribute("inert");
+    await act(async () => {}); // Observer callback runs as a microtask.
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    document.body.removeAttribute("inert");
   }
 });
 
@@ -597,6 +655,20 @@ it.each([
     expect(owner).toHaveFocus();
   } finally {
     owner.remove();
+  }
+});
+
+it("takes focus from a row whose hover preview is open when the conversation mounts", () => {
+  const row = document.createElement("button");
+  row.setAttribute("data-popup-open", "");
+  row.setAttribute("data-popup-preview", "");
+  document.body.append(row);
+  try {
+    row.focus();
+    const h = mount({ autoFocus: true });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    row.remove();
   }
 });
 
@@ -5752,6 +5824,7 @@ it("rejects a known archived recipient at send entry without clearing the draft"
         ensure: async () => {},
         refresh: async () => {},
         writable: false,
+        supported: true,
         consent: vi.fn(),
         request: vi.fn(),
       },
@@ -7263,4 +7336,133 @@ it("drops the attachments mark while a row-requested edit holds pending items", 
   expect(form).not.toHaveAttribute("data-editing");
   expect(form).toHaveAttribute("data-attachments");
   expect(within(view.container).getByText("pending.txt")).toBeVisible();
+});
+
+it("stages session cards above an ordinary caption editor, persists them, and sends both", async () => {
+  const link = "[Session: PR 45 fixes](buzz://channel/session-id)";
+  writeView("scope", "draft:channel", link);
+  const h = mount();
+  const region = screen.getByRole("region", { name: "Session attachments" });
+  expect(region).toHaveTextContent("Session:");
+  expect(h.input()).toHaveValue("");
+  expect(
+    region.compareDocumentPosition(h.input()) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.type(h.input(), "please review");
+  expect(h.input()).not.toHaveTextContent("Session:");
+  expect(
+    readView<{ sessionCards: string[] } | null>("scope", "draft:channel", null)
+      ?.sessionCards,
+  ).toEqual([link]);
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    `${link}\n\n@Honey please review`,
+    [first.pubkey],
+    [],
+  );
+  expect(
+    screen.queryByRole("region", { name: "Session attachments" }),
+  ).toBeNull();
+});
+
+it("stages pasted session links, restores them on remount, and removes them without changing the caption", async () => {
+  const link = "[Session: PR 45 fixes](buzz://channel/session-id)";
+  const h = mount();
+  act(() => h.input().insertText(`${link} Caption`));
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("PR 45 fixes");
+  expect(h.input()).toHaveValue(" Caption");
+  h.unmount();
+  const restored = mount();
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("PR 45 fixes");
+  await restored.user.click(
+    screen.getByRole("button", { name: "Remove session attachment 1" }),
+  );
+  expect(restored.input()).toHaveValue(" Caption");
+  expect(document.activeElement).toBe(restored.input());
+  expect(
+    screen.queryByRole("region", { name: "Session attachments" }),
+  ).toBeNull();
+  await restored.user.click(
+    screen.getByRole("button", { name: "Send message" }),
+  );
+  expect(restored.messages.send).toHaveBeenCalledWith(
+    "channel",
+    " Caption",
+    [],
+    [],
+  );
+});
+
+it("sends a staged session without a caption", async () => {
+  const link = "[Session: 12345678](buzz://channel/session-id)";
+  writeView("scope", "draft:channel", link);
+  const h = mount();
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledWith("channel", link, [], []);
+});
+
+it("retains a new card-only followup when a background upload fails", async () => {
+  const h = await mountUploadComposer();
+  attachByPaste(h.input(), attachmentFile("original.txt"));
+  await userEvent.type(h.input(), "original caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  const link = "[Session: New work](buzz://channel/session-id)";
+  act(() => (h.input() as ComposerInputElement).insertText(link));
+  await act(async () => h.uploadCalls[0]?.result.reject(new Error("offline")));
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("New work");
+  expect(readView(h.scope, "draft:channel", null)).toMatchObject({
+    sessionCards: [link],
+  });
+  expect(
+    await screen.findByText(/Failed send was kept because this draft changed/),
+  ).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+});
+
+it("restores and sends an older session-link draft with its selected mention intact", async () => {
+  const link = "[Session: Fix](buzz://channel/session-id)";
+  writeView("scope", "draft:channel", {
+    text: `@Honey ${link}`,
+    recipients: [{ ...first, start: 0, end: 6 }],
+  });
+  const h = mount();
+  expect(h.input()).toHaveValue("@Honey ");
+  expect(
+    screen.getByRole("region", { name: "Session attachments" }),
+  ).toHaveTextContent("Fix");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    `${link}\n\n@Honey `,
+    [first.pubkey],
+    [],
+  );
+});
+
+it("does not publish an unchanged inline session edit, including reverting a caption change", () => {
+  const h = mount({}, undefined, first.pubkey);
+  const content =
+    "please review [Session: Fix](buzz://channel/session-id) before merge";
+  h.setRows([editableMessage({ content })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.submit();
+  expect(h.messages.edit).not.toHaveBeenCalled();
+  expect(h.input()).not.toHaveAccessibleName("Edit message");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const caption = h.input().textContent ?? "";
+  h.fill("Changed caption");
+  h.fill(caption);
+  h.submit();
+  expect(h.messages.edit).not.toHaveBeenCalled();
 });

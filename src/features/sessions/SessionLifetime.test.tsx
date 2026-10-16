@@ -64,6 +64,7 @@ function setup(
     clock++;
   });
   const details = createChannelDetails({
+    labels: true,
     reader: { read },
     writer: { sign, publish },
     viewer,

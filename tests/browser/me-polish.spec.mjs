@@ -841,7 +841,7 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
   expect(links[0].event.tags).toContainEqual(["h", destination]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
   expect(links[0].event.content).toBe(
-    `[Session · 33333333](buzz://channel/${id})`,
+    `[Session: 33333333](buzz://channel/${id})`,
   );
 });
 
@@ -1156,7 +1156,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     name: "Session settings",
     exact: true,
   });
-  const canvas = settings.getByRole("textbox", { name: "Canvas", exact: true });
+  const canvas = settings.getByRole("textbox", { name: /^Instructions/ });
   await expect(canvas).toBeVisible();
   await canvas.fill("Keep this local draft");
   const draftName = settings.getByRole("textbox", {
@@ -1205,19 +1205,19 @@ test("unified session naming and lifetime retain host focus and save only explic
           .poll(() =>
             dialog.evaluate((el) => {
               const name = el.querySelector("input").closest(".buzz-field");
-              const folders = el
-                .querySelector("textarea")
-                .closest(".buzz-field").parentElement;
-              const canvas = [...el.querySelectorAll(".buzz-field")].find(
-                (field) =>
-                  field.querySelector(".buzz-field-label")?.textContent ===
-                  "Canvas",
-              );
+              const labelled = (label) =>
+                [...el.querySelectorAll(".buzz-field")].find((field) =>
+                  field
+                    .querySelector(".buzz-field-label")
+                    ?.textContent.startsWith(label),
+                );
+              const instructions = labelled("Instructions");
+              const folders = labelled("Folders").parentElement;
               const lifetime = el
                 .querySelector('[role="radio"]')
                 .closest(".buzz-field");
-              const boxes = [name, folders, canvas, lifetime].map((field) =>
-                field.getBoundingClientRect(),
+              const boxes = [name, instructions, folders, lifetime].map(
+                (field) => field.getBoundingClientRect(),
               );
               return boxes
                 .slice(1)
@@ -1511,10 +1511,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     });
     await worktree.click();
     await expect(worktree).toBeChecked();
-    const repository = dialog.getByRole("textbox", {
-      name: "Source repository",
-      exact: true,
-    });
+    const repository = dialog.getByRole("textbox", { name: /^Folders/ });
     const location = dialog.getByRole("textbox", {
       name: "Worktree location",
       exact: true,
@@ -1551,9 +1548,7 @@ test("unified session naming and lifetime retain host focus and save only explic
             }),
           )
           .toBe(true);
-        await repository.click();
-        await page.keyboard.press("Tab");
-        await expect(location).toBeFocused();
+        await location.click();
         await page.keyboard.press("Tab");
         await expect(branch).toBeFocused();
         await expect.poll(() => pointerReachable(branch)).toBe(true);
@@ -1658,6 +1653,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     ["h", id],
     ["name", "Make contrast meet accessibility standards"],
     ["ttl", "1209600"],
+    ["t", "buzz.session.named"],
   ]);
   const saved = readbacks.find((entry) =>
     entry.tags.some(([key, value]) => key === "ttl" && value === "1209600"),
@@ -1669,6 +1665,10 @@ test("unified session naming and lifetime retain host focus and save only explic
     "Buzz session (buzz.sessions/v1)",
   ]);
   expect(saved.tags).toContainEqual(["private"]);
+  expect(saved.tags.filter(([key]) => key === "t")).toEqual([
+    ["t", "stream"],
+    ["t", "buzz.session.named"],
+  ]);
   expect(saved.tags).not.toContainEqual(["public"]);
   expect(
     (app.report.sidebarPublications ?? []).filter((entry) =>

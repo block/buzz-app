@@ -107,6 +107,8 @@ export interface ReadTransport {
   /** Name/about/private-only metadata writer, separate from lifecycle and outbox. */
   readonly channelDetails?: RelayWriter;
   readonly memberAdministration?: RelayWriter;
+  /** NIP-AR kind-45010 config artifacts only; never supplied to the outbox. */
+  readonly configArtifacts?: RelayWriter;
   /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
@@ -175,6 +177,17 @@ export interface ReadTransport {
     signal?: AbortSignal,
     requestId?: string,
     priority?: "foreground" | "background",
+  ): Promise<RelayEvent[]>;
+  /** Relay `POST /profiles/search`: one page of current kind:0 profiles whose
+   * `name` or `display_name` matches `query` by the NIP-50 prefix rule, best
+   * match first. A relay without the endpoint fails with a 404 or 405
+   * `ReadError`. */
+  searchProfiles?(
+    query: string,
+    limit: number,
+    page: number,
+    signal: AbortSignal,
+    priority: "foreground" | "background",
   ): Promise<RelayEvent[]>;
   /** Display URL for a media URL, or undefined when this transport cannot fetch it. */
   media(url: string, size?: "small"): string | undefined;
@@ -382,6 +395,20 @@ export async function registerBrokerCommunity(
       result.error ?? `Community registration failed (${response.status})`,
     );
   }
+}
+
+/** A failed finite read keeps its status, so callers can tell a missing
+ * endpoint from denial or an outage. */
+async function readResponseError(response: Response) {
+  const failure = await readApiFailure(response);
+  return new ReadError(
+    response.status === 401 || response.status === 403
+      ? "denied"
+      : "unavailable",
+    failure.error,
+    response.status,
+    failure.retryAfterMs,
+  );
 }
 
 /** Dev-only: a same-origin broker (see browser-host/relay-broker.mjs) holds the key and signs reads. */
@@ -1092,6 +1119,25 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    searchProfiles: (query, limit, page, signal, priority) =>
+      measureQuery(endpoint, priority, async (sized) => {
+        const result = await fetch(`${endpoint}/profile-search`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Buzz-Read-Priority": priority,
+          },
+          body: JSON.stringify({ query, limit, page }),
+          signal,
+        });
+        if (!result.ok) throw await readResponseError(result);
+        return parseEvents(
+          JSON.parse(sized(await result.text())),
+          verify,
+          signal,
+        );
+      }),
     media: (url, size) =>
       mediaUrl(
         url,
@@ -1273,6 +1319,25 @@ export async function connectSignedTransport(
         );
       },
     },
+    searchProfiles: (query, limit, page, signal, priority) =>
+      measureQuery(httpOrigin, priority, async (sized) => {
+        const result = await signedPost(
+          signer,
+          `${httpOrigin}/profiles/search`,
+          { query, limit, page },
+          signal,
+          profiling,
+          "profile-search",
+          principal().api,
+          priority,
+        );
+        if (!result.ok) throw await readResponseError(result);
+        return parseEvents(
+          JSON.parse(sized(await result.text())),
+          verify,
+          signal,
+        );
+      }),
     query: (filters, signal, requestId = "read", priority = "foreground") =>
       measureQuery(httpOrigin, priority, async (sized) => {
         const result = await signedPost(
@@ -1361,10 +1426,19 @@ export async function acceptPublish(response: Response, id: string) {
       throw new PublishRejected(
         "conflict: the relay state changed; reload before writing again",
       );
-    if ([400, 401, 403, 404, 413, 422].includes(response.status))
+    if ([400, 401, 403, 404, 413, 422].includes(response.status)) {
+      // Keep the relay's bounded `{error}` text for writers that classify it.
+      let reason: string | undefined;
+      await readApiFailure(response, (value) => {
+        const error = (value as { error?: unknown } | null)?.error;
+        if (typeof error === "string") reason = error;
+        return undefined;
+      });
       throw new PublishRejected(
         `Relay rejected the message (${response.status})`,
+        reason,
       );
+    }
     // Only proven non-delivery is safe to mark failed. Socket quota reasons are
     // display-only: keep them distinct from HTTP API quota/cooldown ownership.
     const body = await readApiFailure(response, (value) => {

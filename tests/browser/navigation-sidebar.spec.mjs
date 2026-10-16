@@ -1,4 +1,5 @@
 import { checkDurationConsumer } from "./duration-layout.mjs";
+import { pluginAction } from "./plugin-settings.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -355,13 +356,9 @@ test("disabling Sessions keeps independent lifecycle actions available", async (
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
-  const plugins = page.getByRole("region", { name: "Plugins", exact: true });
-  const toggle = plugins.getByRole("switch", {
-    name: "Enable Sessions",
-    exact: true,
-  });
+  const toggle = pluginAction(page, "Sessions");
   await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await expect(toggle).toHaveAccessibleName(/^Enable /);
 
   await openPage(page, "Multiplayer");
   // Lifecycle is independent of Sessions and retains its unavailable-host explanation.

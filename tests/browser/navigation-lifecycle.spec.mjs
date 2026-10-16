@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 test.use({ pluginFixtures: true, historyCounts: { alpha: 0, beta: 0 } });
@@ -24,9 +25,7 @@ test("Local Settings retain plugin recovery without blocking Profile and Appeara
   await expect(button(page, "Try again")).toBeVisible({ timeout: 1500 });
   await expect(button(page, "Back up & reset settings")).toBeVisible();
   await button(page, "Back up & reset settings").click();
-  await expect(
-    page.getByRole("switch", { name: "Enable Projects" }),
-  ).toBeVisible();
+  await expect(pluginAction(page, "Projects")).toBeVisible();
 });
 
 test.describe("page render failure", () => {

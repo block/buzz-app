@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
 import { openPage, pageChoices } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
@@ -99,6 +100,8 @@ async function nativeImports(page, samples = []) {
         }
         if (command === "plugin_import_discard") return;
         if (command === "plugin_import_install") {
+          if (window.importInstallError)
+            throw new Error(window.importInstallError);
           const candidate = preview.candidates.find(
             (p) => p.path === args.path,
           );
@@ -139,7 +142,7 @@ async function nativeImports(page, samples = []) {
   }, samples);
 }
 
-test("browser truthfully offers desktop-only loading", async ({
+test("browser omits native import acquisition controls", async ({
   page,
   app,
 }) => {
@@ -148,8 +151,11 @@ test("browser truthfully offers desktop-only loading", async ({
     page.getByText(
       "Open the desktop app to load plugins from a folder or Git repository.",
     ),
-  ).toBeVisible();
-  await expect(button(page, "Load from folder")).toHaveCount(0);
+  ).toHaveCount(0);
+  await expect(button(page, "Add")).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Add a plugin" })).toHaveCount(
+    0,
+  );
 });
 
 // Real font metrics, text wrapping and icon geometry are not observable in jsdom.
@@ -178,13 +184,22 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
               continue;
             }
             if (label.classList.contains("sr-only")) continue;
-            const text = document.createRange();
-            text.selectNodeContents(label);
-            for (const line of text.getClientRects()) {
-              if (line.left < bounds.left || line.right > bounds.right)
-                failures.push(
-                  `${label.textContent}: setting label overflows section`,
-                );
+            // Counts include clipped screen-reader context inside the visible
+            // heading. Measure every visible text node, excluding that context.
+            const nodes = document.createTreeWalker(
+              label,
+              NodeFilter.SHOW_TEXT,
+            );
+            for (let node = nodes.nextNode(); node; node = nodes.nextNode()) {
+              if (node.parentElement.closest(".sr-only")) continue;
+              const text = document.createRange();
+              text.selectNodeContents(node);
+              for (const line of text.getClientRects()) {
+                if (line.left < bounds.left || line.right > bounds.right)
+                  failures.push(
+                    `${label.textContent}: setting label overflows section`,
+                  );
+              }
             }
           }
           for (const button of root.querySelectorAll("button.buzz-button")) {
@@ -228,7 +243,9 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
               visibleBounds.left < bounds.left ||
               visibleBounds.right > bounds.right
             )
-              failures.push(`${button.textContent}: button overflows section`);
+              failures.push(
+                `${button.textContent}: button [${visibleBounds.left}, ${visibleBounds.right}] overflows section [${bounds.left}, ${bounds.right}]; group inset ${getComputedStyle(button.closest(".buzz-settings-group") ?? root).getPropertyValue("--settings-group-inset")}`,
+              );
           }
           return failures;
         }, scale),
@@ -338,36 +355,35 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
         name: "Plugins",
         exact: true,
       });
-      await expect(button(page, "Load from folder")).toBeVisible();
-      await expect(button(page, "Load from Git")).toBeVisible();
+      await expect(button(page, "Add")).toBeVisible();
       await checkButtons(plugins, scale);
+      await button(page, "Add").click();
+      const dialog = page.getByRole("dialog", { name: "Add a plugin" });
+      await expect(dialog).toBeVisible();
+      await checkButtons(dialog, scale);
+      const folder = button(page, "Browse plugin folder");
+      const repository = dialog.getByRole("textbox", {
+        name: "Git or GitHub repository",
+        exact: true,
+      });
       if (scale === 200 && width === 320) {
-        // Setup-card actions wrap inside the card instead of scrolling sideways.
-        const actions = plugins.getByRole("group", { name: "Load plugins" });
-        await expect
-          .poll(() =>
-            actions.evaluate((root) => {
-              const bounds = root.getBoundingClientRect();
-              return (
-                root.scrollWidth <= root.clientWidth &&
-                [...root.querySelectorAll("button")].every((button) => {
-                  const box = button.getBoundingClientRect();
-                  return box.left >= bounds.left && box.right <= bounds.right;
-                })
-              );
-            }),
-          )
-          .toBe(true);
-        // Both wrapped actions remain keyboard reachable.
-        await button(page, "Load from folder").focus();
+        // The stacked acquisition sources retain reachable controls in the modal.
+        await folder.focus();
         await page.keyboard.press("Tab");
-        await expect(button(page, "Load from Git")).toBeFocused();
-        await page.keyboard.press("Enter");
+        await expect(repository).toBeFocused();
+        await expect(repository).toBeInViewport({ ratio: 1 });
+        await repository.fill("example/plugins");
+        await page.keyboard.press("Tab");
         await expect(
-          page.getByRole("textbox", { name: "Git or GitHub repository" }),
-        ).toBeVisible();
-        await button(page, "Load from Git").click();
+          dialog.getByRole("textbox", { name: "Branch or tag (optional)" }),
+        ).toBeFocused();
+        await page.keyboard.press("Tab");
+        await expect(button(page, "Find plugins")).toBeFocused();
+        await expect(button(page, "Find plugins")).toBeInViewport({ ratio: 1 });
       }
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(button(page, "Add")).toBeFocused();
       await page.screenshot({
         path: info.outputPath(`settings-buttons-${scale}-${width}.png`),
       });
@@ -381,12 +397,11 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
 }) => {
   await nativeImports(page);
   await openPlugins(page, app.origin);
-  await button(page, "Load from folder").click();
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
   await expect(page.getByRole("radio")).toHaveCount(2);
   await expect(button(page, "Install plugin")).toHaveCount(0);
   await page.getByRole("radio", { name: /Example two/ }).check();
-  await selectSettingsSection(page, "Profile");
-  await selectSettingsSection(page, "Plugins");
   await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
   await expect(
     page.getByText(
@@ -394,9 +409,8 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
     ),
   ).toBeVisible();
   await button(page, "Install plugin").click();
-  const enabled = page.getByRole("switch", { name: "Enable Example two" });
-  await expect(enabled).toHaveAttribute("aria-checked", "false");
-  await expect(button(page, "Reload")).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText(/Example two installed/);
+  await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
   expect(
     await page.evaluate(
       () =>
@@ -404,6 +418,11 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
           .args,
     ),
   ).toEqual({ token: "preview-one", path: "plugins/two/dist" });
+  await button(page, "Close").click();
+  const enabled = pluginAction(page, "Example two");
+  await expect(enabled).toHaveAccessibleName("Enable Example two");
+  await button(page, "View Example two details").click();
+  await expect(button(page, "Reload")).toBeVisible();
   await button(page, "Reload").click();
   expect(
     await page.evaluate(
@@ -411,13 +430,17 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
     ),
   ).toEqual({ id: "example.two" });
   await enabled.click();
+  await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Reload")).toHaveCount(0);
+  await button(page, "Close plugin details").click();
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
+  await page.getByRole("radio", { name: /Example two/ }).check();
   await expect(
     page.getByText(/It stays on and may run immediately/),
   ).toBeVisible();
   await expect(button(page, "Update plugin")).toBeVisible();
   await button(page, "Close preview").click();
-  await button(page, "Load from Git").click();
   await page.getByLabel("Git or GitHub repository").fill("example/plugins");
   await page.getByLabel("Branch or tag (optional)").fill("feature/plugins");
   await button(page, "Find plugins").click();
@@ -446,9 +469,29 @@ test("leaving Settings discards a late preview without installing", async ({
   await page.evaluate(() => {
     window.importDelay = true;
   });
-  await button(page, "Load from folder").click();
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
   await expect(page.getByText(/Reading plugin folders/)).toBeVisible();
-  await openPage(page, "Projects");
+  const dialog = page.getByRole("dialog", { name: "Add a plugin" });
+  await expect(
+    dialog.getByRole("button", { name: "Close", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => {
+    location.hash = `buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.projects",
+        pageId: "projects",
+      }),
+    )}`;
+  });
+  await expect(
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible();
+  await expect(dialog).toHaveCount(0);
   await page.evaluate(() => window.resolveImport());
   await expect
     .poll(() =>
@@ -489,17 +532,25 @@ test("checked-in local examples activate and work independently", async ({
   );
   await nativeImports(page, samples);
   await openPlugins(page, app.origin);
-  await button(page, "Load from folder").click();
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
   for (const sample of samples) {
     await page
       .getByRole("radio", { name: new RegExp(sample.manifest.name) })
       .check();
     await button(page, "Install plugin").click();
-    const toggle = page.getByRole("switch", {
-      name: `Enable ${sample.manifest.name}`,
-    });
-    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByRole("status")).toHaveText(
+      new RegExp(`${sample.manifest.name} installed`),
+    );
+  }
+  await button(page, "Close").click();
+  for (const sample of samples) {
+    const toggle = pluginAction(page, sample.manifest.name);
+    await expect(toggle).toHaveAccessibleName(`Enable ${sample.manifest.name}`);
     await toggle.click();
+    await expect(toggle).toHaveAccessibleName(
+      `Disable ${sample.manifest.name}`,
+    );
   }
   await openPage(page, "Counter playground");
   await button(page, "Clicked 0 times").click();
@@ -512,7 +563,7 @@ test("checked-in local examples activate and work independently", async ({
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await selectSettingsSection(page, "Plugins");
-  await page.getByRole("switch", { name: "Enable Counter playground" }).click();
+  await pluginAction(page, "Counter playground").click();
   const navigation = await pageChoices(page);
   await expect(
     navigation.getByRole("option", { name: "Counter playground", exact: true }),
@@ -520,4 +571,56 @@ test("checked-in local examples activate and work independently", async ({
   await expect(
     navigation.getByRole("option", { name: "Notes playground", exact: true }),
   ).toBeVisible();
+});
+
+// Browser-only: real modal focus and manager error propagation across the IPC boundary.
+test("Add keeps a rejected install reachable and retries the same preview", async ({
+  page,
+  app,
+}, info) => {
+  await nativeImports(page, [
+    {
+      path: "dist",
+      revision: "one",
+      manifest: { id: "example.retry", name: "Retry plugin", apiVersion: 1 },
+    },
+  ]);
+  await openPlugins(page, app.origin);
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
+  const dialog = page.getByRole("dialog", { name: "Add a plugin" });
+  await page.evaluate(() => {
+    window.importInstallError =
+      "Publisher mismatch. Choose a package from the installed publisher.";
+  });
+  await dialog
+    .getByRole("button", { name: "Install plugin", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toContainText("Publisher mismatch");
+  await expect(
+    dialog.getByRole("region", { name: "Plugin import preview" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Install plugin", exact: true }),
+  ).toBeFocused();
+  await dialog.screenshot({
+    path: info.outputPath("plugin-install-error.png"),
+  });
+  await page.evaluate(() => {
+    window.importInstallError = null;
+  });
+  await dialog
+    .getByRole("button", { name: "Install plugin", exact: true })
+    .press("Enter");
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(dialog.getByRole("status")).toContainText(
+    "Retry plugin installed",
+  );
+  expect(
+    await page.evaluate(() =>
+      window.importCalls
+        .filter((c) => c.command === "plugin_import_install")
+        .map((c) => c.args),
+    ),
+  ).toEqual(Array(2).fill({ token: "preview-one", path: "dist" }));
 });

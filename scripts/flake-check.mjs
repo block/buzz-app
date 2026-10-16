@@ -14,7 +14,9 @@ export const ITERATIONS = 10;
 // Repetitions spread across shards, so a whole-file selection stays inside
 // the flake lane's job timeout. Small selections keep a single runner.
 const JOURNEYS_PER_SHARD = 5;
-const MAX_SHARDS = 8;
+// Broad selector migrations can select 180+ journeys (1,800 repetitions).
+// Eight lanes exceeded the unchanged 30-minute deadline in both engines.
+const MAX_SHARDS = 16;
 export const browserShards = (journeys) =>
   Math.min(MAX_SHARDS, Math.max(1, Math.ceil(journeys / JOURNEYS_PER_SHARD)));
 // Journeys that need their own project or platform: the measurements job and

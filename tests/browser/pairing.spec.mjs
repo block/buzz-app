@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 test.use({ pairingFixture: true });
@@ -95,9 +96,7 @@ test("legacy phone confirmation, retry after expiry, and leaving Settings cancel
   await expect
     .poll(() => page.evaluate(() => window.pairingFixture.calls.at(-1)?.action))
     .toBe("cancel");
-  await page
-    .getByRole("switch", { name: "Enable Pair mobile", exact: true })
-    .click();
+  await pluginAction(page, "Pair mobile").click();
   await expect(
     page
       .getByRole("complementary", { name: "Settings sidebar" })

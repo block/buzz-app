@@ -35,7 +35,10 @@ for (const mode of ["light", "dark"]) {
     await expect(history).toHaveCSS("scrollbar-color", color);
     await expect(history).toHaveCSS("scrollbar-gutter", "stable");
     await openPage(page, "Settings");
-    const detail = page.getByRole("region", { name: "Settings", exact: true });
+    const panel = page.getByRole("region", { name: "Settings", exact: true });
+    const detail = panel.locator(".buzz-settings-page");
+    await expect(panel).toHaveCSS("overflow-y", "hidden");
+    await expect(detail).toHaveCSS("overflow-y", "auto");
     const settingsSidebar = page
       .getByRole("complementary", { name: "Settings sidebar" })
       .locator(":scope > div");

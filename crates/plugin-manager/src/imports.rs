@@ -1,14 +1,15 @@
 //! Read-only acquisition. Preview owns immutable artifacts; installation never rereads a source.
 use crate::{
     artifact_from_parts, err, hash, icon_revision, Catalog, Manager, Manifest, Release,
-    ReloadSource, Result, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
+    ReloadSource, Result, BASE64, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
 };
+use base64::Engine as _;
 use nostr::event::Event;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -116,6 +117,98 @@ impl PreparedImport {
             .transpose()?;
         manager.install_artifact(release, source)
     }
+}
+
+#[derive(Deserialize)]
+pub struct FolderUpload {
+    pub source: String,
+    pub files: Vec<ImportFile>,
+}
+
+#[derive(Deserialize)]
+pub struct ImportFile {
+    pub path: String,
+    pub text: Option<String>,
+    pub base64: Option<String>,
+}
+
+/// Browser drops supply package contents, never trusted local filesystem paths.
+/// Reuse the folder reader and signature checks, without retaining a reload source.
+pub fn prepare_upload(upload: FolderUpload) -> Result<PreparedImport> {
+    if upload.source.is_empty()
+        || upload.source.len() > 255
+        || upload.source.chars().any(char::is_control)
+    {
+        return Err("Invalid dropped folder name".into());
+    }
+    if upload.files.len() > MAX_ENTRIES {
+        return Err("Folder exceeds 20,000 entries; choose a smaller folder".into());
+    }
+    let scratch = tempfile::tempdir().map_err(err)?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut bytes = 0usize;
+    for file in upload.files {
+        let parts: Vec<_> = file.path.split('/').collect();
+        if parts.len() > 33
+            || file.path.len() > 4096
+            || parts.iter().any(|part| {
+                part.is_empty()
+                    || *part == "."
+                    || *part == ".."
+                    || part.contains(['\\', ':'])
+                    || part.chars().any(char::is_control)
+            })
+            || !matches!(
+                parts.last().copied(),
+                Some(
+                    "manifest.json"
+                        | "plugin.js"
+                        | "plugin.artifact.json"
+                        | "plugin.signature.json"
+                        | "README.md"
+                        | "icon.png"
+                        | "icon.jpg"
+                )
+            )
+            || !seen.insert(file.path.clone())
+        {
+            return Err("Invalid or duplicate dropped plugin path".into());
+        }
+        let name = parts.last().copied().unwrap();
+        let icon = matches!(name, "icon.png" | "icon.jpg");
+        let limit = match name {
+            "README.md" => MAX_README_BYTES,
+            "icon.png" | "icon.jpg" => MAX_ICON_BYTES,
+            _ => LIMIT as usize,
+        };
+        let contents = match (file.text, file.base64) {
+            (Some(text), None) => text.into_bytes(),
+            (None, Some(encoded)) if icon && encoded.len() <= limit.div_ceil(3) * 4 => {
+                BASE64.decode(encoded).map_err(err)?
+            }
+            _ => return Err("Invalid dropped plugin file encoding".into()),
+        };
+        bytes = bytes
+            .checked_add(contents.len())
+            .ok_or("Dropped folder is too large")?;
+        if contents.len() > limit || bytes > MAX_PREVIEW_BYTES {
+            return Err("Dropped plugin files exceed their file or 32 MiB total limit".into());
+        }
+        let path = scratch.path().join(&file.path);
+        fs::create_dir_all(path.parent().ok_or("Invalid dropped plugin path")?).map_err(err)?;
+        // Also reject aliases on case-insensitive filesystems instead of overwriting.
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(err)?
+            .write_all(&contents)
+            .map_err(err)?;
+    }
+    let mut prepared = prepare_folder(scratch.path())?;
+    prepared.folder_root = None;
+    prepared.preview.source = format!("Dropped folder: {}", upload.source);
+    Ok(prepared)
 }
 
 pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
@@ -732,6 +825,86 @@ fn directory_size(root: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn uploaded(files: &[(&str, &str)]) -> FolderUpload {
+        FolderUpload {
+            source: "example".into(),
+            files: files
+                .iter()
+                .map(|(path, text)| ImportFile {
+                    path: (*path).into(),
+                    text: Some((*text).into()),
+                    base64: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn dropped_folder_uses_reviewed_snapshot_without_a_temporary_reload_source() {
+        let prepared = prepare_upload(uploaded(&[
+            (
+                "dist/manifest.json",
+                r#"{"id":"example.drop","name":"Drop","apiVersion":1}"#,
+            ),
+            ("dist/plugin.js", "export function apply() {}"),
+        ]))
+        .unwrap();
+        assert_eq!(prepared.preview.source, "Dropped folder: example");
+        assert_eq!(prepared.preview.candidates[0].path, "dist");
+        assert!(prepared.folder_root.is_none());
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let installed = prepared
+            .install(&manager, &prepared.preview.token, "dist")
+            .unwrap();
+        let plugin = installed
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.drop")
+            .unwrap();
+        assert!(!plugin.enabled);
+        assert!(!plugin.reloadable);
+        manager.change("enable", "example.drop").unwrap();
+        assert_eq!(
+            manager.module("example.drop", &plugin.revision).unwrap(),
+            "export function apply() {}"
+        );
+    }
+
+    #[test]
+    fn dropped_folder_rejects_escaping_duplicate_and_oversized_inputs() {
+        for path in [
+            "../plugin.js",
+            "/plugin.js",
+            "a/../../plugin.js",
+            "C:/plugin.js",
+            "a\\plugin.js",
+            "a//plugin.js",
+            "a/./plugin.js",
+            "other.txt",
+        ] {
+            assert!(prepare_upload(uploaded(&[(path, "")])).is_err(), "{path}");
+        }
+        assert!(prepare_upload(uploaded(&[("plugin.js", ""), ("plugin.js", "")])).is_err());
+        let large = "x".repeat(LIMIT as usize + 1);
+        assert!(prepare_upload(uploaded(&[("plugin.js", &large)])).is_err());
+    }
+
+    #[test]
+    fn dropped_folder_does_not_fall_back_from_an_incomplete_signed_pair() {
+        let prepared = prepare_upload(uploaded(&[
+            (
+                "manifest.json",
+                r#"{"id":"example.drop","name":"Drop","apiVersion":1}"#,
+            ),
+            ("plugin.js", "export {}"),
+            ("plugin.artifact.json", "{}"),
+        ]))
+        .unwrap();
+        assert!(prepared.preview.candidates.is_empty());
+        assert!(prepared.preview.warnings[0].contains("Incomplete signed plugin release pair"));
+    }
+
     fn decode_content_icon(encoded: Option<&str>) -> Option<Vec<u8>> {
         use base64::Engine as _;
         encoded.map(|value| {
@@ -748,6 +921,99 @@ mod tests {
             .unwrap();
         bytes
     }
+    #[test]
+    fn dropped_assets_match_folder_package_and_survive_install() {
+        let root = tempfile::tempdir().unwrap();
+        let package = plugin(root.path(), "dist", "example.assets");
+        let png = png();
+        let mut jpg = vec![];
+        image::codecs::jpeg::JpegEncoder::new(&mut jpg)
+            .write_image(&[128, 128, 128], 1, 1, ExtendedColorType::Rgb8)
+            .unwrap();
+        fs::write(package.join("README.md"), "# Hello").unwrap();
+        fs::write(package.join("icon.png"), &png).unwrap();
+        fs::write(package.join("icon.jpg"), &jpg).unwrap();
+        let folder = prepare_folder(&package).unwrap();
+        let mut upload = uploaded(&[
+            (
+                "manifest.json",
+                &fs::read_to_string(package.join("manifest.json")).unwrap(),
+            ),
+            (
+                "plugin.js",
+                &fs::read_to_string(package.join("plugin.js")).unwrap(),
+            ),
+            ("README.md", "# Hello"),
+        ]);
+        for (name, bytes) in [("icon.png", &png), ("icon.jpg", &jpg)] {
+            upload.files.push(ImportFile {
+                path: name.into(),
+                text: None,
+                base64: Some(BASE64.encode(bytes)),
+            });
+        }
+        let dropped = prepare_upload(upload).unwrap();
+        assert!(dropped.preview.warnings.is_empty());
+        let candidate = &dropped.preview.candidates[0];
+        assert_eq!(candidate.revision, folder.preview.candidates[0].revision);
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        dropped
+            .install(&manager, &dropped.preview.token, ".")
+            .unwrap();
+        let content = manager
+            .content("example.assets", &candidate.revision)
+            .unwrap();
+        assert_eq!(content.readme.as_deref(), Some("# Hello"));
+        assert_eq!(decode_content_icon(content.icon_png.as_deref()), Some(png));
+        assert_eq!(decode_content_icon(content.icon_jpg.as_deref()), Some(jpg));
+    }
+
+    #[test]
+    fn dropped_assets_reject_invalid_encodings_and_enforce_asset_limits() {
+        for (path, text, base64) in [
+            ("icon.png", None, Some("!".into())),
+            ("icon.png", Some("text".into()), Some("AA==".into())),
+            ("icon.png", None, None),
+            ("plugin.js", None, Some("AA==".into())),
+            ("README.md", Some("x".repeat(MAX_README_BYTES + 1)), None),
+            (
+                "icon.jpg",
+                None,
+                Some(BASE64.encode(vec![0; MAX_ICON_BYTES + 1])),
+            ),
+        ] {
+            assert!(
+                prepare_upload(FolderUpload {
+                    source: "invalid".into(),
+                    files: vec![ImportFile {
+                        path: path.into(),
+                        text,
+                        base64
+                    }],
+                })
+                .is_err(),
+                "{path}"
+            );
+        }
+        // Valid base64 still has to pass the package's real image validator.
+        let mut invalid = uploaded(&[
+            (
+                "manifest.json",
+                r#"{"id":"example.invalid","name":"Invalid","apiVersion":1}"#,
+            ),
+            ("plugin.js", "export {}"),
+        ]);
+        invalid.files.push(ImportFile {
+            path: "icon.png".into(),
+            text: None,
+            base64: Some("AA==".into()),
+        });
+        let prepared = prepare_upload(invalid).unwrap();
+        assert!(prepared.preview.candidates.is_empty());
+        assert_eq!(prepared.preview.warnings.len(), 1);
+    }
+
     fn plugin(root: &Path, folder: &str, id: &str) -> PathBuf {
         let path = root.join(folder);
         fs::create_dir_all(&path).unwrap();

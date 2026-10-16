@@ -3,5 +3,8 @@
   "name": "Solo",
   "apiVersion": 1,
   "description": "View your agent sessions and related activity in one workspace.",
-  "discovery": { "category": "productivity" }
+  "discovery": {
+    "category": "productivity",
+    "tags": ["agent-sessions", "Essentials"]
+  }
 }

@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { openPage } from "./navigation.mjs";
@@ -170,10 +171,10 @@ test("disabling the Channel Usage plugin retires the tab and re-enabling does no
   await page.getByRole("button", { name: "Your profile" }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
-  const toggle = page.getByRole("switch", { name: "Enable Channel Usage" });
-  await expect(toggle).toBeChecked();
+  const toggle = pluginAction(page, "Channel Usage");
+  await expect(toggle).toHaveAccessibleName(/^Disable /);
   await toggle.click();
-  await expect(toggle).not.toBeChecked();
+  await expect(toggle).toHaveAccessibleName(/^Enable /);
   await openPage(page, "Messages");
   await expect(page.getByRole("tab", { name: "Usage" })).toHaveCount(0);
   await actions.click();
@@ -188,7 +189,7 @@ test("disabling the Channel Usage plugin retires the tab and re-enabling does no
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await toggle.click();
-  await expect(toggle).toBeChecked();
+  await expect(toggle).toHaveAccessibleName(/^Disable /);
   await openPage(page, "Messages");
   await expect(page.getByRole("tab", { name: "Usage" })).toHaveCount(0);
   await actions.click();

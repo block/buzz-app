@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { connect } from "node:net";
@@ -42,10 +43,10 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
-  await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
+  await pluginAction(page, "Notes fixture").click();
   await expect(button(page, "Notes")).toHaveCount(0);
   await expect(card(page, "Notes")).toHaveCount(0);
-  await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
+  await pluginAction(page, "Notes fixture").click();
   await expect(button(page, "Notes")).toBeVisible();
   await expect(card(page, "Notes")).toHaveCount(0);
   await companionLauncher(page, "Companion fixture").click();
@@ -168,7 +169,7 @@ test("Me places companion plugins in its new-conversation state and removes disa
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
-  await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
+  await pluginAction(page, "Notes fixture").click();
   await openPage(page, "Me");
   await expect(card(page, "Notes")).toHaveCount(0);
   await expect(button(page, "Notes")).toHaveCount(0);

@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -1087,11 +1088,9 @@ test("Move and Create stay available on Projects with Sessions disabled", async 
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
-  const toggle = page
-    .getByRole("region", { name: "Plugins", exact: true })
-    .getByRole("switch", { name: "Enable Sessions", exact: true });
+  const toggle = pluginAction(page, "Sessions");
   await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await expect(toggle).toHaveAccessibleName(/^Enable /);
   await openPage(page, "Projects");
   const projects = page.getByRole("heading", { name: "Projects", exact: true });
   await expect(projects).toBeVisible();

@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
@@ -154,9 +155,7 @@ test("Me Activity opens the agent's profile locally, restores per conversation a
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
-  await page
-    .getByRole("switch", { name: "Enable Agent Activity", exact: true })
-    .click();
+  await pluginAction(page, "Agent Activity").click();
   await openPage(page, "Me");
   await expect(trigger).toHaveCount(0);
 });

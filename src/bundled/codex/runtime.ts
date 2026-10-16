@@ -71,8 +71,8 @@ type Request = {
   failActivity(reason: string): void;
 };
 /** `at` is when the binding last took in a message or ended a turn; bindings
- * saved before it existed have none. `tools` is the `addedKey` of the thread's tools, absent
- * when plugins added none. */
+ * saved before it existed have none. `tools` is the `addedKey` of the
+ * thread's tools, absent when plugins added none. */
 type Saved = {
   threadId: string;
   workspace: string;

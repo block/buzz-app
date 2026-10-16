@@ -2740,6 +2740,7 @@ it("inbox describes a Solo chat row by its newest top-level message, not only it
     message(h.alice, "chat", "Side reply", 23, [
       ["e", ping.id, "", "reply"],
     ]),
+    message(h.alice, "session", "Agent note", 24, [["audience", "agents"]]),
   ]);
   const item = h.session.unread
     .inbox()

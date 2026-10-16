@@ -940,13 +940,14 @@ export function createUnread({
         });
         const content = new Map(rows.map((row) => [row.id, row.content]));
         // A session's top-level row shows its newest message from someone
-        // else, even one that is not Inbox evidence.
+        // else to everyone, even one that is not Inbox evidence.
         const newest = session
           ? rows.reduce<RelayEvent | undefined>((best, row) => {
               const event = events.get(row.id);
               return event &&
                 !row.threadRootId &&
                 !row.membership &&
+                !row.audience &&
                 row.authorId !== viewer &&
                 (!best || event.created_at > best.created_at)
                 ? event

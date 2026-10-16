@@ -172,7 +172,12 @@ export class AgentSessions {
   }
   /** Conversations with a session, whether each is working, and when each
    * last took in a message or ended a turn. */
-  snapshot(): { key: string; busy: boolean; sessionId?: string; at?: number }[] {
+  snapshot(): {
+    key: string;
+    busy: boolean;
+    sessionId?: string;
+    at?: number;
+  }[] {
     return [
       ...[...this.live].map(([key, live]) => ({
         key,

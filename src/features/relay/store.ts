@@ -44,6 +44,10 @@ type WindowState = {
   cursor: WindowCursor | null;
   events: readonly RelayEvent[];
   atHead: boolean;
+  /** Oldest point any page read reached, in created_at seconds; 0 once a read
+   * reached the start. Only falls while the window lives: a catch-up head can
+   * move `cursor` past rows the reader already has, and those must stay. */
+  floor?: number | undefined;
   generation: number;
   controller?: AbortController | undefined;
   /** Rows came from IndexedDB and no relay read has replaced them. Freshness
@@ -280,6 +284,10 @@ export function createChannelStore(
     });
     notify(listListeners);
   }
+  function moveCursor(state: WindowState, cursor: WindowCursor | null) {
+    state.cursor = cursor;
+    state.floor = Math.min(state.floor ?? Infinity, cursor?.createdAt ?? 0);
+  }
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
     let rows = patch.rows ?? state.snapshot.rows;
     if (authorized(state.channelId) && transport) {
@@ -288,9 +296,7 @@ export function createChannelStore(
       // later page fills mid-list, where the timeline can neither anchor the
       // reader nor tell it from new arrivals. That page shows them instead.
       const floor =
-        (patch.hasMore ?? state.snapshot.hasMore)
-          ? state.cursor?.createdAt
-          : undefined;
+        (patch.hasMore ?? state.snapshot.hasMore) ? state.floor : undefined;
       const combined = new Map(
         [...state.events, ...state.traffic.values()]
           .filter(
@@ -378,6 +384,7 @@ export function createChannelStore(
     state.generation++;
     state.controller?.abort();
     state.events = [];
+    state.floor = undefined;
     state.snapshot = idleWindow(state.channelId);
     notify(windowListeners.get(state.channelId));
   }
@@ -513,6 +520,7 @@ export function createChannelStore(
         state.generation++;
         state.controller?.abort();
         state.events = [];
+        state.floor = undefined;
         state.traffic.clear();
         setWindow(state, {
           status: "error",
@@ -644,7 +652,7 @@ export function createChannelStore(
       if (prepared && !cursor) {
         const head = await requestHead(state.channelId, "foreground");
         if (!live(state, generation)) return;
-        state.cursor = head.cursor;
+        moveCursor(state, head.cursor);
         state.events = head.events;
         state.atHead = true;
         state.restored = head.restored === true;
@@ -676,7 +684,7 @@ export function createChannelStore(
       }
       state.events = retained;
       state.atHead = !cursor;
-      state.cursor = page.cursor;
+      moveCursor(state, page.cursor);
       state.restored = false;
       setWindow(state, {
         status: "ready",
@@ -834,7 +842,7 @@ export function createChannelStore(
           (state.snapshot.status === "idle" ||
             state.snapshot.status === "loading")
         ) {
-          state.cursor = head.cursor;
+          moveCursor(state, head.cursor);
           state.events = head.events;
           state.atHead = true;
           state.restored = head.restored === true;
@@ -2102,7 +2110,7 @@ export function createChannelStore(
       const state = touch(channelId);
       const retained = prepared ? heads.peek(channelId) : undefined;
       if (retained && ["idle", "error"].includes(state.snapshot.status)) {
-        state.cursor = retained.cursor;
+        moveCursor(state, retained.cursor);
         state.events = retained.events;
         state.atHead = true;
         state.restored = retained.restored === true;
@@ -2142,7 +2150,7 @@ export function createChannelStore(
       }
       const head = prepared ? heads.get(channelId) : undefined;
       if (head) {
-        state.cursor = head.cursor;
+        moveCursor(state, head.cursor);
         state.events = head.events;
         state.atHead = true;
         state.restored = head.restored === true;
@@ -2572,7 +2580,7 @@ export function createChannelStore(
         accept(head.events);
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
-        if (retained.atHead) retained.cursor = head.cursor;
+        if (retained.atHead) moveCursor(retained, head.cursor);
         setWindow(retained, {
           ...(retained.atHead ? { hasMore: head.hasMore } : {}),
           status: "ready",

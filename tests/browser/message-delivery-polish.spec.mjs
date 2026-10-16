@@ -90,6 +90,8 @@ appTest.describe("app delivery", () => {
             await page.evaluate((mode) => {
               document.documentElement.dataset.colorMode = mode;
             }, theme);
+            // Responsive layout can remount the row before its geometry settles.
+            await settle(page);
             await retry.scrollIntoViewIfNeeded();
             await settle(page);
             const geometry = await retry.evaluate((button) => {

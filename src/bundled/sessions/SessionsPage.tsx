@@ -76,7 +76,6 @@ import {
   ConversationTimeline,
   useMediaReview,
 } from "../../features/conversation/Conversation";
-import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import { SessionAgentControl } from "../../features/sessions/SessionAgentControl";
@@ -514,8 +513,6 @@ function SessionWork({
           tabIndex={-1}
           className={styles.work}
           data-attachment-drop-zone=""
-          onDragOver={rejectUnhandledFileDrop}
-          onDrop={rejectUnhandledFileDrop}
         >
           <SessionHeading channel={channel} parentName={parentName}>
             <ChannelMembersButton session={session} channelId={channel.id} />

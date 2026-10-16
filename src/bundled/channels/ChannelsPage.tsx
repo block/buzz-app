@@ -40,6 +40,7 @@ import {
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
+import { flushSync } from "react-dom";
 import {
   useCallback,
   useEffect,
@@ -737,8 +738,58 @@ function ChannelWorkspace({
         entry.panel.channelMenu.eligible(current, queries)
       ),
   });
+  const focusConversation = useRef(false);
+  const closeAllTabs = () => {
+    if (!secondary.closeAllTabs()) return false;
+    returnFocus.current = undefined;
+    focusConversation.current = true;
+    return true;
+  };
+  // The channel owns this command, including sessions without a main tab strip.
+  useLayoutEffect(() => {
+    const close = (event: Event) => {
+      const workspace = historyContainer.current?.closest(
+        "[data-channel-workspace]",
+      );
+      if (
+        event.defaultPrevented ||
+        !workspace?.isConnected ||
+        workspace.closest('[hidden], [inert], [aria-hidden="true"]') ||
+        !workspace.getClientRects().length ||
+        document.querySelector('dialog[open], [aria-modal="true"]')
+      )
+        return;
+      flushSync(() => {
+        if (closeAllTabs()) event.preventDefault();
+      });
+    };
+    window.addEventListener("buzz:close-all-tabs", close);
+    return () => window.removeEventListener("buzz:close-all-tabs", close);
+  });
   // The page's thread opener wins after the tab owner restores its fallback.
   useLayoutEffect(() => {
+    if (focusConversation.current) {
+      focusConversation.current = false;
+      const focused = document.activeElement;
+      // Keep typing in surviving content. A removed tab or closing context menu
+      // needs a focus destination; clearing unrelated tabs does not.
+      const preserved =
+        focused instanceof HTMLElement &&
+        focused !== document.body &&
+        focused.isConnected &&
+        !focused.closest(
+          '[inert], [hidden], [aria-hidden="true"], [role="menu"]',
+        );
+      if (!preserved) {
+        const target =
+          channelConversation.current
+            ?.closest("[data-main-workspace]")
+            ?.querySelector<HTMLElement>(
+              '[role="tab"][data-tab-value="conversation"]',
+            ) ?? settingsTrigger.current;
+        target?.focus({ preventScroll: true });
+      }
+    }
     const pending = returnFocus.current;
     if (!pending) return;
     if (pending.channelId !== currentId || !pending.trigger.isConnected) {
@@ -1288,7 +1339,12 @@ function ChannelWorkspace({
     </SessionColumn>
   );
   const workspace = (
-    <div ref={split.ref} style={split.style} className={styles.board}>
+    <div
+      data-channel-workspace=""
+      ref={split.ref}
+      style={split.style}
+      className={styles.board}
+    >
       {current && membersOpen && (
         <ChannelMembersDialog
           key={current.id}
@@ -1419,6 +1475,10 @@ function ChannelWorkspace({
                 <div className={styles.mainWorkspace}>
                   <PanelWorkspace
                     main
+                    tabMenu={{
+                      key: JSON.stringify([scope, currentId]),
+                      closeAll: closeAllTabs,
+                    }}
                     drag={secondary.drag.main}
                     label="Channel tabs"
                     focusOnMount={false}
@@ -1615,6 +1675,10 @@ function ChannelWorkspace({
                       icon={<SidebarRightIcon size="1rem" aria-hidden="true" />}
                     />
                   }
+                  tabMenu={{
+                    key: JSON.stringify([scope, currentId]),
+                    closeAll: closeAllTabs,
+                  }}
                   drag={secondary.drag.side}
                   value={selectedTab}
                   focusOnMount={

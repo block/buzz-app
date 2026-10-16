@@ -2355,6 +2355,103 @@ it.each([true, false])(
   },
 );
 
+it.each(["", "Please review this.\n\n"])(
+  "places session cards outside the caption bubble and keeps message interactions (caption=%s)",
+  async (caption) => {
+    const content = `${caption}[Session: PR 45 fixes](buzz://channel/session-id)`;
+    const reply = vi.fn(),
+      thread = vi.fn(),
+      open = vi.fn(() => true),
+      react = vi.fn();
+    try {
+      const { container } = renderDom(
+        <MessageRow
+          row={{ ...row, content }}
+          viewer={row.authorId}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={open}
+          day={false}
+          retry={undefined}
+          onReply={reply}
+          onOpenThread={thread}
+          quickControls={
+            <button type="button" onClick={react}>
+              React
+            </button>
+          }
+        />,
+      );
+      const card = screen.getByRole("link", {
+        name: "Open Session: PR 45 fixes",
+      });
+      const bubble = container.querySelector("[class*=messageBubble]");
+      expect(card.closest("[data-session-cards]")).not.toBeNull();
+      expect(card.closest("[class*=messageBubble]")).toBeNull();
+      if (caption) {
+        if (!bubble) throw new Error("Caption bubble missing");
+        expect(bubble).toHaveTextContent("Please review this.");
+        expect(
+          card.compareDocumentPosition(bubble) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+      } else {
+        expect(bubble).toBeNull();
+        expect(container.querySelector("[data-bubble]")).toBeNull();
+        expect(container.querySelector("[data-own]")).toBeNull();
+      }
+      expect(container.querySelectorAll("[data-message-id=root]")).toHaveLength(
+        1,
+      );
+      fireEvent.click(card);
+      expect(open).toHaveBeenCalledWith("buzz://channel/session-id", {
+        rootId: "root",
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+      expect(reply).toHaveBeenCalledWith("root");
+      fireEvent.click(screen.getByRole("button", { name: "React" }));
+      expect(react).toHaveBeenCalledOnce();
+      expect(
+        screen.getByRole("button", { name: "More message actions" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /23 replies/ }),
+      ).toBeInTheDocument();
+    } finally {
+      cleanup();
+    }
+  },
+);
+
+it("keeps the timestamp seek action beside a detached session card", () => {
+  const seek = vi.fn();
+  try {
+    renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          content: "⏱ 0:42 — [Session: Fix](buzz://channel/session-id)",
+        }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => true}
+        day={false}
+        retry={undefined}
+        onMediaTime={seek}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "0:42" }));
+    expect(seek).toHaveBeenCalledWith(42);
+    expect(
+      screen
+        .getByRole("link", { name: "Open Session: Fix" })
+        .closest("[class*=messageBubble]"),
+    ).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
 it("shows a message for agents as one line from its author to whom it addresses", () => {
   const agent = keypair();
   const rivet = "b".repeat(64);

@@ -1528,3 +1528,44 @@ it("gives a tool the partial listing a slow native read answers", async () => {
     vi.useRealTimers();
   }
 });
+
+it("method calls: a session launch makes no config call on the relay session; only the conversation name lookup (launch-boundary.test.ts runs the real service path)", async () => {
+  const f = setup();
+  // Every relay-facing call the runtime can make, by name.
+  const requests = {
+    "session.read": f.read,
+    "agentMemories.read": f.memoryRead,
+    "profiles.ensure": f.session.profiles.ensure,
+    "mePlacement.refresh": f.session.mePlacement.refresh,
+    publish: f.agent.publish,
+    query: f.agent.query,
+    upload: f.agent.upload,
+    media: f.agent.media,
+    remember: f.agent.remember,
+  } as Record<string, { mock: { calls: unknown[][] } }>;
+  const made = () =>
+    Object.fromEntries(
+      Object.entries(requests)
+        .filter(([, fn]) => fn.mock.calls.length > 0)
+        .map(([name, fn]) => [name, fn.mock.calls]),
+    );
+  f.core.mockResolvedValue("I am Claude.");
+  await f.deliver({
+    type: "mention",
+    event: message("1", "@Claude 1", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  });
+  await flush(10);
+  expect(f.claudes()).toHaveLength(1);
+  expect(systemPromptOf(f.claudes()[0])).toContain("I am Claude.");
+  // The start makes no config requests. The only call is the conversation's
+  // name lookup for the sender and mentioned agent, which requests only
+  // profiles missing from the cache (none when both are cached).
+  expect(made()).toEqual({
+    "profiles.ensure": [[[alice, self], "foreground"]],
+  });
+});

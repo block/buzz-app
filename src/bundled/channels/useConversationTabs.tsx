@@ -665,6 +665,30 @@ export function useConversationTabs({
       tabState.setPaneOpen(false);
     },
     closeTab,
+    closeAllTabs: () => {
+      if (
+        !currentVisit() ||
+        navigationSignal?.aborted ||
+        !(
+          tabState.tabs.length ||
+          tabState.entries.length ||
+          tabState.settings ||
+          tabState.thread
+        )
+      )
+        return false;
+      const addressed = tabState.tabs.find(
+        (tab) =>
+          tab.kind === "thread" &&
+          routed?.channelId === tab.channelId &&
+          routed.messageId === tab.messageId,
+      );
+      entryList.current = [];
+      opening.current = undefined;
+      tabState.closeAllTabs();
+      if (addressed?.kind === "thread") onCloseThread?.(addressed, false, true);
+      return true;
+    },
     selectedTab,
     drawer,
     drawerContext,

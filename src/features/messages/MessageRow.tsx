@@ -73,6 +73,7 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
+import { separateSessionCards } from "./session-cards";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import {
@@ -304,9 +305,15 @@ function MessageRowContent({
   const presenceId = useId();
   const shown = shownRow ?? row;
   const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
-  const displayRow = timeReply
+  const sourceRow = timeReply
     ? { ...shown, content: timeReply.content }
     : shown;
+  const { caption: displayRow, cards: sessionCards } = useMemo(
+    () => separateSessionCards(sourceRow, directory.channels),
+    [sourceRow, directory.channels],
+  );
+  const cardsOnly =
+    sessionCards.length > 0 && !displayRow.content.trim() && !timeReply;
   const attachmentOnly =
     !row.content.trim() &&
     !row.diff &&
@@ -728,7 +735,7 @@ function MessageRowContent({
         data-viewer-message={
           alignViewer && row.authorId === viewer ? "" : undefined
         }
-        data-own={(!attachmentOnly && ownBubble) || undefined}
+        data-own={(!attachmentOnly && !cardsOnly && ownBubble) || undefined}
       >
         {!renderMessage && <span className={styles.messageGutter} />}
 
@@ -736,7 +743,9 @@ function MessageRowContent({
           {!renderMessage && overlays}
           <div
             className={styles.messageContent}
-            data-bubble={(!attachmentOnly && !shownRow) || undefined}
+            data-bubble={
+              (!attachmentOnly && !cardsOnly && !shownRow) || undefined
+            }
           >
             {/* A live append must not remove the reader's current focus target. */}
             {!renderMessage && (!stackNext || avatarFocused) && (
@@ -812,7 +821,33 @@ function MessageRowContent({
               }
               attachments={attachmentGroups.length > 0}
             >
-              {!attachmentOnly && (
+              {sessionCards.length > 0 && (
+                <div
+                  className={styles.messageAttachments}
+                  data-session-cards
+                  data-message-action-anchor
+                >
+                  {sessionCards.map((card) => (
+                    <MessageMarkdown
+                      key={card.start}
+                      directory={directory}
+                      session={session}
+                      scope={scope}
+                      row={{
+                        ...shown,
+                        content: card.content,
+                        attachmentSeams: [],
+                      }}
+                      extensions={extensions}
+                      media={media}
+                      onOpenLink={openLink}
+                      canOpenLink={canOpenLink}
+                      participantProfiles={participantProfiles}
+                    />
+                  ))}
+                </div>
+              )}
+              {!attachmentOnly && !cardsOnly && (
                 <div
                   className={shownRow ? undefined : styles.messageBubble}
                   data-message-action-anchor

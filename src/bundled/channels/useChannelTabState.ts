@@ -565,6 +565,20 @@ export function useChannelTabState(
       })),
     [update],
   );
+  const closeAllTabs = useCallback(
+    () =>
+      update((s) => ({
+        ...s,
+        entries: [],
+        tabs: [],
+        selected: "",
+        mainSelected: undefined,
+        paneOpen: false,
+        thread: undefined,
+        settings: undefined,
+      })),
+    [update],
+  );
   const setPaneOpen = useCallback(
     (paneOpen: boolean) => update((s) => ({ ...s, paneOpen })),
     [update],
@@ -605,6 +619,7 @@ export function useChannelTabState(
       setPaneOpen,
       setSidePanel,
       renameTab,
+      closeAllTabs,
     }),
     [
       state,
@@ -626,6 +641,7 @@ export function useChannelTabState(
       setPaneOpen,
       setSidePanel,
       renameTab,
+      closeAllTabs,
     ],
   );
 }

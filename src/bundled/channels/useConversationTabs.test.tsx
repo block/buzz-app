@@ -7,11 +7,12 @@ import {
   render,
   renderHook,
   screen,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import type {
@@ -158,7 +159,9 @@ it("retained offline tabs can close and open threads without activating connecte
   });
   expect(label()).toBe("Original message title");
   const staleOpen = h.result.current.workspace.openConversationThread;
+  const staleCloseAll = h.result.current.workspace.closeAllTabs;
   h.unmount();
+  act(() => expect(staleCloseAll()).toBe(false));
   act(() => staleOpen("beta", "another-root", "another-root"));
   const restored = renderHook(() => useChannelTabState(session, "alpha"));
   expect(restored.result.current.tabs).toHaveLength(2);
@@ -842,5 +845,168 @@ it.each(["linked", "conversation"] as const)(
     } finally {
       setThreadPlacementPreference("side");
     }
+  },
+);
+
+// This wiring test uses real tab state, tab menus and channel ownership. Thread
+// bodies are irrelevant here; the menu must clear descriptors, not their DOM.
+it.each(["main", "side"] as const)(
+  "closing all via %s clears both panes, including hidden tabs, only in this channel",
+  async (pane) => {
+    const user = userEvent.setup();
+    const channels = [
+      { id: "alpha", name: "Alpha" },
+      { id: "beta", name: "Beta" },
+    ];
+    const session = {
+      viewer: "viewer",
+      channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+    } as unknown as RelaySession;
+    const panel: RegisteredPanel = {
+      key: "fixture:profile",
+      id: "profile",
+      pluginId: "fixture",
+      revision: "1",
+      title: "Profile",
+      matches: () => true,
+      component: () => null,
+    };
+    const available = [panel];
+    const panels = {
+      snapshot: () => available,
+      subscribe: () => () => {},
+      resolve: () => panel,
+    } as unknown as Panels;
+    const relay = {
+      snapshot: () => ({ status: "connecting", session }),
+    } as unknown as RelayData;
+    const onCloseThread = vi.fn();
+    let state!: ReturnType<typeof useChannelTabState>;
+    let beta!: ReturnType<typeof useChannelTabState>;
+    let workspace!: ReturnType<typeof useConversationTabs>;
+    function Harness() {
+      state = useChannelTabState(session, "alpha");
+      beta = useChannelTabState(session, "beta");
+      workspace = useConversationTabs({
+        state,
+        relay,
+        session,
+        panels,
+        current: channels[0],
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: state.settings ? ["settings"] : [],
+        continuingVisit: true,
+        isLive: () => false,
+        openLink: () => false,
+        mainPane: true,
+        routed: {
+          channelId: "alpha",
+          messageId: "first",
+          navigation: {} as never,
+        },
+        onCloseThread,
+      });
+      const simple = (
+        items: { id: string; label: string; close?: () => void }[],
+      ) => items.map((item) => ({ ...item, content: null }));
+      return (
+        <>
+          <PanelWorkspace
+            main
+            label="Channel tabs"
+            value={workspace.selectedMain}
+            select={(id) =>
+              state.selectMain(id === "conversation" ? undefined : id)
+            }
+            tabMenu={{ key: "alpha", closeAll: workspace.closeAllTabs }}
+            items={[
+              {
+                id: "conversation",
+                label: "Alpha",
+                content: <p>Channel conversation</p>,
+              },
+              ...simple(workspace.mainItems),
+            ]}
+          />
+          {state.paneOpen && (
+            <PanelWorkspace
+              label="Side tabs"
+              value={state.selected}
+              select={workspace.selectPanelTab}
+              tabMenu={{ key: "alpha", closeAll: workspace.closeAllTabs }}
+              items={[
+                ...(state.settings
+                  ? [
+                      {
+                        id: "settings",
+                        label: "Channel settings",
+                        content: null,
+                      },
+                    ]
+                  : []),
+                ...simple(workspace.items),
+              ]}
+            />
+          )}
+        </>
+      );
+    }
+    const view = render(<Harness />);
+    act(() => {
+      state.openThreadTab("alpha", "first", "first", undefined, "main");
+      state.openThreadTab("alpha", "second", "second", undefined, "side");
+      workspace.open({ panel, channelId: "alpha", target: "profile" }, true);
+      state.setSettings({ channelId: "alpha" });
+      beta.openThreadTab("beta", "kept", "kept");
+      if (pane !== "side") state.setPaneOpen(false);
+    });
+    const strip = screen.getByRole("tablist", {
+      name: pane === "main" ? "Channel tabs" : "Side tabs",
+    });
+    const target = within(strip).getAllByRole("tab")[0];
+    if (!target) throw new Error("missing tab");
+    // Opening the menu on an inactive tab must not select it.
+    fireEvent.contextMenu(target);
+    const action = await screen.findByRole("menuitem", {
+      name: "Close all tabs",
+    });
+    expect(state.mainSelected).toBe("thread:alpha:first");
+    await user.click(action);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Alpha",
+    ]);
+    expect(state).toMatchObject({
+      tabs: [],
+      entries: [],
+      settings: undefined,
+      selected: "",
+      mainSelected: undefined,
+      paneOpen: false,
+    });
+    expect(beta.tabs.map((tab) => tab.id)).toEqual(["thread:beta:kept"]);
+    const closedSnapshot = state;
+    act(() => expect(workspace.closeAllTabs()).toBe(false));
+    expect(state).toBe(closedSnapshot);
+    expect(onCloseThread).toHaveBeenCalledTimes(1);
+    expect(onCloseThread.mock.calls[0]?.[0]).toMatchObject({
+      messageId: "first",
+    });
+    act(() =>
+      workspace.open(
+        { panel, channelId: "alpha", target: "fresh-profile" },
+        true,
+      ),
+    );
+    expect(state.entries.map((entry) => entry.target)).toEqual([
+      "fresh-profile",
+    ]);
+    act(() => expect(workspace.closeAllTabs()).toBe(true));
+    // The cleared channel must not recover old descriptors after a page remount.
+    view.unmount();
+    const restored = renderHook(() => useChannelTabState(session, "alpha"));
+    expect(restored.result.current.tabs).toEqual([]);
+    expect(restored.result.current.entries).toEqual([]);
   },
 );

@@ -1,6 +1,6 @@
 import { canonicalDetailsName } from "./channel-details-protocol";
-import { channelLabelTags } from "./channel-labels";
-import { sessionDescription } from "../sessions/metadata";
+import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
+import { SESSION_NAMED_LABEL, sessionDescription } from "../sessions/metadata";
 import type { Outbox } from "./outbox";
 import type { ChannelQueries } from "./contracts";
 import type { RelayReader } from "./reader";
@@ -25,6 +25,7 @@ export function createWorkSessions(
   relayAuthor?: string,
   /** Signed roster discovery, including channels this viewer cannot open. */
   discovery: RelayReader = reader,
+  channelIdentity = false,
 ) {
   const available = !!outbox?.supports(9007);
   function writer(addition = false) {
@@ -550,10 +551,12 @@ export function createWorkSessions(
       parentId?: string,
       ttlSeconds?: number,
       personal = false,
+      named = false,
     ) {
       writer();
       identifier(id);
       if (parentId) identifier(parentId);
+      if (named && !channelIdentity) throw channelIdentityUnsupported();
       if (!title.trim() || [...title].length > 120)
         throw new Error("Use a session title between 1 and 120 characters.");
       if (
@@ -576,6 +579,7 @@ export function createWorkSessions(
           ["channel_type", "stream"],
           ["about", sessionDescription(parentId, personal)],
           ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
+          ...(named ? channelLabelTags([SESSION_NAMED_LABEL]) : []),
         ],
       });
     },

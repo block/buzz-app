@@ -118,7 +118,8 @@ export function createChannelStore(
         /** Explicit NIP-11 self; only it may attribute messages to others. */
         archiveAuthority?: string | undefined;
         media(url: string, size?: "small"): string | undefined;
-        revokeAccess(commit: () => void): void;
+        /** `ids` names the channels that lost access when known; omitted means any. */
+        revokeAccess(commit: () => void, ids?: readonly string[]): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
@@ -247,6 +248,7 @@ export function createChannelStore(
         old.parentChannelId === channel.parentChannelId &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
+        old.ttlSeconds === channel.ttlSeconds &&
         old.readOnly === channel.readOnly &&
         old.cached === channel.cached &&
         old.members?.length === channel.members?.length &&
@@ -521,7 +523,7 @@ export function createChannelStore(
       );
       void persistence?.remove(channelId).catch(() => {});
       saveDiscovery();
-    });
+    }, [channelId]);
   }
   const isSession = (channelId: string) => !!discovery?.isSession(channelId);
   async function readPage(
@@ -2520,7 +2522,7 @@ export function createChannelStore(
       let changed = false;
       for (const id of ids)
         changed = (discovery?.suspend(id) ?? false) || changed;
-      if (changed) transport?.revokeAccess(() => setList(list, true));
+      if (changed) transport?.revokeAccess(() => setList(list, true), ids);
     },
     suspendedPreviews: () => discovery?.suspendedChannels() ?? [],
     acceptDiscovery: applyDiscovery,

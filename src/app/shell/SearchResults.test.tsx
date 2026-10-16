@@ -12,6 +12,11 @@ import {
 } from "@testing-library/react";
 import { type Filter, matchFilter } from "nostr-tools";
 import { npubEncode } from "nostr-tools/nip19";
+import {
+  bindNames,
+  type IdentityNames,
+} from "../../features/identity-names/service";
+import { createAgentDirectory } from "../../features/identity-names/testing";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { eventDto } from "../../features/relay/events";
@@ -3114,14 +3119,74 @@ it("lists directory people and managed agents, not agents this community cannot 
       within(screen.getByRole("group", { name: "People" })).getByRole("option"),
     ).toHaveTextContent("Carol");
     expect(screen.queryByText("Carl Bot")).toBeNull();
-    // `#` asks for a channel and an operator for messages: no people.
-    for (const query of ["#car", "car in:general"]) {
+    // `#` asks for a channel and an operator for messages: no people. Text
+    // longer than the directory accepts reads nothing, so shows no error.
+    for (const query of ["#car", "car in:general", `car ${"x".repeat(97)}`]) {
       mounted.rerender(<SearchResults {...props} query={query} />);
       await act(async () => vi.advanceTimersByTimeAsync(180));
       expect(screen.queryByRole("group", { name: "People" })).toBeNull();
       expect(screen.queryByRole("group", { name: "Agents" })).toBeNull();
+      expect(screen.queryByText(/search community people/)).toBeNull();
     }
     expect(t.people).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+it("tells uncached directory namesakes apart before a DM opens", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    first = keypair(),
+    second = keypair();
+  // The default naming policy, as the bundled plugin registers it.
+  const directory = createAgentDirectory();
+  const owner = createRelaySession(
+    {
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      async query() {
+        return [];
+      },
+    },
+    {
+      identityNames: {
+        bind: (source) =>
+          bindNames(source, {
+            snapshot: () => [directory],
+            subscribe: () => () => {},
+          }),
+      } as IdentityNames,
+    },
+  );
+  const t = peopleSession(owner.session, [
+    { pubkey: first.pubkey, name: "Namesake" },
+    { pubkey: second.pubkey, name: "Namesake" },
+  ]);
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="namesake"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    const group = await screen.findByRole("group", { name: "People" });
+    await waitFor(() =>
+      expect(within(group).getAllByRole("option")).toHaveLength(2),
+    );
+    const labels = within(group)
+      .getAllByRole("option")
+      .map((row) => row.textContent);
+    expect(new Set(labels).size).toBe(2);
+    for (const key of [first.pubkey, second.pubkey])
+      expect(
+        labels.some((label) =>
+          label?.includes(`Namesake · ${npubEncode(key).slice(-4)}`),
+        ),
+      ).toBe(true);
   } finally {
     cleanup();
     owner.dispose();
@@ -3184,7 +3249,7 @@ it.each([true, false])(
     const openAgentSession = vi.fn();
     const openConversation = vi.fn();
     try {
-      render(
+      const mounted = render(
         <SearchResults
           session={session}
           query="sco"
@@ -3229,6 +3294,25 @@ it.each([true, false])(
       fireEvent.click(choice);
       expect(openAgentSession).toHaveBeenCalledExactlyOnceWith(mine.pubkey);
       expect(openConversation).not.toHaveBeenCalled();
+      // The DM gives way only to a New session row that shows. "cout" finds
+      // the DM by substring but not the agent, so the DM stays.
+      mounted.rerender(
+        <SearchResults
+          session={session}
+          query="cout"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={openConversation}
+          openAgentSession={openAgentSession}
+        />,
+      );
+      expect(
+        await within(
+          await screen.findByRole("group", { name: "Direct messages" }),
+        ).findByRole("option", { name: /Scout/ }),
+      ).toBeVisible();
+      expect(screen.queryByRole("group", { name: "Agents" })).toBeNull();
     } finally {
       cleanup();
       owner.dispose();

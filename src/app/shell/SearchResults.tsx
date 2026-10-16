@@ -69,6 +69,9 @@ function conversationName(
   );
 }
 
+/** The most rows the People and Agents groups each show. */
+const PERSON_ROWS = 6;
+
 export function SearchResults({
   session,
   query,
@@ -515,25 +518,36 @@ export function SearchResults({
           picture: agent.avatar,
           isAgent: true,
         });
-    for (const [pubkey, source] of sources) {
+    const eligible = [...sources].flatMap(([pubkey, source]) => {
       const agent =
         !!source.isAgent ||
         knownAgents.has(pubkey) ||
         sessionAgents.has(pubkey);
       // As in New message, an agent is a destination only when this
       // community's native control manages it.
-      if (
-        pubkey === session.viewer ||
+      return pubkey === session.viewer ||
         (agent && !managedAgents.has(pubkey) && !sessionAgents.has(pubkey)) ||
         archiveHides(session.archives, pubkey, session.viewer)
-      )
-        continue;
+        ? []
+        : [{ pubkey, source, agent }];
+    });
+    // Namesakes are told apart within these destinations. Directory rows are
+    // not in the shared profile cache, so they supply their own names.
+    const candidates = eligible.map(({ pubkey }) => pubkey);
+    const displayFacts = personDirectory.people
+      .filter((person) => sources.get(person.pubkey) === person)
+      .map((person) => ({
+        pubkey: person.pubkey,
+        name: person.name,
+        ...(person.isAgent ? { isAgent: true } : {}),
+      }));
+    for (const { pubkey, source, agent } of eligible) {
       const dm = relationships.dm(pubkey);
       const agentName =
         managedAgents.get(pubkey)?.name ?? sessionAgents.get(pubkey)?.name;
       people.push({
         pubkey,
-        label: resolveName(pubkey, source.name),
+        label: resolveName(pubkey, source.name, candidates, displayFacts),
         username: source.username,
         agentName: agentName !== source.name ? agentName : undefined,
         agent,
@@ -592,15 +606,31 @@ export function SearchResults({
     ),
     channelRank,
   );
+  const presence = (pubkey: string) =>
+    session.presence?.status(pubkey) ?? "unknown";
   // A DM with one of the viewer's own agents gives way to its "New session"
-  // row; the DM stays in the sidebar.
+  // row, but only when that row shows; the DM stays in the sidebar. Removing
+  // DM-listed people below only lifts the rest, so a row shown here still
+  // shows in the Agents group.
+  const shownSessionAgents = new Set(
+    rankPeople(
+      people.filter(({ agent }) => agent),
+      peopleNeedle,
+      usage,
+      picked,
+      presence,
+    )
+      .slice(0, PERSON_ROWS)
+      .map(({ person }) => person.pubkey)
+      .filter((pubkey) => sessionAgents.has(pubkey)),
+  );
   const matchingChannels = matchingAll
     .filter(
       (channel) =>
         !(
           channel.channelType === "dm" &&
           channel.participants?.length === 1 &&
-          sessionAgents.has(channel.participants[0] ?? "")
+          shownSessionAgents.has(channel.participants[0] ?? "")
         ),
     )
     .slice(0, 8);
@@ -618,7 +648,7 @@ export function SearchResults({
     peopleNeedle,
     usage,
     picked,
-    (pubkey) => session.presence?.status(pubkey) ?? "unknown",
+    presence,
   );
   const joinedAll = matchingAll.filter(
     (channel) => channel.channelType !== "dm",
@@ -760,11 +790,11 @@ export function SearchResults({
   };
   const personResults = rankedPeople
     .filter(({ person }) => !person.agent)
-    .slice(0, 6)
+    .slice(0, PERSON_ROWS)
     .map(personDestination);
   const agentResults = rankedPeople
     .filter(({ person }) => person.agent)
-    .slice(0, 6)
+    .slice(0, PERSON_ROWS)
     .map(personDestination);
   const recent: SearchDestination[] = channels
     .filter((channel) => !channel.readOnly && !channel.archived)

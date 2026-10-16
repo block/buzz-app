@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import { PEOPLE_SEARCH_MAX_LENGTH } from "../../features/relay/direct-messages";
 
 type Person = Awaited<
   ReturnType<RelaySession["directMessages"]["people"]>
@@ -13,7 +14,9 @@ export const PERSON_DIRECTORY_DELAY_MS = 180;
  * The first page of the community directory for typed text. Command-K shows a
  * few rows per group, so it reads one page per query, unlike New message,
  * which pages through every match. While a new query loads, the last page
- * stays available so its still-matching people do not blink out.
+ * stays available so its still-matching people do not blink out. Text longer
+ * than the directory accepts reads nothing, so a pasted message-search phrase
+ * does not show a people error.
  */
 export function usePersonDirectory(
   session: RelaySession,
@@ -27,7 +30,8 @@ export function usePersonDirectory(
     people: readonly Person[];
     error?: true;
   }>();
-  const active = enabled && !!query.trim();
+  const active =
+    enabled && !!query.trim() && query.length <= PEOPLE_SEARCH_MAX_LENGTH;
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();

@@ -78,6 +78,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         id: "settings",
         title: "Settings",
         role: "settings",
+        splitSettings: true,
         component: SettingsTab,
       },
       {

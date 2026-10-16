@@ -331,6 +331,61 @@ it.each([false, true])(
   },
 );
 
+it("waits for the first non-empty window to resolve a hidden saved activity anchor", () => {
+  const { owner, updates, content } = activityFixture();
+  writeView("activity-folding", "scroll:alpha", {
+    offset: 0,
+    bottom: false,
+    anchor: { id: "activity-0", y: 0 },
+  });
+  try {
+    const view = render(content([]));
+    view.rerender(content(updates(9)));
+    expect(screen.getByRole("button", { name: "Show fewer" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByText("Update 0")).toBeVisible();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it.each(["collapse", "wheel"])(
+  "settles an absent saved activity anchor before later history arrives (%s)",
+  (intent) => {
+    const { owner, updates, content } = activityFixture();
+    writeView("activity-folding", "scroll:alpha", {
+      offset: 0,
+      bottom: false,
+      anchor: { id: "activity-0", y: 0 },
+    });
+    try {
+      const rows = updates(14);
+      const view = render(content(rows.slice(5)));
+      if (intent === "collapse") {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Show 4 previous steps" }),
+        );
+        fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+      } else {
+        const timeline = view.container.querySelector(
+          "[data-channel-timeline]",
+        );
+        if (!timeline) throw new Error("Missing timeline");
+        fireEvent.wheel(timeline, { deltaY: -80 });
+      }
+      view.rerender(content(rows));
+      expect(
+        screen.getByRole("button", { name: "Show 9 previous steps" }),
+      ).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByText("Update 0")).toBeNull();
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
 it("ignores a hidden reading anchor when restoring the bottom", () => {
   const { owner, updates, content } = activityFixture();
   writeView("activity-folding", "scroll:alpha", {

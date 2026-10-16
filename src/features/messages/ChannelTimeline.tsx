@@ -212,11 +212,11 @@ function Timeline({
     [rows, chatPresentation],
   );
   // Resolve a saved anchor once, before measuring initial geometry. A bottom
-  // restore ignores it; an already-visible anchor must not expand on append.
+  // restore ignores it; absent/visible anchors must not expand on later loads.
   const [activityRestore, setActivityRestore] = useState(
     initialPosition?.bottom ? undefined : initialPosition?.anchor?.id,
   );
-  if (activityRestore && rows.some((row) => row.id === activityRestore)) {
+  if (activityRestore && rows.length > 0) {
     setActivityRestore(undefined);
     const older = activity
       .find((group) => group.ids.includes(activityRestore))

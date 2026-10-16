@@ -296,7 +296,6 @@ type Pass = {
   failedAt?: number;
 };
 
-const EMPTY = Object.freeze({});
 const seconds = () => Math.floor(Date.now() / 1000);
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
@@ -330,10 +329,11 @@ export type RunnerHost = {
   record(pubkey: string): AgentRecord;
   /** Saves one record; rejects when it was not saved. */
   write(record: AgentRecord): Promise<void>;
-  /** Saves timers' progress into its latest record, keeping any change to it
-   * still being saved. It stays in memory even if the save later fails, so a
-   * timer does not run again at once; throws when storage refuses it. */
-  progress(pubkey: string, timers: NonNullable<AgentRecord["timers"]>): void;
+  /** Saves the state of the timers whose progress changed, by slug, into its
+   * latest record, keeping any change to it still being saved. It stays in
+   * memory even if the save later fails, so a timer does not run again at
+   * once; throws when storage refuses it. */
+  progress(pubkey: string, changed: Readonly<Record<string, TimerState>>): void;
   /** The team sections of its prompt; empty without a team. */
   team(pubkey: string): string;
   /** What its next run starts with, from this device's storage only. */
@@ -1557,8 +1557,7 @@ export class AgentRunners {
     // Off, timers keep their saved state; one overdue runs once when back on.
     if (!agent.attentionEnabled) return undefined;
     const now = seconds();
-    const prior = this.host.saved(agent.pubkey)?.timers ?? EMPTY;
-    let timers = prior;
+    let changed: Record<string, TimerState> | undefined;
     let next:
       | {
           slug: string;
@@ -1572,7 +1571,7 @@ export class AgentRunners {
       if (timer.type !== "timer" || !timer.enabled) continue;
       const saved = agent.timers[object.slug];
       const state = timerState(timer, saved, now);
-      if (state !== saved) timers = { ...timers, [object.slug]: state };
+      if (state !== saved) changed = { ...changed, [object.slug]: state };
       if (now < state.nextDue || timerSpent(timer, state, now)) continue;
       // Its Interest's lane is busy: it goes once that lane is free.
       if (!idle(timer.interest_id)) continue;
@@ -1584,10 +1583,10 @@ export class AgentRunners {
       used: next.state.used + 1,
       nextDue: now + next.timer.interval_secs,
     };
-    if (next && ran) timers = { ...timers, [next.slug]: ran };
-    if (timers !== prior)
+    if (next && ran) changed = { ...changed, [next.slug]: ran };
+    if (changed)
       try {
-        this.host.progress(agent.pubkey, timers);
+        this.host.progress(agent.pubkey, changed);
       } catch (error) {
         // Unsaved, it would run again at once; it waits for storage instead.
         console.warn(`Agent ${agent.name} timer state was not saved`, error);

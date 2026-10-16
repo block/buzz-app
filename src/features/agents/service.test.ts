@@ -2331,6 +2331,58 @@ it("keeps a settings change still being saved when a timer saves its progress", 
   expect(saved.timers["watch/tick"]).toMatchObject({ used: 1 });
 });
 
+it("keeps a timer rearm still being saved when another timer saves its progress", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const disk = new Map<string, string>();
+  let hold: Promise<void> | undefined;
+  const storage = fileBacked(new Map(), async (key, value) => {
+    await hold;
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (prompt: string, interval: number, armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt,
+      enabled: true,
+      interval_secs: interval,
+      armed_at: armed,
+      max_occurrences: 10,
+      expires_at: null,
+    }) as const;
+  await service.save(bot, {
+    attention: {
+      "watch/a": timer("a", 60, 1_000),
+      "watch/b": timer("b", 90, 1_000),
+    },
+  });
+  // A runs once at 1060.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // A is rearmed, keeping its used count, while B comes due at 1090.
+  const saving = service.save(bot, {
+    attention: { "watch/a": timer("a", 60, 1_070) },
+  });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(run).toHaveBeenCalledTimes(2);
+  release();
+  await saving;
+  const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.timers["watch/a"]).toEqual({
+    armedAt: 1_070,
+    nextDue: 1_130,
+    used: 1,
+  });
+  expect(saved.timers["watch/b"]).toMatchObject({ armedAt: 1_000, used: 1 });
+  expect(service.find(bot)?.timers["watch/a"]).toEqual(saved.timers["watch/a"]);
+});
+
 it("runs no due timer whose progress storage refuses, until it can save it", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const storage = memoryStorage();

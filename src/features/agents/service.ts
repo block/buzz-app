@@ -840,6 +840,31 @@ const PRESENCE_MS = 60_000;
 /** The most agents one presence event names. */
 const PRESENCE_BATCH = 256;
 const EMPTY = Object.freeze({});
+const sameTimer = (a?: TimerState, b?: TimerState) =>
+  a === b ||
+  (!!a &&
+    !!b &&
+    a.armedAt === b.armedAt &&
+    a.nextDue === b.nextDue &&
+    a.used === b.used);
+
+/** `pending` with the timers' progress made from `saved`. A timer that the
+ * pending change rearmed, restarted or removed keeps that change. */
+function withProgress(
+  pending: AgentRecord,
+  saved: AgentRecord,
+  changed: Readonly<Record<string, TimerState>>,
+): AgentRecord {
+  let timers = pending.timers ?? {};
+  for (const [slug, state] of Object.entries(changed))
+    if (
+      pending.attention[slug]?.value.type === "timer" &&
+      sameTimer(pending.timers?.[slug], saved.timers?.[slug])
+    )
+      timers = { ...timers, [slug]: state };
+  return { ...pending, timers };
+}
+
 const blank = (pubkey: string): AgentRecord => ({
   pubkey,
   attention: EMPTY,
@@ -1122,11 +1147,15 @@ export class AgentsService extends Service implements Agents {
       // still compares against what is saved. A refusal throws here, so the
       // timer does not run; a failed save logs, and memory keeps the
       // progress, so the timer does not run again at once.
-      progress: (pubkey, timers) => {
-        const shown = { ...(this.records[pubkey] ?? blank(pubkey)), timers };
+      progress: (pubkey, changed) => {
+        const saved = this.records[pubkey] ?? blank(pubkey);
+        const shown = { ...saved, timers: { ...saved.timers, ...changed } };
         const pending = this.saving.get(pubkey);
-        void this.write(pending ? { ...pending, timers } : shown, shown).catch(
-          (error) => console.warn(`Agent ${pubkey} state was not saved`, error),
+        void this.write(
+          pending ? withProgress(pending, saved, changed) : shown,
+          shown,
+        ).catch((error) =>
+          console.warn(`Agent ${pubkey} state was not saved`, error),
         );
       },
       start: (agent) => {

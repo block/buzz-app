@@ -55,17 +55,17 @@ credential loader is copied into the plugin.
   The standalone MCP client asks for 1,000 events, the most the relay returns
   to one query, and marks a full answer partial.
 - Ten-second incoming upload deadline.
-- Four mounted views per session; no periodic refresh or startup requests.
+- Four mounted views per session; views make no periodic or startup requests.
 - Oversized input fails closed, not silently truncated before head selection.
 
 A session owns each explicitly opened view; its consumer releases it on unmount.
 Refresh drops the previous plaintext rather than displaying stale contents during
 errors. Access purge, disconnect, cache clear and disposal clear snapshots and
-abort/fence pending work. Reconnection does not automatically reload sensitive data.
+abort/fence pending work. Reconnection does not automatically reload a view.
 For hosts with a live stream, connected live updates are an intentional revocation
 fence even though the memory read uses HTTP. Reads before connection or during
 reconnection/cache clearing report blocked, not a failed HTTP request. Manual
-retry after recovery is required; reconnecting never reloads plaintext automatically.
+retry after recovery is required; reconnecting never reloads a view's plaintext.
 Read failure, blocked admission, denied access, unsupported host/target, partial result and successful
 empty remain distinct. Session copies are RAM only; trusted plugin copies cannot
 be revoked or zeroized. The host zeroes its derived conversation-key byte array,
@@ -93,3 +93,15 @@ own memories for their Buzz tools through `session.agentMemories.read(pubkey,
 signal, slug?)`, the paged native read described above, and pass its partial
 status through to the tool result. Without a ready relay connection the read
 fails instead of being attempted.
+
+The `core` memory a new session starts with comes from one host-owned cache per
+agent (`CoreMemoryCache`, owned by the agents service), not from each runtime.
+The service reads `core` alone, by its address, when the agent's community
+connects and when that connection recovers. A start uses the cached copy
+without a relay request; if neither read has finished, it waits up to five
+seconds on one by-address read. A successful `mem_set` of `core` updates the
+cache ahead of any read still under way, and each finished turn refreshes it in
+the background for the next start. A failed read, or a partial read that
+misses `core`, keeps the cached copy. The copy lives only in memory and is never saved to web storage or disk,
+so a restart starts empty and reads `core` again. Leaving a community purges its
+cached copies and fences reads still under way; a disconnect alone keeps them.

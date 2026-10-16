@@ -539,6 +539,47 @@ it("autofocuses each selected conversation once without stealing focus on update
   }
 });
 
+it("defers initial focus until a loading conversation enables its composer", () => {
+  const h = mount({ autoFocus: true, disabled: true });
+  expect(h.input()).not.toHaveFocus();
+  h.retarget({ disabled: false });
+  expect(h.input()).toHaveFocus();
+});
+
+it("does not redo initial focus when a focused composer is disabled and enabled again", () => {
+  writeView("scope", "draft:channel", "Saved draft");
+  const h = mount({ autoFocus: true });
+  act(() => h.input().setSelectionRange(1, 4));
+  h.retarget({ disabled: true });
+  h.retarget({ disabled: false });
+  expect(h.input().selectionStart).toBe(1);
+  expect(h.input().selectionEnd).toBe(4);
+});
+
+it("does not take focus when the composer is enabled after another control takes it", () => {
+  const other = document.createElement("button");
+  document.body.append(other);
+  try {
+    const h = mount({ autoFocus: true, disabled: true });
+    other.focus();
+    h.retarget({ disabled: false });
+    expect(other).toHaveFocus();
+  } finally {
+    other.remove();
+  }
+});
+
+it("does not take focus when the composer is enabled after a control that took focus unmounts", () => {
+  const h = mount({ autoFocus: true, disabled: true });
+  const other = document.createElement("button");
+  document.body.append(other);
+  other.focus();
+  other.remove();
+  expect(document.activeElement).toBe(document.body);
+  h.retarget({ disabled: false });
+  expect(h.input()).not.toHaveFocus();
+});
+
 it("defers initial focus until an inert startup ancestor is revealed", async () => {
   document.body.setAttribute("inert", "");
   try {
@@ -564,6 +605,23 @@ it("does not reclaim startup focus after another control takes it", async () => 
   } finally {
     document.body.removeAttribute("inert");
     other.remove();
+  }
+});
+
+it("does not reclaim startup focus after a control that took focus unmounts", async () => {
+  document.body.setAttribute("inert", "");
+  try {
+    const h = mount({ autoFocus: true });
+    const other = document.createElement("button");
+    document.body.append(other);
+    other.focus();
+    other.remove();
+    expect(document.activeElement).toBe(document.body);
+    document.body.removeAttribute("inert");
+    await act(async () => {}); // Observer callback runs as a microtask.
+    expect(h.input()).not.toHaveFocus();
+  } finally {
+    document.body.removeAttribute("inert");
   }
 });
 
@@ -597,6 +655,20 @@ it.each([
     expect(owner).toHaveFocus();
   } finally {
     owner.remove();
+  }
+});
+
+it("takes focus from a row whose hover preview is open when the conversation mounts", () => {
+  const row = document.createElement("button");
+  row.setAttribute("data-popup-open", "");
+  row.setAttribute("data-popup-preview", "");
+  document.body.append(row);
+  try {
+    row.focus();
+    const h = mount({ autoFocus: true });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    row.remove();
   }
 });
 
@@ -5752,6 +5824,7 @@ it("rejects a known archived recipient at send entry without clearing the draft"
         ensure: async () => {},
         refresh: async () => {},
         writable: false,
+        supported: true,
         consent: vi.fn(),
         request: vi.fn(),
       },

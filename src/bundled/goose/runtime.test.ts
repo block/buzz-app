@@ -62,6 +62,8 @@ function setup(
     reply?: string;
     thread?: readonly EventData[];
     scope?: "thread" | "channel";
+    /** The agent's `core` memory as the host keeps it. */
+    core?: string | null;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -82,7 +84,7 @@ function setup(
   };
   const session = {
     read,
-    agentMemories: { open: () => memories },
+    agentMemories: { open: vi.fn(() => memories) },
     channels: {
       list: () => ({
         channels: [
@@ -111,7 +113,8 @@ function setup(
   const relay = {
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
-  const runtime = new GooseRuntime(host, () => relay);
+  const core = vi.fn(async () => options.core);
+  const runtime = new GooseRuntime(host, () => relay, core);
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,
@@ -150,6 +153,7 @@ function setup(
     } as unknown as Parameters<GooseRuntime["runOnce"]>[0]);
   return {
     agent,
+    core,
     deliver,
     runOnce,
     fake,
@@ -158,6 +162,7 @@ function setup(
     read,
     runtime,
     placement: session.mePlacement,
+    memoryOpen: session.agentMemories.open,
   };
 }
 
@@ -258,6 +263,19 @@ describe("GooseRuntime", () => {
         ],
       },
     ]);
+  });
+
+  it("starts a session from the host's core memory, reading none from the relay", async () => {
+    const { core, deliver, goose, memoryOpen } = setup({
+      core: "I am Gander.",
+    });
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    expect([...(goose()?.prompts.values() ?? [])].join()).toContain(
+      "<core-memory>\nI am Gander.\n</core-memory>",
+    );
+    expect(core).toHaveBeenCalledWith(self);
+    expect(memoryOpen).not.toHaveBeenCalled();
   });
 
   it("posts goose's own text in the thread, or at a Me chat's top level", async () => {
@@ -398,7 +416,11 @@ describe("goose memory reads", () => {
         session: { agentMemories: { read } },
       }),
     } as unknown as RelayData;
-    const runtime = new GooseRuntime({} as Host, () => relay) as unknown as {
+    const runtime = new GooseRuntime(
+      {} as Host,
+      () => relay,
+      async () => null,
+    ) as unknown as {
       memories(pubkey: string, slug?: string): Promise<unknown>;
       forgetMemories(pubkey: string): void;
     };
@@ -419,22 +441,6 @@ describe("goose memory reads", () => {
     });
   });
 
-  it("does not take a partial read that missed core as no core memory", async () => {
-    let listing = { entries: [], partial: true };
-    const relay = {
-      snapshot: () => ({
-        status: "ready",
-        session: { agentMemories: { read: async () => listing } },
-      }),
-    } as unknown as RelayData;
-    const runtime = new GooseRuntime({} as Host, () => relay) as unknown as {
-      memory(pubkey: string, entry: object): Promise<string | null | undefined>;
-    };
-    await expect(runtime.memory(self, {})).resolves.toBeUndefined();
-    listing = { entries: [], partial: false };
-    await expect(runtime.memory(self, {})).resolves.toBeNull();
-  });
-
   it("gives a tool the partial listing a slow native read answers", async () => {
     vi.useFakeTimers();
     // AbortSignal.timeout runs on real time; put it on the fake clock.
@@ -453,7 +459,11 @@ describe("goose memory reads", () => {
           session: { agentMemories: slowMemories(alice) },
         }),
       } as unknown as RelayData;
-      const runtime = new GooseRuntime({} as Host, () => relay) as unknown as {
+      const runtime = new GooseRuntime(
+        {} as Host,
+        () => relay,
+        async () => null,
+      ) as unknown as {
         memories(
           pubkey: string,
           slug?: string,

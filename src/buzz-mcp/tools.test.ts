@@ -1269,3 +1269,179 @@ it("keeps what it changed when a read after the change fails", async () => {
     }),
   ).rejects.toThrow("kind 39000 unavailable");
 });
+
+it("lists, opens and closes tabs for the working channel's threads", async () => {
+  const reply = event({
+    id: nested,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const elsewhere = event({ id: bob, tags: [["h", "other"]] });
+  // The reader takes the last marked root and ignores case.
+  const remarked = event({
+    id: "3".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", alice, "", "root"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+  });
+  const uppercase = event({
+    id: "4".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", alice.toUpperCase(), "", "reply"],
+    ],
+  });
+  const { client } = fake([
+    event({ id: root }),
+    reply,
+    elsewhere,
+    remarked,
+    uppercase,
+  ]);
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {}),
+  ).rejects.toThrow("Tabs are kept in Buzz Desktop and are unavailable here.");
+  const tabs = {
+    list: vi.fn(() => [
+      { root, pane: "side", shown: true },
+      { root: alice, pane: "main", name: "Launch plan", shown: false },
+    ]),
+    open: vi.fn(() => true),
+    close: vi.fn((): "closed" | "missing" | "shown" => "shown"),
+    rename: vi.fn(() => true),
+  };
+  client.tabs = tabs;
+  await expect(callTool(client, {}, "tabs", {})).rejects.toThrow(
+    "Tabs need a channel to work in.",
+  );
+  expect(await callTool(client, { channel: "chan" }, "tabs", {})).toBe(
+    `${root} side (shown)\n${alice} main "Launch plan"`,
+  );
+  expect(tabs.list).toHaveBeenCalledWith("chan");
+  // A reply opens its thread's root.
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "open",
+      thread: nested,
+    }),
+  ).toBe(`opened ${root}`);
+  expect(tabs.open).toHaveBeenCalledWith("chan", root);
+  // Another channel's thread never gets a tab here.
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "open",
+      thread: bob,
+    }),
+  ).rejects.toThrow(`${bob} is not in this channel.`);
+  expect(tabs.open).toHaveBeenCalledTimes(1);
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "close",
+      thread: root,
+    }),
+  ).rejects.toThrow("Your owner is looking at that tab, so it stays open.");
+  expect(tabs.close).toHaveBeenLastCalledWith("chan", root);
+  tabs.close.mockReturnValue("missing");
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "close",
+      thread: root,
+    }),
+  ).toBe("not open");
+  // A reply renames its thread's tab; no name restores the automatic title.
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: nested,
+      name: " Launch plan ",
+    }),
+  ).toBe("renamed");
+  expect(tabs.rename).toHaveBeenLastCalledWith("chan", root, "Launch plan");
+  for (const [message, expected] of [
+    [remarked, root],
+    [uppercase, alice],
+  ] as const) {
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: message.id,
+      name: "Plan",
+    });
+    expect(tabs.rename).toHaveBeenLastCalledWith("chan", expected, "Plan");
+  }
+  tabs.rename.mockReturnValue(false);
+  expect(
+    await callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: root,
+    }),
+  ).toBe("not open");
+  expect(tabs.rename).toHaveBeenLastCalledWith("chan", root, "");
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "rename",
+      thread: root,
+      name: 1,
+    }),
+  ).rejects.toThrow("name must be text.");
+  await expect(
+    callTool(client, { channel: "chan" }, "tabs", {
+      action: "move",
+      thread: root,
+    }),
+  ).rejects.toThrow("action must be open, close or rename.");
+});
+
+it("finds users through the community's name search, in its order", async () => {
+  const { client } = fake(community);
+  // Name search ranks Bob's exact match above a later Alice match.
+  client.searchProfiles = vi.fn(async () => [
+    profile(bob, "Wes"),
+    profile(alice, "Wesley"),
+  ]);
+  const found = await callTool(client, {}, "users", { q: "Wes" });
+  expect(found).toBe(`${bob} Wes\n${alice} Wesley`);
+  expect(client.searchProfiles).toHaveBeenCalledWith("wes", 100);
+  expect(client.query).not.toHaveBeenCalled();
+});
+
+it("finds users with NIP-50 search where the community has no name search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => undefined);
+  // The fake ignores `search`; the name filter keeps only matching names.
+  expect(await callTool(client, {}, "users", { q: "alice" })).toBe(
+    `${alice} Alice Smith`,
+  );
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: [0], search: "alice", limit: 100 },
+  ]);
+});
+
+it("finds a name longer than the name search's limit with NIP-50 search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => []);
+  // 100 code points (200 UTF-16 units) is the longest name search accepts.
+  const longest = "😀".repeat(100);
+  await callTool(client, {}, "users", { q: longest });
+  expect(client.searchProfiles).toHaveBeenCalledWith(longest, 100);
+  expect(client.query).not.toHaveBeenCalled();
+  const over = `${longest}w`;
+  expect(await callTool(client, {}, "users", { q: over })).toBe("No users.");
+  expect(client.searchProfiles).toHaveBeenCalledTimes(1);
+  expect(client.query).toHaveBeenCalledWith([
+    { kinds: [0], search: over, limit: 100 },
+  ]);
+});
+
+it("reads users by id without the name search", async () => {
+  const { client } = fake(community);
+  client.searchProfiles = vi.fn(async () => []);
+  expect(await callTool(client, {}, "users", { ids: [bob] })).toBe(
+    `${bob} Bob`,
+  );
+  expect(client.searchProfiles).not.toHaveBeenCalled();
+});

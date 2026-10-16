@@ -132,3 +132,27 @@ it("fetches only its community's media, signed for a get", async () => {
     btoa("\x01\x02\x03"),
   );
 });
+
+it("searches profile names, signed, and reports a community without the search", async () => {
+  const wes = signed(owner, { kind: 0, content: '{"name":"Wes"}', tags: [] });
+  const fetch = vi.mocked(globalThis.fetch);
+  fetch.mockResolvedValueOnce(new Response(JSON.stringify([wes])));
+  expect(await client().searchProfiles?.("wes", 100)).toMatchObject([
+    { id: wes.id },
+  ]);
+  const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
+  expect(url).toBe("https://relay.test/profiles/search");
+  expect(JSON.parse(String(init.body))).toEqual({ query: "wes", limit: 100 });
+  const header = (init.headers as Record<string, string>).authorization ?? "";
+  const auth = JSON.parse(atob(header.replace(/^Nostr /, "")));
+  expect(auth.kind).toBe(27235);
+  expect(auth.tags).toContainEqual(["u", url]);
+  for (const status of [404, 405]) {
+    fetch.mockResolvedValueOnce(new Response("", { status }));
+    expect(await client().searchProfiles?.("wes", 100)).toBeUndefined();
+  }
+  fetch.mockResolvedValueOnce(new Response("broken", { status: 500 }));
+  await expect(client().searchProfiles?.("wes", 100)).rejects.toThrow(
+    "500 broken",
+  );
+});

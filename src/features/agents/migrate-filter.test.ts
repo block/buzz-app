@@ -54,6 +54,30 @@ describe("upgradeWatch", () => {
       exclude_authors: [owner],
     });
   });
+  it("drops author values that never matched a watched event", () => {
+    const npub =
+      "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+    const upper = "C".repeat(64);
+    expect(upgrade(`!(author == "${npub}") && !is_reply`)).toEqual({
+      ...watch,
+      is_reply: false,
+    });
+    expect(upgrade(`!(author == "${upper}" || author == "${owner}")`)).toEqual({
+      ...watch,
+      exclude_authors: [owner],
+    });
+    expect(
+      upgrade(
+        `author == "${npub}" || author == "${owner}" || author == "${agent}"`,
+      ),
+    ).toEqual({ ...watch, authors: [owner] });
+    for (const filter of [
+      `author == "${npub}"`,
+      `author == "${upper}" && is_reply`,
+      `author == "${agent}"`,
+    ])
+      expect(() => upgrade(filter), filter).toThrow(/never match/);
+  });
   it("refuses the forms the spec cannot express", () => {
     for (const filter of [
       'content == "go"',
@@ -120,6 +144,39 @@ describe("migrateWatchFilters", () => {
     );
     migrateWatchFilters(storage);
     expect(storage.getItem(STORAGE_KEY)).toBe(once);
+  });
+  it("keeps a filter whose conversion the reader would skip", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const keys = Array.from({ length: 101 }, (_, i) =>
+      i.toString(16).padStart(64, "0"),
+    );
+    const value = {
+      ...watch,
+      filter: keys.map((key) => `author == "${key}"`).join(" || "),
+    };
+    const storage = memoryStorage();
+    const before = JSON.stringify({
+      version: 1,
+      agents: {
+        [agent]: {
+          pubkey: agent,
+          config: null,
+          attention: {
+            "watch/many": { slug: "watch/many", value, modifiedAt: 3 },
+          },
+        },
+      },
+    });
+    storage.setItem(STORAGE_KEY, before);
+    migrateWatchFilters(storage);
+    expect(storage.getItem(STORAGE_KEY)).toBe(before);
+    expect(readRecords(storage)[agent]?.skipped?.["watch/many"]).toMatchObject({
+      value,
+      problem: "Unknown field: filter",
+    });
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringMatching(/watch\/many: the converted watch is invalid/),
+    );
   });
   it("leaves missing or malformed storage alone", () => {
     const storage = memoryStorage();

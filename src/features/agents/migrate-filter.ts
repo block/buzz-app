@@ -3,6 +3,7 @@
 // relay attention spec, a stored event watch could have a `filter` expression.
 // The spec replaced it with `authors`, `exclude_authors` and `is_reply`, so
 // startup converts each stored filter once, with the spec's export mapping.
+import { validateObject } from "./attention";
 import { STORAGE_KEY } from "./store";
 
 const fail = (message: string): never => {
@@ -131,11 +132,17 @@ function fieldsOf(node: Legacy): Fields {
   );
 }
 
+const PUBKEY = /^[0-9a-f]{64}$/;
 /** Upgrades a stored event watch that still has the old `filter` field to the
  * `authors`, `exclude_authors` and `is_reply` fields, as the relay spec's
- * export does. One way: the result has no `filter`. The agent's own key leaves
- * `exclude_authors`, because its own events never reach a watch. Other values
- * come back unchanged. Throws a message when the filter cannot be converted. */
+ * export does. One way: the result has no `filter`. Other values come back
+ * unchanged. Throws a message when the filter cannot be converted.
+ *
+ * An `author ==` test matched a watched event's lowercase hex key exactly. A
+ * value that is not lowercase hex, or is the agent's own key (its own events
+ * never reach a watch), never matched, so it is dropped. If that leaves an
+ * `authors` test with no key, the watch could never fire, which the fields
+ * cannot express, so the filter stays. */
 export function upgradeWatch(value: unknown, agent: string): unknown {
   if (!isObject(value) || value.type !== "event" || !("filter" in value))
     return value;
@@ -144,14 +151,18 @@ export function upgradeWatch(value: unknown, agent: string): unknown {
   const fields = fieldsOf(parseFilter(filter as string));
   if (["authors", "exclude_authors", "is_reply"].some((name) => name in rest))
     fail("filter cannot be set beside the fields that replace it");
-  const exclude = [...new Set(fields.exclude ?? [])].filter(
-    (key) => key !== agent,
-  );
-  if (fields.authors && exclude.length)
+  const matchable = (keys: string[] | undefined) =>
+    keys &&
+    [...new Set(keys)].filter((key) => PUBKEY.test(key) && key !== agent);
+  const authors = matchable(fields.authors);
+  const exclude = matchable(fields.exclude) ?? [];
+  if (authors?.length === 0)
+    fail("filter tests only authors that never match a watched event");
+  if (authors && exclude.length)
     fail("filter needs both authors and exclude_authors");
   return {
     ...rest,
-    ...(fields.authors ? { authors: [...new Set(fields.authors)] } : {}),
+    ...(authors ? { authors } : {}),
     ...(exclude.length ? { exclude_authors: exclude } : {}),
     ...(fields.is_reply !== undefined ? { is_reply: fields.is_reply } : {}),
   };
@@ -178,6 +189,9 @@ export function migrateWatchFilters(storage: Storage) {
       try {
         const value = upgradeWatch(object.value, pubkey);
         if (value === object.value) continue;
+        // Never replace a filter with a watch the reader would skip.
+        const problem = validateObject(slug, value);
+        if (problem) fail(`the converted watch is invalid: ${problem}`);
         object.value = value;
         changed = true;
       } catch (error) {

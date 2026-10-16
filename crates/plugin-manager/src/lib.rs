@@ -879,9 +879,20 @@ impl Manager {
         self.catalog()
     }
     pub fn reload(&self, id: &str) -> Result<Catalog> {
-        self.reload_with_commit_hook(id, || {})
+        self.reload_with_commit_hook(id, false, false, || {})
     }
-    fn reload_with_commit_hook(&self, id: &str, before_commit: impl FnOnce()) -> Result<Catalog> {
+    /// Reload a folder installation without changing its enabled state.
+    /// An enabled plugin is replaced by the app's catalog observer.
+    pub fn reload_live(&self, id: &str, accept_permissions: bool) -> Result<Catalog> {
+        self.reload_with_commit_hook(id, true, accept_permissions, || {})
+    }
+    fn reload_with_commit_hook(
+        &self,
+        id: &str,
+        live: bool,
+        accept_permissions: bool,
+        before_commit: impl FnOnce(),
+    ) -> Result<Catalog> {
         valid_id(id)?;
         if is_bundled(id) {
             return Err("Bundled plugins cannot be reloaded from disk".into());
@@ -893,7 +904,7 @@ impl Manager {
                 .installed
                 .get(id)
                 .ok_or("Plugin is not installed")?;
-            if plugin.enabled {
+            if plugin.enabled && !live {
                 return Err("Disable the plugin before reloading it from disk".into());
             }
             let source = plugin
@@ -927,10 +938,11 @@ impl Manager {
             }
             grants
         };
-        if effective_grants(manifest.host.clone().unwrap_or_default())
-            != effective_grants(snapshot.3)
+        if !accept_permissions
+            && effective_grants(manifest.host.clone().unwrap_or_default())
+                != effective_grants(snapshot.3)
         {
-            return Err("Host access changed; use Load from folder to review it".into());
+            return Err(if live { "Host access changed; inspect the new manifest and use plugin reload ID --accept-permissions to accept it" } else { "Host access changed; use Load from folder to review it" }.into());
         }
         let revision = hash(&release.bytes);
         before_commit();
@@ -941,7 +953,7 @@ impl Manager {
                 .installed
                 .get_mut(id)
                 .ok_or("Plugin is not installed")?;
-            if plugin.enabled {
+            if plugin.enabled && !live {
                 return Err("Disable the plugin before reloading it from disk".into());
             }
             if plugin.current != snapshot.0 || plugin.current_source.as_ref() != Some(&snapshot.1) {
@@ -2108,7 +2120,7 @@ mod tests {
             .clone();
         fs::write(source.join("plugin.js"), "export const reloaded = true;").unwrap();
 
-        let error = match manager.reload_with_commit_hook("example.page", || {
+        let error = match manager.reload_with_commit_hook("example.page", false, false, || {
             manager.change("enable", "example.page").unwrap();
         }) {
             Ok(_) => panic!("reload should reject an enabled plugin at commit"),

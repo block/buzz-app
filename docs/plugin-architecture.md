@@ -747,6 +747,17 @@ reloading reads the recorded candidate folder and requires the manifest ID to st
 same. Reload rejects changed host declarations; use Load from folder to review and
 install that revision. Enabled plugins must be disabled before reload so memory-only
 plugin state, such as credentials, is not discarded by replacing the running module.
+For development, `buzzodz plugin reload ID` explicitly allows replacing an enabled
+folder plugin while preserving its enabled state. The running desktop observes the
+shared profile catalog every second and disposes the previous revision before
+activating the new one. Use the same `--home` and `--profile` as the app. Reloading
+identical build bytes does not restart the plugin. CLI reload applies the same
+manifest ID and publisher checks as Settings. Changed host access requires
+`buzzodz plugin reload ID --accept-permissions`, which reports the previous and
+updated declarations. Without that opt-in, changed access is refused. Rejected builds leave
+the installed revision unchanged. Replacing an active plugin ends its in-memory
+work, including a voice call. This is a host-management capability, since an
+external plugin cannot manage other installations or add CLI commands.
 Git installs and older installs without saved folder metadata must be imported again.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded

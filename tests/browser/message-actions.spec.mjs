@@ -29,7 +29,7 @@ test("coordination keeps its first line visible throughout expansion and collaps
   const event = app.append(
     "primary",
     "alpha",
-    "Three café names:\n\n1. Corner Cup: Friendly and local.\n2. Common Grounds: A gathering place.\n3. Porchlight Café: Warm and welcoming.",
+    "Three café names:\n\n1. Corner Cup: Friendly and local.\n2. Common Grounds: A gathering place.\n3. Porchlight Café: Warm and welcoming.\n\n[Nested destination](https://example.com/context)",
     true,
     true,
     root.id,
@@ -37,7 +37,7 @@ test("coordination keeps its first line visible throughout expansion and collaps
     [["audience", "agents"]],
   );
   const row = thread.locator(`[data-message-id="${event.id}"]`);
-  const toggle = row.getByRole("button", { expanded: false });
+  const toggle = row.getByRole("button", { name: /Three café names:/ });
   await expect(toggle).toBeVisible();
   await settle(page, thread.getByRole("region", { name: "Thread messages" }));
   const result = await row.evaluate(async (row) => {
@@ -112,6 +112,33 @@ test("coordination keeps its first line visible throughout expansion and collaps
   ).toBeVisible();
   await page.getByRole("dialog", { name: "Emoji picker" }).press("Escape");
   await expect(addReaction).toBeFocused();
+  // A real nested link owns its handled keyboard gesture; the row still owns
+  // the same gesture on its disclosure. Verify each portal's focus return.
+  const link = row.getByRole("link", {
+    name: "Nested destination",
+    exact: true,
+  });
+  await link.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Open in browser", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("menu", { includeHidden: true })).toHaveCount(1);
+  await expect(
+    page.getByRole("menuitem", { name: "Copy message", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(link).toBeFocused();
+  await toggle.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(
+    page.getByRole("menuitem", { name: "Copy message", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("menu", { includeHidden: true })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(toggle).toBeFocused();
 });
 
 // Native Tab must discover deferred controls before the browser chooses focus;

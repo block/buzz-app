@@ -268,7 +268,11 @@ function MessageActionBarControls({
                 event.currentTarget.querySelector("button");
             }}
             onKeyDown={(event) => {
-              if (!event.currentTarget.contains(event.target as Node)) return;
+              if (
+                event.defaultPrevented ||
+                !event.currentTarget.contains(event.target as Node)
+              )
+                return;
               if (
                 event.key === "ContextMenu" ||
                 (event.shiftKey && event.key === "F10")

@@ -439,22 +439,24 @@ export function MessageReactions(
             />
           );
         })}
-      {active && reactions.length > 0 && !props.disabled && (
-        <span
-          className={styles.inlineReactionTool}
-          data-testid="inline-add-reaction"
-        >
-          <ReactionTool
-            registry={tools}
-            session={session}
-            scope={scope}
-            messageId={row.id}
-            disabled={action.disabled}
-            select={select}
-            showDelivery={false}
-          />
-        </span>
-      )}
+      {active &&
+        (reactions.length > 0 || row.audience === "agents") &&
+        !props.disabled && (
+          <span
+            className={styles.inlineReactionTool}
+            data-testid="inline-add-reaction"
+          >
+            <ReactionTool
+              registry={tools}
+              session={session}
+              scope={scope}
+              messageId={row.id}
+              disabled={action.disabled}
+              select={select}
+              showDelivery={false}
+            />
+          </span>
+        )}
       {action.error && <span role="alert">{action.error}</span>}
       <ReactionDelivery session={session} messageId={row.id} />
     </div>

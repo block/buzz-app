@@ -375,13 +375,22 @@ export function PanelWorkspace({
             tabMenu={
               tabMenu && {
                 ...tabMenu,
-                // A detail tab is kept with the owner whose lifetime it shares.
+                // A detail tab cannot outlive its owner, so the owner is kept.
+                // Details live only here: close the kept owner's ones too,
+                // even when the channel has no other tab to close.
                 closeOthers:
                   tabMenu.closeOthers &&
-                  ((id) =>
-                    tabMenu.closeOthers?.(
-                      owned.find((tab) => tab.id === id)?.owner ?? id,
-                    ) ?? false),
+                  ((id) => {
+                    const local = owned.find((tab) => tab.id === id);
+                    const keep = local?.owner ?? id;
+                    const details = owned.filter((tab) => tab.owner === keep);
+                    const closed = tabMenu.closeOthers?.(keep) ?? false;
+                    if (!closed && !details.length) return false;
+                    // Focus follows the chosen detail's removal to its owner.
+                    if (local) closingTab.current = local.id;
+                    for (const tab of details) tab.close();
+                    return true;
+                  }),
               }
             }
             onValueChange={(id) => {

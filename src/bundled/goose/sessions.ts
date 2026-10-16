@@ -4,8 +4,9 @@
 // shown the conversation again. A one-off turn (a watch or timer wake) gets a
 // session of its own, closed when it ends. Every session holds one of the
 // host's MCP servers, so all goose agents share one pool of them, and the least
-// recently used idle session closes to make room. Nothing is saved: sessions
-// live as long as the app does.
+// recently used idle session closes to make room. Sessions live as long as
+// the app does; only when each conversation last used one is saved, so its
+// sessions stay listed after they close.
 import {
   GooseProcess,
   type ActivityReceipt,
@@ -24,6 +25,15 @@ export const IDLE_MS = 15 * 60_000;
 export const POOL_LIMIT = 48;
 const STOPPED: Settled = { ok: false, error: "goose was stopped" };
 const LATE: Settled = { ok: false, error: "goose did not start in time" };
+/** Saved conversations per agent; the least recently used are forgotten. */
+const SAVED_LIMIT = 200;
+
+/** What is saved for one conversation: when its session last took in a
+ * message or ended a turn. */
+export type SavedConversation = Readonly<{ at: number }>;
+export type SessionStore = {
+  set(key: string, saved: SavedConversation): void;
+};
 
 /** A session's hold on one MCP server in the pool. */
 type Slot = {
@@ -131,6 +141,8 @@ export type SessionsOptions = Readonly<{
   choice(): Choice;
   /** Changes when a setting a session was opened with has changed. */
   fingerprint(): string;
+  /** Where each conversation's last use is saved. */
+  store?: SessionStore;
   /** Called when a conversation's session opens, is sent a message, or
    * closes. */
   onChange?(): void;
@@ -450,6 +462,7 @@ export class AgentSessions {
    * has been shown, and restarts its idle countdown. */
   private touch(key: string, live: Live, seen?: number) {
     live.at = Date.now();
+    this.options.store?.set(key, { at: live.at });
     this.countdown(key, live);
     if (seen !== undefined)
       this.shown.set(key, Math.max(seen, this.shown.get(key) ?? 0));
@@ -476,6 +489,42 @@ export class AgentSessions {
   private close(live: Live) {
     return live.process.close(live.session);
   }
+}
+
+/** Conversations saved in local storage, by agent and then conversation. */
+export function localSessions(
+  storage: Storage,
+  agent: string,
+  name = "buzz.goose.sessions.v1",
+): SessionStore & {
+  /** Saved conversations, most recently used first. */
+  list(): [string, SavedConversation][];
+} {
+  const readAll = (): Record<string, Record<string, SavedConversation>> => {
+    try {
+      const value = JSON.parse(storage.getItem(name) ?? "{}");
+      return value && typeof value === "object" ? value : {};
+    } catch {
+      return {};
+    }
+  };
+  const list = (saved: Record<string, SavedConversation> = {}) =>
+    Object.entries(saved)
+      .filter(([, conversation]) => typeof conversation?.at === "number")
+      .sort(([, a], [, b]) => b.at - a.at);
+  return {
+    list: () => list(readAll()[agent]),
+    set: (key, saved) => {
+      const all = readAll();
+      const kept = list({ ...all[agent], [key]: saved }).slice(0, SAVED_LIMIT);
+      all[agent] = Object.fromEntries(kept);
+      try {
+        storage.setItem(name, JSON.stringify(all));
+      } catch (error) {
+        console.warn("goose sessions were not saved", error);
+      }
+    },
+  };
 }
 
 /** `workspace` as an absolute path, which ACP sessions need: the host

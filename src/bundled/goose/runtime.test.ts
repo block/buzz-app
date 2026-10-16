@@ -114,7 +114,12 @@ function setup(
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
   const core = vi.fn(async () => options.core);
-  const runtime = new GooseRuntime(host, () => relay, core);
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  } as Storage;
+  const runtime = new GooseRuntime(host, () => relay, core, storage);
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,

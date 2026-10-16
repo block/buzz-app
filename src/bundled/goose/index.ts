@@ -24,6 +24,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     host,
     agents.relay,
     (pubkey, signal) => agents.core(pubkey, signal),
+    localStorage,
     () => agents.tools(),
   );
   const spawn = host.spawn?.bind(host);
@@ -73,20 +74,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
       return [provider, model].filter(Boolean).join(" · ") || "Goose";
     },
     sessions: {
-      list: (pubkey) =>
-        runtime.sessions(pubkey).flatMap(({ key, busy, at }) => {
-          // A one-off turn joins no conversation.
-          if (at === undefined) return [];
+      list: (pubkey) => {
+        const busy = new Map(
+          runtime.sessions(pubkey).map((view) => [view.key, view.busy]),
+        );
+        return runtime.conversations(pubkey).map(({ key, at }) => {
           const [channelId = key, root] = key.split("/");
-          return [
-            {
-              channelId,
-              ...(root && { root }),
-              at,
-              status: busy ? "Working" : "Idle",
-            },
-          ];
-        }),
+          const working = busy.get(key);
+          return {
+            channelId,
+            ...(root && { root }),
+            at,
+            ...(working !== undefined && {
+              status: working ? "Working" : "Idle",
+            }),
+          };
+        });
+      },
       subscribe: (listener) => runtime.subscribe(listener),
     },
     tabs: [

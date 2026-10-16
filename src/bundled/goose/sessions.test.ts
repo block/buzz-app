@@ -10,6 +10,8 @@ import {
   AgentSessions,
   IDLE_MS,
   type Launch,
+  localSessions,
+  type SavedConversation,
   ServerPool,
   SharedProcess,
 } from "./sessions";
@@ -29,9 +31,11 @@ const setup = (
     serve,
     silent,
     onChange,
+    store,
   }: Readonly<{
     pool?: ServerPool;
     onChange?: () => void;
+    store?: Map<string, SavedConversation>;
     /** Wraps the fake's `serve`. */
     serve?: (serve: ServeMcp) => ServeMcp;
     silent?: readonly string[];
@@ -65,6 +69,9 @@ const setup = (
       process,
       pool,
       ...(onChange && { onChange }),
+      ...(store && {
+        store: { set: (key: string, saved) => void store.set(key, saved) },
+      }),
       launch: async () => settings,
       choice: () => choice,
       fingerprint: () =>
@@ -348,6 +355,21 @@ describe("AgentSessions", () => {
     expect(fake.geese[0]?.closed).toEqual(["session-1"]);
     expect(sessions.snapshot()).toEqual([]);
     expect(sessions.seen("a")).toBe(0);
+  });
+
+  it("saves when each conversation last used its session, after the session closes too", async () => {
+    vi.useFakeTimers();
+    const store = new Map<string, SavedConversation>();
+    const { sessions } = setup({}, false, { store });
+    await sessions.deliver("a", "one", 1);
+    const at = sessions.snapshot()[0]?.at;
+    expect(store.get("a")).toEqual({ at });
+    await vi.advanceTimersByTimeAsync(IDLE_MS);
+    expect(sessions.snapshot()).toEqual([]);
+    expect(store.get("a")).toEqual({ at });
+    // A one-off turn joins no conversation.
+    await sessions.runOnce("watch/x", () => "look");
+    expect([...store.keys()]).toEqual(["a"]);
   });
 
   it("dates a session by the messages it takes in and the turns it ends, not by a long turn keeping it open", async () => {
@@ -708,4 +730,23 @@ describe("AgentSessions", () => {
     });
     expect(other.sessions.snapshot().map((live) => live.key)).toEqual(["a"]);
   });
+});
+
+it("keeps saved conversations per agent in storage, most recent first", () => {
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  } as Storage;
+  const one = localSessions(storage, "one");
+  one.set("c/root", { at: 1 });
+  one.set("dm", { at: 3 });
+  localSessions(storage, "two").set("c/root", { at: 2 });
+  expect(localSessions(storage, "one").list()).toEqual([
+    ["dm", { at: 3 }],
+    ["c/root", { at: 1 }],
+  ]);
+  expect(localSessions(storage, "two").list()).toEqual([["c/root", { at: 2 }]]);
+  data.set("buzz.goose.sessions.v1", "not json");
+  expect(one.list()).toEqual([]);
 });

@@ -283,11 +283,23 @@ export function createChannelStore(
   function setWindow(state: WindowState, patch: Partial<ChannelWindow>) {
     let rows = patch.rows ?? state.snapshot.rows;
     if (authorized(state.channelId) && transport) {
+      // Session reads (agents, search, previews) and the live tail can carry
+      // rows from before the loaded history. Showing one leaves a gap that a
+      // later page fills mid-list, where the timeline can neither anchor the
+      // reader nor tell it from new arrivals. That page shows them instead.
+      const floor =
+        (patch.hasMore ?? state.snapshot.hasMore)
+          ? state.cursor?.createdAt
+          : undefined;
       const combined = new Map(
-        [...state.events, ...state.traffic.values()].map((event) => [
-          event.id,
-          event as import("./events").EventData,
-        ]),
+        [...state.events, ...state.traffic.values()]
+          .filter(
+            (event) =>
+              floor === undefined ||
+              event.created_at >= floor ||
+              !channelRowKind(event.kind),
+          )
+          .map((event) => [event.id, event as import("./events").EventData]),
       );
       const ids = new Set(combined.keys());
       for (const item of local?.snapshot() ?? [])

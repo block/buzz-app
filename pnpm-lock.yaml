@@ -7,7 +7,7 @@ settings:
 patchedDependencies:
   '@base-ui/react@1.8.0': 2aceff6fff69ac4e5909de9bf576e97855e6215c1ab752005fd488c41f0975d1
   sonner@2.0.8: 5382cda2bb9248e880166099e960d33a043570b790643cf5238d60c61f7def28
-  virtua@0.51.0: 1709eed770fd2d356e4df9fe15b8affef5c27fc960a722aa0237c85c9908bec9
+  virtua@0.53.5: 5b06c19080b1bf5849b1f7d79948cd7b3981f1e687dfc7a9e5ca1ebd88cfcfb3
 
 importers:
 
@@ -143,8 +143,8 @@ importers:
         specifier: 2.0.8
         version: 2.0.8(patch_hash=5382cda2bb9248e880166099e960d33a043570b790643cf5238d60c61f7def28)(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       virtua:
-        specifier: 0.51.0
-        version: 0.51.0(patch_hash=1709eed770fd2d356e4df9fe15b8affef5c27fc960a722aa0237c85c9908bec9)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: 0.53.5
+        version: 0.53.5(patch_hash=5b06c19080b1bf5849b1f7d79948cd7b3981f1e687dfc7a9e5ca1ebd88cfcfb3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -518,12 +518,14 @@ packages:
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@rolldown/binding-linux-arm64-musl@1.2.7':
     resolution: {integrity: sha512-lAIXTH/aiLRLxsTgQvfhjo4K1ydWIp00+V0voOr9beb/9ZmkUFrSIb03dXNFRgMNvkE6oGsF10ioQ6UsI+vS5Q==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@rolldown/binding-linux-ppc64-gnu@1.2.7':
     resolution: {integrity: sha512-kdnwS28Pkenp/mZMRwjXXXwxQ7pIsm+bF919LUK93BOyhcLsrVKdP2p9fxpiPNPAbNuch8ypQt0pm2P2LYCAGg==}
@@ -544,6 +546,7 @@ packages:
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@rolldown/binding-linux-x64-musl@1.2.7':
     resolution: {integrity: sha512-pAsE8iiDxUg1xBqdhrTfg45AVDVpirjz00sblEYClGNNcMnDb+e8beQgqIAw6LvauX/APvgxUnwrgun/YYGBhw==}
@@ -1939,8 +1942,8 @@ packages:
   vfile@6.0.3:
     resolution: {integrity: sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q==}
 
-  virtua@0.51.0:
-    resolution: {integrity: sha512-D4e4lTCaH5ZEb/mA0lN4urI3gMbh8USVzXkgsS1KmOMWFB5aqw79HHWyCxG1uZi6BwIgiIKHiUxcf/PLVYTm1Q==}
+  virtua@0.53.5:
+    resolution: {integrity: sha512-hhtrEli6LkMzKXhqhuStnaU5DECVLjxwr/FbrGcnkId2gyKQJ/5E6LE/T2F4OzyghEOsOCl/g+0DyxJUmkah8Q==}
     peerDependencies:
       '@angular/common': '>=20.0.0'
       '@angular/core': '>=20.0.0'
@@ -3819,7 +3822,7 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
-  virtua@0.51.0(patch_hash=1709eed770fd2d356e4df9fe15b8affef5c27fc960a722aa0237c85c9908bec9)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  virtua@0.53.5(patch_hash=5b06c19080b1bf5849b1f7d79948cd7b3981f1e687dfc7a9e5ca1ebd88cfcfb3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     optionalDependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)

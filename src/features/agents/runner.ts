@@ -466,10 +466,15 @@ export class AgentRunners {
   }
   /** Wakes each runner, which starts any timer that is due. */
   tick() {
-    for (const runner of this.runners.values()) {
-      this.admit(runner);
-      void this.drain(runner);
-    }
+    for (const pubkey of this.runners.keys()) this.wake(pubkey);
+  }
+  /** Wakes the agent's runner, as when the changes its timers wait for are
+   * saved: one due meanwhile starts now, not at the next tick. */
+  wake(pubkey: string) {
+    const runner = this.runners.get(pubkey);
+    if (!runner) return;
+    this.admit(runner);
+    void this.drain(runner);
   }
   /** Whether this copy runs the agent: its type can run it, and no other
    * copy of the app holds it. */

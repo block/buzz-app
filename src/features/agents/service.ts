@@ -2482,7 +2482,11 @@ export class AgentsService extends Service implements Agents {
       } finally {
         const left = (this.changing.get(pubkey) ?? 1) - 1;
         if (left) this.changing.set(pubkey, left);
-        else this.changing.delete(pubkey);
+        else {
+          this.changing.delete(pubkey);
+          // Its timers waited for this change, saved or failed.
+          this.runners.wake(pubkey);
+        }
       }
     });
   }

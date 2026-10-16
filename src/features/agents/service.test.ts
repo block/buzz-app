@@ -2333,6 +2333,79 @@ it("keeps a settings change still being saved when a timer saves its progress", 
   expect(saved.timers["watch/tick"]).toMatchObject({ used: 1 });
 });
 
+it("starts a timer due while a change was saving as soon as it is saved", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async () => {
+    await hold;
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, {
+    attention: {
+      "watch/b": {
+        type: "timer",
+        interest_id: "default",
+        prompt: "b",
+        enabled: true,
+        interval_secs: 60,
+        armed_at: 1_001,
+        max_occurrences: 1,
+        expires_at: 1_063,
+      },
+    },
+  });
+  await vi.advanceTimersByTimeAsync(59_000);
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  // Due at 1061 while the edit saves; it expires before the 1065 tick.
+  const saving = service.save(bot, { config: { reply: "edited" } });
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(run).not.toHaveBeenCalled();
+  release();
+  await saving;
+  await vi.advanceTimersByTimeAsync(100);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("starts a due timer in a free Interest while another timer's progress saves", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  let hold: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async () => {
+    await hold;
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (interest: string, prompt: string, expires: number | null) =>
+    ({
+      type: "timer",
+      interest_id: interest,
+      prompt,
+      enabled: true,
+      interval_secs: 60,
+      armed_at: 1_000,
+      max_occurrences: 1,
+      expires_at: expires,
+    }) as const;
+  await service.save(bot, {
+    attention: {
+      "interest/other": { type: "interest", instructions: "Other." },
+      "watch/a": timer("default", "a", null),
+      "watch/b": timer("other", "b", 1_061),
+    },
+  });
+  // A's run stays active, and its progress is still saving.
+  run.mockImplementation(() => new Promise<void>(() => {}));
+  hold = new Promise(() => {});
+  await vi.advanceTimersByTimeAsync(60_000);
+  const slugs = run.mock.calls.map(([{ trigger }]) =>
+    trigger.type === "timer" ? trigger.slug : trigger.type,
+  );
+  expect(slugs.sort()).toEqual(["watch/a", "watch/b"]);
+});
+
 it("keeps a timer rearm still being saved when another timer saves its progress", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
   const disk = new Map<string, string>();
@@ -6262,10 +6335,12 @@ it("stops watches and timers while attention is off, keeps every object, and res
   expect(service.find(bot)?.attention).toEqual(before?.attention);
   emit({ events: [deploy("w2")] });
   await vi.advanceTimersByTimeAsync(5_000);
+  // The overdue timer starts once turning attention on is saved, before the
+  // next tick and so before the later event.
   expect(run.mock.calls.map(([{ trigger }]) => trigger.type)).toEqual([
     "mention",
-    "watch",
     "timer",
+    "watch",
   ]);
 });
 

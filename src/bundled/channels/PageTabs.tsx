@@ -45,9 +45,12 @@ export function PageTabs({
   children,
   host,
   extensions,
+  visits,
 }: PageTabsProps & {
   host: ConversationHostServices;
   extensions: ConversationExtensions;
+  /** Whether showing a tab visits its conversation, as Channels does. */
+  visits?: boolean | undefined;
 }) {
   const tabState = useChannelTabState(session, undefined, `page:${id}`);
   const list = useChannelList(session.channels);
@@ -95,6 +98,7 @@ export function PageTabs({
     anyMainThread: true,
     // The page stays in view; a thread reaches the main pane only when moved.
     threadPane: "side",
+    visits,
     conversationIcon: (item) => {
       const Icon = channelIcon(item);
       return <Icon size="1rem" />;

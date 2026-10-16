@@ -21,9 +21,11 @@ vi.mock("./ConversationTab", () => ({
   ConversationTab: ({
     tab,
     channel,
+    visit,
   }: {
     tab: Tab;
     channel: { name: string };
+    visit: boolean;
   }) => (
     <p
       data-message={tab.messageId}
@@ -31,6 +33,7 @@ vi.mock("./ConversationTab", () => ({
       data-mark-read={tab.kind === "conversation" ? tab.markRead : undefined}
     >
       {tab.kind} in {channel.name}
+      {!visit && " unvisited"}
     </p>
   ),
 }));
@@ -50,7 +53,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function fixture() {
+function fixture(visits?: boolean) {
   const channels = [
     { id: "alpha", name: "alpha" },
     { id: "beta", name: "beta" },
@@ -91,6 +94,7 @@ function fixture() {
       label="Switchboard"
       host={host}
       extensions={{} as ConversationExtensions}
+      visits={visits}
     >
       {(next) => {
         open = next;
@@ -200,4 +204,17 @@ it("opens a thread at one of its messages", () => {
   page.open({ channelId: "alpha", threadId: "root" });
   expect(thread()).toHaveAttribute("data-message", "root");
   expect(thread()).toHaveAttribute("data-reveal", "2");
+});
+
+it("opens a page's tabs without visiting their conversations when it asks", () => {
+  const page = fixture(false);
+  expect(
+    page.open({ channelId: "alpha", threadId: "root", messageId: "reply" }),
+  ).toBe(true);
+  expect(screen.getByText("thread in alpha unvisited")).toHaveAttribute(
+    "data-message",
+    "reply",
+  );
+  expect(page.open({ channelId: "beta" })).toBe(true);
+  expect(screen.getByText("conversation in beta unvisited")).toBeVisible();
 });

@@ -290,3 +290,52 @@ it.each(["history", "details"])(
     expect(save).not.toHaveBeenCalled();
   },
 );
+
+it.each([false, true])(
+  "staged session cards keep caption-first naming and protect chosen names (chosen=%s)",
+  async (chosen) => {
+    const { startingChatTitle } = await import("../sessions/chat-title");
+    const { composerMarkdown } = await import("../messages/composer-markdown");
+    const draft = {
+      text: "@Agent Review this",
+      recipients: [{ pubkey: first, name: "Agent", start: 0, end: 6 }],
+      sessionCards: ["[Session: Fix](buzz://channel/session-id)"],
+    };
+    const name = startingChatTitle(draft);
+    expect(name).toBe("Review this");
+    const sent = { ...event, content: composerMarkdown(draft) };
+    const save = vi.fn();
+    const relay = connection(() => ({
+      status: "ready",
+      viewer: owner,
+      session: {
+        mePlacement: { has: () => true },
+        read: async () => [sent],
+        profiles: { snapshot: () => new Map([[first, { name: "Agent" }]]) },
+        agentChoices: { snapshot: () => ({ identities: [] }) },
+        channelDetails: {
+          available: true,
+          load: async () => ({
+            name,
+            labels: chosen ? ["buzz.session.named"] : [],
+            canEdit: true,
+          }),
+          save,
+        },
+      },
+    }));
+    await nameMeChat(relay, owner, first, sent, "Useful title");
+    expect(save).toHaveBeenCalledTimes(chosen ? 0 : 1);
+  },
+);
+
+it("an agent tag without a caption retains the session-card starting title", async () => {
+  const { startingChatTitle } = await import("../sessions/chat-title");
+  expect(
+    startingChatTitle({
+      text: "@Agent ",
+      recipients: [{ pubkey: first, name: "Agent", start: 0, end: 6 }],
+      sessionCards: ["[Session: Fix](buzz://channel/session-id)"],
+    }),
+  ).toBe("[Session: Fix](buzz://channel/session-id)");
+});

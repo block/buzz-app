@@ -1073,6 +1073,7 @@ function Composer({
       dirty.current ||
       valueRef.current.text.trim() ||
       valueRef.current.recipients.length ||
+      valueRef.current.sessionCards?.length ||
       attachments.items.length ||
       !rememberAgentsPreference()
     ) {
@@ -1233,7 +1234,8 @@ function Composer({
       setError("Tag an agent to send");
       return;
     }
-    if (!draft.trim() && !sessionCards?.length && !attachments.items.length) return;
+    if (!draft.trim() && !sessionCards?.length && !attachments.items.length)
+      return;
     const recovering = !submission && recoveryFor(session).get(recoveryKey);
     if (recovering) {
       setAccepted(recovering);

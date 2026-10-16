@@ -5,6 +5,7 @@ import { canonicalDetailsName } from "../relay/channel-details-protocol";
 import { profileMentionParts } from "../messages/profile-mentions";
 import { profileKey } from "../profiles/target";
 import type { DraftRecipient } from "../messages/mention-draft";
+import { SESSION_NAMED_LABEL } from "../sessions/metadata";
 import { startingChatTitle } from "../sessions/chat-title";
 
 /**
@@ -112,6 +113,7 @@ export async function nameMeChat(
   if (
     !current() ||
     !base.canEdit ||
+    base.labels?.includes(SESSION_NAMED_LABEL) ||
     base.name === name ||
     canonicalDetailsName(base.name) !== initial
   )

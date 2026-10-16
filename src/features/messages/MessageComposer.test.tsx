@@ -7621,11 +7621,18 @@ it.each([
   "typed-while-loading",
   "storage-failure",
   "archived",
+  "session-card",
 ])(
   "upgrades the exact legacy Solo assistant once without replacing authored intent (%s)",
   async (mode) => {
     writeView("scope", "me:assistant:channel", second.pubkey);
     if (mode === "draft") writeView("scope", "draft:channel", "Keep my draft");
+    if (mode === "session-card")
+      writeView(
+        "scope",
+        "draft:channel",
+        "[Session: Keep](buzz://channel/session-id)",
+      );
     if (mode === "off") setRememberAgentsPreference(false);
     const h = mount();
     h.setLibrary([], "loading");
@@ -7663,6 +7670,10 @@ it.each([
       expect(h.input()).toHaveValue("");
       expect(readView("scope", "me:assistant:channel", null)).toBe("");
     }
+    if (mode === "session-card")
+      expect(readView("scope", "draft:channel", null)).toBe(
+        "[Session: Keep](buzz://channel/session-id)",
+      );
     if (mode === "storage-failure") {
       expect(h.input()).toHaveValue("");
       expect(readView("scope", "me:assistant:channel", null)).toBe(

@@ -1,0 +1,15 @@
+{
+  "id": "buzz.acp",
+  "name": "ACP agents",
+  "apiVersion": 1,
+  "description": "Run any harness that speaks the Agent Client Protocol in Buzz.",
+  "discovery": { "category": "agents" },
+  "host": {
+    "processes": [
+      { "id": "harness", "program": "env" },
+      { "id": "read", "program": "base64", "args": ["-i"] },
+      { "id": "workspace", "program": "pwd" }
+    ],
+    "mcp": true
+  }
+}

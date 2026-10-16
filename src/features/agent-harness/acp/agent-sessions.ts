@@ -8,6 +8,7 @@
 // live as long as the app does.
 import type { AcpProcess } from "./process";
 import type { AcpSession } from "./session";
+import { codeOf } from "./steps";
 import type {
   ActivityReceipt,
   Choice,
@@ -240,9 +241,11 @@ export class AgentSessions {
       if (this.disposed) return this.stopped;
       if (signal?.aborted) return this.late;
       console.warn(`${this.options.label} could not start`, error);
+      const code = codeOf(error);
       return {
         ok: false,
         error: `${this.options.label} could not start: ${message(error)}`,
+        ...(code === undefined ? {} : { code }),
       };
     }
   }

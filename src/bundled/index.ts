@@ -30,6 +30,8 @@ import codexManifest from "./codex/manifest.json";
 import * as codex from "./codex";
 import gooseManifest from "./goose/manifest.json";
 import * as goose from "./goose";
+import acpManifest from "./acp/manifest.json";
+import * as acp from "./acp";
 import channelsManifest from "./channels/manifest.json";
 import usageManifest from "./channel-usage/manifest.json";
 import * as usage from "./channel-usage";
@@ -185,6 +187,13 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...gooseManifest, apiVersion: 1 },
     module: goose,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...acpManifest, apiVersion: 1 },
+    module: acp,
+    // Off by default: its agents run a command the owner types in, so turning
+    // it on is a deliberate choice.
+    enabledByDefault: false,
   },
   {
     manifest: { ...workflowsManifest, apiVersion: 1 },

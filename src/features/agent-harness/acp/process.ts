@@ -388,7 +388,12 @@ export class AcpProcess {
       if (typeof id !== "number") return;
       const call = this.calls.get(id);
       this.calls.delete(id);
-      if (message.error) call?.reject(new Error(errorMessage(message.error)));
+      if (message.error)
+        call?.reject(
+          Object.assign(new Error(errorMessage(message.error)), {
+            code: message.error.code,
+          }),
+        );
       else call?.resolve(message.result);
       return;
     }

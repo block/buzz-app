@@ -46,6 +46,8 @@ function fakeHarness(
     hold?: boolean;
     /** Kill asks it to stop, and it never exits. */
     holdExit?: boolean;
+    /** Every prompt is answered with this error. */
+    promptError?: { code: number; message: string };
   }> = {},
 ) {
   const started: {
@@ -127,6 +129,8 @@ function fakeHarness(
           else if (method === "session/new")
             reply(id, { sessionId: `session-${++sessions}` });
           else if (method === "session/close") reply(id, {});
+          else if (method === "session/prompt" && options.promptError)
+            send({ id, error: options.promptError });
           else if (method === "session/prompt") {
             const sessionId = String(params.sessionId);
             const text = (params.prompt as { text: string }[])[0]?.text ?? "";
@@ -408,6 +412,19 @@ describe("a session without hooks", () => {
       { ok: true },
       { ok: true },
     ]);
+  });
+
+  it("keeps the harness's error code on a failed turn", async () => {
+    const harness = fakeHarness({
+      promptError: { code: -32000, message: "Authentication required" },
+    });
+    const acp = await start(harness);
+    const session = await acp.open({ cwd: "/work", systemPrompt: "" });
+    await expect(session.send("first")).resolves.toEqual({
+      ok: false,
+      error: "Authentication required",
+      code: -32000,
+    });
   });
 
   it("asks the harness to close a session only when it advertises close", async () => {

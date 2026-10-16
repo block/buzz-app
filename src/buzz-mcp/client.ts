@@ -43,6 +43,22 @@ export type Memories = Readonly<{
   partial: boolean;
 }>;
 
+/** The owner's tabs on this device for a channel's own threads, in that
+ * channel's workspace. `shown` is a tab the viewer sees, which `close` leaves
+ * open. */
+export type ThreadTabs = Readonly<{
+  list(channel: string): readonly Readonly<{
+    root: string;
+    pane: string;
+    name?: string | undefined;
+    shown: boolean;
+  }>[];
+  /** False when the thread already has a tab there. */
+  open(channel: string, root: string): boolean;
+  close(channel: string, root: string): "closed" | "missing" | "shown";
+  /** An empty name restores the automatic title; false when it has no tab. */
+  rename(channel: string, root: string, name: string): boolean;
+}>;
 export type Memory = Readonly<{
   slug: string;
   body: string;
@@ -53,6 +69,13 @@ export interface BuzzClient {
   readonly pubkey: string;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
+  /** Finds profiles whose `name` or `display_name` matches `query`, best
+   * match first. `undefined` when the community has no profile name search;
+   * NIP-50 search, which matches the whole profile, is the fallback. */
+  searchProfiles?(
+    query: string,
+    limit: number,
+  ): Promise<readonly BuzzEvent[] | undefined>;
   /** Signs `event` as the agent and posts it. */
   publish(event: Template): Promise<BuzzEvent>;
   upload(data: Uint8Array, mime: string): Promise<Upload>;
@@ -70,6 +93,8 @@ export interface BuzzClient {
   /** The agent's attention, where its host keeps one. Without it the
    * attention tools have nothing to act on. */
   readonly attention?: AgentAttention;
+  /** The owner's thread tabs, where the host shows them. */
+  tabs?: ThreadTabs;
 }
 
 /** Where the agent is working, so tools can default to it. `topLevel` keeps

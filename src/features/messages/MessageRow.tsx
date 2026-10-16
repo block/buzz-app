@@ -29,6 +29,7 @@ import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
 import { usePresenceStatus } from "../presence/react";
+import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
@@ -759,7 +760,17 @@ function MessageRowContent({
                     onOpenLink={openLink}
                   />
                 ) : (
-                  <strong className={styles.author}>{name}</strong>
+                  <span className={styles.authorWithStatus}>
+                    <strong className={styles.author}>{name}</strong>
+                    {session && !stackPrevious && (
+                      <UserStatusDisplay
+                        session={session}
+                        userId={row.authorId}
+                        compact
+                        focusable={false}
+                      />
+                    )}
+                  </span>
                 )}
                 {!stackPrevious && (
                   <MessageTimestamp createdAt={row.createdAt} />

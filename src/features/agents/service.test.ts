@@ -51,6 +51,8 @@ vi.mock("./relay-removal", () => ({
 
 const viewer = "a".repeat(64);
 const other = "b".repeat(64);
+const UNFINISHED =
+  "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
 const bot = "c".repeat(64);
 const sibling = "d".repeat(64);
 const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
@@ -98,8 +100,17 @@ function fakeRelay(origin = "https://relay.example.test") {
     archived,
     /** The last read did not finish, as when its session closed. */
     unknown: false,
+    /** The community has no archives at all. */
+    unavailable: false,
+    snapshot() {
+      return { status: this.unavailable ? "unavailable" : "ready" };
+    },
+    get supported() {
+      return !this.unavailable;
+    },
     consent: vi.fn(
-      async () => ({ auth: ["auth"] }) as { auth: string[] } | null,
+      async (_pubkey: string, _signal?: AbortSignal) =>
+        ({ auth: ["auth"] }) as { auth: string[] } | null,
     ),
     ensure: vi.fn(async () => {}),
     refresh: vi.fn(async () => {}),
@@ -108,9 +119,10 @@ function fakeRelay(origin = "https://relay.example.test") {
       return archived.has(pubkey) ? "archived" : "not-archived";
     },
     writable: true,
-    request: vi.fn(async (_: string, pubkey: string) => {
-      steps.push("archive");
-      archived.add(pubkey);
+    request: vi.fn(async (action: string, pubkey: string) => {
+      steps.push(action);
+      if (action === "archive") archived.add(pubkey);
+      else archived.delete(pubkey);
     }),
   };
   let status = "connected";
@@ -119,8 +131,19 @@ function fakeRelay(origin = "https://relay.example.test") {
   const listed: RelayEvent[] = [];
   /** The kind 9 messages it stores, which catch-up reads. */
   const history: RelayEvent[] = [];
+  /** Each agent's `core` memory as the community holds it. */
+  const memories = new Map<string, string>();
   const session = {
     archives,
+    agentMemories: {
+      read: vi.fn(async (pubkey: string) => {
+        const body = memories.get(pubkey);
+        return {
+          entries: body === undefined ? [] : [{ slug: "core", body }],
+          partial: false,
+        };
+      }),
+    },
     read: vi.fn(async (filters: readonly ReadFilter[]) =>
       filters[0]?.kinds?.includes(9) ? page(history, filters[0]) : [...listed],
     ),
@@ -217,6 +240,7 @@ function fakeRelay(origin = "https://relay.example.test") {
     archives,
     listed,
     history,
+    memories,
     session,
     presence: session.publishAgentPresence as ReturnType<
       typeof vi.fn<RelaySession["publishAgentPresence"]>
@@ -331,6 +355,12 @@ function fakeNative(identities: AgentIdentity[] = []) {
           name: "Older",
           deleted: false,
         };
+        // As native does, under its lock every copy of the app shares: a
+        // re-import replaces a deleted row and refuses a live one.
+        const index = identities.findIndex((item) => item.pubkey === pubkey);
+        if (index >= 0 && !identities[index]?.deleted)
+          throw new Error("That agent is already here");
+        if (index >= 0) identities.splice(index, 1);
         identities.push(identity);
         return { agent: identity, carry: { instructions: "Triage." } };
       },
@@ -345,6 +375,10 @@ function fakeNative(identities: AgentIdentity[] = []) {
     }),
     setType: vi.fn(async (pubkey: string, type: string) => {
       change(pubkey, { type });
+    }),
+    beginDelete: vi.fn(async (pubkey: string) => {
+      steps.push("stop");
+      change(pubkey, { deleting: true });
     }),
     remove: vi.fn(async (pubkey: string) => {
       steps.push("key");
@@ -364,6 +398,7 @@ function fakeNative(identities: AgentIdentity[] = []) {
     ),
     publishProfile: vi.fn(async (_: string) => {}),
     query: vi.fn(async () => []),
+    searchProfiles: vi.fn(async () => undefined),
     upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
     media: vi.fn(async () => ""),
     remember: vi.fn(async (pubkey: string) =>
@@ -486,6 +521,7 @@ async function setup({
     relay: fake.relay,
     reconnecting: fake.reconnecting,
     recover: fake.recover,
+    memories: fake.memories,
     archives: fake.archives,
     session: fake.session,
     history: fake.history,
@@ -556,7 +592,7 @@ it("brings over an identity not already an agent, with its type's defaults and w
   // `bot` is already an agent here; the warning still shows.
   expect(found.agents.map((agent) => agent.pubkey)).toEqual([sibling]);
   expect(found.warnings).toEqual(["Could not read one store"]);
-  const agent = await service.port({
+  const { agent } = await service.port({
     source: "installed",
     pubkey: sibling,
     type: "example/echo",
@@ -584,9 +620,60 @@ it("brings over an identity not already an agent, with its type's defaults and w
   ).rejects.toThrow("That agent type is not available");
 });
 
+it("brings back unarchived an agent whose Delete cleanup archived it, or says it stays archived", async () => {
+  const { service, archives } = await setup();
+  archives.archived.add(sibling);
+  const port = () =>
+    service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+    });
+  const back = await port();
+  expect(archives.request).toHaveBeenCalledWith(
+    "unarchive",
+    sibling,
+    expect.any(AbortSignal),
+  );
+  expect(back.notes).toEqual([]);
+  await service.remove(sibling);
+  archives.archived.add(sibling);
+  archives.request.mockClear();
+  archives.consent.mockResolvedValue(null);
+  const kept = await port();
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(kept.notes).toEqual([
+    "Older is still archived in this community, so it stays out of member lists and mentions there.",
+  ]);
+});
+
+it("passes on what native says did not come over", async () => {
+  const { service, native } = await setup();
+  native.port.mockImplementationOnce(
+    async (_, pubkey, destination, owner, type) => ({
+      agent: {
+        pubkey,
+        relay: destination,
+        owner,
+        type,
+        name: "Older",
+        deleted: false,
+      },
+      carry: { instructions: "Triage." },
+      notes: ["Older came over without its picture."],
+    }),
+  );
+  const { notes } = await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+  });
+  expect(notes).toEqual(["Older came over without its picture."]);
+});
+
 it("imports a shared agent as a new identity with its name and picture, adopting its instructions", async () => {
   const { service, native } = await setup();
-  const agent = await service.port({
+  const { agent } = await service.port({
     source: "shared",
     type: "example/echo",
     name: " Baymax ",
@@ -610,7 +697,7 @@ it("imports a shared agent as a new identity with its name and picture, adopting
     config: { reply: "Open drafts only." },
   });
   // Without instructions it starts from the type's defaults.
-  const plain = await service.port({
+  const { agent: plain } = await service.port({
     source: "shared",
     type: "example/echo",
     name: "Plain",
@@ -1077,6 +1164,7 @@ it("lists a team whose members are all here, and imports it from them", async ()
     failed: [],
     elsewhere: [],
     foreign: [],
+    notes: [],
   });
   expect(native.port).not.toHaveBeenCalled();
 });
@@ -1303,7 +1391,7 @@ it("keeps room for mentions however much watch work waits", async () => {
   run.mockImplementationOnce(() => blocked);
   emit({ events: [event("first")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-  // More watch work than its queue holds, then a mention.
+  // More watch work than its Interest holds, then a mention.
   emit({
     events: Array.from({ length: 40 }, (_, i) =>
       event(`w${i}x`, { created_at: 101 + i }),
@@ -1322,11 +1410,121 @@ it("keeps room for mentions however much watch work waits", async () => {
   });
   await settle();
   unblock();
-  // The mention is heard next; the watch queue kept its own 32.
-  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(34));
+  // The mention is heard next; the watch's Interest kept its own 8.
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(10));
   await settle();
-  expect(run).toHaveBeenCalledTimes(34);
+  expect(run).toHaveBeenCalledTimes(10);
   expect(turns(run).slice(0, 3)).toEqual(["watch", "mention", "watch"]);
+});
+
+it("runs one turn at a time for an Interest, Interests and mentions beside each other, and frees a lane to the oldest waiting job", async () => {
+  const { service, run, emit } = await setup({ identities: [echo] });
+  const watch = (interest: string, kind: number) => ({
+    type: "event" as const,
+    interest_id: interest,
+    enabled: true,
+    since: 1,
+    channels: [channel],
+    kinds: [kind],
+  });
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": null,
+      "watch/a": watch("a", 9),
+      "watch/b": watch("b", 11),
+    },
+  });
+  await settle();
+  const pending = new Map<string, () => void>();
+  run.mockImplementation(
+    ({ trigger }) =>
+      new Promise<void>((resolve) => {
+        pending.set(
+          trigger.type === "timer" || trigger.type === "catch-up"
+            ? trigger.slug
+            : trigger.event.content,
+          resolve,
+        );
+      }),
+  );
+  const working = () => [...pending.keys()].sort();
+  const finish = async (content: string) => {
+    pending.get(content)?.();
+    pending.delete(content);
+    await settle();
+  };
+  emit({
+    events: [
+      event("a1", { content: "a1", created_at: 101 }),
+      event("a2", { content: "a2", created_at: 102 }),
+      event("b1", { content: "b1", kind: 11, created_at: 103 }),
+      event("b2", { content: "b2", kind: 11, created_at: 104 }),
+    ],
+  });
+  await vi.waitFor(() => expect(working()).toEqual(["a1", "b1"]));
+  // A mention runs beside the busy Interests.
+  emit({
+    events: [
+      event("named", {
+        content: "named",
+        created_at: 105,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(working()).toEqual(["a1", "b1", "named"]));
+  await finish("b1");
+  expect(working()).toEqual(["a1", "b2", "named"]);
+  await finish("a1");
+  expect(working()).toEqual(["a2", "b2", "named"]);
+  await finish("a2");
+  await finish("b2");
+  await finish("named");
+  expect(run).toHaveBeenCalledTimes(5);
+});
+
+it("runs at most eight Interests at once, and the oldest waiting one next", async () => {
+  const { service, run, emit } = await setup({ identities: [echo] });
+  const attention: Record<string, object | null> = { "watch/channel": null };
+  for (let i = 0; i < 10; i++)
+    attention[`watch/w${i}`] = {
+      type: "event",
+      interest_id: `i${i}`,
+      enabled: true,
+      since: 1,
+      channels: [channel],
+      kinds: [20 + i],
+    };
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: attention as never,
+  });
+  await settle();
+  const pending = new Map<string, () => void>();
+  run.mockImplementation(
+    ({ trigger }) =>
+      new Promise<void>((resolve) => {
+        if (trigger.type === "watch")
+          pending.set(trigger.event.content, resolve);
+      }),
+  );
+  emit({
+    events: Array.from({ length: 10 }, (_, i) =>
+      event(`e${i}`, { content: `e${i}`, kind: 20 + i, created_at: 101 + i }),
+    ),
+  });
+  await vi.waitFor(() => expect(pending.size).toBe(8));
+  await settle();
+  expect(run).toHaveBeenCalledTimes(8);
+  pending.get("e3")?.();
+  pending.delete("e3");
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(9));
+  expect(pending.has("e8")).toBe(true);
+  expect(pending.has("e9")).toBe(false);
 });
 
 it("passes the model and effort its owner asked for, and no other", async () => {
@@ -1963,7 +2161,7 @@ it("renames through native, and publishes profiles again on rename and reconnect
   expect(native.publishProfile).toHaveBeenCalledTimes(2);
 });
 
-it("retries a failed profile and cleanup when the live connection recovers in the same session", async () => {
+it("retries a failed profile when the live connection recovers in the same session", async () => {
   const { service, native, recover } = await setup();
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   native.publishProfile.mockRejectedValueOnce(new Error("offline"));
@@ -1972,30 +2170,218 @@ it("retries a failed profile and cleanup when the live connection recovers in th
   expect(native.publishProfile).toHaveBeenCalledTimes(1);
   recover();
   expect(native.publishProfile).toHaveBeenCalledTimes(2);
-  leaveChannels.mockRejectedValueOnce(new Error("offline"));
-  await service.remove(bot);
-  await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(2));
   warn.mockRestore();
-  expect(native.forget).not.toHaveBeenCalled();
-  recover();
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
 });
 
-it("retries a cleanup that fails after the connection recovered while it ran", async () => {
-  const { service, native, recover } = await setup();
+it("refreshes an agent's cached core memory when its community connects or its socket recovers in the same session", async () => {
+  const { service, session, memories, recover, connect } = await setup();
+  const read = vi.mocked(session.agentMemories.read);
+  await service.create({ type: "example/echo", name: "Echo" });
+  memories.set(bot, "one");
+  // A device that has never read it waits once.
+  await expect(service.core(bot)).resolves.toBe("one");
+  const reads = read.mock.calls.length;
+  // Changed elsewhere while the socket was down; the session is kept.
+  memories.set(bot, "two");
+  recover();
+  expect(read).toHaveBeenCalledTimes(reads + 1);
+  await settle();
+  await expect(service.core(bot)).resolves.toBe("two");
+  expect(read).toHaveBeenCalledTimes(reads + 1);
+  // A new session refreshes it too.
+  memories.set(bot, "three");
+  connect(false);
+  connect(true);
+  await settle();
+  await expect(service.core(bot)).resolves.toBe("three");
+  expect(read).toHaveBeenCalledTimes(reads + 2);
+});
+
+it("keeps core memory an agent writes through its handle, and refreshes it when the run and its handed-off work end", async () => {
+  const { service, session, memories, run, emit } = await setup();
+  const read = vi.mocked(session.agentMemories.read);
+  await service.create({ type: "example/echo", name: "Echo" });
+  memories.set(bot, "before");
+  await expect(service.core(bot)).resolves.toBe("before");
+  let finish = () => {};
+  run.mockImplementationOnce(async ({ agent, workingUntil }) => {
+    await agent.remember("core", "written", 0);
+    workingUntil(new Promise<void>((resolve) => (finish = resolve)));
+  });
+  emit({
+    events: [
+      event("m1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  await settle();
+  const reads = read.mock.calls.length;
+  // The write is the next start's at once, with no read.
+  await expect(service.core(bot)).resolves.toBe("written");
+  expect(read).toHaveBeenCalledTimes(reads);
+  // Not until the handed-off work ends.
+  memories.set(bot, "after");
+  await settle();
+  expect(read).toHaveBeenCalledTimes(reads);
+  finish();
+  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(reads + 1));
+  await settle();
+  await expect(service.core(bot)).resolves.toBe("after");
+});
+
+it("refreshes core memory when a standalone turn ends, without holding the next one on that read", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const memory: (string | null | undefined)[] = [];
+  let service!: AgentsService;
+  const f = await setup({
+    runOnce: async () => {
+      memory.push(await service.core(bot));
+      return { ok: true };
+    },
+  });
+  service = f.service;
+  const read = vi.mocked(f.session.agentMemories.read);
+  await service.create({ type: "example/echo", name: "Echo" });
+  f.memories.set(bot, "one");
+  await expect(service.core(bot)).resolves.toBe("one");
+  await service.save(bot, { attentionEnabled: true });
+  const timer = (armed: number) =>
+    ({
+      type: "timer",
+      interest_id: "default",
+      prompt: "tick",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: armed,
+      max_occurrences: 1,
+      expires_at: null,
+    }) as const;
+  // The first turn's refresh is held: the second starts on the cached text.
+  let release = () => {};
+  read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            entries: [
+              { slug: "core", body: "two", eventId: "e", createdAt: 0 },
+            ],
+            partial: false,
+          });
+      }),
+  );
+  await service.save(bot, {
+    attention: { "watch/a": timer(1_000), "watch/b": timer(1_000) },
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(memory).toEqual(["one", "one"]));
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+  await expect(service.core(bot)).resolves.toBe("two");
+});
+
+it("never writes decrypted core memory to storage, so a rebuilt service reads it again", async () => {
+  const storage = memoryStorage();
+  const written: string[] = [];
+  const setItem = storage.setItem.bind(storage);
+  vi.spyOn(storage, "setItem").mockImplementation((key, value) => {
+    written.push(`${key}=${value}`);
+    setItem(key, value);
+  });
+  const leaked = () =>
+    written.filter((entry) => /secret-(read|written|refreshed)/.test(entry));
+  const first = await setup({ storage });
+  const read = vi.mocked(first.session.agentMemories.read);
+  await first.service.create({ type: "example/echo", name: "Echo" });
+  // A read.
+  first.memories.set(bot, "secret-read");
+  await expect(first.service.core(bot)).resolves.toBe("secret-read");
+  // A successful write through the agent's handle.
+  first.run.mockImplementationOnce(async ({ agent }) => {
+    await agent.remember("core", "secret-written", 0);
+  });
+  first.emit({
+    events: [
+      event("m1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+    channelId: channel,
+  });
+  await vi.waitFor(() => expect(first.run).toHaveBeenCalledOnce());
+  await settle();
+  // A refresh.
+  first.memories.set(bot, "secret-refreshed");
+  first.recover();
+  await settle();
+  await expect(first.service.core(bot)).resolves.toBe("secret-refreshed");
+  expect(read.mock.calls.length).toBeGreaterThan(0);
+  expect(leaked()).toEqual([]);
+  // A service rebuilt on the same storage starts empty and reads core again.
+  const second = await setup({ storage });
+  const reread = vi.mocked(second.session.agentMemories.read);
+  await second.service.create({ type: "example/echo", name: "Echo" });
+  second.memories.set(bot, "after restart");
+  await expect(second.service.core(bot)).resolves.toBe("after restart");
+  expect(reread).toHaveBeenCalled();
+  expect(leaked()).toEqual([]);
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i) as string;
+    expect(storage.getItem(key)).not.toMatch(/secret-/);
+  }
+});
+
+it("stops refreshing core memory for a community once it is left", async () => {
+  const { service, session, recover, leave, select } = await setup();
+  const read = vi.mocked(session.agentMemories.read);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.core(bot);
+  select("https://other.example.test");
+  leave("https://relay.example.test");
+  const reads = read.mock.calls.length;
+  recover();
+  await settle();
+  expect(read).toHaveBeenCalledTimes(reads);
+});
+
+it("keeps a Delete that fails partway listed and stopped, deletes nothing, and retries nothing", async () => {
+  const { service, native, archives, recover } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  let fail: (error: Error) => void = () => {};
-  leaveChannels.mockImplementationOnce(
-    () => new Promise((_, reject) => (fail = reject)),
-  );
-  await service.remove(bot);
-  await vi.waitFor(() => expect(leaveChannels).toHaveBeenCalledTimes(1));
-  recover();
-  fail(new Error("Read started before the drop"));
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
-  expect(leaveChannels).toHaveBeenCalledTimes(2);
+  leaveChannels.mockRejectedValueOnce(new Error("offline"));
+  await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
   warn.mockRestore();
+  expect(service.find(bot)?.deleting).toBe(true);
+  expect(native.remove).not.toHaveBeenCalled();
+  // Reconnecting retries nothing.
+  recover();
+  await service.refresh();
+  await settle();
+  expect(leaveChannels).toHaveBeenCalledTimes(1);
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(records.remove).not.toHaveBeenCalled();
+  expect(steps).toEqual(["stop"]);
+  // Delete again runs it all again.
+  await service.remove(bot);
+  expect(steps).toEqual([
+    "stop",
+    "stop",
+    "channels",
+    "archive",
+    "record",
+    "key",
+    "forget",
+  ]);
+  expect(service.find(bot)).toBeUndefined();
 });
 
 it("shows an agent whose settings could not be saved with its type's defaults", async () => {
@@ -2491,15 +2877,20 @@ it("runs waiting events before a due timer, so a busy timer cannot starve them",
   ]);
 });
 
-it("deletes the key at once, then leaves its channels and archives it before forgetting it", async () => {
+it("stops it first, and deletes its key only after it left its channels and was archived", async () => {
   const { service, native, storage, archives } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.remove(bot);
+  expect(steps).toEqual([
+    "stop",
+    "channels",
+    "archive",
+    "record",
+    "key",
+    "forget",
+  ]);
   expect(service.snapshot().agents).toEqual([]);
   expect(storage.getItem("buzz.agents.v1")).not.toContain(bot);
-  await vi.waitFor(() =>
-    expect(steps).toEqual(["key", "channels", "archive", "record", "forget"]),
-  );
   expect(leaveChannels).toHaveBeenCalledWith(
     expect.objectContaining({ archives }),
     bot,
@@ -2513,24 +2904,216 @@ it("deletes the key at once, then leaves its channels and archives it before for
   expect(await native.list()).toEqual([]);
 });
 
-it("retries a failed cleanup on the next connect, without archiving twice", async () => {
-  const { service, native, archives, connect } = await setup();
+it("joins a Delete already running instead of starting another", async () => {
+  const { service, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  leaveChannels.mockRejectedValueOnce(new Error("Channel removal refused"));
-  await service.remove(bot);
-  await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
-  archives.request.mockRejectedValueOnce(new Error("Archive refused"));
-  connect(true);
-  await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(2));
-  warn.mockRestore();
-  expect(native.forget).not.toHaveBeenCalled();
-  archives.request.mockClear();
-  archives.archived.add(bot);
-  connect(true);
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
-  expect(archives.request).not.toHaveBeenCalled();
+  let release: () => void = () => {};
+  leaveChannels.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (release = resolve)),
+  );
+  const first = service.remove(bot);
+  await vi.waitFor(() => expect(leaveChannels).toHaveBeenCalledOnce());
+  const second = service.remove(bot);
+  release();
+  await Promise.all([first, second]);
+  expect(native.beginDelete).toHaveBeenCalledOnce();
+  expect(leaveChannels).toHaveBeenCalledOnce();
+  expect(native.forget).toHaveBeenCalledOnce();
 });
+
+it("keeps an unfinished Delete stopped after a relaunch, and finishes it only when Delete runs again", async () => {
+  const storage = memoryStorage();
+  const first = await setup({ storage });
+  await first.service.create({ type: "example/echo", name: "Echo" });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  leaveChannels.mockRejectedValueOnce(new Error("offline"));
+  await expect(first.service.remove(bot)).rejects.toThrow(UNFINISHED);
+  warn.mockRestore();
+  const identities = await first.native.list();
+  const { service, run, emit, native } = await setup({ storage, identities });
+  expect(service.find(bot)).toMatchObject({ name: "Echo", deleting: true });
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await settle();
+  expect(run).not.toHaveBeenCalled();
+  expect(native.remove).not.toHaveBeenCalled();
+  expect(records.remove).not.toHaveBeenCalled();
+  await service.remove(bot);
+  expect(native.forget).toHaveBeenCalledWith(bot);
+  expect(service.find(bot)).toBeUndefined();
+});
+
+it("after a relaunch, only drops the record and row of an agent left deleted", async () => {
+  const { service, native, archives } = await setup({
+    identities: [{ ...here(bot), name: "Echo", deleted: true }],
+  });
+  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
+  expect(steps).toEqual(["record", "forget"]);
+  expect(leaveChannels).not.toHaveBeenCalled();
+  expect(archives.consent).not.toHaveBeenCalled();
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(await native.list()).toEqual([]);
+  expect(service.snapshot().agents).toEqual([]);
+});
+
+it("refuses a re-import while a Delete runs, from this copy of the app or another sharing its agents", async () => {
+  const identities: AgentIdentity[] = [];
+  const { service } = await setup({ identities });
+  // Another copy of the app, reading and writing the same native agents.
+  const { service: otherCopy } = await setup({ identities });
+  await service.create({ type: "example/echo", name: "Echo" });
+  let release: () => void = () => {};
+  leaveChannels.mockImplementationOnce(
+    () => new Promise<void>((resolve) => (release = resolve)),
+  );
+  const removing = service.remove(bot);
+  await vi.waitFor(() => expect(leaveChannels).toHaveBeenCalledOnce());
+  for (const copy of [service, otherCopy])
+    await expect(
+      copy.port({ source: "harness", pubkey: bot, type: "example/echo" }),
+    ).rejects.toThrow("That agent is already here");
+  release();
+  await removing;
+  expect(identities).toEqual([]);
+  // Once deleted it can come back, with nothing left to remove it again.
+  steps.length = 0;
+  const { agent } = await otherCopy.port({
+    source: "harness",
+    pubkey: bot,
+    type: "example/echo",
+  });
+  expect(agent.pubkey).toBe(bot);
+  await settle();
+  expect(steps).toEqual([]);
+});
+
+it("stops an old-order row's record deletion once a re-import takes the agent back", async () => {
+  // Deleted by an earlier build, which erased the key first.
+  let reached = false;
+  records.remove.mockImplementationOnce(
+    (_, __, ___, ____, fence: AbortSignal) =>
+      new Promise<never>((_, reject) => {
+        reached = true;
+        fence.addEventListener("abort", () => reject(fence.reason));
+      }),
+  );
+  const { service, native } = await setup({
+    identities: [{ ...here(bot), name: "Echo", deleted: true }],
+  });
+  await vi.waitFor(() => expect(reached).toBe(true));
+  const { agent } = await service.port({
+    source: "harness",
+    pubkey: bot,
+    type: "example/echo",
+  });
+  expect(agent.pubkey).toBe(bot);
+  await settle();
+  expect(records.remove).toHaveBeenCalledOnce();
+  expect(native.forget).not.toHaveBeenCalled();
+  expect(
+    (await native.list()).find((item) => item.pubkey === bot)?.deleted,
+  ).toBe(false);
+});
+
+it("offers a retry when import could not check archive state, and retries without re-importing", async () => {
+  const { service, archives, native } = await setup();
+  archives.archived.add(sibling);
+  archives.refresh.mockRejectedValueOnce(new Error("offline"));
+  const { notes } = await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+  });
+  expect(notes).toEqual([
+    "Couldn't check whether Older is archived in this community. Retry from its settings.",
+  ]);
+  expect(service.find(sibling)?.archiveUnchecked).toBe(true);
+  // Reconnecting does not retry it behind the user's back.
+  archives.request.mockClear();
+  await service.refresh();
+  expect(archives.request).not.toHaveBeenCalled();
+  await expect(service.unarchive(sibling)).resolves.toBeUndefined();
+  expect(archives.archived.has(sibling)).toBe(false);
+  expect(service.find(sibling)?.archiveUnchecked).toBeUndefined();
+  expect(native.port).toHaveBeenCalledOnce();
+});
+
+it("treats a community without archives as nothing to unarchive", async () => {
+  const { service, archives } = await setup();
+  archives.unavailable = true;
+  archives.unknown = true;
+  const { notes } = await service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+  });
+  expect(notes).toEqual([]);
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(service.find(sibling)?.archiveUnchecked).toBeUndefined();
+});
+
+it("keeps the archive Retry across a restart until a check confirms it", async () => {
+  const storage = memoryStorage();
+  const first = await setup({ storage });
+  first.archives.archived.add(sibling);
+  first.archives.refresh.mockRejectedValueOnce(new Error("offline"));
+  await first.service.port({
+    source: "installed",
+    pubkey: sibling,
+    type: "example/echo",
+  });
+  const identities = await first.native.list();
+  const { service, archives } = await setup({ storage, identities });
+  archives.archived.add(sibling);
+  expect(service.find(sibling)?.archiveUnchecked).toBe(true);
+  archives.refresh.mockRejectedValueOnce(new Error("offline"));
+  await expect(service.unarchive(sibling)).rejects.toThrow("offline");
+  expect(service.find(sibling)?.archiveUnchecked).toBe(true);
+  await expect(service.unarchive(sibling)).resolves.toBeUndefined();
+  expect(service.find(sibling)?.archiveUnchecked).toBeUndefined();
+  const { service: relaunched } = await setup({ storage, identities });
+  expect(relaunched.find(sibling)?.archiveUnchecked).toBeUndefined();
+});
+
+it.each([
+  ["while it reads archive state", "refresh"],
+  ["while it checks consent", "consent"],
+] as const)(
+  "keeps the archive Retry when the session closes %s, on import and on Retry",
+  async (_, step) => {
+    const { service, archives } = await setup();
+    archives.archived.add(sibling);
+    // A disposed session ends its reads without an answer and refuses consent.
+    const close = () => {
+      archives.unknown = true;
+    };
+    const closing = () =>
+      step === "refresh"
+        ? archives.refresh.mockImplementationOnce(async () => close())
+        : archives.consent.mockImplementationOnce(async () => {
+            close();
+            return null;
+          });
+    closing();
+    const { notes } = await service.port({
+      source: "installed",
+      pubkey: sibling,
+      type: "example/echo",
+    });
+    expect(notes).toEqual([
+      "Couldn't check whether Older is archived in this community. Retry from its settings.",
+    ]);
+    expect(service.find(sibling)?.archiveUnchecked).toBe(true);
+    archives.unknown = false;
+    closing();
+    await expect(service.unarchive(sibling)).rejects.toThrow();
+    expect(service.find(sibling)?.archiveUnchecked).toBe(true);
+    expect(archives.request).not.toHaveBeenCalled();
+    archives.unknown = false;
+    await expect(service.unarchive(sibling)).resolves.toBeUndefined();
+    expect(archives.archived.has(sibling)).toBe(false);
+    expect(service.find(sibling)?.archiveUnchecked).toBeUndefined();
+  },
+);
 
 it("forgets an agent with no owner-attested profile without archiving it", async () => {
   const { service, native, archives } = await setup();
@@ -2541,35 +3124,42 @@ it("forgets an agent with no owner-attested profile without archiving it", async
   expect(archives.request).not.toHaveBeenCalled();
 });
 
-it("deletes outside the agent's community, and cleans up once it is open", async () => {
-  const { service, native, connect } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  connect(false);
-  await service.remove(bot);
-  expect(native.remove).toHaveBeenCalledWith(bot);
-  await settle();
-  expect(leaveChannels).not.toHaveBeenCalled();
-  connect(true);
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
-});
-
-it("keeps the cleanup for later when the session closes while archive state is read", async () => {
+it("deletes nothing outside the agent's community, and leaves it stopped for Delete to run again", async () => {
   const { service, native, archives, connect } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
+  connect(false);
+  await expect(service.remove(bot)).rejects.toThrow(
+    `${UNFINISHED} Its community isn't connected.`,
+  );
+  expect(native.remove).not.toHaveBeenCalled();
+  connect(true);
+  await settle();
+  expect(service.find(bot)?.deleting).toBe(true);
+  expect(leaveChannels).not.toHaveBeenCalled();
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(native.forget).not.toHaveBeenCalled();
+});
+
+it("does not archive later when the session closes while its Delete reads archive state", async () => {
+  const { service, native, archives, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   archives.refresh.mockImplementationOnce(async () => {
     // A closed session's read ends without an answer.
     archives.unknown = true;
     connect(false);
   });
-  await service.remove(bot);
-  await vi.waitFor(() => expect(archives.refresh).toHaveBeenCalled());
-  await settle();
-  expect(native.forget).not.toHaveBeenCalled();
-  expect(await native.list()).toMatchObject([{ pubkey: bot, deleted: true }]);
+  await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
+  warn.mockRestore();
+  expect(await native.list()).toMatchObject([
+    { pubkey: bot, deleted: false, deleting: true },
+  ]);
   archives.unknown = false;
   connect(true);
-  await vi.waitFor(() => expect(native.forget).toHaveBeenCalledWith(bot));
-  expect(archives.request).toHaveBeenCalledOnce();
+  await settle();
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(native.remove).not.toHaveBeenCalled();
+  expect(native.forget).not.toHaveBeenCalled();
 });
 
 it("runs once per matching watch, and passes a classifier watch it cannot classify", async () => {
@@ -3792,6 +4382,82 @@ it("gives a missed event to more of one Interest's watches than its lane holds, 
   }
 }, 10_000);
 
+it("keeps an Interest's room for a catch-up being classified, so live events cannot drop it", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const jev = fakeJev();
+    let answer!: (value: Answer) => void;
+    jev.classify.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ran: string[] = [];
+    const { service, history, recover, emit } = await setup({
+      jev,
+      identities: [echo],
+      runOnce: async ({ delivery }) => {
+        const { trigger } = delivery;
+        ran.push(
+          trigger.type === "watch" ? (trigger.event.id[0] ?? "") : trigger.type,
+        );
+        if (ran.length === 1) await blocked;
+        return { ok: true };
+      },
+    });
+    const now = nowSeconds();
+    vi.setSystemTime(now * 1000);
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/channel": null,
+        "watch/chat": {
+          ...chat["watch/chat"],
+          classifier: {
+            questions: {
+              deploy: { question: "Is it about a deploy?", threshold: 0.5 },
+            },
+          },
+        },
+        // Live only, in the same Interest.
+        "watch/likes": {
+          type: "event",
+          interest_id: "default",
+          enabled: true,
+          since: 1,
+          channels: [channel],
+          kinds: [7],
+        },
+      },
+    });
+    await settle();
+    vi.setSystemTime((now + 60) * 1000);
+    history.push(posted("missed", now + 30));
+    recover();
+    // The catch-up turn is being classified, and its checkpoint is past it.
+    await vi.waitFor(() => expect(jev.classify).toHaveBeenCalledOnce());
+    await settle();
+    // One runs; of the eight that then wait, the catch-up keeps one.
+    const likes = Array.from({ length: 9 }, (_, i) =>
+      event(`${i}`, { kind: 7, created_at: now + 61 + i }),
+    );
+    emit({ events: likes.slice(0, 1) });
+    await vi.waitFor(() => expect(ran).toEqual(["0"]));
+    emit({ events: likes.slice(1) });
+    await settle();
+    answer(yes);
+    await settle();
+    release();
+    await vi.waitFor(() => expect(ran).toContain("catch-up"));
+    await settle();
+    expect(ran).toEqual(["0", "1", "2", "3", "4", "5", "6", "7", "catch-up"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("does not give a missed event again after a restart to watches that had it before the rest", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
@@ -4367,6 +5033,16 @@ it("leaves an agent already listed under its name and type as it is", async () =
   expect(service.snapshot().agents).toHaveLength(1);
 });
 
+it("never relists an agent being deleted whose record is already gone", async () => {
+  const { service } = await setup({
+    identities: [{ ...here(bot), name: "Echo", deleting: true }],
+    listed: [],
+  });
+  await vi.waitFor(() => expect(service.find(bot)?.deleting).toBe(true));
+  await settle();
+  expect(records.publish).not.toHaveBeenCalled();
+});
+
 it("shows the owner's agents on other devices without running them, and leaves earlier systems' records alone", async () => {
   const { service, emit, run, native } = await setup({
     listed: [
@@ -4721,6 +5397,78 @@ it("lists only an HTTPS picture of a hosted agent", async () => {
     service.save(hostedKey, { picture: "data:image/png;base64,AAAA" }),
   ).rejects.toThrow(/HTTPS image URL/);
   expect(remote.profile).not.toHaveBeenCalled();
+});
+
+it("adds plugins' tools to every session, each name once", async () => {
+  const { service, plugin, ctx } = await setup();
+  const tool = {
+    name: "tasks_create",
+    description: "Create a task.",
+    inputSchema: { type: "object" },
+    call: async () => "created",
+  };
+  // Installed plugins add tools as bundled ones do.
+  plugin.agents.addTool({ ...tool, name: "notes_add" });
+  expect(service.tools()).toMatchObject([
+    { name: "notes_add", pluginId: "example" },
+  ]);
+  const bundled = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
+  const tasks = bundled("buzz.tasks");
+  for (const bad of [
+    { ...tool, name: "send" },
+    { ...tool, name: "Tasks-Create" },
+    { ...tool, description: "" },
+    { ...tool, inputSchema: { type: "string" } },
+    { ...tool, inputSchema: { type: "object", default: 1n } },
+  ])
+    expect(() => tasks.agents.addTool(bad)).toThrow(/Agent tools need/);
+  expect(service.tools()).toHaveLength(1);
+  tasks.agents.addTool(tool);
+  expect(() =>
+    bundled("buzz.other").agents.addTool({
+      ...tool,
+      call: async () => "other",
+    }),
+  ).toThrow(/Another plugin/);
+  expect(service.tools()).toMatchObject([
+    { name: "notes_add", pluginId: "example" },
+    { name: "tasks_create", pluginId: "buzz.tasks" },
+  ]);
+});
+
+it("reserves a tool name while its plugin is still starting", async () => {
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => false,
+    subscribe: () => () => {},
+  });
+  const service = new AgentsService(
+    ctx,
+    fakeCommunities(fakeRelay()).communities,
+    fakeNative(),
+    memoryStorage(),
+  );
+  const tool = {
+    name: "tasks_create",
+    description: "Create a task.",
+    inputSchema: { type: "object" },
+    call: async () => "created",
+  };
+  const owner = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
+  const first = owner("buzz.tasks").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) => plugin.agents.addTool(tool),
+  });
+  await first;
+  // Neither plugin is active yet, and still the name is taken.
+  expect(service.tools()).toEqual([]);
+  expect(() => owner("buzz.other").agents.addTool(tool)).toThrow(
+    /Another plugin/,
+  );
+  await first.dispose();
+  owner("buzz.other").agents.addTool(tool);
 });
 
 it("refuses a hosted type that also runs here", async () => {
@@ -5250,7 +5998,12 @@ it("stops trying presence on a session that cannot send it", async () => {
   await service.create({ type: "example/echo", name: "Echo" });
   await vi.advanceTimersByTimeAsync(180_000);
   expect(presence).toHaveBeenCalledTimes(1);
-  expect(warn).toHaveBeenCalledTimes(1);
+  // Count only presence warnings: an earlier test's service still runs.
+  const warned = () =>
+    warn.mock.calls.filter(([text]) =>
+      String(text).startsWith("Agent presence cannot be sent"),
+    ).length;
+  expect(warned()).toBe(1);
   presence.mockResolvedValue(true);
   connect(true);
   await vi.advanceTimersByTimeAsync(0);

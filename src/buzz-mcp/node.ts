@@ -57,6 +57,17 @@ export function nodeClient(
     `Nostr ${Buffer.from(JSON.stringify(event)).toString(encoding)}`;
 
   async function request(path: string, body: string) {
+    return json(await send(path, body));
+  }
+
+  async function json(response: Response) {
+    const text = await response.text();
+    if (!response.ok)
+      throw new Error(`${response.status} ${text.slice(0, 300)}`.trim());
+    return JSON.parse(text) as unknown;
+  }
+
+  function send(path: string, body: string) {
     const url = `${base}${path}`;
     const nip98 = sign({
       kind: 27235,
@@ -68,7 +79,7 @@ export function nodeClient(
         ["nonce", randomUUID()],
       ],
     });
-    const response = await fetch(url, {
+    return fetch(url, {
       method: "POST",
       headers: {
         authorization: header(nip98, "base64"),
@@ -77,10 +88,6 @@ export function nodeClient(
       },
       body,
     });
-    const text = await response.text();
-    if (!response.ok)
-      throw new Error(`${response.status} ${text.slice(0, 300)}`.trim());
-    return JSON.parse(text) as unknown;
   }
 
   async function post(event: BuzzEvent) {
@@ -102,6 +109,15 @@ export function nodeClient(
     pubkey,
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),
+    async searchProfiles(query, limit) {
+      const response = await send(
+        "/profiles/search",
+        JSON.stringify({ query, limit }),
+      );
+      // A community without profile name search.
+      if (response.status === 404 || response.status === 405) return undefined;
+      return eventsDto(await json(response));
+    },
     publish(event) {
       const tags = event.tags.filter(
         (tag) => tag[0] !== "auth" && tag[0] !== "ms",

@@ -10,16 +10,20 @@
 import type { Context, Memories } from "../../buzz-mcp/client";
 import {
   abortable,
-  coreOf,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
 import { respond } from "../../buzz-mcp/rpc";
 import { appClient } from "../../buzz-mcp/app-client";
-import { turnNote } from "../../buzz-mcp/session-tools";
+import {
+  type AddedTool,
+  addedKey,
+  turnNote,
+} from "../../buzz-mcp/session-tools";
 import {
   fromOwner,
   type Agent,
   type AgentHandle,
+  type Agents,
   type Delivery,
   type StandaloneTurn,
   type TurnResult,
@@ -63,10 +67,6 @@ export const config = (value: unknown): Config => ({
   ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
 });
 
-/** How long a read of the agent's core memory is reused. */
-const MEMORY_TTL_MS = 5 * 60_000;
-/** How long a new session waits on its `core` memory. */
-const CORE_TIMEOUT_MS = 5_000;
 const NAMES_TIMEOUT_MS = 2_000;
 const CHAT = [9, 40002];
 const TITLE_LIMIT = 80;
@@ -99,7 +99,6 @@ type Entry = {
   team: string;
   /** The agent's name, for its prompt; a rename reopens idle sessions. */
   name?: string;
-  memory?: { value: string | null | undefined; at: number };
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
@@ -126,6 +125,10 @@ export class GooseRuntime {
     private readonly host: Host,
     /** The owner's connection to each agent's own community. */
     private readonly relay: (pubkey: string) => RelayData | undefined,
+    /** The agent's `core` memory as the host keeps it (`Agents.core`). */
+    private readonly core: Agents["core"],
+    /** The tools plugins add to every session now. */
+    private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
 
   private get spawn(): Spawn {
@@ -233,7 +236,6 @@ export class GooseRuntime {
     const entry = this.entry(agent.pubkey, settings);
     entry.handle = agent;
     entry.team = team ?? "";
-    void this.memory(agent.pubkey, entry);
     const { event } = trigger;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
@@ -319,7 +321,6 @@ export class GooseRuntime {
     const entry = this.entry(agent.pubkey, config(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
-    void this.memory(agent.pubkey, entry);
     const done = entry.sessions.runOnce(
       key,
       async () => {
@@ -492,11 +493,10 @@ export class GooseRuntime {
         remember: async (slug: string, body: string, after: number) => {
           await handle.remember(slug, body, after);
           this.forgetMemories(pubkey);
-          if (slug === "core") delete entry.memory;
         },
       };
       const context = (conversation && entry.contexts.get(conversation)) || {};
-      return respond(client, context, message);
+      return respond(client, context, message, this.added());
     };
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
@@ -516,10 +516,11 @@ export class GooseRuntime {
           entry.config.scope,
           entry.team,
           entry.name,
+          addedKey(this.added()),
         ]),
       launch: async () => {
         const { workspace, instructions, scope } = entry.config;
-        const memory = await this.memory(pubkey, entry);
+        const memory = await this.core(pubkey);
         return {
           workspace,
           systemPrompt: systemPrompt({
@@ -537,28 +538,9 @@ export class GooseRuntime {
     return entry;
   }
 
-  /** The agent's `core` memory, as a new session's prompt carries it: its
-   * text, `null` when it has none, or undefined when it could not be read. */
-  private async memory(pubkey: string, entry: Entry) {
-    if (entry.memory && Date.now() - entry.memory.at < MEMORY_TTL_MS)
-      return entry.memory.value;
-    let value: string | null | undefined;
-    try {
-      value = coreOf(await this.memories(pubkey, "core", CORE_TIMEOUT_MS));
-    } catch (error) {
-      console.warn("goose could not read the agent's memory", error);
-    }
-    entry.memory = { value, at: Date.now() };
-    return value;
-  }
-
   /** The agent's memory, or only entry `slug`, read back through the owner's
    * session: it is encrypted to the owner, so no agent key is needed. */
-  private memories(
-    pubkey: string,
-    slug?: string,
-    wait = READ_TIMEOUT_MS,
-  ): Promise<Memories> {
+  private memories(pubkey: string, slug?: string): Promise<Memories> {
     const key = `${pubkey}\0${slug ?? ""}`;
     let reading = this.reading.get(key);
     if (!reading) {
@@ -570,7 +552,7 @@ export class GooseRuntime {
     }
     // The shared read keeps its own bound, so a caller that stops waiting
     // sooner cannot cut it short for the others.
-    return abortable(reading, AbortSignal.timeout(wait));
+    return abortable(reading, AbortSignal.timeout(READ_TIMEOUT_MS));
   }
   /** After a memory write, a read that may have started before it is not
    * shared with later callers. */

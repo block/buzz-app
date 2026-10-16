@@ -29,12 +29,22 @@ export function appClient(
     options.signal?.throwIfAborted();
     options.check?.();
   };
+  const tabs = () => {
+    check();
+    const found = agent.tabs();
+    if (!found) throw new Error("Your community is not connected.");
+    return found;
+  };
   return {
     pubkey: agent.pubkey,
     attention: agent.attention,
     query: (filters) => {
       check();
       return agent.query(filters);
+    },
+    searchProfiles: (query, limit) => {
+      check();
+      return agent.searchProfiles(query, limit);
     },
     publish: (event) => {
       check();
@@ -65,6 +75,12 @@ export function appClient(
     templates: async () => {
       check();
       return agent.templates();
+    },
+    tabs: {
+      list: (channel) => tabs().list(channel),
+      open: (channel, root) => tabs().open(channel, root),
+      close: (channel, root) => tabs().close(channel, root),
+      rename: (channel, root, name) => tabs().rename(channel, root, name),
     },
   };
 }

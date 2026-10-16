@@ -81,6 +81,7 @@ fn request_url(community: &str, path: &str, method: &str) -> Result<Url> {
                 | "/api/invites/claim"
                 | "/api/invites/accept-policy"
                 | "/gifs/search"
+                | "/profiles/search"
         ),
         _ => false,
     };

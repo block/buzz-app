@@ -137,7 +137,20 @@ export function settingsSections(
             ],
           },
         ]
-      : []),
+      : [
+          // Personal space keeps the local default profile with the community
+          // cards that supply their own address, such as Pair mobile.
+          {
+            id: "personal",
+            label: "Personal space",
+            sections: [
+              profile,
+              ...cards
+                .filter((card) => card.personal && !card.group && !card.section)
+                .map((card) => section(card, ChatCircleIcon)),
+            ],
+          },
+        ]),
     ...(administration.length > 0
       ? [
           {
@@ -151,7 +164,6 @@ export function settingsSections(
       id: "app",
       label: "Buzz",
       sections: [
-        ...(community ? [] : [profile]),
         identity,
         ...app.filter((item) => item.id !== "updates"),
         ...cards

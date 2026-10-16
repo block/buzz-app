@@ -262,3 +262,32 @@ test("cancel retains publication outcome before the next status poll", async ({
     page.getByText("Pairing was canceled.", { exact: true }),
   ).toHaveCount(0);
 });
+
+// The real shell, contributed route, and native-boundary fixture must work
+// together; the no-membership and prefilled-origin cases stay in Vitest.
+test("Personal space pairs with a manually entered community address", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page
+    .getByRole("button", { name: "Personal space", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Your profile", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  const pairing = page
+    .getByRole("complementary", { name: "Settings sidebar" })
+    .getByRole("button", { name: "Pair mobile", exact: true });
+  await pairing.click();
+  await expect(pairing).toHaveAttribute("aria-current", "page");
+  const qr = page.getByAltText("Scan this QR code with Buzz on your phone");
+  // With no community selected, pairing waits for the address it needs.
+  await expect(qr).toHaveCount(0);
+  const address = page.getByLabel("Community address", { exact: true });
+  await address.fill("https://community.example");
+  await address.blur();
+  await expect(qr).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.pairingFixture.calls.at(-1)?.action))
+    .toBe("start");
+});

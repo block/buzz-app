@@ -295,6 +295,9 @@ retention. Plugin enablement controls visibility without changing capture settin
 `ctx.settingsCards.register({ id, title, icon, component })` contributes a Settings
 destination under the selected community. Adding `group` places it under that
 labelled navigation group instead; the existing `"App"` group appears as **Buzz**.
+Adding `personal: true` also lists a community card under **Personal space**, for
+cards such as Pair mobile that collect their own community address; it cannot be
+combined with `group` or `section`.
 Its section id is the contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
 uses the shared design-system icon gateway; the host supplies a fallback when omitted.
 Cards receive `active()` and use ordinary

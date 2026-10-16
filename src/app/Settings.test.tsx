@@ -336,6 +336,7 @@ it("keeps grouped cards available without a selected community", () => {
   const { cards } = registry([
     card("hosted", "Hosted communities", "Communities"),
     card("groups", "Personal groups"),
+    { ...card("mobile", "Pair mobile"), personal: true },
   ]);
   const noCommunityState = { ...communityState, selected: null };
   render(
@@ -352,6 +353,7 @@ it("keeps grouped cards available without a selected community", () => {
   );
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
   expect(nav).toHaveTextContent("Communities");
+  expect(nav).toHaveTextContent("Personal space");
   fireEvent.click(screen.getByRole("button", { name: "Profile" }));
   expect(screen.getByRole("button", { name: "Profile" })).toHaveAttribute(
     "aria-current",
@@ -361,6 +363,9 @@ it("keeps grouped cards available without a selected community", () => {
     screen.getByRole("button", { name: "Hosted communities" }),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Personal groups" })).toBeNull();
+  // Personal-space pairing collects its own address and has no community.
+  fireEvent.click(screen.getByRole("button", { name: "Pair mobile" }));
+  expect(screen.getByText("Pair mobile body")).toBeVisible();
 });
 
 it("shows administration only within a selected community", () => {
@@ -577,7 +582,7 @@ it.each(["primary", null])(
       outline(shell as HTMLElement),
     );
     expect(outline(standalone as HTMLElement).map(([label]) => label)).toEqual([
-      ...(selected ? ["Primary", "Community admin"] : []),
+      ...(selected ? ["Primary", "Community admin"] : ["Personal space"]),
       "Buzz",
       "Plugins",
       "Communities",

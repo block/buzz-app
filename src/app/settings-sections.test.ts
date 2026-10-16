@@ -25,7 +25,7 @@ const card = (
 };
 const cards = [
   // Plugin activation/re-enable order must not determine community navigation.
-  card("buzz.pairing/mobile"),
+  card("buzz.pairing/mobile", { personal: true }),
   card("buzz.emoji/custom-emoji"),
   card("buzz.channels/templates", { group: "App" }),
   card("example/groups"),
@@ -99,7 +99,8 @@ it.each([
     undefined,
     "appearance",
     [
-      ["app", "Buzz", ["profile", ...app]],
+      ["personal", "Personal space", ["profile", "buzz.pairing/mobile"]],
+      ["app", "Buzz", app],
       ["plugins", "Plugins", plugins],
       ["group:Communities", "Communities", ["example/hosted"]],
     ],

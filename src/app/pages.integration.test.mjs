@@ -139,6 +139,8 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .snapshot()
       .find((card) => card.key === "buzz.pairing/mobile");
     assert.ok(pairingCard);
+    // Pairing collects its own address, so it also belongs in Personal space.
+    assert.equal(pairingCard.personal, true);
     await services.plugins.change("disable", "buzz.pairing");
     assert.equal(services.settingsCards.has("buzz.pairing/mobile"), false);
     await services.plugins.change("enable", "buzz.pairing");

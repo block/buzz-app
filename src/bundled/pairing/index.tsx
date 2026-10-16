@@ -8,6 +8,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "mobile",
     title: "Pair mobile",
     icon: DeviceMobileIcon,
+    // Pairing needs a community address, not a selected community.
+    personal: true,
     component: ({ active }) => (
       <PairingSettings communities={communities} active={active} />
     ),

@@ -137,7 +137,7 @@ it.each([null, "primary"])(
     });
     expect(profile).toHaveAttribute("aria-current", "page");
     expect(profile.closest("section")).toHaveTextContent(
-      selected ? "Primary" : "Buzz",
+      selected ? "Primary" : "Personal space",
     );
     await userEvent.setup().click(profile);
     expect(onSection).toHaveBeenCalledWith("profile");

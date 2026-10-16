@@ -200,6 +200,25 @@ export function fakeSpawn(known = new Set<string>()) {
 }
 
 /** Lets queued promise callbacks run. */
+/** Claude's full list of live background tasks, as it sends one on each change. */
+export const backgroundTasks = (
+  fake: FakeClaude | undefined,
+  ...tasks: Readonly<{ ambient?: boolean }>[]
+) =>
+  fake?.emit({
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks: tasks.map((task, index) => ({
+      task_id: `task-${index}`,
+      task_type: "local_bash",
+      description: "sleep",
+      ...task,
+    })),
+  });
+/** Claude reporting whether it is in a turn, its own ones included. */
+export const sessionState = (fake: FakeClaude | undefined, state: string) =>
+  fake?.emit({ type: "system", subtype: "session_state_changed", state });
+
 export const flush = async (times = 5) => {
   for (let index = 0; index < times; index++) await Promise.resolve();
   await new Promise((resolve) => setTimeout(resolve, 0));

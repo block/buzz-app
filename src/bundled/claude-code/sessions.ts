@@ -17,7 +17,8 @@ import {
 } from "./claude";
 import { STANDALONE_DEADLINE_MS } from "../../features/agent-harness/standalone";
 
-/** A conversation's process stops after this long without a message. */
+/** A conversation's process stops after this long without a message or its
+ * own activity, such as background work. */
 export const IDLE_MS = 15 * 60_000;
 /** How long a one-off turn can run before it is given up; Janet's turn
  * deadline. */
@@ -343,6 +344,10 @@ export class AgentSessions {
   }
   private adopt(key: string, live: Live, seen: number) {
     live.process.conversation = key;
+    // Not a stop: a turn that reports finished work may be about to start.
+    live.process.onQuiet = () => {
+      if (this.live.get(key) === live) this.touch(key, live);
+    };
     this.live.set(key, live);
     this.touch(key, live, seen);
     this.options.onChange?.();
@@ -369,7 +374,7 @@ export class AgentSessions {
     live.used = this.now();
     clearTimeout(live.timer);
     live.timer = setTimeout(() => {
-      if (live.process.busy) this.touch(key, live);
+      if (live.process.active) this.touch(key, live);
       else if (this.live.get(key) === live) this.drop(key, live);
     }, IDLE_MS);
     const id = live.process.sessionId;

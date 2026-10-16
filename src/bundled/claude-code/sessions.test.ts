@@ -1,5 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { fakeSpawn, flush } from "./claude-testing";
+import {
+  backgroundTasks,
+  fakeSpawn,
+  flush,
+  sessionState,
+} from "./claude-testing";
 import type { ToolServer } from "./claude";
 import {
   AgentSessions,
@@ -311,6 +316,53 @@ it("resumes a saved conversation after its process stops", async () => {
   expect(resumed?.options.args).toContain("new-1");
   expect(resumed?.prompts).toEqual(["later"]);
   expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 5 });
+});
+
+it("keeps a conversation's process while its background work runs", async () => {
+  vi.useFakeTimers();
+  const { pool, claudes } = sessions();
+  await pool.deliver("c/root", "start a build", 1);
+  const [process] = claudes();
+  backgroundTasks(process, {});
+  vi.advanceTimersByTime(IDLE_MS * 3 - 1000);
+  expect(process?.killed).toBe(false);
+  // The build ends, and Claude reports it in a turn of its own.
+  backgroundTasks(process);
+  sessionState(process, "running");
+  sessionState(process, "idle");
+  vi.advanceTimersByTime(IDLE_MS - 1);
+  expect(process?.killed).toBe(false);
+  vi.advanceTimersByTime(1);
+  expect(process?.killed).toBe(true);
+});
+
+it("keeps a conversation's process through a turn Claude starts itself", async () => {
+  vi.useFakeTimers();
+  const { pool, claudes } = sessions();
+  await pool.deliver("c/root", "hi", 1);
+  const [process] = claudes();
+  sessionState(process, "running");
+  vi.advanceTimersByTime(IDLE_MS * 2 - 1000);
+  sessionState(process, "idle");
+  vi.advanceTimersByTime(IDLE_MS - 1);
+  expect(process?.killed).toBe(false);
+  vi.advanceTimersByTime(1);
+  expect(process?.killed).toBe(true);
+});
+
+it("applies new settings over background work once no reply is running", async () => {
+  const { pool, claudes, setModel } = sessions();
+  await pool.deliver("c/root", "start a build", 1);
+  const [process] = claudes();
+  backgroundTasks(process, {});
+  setModel("sonnet");
+  pool.reconfigure();
+  await flush();
+  expect(process?.killed).toBe(true);
+  await pool.deliver("c/root", "again", 2);
+  expect(claudes().at(-1)?.options.args).toEqual(
+    expect.arrayContaining(["--resume", "new-1", "--model", "sonnet"]),
+  );
 });
 
 it("starts over when a saved session no longer loads", async () => {

@@ -883,6 +883,8 @@ impl Manager {
     }
     /// Reload a folder installation without changing its enabled state.
     /// An enabled plugin is replaced by the app's catalog observer.
+    /// Changed host access is accepted without review, so this is for the
+    /// operator's CLI; Settings uses `reload`, which keeps the review step.
     pub fn reload_live(&self, id: &str) -> Result<Catalog> {
         self.reload_with_commit_hook(id, true, || {})
     }

@@ -48,6 +48,32 @@ test("loaded avatar artwork stays mounted through status changes", async ({
   await expect(artwork).toHaveCSS("opacity", "1");
 });
 
+test("thinking badge reverses mid-morph and settles at once under reduced motion", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
+  await page.goto("/tests/fixtures/design-system/thinking-avatar.html");
+  const card = page.getByRole("article", {
+    name: "Centered Start pill",
+    exact: true,
+  });
+  const root = card.locator(".badge-pill-root");
+  await card.getByRole("button", { name: "Thinking", exact: true }).click();
+  await page.clock.runFor(150);
+  await expect(root).toHaveAttribute("data-phase", "morphing");
+  await card.getByRole("button", { name: "Available", exact: true }).click();
+  await page.clock.runFor(320);
+  await expect(root).toHaveAttribute("data-phase", "available");
+
+  await card.getByRole("button", { name: "Thinking", exact: true }).click();
+  await page.clock.runFor(320);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await card.getByRole("button", { name: "Available", exact: true }).click();
+  await page.clock.runFor(20);
+  await expect(root).toHaveAttribute("data-phase", "available");
+});
+
 test("built viewer loads every specimen and foundation without app connections", async ({
   page,
 }) => {

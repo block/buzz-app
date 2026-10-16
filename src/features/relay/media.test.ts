@@ -32,6 +32,21 @@ const flushDecode = async () => {
   await Promise.resolve();
 };
 
+it.each([
+  [100, true],
+  [21000, false],
+])("a %ipx-wide original is explicitly decoded: %s", async (width, decoded) => {
+  const created = stubImages();
+  createMediaPreparation().prepare(["a"]);
+  const image = created[0];
+  if (!image?.onload) throw new Error("image not requested");
+  image.naturalWidth = width;
+  image.onload();
+  await flushDecode();
+  // Oversized originals are not decoded just to prepare an avatar.
+  expect(image.decode).toHaveBeenCalledTimes(decoded ? 1 : 0);
+});
+
 it("Save-Data disables warming but nothing else", () => {
   stubImages();
   vi.stubGlobal("navigator", { connection: { saveData: true } });

@@ -297,11 +297,6 @@ type Pass = {
 };
 
 const EMPTY = Object.freeze({});
-const blank = (pubkey: string): AgentRecord => ({
-  pubkey,
-  attention: EMPTY,
-  config: undefined,
-});
 const seconds = () => Math.floor(Date.now() / 1000);
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
@@ -335,9 +330,10 @@ export type RunnerHost = {
   record(pubkey: string): AgentRecord;
   /** Saves one record; rejects when it was not saved. */
   write(record: AgentRecord): Promise<void>;
-  /** Saves timers' progress. It stays in memory even if the save later fails,
-   * so a timer does not run again at once; throws when storage refuses it. */
-  progress(record: AgentRecord): void;
+  /** Saves timers' progress into its latest record, keeping any change to it
+   * still being saved. It stays in memory even if the save later fails, so a
+   * timer does not run again at once; throws when storage refuses it. */
+  progress(pubkey: string, timers: NonNullable<AgentRecord["timers"]>): void;
   /** The team sections of its prompt; empty without a team. */
   team(pubkey: string): string;
   /** What its next run starts with, from this device's storage only. */
@@ -1561,8 +1557,7 @@ export class AgentRunners {
     // Off, timers keep their saved state; one overdue runs once when back on.
     if (!agent.attentionEnabled) return undefined;
     const now = seconds();
-    const record = this.host.saved(agent.pubkey) ?? blank(agent.pubkey);
-    const prior = record.timers ?? EMPTY;
+    const prior = this.host.saved(agent.pubkey)?.timers ?? EMPTY;
     let timers = prior;
     let next:
       | {
@@ -1592,7 +1587,7 @@ export class AgentRunners {
     if (next && ran) timers = { ...timers, [next.slug]: ran };
     if (timers !== prior)
       try {
-        this.host.progress({ ...record, timers });
+        this.host.progress(agent.pubkey, timers);
       } catch (error) {
         // Unsaved, it would run again at once; it waits for storage instead.
         console.warn(`Agent ${agent.name} timer state was not saved`, error);

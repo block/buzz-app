@@ -1116,11 +1116,17 @@ export class AgentsService extends Service implements Agents {
         if (!identity) throw new Error("No such agent on this device");
         return this.recordOf(identity);
       },
-      write: (record) => this.write(record),
-      // A failed save logs; memory keeps it, so the timer does not run again.
-      progress: (record) => {
-        void this.write(record, true).catch((error) =>
-          console.warn(`Agent ${record.pubkey} state was not saved`, error),
+      write: async (record) => this.write(record),
+      // Into the record being saved, if any, so a pending settings or
+      // attention change is saved with it; shown on the saved one, so a form
+      // still compares against what is saved. A refusal throws here, so the
+      // timer does not run; a failed save logs, and memory keeps the
+      // progress, so the timer does not run again at once.
+      progress: (pubkey, timers) => {
+        const shown = { ...(this.records[pubkey] ?? blank(pubkey)), timers };
+        const pending = this.saving.get(pubkey);
+        void this.write(pending ? { ...pending, timers } : shown, shown).catch(
+          (error) => console.warn(`Agent ${pubkey} state was not saved`, error),
         );
       },
       start: (agent) => {
@@ -2430,31 +2436,36 @@ export class AgentsService extends Service implements Agents {
     return agent;
   }
 
-  /** Saves one record. The owner and the agent see it once it is saved, and
-   * the promise settles then; when the save fails, they keep seeing what
-   * storage still has, so a form keeps its unsaved changes. With `keep`, it
-   * is shown at once and stays when its save fails: timer progress, so a
-   * timer whose progress was lost does not run again at once. */
-  private async write(record: AgentRecord, keep = false) {
+  /** Saves one record; throws at once when storage refuses it. The owner and
+   * the agent see it once it is saved, and the promise settles then; when the
+   * save fails, they keep seeing what storage still has, so a form keeps its
+   * unsaved changes. With `shown`, that is shown at once instead and stays
+   * when the save fails: timer progress, so a timer whose progress was lost
+   * does not run again at once. */
+  private write(record: AgentRecord, shown?: AgentRecord): Promise<void> {
     const { pubkey } = record;
     // Only this agent's key: others may be another program's to change.
     writeRecord(this.storage, record);
     this.saving.set(pubkey, record);
-    if (keep) {
-      this.records = { ...this.records, [pubkey]: record };
+    if (shown) {
+      this.records = { ...this.records, [pubkey]: shown };
       this.update();
     }
+    return this.settle(record, shown !== undefined);
+  }
+  private async settle(record: AgentRecord, keep: boolean) {
+    const { pubkey } = record;
     /** Whether this is still the agent's last write; it stops being saved. */
     const last = () => {
       if (this.saving.get(pubkey) !== record) return false;
       this.saving.delete(pubkey);
-      return !keep;
+      return true;
     };
     try {
       await persisted(this.storage, recordKey(pubkey));
     } catch (error) {
       // A later write settles on its own. Storage put back the saved value.
-      if (last()) {
+      if (last() && !keep) {
         const { [pubkey]: _, ...others } = this.records;
         const saved = readOne(this.storage, pubkey);
         this.records = saved ? { ...others, [pubkey]: saved } : others;
@@ -2462,7 +2473,7 @@ export class AgentsService extends Service implements Agents {
       }
       throw error;
     }
-    if (last()) {
+    if (last() && this.records[pubkey] !== record) {
       this.records = { ...this.records, [pubkey]: record };
       this.update();
     }

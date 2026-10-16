@@ -2289,6 +2289,74 @@ it("rejects a save that agent storage could not write, and saves it on retry", a
   expect(service.find(bot)?.config).toEqual({ reply: "unsaved" });
 });
 
+const tick = {
+  "watch/tick": {
+    type: "timer",
+    interest_id: "default",
+    prompt: "check in",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000,
+    max_occurrences: 10,
+    expires_at: null,
+  },
+} as const;
+
+it("keeps a settings change still being saved when a timer saves its progress", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const disk = new Map<string, string>();
+  let hold: Promise<void> | undefined;
+  const storage = fileBacked(new Map(), async (key, value) => {
+    await hold;
+    if (value === null) disk.delete(key);
+    else disk.set(key, value);
+  });
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, { attention: tick });
+  let release = () => {};
+  hold = new Promise((resolve) => (release = resolve));
+  const saving = service.save(bot, { config: { reply: "edited" } });
+  // The timer comes due while the edit is still being saved.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(run).toHaveBeenCalledTimes(1);
+  // A form still compares its draft against the saved settings.
+  expect(service.find(bot)?.config).toEqual({ reply: "ok" });
+  release();
+  await saving;
+  expect(service.find(bot)?.config).toEqual({ reply: "edited" });
+  const saved = JSON.parse(disk.get(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.config).toEqual({ reply: "edited" });
+  expect(saved.timers["watch/tick"]).toMatchObject({ used: 1 });
+});
+
+it("runs no due timer whose progress storage refuses, until it can save it", async () => {
+  vi.useFakeTimers({ now: 1_000_000 });
+  const storage = memoryStorage();
+  const { service, run } = await setup({ storage });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.save(bot, { attentionEnabled: true });
+  await service.save(bot, { attention: tick });
+  const setItem = storage.setItem.bind(storage);
+  let refusing = true;
+  vi.spyOn(storage, "setItem").mockImplementation((key, value) => {
+    if (refusing && key === `buzz.agent.v1:${bot}`)
+      throw new Error("QuotaExceededError");
+    setItem(key, value);
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  // Due, and due again after each drain: still refused, it never runs.
+  await vi.advanceTimersByTimeAsync(180_000);
+  expect(run).not.toHaveBeenCalled();
+  refusing = false;
+  await vi.advanceTimersByTimeAsync(60_000);
+  warn.mockRestore();
+  expect(run).toHaveBeenCalledTimes(1);
+  const saved = JSON.parse(storage.getItem(`buzz.agent.v1:${bot}`) ?? "{}");
+  expect(saved.timers["watch/tick"]).toMatchObject({ used: 1 });
+});
+
 it("shows the saved teams after a team save agent storage could not write", async () => {
   let failing = false;
   const storage = fileBacked(new Map(), async () => {

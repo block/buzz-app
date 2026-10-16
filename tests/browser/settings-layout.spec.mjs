@@ -66,6 +66,7 @@ test("settings share a centered, bounded column and keep controls contained acro
         "Notifications",
         "Shortcuts",
         "Agent setup",
+        "Decisions",
         "Manage plugins",
         "Software updates",
       ]) {

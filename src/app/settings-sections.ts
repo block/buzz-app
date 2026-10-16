@@ -3,6 +3,7 @@
 import {
   ArchiveIcon,
   BellIcon,
+  BrainIcon,
   ShieldIcon,
   ChatCircleIcon,
   DownloadIcon,
@@ -47,6 +48,7 @@ const app: readonly SettingsSection[] = [
   { id: "notifications", label: "Notifications", icon: BellIcon },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
   { id: "agents", label: "Agent setup", icon: RobotIcon },
+  { id: "decisions", label: "Decisions", icon: BrainIcon },
   { id: "updates", label: "Software updates", icon: DownloadIcon },
 ];
 const plugins: SettingsSection = {

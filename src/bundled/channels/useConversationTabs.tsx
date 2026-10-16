@@ -651,6 +651,36 @@ export function useConversationTabs({
     };
   }
 
+  // Close all tabs and Close other tabs: one store update for both panes,
+  // including hidden tabs. False when the visit ended or nothing would close.
+  const closeTabsExcept = (keep?: string) => {
+    const closing = tabState.tabs.filter((tab) => tab.id !== keep);
+    if (
+      !currentVisit() ||
+      navigationSignal?.aborted ||
+      !(
+        closing.length ||
+        tabState.entries.some((entry) => panelTabId(entry) !== keep) ||
+        (tabState.settings && keep !== "settings") ||
+        tabState.thread
+      )
+    )
+      return false;
+    const addressed = closing.find(
+      (tab) =>
+        tab.kind === "thread" &&
+        routed?.channelId === tab.channelId &&
+        routed.messageId === tab.messageId,
+    );
+    entryList.current = entryList.current.filter(
+      (entry) => panelTabId(entry) === keep,
+    );
+    opening.current = entryList.current[0];
+    tabState.closeTabs(keep);
+    if (addressed?.kind === "thread") onCloseThread?.(addressed, false, true);
+    return true;
+  };
+
   return {
     open,
     opened,
@@ -665,30 +695,8 @@ export function useConversationTabs({
       tabState.setPaneOpen(false);
     },
     closeTab,
-    closeAllTabs: () => {
-      if (
-        !currentVisit() ||
-        navigationSignal?.aborted ||
-        !(
-          tabState.tabs.length ||
-          tabState.entries.length ||
-          tabState.settings ||
-          tabState.thread
-        )
-      )
-        return false;
-      const addressed = tabState.tabs.find(
-        (tab) =>
-          tab.kind === "thread" &&
-          routed?.channelId === tab.channelId &&
-          routed.messageId === tab.messageId,
-      );
-      entryList.current = [];
-      opening.current = undefined;
-      tabState.closeAllTabs();
-      if (addressed?.kind === "thread") onCloseThread?.(addressed, false, true);
-      return true;
-    },
+    closeAllTabs: () => closeTabsExcept(),
+    closeOtherTabs: (id: string) => closeTabsExcept(id),
     selectedTab,
     drawer,
     drawerContext,

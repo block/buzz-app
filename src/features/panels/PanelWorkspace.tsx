@@ -83,7 +83,13 @@ export function PanelWorkspace({
   drag,
 }: {
   /** The channel owner closes tabs across both panes, including hidden tabs. */
-  tabMenu?: { key: string; closeAll(): boolean } | undefined;
+  tabMenu?:
+    | {
+        key: string;
+        closeAll(): boolean;
+        closeOthers?: ((id: string) => boolean) | undefined;
+      }
+    | undefined;
   drag?: TabDragHost | undefined;
   items: Item[];
   value: string;
@@ -366,7 +372,18 @@ export function PanelWorkspace({
                   }
                 : undefined,
             }))}
-            tabMenu={tabMenu}
+            tabMenu={
+              tabMenu && {
+                ...tabMenu,
+                // A detail tab is kept with the owner whose lifetime it shares.
+                closeOthers:
+                  tabMenu.closeOthers &&
+                  ((id) =>
+                    tabMenu.closeOthers?.(
+                      owned.find((tab) => tab.id === id)?.owner ?? id,
+                    ) ?? false),
+              }
+            }
             onValueChange={(id) => {
               focusContent.current = pointerTab.current;
               pointerTab.current = false;

@@ -1,7 +1,10 @@
 import type { BuzzEvent, Filter } from "../../buzz-mcp/client";
 import { channelIdentity } from "../relay/channel-labels";
-import { channelVisibility } from "../relay/channel-details-protocol";
-import { metadataName, openMetadata } from "../relay/discovery";
+import {
+  metadataName,
+  openMetadata,
+  sessionChannelMetadata,
+} from "../relay/discovery";
 import { ReadError, readErrorKind } from "../relay/errors";
 import type { ReadFilter, RelayEvent } from "../relay/events";
 import { foldMessages } from "../relay/fold";
@@ -32,6 +35,10 @@ type Reader = {
   query(filters: readonly Filter[]): Promise<readonly Omit<BuzzEvent, "sig">[]>;
   relayAuthor?: string | undefined;
   signingAuthority?: string | undefined;
+  authorizeAudience?(
+    destination: string,
+    sources: readonly string[],
+  ): Promise<ReadonlySet<string>>;
 };
 type Options = {
   cursor?: SharedSessionCursor | undefined;
@@ -58,21 +65,10 @@ function readerFor(value: Reader | RelaySession, signal?: AbortSignal): Reader {
     relayAuthor: value.relayAuthor,
     signingAuthority: value.workflowAuthority,
     query: async (filters) => {
-      const events = await value.read(filters as readonly ReadFilter[], {
+      return value.readRemote(filters as readonly ReadFilter[], {
         fresh: true,
         ...(signal ? { signal } : {}),
       });
-      // Local intent cannot establish remote page exhaustion or a durable association.
-      if (
-        events.some(
-          (event) =>
-            event.delivery && !["accepted", "seen"].includes(event.delivery),
-        )
-      )
-        throw new Error(
-          "Shared session delivery is still pending. Retry after it settles.",
-        );
-      return events;
     },
   };
 }
@@ -162,15 +158,21 @@ async function accessSnapshot(io: AccessReader, ids: string[]) {
     limit: unique.length * 2,
   });
 }
-type Access = NonNullable<Awaited<ReturnType<typeof access>>>;
 
-function covered(source: Access, destination: Access) {
-  if (openMetadata(source.metadata)) return true;
-  // A public destination has readers outside its roster. Unknown visibility is not private.
-  return (
-    channelVisibility(destination.metadata) === "private" &&
-    destination.members.every((key) => source.members.includes(key))
-  );
+async function authorizeAudience(
+  io: AccessReader,
+  destination: string,
+  sources: readonly string[],
+  signal?: AbortSignal,
+) {
+  if (!io.reader.authorizeAudience)
+    throw new Error(
+      "This community cannot confirm the current answer audience. Shared-session agent retrieval requires updated server support.",
+    );
+  signal?.throwIfAborted();
+  const allowed = await io.reader.authorizeAudience(destination, sources);
+  signal?.throwIfAborted();
+  return allowed;
 }
 
 async function page(
@@ -308,12 +310,25 @@ export async function listSharedSessions(
   }
   const finalDestination = accessRecord(io, destination, records);
   if (!finalDestination) throw unavailable();
+  const allowed =
+    options.audience && groups.size
+      ? await authorizeAudience(
+          io,
+          destination,
+          [...groups.keys()],
+          options.signal,
+        )
+      : undefined;
   const checked: SharedSessionEntry[] = [];
-  // No asynchronous work after this snapshot: all audience/source decisions agree.
+  // No asynchronous reads after the current server audience decision.
   for (const [id, shares] of groups) {
     try {
       const source = accessRecord(io, id, records);
-      if (!source || (options.audience && !covered(source, finalDestination)))
+      if (
+        !source ||
+        !sessionChannelMetadata(source.metadata) ||
+        (allowed && !allowed.has(id))
+      )
         continue;
       const title = metadataName(source.metadata)?.trim() || id.slice(0, 8);
       if (
@@ -416,11 +431,7 @@ export async function readSharedSession(
       "No current shared session association was confirmed within the read budget.",
     );
   const source = await access(io, sourceId);
-  if (!source) throw unavailable();
-  if (!covered(source, dest))
-    throw new Error(
-      "This session cannot be used for the channel's current audience. An authorized person may need to re-share it; private sources cannot be quoted into public channels.",
-    );
+  if (!source || !sessionChannelMetadata(source.metadata)) throw unavailable();
   const result = await page(
     io,
     {
@@ -447,9 +458,19 @@ export async function readSharedSession(
   if (
     !afterSource ||
     !afterDestination ||
-    !covered(afterSource, afterDestination)
+    !sessionChannelMetadata(afterSource.metadata)
   )
     throw unavailable();
+  const allowed = await authorizeAudience(
+    io,
+    destination,
+    [sourceId],
+    options.signal,
+  );
+  if (!allowed.has(sourceId))
+    throw new Error(
+      "Shared session access could not be confirmed for the current answer audience.",
+    );
   const name = channelIdentity(afterSource.metadata).labels.includes(
     SESSION_NAMED_LABEL,
   )

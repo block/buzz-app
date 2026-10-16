@@ -81,27 +81,17 @@ test("a confirmed share opens the durable title-first channel index", async ({
   await search.fill(person);
   await expect(row).toHaveCount(1);
   await search.fill("");
+  // Keep representative PR evidence; state/search/recovery matrices are mounted tests.
+  await page.setViewportSize({ width: 1440, height: 950 });
   for (const mode of ["light", "dark"]) {
-    for (const width of [950, 1440]) {
-      for (const scale of [1, 2]) {
-        await page.setViewportSize({ width, height: 950 });
-        await page.evaluate(
-          ({ mode, scale }) => {
-            document.documentElement.dataset.colorMode = mode;
-            document.documentElement.style.fontSize = scale === 2 ? "200%" : "";
-          },
-          { mode, scale },
-        );
-        await expect(row.getByRole("button")).toBeVisible();
-        await page.screenshot({
-          path: testInfo.outputPath(
-            `shared-sessions-${mode}-${width}-${scale}.png`,
-          ),
-        });
-      }
-    }
+    await page.evaluate((mode) => {
+      document.documentElement.dataset.colorMode = mode;
+    }, mode);
+    await expect(row.getByRole("button")).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath(`shared-sessions-${mode}.png`),
+    });
   }
-  await page.evaluate(() => (document.documentElement.style.fontSize = ""));
   await row.getByRole("button").click();
   await expect(
     page.getByRole("article", { name: "Conversation", exact: true }),

@@ -607,6 +607,8 @@ export class ClaudeRuntime {
           handle &&
           appClient(handle, {
             relayAuthor: this.reads(pubkey)?.relayAuthor?.(),
+            audienceAuthorityCommunity:
+              this.reads(pubkey)?.audienceAuthorityCommunity?.(),
             signingAuthority: this.reads(pubkey)?.workflowAuthority(),
             spawn: this.spawn,
             cwd,

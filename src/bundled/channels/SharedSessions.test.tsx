@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
@@ -38,12 +38,14 @@ function deferred<T>() {
 function fixture() {
   const rosterListeners = new Set<() => void>();
   const liveListeners = new Set<Parameters<RelaySession["subscribeLive"]>[0]>();
-  let channels: ChannelSummary[] = ["destination", "source"].map((id) => ({
-    id,
-    name: id,
-    members: [viewer, sender],
-    visibility: "private",
-  }));
+  let channels: ChannelSummary[] = ["destination", "source", "unrelated"].map(
+    (id) => ({
+      id,
+      name: id,
+      members: [viewer, sender],
+      visibility: "private",
+    }),
+  );
   const profileValues = new Map([
     [sender, { name: "Tulsi" }],
     ["c".repeat(64), { name: "Avery" }],
@@ -110,6 +112,12 @@ function fixture() {
     publicNonmemberSource() {
       channels = channels.filter((channel) => channel.id !== "source");
     },
+    renameUnrelated() {
+      channels = channels.map((channel) =>
+        channel.id === "unrelated" ? { ...channel, name: "renamed" } : channel,
+      );
+      for (const listener of rosterListeners) listener();
+    },
     renameDestination() {
       channels = channels.map((channel) => ({ ...channel, name: "renamed" }));
       for (const listener of rosterListeners) listener();
@@ -143,7 +151,7 @@ it("refreshes an open list when an unmarked session card arrives", async () => {
   });
 });
 
-it("shows loading as status, then a title-first accessible row with a single open target", async () => {
+it("loads, searches, clears and opens a title-first accessible row", async () => {
   const gate = deferred<SharedSessionPage>();
   list.mockReturnValue(gate.promise);
   const open = vi.fn();
@@ -165,23 +173,6 @@ it("shows loading as status, then a title-first accessible row with a single ope
   });
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
   expect(row).toHaveAccessibleDescription("Session ID source");
-  await userEvent.click(row);
-  expect(open).toHaveBeenCalledWith("source");
-  expect(
-    screen.getByRole("region", { name: "Shared sessions" }),
-  ).toHaveAttribute("tabindex", "-1");
-});
-
-it("searches loaded titles and offers recovery without implying transcript search", async () => {
-  list.mockResolvedValue(page);
-  render(
-    <SharedSessions
-      session={fixture().session}
-      channelId="destination"
-      open={() => {}}
-    />,
-  );
-  await screen.findByRole("listitem");
   await userEvent.type(
     screen.getByRole("searchbox", { name: "Search shared sessions" }),
     "another topic",
@@ -191,6 +182,15 @@ it("searches loaded titles and offers recovery without implying transcript searc
   await userEvent.click(screen.getByRole("button", { name: /^Clear search$/ }));
   expect(screen.getByRole("listitem")).toBeVisible();
   expect(list).toHaveBeenCalledTimes(1);
+  await userEvent.click(
+    screen.getByRole("button", {
+      name: /Investigate duplicate notifications, shared by Tulsi/,
+    }),
+  );
+  expect(open).toHaveBeenCalledWith("source");
+  expect(
+    screen.getByRole("region", { name: "Shared sessions" }),
+  ).toHaveAttribute("tabindex", "-1");
 });
 
 it("searches every contributing sharer by name, including an earlier sharer", async () => {
@@ -228,21 +228,6 @@ it("searches every contributing sharer by name, including an earlier sharer", as
   expect(screen.queryByRole("listitem")).toBeNull();
   expect(screen.getByText(/No titles or sharers match/)).toBeVisible();
   expect(list).toHaveBeenCalledTimes(1);
-});
-
-it("uses an honest settled empty state without inaccessible counts", async () => {
-  list.mockResolvedValue({ entries: [], complete: true, errors: [] });
-  render(
-    <SharedSessions
-      session={fixture().session}
-      channelId="destination"
-      open={() => {}}
-    />,
-  );
-  expect(await screen.findByText("No shared sessions to show")).toBeVisible();
-  expect(
-    screen.queryByText(/unavailable|not available|aren’t available/),
-  ).toBeNull();
 });
 
 it("keeps read failures distinct from an empty collection and retries", async () => {
@@ -505,4 +490,249 @@ it("retains a readable public nonmember source through an unrelated refresh fail
   );
   expect(row).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});
+
+it("finishes Load more and coalesces live traffic into one trailing refresh", async () => {
+  const f = fixture();
+  const cursor = { until: 100, before_id: "share" };
+  const gate = deferred<SharedSessionPage>();
+  const older = { ...entry, id: "older", title: "Older work" };
+  const olderPage = { entries: [older], complete: true, errors: [] };
+  list
+    .mockResolvedValueOnce({ ...page, cursor, complete: false })
+    .mockReturnValueOnce(gate.promise)
+    .mockResolvedValueOnce({ ...page, cursor, complete: false })
+    .mockResolvedValueOnce(olderPage);
+  render(
+    <SharedSessions
+      session={f.session}
+      channelId="destination"
+      open={vi.fn()}
+    />,
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Load more" }),
+  );
+  const signal = list.mock.calls[1]?.[2]?.signal;
+  try {
+    act(() => {
+      f.mutation();
+      f.mutation();
+      f.legacyShare();
+    });
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(signal?.aborted).toBe(false);
+    expect(screen.getByText(entry.title)).toBeVisible();
+  } finally {
+    await act(async () => gate.resolve(olderPage));
+  }
+  await screen.findByText("Older work");
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(4));
+  expect(list.mock.calls[3]?.[2]?.cursor).toEqual(cursor);
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
+});
+
+it.each([
+  { query: "   ", cursor: undefined, text: "No shared sessions to show" },
+  { query: "missing", cursor: undefined, text: /No titles or sharers match/ },
+  {
+    query: "",
+    cursor: { until: 100, before_id: "share" },
+    text: /Older messages remain/,
+  },
+])(
+  "retains the settled $query empty/search state during refresh",
+  async ({ query, cursor, text }) => {
+    const f = fixture();
+    const empty = {
+      entries: [],
+      errors: [],
+      complete: !cursor,
+      ...(cursor ? { cursor } : {}),
+    };
+    const gate = deferred<SharedSessionPage>();
+    list.mockResolvedValueOnce(empty).mockReturnValueOnce(gate.promise);
+    render(
+      <SharedSessions
+        session={f.session}
+        channelId="destination"
+        view={{ query, scrollTop: 0 }}
+        open={vi.fn()}
+      />,
+    );
+    const settled = await screen.findByText(text);
+    const clear = screen.queryByRole("button", { name: "Clear search" });
+    clear?.focus();
+    try {
+      act(() => f.mutation());
+      expect(settled).toBeVisible();
+      if (clear) {
+        expect(screen.getByRole("button", { name: "Clear search" })).toBe(
+          clear,
+        );
+        expect(clear).toHaveFocus();
+      }
+      expect(screen.queryByText("Loading shared sessions…")).toBeNull();
+      expect(
+        screen.queryByText(/unavailable|not available|aren’t available/),
+      ).toBeNull();
+    } finally {
+      await act(async () => gate.resolve(empty));
+    }
+  },
+);
+
+it("ignores unrelated channel renames and never restores a revoked row from a held refresh", async () => {
+  const f = fixture();
+  const gate = deferred<SharedSessionPage>();
+  const trailing = deferred<SharedSessionPage>();
+  list
+    .mockResolvedValueOnce(page)
+    .mockReturnValueOnce(gate.promise)
+    .mockReturnValueOnce(trailing.promise);
+  render(
+    <SharedSessions
+      session={f.session}
+      channelId="destination"
+      open={vi.fn()}
+    />,
+  );
+  await screen.findByText(entry.title);
+  act(() => f.renameUnrelated());
+  expect(list).toHaveBeenCalledTimes(1);
+  act(() => f.mutation());
+  act(() => f.revoke());
+  expect(screen.queryByText(entry.title)).toBeNull();
+  try {
+    await act(async () => gate.resolve(page));
+    expect(list).toHaveBeenCalledTimes(3);
+    expect(screen.queryByText(entry.title)).toBeNull();
+  } finally {
+    await act(async () => {
+      gate.resolve(page);
+      trailing.resolve({ entries: [], errors: [], complete: true });
+    });
+  }
+});
+
+it("prioritizes Load more over repeated trailing refreshes without aborting either read", async () => {
+  const f = fixture();
+  const cursor = { until: 100, before_id: "share" };
+  const first = { ...page, complete: false, cursor };
+  const olderPage = {
+    ...page,
+    entries: [{ ...entry, id: "older", title: "Older work" }],
+  };
+  const refresh = deferred<SharedSessionPage>();
+  const trailing = deferred<SharedSessionPage>();
+  const more = deferred<SharedSessionPage>();
+  list
+    .mockResolvedValueOnce(first)
+    .mockReturnValueOnce(refresh.promise)
+    .mockReturnValueOnce(trailing.promise)
+    .mockReturnValueOnce(more.promise)
+    .mockResolvedValueOnce(first)
+    .mockResolvedValueOnce(olderPage);
+  render(
+    <SharedSessions
+      session={f.session}
+      channelId="destination"
+      open={vi.fn()}
+    />,
+  );
+  const button = await screen.findByRole("button", { name: "Load more" });
+  try {
+    act(() => {
+      f.mutation();
+      f.mutation();
+    });
+    await act(async () => refresh.resolve(first));
+    expect(list).toHaveBeenCalledTimes(3);
+    act(() => {
+      f.mutation();
+      f.mutation();
+    });
+    expect(button).toHaveAttribute("aria-disabled", "false");
+    await userEvent.click(button);
+    await userEvent.click(button);
+    expect(list).toHaveBeenCalledTimes(3);
+    expect(list.mock.calls[2]?.[2]?.signal?.aborted).toBe(false);
+    await act(async () => trailing.resolve(first));
+    expect(list).toHaveBeenCalledTimes(4);
+    expect(list.mock.calls[3]?.[2]?.cursor).toEqual(cursor);
+    expect(button).toHaveAttribute("aria-disabled", "true");
+  } finally {
+    await act(async () => {
+      refresh.resolve(first);
+      trailing.resolve(first);
+      more.resolve(olderPage);
+    });
+  }
+  await screen.findByText("Older work");
+  expect(list).toHaveBeenCalledTimes(6);
+});
+
+it("prioritizes Retry over a queued background refresh", async () => {
+  const f = fixture();
+  const failed = { entries: [], complete: false, errors: ["Unavailable"] };
+  const refresh = deferred<SharedSessionPage>();
+  const retry = deferred<SharedSessionPage>();
+  list
+    .mockResolvedValueOnce(failed)
+    .mockReturnValueOnce(refresh.promise)
+    .mockReturnValueOnce(retry.promise)
+    .mockResolvedValueOnce(page);
+  render(
+    <SharedSessions
+      session={f.session}
+      channelId="destination"
+      open={vi.fn()}
+    />,
+  );
+  const button = await screen.findByRole("button", { name: "Retry" });
+  try {
+    act(() => {
+      f.mutation();
+      f.mutation();
+    });
+    expect(button).toHaveAttribute("aria-disabled", "false");
+    await userEvent.click(button);
+    await act(async () => refresh.resolve(failed));
+    expect(list).toHaveBeenCalledTimes(3);
+    expect(list.mock.calls[2]?.[2]?.cursor).toBeUndefined();
+  } finally {
+    await act(async () => {
+      refresh.resolve(failed);
+      retry.resolve(page);
+    });
+  }
+  expect(await screen.findByText(entry.title)).toBeVisible();
+  expect(list).toHaveBeenCalledTimes(4);
+});
+
+it("ignores repeated Load more activation while that explicit read is held", async () => {
+  const cursor = { until: 100, before_id: "share" };
+  const gate = deferred<SharedSessionPage>();
+  list
+    .mockResolvedValueOnce({ ...page, complete: false, cursor })
+    .mockReturnValueOnce(gate.promise);
+  render(
+    <SharedSessions
+      session={fixture().session}
+      channelId="destination"
+      open={vi.fn()}
+    />,
+  );
+  const button = await screen.findByRole("button", { name: "Load more" });
+  await userEvent.click(button);
+  try {
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(button);
+    await userEvent.click(button);
+    expect(list).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => gate.resolve(page));
+  }
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  expect(list).toHaveBeenCalledTimes(2);
 });

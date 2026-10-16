@@ -61,10 +61,7 @@ export function SharedSessions({
 
   useEffect(() => {
     const requested = focusRequest && view?.focusedEntry !== focusRequest;
-    if (
-      requested ||
-      document.activeElement?.getAttribute("title") === "Shared sessions"
-    ) {
+    if (requested) {
       // A retained tab is selected after navigation commits. Let the tab host
       // finish its own focus handoff before focusing the explicitly opened view.
       const frame = requestAnimationFrame(() => {
@@ -92,6 +89,7 @@ export function SharedSessions({
     let closed = false;
     let depth = 1;
     let retryMore = false;
+    const revoked = new Set<string>();
     const readable = (id: string) => {
       const channel = session.channels
         .list()
@@ -110,7 +108,10 @@ export function SharedSessions({
           .list()
           .channels.map((channel) => [
             channel.id,
-            channel.name,
+            channel.id === channelId ||
+            retained.current?.entries.some((entry) => entry.id === channel.id)
+              ? channel.name
+              : undefined,
             channel.cached,
             channel.visibility === "public" ||
               (!!session.viewer && !!channel.members?.includes(session.viewer)),
@@ -122,7 +123,6 @@ export function SharedSessions({
     );
     let evidence = fingerprint();
     const load = async (more = false) => {
-      request.current?.abort();
       const controller = new AbortController();
       request.current = controller;
       setPending(true);
@@ -178,9 +178,11 @@ export function SharedSessions({
           ...(nextCursor ? { cursor: nextCursor } : {}),
           complete: !errors.length && result.complete,
           errors,
-          entries: [...entries.values()].sort(
-            (a, b) => b.sharedAt - a.sharedAt || a.id.localeCompare(b.id),
-          ),
+          entries: [...entries.values()]
+            .filter((entry) => readable(channelId) && !revoked.has(entry.id))
+            .sort(
+              (a, b) => b.sharedAt - a.sharedAt || a.id.localeCompare(b.id),
+            ),
         };
         if (more && !errors.length) depth++;
         retained.current = next;
@@ -202,20 +204,40 @@ export function SharedSessions({
         if (!closed && !controller.signal.aborted) setPending(false);
       }
     };
-    loader.current = (more) => {
-      if (!request.current?.signal.aborted && request.current && pendingRead)
-        return;
-      void run(more ?? retryMore);
-    };
     let pendingRead = false;
-    let runId = 0;
-    const run = async (more = false) => {
-      const activeRun = ++runId;
+    let refreshQueued = false;
+    let explicitRead = false;
+    let queuedAction: boolean | undefined;
+    loader.current = (more) => {
+      if (explicitRead || queuedAction !== undefined) return;
+      const action = more ?? retryMore;
+      if (pendingRead) {
+        // A person can queue recovery/history work during a silent refresh;
+        // continuous live traffic must not starve that explicit action.
+        queuedAction ??= action;
+        setLoadingMore(action);
+      } else void run(action, true);
+    };
+    const run = async (more = false, explicit = false) => {
+      if (pendingRead) {
+        refreshQueued = true;
+        return;
+      }
       pendingRead = true;
+      explicitRead = explicit;
       try {
         await load(more);
       } finally {
-        if (activeRun === runId) pendingRead = false;
+        pendingRead = false;
+        explicitRead = false;
+        if (!closed && queuedAction !== undefined) {
+          const action = queuedAction;
+          queuedAction = undefined;
+          void run(action, true);
+        } else if (!closed && refreshQueued) {
+          refreshQueued = false;
+          void run();
+        }
       }
     };
     const stopRoster = session.channels.subscribeList(() => {
@@ -227,6 +249,11 @@ export function SharedSessions({
         const currentChannels = new Set(
           session.channels.list().channels.map(({ id }) => id),
         );
+        for (const id of revoked) if (readable(id)) revoked.delete(id);
+        for (const entry of previous.entries) {
+          if (readable(entry.id)) revoked.delete(entry.id);
+          else if (knownChannels.has(entry.id)) revoked.add(entry.id);
+        }
         const entries = readable(channelId)
           ? previous.entries.filter(
               (entry) =>
@@ -336,7 +363,7 @@ export function SharedSessions({
             <p role="status">Some shared sessions couldn’t be loaded.</p>
             <Button
               size="compact"
-              aria-disabled={pending}
+              aria-disabled={pending && (!page || loadingMore)}
               onClick={() => loader.current()}
             >
               Retry
@@ -368,19 +395,14 @@ export function SharedSessions({
             Loading shared sessions…
           </p>
         )}
-        {!pending &&
-          page &&
-          !error &&
-          !entries.length &&
-          !query &&
-          !page.cursor && (
-            <EmptyState
-              icon={<FileTextIcon size={24} aria-hidden="true" />}
-              title="No shared sessions to show"
-              description="Sessions shared in this channel appear here. Agents here can use them to answer questions."
-            />
-          )}
-        {!pending && page && !entries.length && query && (
+        {page && !error && !entries.length && !search && !page.cursor && (
+          <EmptyState
+            icon={<FileTextIcon size={24} aria-hidden="true" />}
+            title="No shared sessions to show"
+            description="Sessions shared in this channel appear here. Agents here can use them to answer questions."
+          />
+        )}
+        {page && !entries.length && search && (
           <div className={styles.feedback}>
             <p>
               No titles or sharers match “{query}”
@@ -398,7 +420,7 @@ export function SharedSessions({
             </Button>
           </div>
         )}
-        {!pending && page?.cursor && !entries.length && !query && !error && (
+        {page?.cursor && !entries.length && !search && !error && (
           <p className={styles.status}>
             No shared sessions to show in the messages checked. Older messages
             remain.
@@ -408,7 +430,7 @@ export function SharedSessions({
           <div className={styles.feedback}>
             <Button
               size="compact"
-              aria-disabled={pending}
+              aria-disabled={pending && (!page || loadingMore)}
               onClick={() => loader.current(true)}
             >
               {page.entries.length ? "Load more" : "Search older messages"}

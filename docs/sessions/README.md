@@ -289,25 +289,30 @@ topic filtering after its SQL limit. Each request scans up to 1,000 messages in
 include continuation and scan coverage; an incomplete scan never establishes
 absence. Metadata and roster reads use one writer-backed combined query,
 bounded to the relay's 1,000-record event-query limit. Original source metadata and
-transcripts are used, including for readable archived sessions. **Known discovery
-blocker:** the UI adapter currently rejects unconfirmed outbox entries; excluding
-those by local delivery alone can also discard remotely stored messages after a
-lost acknowledgement and falsely exhaust a page. A verified remote-only read is
-needed at the relay-session boundary.
+transcripts are used, including for readable archived sessions. Sources must match
+the canonical private-stream session metadata contract. Catalog reads use fresh,
+verified remote events without local Outbox or live projections, preserving remote
+page size even when an acknowledgement was lost. Background refreshes serialize
+with explicit paging, preserve loaded depth, and give one queued user action
+priority over trailing refresh work.
 
 Codex, Claude Code and Goose expose the shared `shared_sessions` list/read tool.
-The host binds the answer destination. Before returning titles or source messages
-to an agent, the current implementation compares source access and audience
-coverage using the final combined stored-event response. **Known release blocker:**
-these signed discovery records can lag committed membership or visibility changes;
-a strong stored-event read does not prove current audience coverage. Agent
-retrieval needs a backend check against current channel/membership rows before
-this feature can ship. Private sources are withheld for public destinations,
-whose readers can exceed the roster. Missing discovery evidence fails closed,
-but that does not protect against stale discovery evidence. Optional
-contributing share IDs from list are exact-event lookup hints for read, still
-subject to current association, destination, edit/delete and access verification.
-Standalone MCP without trusted relay authority cannot retrieve protected sessions.
+The host binds the answer destination. After reading metadata, associations and
+content, the agent performs one final versioned audience-authority query against
+current server channel/membership rows. The response must match the NIP-11
+community binding, authenticated agent, destination and complete ordered source
+set. Ordinary event arrays, unknown capabilities and incomplete responses cannot
+authorize output. Results are released synchronously after that decision, without
+further awaited reads. Signed discovery records can conservatively withhold data,
+but cannot independently authorize it. Private sources are withheld for public
+destinations, whose readers can exceed the roster. Optional contributing share IDs
+from list are exact-event lookup hints for read, still subject to association,
+destination, edit/delete and access verification. Standalone MCP without trusted
+relay authority cannot retrieve protected sessions. **Deployment dependency:** the
+relay must advertise and implement audience-authority v1 before channel-agent
+retrieval works; unsupported communities receive a capability error when protected
+candidates require authorization. The human catalog does not depend on that new
+capability.
 Agents cite source links and must not interpret a title miss as proof no relevant
 work exists. Already consumed model context cannot be retroactively erased.
 

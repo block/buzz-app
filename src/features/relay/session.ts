@@ -1777,6 +1777,7 @@ export function createRelaySession(
     presence,
     viewer: transport?.viewer,
     relayAuthor: transport?.relayAuthor,
+    audienceAuthorityCommunity: transport?.audienceAuthorityCommunity,
     /** NIP-AP config artifacts: the relay's own verified answer, never merged
      * with live or local outgoing events or fed to any projection, and a
      * kind-45010 writer when the host has one. Each read starts fresh. */
@@ -2064,6 +2065,24 @@ export function createRelaySession(
     outbox: writes?.outbox,
     /** People by profile name only; see `createProfileSearch`. */
     searchProfiles,
+    /** A fresh verified remote page under the normal access guards, without
+     * merging live observations or local outbox intent into paging evidence. */
+    async readRemote(filters: readonly ReadFilter[], settings?: ReadOptions) {
+      const epoch = accessEpoch;
+      const signal = settings?.signal
+        ? AbortSignal.any([settings.signal, lifetime.signal])
+        : lifetime.signal;
+      signal.throwIfAborted();
+      const result = await readVerified(filters, {
+        ...settings,
+        signal,
+        fresh: true,
+      });
+      signal.throwIfAborted();
+      if (closed || epoch !== accessEpoch)
+        throw new DOMException("Stale relay read", "AbortError");
+      return result;
+    },
     async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
       const began = revision;
       const epoch = accessEpoch;

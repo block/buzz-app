@@ -1,3 +1,4 @@
+import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
@@ -402,6 +403,9 @@ export async function connectNativeTransport(
   });
   return {
     ...transport,
+    audienceAuthorityCommunity: audienceAuthorityCommunity(
+      info.audience_authority,
+    ),
     workflows: workflowHost(async (route, body, signal) => {
       if (route !== "workflow-runs") throw new Error("Invalid workflow read");
       workflowRunsPath(body);

@@ -56,7 +56,6 @@
   padding-block: var(--space-2);
 }
 .feedback p,
-.status,
-.count {
+.status {
   margin-block: var(--space-2);
 }

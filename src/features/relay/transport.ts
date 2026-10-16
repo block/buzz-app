@@ -1,3 +1,4 @@
+import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import type { ReminderHost } from "./reminders";
 import { archiveClient } from "../archive/client";
 import type { ArchiveHost } from "../archive/types";
@@ -165,6 +166,7 @@ export interface ReadTransport {
   readonly viewer: string;
   /** Relay authority that signs discovery and window-bounds events. */
   readonly relayAuthor: string;
+  readonly audienceAuthorityCommunity?: string | undefined;
   /** Explicit NIP-11 self from this community, never a contact-key fallback. */
   readonly archiveAuthority?: string;
   /** Purpose-bound authoritative recency, verified and max 128 channel IDs. */
@@ -460,6 +462,7 @@ export async function connectBrokerTransport(
     agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
+    audienceAuthorityCommunity?: string;
   };
   if (
     typeof session.viewer !== "string" ||
@@ -856,6 +859,13 @@ export async function connectBrokerTransport(
             },
           },
         }
+      : {}),
+    ...(audienceAuthorityCommunity({
+      version: 1,
+      max_sources: 100,
+      community_id: session.audienceAuthorityCommunity,
+    })
+      ? { audienceAuthorityCommunity: session.audienceAuthorityCommunity }
       : {}),
     ...(session.readStateCommunity
       ? {

@@ -373,6 +373,7 @@ export type RunnerHost = {
         | "publish"
         | "query"
         | "searchProfiles"
+        | "audienceAuthority"
         | "upload"
         | "media"
         | "remember"
@@ -1742,6 +1743,24 @@ export class AgentRunners {
       publish: (event: AgentEventTemplate) => this.publish(runner, event),
       query: (filters: readonly object[]) =>
         this.require().query(agent.pubkey, filters),
+      audienceAuthority: async (
+        destination: string,
+        sources: readonly string[],
+      ) => {
+        signal.throwIfAborted();
+        const native = this.require();
+        if (!native.audienceAuthority)
+          throw new Error(
+            "Current audience authority is unsupported by this host.",
+          );
+        const response = await native.audienceAuthority(
+          agent.pubkey,
+          destination,
+          sources,
+        );
+        signal.throwIfAborted();
+        return response;
+      },
       searchProfiles: (query: string, limit: number) =>
         this.require().searchProfiles(agent.pubkey, query, limit),
       upload: (data: string, mime: string) =>

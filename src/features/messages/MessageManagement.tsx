@@ -525,11 +525,7 @@ function DeleteMessageDialog({
   return (
     <AlertDialog
       title="Delete message?"
-      description={
-        indexedShare
-          ? "Deletes this message and removes this share from Shared sessions. The session stays listed if someone else also shared it. People who already have access keep it. People may still have copies of this message. This cannot be undone."
-          : "This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
-      }
+      description="This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
       pending={pending}
       finalFocus={() => (operationId ? (selection.focus?.() ?? true) : true)}
       onClose={close}
@@ -544,6 +540,12 @@ function DeleteMessageDialog({
         </>
       }
     >
+      {indexedShare && (
+        <p role="status">
+          This share will leave Shared sessions; other shares and existing
+          access remain.
+        </p>
+      )}
       {(error || retryable) && (
         <p role="alert">
           {error ??

@@ -10,6 +10,7 @@ import {
   sessionReferenceIds,
 } from "./shared-session-marker";
 import { sessionLinkMessage } from "./share";
+import { sessionDescription } from "./metadata";
 
 const key = new Uint8Array(32).fill(1);
 const event = (kind: number, tags: string[][], content = "", created_at = 10) =>
@@ -27,12 +28,14 @@ const share = (time = 10, extra: string[][] = []) =>
   );
 function fixture() {
   let records: RelayEvent[] = [];
+  const current = new Map<string, { members: string[]; isPublic: boolean }>();
   const setAccess = (
     id: string,
     members = [viewer, authority],
     isPublic = false,
     title = id,
   ) => {
+    current.set(id, { members, isPublic });
     records = records.filter(
       (e) =>
         ![39000, 39002].includes(e.kind) ||
@@ -44,6 +47,7 @@ function fixture() {
         [isPublic ? "public" : "private"],
         ["t", "stream"],
         ["name", title],
+        ...(id !== "destination" ? [["about", sessionDescription()]] : []),
       ]),
       event(39002, [["d", id], ...members.map((m) => ["p", m])]),
     );
@@ -58,7 +62,32 @@ function fixture() {
       .slice(0, filter.limit);
   });
   return {
-    reader: { pubkey: viewer, relayAuthor: authority, query },
+    reader: {
+      pubkey: viewer,
+      relayAuthor: authority,
+      query,
+      authorizeAudience: vi.fn(
+        async (destination: string, sources: readonly string[]) => {
+          const dest = current.get(destination);
+          return new Set(
+            sources.filter((id) => {
+              const src = current.get(id);
+              return (
+                !!src &&
+                !!dest &&
+                !dest.isPublic &&
+                !src.isPublic &&
+                dest.members.includes(viewer) &&
+                src.members.includes(viewer) &&
+                dest.members.every((key) => src.members.includes(key))
+              );
+            }),
+          );
+        },
+      ),
+    },
+    setCurrentAccess: (id: string, members: string[], isPublic = false) =>
+      current.set(id, { members, isPublic }),
     setAccess,
     add: (...events: RelayEvent[]) => records.push(...events),
     remove: (id: string) => {
@@ -263,22 +292,23 @@ it("withholds private-source discovery and retrieval for a public answer destina
   ).toEqual([]);
   await expect(
     readSharedSession(f.reader, "destination", "source"),
-  ).rejects.toThrow(/public/);
+  ).rejects.toThrow(/access/);
   // Personal UI still shows a source the person can read.
   expect(
     (await listSharedSessions(f.reader, "destination")).entries,
   ).toHaveLength(1);
 });
 
-it("allows public source material for public destinations", async () => {
+it("rejects public streams even when a copied card labels them as sessions", async () => {
   const f = fixture();
-  f.add(share(), event(9, [["h", "source"]], "public evidence"));
-  f.setAccess("destination", undefined, true);
+  f.add(share(), event(9, [["h", "source"]], "ordinary public channel"));
   f.setAccess("source", [other], true);
-  expect(
-    (await readSharedSession(f.reader, "destination", "source")).messages[0]
-      ?.content,
-  ).toBe("public evidence");
+  expect((await listSharedSessions(f.reader, "destination")).entries).toEqual(
+    [],
+  );
+  await expect(
+    readSharedSession(f.reader, "destination", "source"),
+  ).rejects.toThrow(/access/);
 });
 
 it("requires complete audience coverage even if agent personally has access", async () => {
@@ -596,4 +626,97 @@ it("bounds historical card associations without trapping older valid shares", as
   });
   expect(older.entries.map(({ id }) => id)).toEqual(["source"]);
   expect(older.complete).toBe(true);
+});
+
+it.each(["destination addition", "source removal", "visibility change"])(
+  "rejects stale signed rosters after current %s",
+  async (change) => {
+    const f = fixture();
+    f.add(share(), event(9, [["h", "source"]], "protected content"));
+    if (change === "destination addition")
+      f.setCurrentAccess("destination", [viewer, authority, other]);
+    else if (change === "source removal")
+      f.setCurrentAccess("source", [authority]);
+    else f.setCurrentAccess("destination", [viewer, authority], true);
+    expect(
+      (
+        await listSharedSessions(f.reader, "destination", {
+          audience: "destination",
+        })
+      ).entries,
+    ).toEqual([]);
+    await expect(
+      readSharedSession(f.reader, "destination", "source"),
+    ).rejects.toThrow(/access/);
+  },
+);
+
+it("withholds agent output without current server audience support", async () => {
+  const f = fixture();
+  f.add(share(), event(9, [["h", "source"]], "protected content"));
+  const { authorizeAudience: _unsupported, ...reader } = f.reader;
+  await expect(
+    listSharedSessions(reader, "destination", { audience: "destination" }),
+  ).rejects.toThrow(/updated server support/);
+  await expect(
+    readSharedSession(reader, "destination", "source"),
+  ).rejects.toThrow(/updated server support/);
+});
+
+it("requires canonical session identity for a private stream source", async () => {
+  const f = fixture();
+  const query = f.query.getMockImplementation();
+  if (!query) throw new Error("Missing fixture query");
+  f.query.mockImplementation(async (filters) =>
+    (await query(filters)).map((record) =>
+      record.kind === 39000 &&
+      record.tags.some(([k, v]) => k === "d" && v === "source")
+        ? event(
+            39000,
+            record.tags.filter(([k]) => k !== "about"),
+            record.content,
+          )
+        : record,
+    ),
+  );
+  f.add(share(), event(9, [["h", "source"]], "ordinary private channel"));
+  expect((await listSharedSessions(f.reader, "destination")).entries).toEqual(
+    [],
+  );
+  await expect(
+    readSharedSession(f.reader, "destination", "source"),
+  ).rejects.toThrow(/access/);
+});
+
+it("uses remote page evidence rather than the projected local outbox adapter", async () => {
+  const f = fixture();
+  f.add(
+    ...Array.from({ length: 50 }, (_, i) =>
+      event(9, [["h", "destination"]], `ordinary ${i}`, 100 + i),
+    ),
+    share(10),
+  );
+  const owner = createRelaySession({
+    viewer,
+    relayAuthor: authority,
+    query: f.query,
+    media: () => undefined,
+  });
+  const projected = vi.fn(async () => {
+    throw new Error("Local failed outbox projection must not be used");
+  });
+  try {
+    const adapter = {
+      viewer,
+      relayAuthor: authority,
+      readRemote: owner.session.readRemote,
+      read: projected,
+    } as unknown as Parameters<typeof listSharedSessions>[0];
+    const result = await listSharedSessions(adapter, "destination");
+    expect(result.entries.map(({ id }) => id)).toEqual(["source"]);
+    expect(result.complete).toBe(true);
+    expect(projected).not.toHaveBeenCalled();
+  } finally {
+    owner.dispose();
+  }
 });

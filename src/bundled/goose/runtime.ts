@@ -487,6 +487,8 @@ export class GooseRuntime {
       const client = handle && {
         ...appClient(handle, {
           relayAuthor: this.relay(pubkey)?.snapshot().session.relayAuthor,
+          audienceAuthorityCommunity:
+            this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
           signingAuthority:
             this.relay(pubkey)?.snapshot().session.workflowAuthority,
           spawn: this.spawn,

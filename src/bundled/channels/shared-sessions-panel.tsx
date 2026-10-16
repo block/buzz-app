@@ -53,8 +53,7 @@ export function registerSharedSessions(ctx: Context) {
         aria-label="Toggle shared sessions"
         title="Shared sessions"
         aria-expanded={pressed}
-        onClick={(event) => {
-          event.currentTarget.focus();
+        onClick={() => {
           if (available()) toggle(sharedSessionsTarget(context.channelId));
         }}
       />

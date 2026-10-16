@@ -1,3 +1,4 @@
+import { audienceAuthorityCommunity } from "../src/features/sessions/audience-authority.ts";
 import {
   isCatalogKind,
   MAX_EVENT_BYTES as CATALOG_EVENT_BYTES,
@@ -313,6 +314,13 @@ async function relayAuthority(fetch, relay) {
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
+    ...(audienceAuthorityCommunity(nip11.audience_authority)
+      ? {
+          audienceAuthorityCommunity: audienceAuthorityCommunity(
+            nip11.audience_authority,
+          ),
+        }
+      : {}),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),

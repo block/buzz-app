@@ -12,6 +12,15 @@ export function metadataName(event: RelayEvent): string | undefined {
   return tag(event, "name") || undefined;
 }
 
+/** The canonical session identity, independent of membership or presentation labels. */
+export function sessionChannelMetadata(event: RelayEvent): boolean {
+  return (
+    tag(event, "t") === "stream" &&
+    event.tags.some(([name]) => name === "private") &&
+    sessionMetadata(tag(event, "about")) !== undefined
+  );
+}
+
 /** Explicit signed public metadata: readable and joinable by any viewer. */
 export function openMetadata(event: RelayEvent): boolean {
   return (
@@ -191,12 +200,7 @@ export class DiscoveryState {
   }
   isSession(id: string): boolean {
     const event = this.metadata.get(id);
-    return (
-      !!event &&
-      tag(event, "t") === "stream" &&
-      event.tags.some(([name]) => name === "private") &&
-      sessionMetadata(tag(event, "about")) !== undefined
-    );
+    return !!event && sessionChannelMetadata(event);
   }
   get(id: string): ChannelSummary | undefined {
     if (!this.canAccess(id) || (!this.authorized(id) && !this.open(id))) return;

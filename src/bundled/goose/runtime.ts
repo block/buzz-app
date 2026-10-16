@@ -486,6 +486,9 @@ export class GooseRuntime {
       const handle = entry.handle;
       const client = handle && {
         ...appClient(handle, {
+          relayAuthor: this.relay(pubkey)?.snapshot().session.relayAuthor,
+          signingAuthority:
+            this.relay(pubkey)?.snapshot().session.workflowAuthority,
           spawn: this.spawn,
           cwd: entry.config.workspace,
           memories: (slug) => this.memories(pubkey, slug),

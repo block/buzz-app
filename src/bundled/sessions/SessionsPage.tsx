@@ -521,6 +521,7 @@ function SessionWork({
             <ChannelMembersButton session={session} channelId={channel.id} />
             {drawer.launchers}
             <SessionShare
+              navigator={navigator}
               session={session}
               channel={channel}
               signal={navigation?.signal}

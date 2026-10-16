@@ -54,10 +54,11 @@ test("a session chip opens the same authorized conversation in the channel side 
     name: "Conversation",
     exact: true,
   });
+  app.append("primary", "alpha", "A preceding message from the same person.");
   const link = app.append(
     "primary",
     "alpha",
-    "[Session · beta](buzz://channel/beta)",
+    "[Session · beta](buzz://channel/beta)\n\nPlease review this session.",
   );
   const row = destination.locator(`[data-message-id="${link.id}"]`);
   const chip = row.getByRole("link", {
@@ -65,6 +66,17 @@ test("a session chip opens the same authorized conversation in the channel side 
     exact: true,
   });
   await expect(chip).toBeVisible();
+  await expect(row.locator('[data-stack-previous="true"]')).toHaveCount(1);
+  const captionGap = () =>
+    row.evaluate((element) => {
+      const cards = element.querySelector("[data-session-cards]");
+      const caption = element.querySelector('[class*="messageBubble"]');
+      return (
+        caption.getBoundingClientRect().top -
+        cards.getBoundingClientRect().bottom
+      );
+    });
+  await expect.poll(captionGap).toBe(2);
   await expect(chip.locator("svg.tabler-icon-file-text")).toBeVisible();
   await chip.click();
   const panel = page.locator("[data-panel-workspace]");
@@ -112,6 +124,7 @@ test("a session chip opens the same authorized conversation in the channel side 
     }, mode);
     for (const width of [1280, 950]) {
       await page.setViewportSize({ width, height: 850 });
+      await expect.poll(captionGap).toBe(2);
       await expect(
         conversation.getByRole("textbox", { name: "Message this session" }),
       ).toBeInViewport();

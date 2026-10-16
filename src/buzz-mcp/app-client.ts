@@ -15,6 +15,8 @@ export function appClient(
   agent: AgentHandle,
   options: Readonly<{
     spawn: Spawn;
+    relayAuthor?: string | undefined;
+    signingAuthority?: string | undefined;
     /** Where relative paths start: the agent's working directory. */
     cwd: string;
     memories(slug?: string): Promise<Memories>;
@@ -37,10 +39,14 @@ export function appClient(
   };
   return {
     pubkey: agent.pubkey,
+    relayAuthor: options.relayAuthor,
+    signingAuthority: options.signingAuthority,
     attention: agent.attention,
-    query: (filters) => {
+    query: async (filters) => {
       check();
-      return agent.query(filters);
+      const events = await agent.query(filters);
+      check();
+      return events;
     },
     searchProfiles: (query, limit) => {
       check();

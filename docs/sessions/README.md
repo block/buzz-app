@@ -255,3 +255,53 @@ Human testing, packaged/native GUI, live relay, cross-account, no-wake and hoste
 CI acceptance remain separate. Narrow enlarged-text footer clipping/wrapping
 remains a presentation limitation; center hit testing and Tab reachability are
 not complete visual acceptance.
+
+## Channel Shared sessions
+
+Stream and forum headers expose Shared sessions in the existing channel tab host.
+The list shows each readable session's current source title (or short ID), latest
+sharer, share date and short ID. It does not read transcripts to render titles,
+require summaries, or start inference. The UI search matches loaded titles and
+the current display names of every contributing sharer, including earlier sharers.
+It searches neither session contents nor participants who did not share. A cursor
+means older messages remain. Inaccessible entries and their counts stay hidden.
+Unknown reads show a generic retry state.
+
+New Share-to-channel messages and composer session attachments carry the
+`buzz.shared-session.v1` topic and explicit source references. The confirmed
+signed message is the durable association; there is no device-local catalog write.
+Historical unmarked messages with visible Session-labelled cards also contribute,
+using their original signed references intersected with current edited content.
+Bare links, generic links, quoted/code/hidden cards and edited-in new sources do
+not establish associations. Copied Session-labelled cards are indistinguishable
+from historical shares and are included. No history or permissions are rewritten.
+An old card does not prove its access grants completed; current source access
+and the agent's answer audience are still checked before returning anything.
+Current canonical edits/deletions determine surviving contributions;
+duplicates collapse by source ID. Removing the final contribution removes the
+entry without revoking access to the source session. Membership grants remain
+roster-at-share, without automatic synchronization.
+
+The catalog pages ordinary channel messages because the inspected relay applies
+topic filtering after its SQL limit. Each request scans up to 1,000 messages in
+50-message reads, stopping between messages at the candidate target. Results
+include continuation and scan coverage; an incomplete scan never establishes
+absence. Metadata and roster checks use one writer-backed combined query,
+bounded to the relay's 1,000-record authority limit. Original source metadata and
+transcripts remain authoritative, including for readable archived sessions.
+
+Codex, Claude Code and Goose expose the shared `shared_sessions` list/read tool.
+The host binds the answer destination. Before returning titles or source messages
+to an agent, it verifies source access and audience coverage from the final
+combined authority response. Private sources are withheld for public destinations,
+whose readers can exceed the roster. Missing authority fails closed. Optional
+contributing share IDs from list are exact-event lookup hints for read, still
+subject to current association, destination, edit/delete and access verification.
+Standalone MCP without trusted relay authority cannot retrieve protected sessions.
+Agents cite source links and must not interpret a title miss as proof no relevant
+work exists. Already consumed model context cannot be retroactively erased.
+
+The browser journey in `tests/browser/shared-sessions.spec.mjs` exercises Share,
+its confirmed receipt, View routing, the title list, search and source opening
+against the signed synthetic relay. This does not establish deployed relay paging,
+cross-device persistence, or a live model's discovery/retrieval behavior.

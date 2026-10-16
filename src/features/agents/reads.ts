@@ -46,6 +46,8 @@ export type AgentReads = Readonly<{
   channelName(id: string): string | undefined;
   /** The key the community signs workflow messages with, if known. */
   workflowAuthority(): string | undefined;
+  /** The connected relay signing its channel metadata. */
+  relayAuthor?(): string | undefined;
   /** The agent's memory, or only entry `slug` when given; `partial` when the
    * entries may be incomplete. `signal` stops the read. */
   memoryListing(signal: AbortSignal, slug?: string): Promise<MemoryListing>;
@@ -96,6 +98,7 @@ export function ownerReads(
     channelName: (id: string) =>
       session.channels.list().channels.find((item) => item.id === id)?.name,
     workflowAuthority: () => session.workflowAuthority,
+    relayAuthor: () => session.relayAuthor,
     meChat: (owner: string, channelId: string, signal: AbortSignal) =>
       meChat(() => relay, owner, channelId, signal),
     memoryListing: (signal: AbortSignal, slug?: string) =>

@@ -60,12 +60,14 @@ import {
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { SessionListItem } from "./SessionsWorkspace";
+import type { Navigation } from "../../features/navigation/controller";
 import styles from "./SessionsWorkspace.module.css";
 import channelStyles from "../channels/Channels.module.css";
 
 /** The existing relay preference service owns delivery, rollback and retry. */
 export function SessionSections({
   session,
+  navigator: navigationController,
   scope,
   sessions,
   renderSession,
@@ -81,6 +83,7 @@ export function SessionSections({
   onConverted?: ((id: string) => void) | undefined;
   visit?: AbortSignal;
   session: RelaySession;
+  navigator?: Navigation | undefined;
   scope: string;
   sessions: readonly SessionListItem[];
   renderSession: (item: SessionListItem) => ReactNode;
@@ -542,6 +545,7 @@ export function SessionSections({
       {sharing && sharingChannel && (
         <SessionShare
           key={sharing.id}
+          navigator={navigationController}
           session={session}
           channel={sharingChannel}
           signal={sharing.visit}

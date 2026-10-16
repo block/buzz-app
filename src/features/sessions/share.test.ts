@@ -5,6 +5,7 @@ import { matchesEvent } from "../relay/projection";
 import type { RelayEvent } from "../relay/events";
 import { beginSessionShare, finishSessionShare } from "./share-attempt";
 import { PublishRejected } from "../relay/outbox";
+import { SHARED_SESSION_TOPIC } from "./shared-session-marker";
 import { SESSION_NAMED_LABEL } from "./metadata";
 import {
   destinationShareAudience,
@@ -203,7 +204,11 @@ it("grants exact session membership, confirms its signed roster, then posts one 
   expect(t.published[0]?.tags).toContainEqual(["p", t.human.pubkey]);
   expect(t.published[0]?.tags.some(([name]) => name === "role")).toBe(false);
   expect(t.published[1]?.tags).toEqual(
-    expect.arrayContaining([["h", channelId]]),
+    expect.arrayContaining([
+      ["h", channelId],
+      ["t", SHARED_SESSION_TOPIC],
+      ["s", sessionId],
+    ]),
   );
   expect(t.published[1]?.content).toBe(sessionLinkMessage(sessionId));
 });
@@ -345,7 +350,9 @@ it("does not publish on failed grant, nor duplicate an accepted grant or rejecte
     () => {},
   );
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
-  expect(t.published[1]?.content).toBe(saved?.event.content);
+  if (!saved) throw new Error("Missing saved receipt");
+  expect(t.published[1]).toMatchObject(saved.event);
+  expect(t.published[1]?.tags).toContainEqual(["t", SHARED_SESSION_TOPIC]);
   expect(t.records().filter((item) => item.event.kind === 9)).toHaveLength(1);
 });
 
@@ -510,3 +517,38 @@ it.each(["accepted", "unknown"] as const)(
     }
   },
 );
+
+it("retries an older plain-link receipt without upgrading its signed share intent", async () => {
+  const t = setup();
+  await t.ready();
+  t.failLink(true);
+  const id = t.session.messages.send(
+    channelId,
+    sessionLinkMessage(sessionId),
+    [],
+    [],
+  );
+  await vi.waitFor(() =>
+    expect(
+      t.session.outbox?.snapshot().find((item) => item.event.id === id)
+        ?.delivery,
+    ).toBe("failed"),
+  );
+  const original = t.records().find((item) => item.event.id === id)?.event;
+  if (!original) throw new Error("Missing original receipt");
+  expect(original?.tags.some(([key]) => key === "s")).toBe(false);
+  expect(original?.tags).not.toContainEqual(["t", SHARED_SESSION_TOPIC]);
+  t.failLink(false);
+  await expect(
+    publishSessionLink(
+      t.session,
+      sessionId,
+      channelId,
+      id,
+      new AbortController().signal,
+      () => {},
+    ),
+  ).resolves.toBe(id);
+  expect(t.published).toHaveLength(1);
+  expect(t.published[0]).toMatchObject(original);
+});

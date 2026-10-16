@@ -2650,6 +2650,9 @@ html[data-keyboard-navigation] .channelJoinSurface {
   max-width: 100%;
   margin-block: 0;
 }
+.messageAttachments[data-session-cards] + .messageBubble {
+  margin-top: var(--space-half);
+}
 .messageAttachments .imageUnavailable {
   border-radius: calc(var(--radius-panel) - var(--space-2));
 }

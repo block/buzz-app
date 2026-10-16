@@ -11,6 +11,7 @@ import { useReturnHighlight } from "../../features/messages/use-return-highlight
 import { ChannelBody } from "./ChannelBody";
 import { tabPane, useChannelTabState } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
+import { sharedSessionsTarget } from "./shared-sessions-panel";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
@@ -814,6 +815,31 @@ function ChannelWorkspace({
     panelTrigger,
     splitTrigger,
   } = secondary;
+  const sharedSessionsVisit = useRef<string>(undefined);
+  useLayoutEffect(() => {
+    if (
+      !navigation ||
+      navigation.signal.aborted ||
+      navigation.target.kind !== "conversation" ||
+      navigation.target.panel !== "shared-sessions" ||
+      currentId !== navigation.target.channelId ||
+      !drawerContext ||
+      cached ||
+      sharedSessionsVisit.current === navigation.entryId
+    )
+      return;
+    const target = sharedSessionsTarget(currentId);
+    // This route names our contribution, just like a contribution-bound launcher.
+    const panel = panels
+      .snapshot()
+      .find((entry) => entry.id === "shared-sessions" && entry.matches(target));
+    if (!panel) return;
+    sharedSessionsVisit.current = navigation.entryId;
+    open(
+      { panel, target, channelId: currentId, channelContext: drawerContext },
+      true,
+    );
+  }, [navigation, currentId, drawerContext, cached, panels, open]);
   useLayoutEffect(() => {
     // Navigation temporarily withdraws the old presentation while preparing
     // the next destination. That handoff must not dismiss saved thread tabs.
@@ -1456,6 +1482,7 @@ function ChannelWorkspace({
                 >
                   <SessionShare
                     key={`${current.id}:${navigation?.entryId ?? ""}`}
+                    navigator={navigator}
                     session={queries}
                     channel={current}
                     signal={navigation?.signal}

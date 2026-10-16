@@ -887,6 +887,11 @@ export const test = base.extend({
         .map((entry) => entry.event);
     };
     const answer = (community, filter) => {
+      // The real relay can return both current metadata and rosters in one query.
+      if (filter.kinds?.includes(39000) && filter.kinds?.includes(39002))
+        return [39000, 39002].flatMap((kind) =>
+          answer(community, { ...filter, kinds: [kind] }),
+        );
       if (filter.kinds?.includes(13535)) {
         expect(filter).toEqual({
           kinds: [13535],

@@ -242,6 +242,9 @@ export async function publishSessionLink(
       [],
       [],
       recovery,
+      [],
+      {},
+      [sourceId],
     );
   onQueued(id);
   if (existing?.delivery === "failed" || existing?.delivery === "unknown")

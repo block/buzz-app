@@ -1,4 +1,5 @@
 import { stageSessionCards } from "./composer-session-cards";
+import { sessionReferenceIds } from "../sessions/shared-session-marker";
 import { ComposerSessionCards } from "./ComposerSessionCards";
 import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
@@ -1284,6 +1285,9 @@ function Composer({
         ),
       );
       const tuned = Object.keys(sentPicks).length > 0;
+      const sharedSessions = sessionReferenceIds(
+        (captured.sessionCards ?? []).join("\n\n"),
+      );
       // Destination and content are fixed here; a background send never retargets.
       const publish = (uploaded: readonly UploadedAttachment[]) => {
         requireCompletedSessionStart();
@@ -1294,13 +1298,19 @@ function Composer({
               content,
               recipients,
               uploaded,
-              ...(replyParentId || references.length || tuned
+              ...(replyParentId ||
+              references.length ||
+              tuned ||
+              sharedSessions.length
                 ? [replyParentId]
                 : []),
-              ...(references.length || tuned ? [references] : []),
-              ...(tuned ? [sentPicks] : []),
+              ...(references.length || tuned || sharedSessions.length
+                ? [references]
+                : []),
+              ...(tuned || sharedSessions.length ? [sentPicks] : []),
+              ...(sharedSessions.length ? [sharedSessions] : []),
             )
-          : references.length || tuned
+          : references.length || tuned || sharedSessions.length
             ? session.messages.send(
                 channelId,
                 content,
@@ -1308,7 +1318,8 @@ function Composer({
                 uploaded,
                 undefined,
                 references,
-                ...(tuned ? [sentPicks] : []),
+                ...(tuned || sharedSessions.length ? [sentPicks] : []),
+                ...(sharedSessions.length ? [sharedSessions] : []),
               )
             : session.messages.send(channelId, content, recipients, uploaded);
       };

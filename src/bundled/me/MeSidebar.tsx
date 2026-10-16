@@ -119,6 +119,7 @@ function PersonalHistory({
       aria-label="Solo conversations"
     >
       <SessionSections
+        navigator={navigator}
         header={<SidebarBrand mark="berd" />}
         personal
         visit={navigator.snapshot().attempt.signal}

@@ -839,6 +839,8 @@ export class CodexRuntime {
     const owner = request ?? (once as Once);
     const { agent } = owner;
     const client = appClient(agent, {
+      relayAuthor: this.reads(agent.pubkey)?.relayAuthor?.(),
+      signingAuthority: this.reads(agent.pubkey)?.workflowAuthority(),
       spawn: this.spawn,
       cwd: turn.workspace,
       check,

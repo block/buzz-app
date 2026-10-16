@@ -178,7 +178,11 @@ export class GooseSetup {
   }
 
   /** The thinking levels goose offers on `choice`'s provider and model, as a
-   * session opened on them lists. goose without them offers none. */
+   * session opened on them lists. goose without them offers none.
+   *
+   * ACP lists config options only per session, and only for the model the
+   * session is on, so this opens a throwaway session and moves it to the
+   * model to read them. */
   efforts(choice: Choice): Promise<Efforts> {
     const provider = choice.provider.trim();
     const model = choice.model.trim();

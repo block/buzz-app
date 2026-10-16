@@ -440,7 +440,7 @@ function pushFixture(t, changes) {
   // a real cargo build, exactly like the fake Vitest below.
   rmSync(path.join(f.dir, "bin"));
   mkdirSync(path.join(f.dir, "bin"));
-  for (const tool of ["node", "pnpm", "lefthook"]) {
+  for (const tool of ["node", "pnpm", "lefthook", "lefthook-runner", "go"]) {
     symlinkSync(
       path.join(root, `bin/${tool}`),
       path.join(f.dir, `bin/${tool}`),
@@ -880,7 +880,7 @@ pre-push:
     isolated,
   );
   assert.equal(selected.status, 0, selected.stdout + selected.stderr);
-  assert.equal(selected.stdout, `${root}bin/lefthook\n2.2.2\n`);
+  assert.equal(selected.stdout, `${root}bin/lefthook\n2.2.3-buzz.1\n`);
   return { ...f, isolated };
 }
 
@@ -938,11 +938,12 @@ for (const mode of ["standalone", "real lhm"]) {
   }, async (t) => {
     const f = mode === "real lhm" ? lhmFixture(t) : fixture(t);
     const isolated = f.isolated ?? {};
-    // Retain a pre-existing stash that carries Lefthook's own backup message.
+    // Retain both a legacy-named user stash and a pre-existing recovery ref.
     f.write("partial.ts", "export const legacy = 9;\n");
     const legacy = f.git("stash", "create").trim();
     f.git("stash", "store", "-m", "lefthook auto backup", legacy);
     f.git("restore", "partial.ts");
+    f.git("update-ref", `refs/lefthook/backup/${legacy}`, legacy, "");
     const stashes = f.git("stash", "list", "--format=%H %gs");
     const sibling = path.join(f.dir, "sibling");
     f.git("worktree", "add", "-q", "--detach", sibling);
@@ -975,8 +976,7 @@ if (process.env.BUZZ_HOOK_GATE) {
   });
 }
 if (process.env.BUZZ_CORRUPT_RECOVERY) {
-  // Lefthook keeps every worktree's patches in the common info directory,
-  // suffixed with the worktree name; only this run's exist at this point.
+  // Both commits have finished; only this failed run's worktree patches remain.
   const dir = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf8" }).trim() + "/info";
   for (const name of readdirSync(dir))
     if (name.startsWith("lefthook-unstaged")) writeFileSync(dir + "/" + name, "invalid patch\\n");
@@ -1000,14 +1000,11 @@ if (process.env.BUZZ_CORRUPT_RECOVERY) {
         staged + `// precious-${id}\n`,
       );
     }
-    // Lefthook's backups share the stash list; each run drops only its own.
-    const backups = () =>
+    const refs = () =>
       f
-        .git("stash", "list", "--format=%H %gs")
+        .git("for-each-ref", "--format=%(refname)", "refs/lefthook/backup/")
         .trim()
-        .split("\n")
-        .filter((line) => line.includes(" lefthook auto backup"))
-        .map((line) => line.split(" ")[0]);
+        .split("\n");
     const start = (dir, id) => {
       const ready = new Promise((resolve) => waiting.set(id, resolve));
       const child = spawn("git", ["commit", "-qm", id], {
@@ -1048,23 +1045,19 @@ if (process.env.BUZZ_CORRUPT_RECOVERY) {
     };
     const a = start(f.dir, "main");
     const mainGate = await a.ready;
-    const mainBackup = backups().find((hash) => hash !== legacy);
-    assert.ok(mainBackup);
+    const mainRef = refs().find((ref) => !ref.endsWith(legacy));
+    assert.ok(mainRef);
     const b = start(sibling, "linked");
     const linkedGate = await b.ready;
-    const linkedBackup = backups().find(
-      (hash) => hash !== mainBackup && hash !== legacy,
+    const linkedRef = refs().find(
+      (ref) => ref !== mainRef && !ref.endsWith(legacy),
     );
-    assert.ok(linkedBackup);
+    assert.ok(linkedRef);
     f.git("gc", "--prune=now", "--quiet");
-    f.git("cat-file", "-e", `${linkedBackup}^{commit}`);
+    f.git("cat-file", "-e", `${linkedRef}^{commit}`);
     mainGate.write("release");
     await a.done;
-    assert.ok(
-      backups().includes(linkedBackup),
-      "main cleanup removed linked backup",
-    );
-    assert.ok(!backups().includes(mainBackup), "main kept its own backup");
+    assert.ok(refs().includes(linkedRef), "main cleanup removed linked backup");
     linkedGate.write("release");
     await b.done;
     for (const [dir, id] of [
@@ -1082,9 +1075,10 @@ if (process.env.BUZZ_CORRUPT_RECOVERY) {
           "export const value = 1;\n",
         );
     }
+    assert.deepEqual(refs(), [`refs/lefthook/backup/${legacy}`]);
     assert.equal(f.git("stash", "list", "--format=%H %gs"), stashes);
 
-    // Corrupt only this disposable fixture's recovery patches. The backup stash
+    // Corrupt only this disposable fixture's recovery patches. The owned ref
     // must survive failure and main-worktree GC and restore the original index.
     const next = staged.replace("first = 3", "first = 4");
     writeFileSync(path.join(sibling, "partial.ts"), next);
@@ -1099,7 +1093,7 @@ if (process.env.BUZZ_CORRUPT_RECOVERY) {
       BUZZ_CORRUPT_RECOVERY: "1",
     });
     assert.notEqual(failed.status, 0, failed.stdout + failed.stderr);
-    const retained = backups().filter((hash) => hash !== legacy);
+    const retained = refs().filter((ref) => !ref.endsWith(legacy));
     assert.equal(retained.length, 1);
     f.git("gc", "--prune=now", "--quiet");
     f.git("cat-file", "-e", `${retained[0]}^{commit}`);
@@ -1118,25 +1112,93 @@ if (process.env.BUZZ_CORRUPT_RECOVERY) {
       next + "// precious-failure\n",
     );
     assert.equal(f.git("-C", sibling, "write-tree"), index);
-    // Drop only the retained backup, as the recovery instructions say.
-    const entry = f
-      .git("stash", "list", "--format=%gd %H")
-      .trim()
-      .split("\n")
-      .find((line) => line.endsWith(retained[0]))
-      .split(" ")[0];
-    f.git("stash", "drop", "--quiet", entry);
     assert.equal(f.git("stash", "list", "--format=%H %gs"), stashes);
   });
 }
 
-test("real lhm rejects an outdated runner before changing staged or unstaged content", {
-  skip: !process.env.BUZZ_REAL_LHM || !process.env.BUZZ_OLD_LEFTHOOK,
+test("cleanup preserves a sibling stash inserted after the cleanup snapshot", {
+  timeout: 30_000,
+}, (t) => {
+  const f = fixture(t, { install: false });
+  // Permit the vulnerable official binary only in this disposable fixture, to
+  // demonstrate that the regression fails before the ownership fix.
+  f.write(
+    "lefthook.yml",
+    f.read("lefthook.yml").replace(/^min_version: .*$/m, "min_version: 2.2.2"),
+  );
+  const sibling = path.join(f.dir, "sibling");
+  f.git("worktree", "add", "-q", "--detach", sibling);
+  writeFileSync(path.join(sibling, "partial.ts"), "// sibling recovery\n");
+  const backup = f.git("-C", sibling, "stash", "create").trim();
+  assert.ok(backup);
+  const stashes = f.git("stash", "list", "--format=%H %gs");
+  const staged = "export const first = 3;\nexport const second = 2;\n";
+  const content = staged + "// precious unstaged edit\n";
+  f.write("partial.ts", staged);
+  f.git("add", "partial.ts");
+  f.write("partial.ts", content);
+  const realGit = f.run("/bin/sh", ["-c", "command -v git"]).stdout.trim();
+  assert.ok(path.isAbsolute(realGit));
+  const marker = path.join(f.dir, "cleanup-interleaved");
+  const message = "sibling recovery inserted during cleanup";
+  f.write(
+    "wrappers/git",
+    `#!${process.execPath}
+import { spawnSync } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+const run = (args) => {
+  const result = spawnSync(${JSON.stringify(realGit)}, args, { encoding: "utf8" });
+  if (result.error) throw result.error;
+  return result;
+};
+const insert = () => {
+  if (existsSync(${JSON.stringify(marker)})) return;
+  const result = run(["-C", ${JSON.stringify(sibling)}, "stash", "store", "--quiet", "--message", ${JSON.stringify(message)}, ${JSON.stringify(backup)}]);
+  if (result.status !== 0) throw new Error(result.stderr);
+  writeFileSync(${JSON.stringify(marker)}, JSON.stringify(args));
+};
+let result;
+if (args[0] === "stash" && args[1] === "list") {
+  // Capture the old positions, insert the sibling's stash, then return the
+  // stale snapshot. The vulnerable runner now drops the sibling's position.
+  result = run(args);
+  insert();
+} else {
+  // The repaired runner never lists stashes. Interleave at its atomic delete.
+  if (args[0] === "update-ref" && args[1] === "-d" && args[2].startsWith("refs/lefthook/backup/")) insert();
+  result = run(args);
+}
+process.stdout.write(result.stdout);
+process.stderr.write(result.stderr);
+process.exit(result.status ?? 1);
+`,
+  );
+  chmodSync(path.join(f.dir, "wrappers/git"), 0o755);
+  const runner =
+    process.env.BUZZ_RECOVERY_RUNNER ?? path.join(root, "bin/lefthook");
+  const result = f.run(runner, ["run", "pre-commit"], {
+    PATH: `${path.join(f.dir, "wrappers")}${path.delimiter}${env.PATH}`,
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.ok(existsSync(marker), "cleanup must cross the interleaving gate");
+  assert.equal(
+    f.git("stash", "list", "--format=%H %gs"),
+    `${backup} ${message}\n${stashes}`,
+    "cleanup removed the sibling's recovery stash",
+  );
+  assert.equal(f.git("show", ":partial.ts"), staged);
+  assert.equal(f.read("partial.ts"), content);
+  assert.equal(f.git("for-each-ref", "refs/lefthook/backup/"), "");
+});
+
+test("real lhm rejects an unpatched runner before changing staged or unstaged content", {
+  skip: !process.env.BUZZ_REAL_LHM || !process.env.BUZZ_STOCK_LEFTHOOK,
 }, (t) => {
   const f = lhmFixture(t);
   mkdirSync(path.join(f.dir, "stock"));
   symlinkSync(
-    process.env.BUZZ_OLD_LEFTHOOK,
+    process.env.BUZZ_STOCK_LEFTHOOK,
     path.join(f.dir, "stock/lefthook"),
   );
   f.write("partial.ts", "export const first = 3;\nexport const second = 2;\n");
@@ -1157,4 +1219,5 @@ test("real lhm rejects an outdated runner before changing staged or unstaged con
   assert.equal(f.git("write-tree"), index);
   assert.equal(f.read("partial.ts"), content);
   assert.equal(f.git("stash", "list", "--format=%H %gs"), stashes);
+  assert.equal(f.git("for-each-ref", "refs/lefthook/backup/"), "");
 });

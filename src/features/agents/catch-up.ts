@@ -4,7 +4,7 @@
 // Only the progress is saved, never an event.
 import type { Agent } from "./service";
 import type { EventData, ReadFilter } from "../relay/events";
-import { afterSaved } from "./store";
+import { addItem, afterSaved } from "./store";
 
 export const CATCH_UP_KEY = "buzz.agents.catch-up.v1";
 /** Events in one read, as Janet's catch-up pages are. */
@@ -162,11 +162,8 @@ export function readCheckpoints(storage: Storage): Checkpoints {
   );
 }
 
-/** Saves the progress of each agent whose progress changed, in its own key,
- * and removes the key of an agent with none left. An agent another program
- * runs keeps the progress that program saved: this one's copy of it is
- * unchanged, so it is not written. */
-export function writeCheckpoints(storage: Storage, checkpoints: Checkpoints) {
+/** Valid checkpoints by agent. */
+function byAgent(checkpoints: Checkpoints) {
   const agents = new Map<string, Record<string, Checkpoint>>();
   for (const [key, value] of Object.entries(checkpoints)) {
     const pubkey = ownerOf(key);
@@ -176,51 +173,51 @@ export function writeCheckpoints(storage: Storage, checkpoints: Checkpoints) {
     streams[key] = checkpoint;
     agents.set(pubkey, streams);
   }
-  const gone: string[] = [];
-  for (let index = 0; index < storage.length; index++) {
-    const key = storage.key(index);
-    if (
-      key?.startsWith(CATCH_UP_PREFIX) &&
-      !agents.has(key.slice(CATCH_UP_PREFIX.length))
-    )
-      gone.push(key);
-  }
-  for (const key of gone) storage.removeItem(key);
-  for (const [pubkey, streams] of agents) {
-    const key = catchUpKey(pubkey);
-    const text = serialize(streams);
-    if (serialize(parseStreams(storage.getItem(key), pubkey)) !== text)
-      storage.setItem(key, text);
+  return agents;
+}
+
+/** Saves the progress of each agent whose progress changed since `saved`,
+ * this program's last save or read, in its own key, and removes the key of
+ * an agent with none left. An agent this program did not move is never
+ * written, so it keeps what the program that runs it saved, even when this
+ * program's copy of it is older. */
+export function writeCheckpoints(
+  storage: Storage,
+  checkpoints: Checkpoints,
+  saved: Checkpoints,
+) {
+  const next = byAgent(checkpoints);
+  const last = byAgent(saved);
+  for (const pubkey of new Set([...next.keys(), ...last.keys()])) {
+    const streams = next.get(pubkey);
+    const before = last.get(pubkey);
+    const text = streams && serialize(streams);
+    if (text === (before && serialize(before))) continue;
+    if (text === undefined) storage.removeItem(catchUpKey(pubkey));
+    else storage.setItem(catchUpKey(pubkey), text);
   }
 }
 
 /** Moves progress from the old value that held every agent's into one key
- * per agent, then removes it, as `splitLegacyRecords` does records. It runs
- * before any progress is read, so every program that starts from the old
- * value moves the same progress, and after it each save writes only the
- * agents whose progress changed. */
+ * per agent, then removes it, as `splitLegacyRecords` does records. A key
+ * is only added where none is saved: a program that starts from the old
+ * value after another moved it, and ran its agents on, keeps their newer
+ * progress. */
 export function splitLegacyCheckpoints(storage: Storage) {
   if (storage.getItem(CATCH_UP_KEY) === null) return;
-  const checkpoints = readCheckpoints(storage);
+  const agents = byAgent(readCheckpoints(storage));
   try {
-    writeCheckpoints(storage, checkpoints);
+    for (const [pubkey, streams] of agents)
+      addItem(storage, catchUpKey(pubkey), serialize(streams));
   } catch (error) {
     // A full store must not stop startup. The shared value stays, so the
     // progress is read from it and the move is tried again at the next start.
     console.error("Agent catch-up progress was not split", error);
     return;
   }
-  const keys = [
-    ...new Set(
-      Object.keys(checkpoints).flatMap((key) => {
-        const pubkey = ownerOf(key);
-        return pubkey === undefined ? [] : [catchUpKey(pubkey)];
-      }),
-    ),
-  ];
   afterSaved(
     storage,
-    keys,
+    [...agents.keys()].map(catchUpKey),
     () => storage.removeItem(CATCH_UP_KEY),
     (error) => console.error("Agent catch-up progress was not split", error),
   );

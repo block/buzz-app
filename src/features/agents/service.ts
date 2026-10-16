@@ -120,6 +120,7 @@ import {
   readCheckpoints,
   splitLegacyCheckpoints,
   writeCheckpoints,
+  type Checkpoints,
 } from "./catch-up";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
@@ -1092,6 +1093,8 @@ export class AgentsService extends Service implements Agents {
     this.coreMemory = new CoreMemoryCache((pubkey) =>
       ownerReads(this.relay(pubkey), pubkey),
     );
+    /** The catch-up progress this program last read or saved. */
+    let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
       ready: (pubkey) => this.ready(pubkey),
       agent: (pubkey) => this.agent(pubkey),
@@ -1100,8 +1103,11 @@ export class AgentsService extends Service implements Agents {
       community: (agent) => this.bindingOf(agent),
       records: () => Object.values(this.records),
       checkpoints: {
-        read: () => readCheckpoints(this.storage),
-        write: (checkpoints) => writeCheckpoints(this.storage, checkpoints),
+        read: () => (savedProgress = readCheckpoints(this.storage)),
+        write: (checkpoints) => {
+          writeCheckpoints(this.storage, checkpoints, savedProgress);
+          savedProgress = checkpoints;
+        },
       },
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (pubkey) => this.records[pubkey],

@@ -85,6 +85,22 @@ impl AgentState {
 
     /// Saves `value` under `key`, or removes the key when `value` is `None`.
     pub(crate) fn set(&self, key: &str, value: Option<&str>) -> Result<(), String> {
+        self.write(key, value, false).map(|_| ())
+    }
+
+    /// Saves `value` under `key` only if no file holds the key, in one step, so
+    /// two programs that add the same key at once never replace each other's.
+    /// Returns what the file already held when it was there.
+    pub(crate) fn add(&self, key: &str, value: &str) -> Result<Option<String>, String> {
+        self.write(key, Some(value), true)
+    }
+
+    fn write(
+        &self,
+        key: &str,
+        value: Option<&str>,
+        absent: bool,
+    ) -> Result<Option<String>, String> {
         if key.is_empty() {
             return Err("Invalid agent state key".into());
         }
@@ -96,7 +112,7 @@ impl AgentState {
                 Err(error) if error.kind() != ErrorKind::NotFound => {
                     Err("Could not save agent state".into())
                 }
-                _ => Ok(()),
+                _ => Ok(None),
             };
         };
         if value.len() > VALUE_LIMIT {
@@ -120,8 +136,23 @@ impl AgentState {
                 .tempfile_in(dir)?;
             std::io::Write::write_all(&mut file, contents.as_bytes())?;
             file.as_file().sync_all()?;
-            file.persist(&path).map_err(|error| error.error)?;
-            Ok::<_, std::io::Error>(())
+            if !absent {
+                file.persist(&path).map_err(|error| error.error)?;
+                return Ok(None);
+            }
+            match file.persist_noclobber(&path) {
+                Ok(_) => Ok(None),
+                Err(error) if error.error.kind() == ErrorKind::AlreadyExists => {
+                    let text = fs::read_to_string(&path)?;
+                    if !name.starts_with(HASHED) {
+                        return Ok(Some(text));
+                    }
+                    let saved = serde_json::from_str::<Hashed>(&text)
+                        .map_err(|error| std::io::Error::new(ErrorKind::InvalidData, error))?;
+                    Ok(Some(saved.value.into_owned()))
+                }
+                Err(error) => Err(error.error),
+            }
         })();
         saved.map_err(|_| "Could not save agent state".into())
     }
@@ -183,13 +214,19 @@ pub(crate) async fn app_agent_state_load(
     state.load()
 }
 
+/// Saves or removes `value` under `key`. With `absent`, it saves only if no
+/// file holds the key, and returns what the file held when one did.
 #[tauri::command]
 pub(crate) async fn app_agent_state_set(
     state: tauri::State<'_, AgentState>,
     key: String,
     value: Option<String>,
-) -> Result<(), String> {
-    state.set(&key, value.as_deref())
+    absent: Option<bool>,
+) -> Result<Option<String>, String> {
+    match (value, absent.unwrap_or(false)) {
+        (Some(value), true) => state.add(&key, &value),
+        (value, _) => state.set(&key, value.as_deref()).map(|_| None),
+    }
 }
 
 #[cfg(test)]
@@ -236,6 +273,22 @@ mod tests {
             .join("state")
             .join("k".repeat(NAME_LIMIT))
             .exists());
+    }
+
+    #[test]
+    fn adds_a_key_only_where_none_is_saved() {
+        let root = tempfile::tempdir().unwrap();
+        let state = AgentState::new(Ok(root.path().join("state")));
+        assert_eq!(state.add("one", "first").unwrap(), None);
+        // Another program saved it first: it keeps that value, and gets it back.
+        assert_eq!(state.add("one", "stale").unwrap().as_deref(), Some("first"));
+        assert_eq!(state.load().unwrap()["one"], "first");
+        let long = "k".repeat(NAME_LIMIT + 1);
+        assert_eq!(state.add(&long, "first").unwrap(), None);
+        assert_eq!(state.add(&long, "stale").unwrap().as_deref(), Some("first"));
+        assert_eq!(state.load().unwrap()[&long], "first");
+        // No write in progress is left behind.
+        assert_eq!(fs::read_dir(root.path().join("state")).unwrap().count(), 2);
     }
 
     #[test]

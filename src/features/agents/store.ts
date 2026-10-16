@@ -156,6 +156,19 @@ export function persisted(storage: Storage, key?: string): Promise<void> {
     : Promise.resolve();
 }
 
+type Adding = { addItem?: (key: string, value: string) => void };
+
+/** Saves `value` under `key` only if no program saved one. Agent storage
+ * files (state.ts) decide that in the file system, in one step, and keep the
+ * value another program saved first; other storage, which one program owns,
+ * checks its own copy. A move from a shared value uses it, so a program that
+ * moves late never replaces what another saved since. */
+export function addItem(storage: Storage, key: string, value: string) {
+  const { addItem: add } = storage as Adding;
+  if (typeof add === "function") add.call(storage, key, value);
+  else if (storage.getItem(key) === null) storage.setItem(key, value);
+}
+
 /** Runs `then` once these keys' values are saved: at once for storage that
  * saves as it is set, else later, and not at all if one failed. A move that
  * removes its source this way never leaves no saved copy. */
@@ -182,7 +195,8 @@ export function splitLegacyRecords(
 ) {
   if (storage.getItem(STORAGE_KEY) === null) return;
   try {
-    for (const record of Object.values(records)) writeRecord(storage, record);
+    for (const record of Object.values(records))
+      addItem(storage, recordKey(record.pubkey), recordText(record));
   } catch (error) {
     // A full store must not stop startup: this runs before the app can show
     // an error. The shared value stays, so the records are read from it and
@@ -205,14 +219,11 @@ export function removeRecord(storage: Storage, pubkey: string) {
   storage.removeItem(recordKey(pubkey));
 }
 
-/** Saves one record, when it changed. */
-export function writeRecord(
-  storage: Storage,
-  { skipped, ...record }: AgentRecord,
-) {
+/** A record as it is saved. */
+function recordText({ skipped, ...record }: AgentRecord) {
   // Skipped objects go back where they were read from, so a later reader that
   // can apply them still finds them.
-  const text = JSON.stringify({
+  return JSON.stringify({
     ...record,
     attention: {
       ...Object.fromEntries(
@@ -224,6 +235,11 @@ export function writeRecord(
       ...record.attention,
     },
   });
+}
+
+/** Saves one record, when it changed. */
+export function writeRecord(storage: Storage, record: AgentRecord) {
+  const text = recordText(record);
   const key = recordKey(record.pubkey);
   if (storage.getItem(key) !== text) storage.setItem(key, text);
 }

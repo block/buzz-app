@@ -14,7 +14,7 @@ import {
   writeTeams,
   type AgentRecord,
 } from "./store";
-import { memoryStorage } from "./test-fakes";
+import { memoryStorage, sharedFiles } from "./test-fakes";
 
 const pubkey = "a".repeat(64);
 const record: AgentRecord = {
@@ -298,4 +298,23 @@ it("keeps the old shared value until every record from it is saved", async () =>
   expect(readRecords(fileBacked(new Map(disk), save))[pubkey]?.config).toEqual(
     record.config,
   );
+});
+
+it("keeps a record saved since, when a late move from the old shared value lands", async () => {
+  const { open } = sharedFiles({
+    [STORAGE_KEY]: JSON.stringify({ version: 1, agents: { [pubkey]: record } }),
+  });
+  let release = () => {};
+  const first = open();
+  const second = open(new Promise((resolve) => (release = resolve)));
+  splitLegacyRecords(first, readRecords(first));
+  splitLegacyRecords(second, readRecords(second));
+  await first.saved();
+  writeRecord(first, { ...record, config: { word: "newer" } });
+  await first.saved();
+  release();
+  await second.saved();
+  await new Promise((resolve) => setTimeout(resolve));
+  expect(readRecords(open())[pubkey]?.config).toEqual({ word: "newer" });
+  expect(readRecords(second)[pubkey]?.config).toEqual({ word: "newer" });
 });

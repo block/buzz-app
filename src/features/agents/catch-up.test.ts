@@ -13,7 +13,7 @@ import {
   type Stream,
 } from "./catch-up";
 import { fileBacked } from "./state";
-import { memoryStorage } from "./test-fakes";
+import { memoryStorage, sharedFiles } from "./test-fakes";
 
 type Stored = { id: string; created_at: number; content: string };
 const id = (i: number) => i.toString(16).padStart(64, "0");
@@ -156,25 +156,13 @@ it("keeps only valid live events heard past a saved checkpoint, and skips them",
   expect(window?.events.map(({ content }) => content)).toEqual(["missed"]);
 });
 
-/** Agent storage files that programs share: each program loads its own copy
- * of them once, as the app does at start, and then saves into them. */
-function sharedFiles(initial: Record<string, string> = {}) {
-  const disk = new Map(Object.entries(initial));
-  const open = () =>
-    fileBacked(new Map(disk), async (key, value) => {
-      if (value === null) disk.delete(key);
-      else disk.set(key, value);
-    });
-  return { disk, open };
-}
-
 const a = streamKey(id(10), "watch/chat");
 const b = streamKey(id(11), "watch/chat");
 
 it("keeps the progress each program saves for its own agents", async () => {
   const { disk, open } = sharedFiles();
   const setup = open();
-  writeCheckpoints(setup, { [a]: { through: 100 }, [b]: { through: 100 } });
+  writeCheckpoints(setup, { [a]: { through: 100 }, [b]: { through: 100 } }, {});
   await setup.saved();
   // Two programs start from the same files, each running one agent, and each
   // keeps its own copy of every agent's progress.
@@ -182,9 +170,13 @@ it("keeps the progress each program saves for its own agents", async () => {
   const second = open();
   const firstCopy = readCheckpoints(first);
   const secondCopy = readCheckpoints(second);
-  writeCheckpoints(first, { ...firstCopy, [a]: { through: 200 } });
+  writeCheckpoints(first, { ...firstCopy, [a]: { through: 200 } }, firstCopy);
   await first.saved();
-  writeCheckpoints(second, { ...secondCopy, [b]: { through: 300 } });
+  writeCheckpoints(
+    second,
+    { ...secondCopy, [b]: { through: 300 } },
+    secondCopy,
+  );
   await second.saved();
   // Neither wrote over the other's agent.
   expect(readCheckpoints(open())).toEqual({
@@ -196,26 +188,39 @@ it("keeps the progress each program saves for its own agents", async () => {
   );
 });
 
-it("moves the old shared progress into each agent's key, then removes it", async () => {
+it("moves the old shared progress into each agent's key, and a late move keeps newer progress", async () => {
   const { disk, open } = sharedFiles({
     [CATCH_UP_KEY]: JSON.stringify({
       version: 1,
       streams: { [a]: { through: 100 }, [b]: { through: 100 } },
     }),
   });
-  // Both programs start before either move is saved.
+  // Both programs start from the old value. The second's saves wait.
+  let release = () => {};
   const first = open();
-  const second = open();
+  const second = open(new Promise((resolve) => (release = resolve)));
   splitLegacyCheckpoints(first);
-  splitLegacyCheckpoints(second);
   const firstCopy = readCheckpoints(first);
+  splitLegacyCheckpoints(second);
   const secondCopy = readCheckpoints(second);
   await first.saved();
-  await second.saved();
+  await new Promise((resolve) => setTimeout(resolve));
   expect(disk.has(CATCH_UP_KEY)).toBe(false);
-  writeCheckpoints(first, { ...firstCopy, [a]: { through: 200 } });
-  writeCheckpoints(second, { ...secondCopy, [b]: { through: 300 } });
+  // The first runs its agent on before the second's move is saved.
+  writeCheckpoints(first, { ...firstCopy, [a]: { through: 200 } }, firstCopy);
   await first.saved();
+  release();
+  await second.saved();
+  await new Promise((resolve) => setTimeout(resolve));
+  // The late move kept the newer progress, and the second's copy has it too.
+  expect(readCheckpoints(open())[a]).toEqual({ through: 200 });
+  expect(readCheckpoints(second)[a]).toEqual({ through: 200 });
+  // The second saves only its own agent, from its older copy.
+  writeCheckpoints(
+    second,
+    { ...secondCopy, [b]: { through: 300 } },
+    secondCopy,
+  );
   await second.saved();
   expect(readCheckpoints(open())).toEqual({
     [a]: { through: 200 },

@@ -50,11 +50,18 @@ export function agentStorage(): Storage {
 type Native = Readonly<{
   load(): Promise<Record<string, string>>;
   set(key: string, value: string | null): Promise<void>;
+  /** Saves `value` only if no file holds `key`, in one step; resolves with
+   * what the file held when one did, else null. */
+  add?(key: string, value: string): Promise<string | null>;
 }>;
 
 const native: Native = {
   load: () => invoke("app_agent_state_load"),
-  set: (key, value) => invoke("app_agent_state_set", { key, value }),
+  set: async (key, value) => {
+    await invoke("app_agent_state_set", { key, value });
+  },
+  add: (key, value) =>
+    invoke("app_agent_state_set", { key, value, absent: true }),
 };
 
 /** Agent storage holds this key once every agent key in localStorage was
@@ -81,6 +88,7 @@ export async function loadAgentStorage(
     const storage = fileBacked(
       new Map(Object.entries(await files.load())),
       files.set,
+      files.add,
     );
     const moved: string[] = [];
     for (let index = 0; index < local.length; index++) {
@@ -138,6 +146,9 @@ type FileBacked = Storage & {
   /** Settles once `key`'s value, or without a key every value, is saved;
    * rejects while the last write of one failed. */
   saved(key?: string): Promise<void>;
+  /** Sets `key` only if neither this copy nor its file holds it. When another
+   * program saved it first, the copy takes that program's value. */
+  addItem(key: string, value: string): void;
 };
 
 /** A Storage held in memory and saved through `save`, one key at a time. A
@@ -146,20 +157,29 @@ type FileBacked = Storage & {
 export function fileBacked(
   items: Map<string, string>,
   save: Native["set"],
+  add: NonNullable<Native["add"]> = async (key, value) => {
+    await save(key, value);
+    return null;
+  },
 ): FileBacked {
   /** What each key's file holds, as far as this program saved it. */
   const durable = new Map(items);
   /** Each key's last write, until it is saved. */
-  const pending = new Map<string, Promise<void>>();
+  const pending = new Map<string, Promise<unknown>>();
   let queue: Promise<void> = Promise.resolve();
-  const write = (key: string, value: string | null) => {
-    const next = queue.then(() => save(key, value));
+  const write = (key: string, value: string | null, absent = false) => {
+    const next = queue.then(async () =>
+      absent && value !== null ? add(key, value) : save(key, value),
+    );
     pending.set(key, next);
     queue = next.then(
-      () => {
-        if (value === null) durable.delete(key);
-        else durable.set(key, value);
-        if (pending.get(key) === next) pending.delete(key);
+      (held) => {
+        const kept = held ?? value;
+        if (kept === null) durable.delete(key);
+        else durable.set(key, kept);
+        if (pending.get(key) !== next) return;
+        pending.delete(key);
+        if (kept !== null) items.set(key, kept);
       },
       (error) => {
         console.error(`Agent state ${key} was not saved`, error);
@@ -183,6 +203,11 @@ export function fileBacked(
     removeItem(key) {
       if (!items.delete(key)) return;
       write(key, null);
+    },
+    addItem(key, value) {
+      if (items.has(key)) return;
+      items.set(key, String(value));
+      write(key, String(value), true);
     },
     clear() {
       for (const key of [...items.keys()]) this.removeItem(key);

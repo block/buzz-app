@@ -255,7 +255,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   const sockets = app.relay.sockets.length;
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   const toggle = page.getByRole("switch", {
     name: "Enable Agent Activity",
     exact: true,
@@ -284,7 +286,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
 
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   // Capture keeps this wire alive while the display is disabled. Its existence
   // no longer proves that the plugin's new display generation reached the host.
   const enabled = page.waitForResponse(

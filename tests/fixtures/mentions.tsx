@@ -1,6 +1,7 @@
 import "../../src/shared/styles/globals.css";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
-import { AgentSettings } from "../../src/app/AgentSettings";
+import { AppearanceSettings } from "../../src/app/AppearanceSettings";
+import { createAppearance } from "../../src/shared/theme/service";
 import { StrictMode, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
@@ -29,6 +30,9 @@ import {
 import { matchesEvent } from "../../src/features/relay/projection";
 import type { RelayEvent } from "../../src/features/relay/events";
 
+const appearance = new URLSearchParams(location.search).has("settings")
+  ? createAppearance()
+  : undefined;
 const viewer = keypair(),
   relay = keypair(),
   first = keypair(),
@@ -472,9 +476,7 @@ function Fixture() {
           {...(thread ? { threadRootId: "a".repeat(64) } : {})}
         />
       </div>
-      {new URLSearchParams(location.search).has("settings") && (
-        <AgentSettings />
-      )}
+      {appearance && <AppearanceSettings appearance={appearance} />}
     </main>
   );
 }

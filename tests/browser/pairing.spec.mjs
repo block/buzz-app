@@ -90,7 +90,7 @@ test("legacy phone confirmation, retry after expiry, and leaving Settings cancel
   ).toBeVisible();
   await page
     .getByRole("complementary", { name: "Settings sidebar" })
-    .getByRole("button", { name: "Plugins", exact: true })
+    .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
   await expect
     .poll(() => page.evaluate(() => window.pairingFixture.calls.at(-1)?.action))

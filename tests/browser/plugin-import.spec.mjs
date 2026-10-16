@@ -9,7 +9,7 @@ async function openPlugins(page, origin) {
   await page.goto(origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
 async function nativeImports(page, samples = []) {
@@ -339,9 +339,9 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
             ),
         )
         .not.toContain(false);
-      await selectSettingsSection(page, "Plugins");
+      await selectSettingsSection(page, "Manage plugins");
       const plugins = page.getByRole("region", {
-        name: "Plugins",
+        name: "Manage plugins",
         exact: true,
       });
       await expect(button(page, "Load from folder")).toBeVisible();
@@ -392,7 +392,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(button(page, "Install plugin")).toHaveCount(0);
   await page.getByRole("radio", { name: /Example two/ }).check();
   await selectSettingsSection(page, "Profile");
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
   await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
   await expect(
     page.getByText(
@@ -517,7 +517,7 @@ test("checked-in local examples activate and work independently", async ({
   );
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
   await page.getByRole("switch", { name: "Enable Counter playground" }).click();
   const navigation = await pageChoices(page);
   await expect(

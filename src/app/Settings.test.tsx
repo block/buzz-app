@@ -91,7 +91,6 @@ for (const [path, name] of [
   vi.doMock(path, () => ({ [name]: () => null }));
 const { Settings } = await import("./Settings");
 const { SettingsSidebar } = await import("./SettingsSidebar");
-const { developerMode } = await import("./settings-sections");
 const pluginState = {
   configuration: { status: "loading" },
   activation: {},
@@ -232,8 +231,8 @@ it.each([false, true])("groups plugins (Essentials=%s)", (essentials) => {
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
-  const content = screen.getByRole("region", { name: "Plugins" });
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+  const content = screen.getByRole("region", { name: "Manage plugins" });
   expect(
     within(content)
       .getAllByRole("heading", { level: 3 })
@@ -375,7 +374,7 @@ it("shows administration only within a selected community", () => {
   const view = render(<Settings {...host} cards={cards} />);
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
   expect(nav).toHaveTextContent("Primary");
-  expect(nav).toHaveTextContent("Administration");
+  expect(nav).toHaveTextContent("Community admin");
   fireEvent.click(screen.getByRole("button", { name: "Membership" }));
   expect(screen.getByText("Membership body for Primary")).toBeVisible();
 
@@ -385,7 +384,7 @@ it("shows administration only within a selected community", () => {
     snapshot: () => noCommunityState,
   } as unknown as Parameters<typeof Settings>[0]["communities"];
   view.rerender(<Settings {...host} communities={noCommunity} cards={cards} />);
-  expect(nav).not.toHaveTextContent("Administration");
+  expect(nav).not.toHaveTextContent("Community admin");
   expect(screen.queryByRole("button", { name: "Membership" })).toBeNull();
   expect(screen.queryByText("Membership body")).toBeNull();
 });
@@ -454,7 +453,7 @@ it("keeps same-id community cards from different plugins distinct", () => {
   ).not.toHaveAttribute("aria-current");
 });
 
-it("keeps Administration hidden after applying a verified ordinary-member roster", async () => {
+it("keeps Community admin hidden after applying a verified ordinary-member roster", async () => {
   const viewer = "a".repeat(64);
   const relayAuthor = "f".repeat(64);
   let resolveRoster!: (events: unknown[]) => void;
@@ -527,7 +526,7 @@ it("keeps Administration hidden after applying a verified ordinary-member roster
   );
 
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
-  expect(nav).not.toHaveTextContent("Administration");
+  expect(nav).not.toHaveTextContent("Community admin");
   expect(screen.queryByRole("button", { name: "Membership" })).toBeNull();
   await fiber.dispose();
   membership.dispose();
@@ -578,10 +577,10 @@ it.each(["primary", null])(
       outline(shell as HTMLElement),
     );
     expect(outline(standalone as HTMLElement).map(([label]) => label)).toEqual([
-      ...(selected ? ["Primary", "Administration"] : []),
+      ...(selected ? ["Primary", "Community admin"] : []),
+      "Buzz",
+      "Plugins",
       "Communities",
-      "App",
-      ...(developerMode ? ["Development"] : []),
     ]);
     // Existing presentations differ only in the contributed-group icon.
     const hosted = (nav: HTMLElement) =>
@@ -661,4 +660,37 @@ it("retains departure confirmation until local cleanup settles", async () => {
       "Primary was removed from this device. Your membership wasn’t changed. You can add it again later.",
     ),
   ).toBeVisible();
+});
+
+it("keeps identity independent of community profile and clears revealed keys on destination changes", async () => {
+  const exportKey = vi.fn().mockResolvedValue("nsec-public-test-fixture");
+  const { cards } = registry([]);
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <Settings
+        {...host}
+        cards={cards}
+        identity={
+          { exportKey } as unknown as Parameters<typeof Settings>[0]["identity"]
+        }
+      />
+    </ToastProvider>,
+  );
+  expect(exportKey).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("button", { name: "Reveal private key" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Identity" }));
+  await user.click(screen.getByRole("button", { name: "Reveal private key" }));
+  expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
+    "nsec-public-test-fixture",
+  );
+  await user.click(screen.getByRole("button", { name: "Appearance" }));
+  expect(screen.queryByLabelText("Private key (nsec)")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Identity" }));
+  expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
+    "••••••••••••••••",
+  );
+  expect(exportKey).toHaveBeenCalledTimes(1);
 });

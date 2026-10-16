@@ -66,7 +66,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   const plugins = async () => {
     await button("Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await selectSettingsSection(page, "Plugins");
+    await selectSettingsSection(page, "Manage plugins");
   };
   const messages = async () => {
     await settleShellToggle(page);

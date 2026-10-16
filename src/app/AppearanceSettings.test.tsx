@@ -14,9 +14,29 @@ import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { createAppearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
 
+import {
+  rememberAgentsPreference,
+  setRememberAgentsPreference,
+} from "../features/messages/mention-preferences";
+import {
+  setThreadPlacementPreference,
+  threadPlacementPreference,
+} from "../features/messages/thread-preferences";
+
+const preferenceAppearances: ReturnType<typeof createAppearance>[] = [];
+function preferencesPage() {
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  return <AppearanceSettings appearance={appearance} />;
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  for (const appearance of preferenceAppearances.splice(0))
+    appearance.dispose();
+  setRememberAgentsPreference(true);
+  setThreadPlacementPreference("side");
   localStorage.clear();
 });
 
@@ -287,4 +307,123 @@ it("chooses how much of the app the accent colors with a named step slider", asy
   expect(vibe).toHaveAttribute("aria-valuetext", "Swarmin’");
   expect(appearance.snapshot().colorLevel).toBe("more");
   appearance.dispose();
+});
+
+it("defaults on, persists opt-out, and follows another window's preference", async () => {
+  const user = userEvent.setup();
+  render(preferencesPage(), {
+    wrapper: ToastProvider,
+  });
+  const toggle = () =>
+    screen.getByRole("switch", { name: "Remember mentioned agents" });
+  expect(toggle()).toBeChecked();
+  await user.click(toggle());
+  expect(rememberAgentsPreference()).toBe(false);
+  cleanup();
+  render(preferencesPage(), {
+    wrapper: ToastProvider,
+  });
+  expect(toggle()).not.toBeChecked();
+  act(() => {
+    localStorage.removeItem("buzz-remember-mentioned-agents.v1");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "buzz-remember-mentioned-agents.v1" }),
+    );
+  });
+  expect(toggle()).toBeChecked();
+});
+
+it("keeps an unsaved opt-out effective and offers retry without changing the choice", async () => {
+  const user = userEvent.setup();
+  render(preferencesPage(), {
+    wrapper: ToastProvider,
+  });
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+  await user.click(
+    screen.getByRole("switch", { name: "Remember mentioned agents" }),
+  );
+  expect(rememberAgentsPreference()).toBe(false);
+  expect(screen.getByRole("dialog")).toHaveTextContent("could not be saved");
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving mentioned agents" }),
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(localStorage.getItem("buzz-remember-mentioned-agents.v1")).toBe("off");
+});
+
+it("does not prefill when storage cannot be read", () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("storage unavailable");
+  });
+  expect(rememberAgentsPreference()).toBe(false);
+});
+
+it("saves new-thread placement, restores it, and follows another window", async () => {
+  const user = userEvent.setup();
+  render(preferencesPage(), {
+    wrapper: ToastProvider,
+  });
+  const choice = () =>
+    screen.getByRole("combobox", { name: "Open threads in" });
+  expect(
+    screen.getByText(
+      "New threads open here. Already-open threads stay where you placed them.",
+    ),
+  ).toBeVisible();
+  expect(choice()).toHaveTextContent("Side pane");
+  await user.click(choice());
+  await user.click(await screen.findByRole("option", { name: "Main pane" }));
+  expect(threadPlacementPreference()).toBe("main");
+  cleanup();
+  render(preferencesPage(), {
+    wrapper: ToastProvider,
+  });
+  expect(choice()).toHaveTextContent("Main pane");
+  act(() => {
+    localStorage.setItem("buzz-thread-placement.v1", "side");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "buzz-thread-placement.v1" }),
+    );
+  });
+  expect(choice()).toHaveTextContent("Side pane");
+});
+
+it("keeps unsaved thread placement and recovery through remount, then retries the same choice", async () => {
+  const user = userEvent.setup();
+  const view = render(preferencesPage(), {
+    wrapper: ToastProvider,
+  });
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(screen.getByRole("combobox", { name: "Open threads in" }));
+  await user.click(await screen.findByRole("option", { name: "Main pane" }));
+  expect(threadPlacementPreference()).toBe("main");
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Thread preference wasn’t saved",
+  );
+  // The app keeps its toast host while the settings destination unmounts.
+  view.rerender(null);
+  view.rerender(preferencesPage());
+  expect(
+    screen.getByRole("combobox", { name: "Open threads in" }),
+  ).toHaveTextContent("Main pane");
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Thread preference wasn’t saved",
+  );
+  // Re-enter through the preference before invoking its recovery action.
+  screen.getByRole("combobox", { name: "Open threads in" }).focus();
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving thread placement" }),
+  );
+  expect(localStorage.getItem("buzz-thread-placement.v1")).toBe("main");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

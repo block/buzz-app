@@ -260,7 +260,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     ).toBeEnabled();
     picker.unmount();
     const card = cards.snapshot()[0];
-    expect(card?.group).toBe("Integrations");
+    expect(card?.group).toBe("Plugins");
     if (!card) throw new Error("Missing Builderlab login card");
     const Card = card.component;
     const mounted = render(<Card active={() => true} />);

@@ -41,7 +41,7 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   await button(page, "Notes").click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
   await expect(button(page, "Notes")).toHaveCount(0);
   await expect(card(page, "Notes")).toHaveCount(0);
@@ -167,7 +167,7 @@ test("A new Solo chat places companion plugins in its draft state and removes di
   await button(page, "Notes").click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
   await newChat(page);
   await expect(card(page, "Notes")).toHaveCount(0);

@@ -24,23 +24,43 @@ const card = (
   };
 };
 const cards = [
+  // Plugin activation/re-enable order must not determine community navigation.
+  card("buzz.pairing/mobile"),
+  card("buzz.emoji/custom-emoji"),
+  card("buzz.channels/templates"),
   card("example/groups"),
   card("other/groups"),
   card("example/membership", { section: "administration" }),
   card("example/hosted", { group: "Communities" }),
+  card("buzz.agents/jev-classifier", {
+    group: "Plugins",
+    title: "Jev classifier",
+  }),
+  card("block.hosted-communities/hosted", {
+    group: "Plugins",
+    title: "Builderlab hosting",
+  }),
+  card("block.builderlab/login", {
+    group: "Plugins",
+    title: "Builderlab agents",
+  }),
 ];
 const primary = { id: "primary", name: "Primary" };
 const app = [
+  "identity",
   "appearance",
   "notifications",
   "shortcuts",
   "agents",
-  "plugins",
   "updates",
+  ...(developerMode ? ["developer"] : []),
 ];
-const development = developerMode
-  ? [["development", "Development", ["developer"]]]
-  : [];
+const plugins = [
+  "plugins",
+  "block.builderlab/login",
+  "block.hosted-communities/hosted",
+  "buzz.agents/jev-classifier",
+];
 const outline = (model: ReturnType<typeof settingsSections>) =>
   model.groups.map((group) => [
     group.id,
@@ -57,12 +77,21 @@ it.each([
       [
         "community",
         "Primary",
-        ["profile", "example/groups", "other/groups", "leave-community"],
+        [
+          "profile",
+          "buzz.channels/templates",
+          "buzz.emoji/custom-emoji",
+          "example/groups",
+          "other/groups",
+          "local-archive",
+          "buzz.pairing/mobile",
+          "leave-community",
+        ],
       ],
-      ["administration", "Administration", ["example/membership"]],
+      ["administration", "Community admin", ["example/membership"]],
+      ["app", "Buzz", app],
+      ["plugins", "Plugins", plugins],
       ["group:Communities", "Communities", ["example/hosted"]],
-      ["app", "App", app],
-      ...development,
     ],
   ],
   [
@@ -70,9 +99,9 @@ it.each([
     undefined,
     "appearance",
     [
+      ["app", "Buzz", ["profile", ...app]],
+      ["plugins", "Plugins", plugins],
       ["group:Communities", "Communities", ["example/hosted"]],
-      ["app", "App", ["profile", ...app]],
-      ...development,
     ],
   ],
 ])(
@@ -88,7 +117,14 @@ it.each([
 );
 
 it("classifies built-in sections apart from plugin card keys", () => {
-  for (const id of ["profile", "leave-community", ...app])
+  for (const id of [
+    "profile",
+    "identity",
+    "plugins",
+    "local-archive",
+    "leave-community",
+    ...app,
+  ])
     expect(isBuiltInSettingsSection(id)).toBe(true);
   expect(isBuiltInSettingsSection("developer")).toBe(developerMode);
   for (const id of ["example/groups", "Profile", "", "administration"])

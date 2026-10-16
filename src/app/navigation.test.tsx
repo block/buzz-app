@@ -422,3 +422,42 @@ it("keeps the confirmed departure mounted through removal, then opens Personal P
   await screen.findByText("This destination couldn’t open");
   expect(current.navigation.snapshot().reason).toBe("denied");
 });
+
+it("opens removed Messages settings links at Appearance without adding a navigation entry", async () => {
+  // jsdom does not measure layout; this test exercises route normalization, not geometry.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const target = {
+    version: 1,
+    kind: "settings",
+    section: "buzz.channels/messages",
+  };
+  window.history.replaceState(
+    null,
+    "",
+    `/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+  );
+  services = createServices();
+  render(<App services={services} />);
+  await screen.findByRole("heading", { name: "Conversations" });
+  expect(
+    screen.getByRole("combobox", { name: "Open threads in" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("switch", { name: "Remember mentioned agents" }),
+  ).toBeVisible();
+  await waitFor(() =>
+    expect(services?.navigation.snapshot().status).toBe("opened"),
+  );
+  expect(services.navigation.snapshot().entry.target).toEqual({
+    ...target,
+    section: "appearance",
+  });
+  expect(screen.queryByRole("button", { name: "Messages" })).toBeNull();
+});

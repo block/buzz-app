@@ -1,4 +1,4 @@
-import { matchPerson, normalizeName } from "./person-match";
+import { matchPerson } from "./person-match";
 import { searchOrder, type SearchUsage } from "./usage";
 
 export type PersonCandidate = {
@@ -10,8 +10,6 @@ export type PersonCandidate = {
   /** A managed agent's own name, matched but not shown, as in mentions. */
   agentName?: string | undefined;
   agent: boolean;
-  /** One of the viewer's own agents. */
-  owned: boolean;
   /** peopleRelationships rank: lower is closer. */
   relationship: number;
   /** Search usage keys that lift this person: their own and their DM's. */
@@ -37,18 +35,17 @@ export function personMatch(person: PersonCandidate, needle: string) {
 }
 
 /**
- * Command-K order for people and agents, the mention chooser's order adapted
- * to destinations. The shared search order leads (an exact name, then the
- * earlier choice for this text, then relationship bands lifted by usage, as
- * New message recipients order). Ties then follow the mention chooser:
- * the viewer's own agents, presence, then name and key.
+ * Command-K order for people and agents, as New message orders recipients:
+ * the shared search order (an exact name, then the earlier choice for this
+ * text, then relationship bands lifted by usage). Ties keep the given order,
+ * so callers list the directory's rows first, in the order the relay ranked
+ * them.
  */
 export function rankPeople<T extends PersonCandidate>(
   people: readonly T[],
   needle: string,
   usage: SearchUsage,
   picked: string | undefined,
-  presence: (pubkey: string) => string = () => "unknown",
 ) {
   return people
     .flatMap((person) => {
@@ -62,17 +59,5 @@ export function rankPeople<T extends PersonCandidate>(
       });
       return [{ person, order }];
     })
-    .sort(
-      (a, b) =>
-        a.order - b.order ||
-        Number(b.person.agent && b.person.owned) -
-          Number(a.person.agent && a.person.owned) ||
-        online(presence(a.person.pubkey)) - online(presence(b.person.pubkey)) ||
-        compare(normalizeName(a.person.label), normalizeName(b.person.label)) ||
-        compare(a.person.pubkey, b.person.pubkey),
-    );
+    .sort((a, b) => a.order - b.order);
 }
-
-const online = (status: string) =>
-  ({ online: 0, away: 1 })[status as "online" | "away"] ?? 2;
-const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);

@@ -506,11 +506,19 @@ export function SearchResults({
         isAgent?: boolean | undefined;
       }
     >();
-    for (const [pubkey, profile] of profiles)
-      if (!profile.nameIsFallback || profile.username)
-        sources.set(pubkey, profile);
+    // Ties keep this order, as in New message: the directory's rows first, in
+    // the relay's order, then cached profiles, then agents. A cached profile
+    // still supplies a directory row's facts.
+    const cached = (pubkey: string) => {
+      const profile = profiles.get(pubkey);
+      return profile && (!profile.nameIsFallback || profile.username)
+        ? profile
+        : undefined;
+    };
     for (const person of personDirectory.people)
-      if (!sources.has(person.pubkey)) sources.set(person.pubkey, person);
+      sources.set(person.pubkey, cached(person.pubkey) ?? person);
+    for (const [pubkey, profile] of profiles)
+      if (!sources.has(pubkey) && cached(pubkey)) sources.set(pubkey, profile);
     for (const agent of [...managedAgents.values(), ...sessionAgents.values()])
       if (!sources.has(agent.pubkey))
         sources.set(agent.pubkey, {
@@ -551,9 +559,6 @@ export function SearchResults({
         username: source.username,
         agentName: agentName !== source.name ? agentName : undefined,
         agent,
-        owned:
-          !!session.viewer &&
-          profiles.get(pubkey)?.ownerPubkey === session.viewer,
         relationship: relationships.rank(pubkey),
         usageKeys: [personKey(pubkey), ...(dm ? [`channel:${dm}`] : [])],
         picture:
@@ -606,8 +611,6 @@ export function SearchResults({
     ),
     channelRank,
   );
-  const presence = (pubkey: string) =>
-    session.presence?.status(pubkey) ?? "unknown";
   // A DM with one of the viewer's own agents gives way to its "New session"
   // row, but only when that row shows; the DM stays in the sidebar. Removing
   // DM-listed people below only lifts the rest, so a row shown here still
@@ -618,7 +621,6 @@ export function SearchResults({
       peopleNeedle,
       usage,
       picked,
-      presence,
     )
       .slice(0, PERSON_ROWS)
       .map(({ person }) => person.pubkey)
@@ -648,7 +650,6 @@ export function SearchResults({
     peopleNeedle,
     usage,
     picked,
-    presence,
   );
   const joinedAll = matchingAll.filter(
     (channel) => channel.channelType !== "dm",

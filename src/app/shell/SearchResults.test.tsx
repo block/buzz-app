@@ -2948,6 +2948,54 @@ function peopleSession(
   };
 }
 
+it("keeps the directory's order for tied people, as New message does", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    park = keypair(),
+    lee = keypair();
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return filters.some((filter) => filter.kinds?.includes(0))
+        ? [profile(lee, { display_name: "Kim Lee" })]
+        : [];
+    },
+  });
+  // The relay ranked Kim Park first. Kim Lee is also in the profile cache and
+  // sorts first by name; neither may move the directory's order.
+  const t = peopleSession(owner.session, [
+    { pubkey: park.pubkey, name: "Kim Park" },
+    { pubkey: lee.pubkey, name: "Kim Lee" },
+  ]);
+  try {
+    render(
+      <SearchResults
+        session={t.session}
+        query="kim"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    await act(async () => owner.session.profiles.ensure([lee.pubkey]));
+    const group = await screen.findByRole("group", { name: "People" });
+    await waitFor(() =>
+      expect(
+        within(group)
+          .getAllByRole("option")
+          .map((row) => row.textContent?.match(/Kim (Park|Lee)/)?.[0]),
+      ).toEqual(["Kim Park", "Kim Lee"]),
+    );
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("finds a person by username and starts a DM with them", async () => {
   const relay = keypair(),
     viewer = keypair(),

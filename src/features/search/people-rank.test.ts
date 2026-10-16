@@ -10,7 +10,6 @@ const person = (
   pubkey,
   label,
   agent: false,
-  owned: false,
   relationship: 4,
   usageKeys: [personKey(pubkey)],
   ...extra,
@@ -20,11 +19,8 @@ const order = (
   needle: string,
   usage: SearchUsage = noSearchUsage,
   picked?: string,
-  presence?: (pubkey: string) => string,
 ) =>
-  rankPeople(people, needle, usage, picked, presence).map(
-    ({ person }) => person.label,
-  );
+  rankPeople(people, needle, usage, picked).map(({ person }) => person.label);
 
 it("matches display names and usernames with the shared name rule", () => {
   const people = [
@@ -77,17 +73,13 @@ it("ranks a hidden agent name after shown names, as mentions do", () => {
   expect(order(people, "robin")).toEqual(["Robin Wu", "Helper Bot"]);
 });
 
-it("breaks ties with owned agents, then presence, then name, as mentions do", () => {
+it("keeps the given order for ties, as New message keeps the directory's", () => {
   const people = [
     person("z", "Zed Agent", { agent: true }),
-    person("o", "Zed Owned", { agent: true, owned: true }),
+    person("p", "Kim Park"),
+    person("l", "Kim Lee"),
   ];
-  expect(order(people, "zed")).toEqual(["Zed Owned", "Zed Agent"]);
-  const twins = [person("x", "Kim Lee"), person("y", "Kim Park")];
-  expect(order(twins, "kim")).toEqual(["Kim Lee", "Kim Park"]);
-  expect(
-    order(twins, "kim", noSearchUsage, undefined, (key) =>
-      key === "y" ? "online" : "offline",
-    ),
-  ).toEqual(["Kim Park", "Kim Lee"]);
+  expect(order(people, "kim")).toEqual(["Kim Park", "Kim Lee"]);
+  expect(order(people, "z")).toEqual(["Zed Agent"]);
+  expect(order([...people].reverse(), "kim")).toEqual(["Kim Lee", "Kim Park"]);
 });

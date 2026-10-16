@@ -1105,6 +1105,8 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
       pane.getByRole("button", { name: "Close plugin details" }),
     ).toBeFocused();
     await expect(trigger).toBeHidden();
+    // The covered catalog is hidden from AT; its live feedback must stay exposed.
+    await expect(page.getByRole("alert")).toHaveCSS("visibility", "visible");
     await page.keyboard.press("Tab");
     await expect(
       pane.getByRole("button", { name: "Disable", exact: true }),

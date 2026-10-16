@@ -250,7 +250,7 @@ contracts with their own layout and local navigation.
 **Channels is the only required bundled plugin.** Bestie
 and Todos are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Me, Inbox,
-Projects, Agents, Claude, Codex, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
+Projects, Agents, Claude, Codex, Workflows, Sessions, Builderlab, Hosted communities, and Membership are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
 Me is an empty, optional default-enabled page. Me and Channels request topbar
@@ -263,7 +263,7 @@ is no migration or forced reset: a browser profile that previously saved its ful
 plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
 overrides. Default-on does not promise platform support: Terminal contributes UI
 only on macOS/Linux desktop; Hosted communities needs either the desktop app or
-the live development broker. Disabling Community admin removes its Invite to community shortcut.
+the live development broker. Disabling Membership removes its Invite to community shortcut.
 
 Projects
 is enabled by default and owns versioned, validated entity page routes. It resolves

@@ -4,7 +4,7 @@
   "apiVersion": 1,
   "description": "Show live and recent agent work alongside conversations.",
   "discovery": {
-    "category": "agents",
+    "category": "agent-tools",
     "tags": ["Essentials", "coding-agents", "agent-sessions"]
   }
 }

@@ -5,6 +5,6 @@
   "description": "Keep legacy Sessions links working through the Solo workspace.",
   "discovery": {
     "category": "productivity",
-    "tags": ["Essentials", "agent-sessions"]
+    "tags": ["agent-sessions"]
   }
 }

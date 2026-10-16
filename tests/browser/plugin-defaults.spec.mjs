@@ -52,7 +52,7 @@ test("Bestie opts in without changing the other bundled defaults and survives re
 
 // Real App -> shell -> rail Settings-registry wiring, including the scoped
 // destination. Role and contribution-removal permutations stay in jsdom.
-test("Community admin action removes and restores the working Invite destination", async ({
+test("Membership action removes and restores the working Invite destination", async ({
   page,
   app,
 }) => {
@@ -78,7 +78,7 @@ test("Community admin action removes and restores the working Invite destination
   await expect(invite).toBeVisible();
   await page.keyboard.press("Escape");
   await plugins(page);
-  const admin = pluginAction(page, "Community admin");
+  const admin = pluginAction(page, "Membership");
   await admin.click();
   await expect(admin).toHaveAccessibleName(/^Enable /);
   await menu();

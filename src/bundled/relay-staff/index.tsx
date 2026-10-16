@@ -11,7 +11,7 @@ import { RelayStaff } from "./RelayStaff";
 import { createStaff, type Staff } from "./staff";
 
 /** The Settings group for every relay-wide staff entry. */
-export const GROUP = "Relay admin";
+export const GROUP = "Moderation";
 
 export const inject = ["relay", "settingsCards", "communityReader"];
 export const apply: PluginModule["apply"] = (ctx) => {

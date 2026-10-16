@@ -202,6 +202,7 @@ export class GooseRuntime {
     channelId,
     team,
     model,
+    session,
     workingUntil,
     ignored,
     signal,
@@ -286,6 +287,7 @@ export class GooseRuntime {
       title: sessionTitle(entry.name, place, key.split("/")[1]),
       signal,
       ...(model ? { model } : {}),
+      ...(session ? { session } : {}),
       activityScope: topLevel
         ? channel
         : (threadReference(event)?.rootId ?? event.id),

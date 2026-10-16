@@ -458,6 +458,7 @@ export class GooseSession {
   private acted = false;
   private written = "";
   private closed = false;
+  private idlers: (() => void)[] = [];
 
   constructor(
     private readonly goose: GooseProcess,
@@ -474,6 +475,13 @@ export class GooseSession {
   }
   get open() {
     return !this.closed;
+  }
+  /** Resolves once nothing runs, waits to run or waits for its answer:
+   * unlike `busy`, it waits out the model call goose makes after a final
+   * `send` too. */
+  idle(): Promise<void> {
+    if (this.quiet()) return Promise.resolve();
+    return new Promise((resolve) => this.idlers.push(resolve));
   }
 
   /** Sends one user message, whose turn runs on `model` of the provider when
@@ -615,6 +623,7 @@ export class GooseSession {
       this.ranAs(undefined);
     }
     if (!this.steering && !this.closed) this.done();
+    this.wake();
   }
 
   /** Puts the session on the provider and model chosen now, or `model` of
@@ -698,6 +707,16 @@ export class GooseSession {
     this.owner = undefined;
     for (const resolve of this.waiters.splice(0))
       resolve(resolve === owner ? settled : { ok: settled.ok });
+    this.wake();
+  }
+  private quiet() {
+    return (
+      this.closed ||
+      (!this.prompting && !this.steering && !this.pending && !this.queue.length)
+    );
+  }
+  private wake() {
+    if (this.quiet()) for (const resolve of this.idlers.splice(0)) resolve();
   }
 }
 

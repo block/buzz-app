@@ -16,6 +16,7 @@ import {
   type Spawn,
   type ToolServer,
 } from "./goose";
+import type { SessionAction } from "../../features/agents/service";
 
 /** A conversation's session closes after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
@@ -150,6 +151,8 @@ export class AgentSessions {
   private readonly once = new Map<string, Live | undefined>();
   private onceCount = 0;
   /** Conversations whose session is opening, and the turn it opened for. */
+  /** The openings that hold a conversation for a session action. */
+  private readonly resets = new WeakSet<Promise<unknown>>();
   private readonly opening = new Map<
     string,
     Promise<{ settled?: Promise<Settled> }>
@@ -196,6 +199,7 @@ export class AgentSessions {
       title,
       signal,
       model,
+      session,
       ...activity
     }: Readonly<{
       steer?: string;
@@ -203,13 +207,28 @@ export class AgentSessions {
       title?: string;
       signal?: AbortSignal;
       model?: string;
+      session?: SessionAction;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
+    // Held as an opening is, so a message meanwhile waits for it rather than
+    // steering into the session it compacts or closes. A message held by one
+    // has spent its time to start waiting, so it waits as long as that takes.
+    if (session) {
+      const reset = this.reset(key, session, this.opening.get(key));
+      const held = reset.then(() => ({}));
+      this.resets.add(held);
+      this.opening.set(key, held);
+      const result = await reset;
+      if (this.opening.get(key) === held) this.opening.delete(key);
+      if (!result.ok) return result;
+      signal = undefined;
+    }
     for (;;) {
       if (this.disposed) return STOPPED;
       // A message that arrives while its conversation's session opens uses it.
       const opening = this.opening.get(key);
+      if (opening && this.resets.has(opening)) signal = undefined;
       if (opening) {
         // The session stays shared; only this message gives up on it.
         try {
@@ -269,6 +288,33 @@ export class AgentSessions {
       console.warn("goose could not start", error);
       return { ok: false, error: `goose could not start: ${message(error)}` };
     }
+  }
+
+  /** Waits for the conversation's session to finish its work, then compacts
+   * it or closes it, so the message opens a new one. Without an open session
+   * there is nothing to do. */
+  private async reset(
+    key: string,
+    action: SessionAction,
+    before: Promise<unknown> | undefined,
+  ): Promise<Settled> {
+    await before?.catch(() => undefined);
+    const live = this.live.get(key);
+    if (!live?.session.open) return { ok: true };
+    await live.session.idle();
+    if (this.disposed) return STOPPED;
+    if (this.live.get(key) !== live || !live.session.open) return { ok: true };
+    if (action === "new") {
+      this.drop(key, live);
+      return { ok: true };
+    }
+    const result = await this.answer(key, live, "/compact", {}, undefined);
+    // goose ends the turn either way, and says which in its text.
+    if (!result.ok || result.text === "Compaction complete") return result;
+    return {
+      ok: false,
+      error: result.text || "goose could not compact the session",
+    };
   }
 
   /** Runs one turn in a new session, then closes it. `label` names it in the

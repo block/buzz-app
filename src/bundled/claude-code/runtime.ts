@@ -324,6 +324,7 @@ export class ClaudeRuntime {
     channelId,
     model,
     effort,
+    session,
     team,
     workingUntil,
     ignored,
@@ -380,13 +381,22 @@ export class ClaudeRuntime {
       );
     // A turn keeps the posting policy it was admitted with: a request under
     // the other policy waits for the conversation's turns to settle rather
-    // than steering into them and changing their tools' context.
+    // than steering into them and changing their tools' context. So does one
+    // that compacts or replaces their session.
     const prior = entry.policies.get(key);
-    const same = prior?.topLevel === topLevel;
+    const same = prior?.topLevel === topLevel && !session;
     const wait = prior && (same ? prior.handed : prior.settled);
     let delivered!: Promise<Settled>;
     const handed = (async () => {
       await wait;
+      if (session === "new") entry.sessions.forget(key);
+      if (session === "compact") {
+        const compacted = await entry.sessions.compact(key);
+        if (!compacted.ok) {
+          delivered = Promise.resolve(compacted);
+          return;
+        }
+      }
       const text = await prompt(false);
       // A conversation's tools default to its thread; a session shared by
       // several threads is told which to reply in instead.

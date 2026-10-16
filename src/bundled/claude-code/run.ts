@@ -12,8 +12,12 @@ const HANDOVER_MS = 2 * 60_000;
 export const claudeRun = (
   runtime: ClaudeRuntime,
   ready?: (signal: AbortSignal) => Promise<void>,
-): Pick<AgentType<Config>, "models" | "run" | "runOnce" | "timeoutMs"> => ({
+): Pick<
+  AgentType<Config>,
+  "models" | "sessions" | "run" | "runOnce" | "timeoutMs"
+> => ({
   models: (agent) => runtime.models(agent.pubkey),
+  sessions: true,
   run: async (delivery) => {
     await ready?.(delivery.signal);
     return runtime.run(delivery);

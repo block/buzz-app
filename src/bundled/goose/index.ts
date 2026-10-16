@@ -88,6 +88,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     models: (agent) => setup.picks(config(agent.config)),
+    sessions: true,
     run: (delivery) => runtime.run(delivery),
     runOnce: (turn) => runtime.runOnce(turn),
     timeoutMs: HANDOVER_MS,

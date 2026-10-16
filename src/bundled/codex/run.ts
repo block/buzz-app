@@ -14,8 +14,12 @@ const HANDOVER_MS = 2 * 60_000;
 export const codexRun = (
   runtime: CodexRuntime,
   ready?: (signal: AbortSignal) => Promise<void>,
-): Pick<AgentType<Config>, "models" | "run" | "runOnce" | "timeoutMs"> => ({
+): Pick<
+  AgentType<Config>,
+  "models" | "sessions" | "run" | "runOnce" | "timeoutMs"
+> => ({
   models: (agent) => runtime.preview(agent),
+  sessions: true,
   run: async (delivery) => {
     await ready?.(delivery.signal);
     return runtime.run(delivery);

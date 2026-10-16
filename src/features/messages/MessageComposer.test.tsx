@@ -2338,6 +2338,57 @@ it("opens the model picker while discovery is pending, then fills its controls",
   ).not.toBeInTheDocument();
 });
 
+it("asks an agent whose type has them to compact its session first on the next run", async () => {
+  const snapshot = {
+    status: "ready",
+    agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+  };
+  const types = [
+    {
+      key: "test/agent",
+      models: () => ({
+        current: "fast",
+        models: [{ id: "fast", label: "Fast", efforts: [] }],
+      }),
+      sessions: true,
+    },
+  ];
+  const agents = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
+  await h.user.type(h.input(), "tidy up");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  // One model and no efforts is no choice of its own; the session still is.
+  await h.user.click(
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    }),
+  );
+  await h.user.click(
+    await screen.findByRole("button", { name: "Honey's session" }),
+  );
+  await h.user.click(
+    await screen.findByRole("menuitemcheckbox", {
+      name: "Compact session first",
+    }),
+  );
+  await h.user.keyboard("{Escape}");
+  await h.user.keyboard("{Escape}");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenLastCalledWith(
+    "channel",
+    expect.stringContaining("tidy up"),
+    [first.pubkey],
+    [],
+    undefined,
+    [],
+    { [first.pubkey]: { session: "compact" } },
+  );
+});
+
 it.each([
   "claude-sonnet-4-5@20250929",
   "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-5",

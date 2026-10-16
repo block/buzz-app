@@ -3,10 +3,12 @@ import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { Host } from "../features/host/service";
 import { createServices, type AppServices } from "./services";
+import type { AssistiveUx } from "../features/assistive-ux/service";
 
 const plugin = vi.hoisted(() => ({
   cleanup: vi.fn<() => void | Promise<void>>(),
   host: undefined as Host | undefined,
+  assistiveUx: undefined as AssistiveUx | undefined,
 }));
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
@@ -24,9 +26,10 @@ vi.mock("../bundled", () => ({
     {
       manifest: { id: "test.page", name: "Test", apiVersion: 1 },
       module: {
-        inject: ["pages", "host"],
+        inject: ["pages", "host", "assistiveUx"],
         apply(ctx: Context) {
           plugin.host = ctx.host;
+          plugin.assistiveUx = ctx.assistiveUx;
           ctx.pages.register({
             id: "main",
             title: "Test",
@@ -53,6 +56,7 @@ beforeEach(() => {
   vi.stubGlobal("navigator", { platform: "MacIntel" });
   plugin.cleanup.mockReset();
   plugin.host = undefined;
+  plugin.assistiveUx = undefined;
   vi.mocked(isTauri).mockReturnValue(false);
   vi.mocked(invoke).mockReset();
   values = new Map<string, string>();
@@ -156,6 +160,22 @@ function expectHostStopped() {
     ).toHaveLength(1);
   expect(services.pages.snapshot()).toHaveLength(0);
 }
+
+it("provides session-scoped assistive UX independently of plugin enablement", async () => {
+  await openCommunities();
+  const session = services.relay.snapshot().session;
+  expect(plugin.assistiveUx?.forSession(session)).toBe(
+    session.assistiveProgress,
+  );
+  await services.plugins.change("disable", "test.page");
+  await vi.advanceTimersByTimeAsync(0);
+  const progress = services.assistiveUx.forSession(session);
+  expect(progress).toBe(session.assistiveProgress);
+  await services.dispose();
+  await expect(
+    progress.record("threads.new-thread-placement", "dismissed"),
+  ).resolves.toBe("unavailable");
+});
 
 it("provides the host command service to plugins", async () => {
   await vi.advanceTimersByTimeAsync(0);

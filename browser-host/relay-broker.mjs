@@ -67,6 +67,11 @@ import {
   signReadState,
   READ_STATE_DECODE_BYTES,
 } from "./read-state.mjs";
+import {
+  assistiveAddresses,
+  decodeAssistive,
+  signAssistive,
+} from "./assistive-ux.mjs";
 import { READ_STATE_TIMESTAMP_REFUSAL } from "../src/features/relay/read-state-host.ts";
 import { READ_STATE_EVENT_BYTES } from "../src/features/relay/read-state-model.ts";
 import {
@@ -1091,11 +1096,15 @@ export function relayBrokerPlugin({
             [
               "/api/relay/sidebar-preferences",
               "/api/relay/read-state-decode",
+              "/api/relay/assistive-decode",
               "/api/relay/channel-kit-decode",
             ].includes(route) &&
             req.method === "POST"
           ) {
             const readStateDecode = route === "/api/relay/read-state-decode";
+            const assistiveDecode = route === "/api/relay/assistive-decode";
+            if (assistiveDecode && !scoped)
+              return json(res, 400, { error: "Select a community first" });
             const kitDecode = route === "/api/relay/channel-kit-decode";
             if (sidebarUploads >= SIDEBAR_UPLOAD_SLOTS)
               return json(res, 429, { error: "Sidebar decoder is busy" });
@@ -1110,7 +1119,7 @@ export function relayBrokerPlugin({
                 bytes += Buffer.byteLength(part);
                 if (
                   bytes >
-                  (readStateDecode || kitDecode
+                  (readStateDecode || kitDecode || assistiveDecode
                     ? READ_STATE_DECODE_BYTES
                     : SIDEBAR_REQUEST_BYTES)
                 )
@@ -1123,18 +1132,22 @@ export function relayBrokerPlugin({
               return json(
                 res,
                 200,
-                kitDecode
-                  ? decodeChannelKit(events, key, relay)
-                  : readStateDecode
-                    ? decodeReadState(events, key)
-                    : decodeSidebarPreferences(events, key),
+                assistiveDecode
+                  ? decodeAssistive(events, key, relay)
+                  : kitDecode
+                    ? decodeChannelKit(events, key, relay)
+                    : readStateDecode
+                      ? decodeReadState(events, key)
+                      : decodeSidebarPreferences(events, key),
               );
             } catch {
               if (!res.destroyed)
                 return json(res, 400, {
-                  error: readStateDecode
-                    ? "Read state could not be decoded"
-                    : "Sidebar preferences could not be decoded",
+                  error: assistiveDecode
+                    ? "Assistive progress could not be decoded"
+                    : readStateDecode
+                      ? "Read state could not be decoded"
+                      : "Sidebar preferences could not be decoded",
                 });
             } finally {
               clearTimeout(deadline);
@@ -1974,6 +1987,9 @@ export function relayBrokerPlugin({
               "/api/relay/identity-archive-publish",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
+              "/api/relay/assistive-addresses",
+              "/api/relay/assistive-sign",
+              "/api/relay/assistive-publish",
               "/api/relay/channel-kit-prepare",
               "/api/relay/read-state-publish",
               "/api/relay/profile",
@@ -2408,6 +2424,32 @@ export function relayBrokerPlugin({
                 }
               : { code: filters.code, policy_receipt: filters.policy_receipt };
           }
+          const assistivePublishing = route === "/api/relay/assistive-publish";
+          if (
+            [
+              "/api/relay/assistive-addresses",
+              "/api/relay/assistive-sign",
+              "/api/relay/assistive-publish",
+            ].includes(route)
+          ) {
+            if (!scoped)
+              return json(res, 400, {
+                error: "Select a community first",
+                sent: false,
+              });
+            try {
+              if (route === "/api/relay/assistive-addresses")
+                return json(res, 200, assistiveAddresses(key, relay));
+              if (route === "/api/relay/assistive-sign")
+                return json(res, 200, signAssistive(filters, key, relay));
+              decodeAssistive([filters], key, relay);
+            } catch {
+              return json(res, 400, {
+                error: "Assistive operation rejected",
+                sent: false,
+              });
+            }
+          }
           const readSigning = route === "/api/relay/read-state-sign";
           const readPublishing = route === "/api/relay/read-state-publish";
           if (readSigning || readPublishing) {
@@ -2634,12 +2676,13 @@ export function relayBrokerPlugin({
             !profileSearch &&
             !workflowPath &&
             !readPublishing &&
+            !assistivePublishing &&
             !snapshot &&
             !channelActivity &&
             !validFilters(filters)
           )
             return json(res, 400, { error: "Read filter rejected" });
-          if (publishing || readPublishing) {
+          if (publishing || readPublishing || assistivePublishing) {
             const stream = streams.get(req.headers["x-buzz-live-id"]);
             // This route has already validated the signed event. Do not log its
             // content, tags, signature, or the browser's private stream handle.

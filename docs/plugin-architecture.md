@@ -591,6 +591,25 @@ The pending [catalog update](https://github.com/block/buzz-app/pull/1246) adds
 reorders the categories and adds the bundled `Core` tag. The table above reflects
 current main; update it from `plugin-categories.ts` when that change lands.
 
+### Make bundled plugins distinct
+
+Each bundled plugin must be distinguishable from the others at a glance. Choose
+a name and description that make its job and scope clear, including who it is
+for when that matters. Similar plugins should explain their different jobs in
+the catalog itself; people should not need to open both READMEs to tell them
+apart. For example, community administration concerns one community's members,
+roles and invitations, while relay administration concerns reports, feedback and
+communities across a relay for authorized relay staff.
+
+Artwork should reinforce that distinction with a recognizable subject or
+silhouette while following Buzz's shared visual style. Avoid giving neighboring
+plugins near-identical imagery or relying on color alone to distinguish them.
+Before adding or changing a bundled plugin, authors and reviewers must compare
+its name, description and artwork with the existing catalog, especially plugins
+with similar names or purposes in the same category. Check whether someone new
+to Buzz can tell what each adds and which one they need. Revise ambiguous copy
+or imagery before considering the plugin ready.
+
 ### Writing the plugin README
 
 Keep the user guide short and positive: `# <plugin name>`, a couple of sentences

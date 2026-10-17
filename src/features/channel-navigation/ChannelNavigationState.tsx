@@ -270,6 +270,16 @@ export function ChannelNavigationProvider({
             action={state.lifecycleDialog.action}
             lifecycle={connection.session.channelLifecycle}
             onSubmit={value.beginLifecycle}
+            // Submission closes asynchronously; use the same captured origin
+            // as cancellation instead of Base UI's older focus-history entry.
+            finalFocus={() => {
+              const { trigger, focusFallback } = state.lifecycleDialog ?? {};
+              return trigger?.isConnected
+                ? trigger
+                : focusFallback?.isConnected
+                  ? focusFallback
+                  : true;
+            }}
             close={() => {
               (
                 state.lifecycleDialog?.callbacks ?? lifecycleCallbacks.current

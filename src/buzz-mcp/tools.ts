@@ -23,6 +23,7 @@ import {
   attachmentName,
 } from "../features/relay/attachments";
 import { threadReference } from "../features/relay/thread-reference";
+import { attestedOwner } from "../features/agents/owner-attestation";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
@@ -1017,7 +1018,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!client.gitAuth) throw new Error("Git access needs Buzz Desktop.");
     const channel = target(tools, args);
     const create = optional(args, "create");
-    let found = await repos(client, channel);
+    let found = await repos(tools, channel);
     if (create !== undefined) {
       if (!REPO.test(create) || create.includes(".."))
         throw new Error(
@@ -1026,19 +1027,28 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       if (found.length)
         throw new Error("This channel already has a repository.");
       if (!(await tools.metadata(channel))) throw unseen(channel);
+      // Announcing it again would move it, history and all, to this channel.
+      const [mine] = await client.query([
+        { kinds: [30617], authors: [client.pubkey], "#d": [create], limit: 1 },
+      ]);
+      if (mine)
+        throw new Error(`You already have a repository named ${create}.`);
       // Members may push; no one may rewrite or delete a branch.
-      found = [
-        await client.publish({
-          kind: 30617,
-          content: "",
-          tags: [
-            ["d", create],
-            ["name", create],
-            ["buzz-channel", channel],
-            ["buzz-protect", "refs/heads/*", "no-force-push", "no-delete"],
-          ],
-        }),
-      ];
+      const created = await client.publish({
+        kind: 30617,
+        content: "",
+        tags: [
+          ["d", create],
+          ["name", create],
+          ["buzz-channel", channel],
+          ["buzz-protect", "refs/heads/*", "no-force-push", "no-delete"],
+        ],
+      });
+      if (!(await leads(tools, channel, created)))
+        throw new Error(
+          "Created, but a channel's repository counts only from its owner or an admin, or their agent.",
+        );
+      found = [created];
     }
     const name = optional(args, "repo");
     const chosen = found.filter(
@@ -1058,7 +1068,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return [
       `${tag(event, "name") ?? tag(event, "d")}: ${url}`,
       "For the next 60 seconds, pass this header to each git command (call again for a new one; never save it):",
-      `git -c http.extraHeader='${header}' clone ${url}`,
+      `git -c http.${url}.extraHeader='${header}' clone ${url}`,
     ].join("\n");
   },
 
@@ -1721,13 +1731,30 @@ const unseen = (channel: string) =>
     `No channel ${channel} that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.`,
   );
 
-/** The repositories bound to `channel`: Git access follows a repository's
- * first `buzz-channel` tag, so only those that name it first. */
-async function repos(client: BuzzClient, channel: string) {
-  const events = await client.query([
+/** The repositories bound to `channel` by its owners and admins or their
+ * agents. Git access follows a repository's first `buzz-channel` tag, which
+ * anyone may set, so only those that name it first and that it trusts. */
+async function repos(tools: Tools, channel: string) {
+  const events = await tools.client.query([
     { kinds: [30617], "#buzz-channel": [channel], limit: 100 },
   ]);
-  return events.filter((event) => tag(event, "buzz-channel") === channel);
+  const bound = events.filter(
+    (event) => tag(event, "buzz-channel") === channel,
+  );
+  const trusted = await Promise.all(
+    bound.map((event) => leads(tools, channel, event)),
+  );
+  return bound.filter((_, index) => trusted[index]);
+}
+
+/** Whether `event` is by an owner or admin of `channel`, or their agent. */
+async function leads(tools: Tools, channel: string, event: BuzzEvent) {
+  const owner = await attestedOwner(event);
+  return (await tools.members(channel)).some(
+    (member) =>
+      (member.role === "owner" || member.role === "admin") &&
+      (member.pubkey === event.pubkey || member.pubkey === owner),
+  );
 }
 
 /** A failed read after a write, as the reason the write is not confirmed. */

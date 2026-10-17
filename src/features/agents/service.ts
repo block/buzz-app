@@ -89,6 +89,7 @@ import {
   type AgentsNative,
   type AgentMedia,
   type AgentUpload,
+  type GitAuth,
   type OldTeam,
   type PortableAgents,
   type PortSource,
@@ -310,6 +311,9 @@ export type AgentHandle = Readonly<{
   /** Saves one of its community's media blobs, of any type, by URL or
    * `sha256[.ext]`, to a local file for the agent. */
   media(url: string): Promise<AgentMedia>;
+  /** Repository `repo` of `owner` in its community: its URL, and the Git
+   * header that authorizes it there as the agent for a minute. */
+  gitAuth(owner: string, repo: string): Promise<GitAuth>;
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
    * that entry's `createdAt`, or 0). The owner reads it back. */
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;

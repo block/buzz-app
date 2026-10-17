@@ -382,6 +382,7 @@ export type RunnerHost = {
         | "audienceAuthority"
         | "upload"
         | "media"
+        | "gitAuth"
         | "remember"
       >
     | undefined;
@@ -1904,6 +1905,8 @@ export class AgentRunners {
       upload: async (data: string, mime: string) =>
         this.require().upload(agent.pubkey, data, mime),
       media: async (url: string) => this.require().media(agent.pubkey, url),
+      gitAuth: async (owner: string, repo: string) =>
+        this.require().gitAuth(agent.pubkey, owner, repo),
       remember: async (slug: string, body: string, after: number) => {
         const event = await this.require().remember(
           agent.pubkey,

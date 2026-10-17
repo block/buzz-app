@@ -207,6 +207,15 @@ export const TOOLS: readonly Tool[] = [
     ["url"],
   ),
   tool(
+    "repo",
+    "A channel's Git repository (default: current): its URL and a header that lets git clone, fetch and push it as you for 60 seconds. create starts one for the channel.",
+    {
+      channel: str,
+      create: str,
+      repo: { type: "string", description: "owner/name, when it has several." },
+    },
+  ),
+  tool(
     "tabs",
     "Your owner's open tabs for this channel's threads, or open, close or rename a thread's tab. Opening never takes their focus; no name clears a rename.",
     {
@@ -224,6 +233,8 @@ const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
 /** A NIP-23 long-form note, as `buzz notes` writes it. */
 const NOTE = 30023;
+/** A repository name the community accepts. */
+const REPO = /^[a-zA-Z0-9_-][a-zA-Z0-9._-]{0,63}$/;
 /** A read's page size and scan budget. */
 const PAGE = 500;
 const MAX_EVENTS = 10_000;
@@ -1001,6 +1012,56 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return "saved";
   },
 
+  async repo(tools, args) {
+    const { client } = tools;
+    if (!client.gitAuth) throw new Error("Git access needs Buzz Desktop.");
+    const channel = target(tools, args);
+    const create = optional(args, "create");
+    let found = await repos(client, channel);
+    if (create !== undefined) {
+      if (!REPO.test(create) || create.includes(".."))
+        throw new Error(
+          "create must be 1 to 64 letters, digits, '.', '_' or '-', not starting with '.'.",
+        );
+      if (found.length)
+        throw new Error("This channel already has a repository.");
+      if (!(await tools.metadata(channel))) throw unseen(channel);
+      // Members may push; no one may rewrite or delete a branch.
+      found = [
+        await client.publish({
+          kind: 30617,
+          content: "",
+          tags: [
+            ["d", create],
+            ["name", create],
+            ["buzz-channel", channel],
+            ["buzz-protect", "refs/heads/*", "no-force-push", "no-delete"],
+          ],
+        }),
+      ];
+    }
+    const name = optional(args, "repo");
+    const chosen = found.filter(
+      (event) => !name || `${event.pubkey}/${tag(event, "d")}` === name,
+    );
+    if (chosen.length !== 1) {
+      if (!found.length) throw new Error("This channel has no repository.");
+      throw new Error(
+        `Choose repo: ${found.map((event) => `${event.pubkey}/${tag(event, "d")}`).join(", ")}`,
+      );
+    }
+    const [event] = chosen as [BuzzEvent];
+    const { url, header } = await client.gitAuth(
+      event.pubkey,
+      tag(event, "d") ?? "",
+    );
+    return [
+      `${tag(event, "name") ?? tag(event, "d")}: ${url}`,
+      "For the next 60 seconds, pass this header to each git command (call again for a new one; never save it):",
+      `git -c http.extraHeader='${header}' clone ${url}`,
+    ].join("\n");
+  },
+
   async media_get(tools, args) {
     const media = await tools.client.media(required(args, "url"));
     const saved = `Saved ${media.path} (${media.type}, ${media.size} bytes).`;
@@ -1659,6 +1720,15 @@ const unseen = (channel: string) =>
   new Error(
     `No channel ${channel} that you can see (it may not be visible yet). If you supplied a name, channels with q finds its ID.`,
   );
+
+/** The repositories bound to `channel`: Git access follows a repository's
+ * first `buzz-channel` tag, so only those that name it first. */
+async function repos(client: BuzzClient, channel: string) {
+  const events = await client.query([
+    { kinds: [30617], "#buzz-channel": [channel], limit: 100 },
+  ]);
+  return events.filter((event) => tag(event, "buzz-channel") === channel);
+}
 
 /** A failed read after a write, as the reason the write is not confirmed. */
 const unread = (error: unknown) =>

@@ -87,6 +87,10 @@ export function appClient(
       check();
       return agent.media(url);
     },
+    gitAuth: (owner, repo) => {
+      check();
+      return agent.gitAuth(owner, repo);
+    },
     read: (path) => {
       check();
       return options.read(path);

@@ -8,7 +8,9 @@ bin/pnpm test:browser:install # once per pinned browser version
 bin/pnpm perf --scenario channel-open --repeat 5 --cpu 4 --out results.json
 ```
 
-`--scenario all` is the default. `--cpu` sets Chromium's CPU slowdown factor
+`--scenario all` is the default. A case name runs only that case; a group
+(`channel-open` or `scroll-paging`) runs every case whose name it prefixes, so
+`scroll-paging-fast` excludes its variants. `--cpu` sets Chromium's CPU slowdown factor
 (1 means unthrottled); it does not throttle network or the fixture server.
 `--repeat` defaults to 5. Every sample gets fresh browser storage, signed
 histories and server state; a production frontend build is shared by the worker.
@@ -110,6 +112,7 @@ All scroll scenarios use the same observer, counters, fresh contexts and result 
 | `scroll-long` | 12,000px upward at 4000px/s across a 360-message channel, fully loaded before measuring |
 | `scroll-paging-fast` | Repeated 2500px upward gestures at 25,000px/s through 640 mixed-height messages, with 100ms added older-response delay, until the oldest message is visible |
 | `scroll-paging-delayed` | The same complete traversal with 500ms added older-response delay |
+| `scroll-paging-fast-keyboard` | `scroll-paging-fast` in keyboard modality |
 
 The long case loads older pages without traversing them first, so the gesture
 encounters rows the virtualizer has not yet mounted/measured. Setup waits for
@@ -117,18 +120,31 @@ page processing to finish, rejects the history-limit notice, then settles geomet
 Neither short nor long windows permit older-page reads. They isolate rendering
 from pagination.
 
+Wheel input lands in the timeline gutter, away from message hover. Setup reaches
+Messages through palette arrow keys, which set `html[data-keyboard-navigation]`;
+in that state the app prepares each newly mounted row's full action bar. Every scroll
+case except `scroll-paging-fast-keyboard` therefore ends setup with a real
+pointer press at the gutter point. The press clears keyboard modality and
+focuses the message list, as clicking into a conversation does, so the reading
+observer runs during the gesture. `scroll-paging-fast-keyboard` only moves the
+pointer there, keeping keyboard modality and focus outside the list as after
+palette navigation. Each sample asserts its modality and focus before measuring
+and records `work.modality`. Scroll results recorded before the pointer press
+ran in keyboard modality, like `scroll-paging-fast-keyboard`; rerun baselines
+before comparing them.
+
 The short and long Chromium gestures must produce wheel events, scroll-offset movement
 of at least 80% of the request, multiple visible messages and changed visible IDs.
 Raw frames and work receipts record the requested distance/speed, history size,
 released pages, wheel count and observed rows. `scrollTopRangePx` is the observed
 offset range, including virtualizer corrections; it is not physical input distance.
 
-`--scenario scroll-paging` runs both variants; so does the default `all`.
-Use either full variant name to isolate it. Each variant has its own samples and
+`--scenario scroll-paging` runs every paging case; so does the default `all`.
+Use a full case name to isolate one. Each case has its own samples and
 summary; the runner never pools their metrics. The same `--cpu` setting applies
-to both. There is no delay parameter or implicit CPU matrix.
+to all. There is no delay parameter or implicit CPU matrix.
 
-Both start with only the head loaded. The modeled HTTP broker adds the named
+Paging cases start with only the head loaded. The modeled HTTP broker adds the named
 delay to each older-page response; there are no page-completion or idle waits
 between gestures. Arrivals compete with scrolling and pending virtualizer
 corrections, the workload behind [the held-range prepend fix](https://github.com/block/buzz-app/pull/1066).

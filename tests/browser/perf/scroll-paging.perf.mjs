@@ -2,9 +2,11 @@ import { test, expect, repeats, timeline } from "./runner.mjs";
 import { scrollCadence } from "./cadence.mjs";
 
 const count = 640;
-for (const [name, olderPageDelayMs] of [
-  ["scroll-paging-fast", 100],
-  ["scroll-paging-delayed", 500],
+// Each variant changes one condition of scroll-paging-fast.
+for (const [name, olderPageDelayMs, modality] of [
+  ["scroll-paging-fast", 100, "pointer"],
+  ["scroll-paging-delayed", 500, "pointer"],
+  ["scroll-paging-fast-keyboard", 100, "keyboard"],
 ])
   test.describe(name, () => {
     test.use({ historyCounts: { alpha: count, beta: 1 }, olderPageDelayMs });
@@ -13,19 +15,7 @@ for (const [name, olderPageDelayMs] of [
         await perf.setup("alpha");
         const scroller = page.locator(timeline("alpha"));
         const oldestId = app.histories.get("primary/alpha")[0].id;
-        // Use the gutter, avoiding hover action bars while delivering real wheels.
-        const point = await scroller.evaluate((element) => {
-          const box = element.getBoundingClientRect();
-          const list = element.querySelector("ol").getBoundingClientRect();
-          return {
-            x: Math.round((box.left + list.left) / 2),
-            y: Math.round(box.top + box.height / 2),
-          };
-        });
-        await perf.cdp.send("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          ...point,
-        });
+        const point = await perf.gutter("alpha", modality);
         await perf.settle("alpha");
         expect(app.pending, "history is not preloaded").toHaveLength(0);
         const head = app.report.queries.find(
@@ -43,6 +33,7 @@ for (const [name, olderPageDelayMs] of [
         const sample = await perf.measure("alpha", {
           timeoutMs: 60_000,
           work: {
+            modality,
             historyCount: count,
             requestedPxPerGesture: 2500,
             speedPxPerSecond: 25000,

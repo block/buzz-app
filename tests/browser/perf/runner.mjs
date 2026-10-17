@@ -237,6 +237,48 @@ export const test = base.extend({
         ).toBeVisible();
         await virtuaIdle(page, page.locator(timeline(id)));
       },
+      // Wheel input uses the timeline gutter, avoiding message hover. Pointer
+      // modality ends setup with a real press there, which focuses the list as
+      // clicking into a conversation does. Keyboard modality keeps the palette's
+      // arrow-key state, with focus outside the list.
+      async gutter(id, modality) {
+        const scroller = page.locator(timeline(id));
+        const point = await scroller.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const list = element.querySelector("ol").getBoundingClientRect();
+          return {
+            x: Math.round((box.left + list.left) / 2),
+            y: Math.round(box.top + box.height / 2),
+          };
+        });
+        for (const type of modality === "pointer"
+          ? ["mouseMoved", "mousePressed", "mouseReleased"]
+          : ["mouseMoved"])
+          await cdp.send("Input.dispatchMouseEvent", {
+            type,
+            ...point,
+            button: type === "mouseMoved" ? "none" : "left",
+            clickCount: 1,
+          });
+        expect(
+          await scroller.evaluate(
+            (element, { x, y }) => ({
+              inside: element.contains(document.elementFromPoint(x, y)),
+              keyboard: document.documentElement.hasAttribute(
+                "data-keyboard-navigation",
+              ),
+              listFocused: element.contains(document.activeElement),
+            }),
+            point,
+          ),
+          `pointer inside the timeline, ${modality} modality`,
+        ).toEqual({
+          inside: true,
+          keyboard: modality === "keyboard",
+          listFocused: modality === "pointer",
+        });
+        return point;
+      },
       async measure(
         id,
         { click, hoverMs = 0, act, work = {}, timeoutMs = 10_000 },

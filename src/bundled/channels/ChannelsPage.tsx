@@ -14,7 +14,6 @@ import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { sharedSessionsTarget } from "./shared-sessions-panel";
 import { UsersIcon } from "../../shared/design-system/icons";
 import { newSessionParent } from "../../features/channel-navigation/routes";
-import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -62,7 +61,11 @@ import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
-import { panelOpening, type Panels } from "../../features/panels/service";
+import {
+  panelOpening,
+  type Panels,
+  type RegisteredPanel,
+} from "../../features/panels/service";
 import type { PagesReader } from "../../features/pages/service";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
@@ -197,10 +200,6 @@ function ChannelWorkspace({
     // Start the optional catalog afterward so opening Messages cannot strand it.
     if (list.status === "ready") queries.channelKit.ensure();
   }, [queries, list.status]);
-  const [canvasOrigin, setCanvasOrigin] = useState<{
-    channelId: string;
-    navigation: PageNavigation | undefined;
-  }>();
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
@@ -210,7 +209,6 @@ function ChannelWorkspace({
   // A started join focuses the composer when membership makes it writable,
   // however that membership arrives. Opening another channel drops the intent.
   const [joiningChannel, setJoiningChannel] = useState<string>();
-  const canvasTrigger = useRef<HTMLButtonElement>(null);
   const [membersChannel, setMembersChannel] = useState<string>();
   const membersTrigger = useRef<HTMLButtonElement>(null);
   const membersHeaderTrigger = useRef<HTMLButtonElement>(null);
@@ -479,14 +477,6 @@ function ChannelWorkspace({
     requestedMessage,
     requestedThread,
   ]);
-  const canvasOpen =
-    !!canvasOrigin &&
-    canvasOrigin.channelId === currentId &&
-    canvasOrigin.navigation === navigation &&
-    !navigation?.signal.aborted;
-  useEffect(() => {
-    if (!canvasOpen) setCanvasOrigin(undefined);
-  }, [canvasOpen]);
   useEffect(() => {
     setMembersChannel((id) => (id === currentId ? id : undefined));
   }, [currentId]);
@@ -838,6 +828,43 @@ function ChannelWorkspace({
     panelTrigger,
     splitTrigger,
   } = secondary;
+  const menuPanels =
+    current && !cached
+      ? available.filter((panel) =>
+          panel.channelMenu?.eligible(current, queries),
+        )
+      : [];
+  const openMenuPanel = (panel: RegisteredPanel) => {
+    const connection = relay.snapshot();
+    const channel = queries.channels
+      .list()
+      .channels.find((item) => item.id === currentId);
+    if (
+      connection.status !== "ready" ||
+      connection.cached ||
+      connection.session !== queries ||
+      !drawerContext ||
+      drawerContext.channelId !== channel?.id ||
+      !channel ||
+      channel.cached ||
+      channel.readOnly ||
+      !channel.members?.includes(queries.viewer ?? "") ||
+      !panels.snapshot().includes(panel) ||
+      !panel.channelMenu?.eligible(channel, queries)
+    )
+      return;
+    drawer.close();
+    panelTrigger.current = settingsTrigger.current;
+    open(
+      {
+        panel,
+        channelId: channel.id,
+        target: channel.id,
+        channelContext: drawerContext,
+      },
+      true,
+    );
+  };
   const sharedSessionsVisit = useRef<string>(undefined);
   useLayoutEffect(() => {
     if (
@@ -1185,11 +1212,6 @@ function ChannelWorkspace({
         )
         ?.focus({ preventScroll: true });
   }, [settingsFocus, split.ref]);
-  const openCanvas = (trigger: HTMLButtonElement) => {
-    canvasTrigger.current = trigger;
-    if (currentId && !navigation?.signal.aborted)
-      setCanvasOrigin({ channelId: currentId, navigation });
-  };
   const settingsContent = (
     <ChannelSettingsPanel
       scope={scope}
@@ -1415,20 +1437,6 @@ function ChannelWorkspace({
           }
         />
       )}
-      {current && !current.readOnly && canvasOpen && (
-        <ChannelCanvasDialog
-          key={`${scope}:${current.id}`}
-          canvas={queries.canvas}
-          profiles={queries.profiles}
-          scope={scope}
-          channelId={current.id}
-          open={canvasOpen}
-          onOpenChange={(open) => {
-            if (!open) setCanvasOrigin(undefined);
-          }}
-          finalFocus={canvasTrigger}
-        />
-      )}
       <Panel as="article" aria-label="Conversation">
         <div
           className={`${styles.conversation}${flatSession ? ` ${styles.sessionConversation}` : ""}`}
@@ -1496,7 +1504,8 @@ function ChannelWorkspace({
                         requestSettingsFocus((value) => value + 1);
                         setSettings({ channelId: current.id });
                       }}
-                      openCanvas={openCanvas}
+                      menuPanels={menuPanels}
+                      openMenuPanel={openMenuPanel}
                     />
                   }
                 >
@@ -1571,47 +1580,8 @@ function ChannelWorkspace({
                             requestSettingsFocus((value) => value + 1);
                             setSettings({ channelId: currentId });
                           }}
-                          openCanvas={openCanvas}
-                          menuPanels={
-                            current && !cached
-                              ? available.filter((panel) =>
-                                  panel.channelMenu?.eligible(current, queries),
-                                )
-                              : []
-                          }
-                          openMenuPanel={(panel) => {
-                            const connection = relay.snapshot();
-                            const channel = queries.channels
-                              .list()
-                              .channels.find((item) => item.id === currentId);
-                            if (
-                              connection.status !== "ready" ||
-                              connection.cached ||
-                              connection.session !== queries ||
-                              !drawerContext ||
-                              drawerContext.channelId !== channel?.id ||
-                              !channel ||
-                              channel.cached ||
-                              channel.readOnly ||
-                              !channel.members?.includes(
-                                queries.viewer ?? "",
-                              ) ||
-                              !panels.snapshot().includes(panel) ||
-                              !panel.channelMenu?.eligible(channel, queries)
-                            )
-                              return;
-                            drawer.close();
-                            panelTrigger.current = settingsTrigger.current;
-                            open(
-                              {
-                                panel,
-                                channelId: channel.id,
-                                target: channel.id,
-                                channelContext: drawerContext,
-                              },
-                              true,
-                            );
-                          }}
+                          menuPanels={menuPanels}
+                          openMenuPanel={openMenuPanel}
                         />
                         {current && hasChannelPanel && !showingChannelPanel && (
                           <span className={panelStyles.paneToggle}>

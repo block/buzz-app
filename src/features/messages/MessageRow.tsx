@@ -938,6 +938,7 @@ function MessageRowContent({
                         return (
                           <AttachmentImage
                             key={url}
+                            session={session}
                             attachment={{ ...attachment, url }}
                             source={source}
                             cached={cached}

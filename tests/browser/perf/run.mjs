@@ -6,7 +6,15 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
-const scenarios = ["all", "channel-open", "scroll-short", "scroll-long"];
+const scenarios = [
+  "all",
+  "channel-open",
+  "scroll-short",
+  "scroll-long",
+  "scroll-paging",
+  "scroll-paging-fast",
+  "scroll-paging-delayed",
+];
 try {
   const { values } = parseArgs({
     args: process.argv.slice(2).filter((arg, i) => i !== 0 || arg !== "--"),

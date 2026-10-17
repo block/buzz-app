@@ -40,8 +40,8 @@ browser timings, in milliseconds:
 The first-rows endpoint gives the browser a paint opportunity; it is not a
 compositor screenshot or proof that every pixel finished painting. The settle
 barrier observes row IDs/positions/heights and scroll geometry, not arbitrary
-future async work. A ten-second deadline fails the sample instead of reporting
-an unfinished operation as a win.
+future async work. A ten-second deadline (60 seconds for paging through history)
+fails the sample instead of reporting an unfinished operation as a win.
 Counter windows also include measurement
 overhead and protocol dispatch around the action. Measured actions use browser
 input: JavaScript invoked directly through the automation protocol can be absent
@@ -99,32 +99,67 @@ collect a new baseline rather than comparing them as equivalent.
 ```sh
 bin/pnpm perf --scenario scroll-short --repeat 5 --cpu 4
 bin/pnpm perf --scenario scroll-long --repeat 5 --cpu 4
+bin/pnpm perf --scenario scroll-paging --repeat 5 --cpu 4
 ```
 
-Both scenarios use the same observer, counters, fresh contexts and result format:
+All scroll scenarios use the same observer, counters, fresh contexts and result format:
 
 | Scenario | Workload |
 | --- | --- |
 | `scroll-short` | 800px upward at 1600px/s within the loaded head of a 120-message channel |
 | `scroll-long` | 12,000px upward at 4000px/s across a 360-message channel, fully loaded before measuring |
+| `scroll-paging-fast` | Repeated 2500px upward gestures at 25,000px/s through 640 mixed-height messages, with 100ms added older-response delay, until the oldest message is visible |
+| `scroll-paging-delayed` | The same complete traversal with 500ms added older-response delay |
 
 The long case loads older pages without traversing them first, so the gesture
 encounters rows the virtualizer has not yet mounted/measured. Setup waits for
 page processing to finish, rejects the history-limit notice, then settles geometry.
-Neither window permits older-page reads. This isolates rendering from pagination;
-network-bound scrolling should be a separate future scenario.
+Neither short nor long windows permit older-page reads. They isolate rendering
+from pagination.
 
-Real Chromium wheel gestures must produce wheel events, scroll-offset movement
+The short and long Chromium gestures must produce wheel events, scroll-offset movement
 of at least 80% of the request, multiple visible messages and changed visible IDs.
 Raw frames and work receipts record the requested distance/speed, history size,
 released pages, wheel count and observed rows. `scrollTopRangePx` is the observed
 offset range, including virtualizer corrections; it is not physical input distance.
 
+`--scenario scroll-paging` runs both variants; so does the default `all`.
+Use either full variant name to isolate it. Each variant has its own samples and
+summary; the runner never pools their metrics. The same `--cpu` setting applies
+to both. There is no delay parameter or implicit CPU matrix.
+
+Both start with only the head loaded. The modeled HTTP broker adds the named
+delay to each older-page response; there are no page-completion or idle waits
+between gestures. Arrivals compete with scrolling and pending virtualizer
+corrections, the workload behind [the held-range prepend fix](https://github.com/block/buzz-app/pull/1066).
+The existing installed-Virtua tests protect that correction's correctness; these
+scenarios measure its browser cost. They use normal-height text, unlike the
+taller short/long corpus. Fast retains pressure from closely spaced arrivals;
+delayed exercises more waiting while the user keeps scrolling. These are
+repeatable modeled conditions, not production latency percentiles or a guarantee
+that every run hits a particular scheduling race. The delay starts after the
+fixture computes its response; browser queueing, transport and verification add
+to it. `work.olderReleaseDelaysMs` records actual server-side release delays.
+
+Paging measures a complete traversal, not however many pages fit a fixed time:
+input continues until the oldest message is visibly in the viewport, with a
+200-gesture safety bound and a 60-second recording deadline. Those bounds allow
+for the intentional per-page waits in the delayed variant. Successful samples
+require real wheels, multiple older reads, all expected older fixture IDs in
+released responses, and the oldest message still visible after settling. Work receipts record gesture/page counts, unique older rows
+received and the endpoint ID. A stalled traversal fails; it cannot win by doing
+less work. There is no mount-count target or automatic performance verdict.
+
+These variants replace the experimental zero-delay `scroll-paging` workload;
+collect new baselines rather than treating those old results as equivalent.
+
 `rafMaxGapMs`, `rafP95GapMs` and `rafGapsOver50` describe animation-frame callback
 cadence during the gesture. Raw `gestureStartMs` and `gestureEndMs` timestamps
 are relative to the recording start: the first observed wheel event and the
-browser marker after Chromium reports the synthetic gesture complete. The end
-includes that marker's protocol dispatch. Gaps are clipped to those boundaries,
+browser marker after Chromium reports the synthetic gesture complete. For paging,
+that marker follows the last gesture and its visible-oldest check; gaps between
+successive gestures remain inside the cadence window. The end includes the
+marker's protocol dispatch. Gaps are clipped to those boundaries,
 including partial gaps before the first and after the last callback inside the
 window. All callbacks count, including stalls when the scroll offset is unchanged.
 The settling tail after the end marker is excluded from cadence only:
@@ -162,7 +197,8 @@ alternate baseline/candidate runs when making a performance claim. Comparing
 different CPU settings, browsers, fixtures or concurrent host loads is not a
 controlled comparison. The runner does not decide which tradeoffs are acceptable.
 
-This is Chromium-local evidence with modeled immediate backend responses,
+This is Chromium-local evidence with modeled backend responses (immediate except
+for the named paging delays),
 HTTP interception (which disables HTTP cache), preloaded fonts and text content.
 It does not measure production network latency, media, native hosting, WebKit,
 long-session memory growth or application startup. Add those as explicit workloads

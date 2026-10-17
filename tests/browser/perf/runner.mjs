@@ -17,7 +17,7 @@ export const heads = (app, id) =>
 
 // One observer per operation, owned by its JSHandle. No global recorder or
 // surviving animation-frame loop. Geometry reads are included in browser costs.
-function observe({ selector, ids, click, hoverMs }) {
+function observe({ selector, ids, click, hoverMs, timeoutMs }) {
   const allowed = new Set(ids);
   const frames = [];
   const longAnimationFrames = [];
@@ -158,8 +158,8 @@ function observe({ selector, ids, click, hoverMs }) {
       loafObserver.observe({ type: "long-animation-frame", buffered: false });
       quietSince = start;
       timer = setTimeout(
-        () => stop("Timeline did not settle within 10s"),
-        10_000,
+        () => stop(`Timeline did not settle within ${timeoutMs}ms`),
+        timeoutMs,
       );
       raf = requestAnimationFrame(sample);
     },
@@ -237,7 +237,10 @@ export const test = base.extend({
         ).toBeVisible();
         await virtuaIdle(page, page.locator(timeline(id)));
       },
-      async measure(id, { click, hoverMs = 0, act, work = {} }) {
+      async measure(
+        id,
+        { click, hoverMs = 0, act, work = {}, timeoutMs = 10_000 },
+      ) {
         const ids = app.histories.get(`primary/${id}`).map((event) => event.id);
         const box = click ? await page.locator(click).boundingBox() : null;
         if (click && !box) throw new Error(`Missing click target: ${click}`);
@@ -255,6 +258,7 @@ export const test = base.extend({
             ids,
             click,
             hoverMs,
+            timeoutMs,
           });
           if (hoverMs) {
             await cdp.send("Input.dispatchMouseEvent", {

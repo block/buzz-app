@@ -76,6 +76,8 @@ export const test = base.extend({
   inboxThreadWindow: [false, { option: true }],
   inboxSessionAgent: [false, { option: true }],
   tallMessages: [false, { option: true }],
+  // Opt-in perf workload: let modeled HTTP pages arrive during wheel input.
+  olderPageDelayMs: [null, { option: true }],
   membershipActivity: [false, { option: true }],
   launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
@@ -134,6 +136,7 @@ export const test = base.extend({
       inboxThreadWindow,
       inboxSessionAgent,
       tallMessages,
+      olderPageDelayMs,
       membershipActivity,
       launchAnimation,
       historyCounts,
@@ -798,6 +801,7 @@ export const test = base.extend({
         dmLabels,
         agentPeers,
         tallMessages,
+        olderPageDelayMs,
         browserVersion: browser.version(),
         node: process.version,
         platform: platform(),
@@ -819,6 +823,7 @@ export const test = base.extend({
       measurements: [],
     };
     const pending = [];
+    const olderPageTimers = new Set();
     const retiredStreams = new Set();
     const observerFailures = [];
     const consoleLocations = new Map();
@@ -2016,13 +2021,26 @@ export const test = base.extend({
           filter.until !== undefined &&
           filter["#h"]?.length
         ) {
-          pending.push({
+          const queuedAt = performance.now();
+          const receipt = {
             community,
             channel: filter["#h"][0],
             filter,
             events: result.filter((event) => event.kind === 9),
-            release: () => send(response, result),
-          });
+            release: () => {
+              if (response.destroyed || response.writableEnded) return;
+              receipt.releaseDelayMs = performance.now() - queuedAt;
+              send(response, result);
+            },
+          };
+          pending.push(receipt);
+          if (olderPageDelayMs !== null) {
+            const timer = setTimeout(() => {
+              olderPageTimers.delete(timer);
+              receipt.release();
+            }, olderPageDelayMs);
+            olderPageTimers.add(timer);
+          }
         } else send(response, result);
       } catch (error) {
         report.unexpected.push(String(error));
@@ -2601,6 +2619,7 @@ export const test = base.extend({
       // All page errors stay in the evidence; only known engine reports pass.
       expect(unexplainedPageErrors()).toEqual([]);
     } finally {
+      for (const timer of olderPageTimers) clearTimeout(timer);
       if (iconCongestion)
         for (const response of heldIcons)
           if (!response.writableEnded) send(response, {});

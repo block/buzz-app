@@ -1862,7 +1862,7 @@ it.each(["/queue", "/stop", "/steer", "/reset"])(
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   },
 );
-it.each(["v2", "v3", "v5"])(
+it.each(["v2", "v3", "v5", "v6"])(
   "starts fresh instead of restoring a %s binding, whose tools are out of date",
   async (version) => {
     const f = fixture();
@@ -1882,8 +1882,13 @@ it.each(["v2", "v3", "v5"])(
     ).toHaveLength(0);
     const thread = f.sent.find((wire) => wire.method === "thread/start")
       ?.params as { dynamicTools: { tools: { name: string }[] }[] };
-    expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
-      "media_get",
+    expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        "media_get",
+        "notes_get",
+        "notes_set",
+        "notes_rm",
+      ]),
     );
     f.complete();
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
@@ -2569,7 +2574,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v6:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v7:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -2606,7 +2611,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -2706,7 +2711,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v6:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),

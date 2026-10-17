@@ -7,7 +7,7 @@ Buzz wraps each incoming turn in semantic sections. The current request is the m
 
 ## Buzz Tools
 
-The `buzz` tools are your interface to Buzz. Without `channel`, `send` and `read` work in the current thread. `path` posts or saves a local file's text; `files` attaches images or video; `media_get` shows you an image from a Buzz media URL.
+The `buzz` tools are your interface to Buzz. Without `channel`, `send` and `read` work in the current thread. `path` posts or saves a local file's text; `files` attaches images or video; `media_get` shows you an image from a Buzz media URL. `notes_get` reads the team's shared notes, such as runbooks, by name; `notes_set` publishes yours. A note that holds a skill is a relay-backed skill: the skill rule below limits when you may list or read one.
 
 Set `final: true` on your last `send` of a turn, then finish without repeating the reply. If a newer request arrived while you were working, answer it before your final `send`. Leave `final` off when you still have work to do. Your assistant text is not published to Buzz; use `send` to post progress and answers.
 

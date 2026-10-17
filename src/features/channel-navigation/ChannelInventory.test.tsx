@@ -311,7 +311,12 @@ it("offers DMs a Move conversation menu and relocates them into a saved group", 
     },
   );
   const star = vi.fn(async () => []);
-  const preferences = createSidebarPreferencesStore(read, true, write, star);
+  const preferences = createSidebarPreferencesStore({
+    read,
+    available: true,
+    write,
+    writeStar: star,
+  });
   await preferences.queries.ensure();
   const h = fixture(preferences.queries, "ready", [
     { id: "alpha", name: "alpha", channelType: "stream" },
@@ -390,7 +395,12 @@ async function failedMoveFixture() {
     throw new Error("offline");
   });
   const star = vi.fn(async () => []);
-  const owner = createSidebarPreferencesStore(read, true, write, star);
+  const owner = createSidebarPreferencesStore({
+    read,
+    available: true,
+    write,
+    writeStar: star,
+  });
   const prefs = owner.queries;
   await prefs.ensure();
   await expect(prefs.assign("beta")).rejects.toThrow("offline");
@@ -460,20 +470,20 @@ it.each(["Laptop", "Channels", "Starred"])(
   async (section) => {
     const fromGroup = section === "Laptop";
     const fromStarred = section === "Starred";
-    const preferences = createSidebarPreferencesStore(
-      async () => ({
+    const preferences = createSidebarPreferencesStore({
+      read: async () => ({
         sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
         assignments: { beta: "laptop" },
         starred: ["alpha"],
         muted: [],
       }),
-      true,
-      async () => ({
+      available: true,
+      write: async () => ({
         sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
         assignments: {},
       }),
-      async () => [],
-    );
+      writeStar: async () => [],
+    });
     await preferences.queries.ensure();
     const h = fixture(preferences.queries);
     const create = vi.fn(async () => "new-channel");
@@ -562,17 +572,17 @@ it.each(["Laptop", "Channels", "Starred"])(
 );
 
 it("rejects a deferred header Create section after its navigation origin retires", async () => {
-  const preferences = createSidebarPreferencesStore(
-    async () => ({
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
       sections: [],
       assignments: {},
       starred: [],
       muted: [],
     }),
-    true,
-    vi.fn(async () => ({ sections: [], assignments: {} })),
-    vi.fn(async () => []),
-  );
+    available: true,
+    write: vi.fn(async () => ({ sections: [], assignments: {} })),
+    writeStar: vi.fn(async () => []),
+  });
   await preferences.queries.ensure();
   const h = fixture(preferences.queries);
   const origin = new AbortController();
@@ -630,17 +640,14 @@ it("clears only the removed section's collapsed intent after confirmation, never
     .fn()
     .mockRejectedValueOnce(new Error("offline"))
     .mockReturnValueOnce(pending);
-  const preferences = createSidebarPreferencesStore(
-    async () => current,
-    true,
-    async () => current,
-    async () => [],
-    undefined,
-    undefined,
-    async () => ({}),
-    undefined,
-    remove,
-  );
+  const preferences = createSidebarPreferencesStore({
+    read: async () => current,
+    available: true,
+    write: async () => current,
+    writeStar: async () => [],
+    writeSort: async () => ({}),
+    removeSection: remove,
+  });
   try {
     await preferences.queries.ensure();
     const h = fixture(preferences.queries);
@@ -1053,19 +1060,13 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     }))
     .mockRejectedValueOnce(new Error("offline"));
   const read = vi.fn(async () => data);
-  const preferences = createSidebarPreferencesStore(
+  const preferences = createSidebarPreferencesStore({
     read,
-    true,
-    async () => data,
-    async () => [],
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    false,
-    order,
-  );
+    available: true,
+    write: async () => data,
+    writeStar: async () => [],
+    writeOrder: order,
+  });
   await preferences.queries.ensure();
   const h = fixture(preferences.queries, "ready", [
     { id: "beta", name: "beta", channelType: "stream" },

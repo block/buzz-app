@@ -67,18 +67,15 @@ function fixture(sectionName = "Work") {
     return saved;
   });
   const store = () =>
-    createSidebarPreferencesStore(
-      async () => saved,
-      true,
+    createSidebarPreferencesStore({
+      read: async () => saved,
+      available: true,
       write,
-      async () => [],
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      remove,
-      true, // Groups-only sessions have no Messages sort coordinate.
-    );
+      writeStar: async () => [],
+      removeSection: remove,
+      // Groups-only sessions have no Messages sort coordinate.
+      groupsOnly: true,
+    });
   const onNew = vi.fn();
   const channels = { status: "ready", channels: [] };
   const view = (

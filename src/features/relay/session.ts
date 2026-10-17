@@ -1292,8 +1292,8 @@ export function createRelaySession(
           signal: lifetime.signal,
         })
       : undefined;
-  const sidebarPreferences = createSidebarPreferencesStore(
-    async (signal?: AbortSignal) => {
+  const sidebarPreferences = createSidebarPreferencesStore({
+    read: async (signal?: AbortSignal) => {
       const decode = transport?.decodeSidebarPreferences;
       if (closed || !transport || !decode)
         throw new Error(
@@ -1311,8 +1311,8 @@ export function createRelaySession(
         combined,
       );
     },
-    !!transport?.decodeSidebarPreferences,
-    (() => {
+    available: !!transport?.decodeSidebarPreferences,
+    write: (() => {
       const write = transport?.writeSidebarAssignment;
       return write
         ? (intent, signal) =>
@@ -1326,7 +1326,7 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-    (() => {
+    writeStar: (() => {
       const write = transport?.writeSidebarStar;
       return write
         ? (intent, signal) =>
@@ -1341,7 +1341,7 @@ export function createRelaySession(
         : undefined;
     })(),
     notify,
-    (() => {
+    writeMute: (() => {
       const write = transport?.writeSidebarMute;
       return write
         ? (intent, signal) =>
@@ -1355,7 +1355,7 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-    (() => {
+    writeSort: (() => {
       const write = transport?.writeSidebarSort;
       return write
         ? (group, mode, sectionIds, signal) =>
@@ -1371,8 +1371,8 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-    options.persistence,
-    (() => {
+    persistence: options.persistence,
+    removeSection: (() => {
       const write = transport?.removeSidebarSection;
       return write
         ? (sectionId, signal) =>
@@ -1386,8 +1386,7 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-    false,
-    (() => {
+    writeOrder: (() => {
       const write = transport?.writeSidebarSectionOrder;
       return write
         ? (sectionIds, signal) =>
@@ -1401,7 +1400,7 @@ export function createRelaySession(
             )
         : undefined;
     })(),
-  );
+  });
   let soloHead: string | undefined;
   const stopSoloGroups = channelKit.capability.subscribe(() => {
     const state = channelKit.capability.snapshot();

@@ -104,14 +104,14 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
       throw new Error("Solo group changes could not be confirmed");
     return project(value);
   }
-  const store = createSidebarPreferencesStore(
-    async (signal) => ({
+  const store = createSidebarPreferencesStore({
+    read: async (signal) => ({
       ...project((await current(signal, false)).value),
       starred: [],
       muted: [],
     }),
-    kit.available,
-    (intent: SidebarAssignmentIntent, signal) =>
+    available: kit.available,
+    write: (intent: SidebarAssignmentIntent, signal) =>
       serialize(async () => {
         const { value, entry, active } = await current(signal);
         const target = intent.createSection?.id ?? intent.sectionId;
@@ -141,12 +141,7 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
           return project(value);
         return save({ ...value, groups, assignments }, entry, active);
       }),
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    (id, signal) =>
+    removeSection: (id, signal) =>
       serialize(async () => {
         const { value, entry, active } = await current(signal);
         if (!value.groups.some((group) => group.id === id))
@@ -165,9 +160,8 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
           active,
         );
       }),
-    true,
-    undefined,
-    (section, signal) =>
+    groupsOnly: true,
+    createSection: (section, signal) =>
       serialize(async () => {
         const { value, entry, active } = await current(signal);
         const name = section.name.trim();
@@ -191,7 +185,7 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
           active,
         );
       }),
-  );
+  });
   return {
     ...store,
     clear() {

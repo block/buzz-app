@@ -4,6 +4,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { ownerReads } from "../../features/agents/reads";
+import { localStore } from "../../features/agents/state";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -269,12 +270,13 @@ function fixture(
     },
   };
   const relay = { snapshot: () => snapshot } as unknown as RelayData;
-  const store = {
+  const local = {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => {
       storage.set(key, value);
     },
   } as Storage;
+  const store = localStore(local);
   // The host's copy of `core` memory, which needs no relay read.
   const core = vi.fn(
     async (
@@ -401,7 +403,7 @@ function fixture(
     runtime.run(delivery);
   let pluginDispose = () => {};
   if (plugin) {
-    vi.stubGlobal("localStorage", store);
+    vi.stubGlobal("localStorage", local);
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     apply({
       host: { spawn },
@@ -1447,7 +1449,10 @@ it("starts no work when the agent stops while its channel is read", async () => 
       );
     },
     async () => undefined,
-    { getItem: () => null, setItem: () => {} } as unknown as Storage,
+    localStore({
+      getItem: () => null,
+      setItem: () => {},
+    } as unknown as Storage),
   );
   runtimes.push(runtime);
   runtime.sync([{ pubkey } as Agent]);

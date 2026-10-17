@@ -6,6 +6,7 @@ import type { BuzzClient } from "../../buzz-mcp/client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { ownerReads } from "../../features/agents/reads";
+import { localStore } from "../../features/agents/state";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -121,10 +122,11 @@ function setup(
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
   const data = new Map<string, string>();
-  const storage = {
+  const storage = localStore({
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
-  } as Storage;
+    removeItem: (key: string) => void data.delete(key),
+  } as Storage);
   // The host's copy of `core` memory, which needs no relay read.
   const core = vi.fn(
     async (
@@ -248,11 +250,11 @@ function setup(
 it("names each saved session's channel as the community lists it", () => {
   const { runtime, data } = setup();
   const saved = localSessions(
-    {
+    localStore({
       getItem: (key: string) => data.get(key) ?? null,
       setItem: (key: string, value: string) => void data.set(key, value),
       removeItem: (key: string) => void data.delete(key),
-    } as Storage,
+    } as Storage),
     self,
   );
   saved.set(channel, { id: "s1", seen: 100, at: 5 });
@@ -1012,7 +1014,7 @@ it("runs a timer as a one-off turn that is never saved", async () => {
   expect(prompt).toMatch(/<attention>\nHandle the work that caused this turn/);
   // Its process stops once the turn is done, and no session is kept for it.
   expect(claude?.killed).toBe(true);
-  expect(data.get("buzz.claude-code.sessions.v1") ?? "{}").toBe("{}");
+  expect(data.get(`buzz.claude-code.sessions.v1:${self}`) ?? "{}").toBe("{}");
   expect(runtime.sessions(self)).toEqual([]);
 });
 

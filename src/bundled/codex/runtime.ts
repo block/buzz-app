@@ -1,6 +1,7 @@
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
   Agent,
   AgentHandle,
@@ -172,7 +173,7 @@ export class CodexRuntime {
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
-    private readonly storage: Storage = localStorage,
+    private readonly storage: AgentStore = localStore(),
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every thread now. */
     private readonly added: () => readonly AddedTool[] = () => [],
@@ -371,9 +372,7 @@ export class CodexRuntime {
   }
   private load(storageKey: string) {
     try {
-      const stored: unknown = JSON.parse(
-        this.storage.getItem(storageKey) ?? "{}",
-      );
+      const stored: unknown = JSON.parse(this.storage.get(storageKey) ?? "{}");
       if (stored && typeof stored === "object" && !Array.isArray(stored))
         return Object.fromEntries(
           Object.entries(stored).filter(
@@ -457,16 +456,16 @@ export class CodexRuntime {
     entry.saved[key] = saved;
     // Retain a bounded set of bindings; this never deletes Codex's own history.
     entry.saved = Object.fromEntries(Object.entries(entry.saved).slice(-200));
-    try {
-      this.storage.setItem(entry.storageKey, JSON.stringify(entry.saved));
-    } catch (error) {
-      this.status(
-        request.agent.pubkey,
-        key,
-        "Session could not be saved",
-        message(error),
+    void this.storage
+      .set(entry.storageKey, JSON.stringify(entry.saved))
+      .catch((error: unknown) =>
+        this.status(
+          request.agent.pubkey,
+          key,
+          "Session could not be saved",
+          message(error),
+        ),
       );
-    }
   }
   /** Dates the binding now, when it takes in a message or ends a turn. */
   private touch(request: Request, entry: Entry, key: string) {

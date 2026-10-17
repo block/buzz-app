@@ -408,6 +408,7 @@ export function createTabs({
     );
     const [draftDefault, setDraftDefault] = useState(savedDefaults.model);
     const [defaultError, setDefaultError] = useState("");
+    const [savingDefault, setSavingDefault] = useState(false);
     const [code, setCode] = useState("");
     const status = state.status;
     const ready = status?.state === "ready" && !state.checking;
@@ -538,14 +539,14 @@ export function createTabs({
           hidden={!ready}
           onSubmit={(event) => {
             event.preventDefault();
+            if (savingDefault) return;
             setDefaultError("");
-            try {
-              defaults.save({ model: draftDefault });
-            } catch (error) {
-              setDefaultError(message(error));
-              return;
-            }
-            onClose();
+            setSavingDefault(true);
+            // Closes only once saved; else the draft stays to try again.
+            defaults
+              .save({ model: draftDefault })
+              .then(onClose, (error) => setDefaultError(message(error)))
+              .finally(() => setSavingDefault(false));
           }}
         >
           <Select
@@ -570,7 +571,8 @@ export function createTabs({
                 ],
               },
             ]}
-            disabled={state.modelsChecking}
+            // A choice made while saving would be lost when the dialog closes.
+            disabled={state.modelsChecking || savingDefault}
             valueLabel={
               state.modelsChecking
                 ? "Loading models…"
@@ -617,6 +619,7 @@ export function createTabs({
               type="submit"
               form={defaultsForm}
               variant="prominent"
+              loading={savingDefault}
               disabled={draftDefault === savedDefaults.model}
               focusableWhenDisabled
             >

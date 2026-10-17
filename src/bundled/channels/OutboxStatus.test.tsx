@@ -16,7 +16,7 @@ import {
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayWriter } from "../../features/relay/transport";
 import { createRelayProfiler } from "../../features/relay/profiling";
-import { sessionLinkMessage } from "../../features/sessions/share";
+import { sessionLinkMessage } from "../../features/solo/share";
 import { OutboxStatus } from "./OutboxStatus";
 
 afterEach(cleanup);

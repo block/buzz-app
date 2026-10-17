@@ -253,10 +253,7 @@ function Preview() {
         </fieldset>
       </header>
       <div className="nav-thinking-workspace">
-        <aside
-          className="nav-thinking-sidebar"
-          aria-label="Channel sidebar preview"
-        >
+        <aside className="nav-thinking-sidebar" aria-label="Sidebar preview">
           <h2 className="text-label text-subtle">Channels</h2>
           {channels.slice(0, 2).map((channel) => (
             <ChannelSidebarItem

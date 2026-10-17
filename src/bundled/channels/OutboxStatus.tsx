@@ -4,7 +4,7 @@ import { useState, useSyncExternalStore } from "react";
 import type { RelayProfiler } from "../../features/relay/profiling";
 import { RelayTimings } from "./RelayTimings";
 import { PRODUCT_FEEDBACK_KIND } from "../../features/relay/product-feedback";
-import { isSessionLinkReceipt } from "../../features/sessions/share";
+import { isSessionLinkReceipt } from "../../features/solo/share";
 import type { Outbox } from "../../features/relay/outbox";
 
 /** Delivery belongs to the session, including messages from other pages or a previous launch. */

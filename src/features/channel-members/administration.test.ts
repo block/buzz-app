@@ -8,7 +8,7 @@ import type { ReadFilter, RelayEvent } from "../relay/events";
 import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { matchesEvent } from "../relay/projection";
-import { sessionDescription } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 import { createMemberAdministration } from "./administration";
 import {
   memberAuthority,
@@ -229,7 +229,7 @@ it.each(["dm", "archived", "session"])("excludes %s channels", async (kind) => {
       ["d", id],
       ["t", kind === "dm" ? "dm" : "stream"],
       ...(kind === "archived" ? [["archived", "true"]] : []),
-      ...(kind === "session" ? [["about", sessionDescription()]] : []),
+      ...(kind === "session" ? [["t", SOLO_LABEL]] : []),
     ]),
     ...h.events().slice(1),
   ]);
@@ -807,7 +807,7 @@ it.each([
         ["d", id],
         ["t", failure === "dm" ? "dm" : "stream"],
         ...(failure === "archived" ? [["archived", "true"]] : []),
-        ...(failure === "session" ? [["about", sessionDescription()]] : []),
+        ...(failure === "session" ? [["t", SOLO_LABEL]] : []),
       ]),
       ...h.events().slice(1),
     ]);

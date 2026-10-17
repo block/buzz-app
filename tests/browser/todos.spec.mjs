@@ -184,7 +184,10 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   };
   // Channel-specific drawers stay off other pages, but returning to the same
   // channel can reopen its Canvas-backed content with a live launcher.
-  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  const sidebar = page.getByRole("complementary", {
+    name: "Sidebar",
+    exact: true,
+  });
   const pages = sidebar.getByRole("navigation", { name: "Pages" });
   for (const destination of ["Inbox", "Bestie"]) {
     await pages.getByRole("button", { name: destination, exact: true }).click();

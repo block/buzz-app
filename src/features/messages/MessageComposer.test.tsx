@@ -70,9 +70,9 @@ import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
-import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
-import { entityHref } from "../projects/routes";
-import type { Entity, ProjectHome } from "../projects/destinations";
+import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
+import { entityHref } from "../repos/routes";
+import type { Entity, RepositoryHome } from "../repos/destinations";
 
 composerDOMFixture();
 
@@ -80,6 +80,17 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
+/** The mounted channel listed as a Solo chat. */
+const soloList = {
+  status: "ready" as const,
+  channels: [
+    {
+      id: "channel",
+      channelType: "session" as const,
+      members: [first.pubkey, second.pubkey],
+    },
+  ],
+};
 const resourceOwner = "c".repeat(64);
 const resourceRoute = {
   type: "issue",
@@ -4387,7 +4398,13 @@ it("tags a Berd draft with the default agent once and needs a tag to send", asyn
       [second.pubkey, { name: "Selected", isAgent: true }],
     ]),
   );
-  Object.assign(h.session, { mePlacement: { has: () => true } });
+  // A Solo chat: personal sends are admitted while its label holds.
+  Object.assign(h.session, {
+    channels: {
+      ...h.session.channels,
+      list: () => soloList,
+    },
+  });
   // The default agent arrives in the empty draft as an ordinary tag.
   await waitFor(() => expect(h.input()).toHaveValue("@Selected "));
   const send = screen.getByRole("button", { name: "Send message" });
@@ -5845,7 +5862,7 @@ it("sends a resource between mentions and keeps both after a failed send", () =>
   ]);
 });
 
-describe("project resource picker", () => {
+describe("repository resource picker", () => {
   const empty: readonly never[] = [];
   const repository = {
     type: "repo",
@@ -5855,13 +5872,6 @@ describe("project resource picker", () => {
     name: "Game repo",
     description: "",
     event: {} as never,
-  } satisfies Entity;
-  const project = {
-    ...repository,
-    type: "project",
-    dtag: "proj",
-    address: `30621:${resourceOwner}:proj`,
-    name: "Proj",
   } satisfies Entity;
   const item = {
     id: resourceRoute.id,
@@ -5877,9 +5887,9 @@ describe("project resource picker", () => {
   const row = /^Fix login, Issue in Game repo$/;
   function picker(
     home: (channelId: string, signal: AbortSignal) => Promise<unknown> = () =>
-      Promise.resolve({ status: "home", project }),
+      Promise.resolve({ status: "home", repositories: [repository] }),
     issues: readonly (typeof item)[] = [item],
-    cached?: ProjectHome,
+    cached?: RepositoryHome,
   ) {
     const h = mount({ extensions: undefined });
     let release: (() => void) | undefined;
@@ -5887,10 +5897,9 @@ describe("project resource picker", () => {
     const validations: AbortSignal[] = [];
     const load = vi.fn(
       (route: { type: string; tab?: string }, signal: AbortSignal) => {
-        if (route.type === "project")
+        if (route.type === "repo")
           return Promise.resolve({
             items: route.tab === "prs" ? [] : issues,
-            repositories: [repository],
             truncated: route.tab === "prs",
           });
         validations.push(signal);
@@ -5902,7 +5911,7 @@ describe("project resource picker", () => {
     );
     const homes = vi.fn(home);
     Object.assign(h.session as object, {
-      projects: {
+      repositories: {
         home: homes,
         load,
         peekHome: (channelId: string) =>
@@ -5912,8 +5921,8 @@ describe("project resource picker", () => {
     const tools: readonly Contribution<ComposerTool>[] = [
       {
         id: "resources",
-        key: "projects/resources",
-        pluginId: "projects",
+        key: "repos/resources",
+        pluginId: "repos",
         revision: "1",
         title: "Issues and pull requests",
         component: ResourcePicker,
@@ -5929,6 +5938,7 @@ describe("project resource picker", () => {
     return {
       h,
       homes,
+      load,
       validations,
       release: async () => {
         await act(async () => {
@@ -5950,6 +5960,26 @@ describe("project resource picker", () => {
       },
     };
   }
+
+  it("searches every channel repository and deduplicates shared items", async () => {
+    const second = {
+      ...repository,
+      dtag: "other",
+      address: `30617:${resourceOwner}:other`,
+    };
+    const p = picker(
+      () =>
+        Promise.resolve({ status: "home", repositories: [repository, second] }),
+      [{ ...item, tags: [...item.tags, ["a", second.address]] }],
+    );
+    await p.open();
+    await screen.findByRole("button", { name: row });
+    expect(screen.getAllByRole("button", { name: row })).toHaveLength(1);
+    expect(
+      p.load.mock.calls.filter(([route]) => route.type === "repo"),
+    ).toHaveLength(4);
+    expect(p.homes).toHaveBeenCalledWith("channel", expect.any(AbortSignal));
+  });
 
   it("validates the chosen row, inserts it, closes and leaves focus in the draft", async () => {
     const p = picker();
@@ -6186,7 +6216,7 @@ describe("project resource picker", () => {
     expect(screen.queryByRole("button", { name: row })).toBeNull();
   });
 
-  it("does not show a PR action while checking a new channel's project", async () => {
+  it("does not show a PR action while checking a new channel's repository", async () => {
     const pending: {
       channelId: string;
       resolve(value: unknown): void;
@@ -6206,25 +6236,30 @@ describe("project resource picker", () => {
     };
     try {
       await waitFor(() => expect(p.homes).toHaveBeenCalled());
-      expect(screen.getByText("Loading project…")).toBeInTheDocument();
+      expect(screen.getByText("Loading repositories…")).toBeInTheDocument();
       expect(trigger()).toBeNull();
-      await finish("channel", { status: "home", project });
+      await finish("channel", { status: "home", repositories: [repository] });
       expect(trigger()).toBeEnabled();
-      p.h.retarget({ channelId: "no-project", channelName: "Other" });
+      p.h.retarget({ channelId: "no-repository", channelName: "Other" });
       await waitFor(() =>
-        expect(pending.some((read) => read.channelId === "no-project")).toBe(
+        expect(pending.some((read) => read.channelId === "no-repository")).toBe(
           true,
         ),
       );
       expect(trigger()).toBeNull();
-      await finish("no-project", { status: "none" });
+      await finish("no-repository", { status: "none" });
       expect(trigger()).toBeNull();
-      p.h.retarget({ channelId: "project", channelName: "Project" });
+      p.h.retarget({ channelId: "repository", channelName: "Repository" });
       await waitFor(() =>
-        expect(pending.some((read) => read.channelId === "project")).toBe(true),
+        expect(pending.some((read) => read.channelId === "repository")).toBe(
+          true,
+        ),
       );
       expect(trigger()).toBeNull();
-      await finish("project", { status: "home", project });
+      await finish("repository", {
+        status: "home",
+        repositories: [repository],
+      });
       expect(trigger()).toBeEnabled();
     } finally {
       await act(async () => {
@@ -6233,7 +6268,7 @@ describe("project resource picker", () => {
     }
   });
 
-  it("keeps a chat without a project free of the PR button after closing formatting", async () => {
+  it("keeps a chat without a repository free of the PR button after closing formatting", async () => {
     const pending: ((value: unknown) => void)[] = [];
     const p = picker(() => new Promise((resolve) => pending.push(resolve)));
     await waitFor(() => expect(p.homes).toHaveBeenCalled());
@@ -6273,7 +6308,7 @@ describe("project resource picker", () => {
     }
   });
 
-  it("hides only for no project, and explains ambiguity or failure with a retry", async () => {
+  it("hides only for no repository, and explains failure with a retry", async () => {
     const none = picker(() => Promise.resolve({ status: "none" }));
     await waitFor(() => expect(none.homes).toHaveBeenCalled());
     await act(async () => {});
@@ -6287,28 +6322,34 @@ describe("project resource picker", () => {
         ? new Promise((resolve) => {
             resolveHome = resolve;
           })
-        : Promise.resolve({ status: "ambiguous" }),
+        : Promise.reject(new Error("offline")),
     );
     await ambiguous.open();
     expect(
-      await screen.findByText(/belongs to more than one project/),
+      await screen.findByText(/Could not load this channel’s repositories/),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: row })).toBeNull();
-    // Ambiguity is recoverable: once the conflict is resolved, retry rereads.
+    // Failure is recoverable: once the connection is restored, retry rereads.
     resolveHome = () => {};
     await ambiguous.h.user.click(
-      screen.getByRole("button", { name: "Retry project" }),
+      screen.getByRole("button", { name: "Retry repositories" }),
     );
-    expect(await screen.findByText("Loading project…")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Loading repositories…"),
+    ).toBeInTheDocument();
     await act(async () => {
-      resolveHome?.({ status: "home", project });
+      resolveHome?.({ status: "home", repositories: [repository] });
     });
     expect(await screen.findByRole("button", { name: row })).toBeVisible();
-    expect(screen.queryByText(/belongs to more than one project/)).toBeNull();
+    expect(
+      screen.queryByText(/Could not load this channel’s repositories/),
+    ).toBeNull();
     cleanup();
     const failed = picker(() => Promise.reject(new Error("offline")));
     await failed.open();
-    const retry = await screen.findByRole("button", { name: "Retry project" });
+    const retry = await screen.findByRole("button", {
+      name: "Retry repositories",
+    });
     const reads = failed.homes.mock.calls.length;
     await failed.h.user.click(retry);
     await waitFor(() =>
@@ -6317,17 +6358,17 @@ describe("project resource picker", () => {
   });
 
   it.each(["formatting", "channel"])(
-    "keeps a known project visible but unusable after %s remount, then preserves ambiguity and retry",
+    "keeps a known repository visible but unusable after %s remount, then preserves failure and retry",
     async (action) => {
-      const reads: ReturnType<typeof deferred<ProjectHome>>[] = [];
+      const reads: ReturnType<typeof deferred<RepositoryHome>>[] = [];
       const p = picker(
         () => {
-          const read = deferred<ProjectHome>();
+          const read = deferred<RepositoryHome>();
           reads.push(read);
           return read.promise;
         },
         undefined,
-        { status: "home", project },
+        { status: "home", repositories: [repository] },
       );
       const trigger = () =>
         screen.getByRole("button", { name: "Add issue or pull request" });
@@ -6336,7 +6377,8 @@ describe("project resource picker", () => {
         expect(trigger()).toBeVisible();
         expect(trigger()).toBeDisabled();
         await act(async () => {
-          for (const read of reads) read.resolve({ status: "home", project });
+          for (const read of reads)
+            read.resolve({ status: "home", repositories: [repository] });
         });
         expect(trigger()).toBeEnabled();
         if (action === "formatting") {
@@ -6379,20 +6421,20 @@ describe("project resource picker", () => {
         expect(
           screen.queryByRole("dialog", { name: "Add issue or pull request" }),
         ).toBeNull();
-        await act(async () => reads.at(-1)?.resolve({ status: "ambiguous" }));
+        await act(async () => reads.at(-1)?.reject(new Error("offline")));
         await p.open();
         expect(
-          await screen.findByText(/belongs to more than one project/),
+          await screen.findByText(/Could not load this channel’s repositories/),
         ).toBeVisible();
         expect(screen.queryByRole("button", { name: row })).toBeNull();
         await p.h.user.click(
-          screen.getByRole("button", { name: "Retry project" }),
+          screen.getByRole("button", { name: "Retry repositories" }),
         );
         expect(
           screen.queryByRole("button", { name: "Add issue or pull request" }),
         ).toBeNull();
         await act(async () =>
-          reads.at(-1)?.resolve({ status: "home", project }),
+          reads.at(-1)?.resolve({ status: "home", repositories: [repository] }),
         );
         expect(await screen.findByRole("button", { name: row })).toBeVisible();
         p.h.retarget({ channelId: "other" });
@@ -6410,13 +6452,13 @@ describe("project resource picker", () => {
     },
   );
 
-  it.each(["none", "ambiguous", "error"] as const)(
-    "a warm project is replaced by the completed %s state",
+  it.each(["none", "error"] as const)(
+    "a warm repository is replaced by the completed %s state",
     async (outcome) => {
-      const read = deferred<ProjectHome>();
+      const read = deferred<RepositoryHome>();
       const p = picker(() => read.promise, undefined, {
         status: "home",
-        project,
+        repositories: [repository],
       });
       try {
         await waitFor(() => expect(p.homes).toHaveBeenCalled());
@@ -6434,14 +6476,10 @@ describe("project resource picker", () => {
         } else {
           await p.open();
           expect(
-            screen.getByText(
-              outcome === "ambiguous"
-                ? /belongs to more than one project/
-                : /Could not load this channel's project/,
-            ),
+            screen.getByText(/Could not load this channel’s repositories/),
           ).toBeVisible();
           expect(
-            screen.getByRole("button", { name: "Retry project" }),
+            screen.getByRole("button", { name: "Retry repositories" }),
           ).toBeEnabled();
           expect(screen.queryByRole("button", { name: row })).toBeNull();
         }
@@ -7102,42 +7140,6 @@ it.each(["disabled", "retarget", "unmount"])(
   },
 );
 
-it("rechecks session setup before publishing after a background upload", async () => {
-  const channelId = "22222222-2222-4222-8222-222222222222";
-  const h = mount({ channelId });
-  const gate = deferred<ReturnType<typeof uploadDescriptor>>();
-  const upload = vi.fn(() => gate.promise);
-  h.rerender(
-    <ToastProvider>
-      <MessageComposer
-        session={{ ...h.session, attachments: { upload } }}
-        scope="scope"
-        channelId={channelId}
-        channelName="General"
-      />
-    </ToastProvider>,
-  );
-  h.fill("Keep this draft");
-  fireEvent.change(screen.getByLabelText("Choose attachments"), {
-    target: { files: [new NodeFile(["notes"], "notes.txt")] },
-  });
-  fireEvent.submit(
-    screen.getByRole("form", { name: "Send a message to General" }),
-  );
-  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
-  writeView("scope", "sessions:section:work:pending", {
-    id: channelId,
-    text: "Original start",
-    creationId: "c".repeat(64),
-    setup: { sectionId: "work", canvas: "Frozen", agents: [] },
-  });
-  await act(async () => gate.resolve(uploadDescriptor()));
-  await waitFor(() => expect(h.input()).toHaveValue("Keep this draft"));
-  expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.messages.reply).not.toHaveBeenCalled();
-  expect(within(screen.getByRole("form")).getByText("notes.txt")).toBeVisible();
-});
-
 it("keeps snapshot paste from taking the attachment slot reserved for a recording", async () => {
   const empty: readonly never[] = [];
   const tools: readonly Contribution<ComposerTool>[] = [
@@ -7539,7 +7541,10 @@ it.each(["thread", "solo"])(
         : { threadRootId: "root" }),
       session: {
         ...h.session,
-        mePlacement: { has: () => true },
+        channels: {
+          ...h.session.channels,
+          list: () => soloList,
+        },
         workSessions: {
           refreshMembership: async () => ({
             id: "channel",

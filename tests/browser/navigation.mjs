@@ -8,10 +8,16 @@ export async function pageChoices(page) {
 }
 
 export async function openPage(page, name, { connected = true } = {}) {
-  // The community rail appears after local startup has replaced the launch view.
+  // The community switcher appears after local startup has replaced the launch view.
   await expect(
-    page.getByRole("button", { name: "Switch to Primary", exact: true }),
+    page.getByRole("button", { name: /^Community switcher:/ }),
   ).toBeVisible();
+  if (name === "Me" || name === "Solo") {
+    // Solo is not a page: it is a new Solo draft in Messages.
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
+    return;
+  }
   await pageChoices(page);
   await selectPage(page, name, { connected });
 }
@@ -19,7 +25,7 @@ export async function openPage(page, name, { connected = true } = {}) {
 // Select from an already-open palette, including tests that inspect page order.
 export async function selectPage(page, name, { connected = true } = {}) {
   // Keep fixture call sites on stable page identities, not the current branding.
-  name = name === "Me" ? "Solo" : name === "Messages" ? "Multiplayer" : name;
+  name = name === "Me" ? "Solo" : name === "Multiplayer" ? "Messages" : name;
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const input = dialog.getByRole("combobox", { name: "Search Buzz" });
   const choice = dialog
@@ -110,4 +116,30 @@ export async function settlePanelMotion(page) {
       ),
     ),
   );
+}
+
+export async function openCommunityPicker(page) {
+  await page.getByRole("button", { name: /^Community switcher:/ }).click();
+  const picker = page.getByRole("dialog", {
+    name: "Switch community",
+    exact: true,
+  });
+  await expect(picker).toBeVisible();
+  return picker;
+}
+
+export async function selectCommunity(page, name) {
+  const picker = await openCommunityPicker(page);
+  await picker
+    .getByRole("button", {
+      name: name === "Personal space" ? name : `Switch to ${name}`,
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: `Community switcher: ${name}`,
+      exact: true,
+    }),
+  ).toBeVisible();
 }

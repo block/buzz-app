@@ -26,7 +26,7 @@ test("Me opens video review and Escape returns to its opener", async ({
   await page.goto(app.origin);
   await openPage(page, "Me");
   const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  await sidebar.locator(`[data-solo-channel-id="${id}"]`).click();
   app.append("primary", id, "Me video", true, false, undefined, undefined, [
     ["imeta", "url https://primary.example/media/me-review.mp4", "m video/mp4"],
   ]);
@@ -51,7 +51,7 @@ test("Me opens image review with its comments", async ({ page, app }) => {
   await page.goto(app.origin);
   await openPage(page, "Me");
   const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  await sidebar.locator(`[data-solo-channel-id="${id}"]`).click();
   app.append("primary", id, "Me image", true, false, undefined, undefined, [
     ["imeta", "url https://primary.example/media/me-review.png", "m image/png"],
   ]);
@@ -79,7 +79,7 @@ test("Me Activity opens the agent's profile locally, restores per conversation a
   await page.goto(app.origin);
   await openPage(page, "Me");
   const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  await sidebar.locator(`[data-solo-channel-id="${id}"]`).click();
   const composer = page.getByRole("textbox", {
     name: "Message your agents",
     exact: true,
@@ -119,7 +119,7 @@ test("Me Activity opens the agent's profile locally, restores per conversation a
   await expect(panel).toBeVisible();
   await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
   await expect(panel).toHaveCount(0);
-  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  await sidebar.locator(`[data-solo-channel-id="${id}"]`).click();
   await expect(panel).toBeVisible();
   await expect(composer).toHaveText("Keep my Me draft");
   await closeProfile(page).click();
@@ -143,12 +143,12 @@ test("Me Activity opens the agent's profile locally, restores per conversation a
   });
   await expect(conversationAction).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(sidebar).toHaveCount(0);
+  await expect(sidebar).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Alpha", exact: true }),
   ).toBeVisible();
   await openPage(page, "Me");
-  await sidebar.locator(`[data-me-channel-id="${id}"]`).click();
+  await sidebar.locator(`[data-solo-channel-id="${id}"]`).click();
   await trigger.press("Enter");
   await expect(panel).toBeVisible();
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
@@ -170,7 +170,7 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   await page.goto(app.origin);
   await openPage(page, "Me");
   const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
+  const alpha = sidebar.locator(`[data-solo-channel-id="${id}"]`);
   await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const key = generateSecretKey();
@@ -186,7 +186,7 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   const badge = alpha.getByRole("img", { name: /working in Alpha$/ });
   await page.mouse.move(0, 0);
   await expect(badge).toBeVisible();
-  await expect(alpha.locator("[data-me-working-indicator]")).toHaveCSS(
+  await expect(alpha.locator("[data-solo-working-indicator]")).toHaveCSS(
     "opacity",
     "1",
   );
@@ -237,7 +237,7 @@ test("Me sidebar shares working activity, keyboard preview and local panel navig
   // Context actions must remain separate from the activity trigger.
   await alpha.press("Shift+F10");
   await expect(
-    page.getByRole("menuitem", { name: "Session settings…", exact: true }),
+    page.getByRole("menuitem", { name: "Chat settings…", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   app.observer(event("turn_completed"), key);
@@ -288,8 +288,8 @@ test.describe("reading", () => {
     const sidebar = page.getByRole("navigation", {
       name: "Solo conversations",
     });
-    const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
-    const beta = sidebar.locator(`[data-me-channel-id="${other}"]`);
+    const alpha = sidebar.locator(`[data-solo-channel-id="${id}"]`);
+    const beta = sidebar.locator(`[data-solo-channel-id="${other}"]`);
     // Startup shows Alpha in Multiplayer first, so read Beta, which only Solo shows.
     await expect(bold(beta)).toHaveCount(1);
     await beta.click();
@@ -317,8 +317,8 @@ test.describe("reading", () => {
     const sidebar = page.getByRole("navigation", {
       name: "Solo conversations",
     });
-    const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
-    const beta = sidebar.locator(`[data-me-channel-id="${other}"]`);
+    const alpha = sidebar.locator(`[data-solo-channel-id="${id}"]`);
+    const beta = sidebar.locator(`[data-solo-channel-id="${other}"]`);
     await alpha.click();
     await expect(bold(beta)).toHaveCount(1);
     await expect
@@ -360,7 +360,7 @@ test.describe("personal recipients", () => {
     meAgentNames: ["Owned Honey", "Owned Brain"],
     meOutsideAgentNames: ["Outside Agent"],
   });
-  test("Me signs only explicit owned recipients and rejects an outside identity", async ({
+  test("Me signs only explicit owned recipients and never offers an outside identity, in a linked tab too", async ({
     page,
     app,
   }) => {
@@ -480,38 +480,28 @@ test.describe("personal recipients", () => {
         name: "Beta",
         exact: true,
       });
+      // The linked tab follows the same Solo policy as the main reader: the
+      // channel member outside the owner's inventory is not offered.
       await linkedSession
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
-      await page
-        .getByRole("dialog", { name: "Mention a member or agent" })
-        .getByRole("button", {
+      const linkedPicker = page.getByRole("dialog", {
+        name: "Mention a member or agent",
+      });
+      await expect(
+        linkedPicker.getByRole("button", {
+          name: `${brain.name} ${brain.pubkey}`,
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        linkedPicker.getByRole("button", {
           name: `${outsider.name} ${outsider.pubkey}`,
           exact: true,
-        })
-        .click();
-      const ordinaryComposer = linkedSession.getByRole("textbox", {
-        name: "Message this session",
-        exact: true,
-      });
-      await ordinaryComposer.press("End");
-      await page.keyboard.insertText("Not mine");
-      await openPage(page, "Me");
-      await page
-        .getByRole("navigation", { name: "Solo conversations" })
-        .getByRole("button", { name: "Beta", exact: true })
-        .click();
-      await expect(composer).toContainText("@Outside Agent");
-      await composer.press("Enter");
-      await expect(
-        workspace.getByText(
-          "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
-          { exact: true },
-        ),
-      ).toBeVisible();
-      // Error rendering is the completion barrier: rejected admission never reaches outbox.
+        }),
+      ).toHaveCount(0);
+      await page.keyboard.press("Escape");
       expect(publications()).toHaveLength(1);
-      await expect(composer).toContainText("Not mine");
     } finally {
       releaseHead();
     }
@@ -538,8 +528,8 @@ test.describe("touch sidebar activity", () => {
       },
       generateSecretKey(),
     );
-    const row = page.locator(`[data-me-channel-id="${id}"]`);
-    const indicator = row.locator("[data-me-working-indicator]");
+    const row = page.locator(`[data-solo-channel-id="${id}"]`);
+    const indicator = row.locator("[data-solo-working-indicator]");
     await expect(
       row.getByRole("img", { name: /working in Alpha$/ }),
     ).toBeVisible();
@@ -568,7 +558,7 @@ test("Me sidebar opens a captured trigger in the canonical message reader", asyn
   await page.goto(app.origin);
   await openPage(page, "Me");
   const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  const alpha = sidebar.locator(`[data-me-channel-id="${id}"]`);
+  const alpha = sidebar.locator(`[data-solo-channel-id="${id}"]`);
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const key = generateSecretKey();
   const target = app.histories.get(`primary/${id}`)[0];
@@ -594,7 +584,7 @@ test("Me sidebar opens a captured trigger in the canonical message reader", asyn
   });
   await expect(popup).toBeVisible();
   await popup.getByRole("button", { name: /Open thread for/ }).click();
-  await expect(sidebar).toHaveCount(0);
+  await expect(sidebar).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(() =>

@@ -84,7 +84,7 @@ retain navigation semantics except for the wide shell topbar described in
 chrome, preserve a meaningful destination focus target, such as a named content
 region. Do not add a duplicate title or discard the focus handoff just because the
 shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
-body filters and list/detail ownership; [Sessions](../../bundled/sessions/SessionsPage.tsx)
+body filters and list/detail ownership; [Solo chats](../../bundled/channels/ChannelsPage.tsx)
 demonstrates a working area with a persistent composer. Neither is a blanket visual
 template: check the adoption review before copying their surrounding chrome.
 
@@ -496,6 +496,11 @@ glass remains; the flat shell does not establish a general glass contrast guaran
 
 ### Match controls to their surface
 
+Shell control groups use `Panel shape="capsule"` to share the workspace panel
+fill and shadow with rounded ends. Layout and overflow remain shell-owned.
+
+Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
+a capsule track and raised capsule selection (for example, sidebar scope).
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
 Chrome tab and route-navigation groups use a shared `affordance-subtle` capsule,
@@ -1552,17 +1557,17 @@ For full-page destinations, compose native-button `NavigationItem variant="pill"
 inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
 but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
 buttons a tablist/tabpanel relationship when selection moves focus to main content.
-The wide shell topbar is the deliberate exception: Solo and Multiplayer use
-`Tabs variant="chrome"` linked to the retained, labelled page panel. Arrow keys
+The wide shell topbar is the deliberate exception: global destinations use
+`Tabs variant="segmented"` linked to the retained, labelled page panel. Arrow keys
 move focus without selecting; Enter, Space or pointer selection changes the page
 while focus stays on its tab. The host passes per-opening focus intent so page
 autofocus does not override that handoff. Explicit content openings, including
 New conversation, retain their destination focus. This is not a general route-tab
 recipe: toolbar destinations and More pages overflow retain button semantics.
-Multiplayer represents the containing area for registered sidebar/default-placement
+Messages represents the containing area for registered sidebar/default-placement
 pages, while their sidebar selection and route remain exact. Its tab stays linked
 to the active child panel. The shell opts into Tabs' `onReselect` to return from a
-child to Multiplayer without changing ordinary active-tab behavior elsewhere. More
+child to Messages without changing ordinary active-tab behavior elsewhere. More
 pages marks that containing area with `aria-current="true"`, reserving `page` for
 an exact destination. Settings and independent header pages stay separate.
 

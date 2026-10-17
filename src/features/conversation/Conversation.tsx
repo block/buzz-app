@@ -22,16 +22,23 @@ import {
 } from "../messages/MessageManagement";
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
+import { ownSolo } from "../solo/labels";
 import {
   ConversationHost,
   type ConversationHostServices,
   type ConversationInteractions,
 } from "./ConversationHost";
 
-/** Everything a reader or composer needs from its channel, supplied once. */
+/** Everything a reader or composer needs from its channel, supplied once,
+ * including the Solo policy, so no view can open a chat under other rules. */
 type Conversation = Pick<
   ThreadPanelProps,
-  "session" | "scope" | "channelId" | "channelName" | "extensions"
+  | "session"
+  | "scope"
+  | "channelId"
+  | "channelName"
+  | "extensions"
+  | "personalConversation"
 > &
   ConversationInteractions & { sessionConversation: boolean };
 type Shared = keyof Conversation;
@@ -90,6 +97,8 @@ type ChannelProps = Pick<Conversation, "session" | "scope" | "extensions"> & {
         id: string;
         name: string;
         channelType?: ChannelSummary["channelType"] | undefined;
+        /** Decides whether this is the viewer's own Solo chat; see ownSolo. */
+        creator?: ChannelSummary["creator"] | undefined;
       }
     | undefined;
   /** Presentation name, when the page labels the channel differently. */
@@ -182,6 +191,7 @@ function Provider({
 }) {
   const id = channel?.id;
   const sessionConversation = channel?.channelType === "session";
+  const personalConversation = ownSolo(channel, session.viewer);
   const value = useMemo(
     () =>
       id
@@ -192,6 +202,7 @@ function Provider({
             channelId: id,
             channelName,
             sessionConversation,
+            personalConversation,
             onOpenLink,
             canOpenLink,
             onOpenMediaReview,
@@ -204,6 +215,7 @@ function Provider({
       id,
       channelName,
       sessionConversation,
+      personalConversation,
       onOpenLink,
       canOpenLink,
       onOpenMediaReview,
@@ -235,7 +247,12 @@ export function ConversationThread(props: Own<ThreadPanelProps>) {
 export function ConversationTimeline(
   props: Own<Omit<ChannelTimelineProps, "queries">>,
 ) {
-  const { session, sessionConversation: _, ...shared } = useConversation();
+  const {
+    session,
+    sessionConversation: _,
+    personalConversation: __,
+    ...shared
+  } = useConversation();
   return (
     <ChannelTimeline
       queries={session}
@@ -248,5 +265,16 @@ export function ConversationTimeline(
 
 export function ConversationComposer(props: Own<MessageComposerProps>) {
   const { onOpenMediaReview: _, ...shared } = useConversation();
-  return <MessageComposer {...shared} {...props} />;
+  // Solo chats are flat agent conversations; the owner's also start tagged.
+  return (
+    <MessageComposer
+      {...shared}
+      {...(shared.sessionConversation
+        ? { label: "Message your agents", activityClickOpensPanel: true }
+        : {})}
+      chatPresentation={shared.personalConversation}
+      requireMention={shared.personalConversation}
+      {...props}
+    />
+  );
 }

@@ -719,7 +719,7 @@ it.each(["stream", "forum", "session"] as const)(
           ["d", "archive"],
           ["t", channelType === "session" ? "stream" : channelType],
           ...(channelType === "session"
-            ? [["private"], ["about", "Buzz session (buzz.sessions/v1)"]]
+            ? [["private"], ["t", "buzz.solo"]]
             : []),
           ["name", "Past project"],
           ["archived", "true"],

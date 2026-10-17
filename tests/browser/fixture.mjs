@@ -368,7 +368,6 @@ export const test = base.extend({
             id: "me",
             groups: [],
             assignments: {},
-            channels: meChannels,
           },
         };
         readEvents.get(community).set(
@@ -911,8 +910,8 @@ export const test = base.extend({
       }
       if (filter.kinds?.includes(30617) || filter.kinds?.includes(30621)) {
         if ("#buzz-channel" in filter) {
-          // A channel's project-home read: one kind per filter, one channel.
-          expect([[30617], [30621]]).toContainEqual(filter.kinds);
+          // A channel’s repository discovery: one kind, one channel.
+          expect(filter.kinds).toEqual([30617]);
           expect(filter).toEqual({
             kinds: filter.kinds,
             "#buzz-channel": [expect.any(String)],
@@ -1077,9 +1076,13 @@ export const test = base.extend({
                   ...(sessionChannels.includes(id)
                     ? [
                         ["private"],
+                        ["t", "buzz.solo"],
+                        // The viewer's own Solo chats; any other is shared with them.
                         [
-                          "about",
-                          `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
+                          "P",
+                          meChannels.includes(id)
+                            ? viewer
+                            : getPublicKey(relayKey),
                         ],
                       ]
                     : []),

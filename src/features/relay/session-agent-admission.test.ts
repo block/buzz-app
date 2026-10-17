@@ -4,6 +4,7 @@ import { PublishRejected } from "./outbox";
 import { keypair, roster, signed } from "./testing";
 import { matchesEvent } from "./projection";
 import type { RelayEvent } from "./events";
+import { SOLO_LABEL } from "../solo/labels";
 
 function setup() {
   const viewer = keypair(),
@@ -104,14 +105,8 @@ function setup() {
             tags: [["-"], ...archived.map((key) => ["p", key])],
           }),
           meta(parent, "stream"),
-          meta(child, "stream", [
-            ["private"],
-            ["about", `Buzz session (buzz.sessions/v1)\nparent:${parent}`],
-          ]),
-          meta(standalone, "stream", [
-            ["private"],
-            ["about", "Buzz session (buzz.sessions/v1)"],
-          ]),
+          meta(child, "stream", [["private"], ["t", SOLO_LABEL]]),
+          meta(standalone, "stream", [["private"], ["t", SOLO_LABEL]]),
           roster(relay, parent, members, clock),
           roster(relay, child, childMembers, clock),
           roster(relay, standalone, [viewer.pubkey], clock),
@@ -185,15 +180,15 @@ function setup() {
         expect(
           owner.session.channels
             .list()
-            .channels.find((item) => item.id === child)?.parentChannelId,
-        ).toBe(parent),
+            .channels.find((item) => item.id === child)?.channelType,
+        ).toBe("session"),
       );
       await owner.session.agentLibrary.refresh();
     },
   };
 }
 
-it("adds an outside agent once to each channel and confirms both memberships", async () => {
+it("adds an outside agent once and confirms its membership", async () => {
   const test = setup();
   try {
     await test.ready();
@@ -201,11 +196,11 @@ it("adds an outside agent once to each channel and confirms both memberships", a
       test.agent,
       test.agent,
     ]);
-    expect(test.publish).toHaveBeenCalledTimes(2);
+    expect(test.publish).toHaveBeenCalledOnce();
     expect(test.publish.mock.calls[0]?.[0]).toMatchObject({
       kind: 9000,
       tags: expect.arrayContaining([
-        ["h", test.parent],
+        ["h", test.child],
         ["p", test.agent],
       ]),
     });
@@ -217,8 +212,8 @@ it("adds an outside agent once to each channel and confirms both memberships", a
         .list()
         .channels.find((item) => item.id === test.child)?.members,
     ).toContain(test.agent);
-    await test.owner.session.workSessions.addAgents(test.parent, [test.agent]);
-    expect(test.publish).toHaveBeenCalledTimes(2);
+    await test.owner.session.workSessions.addAgents(test.child, [test.agent]);
+    expect(test.publish).toHaveBeenCalledOnce();
   } finally {
     test.owner.dispose();
   }
@@ -261,7 +256,7 @@ it("keeps channel permission failures and retries the same saved invitation", as
     test.setDenied(false);
     await test.owner.session.workSessions.addAgents(test.child, [test.agent]);
     expect(test.publish.mock.calls[1]?.[0].id).toBe(first);
-    expect(test.publish).toHaveBeenCalledTimes(3);
+    expect(test.publish).toHaveBeenCalledTimes(2);
   } finally {
     test.owner.dispose();
   }
@@ -325,7 +320,7 @@ it("rejects a known-archived library agent before adding it to a session", async
   }
 });
 
-it("rejects a known-archived parent member before inviting it to a child session", async () => {
+it("rejects a known-archived channel member before inviting it to a Solo chat", async () => {
   const test = setup();
   try {
     test.setMembership(true, false);
@@ -337,24 +332,6 @@ it("rejects a known-archived parent member before inviting it to a child session
       test.owner.session.workSessions.addAgents(test.child, [test.agent]),
     ).rejects.toThrow(/archived/);
     expect(test.publish).not.toHaveBeenCalled();
-  } finally {
-    test.owner.dispose();
-  }
-});
-
-it("keeps the parent-member fallback while archive state is unknown", async () => {
-  const test = setup();
-  try {
-    test.setMembership(true, false);
-    test.failLibraryRefresh();
-    await test.ready().catch(() => {});
-    expect(test.owner.session.archives.state(test.agent)).toBe("unknown");
-    await test.owner.session.workSessions.addAgents(test.child, [test.agent]);
-    expect(test.publish).toHaveBeenCalledOnce();
-    expect(test.publish.mock.calls[0]?.[0].tags).toContainEqual([
-      "h",
-      test.child,
-    ]);
   } finally {
     test.owner.dispose();
   }
@@ -375,39 +352,6 @@ it("rejects a stale cached identity after the current library refresh fails", as
       test.owner.session.workSessions.addAgents(test.parent, [test.agent]),
     ).rejects.toThrow(/agent library/);
     expect(test.publish).not.toHaveBeenCalled();
-  } finally {
-    test.owner.dispose();
-  }
-});
-
-it("rejects a stale cached identity from a standalone session picker", async () => {
-  const test = setup();
-  try {
-    await test.ready();
-    test.failLibraryRefresh();
-    await test.owner.session.agentLibrary.refresh();
-    expect(() =>
-      test.owner.session.workSessions.invite(test.standalone, test.agent),
-    ).toThrow(/agent library/);
-    expect(test.publish).not.toHaveBeenCalled();
-  } finally {
-    test.owner.dispose();
-  }
-});
-
-it("allows a freshly verified parent member when the local library is unavailable", async () => {
-  const test = setup();
-  try {
-    await test.ready();
-    test.setMembership(true, false);
-    test.failLibraryRefresh();
-    await test.owner.session.agentLibrary.refresh();
-    await test.owner.session.workSessions.addAgents(test.child, [test.agent]);
-    expect(test.publish).toHaveBeenCalledOnce();
-    expect(test.publish.mock.calls[0]?.[0].tags).toContainEqual([
-      "h",
-      test.child,
-    ]);
   } finally {
     test.owner.dispose();
   }
@@ -438,70 +382,6 @@ it("stops additional invitations when the composing view closes during admission
   }
 });
 
-it.each([false, true])(
-  "ordinary child admission uses real separate rosters and recovers denial: %s",
-  async (rejectChild) => {
-    const test = setup();
-    try {
-      await test.ready();
-      test.denyChild(rejectChild);
-      if (rejectChild) {
-        await expect(
-          test.owner.session.workSessions.addAgents(test.child, [test.agent]),
-        ).rejects.toThrow(/Only channel admins/);
-        expect(
-          test.owner.session.channels
-            .list()
-            .channels.find((item) => item.id === test.child)?.members,
-        ).not.toContain(test.agent);
-        test.denyChild(false);
-      }
-      await test.owner.session.workSessions.addAgents(test.child, [test.agent]);
-      expect(
-        test.publish.mock.calls.map(
-          ([event]) => event.tags.find(([name]) => name === "h")?.[1],
-        ),
-      ).toEqual(
-        rejectChild
-          ? [test.parent, test.child, test.child]
-          : [test.parent, test.child],
-      );
-      if (rejectChild)
-        expect(test.publish.mock.calls[1]?.[0].id).toBe(
-          test.publish.mock.calls[2]?.[0].id,
-        );
-      expect(
-        test.owner.session.channels
-          .list()
-          .channels.find((item) => item.id === test.child)?.members,
-      ).toContain(test.agent);
-      await test.owner.session.workSessions.addAgents(test.child, [test.agent]);
-      expect(test.publish).toHaveBeenCalledTimes(rejectChild ? 3 : 2);
-    } finally {
-      test.owner.dispose();
-    }
-  },
-);
-
-it("refreshes stale membership and preserves an existing child's independent access", async () => {
-  const test = setup();
-  try {
-    await test.ready();
-    test.setMembership(false, true);
-    await test.owner.session.workSessions.addAgents(test.child, [test.agent]);
-    expect(test.publish).not.toHaveBeenCalled();
-    expect(
-      test.owner.session.channels
-        .list()
-        .channels.find((item) => item.id === test.child)?.members,
-    ).toContain(test.agent);
-    test.setMembership(false, false);
-    await test.owner.session.workSessions.addAgents(test.child, [test.agent]);
-    expect(test.publish).toHaveBeenCalledTimes(2);
-  } finally {
-    test.owner.dispose();
-  }
-});
 it("does not accept a foreign-signed roster as fresh membership", async () => {
   const test = setup();
   try {

@@ -92,7 +92,8 @@ function setup(
             id: channel,
             name: "general",
             channelType:
-              options.channelType ?? (options.me ? "session" : "stream"),
+              options.channelType ??
+              (options.me?.has(channel) ? "session" : "stream"),
             members: [],
           },
         ],
@@ -102,12 +103,6 @@ function setup(
     profiles: {
       ensure: vi.fn(async () => {}),
       snapshot: () => new Map(),
-    },
-    mePlacement: {
-      state: { status: "ready" } as { status: string; error?: string },
-      snapshot: () => session.mePlacement.state,
-      refresh: vi.fn(async () => {}),
-      has: (id: string) => !!options.me?.has(id),
     },
   };
   const relay = {
@@ -166,7 +161,6 @@ function setup(
     published,
     read,
     runtime,
-    placement: session.mePlacement,
     memoryOpen: session.agentMemories.open,
   };
 }
@@ -323,18 +317,15 @@ describe("GooseRuntime", () => {
     ]);
   });
 
-  it("keeps a converted stream threaded despite the owner's retained Me entry", async () => {
-    const { deliver, goose, placement, published } = setup({
+  it("keeps a converted stream threaded", async () => {
+    const { deliver, goose, published } = setup({
       me: new Set([channel]),
       channelType: "stream",
       reply: "Converted answer",
     });
-    // Verified ordinary metadata does not depend on private filing reads.
-    placement.state = { status: "error", error: "Recipe read failed" };
     await deliver(message("1", "@Gander converted"));
     await flush(100);
     expect(goose()?.turns[0]?.text).toContain("Scope: thread");
-    expect(placement.refresh).not.toHaveBeenCalled();
     expect(published.map((event) => event.tags)).toEqual([
       [
         ["h", channel],
@@ -415,19 +406,6 @@ describe("GooseRuntime", () => {
     await flush(30);
     expect(goose?.killed).toBe(true);
     expect(fake.geese).toHaveLength(1);
-  });
-
-  it("fails a session mention it cannot place until the placement can be read", async () => {
-    const { deliver, fake, placement, published } = setup({
-      channelType: "session",
-    });
-    placement.state = { status: "error", error: "Recipe read failed" };
-    await expect(deliver(message("1", "@Gander hi"))).rejects.toThrow(
-      "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
-    );
-    expect(placement.refresh).toHaveBeenCalledOnce();
-    expect(fake.geese).toEqual([]);
-    expect(published).toEqual([]);
   });
 });
 

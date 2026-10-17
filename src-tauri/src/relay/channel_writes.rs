@@ -1049,7 +1049,7 @@ pub(super) fn channel_label(label: &str) -> bool {
         && !matches!(label, "stream" | "forum" | "dm" | "workflow" | "system")
 }
 
-/// Mirrors `sessionMetadata` in `src/features/sessions/metadata.ts`: the header,
+/// The retired session `about` grammar (`metadata-contract.json`): the header,
 /// then an optional `parent:<uuid>` line, then an optional `personal` line.
 fn session_metadata(description: &str) -> bool {
     const PREFIX: &str = "Buzz session (buzz.sessions/v1)";

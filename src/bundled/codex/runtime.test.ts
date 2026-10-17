@@ -324,7 +324,12 @@ function fixture(
     type: mime,
   }));
   const workingUntil = vi.fn<Delivery["workingUntil"]>();
-  const media = vi.fn(async () => btoa("\x89PNG\r\n"));
+  const media = vi.fn(async () => ({
+    path: "/cache/shot.png",
+    type: "image/png",
+    size: 6,
+    data: btoa("\x89PNG\r\n"),
+  }));
   /** The owner's attention switch, and the objects the host holds. */
   const attention = { on: false };
   const objects = new Map<string, Record<string, unknown>>();
@@ -2174,6 +2179,10 @@ it("uses the launched workspace for shared file tools and the owner view for enc
       {
         type: "inputImage",
         imageUrl: `data:image/png;base64,${btoa("\x89PNG\r\n")}`,
+      },
+      {
+        type: "inputText",
+        text: "Saved /cache/shot.png (image/png, 6 bytes).",
       },
     ],
   });

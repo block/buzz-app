@@ -86,6 +86,7 @@ import {
   type AgentIdentity,
   type Carry,
   type AgentsNative,
+  type AgentMedia,
   type AgentUpload,
   type OldTeam,
   type PortableAgents,
@@ -240,11 +241,12 @@ export type AgentHandle = Readonly<{
     query: string,
     limit: number,
   ): Promise<RelayEvent[] | undefined>;
-  /** Uploads base64 `data`, an image or MP4 video, as the agent. */
+  /** Uploads base64 `data`, a file of any type its community accepts, as
+   * the agent. `mime` is a hint; the community decides the type. */
   upload(data: string, mime: string): Promise<AgentUpload>;
-  /** Downloads one of its community's media blobs, by URL or `sha256[.ext]`,
-   * as base64. */
-  media(url: string): Promise<string>;
+  /** Saves one of its community's media blobs, of any type, by URL or
+   * `sha256[.ext]`, to a local file for the agent. */
+  media(url: string): Promise<AgentMedia>;
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
    * that entry's `createdAt`, or 0). The owner reads it back. */
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;

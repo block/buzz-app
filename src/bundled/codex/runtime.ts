@@ -892,14 +892,18 @@ export class CodexRuntime {
     }
     return {
       success: true,
-      contentItems: [
+      contentItems:
         typeof reply === "string"
-          ? { type: "inputText", text: reply }
-          : {
-              type: "inputImage",
-              imageUrl: `data:${reply.type};base64,${reply.data}`,
-            },
-      ],
+          ? [{ type: "inputText", text: reply }]
+          : [
+              {
+                type: "inputImage",
+                imageUrl: `data:${reply.type};base64,${reply.data}`,
+              },
+              ...(reply.text
+                ? [{ type: "inputText" as const, text: reply.text }]
+                : []),
+            ],
     };
   }
   /** The agent's memory, or only entry `slug`, as its community's reads give

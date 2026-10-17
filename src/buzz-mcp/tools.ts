@@ -18,6 +18,10 @@ import {
   listSharedSessions,
   readSharedSession,
 } from "../features/sessions/shared-sessions";
+import {
+  attachmentMarkdown,
+  attachmentName,
+} from "../features/relay/attachments";
 import { sessionMetadata } from "../features/sessions/metadata";
 import { threadReference } from "../features/relay/thread-reference";
 import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
@@ -159,9 +163,12 @@ export const TOOLS: readonly Tool[] = [
     text: str,
     path: str,
   }),
-  tool("media_get", "See an image from a Buzz media URL.", { url: str }, [
-    "url",
-  ]),
+  tool(
+    "media_get",
+    "Get a file of any type from a Buzz media URL: saves it locally and gives its path; an image is also shown.",
+    { url: str },
+    ["url"],
+  ),
   tool(
     "tabs",
     "Your owner's open tabs for this channel's threads, or open, close or rename a thread's tab. Opening never takes their focus; no name clears a rename.",
@@ -197,8 +204,11 @@ const ACTIONS: Readonly<Record<string, readonly string[]>> = {
 };
 
 type Args = Readonly<Record<string, unknown>>;
-/** A tool's answer: text, or an image (base64 `data`) for the agent to see. */
-export type Reply = string | Readonly<{ data: string; type: string }>;
+/** A tool's answer: text, or an image (base64 `data`) for the agent to see,
+ * with any `text` about it. */
+export type Reply =
+  | string
+  | Readonly<{ data: string; type: string; text?: string }>;
 type Handler = (tools: Tools, args: Args) => Promise<Reply>;
 
 /** Runs tool `name` for an agent working in `context`. A throw is a tool
@@ -713,13 +723,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   async media_get(tools, args) {
-    const data = await tools.client.media(required(args, "url"));
-    // The first 12 bytes name the type.
-    const head = atob(data.slice(0, 16));
-    const type = sniff(Uint8Array.from(head, (c) => c.charCodeAt(0)));
-    if (!type?.startsWith("image/"))
-      throw new Error("Only JPEG, PNG, GIF and WebP images can be shown.");
-    return { data, type };
+    const media = await tools.client.media(required(args, "url"));
+    const saved = `Saved ${media.path} (${media.type}, ${media.size} bytes).`;
+    if (media.data) {
+      // The first 12 bytes name the type.
+      const head = atob(media.data.slice(0, 16));
+      const type = sniff(Uint8Array.from(head, (c) => c.charCodeAt(0)));
+      if (type?.startsWith("image/"))
+        return { data: media.data, type, text: saved };
+    }
+    return `${saved} Open it with your own tools.`;
   },
 
   async tabs(tools, args) {
@@ -1134,18 +1147,20 @@ class Tools {
     return [...keys].slice(0, 50);
   }
 
-  /** Uploads each file and returns its `imeta` tags and the links to append. */
+  /** Uploads each file and returns its `imeta` tags and the links to append.
+   * Any file the community accepts attaches; it decides the type. */
   async attach(paths: readonly string[]) {
     const tags: string[][] = [];
     let links = "";
     for (const path of paths) {
       const data = await this.client.read(path);
-      const mime = sniff(data);
-      if (!mime)
-        throw new Error(`${path}: only JPEG, PNG, GIF, WebP and MP4 attach.`);
-      const upload = await this.client.upload(data, mime);
-      tags.push(imeta(upload));
-      links += `\n![${mime.startsWith("video/") ? "video" : "image"}](${upload.url})`;
+      const upload = await this.client.upload(
+        data,
+        sniff(data) ?? "application/octet-stream",
+      );
+      const name = attachmentName(path.split(/[\\/]/).pop() ?? "");
+      tags.push([...imeta(upload), `filename ${name}`]);
+      links += `\n${attachmentMarkdown(name, upload)}`;
     }
     return { tags, links };
   }
@@ -1206,7 +1221,7 @@ function imeta(upload: Upload) {
   ];
 }
 
-/** An attachable type, by the file's leading bytes. */
+/** An image or MP4's type, by the file's leading bytes. */
 function sniff(data: Uint8Array) {
   const at = (offset: number, ...bytes: number[]) =>
     bytes.every((byte, index) => data[offset + index] === byte);

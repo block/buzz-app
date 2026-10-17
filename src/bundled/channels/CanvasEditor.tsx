@@ -246,7 +246,7 @@ export function CanvasEditor({
     ) : undefined;
   const body = (
     <>
-      <div className={styles.stack}>
+      <div className={panelStyles.body}>
         <Tabs
           variant="panel"
           label="Canvas views"
@@ -268,32 +268,31 @@ export function CanvasEditor({
           role="tabpanel"
           id={`${panelId}-edit`}
           aria-labelledby={`${panelId}-edit-tab`}
+          className={panelStyles.edit}
         >
-          <div className={styles.stack}>
-            <p className="text-secondary">Shared Markdown for this channel.</p>
-            {readOnly && (
-              <p role="status">Archived channel. Canvas is read-only.</p>
-            )}
-            <Textarea
-              ref={editor}
-              data-tab-focus
-              readOnly={readOnly}
-              aria-label="Canvas Markdown"
-              variant="code"
-              rows={16}
-              value={draft}
-              disabled={busy || !loaded}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                writeView(scope, key, { content: e.target.value, base });
-              }}
-            />
-            {error && (
-              <p role="alert" className={styles.error}>
-                {error}
-              </p>
-            )}
-          </div>
+          <p className="text-secondary">Shared Markdown for this channel.</p>
+          {readOnly && (
+            <p role="status">Archived channel. Canvas is read-only.</p>
+          )}
+          <Textarea
+            ref={editor}
+            data-tab-focus
+            readOnly={readOnly}
+            aria-label="Canvas Markdown"
+            variant="code"
+            rows={16}
+            value={draft}
+            disabled={busy || !loaded}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              writeView(scope, key, { content: e.target.value, base });
+            }}
+          />
+          {error && (
+            <p role="alert" className={styles.error}>
+              {error}
+            </p>
+          )}
         </div>
         <div
           hidden={tab !== "history"}

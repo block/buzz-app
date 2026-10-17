@@ -1869,7 +1869,13 @@ it("publishes a note in the CLI's shape, keeping what an update leaves out", asy
   ]);
   // Only your own note is the one an update replaces.
   expect(vi.mocked(again.query).mock.calls[0]?.[0]).toEqual([
-    { kinds: [30023], authors: [me], "#d": ["plan"], limit: 1 },
+    {
+      kinds: [30023],
+      authors: [me],
+      "#d": ["plan"],
+      limit: 1,
+      consistency: "strong",
+    },
   ]);
 });
 
@@ -1903,6 +1909,37 @@ it("reports a conflict when another write of the same second wins", async () => 
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("checks a note write against the writer, not a lagging replica", async () => {
+  const { client } = fake([...community, note(me, "plan", 100)], {
+    keep: true,
+  });
+  // A replica still holds version 100; only the writer has the new one.
+  const writer = client.query;
+  const stale = note(me, "plan", 100);
+  client.query = vi.fn(async (filters: readonly Filter[]) =>
+    filters.every((filter) => filter.consistency === "strong")
+      ? writer(filters)
+      : [stale],
+  );
+  await expect(
+    callTool(client, {}, "notes_set", { name: "plan", text: "v2" }),
+  ).resolves.toBe(`saved 30023:${me}:plan`);
+  expect(client.query).toHaveBeenCalledTimes(2);
+});
+
+it("reports a conflict when the note is gone after a write", async () => {
+  const { client } = fake(community);
+  await expect(
+    callTool(client, {}, "notes_set", {
+      name: "plan",
+      title: "Plan",
+      text: "v1",
+    }),
+  ).rejects.toThrow(
+    "conflict: note plan was not found after this write. Read it with notes_get, then write again.",
+  );
 });
 
 it("deletes only your own note, by its address", async () => {

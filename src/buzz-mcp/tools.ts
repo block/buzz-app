@@ -902,11 +902,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         !args.tags.every((item) => typeof item === "string" && item.trim()))
     )
       throw new Error("tags must be a list of words.");
-    const [prior] = latestNotes(
-      await client.query([
-        { kinds: [NOTE], authors: [client.pubkey], "#d": [name], limit: 1 },
-      ]),
-    );
+    // Read from the writer, so a lagging replica cannot hide the version
+    // this write replaces or the one it saved.
+    const own = {
+      kinds: [NOTE],
+      authors: [client.pubkey],
+      "#d": [name],
+      limit: 1,
+      consistency: "strong",
+    };
+    const [prior] = latestNotes(await client.query([own]));
     if (title === undefined && !prior)
       throw new Error("title is required for a new note.");
     const kept = (key: string) =>
@@ -938,14 +943,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     });
     // The community accepts a write that loses to another version of the
     // same second, so only a read shows whether this one is the note now.
-    const [current] = latestNotes(
-      await client.query([
-        { kinds: [NOTE], authors: [client.pubkey], "#d": [name], limit: 1 },
-      ]),
-    );
-    if (current?.id !== saved.id)
+    const [current] = latestNotes(await client.query([own]));
+    if (!current)
       throw new Error(
-        `conflict: note ${name} now holds another version${current ? ` (${current.id}, ${time(current.created_at)})` : ""}, not this text. Read it with notes_get, then write again.`,
+        `conflict: note ${name} was not found after this write. Read it with notes_get, then write again.`,
+      );
+    if (current.id !== saved.id)
+      throw new Error(
+        `conflict: note ${name} now holds another version (${current.id}, ${time(current.created_at)}), not this text. Read it with notes_get, then write again.`,
       );
     return `saved ${NOTE}:${client.pubkey}:${name}`;
   },

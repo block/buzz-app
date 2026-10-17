@@ -210,12 +210,15 @@ single ordered list.
 
 The app verifies each relay event's signature once per connection and reuses that
 proof. Its startup unread read takes the newest 500 events across joined channels,
-so default history is verified before measurement, including 480 of the 620
-older paging rows. `firstSeenHistory` (`scroll-paging-fast-first-seen`) adds a
+so default history reaches the app before measurement, including 480 of the
+620 older paging rows. `firstSeenHistory` (`scroll-paging-fast-first-seen`) adds a
 joined `busy` channel whose 500 newer messages fill that read, as busier channels
 do. Older pages then first reach the app, and are verified, during the measured
-traversal. The fixture records every event ID it serves; paging samples record
-`work.olderRowsServedBefore`, and the first-seen case requires zero. The option
+traversal. The fixture records the event IDs of each modeled HTTP query response
+when it computes the response, which for a held older page is before release.
+Paging samples record `work.olderRowsServedBefore`, and the first-seen case
+requires zero. This proves which events arrive first-seen, not when background
+verification of the startup read finishes; setup does not wait for it. The option
 adds 500 fixture signatures to setup and one sidebar row. There is no first-seen
 channel-open case: verifying its one 20-event head page is within that case's
 sample-to-sample variation, and the busy channel also changes unread state

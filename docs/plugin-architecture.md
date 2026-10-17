@@ -96,6 +96,12 @@ create a second connection, cache or outbox inside a page. The conversation prev
 source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
+Plugin-owned Rust may live under `bundled/<plugin>/native/` as a Cargo workspace
+member (currently Mesh). Keep its native host admission/IPC integration in
+`src-tauri/`; source colocation does not make Rust dynamically installable.
+When adding such a crate, include its path in the Rust input selection in
+`scripts/check-push.mjs` and cover that selection in the hook tests.
+
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
@@ -250,7 +256,7 @@ contracts with their own layout and local navigation.
 **Channels is the only required bundled plugin.** Bestie
 and Todos are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Me, Inbox,
-Projects, Agents, Claude, Codex, Workflows, Sessions, Builderlab, Hosted communities, and Community admin are
+Projects, Agents, Claude, Codex, Workflows, Sessions, Builderlab, Hosted communities, Shared compute, and Community admin are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
 Me is an empty, optional default-enabled page. Me and Channels request topbar

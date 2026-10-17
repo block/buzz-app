@@ -9,11 +9,19 @@ rust-version = "1.90"
 name = "buzz_foundation_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+mesh = ["dep:buzz-mesh-agent", "dep:async-trait", "dep:axum", "dep:buzz-mesh-compute", "buzz-mesh-compute/mesh"]
+
 [build-dependencies]
 url = "2"
 tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
+buzz-mesh-agent = { path = "../src/bundled/mesh-compute/native", optional = true }
+async-trait = { version = "0.1", optional = true }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
+buzz-mesh-compute = { path = "../crates/mesh-compute", optional = true }
 buzz-pairing = { path = "../crates/pairing" }
 nostr-pairing = { package = "nostr", version = "0.44", features = ["nip44"] }
 tokio-util = "0.7"
@@ -23,7 +31,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = "1"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
-tauri = { version = "=2.12.3", features = ["unstable"] }
+tauri = { version = "=2.12.3", features = ["unstable", "macos-private-api"] }
 wry = { version = "=0.57.0", default-features = false, features = ["os-webview"] }
 buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-credential-store = { path = "../crates/credential-store" }
@@ -60,7 +68,8 @@ tempfile = "3"
 fs2 = "0.4"
 arboard = { version = "3", features = ["wayland-data-control"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+
 
 [dev-dependencies]
 hex = "0.4"

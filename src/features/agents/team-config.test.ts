@@ -1,40 +1,42 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
 import { keypair, signed } from "../relay/testing";
-import { AgentConfigStore } from "./agent-config";
-import {
-  ARTIFACT_MAX_EVENT_BYTES,
-  artifactD,
-  type SnapshotRead,
-} from "./agent-config-artifacts";
+import { artifactD, artifactTemplate } from "./agent-config-artifacts";
 import { teamSubject } from "./config-channels";
-import { MigrationJournal } from "./config-writes";
-import { discoverTeams, TeamJournal } from "./team-config";
+import {
+  discoverTeams,
+  TEAMS_MIGRATION_KEY,
+  TeamJournal,
+  teamCommunity,
+} from "./team-config";
+import { type TeamOp, TeamOps } from "./team-ops";
 import { memoryStorage } from "./test-fakes";
 
 const owner = keypair();
 const community = "wss://relay.example";
 const teamChannel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
+const teamId = "0f6a3c1e-2b4d-4e8f-9a1b-3c5d7e9f1a2b";
 const a = keypair().pubkey;
 const b = keypair().pubkey;
 
-/** A team channel whose head is team `t-1`'s, with `a` and `b` in it. */
-async function setup() {
+const head = async (claimed = teamId) =>
+  signed(
+    owner,
+    artifactTemplate({
+      channel: teamChannel,
+      type: "buzz.team",
+      d: await artifactD("buzz.team", teamChannel),
+      team: claimed,
+      title: "Core",
+      content: JSON.stringify({ version: 1, name: "Core", instructions: "x" }),
+      op: "create",
+      extra: [["team", claimed]],
+    }),
+  );
+
+async function setup(members = [owner.pubkey, a, b]) {
   const storage = memoryStorage();
-  const head: RelayEvent = await signed(owner, {
-    kind: 45010,
-    created_at: 1,
-    content: JSON.stringify({ version: 1, name: "Core", instructions: "" }),
-    tags: [
-      ["ar", "1"],
-      ["d", await artifactD("buzz.team", teamChannel)],
-      ["h", teamChannel],
-      ["type", "buzz.team"],
-      ["title", "Core"],
-      ["op", "create"],
-      ["team", "t-1"],
-    ],
-  });
+  const state = { head: (await head()) as RelayEvent | undefined };
   const agents = new Set([a, b]);
   const channels = {
     owns: vi.fn(async (pubkey: string) => agents.has(pubkey)),
@@ -45,96 +47,104 @@ async function setup() {
         {
           id: teamChannel,
           archived: false,
-          label: await teamSubject("t-1"),
-          members: [owner.pubkey, a, b],
+          label: await teamSubject(teamId),
+          members,
         },
       ],
     ),
   };
-  const read: SnapshotRead = async () => [head];
-  const journal = new TeamJournal(storage);
+  const ops = new TeamOps(storage);
   const deps = {
     channels,
     sync: { bind: vi.fn(async () => {}) },
     writes: {
-      read,
-      writer: {
-        sign: vi.fn(async () => head),
-        publish: vi.fn(async () => {}),
-      },
-      store: new AgentConfigStore(storage),
-      journal: new MigrationJournal(storage),
-      maxEventBytes: ARTIFACT_MAX_EVENT_BYTES,
+      read: vi.fn(async () => (state.head ? [state.head] : [])),
       signal: new AbortController().signal,
     },
-    journal,
+    ops,
     owner: owner.pubkey,
     community,
   };
-  return { deps, channels, journal, storage };
+  return { deps, state, channels, ops, storage };
 }
 
 describe("synced teams", () => {
+  it("keeps a team whose members span communities local", () => {
+    const team = { members: [a, b] };
+    const where = { [a]: "one", [b]: "two" } as Record<string, string>;
+    expect(teamCommunity(team, (p) => where[p])).toBe("spans");
+    expect(teamCommunity(team, () => "one")).toBe("one");
+  });
+
   it("discovers a team by the id its channel label proves, and binds it", async () => {
     const f = await setup();
     const [found] = await discoverTeams(f.deps);
     expect(found).toMatchObject({
-      id: "t-1",
+      id: teamId,
       channel: teamChannel,
+      unreadable: false,
       members: [a, b],
     });
     expect(f.deps.sync.bind).toHaveBeenLastCalledWith([
-      { family: "team-config", subject: "t-1", channel: teamChannel },
+      { family: "team-config", subject: teamId, channel: teamChannel },
     ]);
   });
 
   it("skips a team channel whose head claims a team its label doesn't prove", async () => {
     const f = await setup();
-    f.channels.teams.mockResolvedValue([
-      { id: teamChannel, archived: false, label: await teamSubject("other") },
-    ]);
+    f.state.head = await head("another-team");
     expect(await discoverTeams(f.deps)).toEqual([]);
+  });
+
+  it("names an unreadable channel by the team change that made it", async () => {
+    const f = await setup();
+    f.state.head = undefined;
+    f.ops.write({
+      op1: {
+        id: "op1",
+        owner: owner.pubkey,
+        community,
+        teamId,
+        channel: teamChannel,
+        seq: 1,
+        commands: [],
+      } as unknown as TeamOp,
+    });
+    expect(await discoverTeams(f.deps)).toMatchObject([
+      { id: teamId, unreadable: true },
+    ]);
   });
 
   it("keeps a known team whose head can't be read as unreadable, with its members", async () => {
     const f = await setup();
-    const found = await discoverTeams(f.deps);
-    f.journal.remember(owner.pubkey, community, found);
-    f.deps.writes.read = async () => {
+    const [known] = await discoverTeams(f.deps);
+    f.deps.writes.read = vi.fn(async () => {
       throw new Error("relay down");
-    };
-    expect(await discoverTeams(f.deps, found)).toMatchObject([
-      { id: "t-1", unreadable: true, members: [a, b] },
+    });
+    expect(await discoverTeams(f.deps, known ? [known] : [])).toMatchObject([
+      { id: teamId, unreadable: true, members: [a, b] },
     ]);
-    // Only the journal knows it, as after a restart.
-    const known = new TeamJournal(f.storage).known(owner.pubkey, community);
-    expect(await discoverTeams(f.deps, known)).toMatchObject([
-      { id: "t-1", unreadable: true, members: [a, b] },
-    ]);
-    expect(await discoverTeams(f.deps)).toEqual([]);
   });
 
   it("counts only agents this owner attests to as members", async () => {
-    const f = await setup();
     const human = keypair().pubkey;
-    const theirs = keypair().pubkey;
-    f.channels.teams.mockResolvedValue([
-      {
-        id: teamChannel,
-        archived: false,
-        label: await teamSubject("t-1"),
-        members: [owner.pubkey, a, human, b, theirs],
-      },
-    ]);
+    const f = await setup([owner.pubkey, a, human, b]);
     const [found] = await discoverTeams(f.deps);
     expect(found?.members).toEqual([a, b]);
   });
 
-  it("knows a discovered team as synced on this device after a restart", async () => {
+  it("remembers discovered teams per owner and community, across restarts", async () => {
     const f = await setup();
-    f.journal.remember(owner.pubkey, community, await discoverTeams(f.deps));
-    const restarted = new TeamJournal(f.storage);
-    expect(restarted.synced("t-1")).toBe(true);
-    expect(restarted.synced("local-1")).toBe(false);
+    const teams = await discoverTeams(f.deps);
+    new TeamJournal(f.storage).remember(owner.pubkey, community, teams);
+    const journal = new TeamJournal(f.storage);
+    expect(journal.known(owner.pubkey, community)).toMatchObject([
+      { id: teamId, subject: { subject: teamId, channel: teamChannel } },
+    ]);
+    expect(journal.known(owner.pubkey, "wss://other.example")).toBeUndefined();
+    expect(journal.synced(teamId)).toBe(true);
+    expect(journal.synced("local-id")).toBe(false);
+    f.storage.setItem(TEAMS_MIGRATION_KEY, "{bad");
+    expect(new TeamJournal(f.storage).synced(teamId)).toBe(false);
   });
 });

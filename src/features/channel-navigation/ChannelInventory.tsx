@@ -12,7 +12,7 @@ import {
 } from "react";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
-import { useSoloPlacement } from "../solo/placement";
+import { ownSolo } from "../sessions/metadata";
 import type { RelayData } from "../relay/service";
 import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
@@ -123,7 +123,6 @@ export function ChannelInventory({
 }) {
   const list = useChannelList(queries.channels);
   const recoveryShown = useRecoveryShown(queries.recovery);
-  const placement = useSoloPlacement(queries);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const startup = useSidebarStartup(queries, list, preferences);
   const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
@@ -207,9 +206,8 @@ export function ChannelInventory({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
-      // Solo lists its own conversations; a filed public stream stays here too.
-      (!placement.ids.includes(channel.id) ||
-        (!channel.cached && channel.channelType === "stream")) &&
+      // Solo lists the viewer's own Solo chats.
+      !ownSolo(channel, queries.viewer) &&
       (!preparingDm ||
         preparingDm.existing.has(channel.id) ||
         channel.channelType !== "dm" ||

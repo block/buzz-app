@@ -75,9 +75,7 @@ export function MentionPicker({
     model,
     open && !disabled && !!selectTeam,
   );
-  const parentAdmission =
-    !!channel &&
-    (channel.channelType !== "session" || !!channel.parentChannelId);
+  const parentAdmission = !!channel && channel.channelType !== "session";
   const members =
     draftRoster?.map((person) => person.pubkey) ?? channel?.members;
   const memberKey = members?.join(":") ?? "";

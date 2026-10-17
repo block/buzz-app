@@ -1,6 +1,6 @@
 import { canonicalDetailsName } from "./channel-details-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
-import { SESSION_NAMED_LABEL, sessionDescription } from "../sessions/metadata";
+import { SESSION_NAMED_LABEL, SOLO_LABEL } from "../sessions/metadata";
 import type { Outbox } from "./outbox";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";
@@ -193,7 +193,6 @@ export function createWorkSessions(
     expected: {
       member?: string;
       members?: readonly string[];
-      parent?: string;
       system?: boolean | undefined;
     } = {},
     sessionOnly = true,
@@ -240,8 +239,7 @@ export function createWorkSessions(
         (!sessionOnly || channel.channelType === "session") &&
         (!expected.member || channel.members?.includes(expected.member)) &&
         (!expected.members ||
-          expected.members.every((key) => channel.members?.includes(key))) &&
-        (!expected.parent || channel.parentChannelId === expected.parent);
+          expected.members.every((key) => channel.members?.includes(key)));
       const inspect = (reportError = true) => {
         const list = channels.list();
         if (reportError && list.status === "error")
@@ -397,7 +395,6 @@ export function createWorkSessions(
     keys: readonly string[],
     active?: () => boolean,
   ) {
-    const find = () => channels.list().channels.find((item) => item.id === id);
     if (active?.() === false)
       throw new DOMException("Channel addition cancelled", "AbortError");
     const original = await refreshMembership(id);
@@ -408,96 +405,73 @@ export function createWorkSessions(
         original.channelType !== "session" || !original.members?.includes(key),
     );
     if (!unique.length) return;
-    const parentId = original.parentChannelId ?? id;
-    const parent =
-      parentId === id ? original : await refreshMembership(parentId);
     if (
-      !parentId ||
-      !parent?.members ||
-      parent.archived ||
-      !["stream", "forum", "session"].includes(parent.channelType ?? "")
+      !original.members ||
+      original.archived ||
+      !["stream", "forum", "session"].includes(original.channelType ?? "")
     )
-      throw new Error("Refresh the parent channel before adding agents.");
-    // Archive state applies to every new admission, even for parent members;
-    // unknown archive state fails open to the library/parent-member rule.
+      throw new Error("Refresh the channel before adding agents.");
+    // Archive state applies to every new admission, even for current members;
+    // unknown archive state fails open to the library/member rule.
     if (unique.some((key) => agents?.archived(key)))
       throw new Error("This agent is archived. Choose another agent.");
     const known = new Set(agents?.selectable() ?? []);
-    if (unique.some((key) => !parent.members?.includes(key) && !known.has(key)))
+    if (
+      unique.some((key) => !original.members?.includes(key) && !known.has(key))
+    )
       throw new Error("Choose an agent from your agent library.");
-    // Parent metadata organizes the UI; both channels keep their own rosters.
-    const targets = parentId !== id ? [parentId, id] : [parentId];
-    // Each target's additions are published and acknowledged in turn, parent
-    // first. Their roster confirmations then run together: one exact read per
-    // target, concurrently, rather than a serial gate after every command.
-    const confirmations: [string, string[]][] = [];
-    for (const targetId of targets) {
-      const added: string[] = [];
-      for (const key of unique) {
-        if (active?.() === false)
-          throw new DOMException("Channel addition cancelled", "AbortError");
-        writer(!!active);
-        if (find()?.parentChannelId !== original?.parentChannelId)
-          throw new Error("This session moved. Refresh and retry.");
-        const current = channels
-          .list()
-          .channels.find((item) => item.id === targetId);
-        if (!current?.members || current.archived)
-          throw new Error("Channel membership is unavailable.");
-        if (current.members.includes(key)) continue;
-        const previous = (receipts ?? outbox)
-          ?.snapshot()
-          .find(
-            (item) =>
-              item.event.kind === 9000 &&
-              !item.acknowledged &&
-              !["accepted", "seen"].includes(item.delivery) &&
-              item.event.tags.some(
-                ([name, value]) => name === "h" && value === targetId,
-              ) &&
-              item.event.tags.some(
-                ([name, value]) => name === "p" && value === key,
-              ) &&
-              !item.event.tags.some(([name]) => name === "role"),
-          );
-        if (
-          previous &&
-          Date.now() / 1000 - previous.event.created_at >= 15 * 60
-        )
-          throw new Error(
-            `This agent-add request expired. Open Outbox, remove the “Add agent ${key.slice(0, 12)}” item, then add the agent again. Check channel membership first if the request was unconfirmed.`,
-          );
-        const operation =
-          previous?.event.id ??
-          writer(!!active).send(
-            {
-              kind: 9000,
-              content: "",
-              tags: [
-                ["h", targetId],
-                ["p", key],
-              ],
-            },
-            undefined,
-            active,
-          );
-        await delivered(operation, active, true);
-        if (active?.() === false)
-          throw new DOMException("Channel addition cancelled", "AbortError");
-        added.push(key);
-      }
-      if (added.length) confirmations.push([targetId, added]);
+    // Additions are published and acknowledged in turn; the roster is then
+    // confirmed with one exact read rather than a gate after every command.
+    const added: string[] = [];
+    for (const key of unique) {
+      if (active?.() === false)
+        throw new DOMException("Channel addition cancelled", "AbortError");
+      writer(!!active);
+      const current = channels.list().channels.find((item) => item.id === id);
+      if (!current?.members || current.archived)
+        throw new Error("Channel membership is unavailable.");
+      if (current.members.includes(key)) continue;
+      const previous = (receipts ?? outbox)
+        ?.snapshot()
+        .find(
+          (item) =>
+            item.event.kind === 9000 &&
+            !item.acknowledged &&
+            !["accepted", "seen"].includes(item.delivery) &&
+            item.event.tags.some(
+              ([name, value]) => name === "h" && value === id,
+            ) &&
+            item.event.tags.some(
+              ([name, value]) => name === "p" && value === key,
+            ) &&
+            !item.event.tags.some(([name]) => name === "role"),
+        );
+      if (previous && Date.now() / 1000 - previous.event.created_at >= 15 * 60)
+        throw new Error(
+          `This agent-add request expired. Open Outbox, remove the “Add agent ${key.slice(0, 12)}” item, then add the agent again. Check channel membership first if the request was unconfirmed.`,
+        );
+      const operation =
+        previous?.event.id ??
+        writer(!!active).send(
+          {
+            kind: 9000,
+            content: "",
+            tags: [
+              ["h", id],
+              ["p", key],
+            ],
+          },
+          undefined,
+          active,
+        );
+      await delivered(operation, active, true);
+      if (active?.() === false)
+        throw new DOMException("Channel addition cancelled", "AbortError");
+      added.push(key);
     }
-    await Promise.all(
-      confirmations.map(([targetId, members]) =>
-        refresh(targetId, { members }, false),
-      ),
-    );
+    if (added.length) await refresh(id, { members: added }, false);
     if (original?.channelType === "session")
-      await refresh(id, {
-        members: unique,
-        ...(original.parentChannelId ? { parent: parentId } : {}),
-      });
+      await refresh(id, { members: unique });
   }
   return Object.freeze({
     available,
@@ -529,6 +503,8 @@ export function createWorkSessions(
         throw new Error("Keep the channel description under 1,000 characters.");
       if (about?.includes("Buzz session ("))
         throw new Error("Choose a different channel description.");
+      if (options.labels?.includes(SOLO_LABEL))
+        throw new Error("Start a Solo chat from Solo instead.");
       if (
         ttlSeconds !== undefined &&
         (!Number.isInteger(ttlSeconds) ||
@@ -557,7 +533,8 @@ export function createWorkSessions(
     create(id: string, title: string, ttlSeconds?: number, named = false) {
       writer();
       identifier(id);
-      if (named && !channelIdentity) throw channelIdentityUnsupported();
+      // Solo is a channel label, so a relay without NIP-CL cannot hold one.
+      if (!channelIdentity) throw channelIdentityUnsupported();
       if (!title.trim() || [...title].length > 120)
         throw new Error("Use a session title between 1 and 120 characters.");
       if (
@@ -575,9 +552,10 @@ export function createWorkSessions(
           ["name", title],
           ["visibility", "private"],
           ["channel_type", "stream"],
-          ["about", sessionDescription(undefined, true)],
           ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
-          ...(named ? channelLabelTags([SESSION_NAMED_LABEL]) : []),
+          ...channelLabelTags(
+            named ? [SOLO_LABEL, SESSION_NAMED_LABEL] : [SOLO_LABEL],
+          ),
         ],
       });
     },
@@ -586,10 +564,8 @@ export function createWorkSessions(
       const target = channels
         .list()
         .channels.find((channel) => channel.id === id);
-      if (target?.channelType !== "session" || target.parentChannelId)
-        throw new Error(
-          "Manage this session’s participants in its parent channel.",
-        );
+      if (target?.channelType !== "session")
+        throw new Error("Manage this channel’s participants in its settings.");
       if (!/^[0-9a-f]{64}$/.test(pubkey))
         throw new Error("Choose a valid participant.");
       if (!new Set(agents?.selectable() ?? []).has(pubkey))

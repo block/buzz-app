@@ -104,10 +104,7 @@ export function ConversationTab({
               onOpenThread={openThread}
               revealMessageId={sent}
             />
-            <ConversationComposer
-              label={sessionConversation ? "Message your agents" : undefined}
-              onSend={setSent}
-            />
+            <ConversationComposer onSend={setSent} />
           </SoloColumn>
         )}
       </section>

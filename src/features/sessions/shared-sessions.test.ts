@@ -13,7 +13,7 @@ import {
   sessionReferenceIds,
 } from "./shared-session-marker";
 import { sessionLinkMessage } from "../solo/share";
-import { sessionDescription } from "../sessions/metadata";
+import { SOLO_LABEL } from "../sessions/metadata";
 
 const key = new Uint8Array(32).fill(1);
 const event = (kind: number, tags: string[][], content = "", created_at = 10) =>
@@ -50,7 +50,7 @@ function fixture() {
         [isPublic ? "public" : "private"],
         ["t", "stream"],
         ["name", title],
-        ...(id !== "destination" ? [["about", sessionDescription()]] : []),
+        ...(id !== "destination" ? [["t", SOLO_LABEL]] : []),
       ]),
       event(39002, [["d", id], ...members.map((m) => ["p", m])]),
     );
@@ -666,7 +666,7 @@ it("withholds agent output without current server audience support", async () =>
   ).rejects.toThrow(/updated server support/);
 });
 
-it("requires canonical session identity for a private stream source", async () => {
+it("requires the Solo label for a private stream source", async () => {
   const f = fixture();
   const query = f.query.getMockImplementation();
   if (!query) throw new Error("Missing fixture query");
@@ -676,7 +676,7 @@ it("requires canonical session identity for a private stream source", async () =
       record.tags.some(([k, v]) => k === "d" && v === "source")
         ? event(
             39000,
-            record.tags.filter(([k]) => k !== "about"),
+            record.tags.filter(([k, v]) => k !== "t" || v !== SOLO_LABEL),
             record.content,
           )
         : record,

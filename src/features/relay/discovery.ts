@@ -1,5 +1,5 @@
 import { channelTtl, channelVisibility } from "./channel-details-protocol";
-import { sessionMetadata } from "../sessions/metadata";
+import { soloLabels } from "../sessions/metadata";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
@@ -12,12 +12,12 @@ export function metadataName(event: RelayEvent): string | undefined {
   return tag(event, "name") || undefined;
 }
 
-/** The canonical session identity, independent of membership or presentation labels. */
+/** A Solo chat: a private stream carrying the Solo label. Never access. */
 export function sessionChannelMetadata(event: RelayEvent): boolean {
   return (
     tag(event, "t") === "stream" &&
     event.tags.some(([name]) => name === "private") &&
-    sessionMetadata(tag(event, "about")) !== undefined
+    soloLabels(channelIdentity(event).labels)
   );
 }
 
@@ -225,7 +225,6 @@ export class DiscoveryState {
       (type === "session" && this.isSession(id))
         ? type
         : undefined;
-    const parentId = event && sessionMetadata(tag(event, "about"))?.parentId;
     const identity = event && channelIdentity(event);
     const ttlSeconds = event && channelTtl(event);
     return {
@@ -238,9 +237,7 @@ export class DiscoveryState {
       ...(event
         ? {
             visibility: channelVisibility(event),
-            ...(channelType !== "session"
-              ? { description: tag(event, "about") ?? "" }
-              : {}),
+            description: tag(event, "about") ?? "",
           }
         : {}),
       members: Object.freeze(
@@ -258,14 +255,7 @@ export class DiscoveryState {
       ...(this.isPrivate(id) ? { private: true } : {}),
       ...(channelType ? { channelType } : {}),
       ...(channelType === "session" && event
-        ? {
-            updatedAt: event.created_at,
-            ...(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
-              parentId ?? "",
-            )
-              ? { parentChannelId: parentId }
-              : {}),
-          }
+        ? { updatedAt: event.created_at }
         : {}),
       ...(event && hasTag(event, "archived", "true") ? { archived: true } : {}),
       ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),

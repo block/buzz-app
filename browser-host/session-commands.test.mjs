@@ -60,7 +60,7 @@ it("admits stream and NIP-CL system channel creation only", () => {
     expect(validChannelCommand(create(type))).toBe(false);
 });
 
-it("preserves strict Sessions metadata while allowing ordinary stream visibility", () => {
+it("creates a Solo chat with its label and refuses the retired session marker", () => {
   const create = {
     kind: 9007,
     created_at: 1,
@@ -70,26 +70,21 @@ it("preserves strict Sessions metadata while allowing ordinary stream visibility
       ["name", "Work"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      ["about", "Buzz session (buzz.sessions/v1)"],
+      ["t", "buzz.solo"],
     ],
   };
   expect(validChannelCommand(create)).toBe(true);
-  const child = (description) => ({
-    ...create,
-    tags: create.tags.map((tag) =>
-      tag[0] === "about" ? ["about", description] : tag,
-    ),
-  });
-  expect(
-    validChannelCommand(child(`Buzz session (buzz.sessions/v1)\nparent:${id}`)),
-  ).toBe(true);
-  for (const parent of ["invalid", `${id}\nrole:owner`, `${id}extra`]) {
+  for (const about of [
+    "Buzz session (buzz.sessions/v1)",
+    "Buzz session (buzz.sessions/v1)\npersonal",
+    `Buzz session (buzz.sessions/v1)\nparent:${id}`,
+  ])
     expect(
-      validChannelCommand(
-        child(`Buzz session (buzz.sessions/v1)\nparent:${parent}`),
-      ),
+      validChannelCommand({
+        ...create,
+        tags: [...create.tags.slice(0, 4), ["about", about], create.tags[4]],
+      }),
     ).toBe(false);
-  }
   for (const [index, value] of [
     [3, "dm"],
     [1, " "],
@@ -107,7 +102,7 @@ it("preserves strict Sessions metadata while allowing ordinary stream visibility
     validChannelCommand({
       ...create,
       tags: create.tags.map((tag, i) =>
-        i === 4 ? [tag[0], "Buzz session (forged)"] : tag,
+        i === 4 ? ["about", "Buzz session (forged)"] : tag,
       ),
     }),
   ).toBe(false);
@@ -208,7 +203,7 @@ it("rejects every truncated mandatory creation-tag prefix", () => {
     ).toBe(false);
 });
 
-it("allows standalone lifetime but rejects parent-linked and malformed creation TTL", () => {
+it("allows a Solo lifetime but rejects malformed creation TTL", () => {
   const create = {
     kind: 9007,
     created_at: 1,
@@ -218,8 +213,8 @@ it("allows standalone lifetime but rejects parent-linked and malformed creation 
       ["name", "Work"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      ["about", "Buzz session (buzz.sessions/v1)"],
       ["ttl", "604800"],
+      ["t", "buzz.solo"],
     ],
   };
   expect(validChannelCommand(create)).toBe(true);
@@ -227,19 +222,9 @@ it("allows standalone lifetime but rejects parent-linked and malformed creation 
     expect(
       validChannelCommand({
         ...create,
-        tags: [...create.tags.slice(0, -1), ["ttl", ttl]],
+        tags: [...create.tags.slice(0, 4), ["ttl", ttl], create.tags[5]],
       }),
     ).toBe(false);
-  expect(
-    validChannelCommand({
-      ...create,
-      tags: create.tags.map((tag) =>
-        tag[0] === "about"
-          ? ["about", `Buzz session (buzz.sessions/v1)\nparent:${id}`]
-          : tag,
-      ),
-    }),
-  ).toBe(false);
 });
 
 it("rejects plugin placement metadata in channel creation", () => {
@@ -320,26 +305,23 @@ it("admits NIP-CL labels at the end of a channel creation, before the client id"
     expect(validChannelCommand(create(labels))).toBe(false);
 });
 
-it("preserves legacy creation metadata and rejects metadata rewrites at the details boundary", () => {
-  for (const [key, accepted] of [
-    ["accepted", true],
-    ["rejected", false],
-  ])
-    for (const row of cases[key]) {
-      const create = {
-        kind: 9007,
-        created_at: 1,
-        content: "",
-        tags: [
-          ["h", id],
-          ["name", row.name],
-          ["visibility", "private"],
-          ["channel_type", "stream"],
-          ["about", row.about],
-        ],
-      };
-      expect(validChannelCommand(create), row.about).toBe(accepted);
-      const edit = {
+it("refuses the retired session marker at the creation and details boundaries", () => {
+  for (const row of [...cases.accepted, ...cases.rejected]) {
+    const create = {
+      kind: 9007,
+      created_at: 1,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", row.name],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ["about", row.about],
+      ],
+    };
+    expect(validChannelCommand(create), row.about).toBe(false);
+    expect(() =>
+      validateDetailsTemplate({
         ...create,
         kind: 9002,
         tags: [
@@ -347,23 +329,7 @@ it("preserves legacy creation metadata and rejects metadata rewrites at the deta
           ["name", row.name],
           ["about", row.about],
         ],
-      };
-      expect(() => validateDetailsTemplate(edit)).toThrow();
-      if (accepted) {
-        for (const tail of [
-          ["visibility", "open"],
-          ["t", "for-you"],
-          ["t", ""],
-        ])
-          expect(() =>
-            validateDetailsTemplate({ ...edit, tags: [...edit.tags, tail] }),
-          ).toThrow();
-        expect(() =>
-          validateDetailsTemplate({
-            ...edit,
-            tags: [...edit.tags, ["ttl", ""]],
-          }),
-        ).toThrow();
-      }
-    }
+      }),
+    ).toThrow();
+  }
 });

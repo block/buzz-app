@@ -18,7 +18,7 @@ import {
   useSessionConversions,
   type SessionConversion,
 } from "./conversion";
-import { sessionMetadata } from "../sessions/metadata";
+import { SOLO_LABEL, soloLabels } from "../sessions/metadata";
 import { applySharedChannelDetails } from "./share";
 
 /** Presentation gating only; fresh signed details authorize the actual write. */
@@ -30,17 +30,17 @@ export function canConvertToChannel(
     session.channelDetails?.available &&
     channel &&
     (channel.channelType === "session" ||
-      !!sessionConversion(session, channel.id) ||
-      (channel.channelType === "stream" &&
-        session.soloPlacement.has(channel.id))) &&
-    !channel.parentChannelId &&
+      !!sessionConversion(session, channel.id)) &&
     !channel.cached &&
     !channel.readOnly &&
     !channel.archived
   );
 }
 
-/** Confirm metadata, remove this viewer’s Me placement, then hand off navigation. */
+const withoutSolo = (labels: readonly string[] | undefined) =>
+  (labels ?? []).filter((label) => label !== SOLO_LABEL);
+
+/** Clear the Solo label, drop the chat's project filing, then hand off navigation. */
 export function ConvertToChannel({
   session,
   id,
@@ -59,10 +59,6 @@ export function ConvertToChannel({
   const details = session.channelDetails;
   const sharing = useSessionShareAttempts(session).has(id);
   const receipt = useSessionConversions(session).get(id);
-  const placement = useSyncExternalStore(
-    session.soloPlacement.subscribe,
-    session.soloPlacement.snapshot,
-  );
   const converted = !!receipt?.converted;
   const notify = useToastNotification();
   const attempt = useSyncExternalStore(details.subscribe, () =>
@@ -76,38 +72,31 @@ export function ConvertToChannel({
   const [visibility, setVisibility] = useState<"private" | "public">("private");
   const lifetime = useRef<AbortController | undefined>(undefined);
   const pending = useRef(false);
-  const metadata = base && sessionMetadata(base.description);
   const conversionAttempt =
-    attempt?.draft.description === "" ? attempt : undefined;
+    attempt?.draft.labels && !soloLabels(attempt.draft.labels)
+      ? attempt
+      : undefined;
   const matchingAttempt = !!(
     base &&
-    conversionAttempt &&
+    conversionAttempt?.draft.labels &&
     conversionAttempt.draft.name === base.name &&
+    conversionAttempt.draft.description === base.description &&
     conversionAttempt.draft.ttlSeconds === base.ttlSeconds &&
-    (conversionAttempt.draft.labels === undefined ||
-      sameLabels(conversionAttempt.draft.labels, base.labels ?? [])) &&
-    (base.description === "" || (metadata && !metadata.parentId))
+    sameLabels(conversionAttempt.draft.labels, withoutSolo(base.labels))
   );
-  const eligible = !!base?.canEdit && !!metadata && !metadata.parentId;
-  const removalOnly =
-    !!receipt?.removalOnly ||
-    (!receipt &&
-      !!base &&
-      !metadata &&
-      placement.status === "ready" &&
-      session.soloPlacement.has(id));
+  const eligible = !!base?.canEdit && soloLabels(base.labels);
   // Another details surface may have confirmed the same publication and retired
   // its receipt. Require fresh exact intent evidence, not absence of an attempt.
   const confirmedElsewhere = !!(
     base &&
     receipt &&
     !attempt &&
-    base.description === receipt.draft.description &&
+    !soloLabels(base.labels) &&
     base.name === receipt.draft.name &&
     base.visibility === receipt.draft.visibility &&
     base.ttlSeconds === receipt.draft.ttlSeconds
   );
-  const canFinish = converted || confirmedElsewhere || removalOnly;
+  const canFinish = converted || confirmedElsewhere;
   // Uncertain intent belongs to the details owner, including the chosen privacy.
   const selectedVisibility =
     receipt?.draft.visibility ??
@@ -175,41 +164,27 @@ export function ConvertToChannel({
           throw new Error(
             "Finish sharing or choose Start over before converting.",
           );
-        if (!session.soloPlacement.available)
-          throw new Error(
-            "Solo placement is unavailable on this connection. Try conversion on a supported connection.",
-          );
         if (!base && !receipt) return;
         exact = sessionConversion(session, id) ?? {
           draft: {
             name: base?.name ?? "",
-            description: "",
+            description: base?.description ?? "",
             visibility: selectedVisibility,
             ttlSeconds: base?.ttlSeconds,
+            labels: withoutSolo(base?.labels),
           },
-          ...(removalOnly ? { removalOnly: true } : {}),
         };
         exact.running = true;
         updateSessionConversion(session, id, exact);
         if (!exact.converted) {
-          // Establish that Me can be read before changing the channel. The
-          // preference owner refreshes again when removing, never overwrites blind.
-          await session.soloPlacement.refresh();
-          active.throwIfAborted();
-          if (session.soloPlacement.snapshot().status !== "ready")
-            throw new Error(
-              "Solo placement could not be read. Retry before converting.",
-            );
           if (action === "check") await details.check(id, active);
           else if (action === "finish") {
             const fresh = await details.load(id, active);
             if (
-              exact.removalOnly
-                ? !!sessionMetadata(fresh.description)
-                : fresh.description !== exact.draft.description ||
-                  fresh.name !== exact.draft.name ||
-                  fresh.visibility !== exact.draft.visibility ||
-                  fresh.ttlSeconds !== exact.draft.ttlSeconds
+              soloLabels(fresh.labels) ||
+              fresh.name !== exact.draft.name ||
+              fresh.visibility !== exact.draft.visibility ||
+              fresh.ttlSeconds !== exact.draft.ttlSeconds
             )
               throw new Error(
                 "Channel settings changed. Reload details before continuing.",
@@ -226,19 +201,23 @@ export function ConvertToChannel({
           updateSessionConversion(session, id, exact);
         }
         active.throwIfAborted();
-        await session.soloPlacement.set(id, false, { signal: active });
-        active.throwIfAborted();
-        if (
-          session.soloPlacement.snapshot().status !== "ready" ||
-          session.soloPlacement.has(id)
-        )
-          throw new Error("Removal from Solo could not be confirmed.");
+        // A channel is no longer filed in a Solo project.
+        const projects = session.soloPreferences;
+        if (projects.snapshot().status !== "unsupported") {
+          await projects.refresh();
+          active.throwIfAborted();
+          const filing = projects.snapshot();
+          if (filing.status !== "ready")
+            throw new Error(
+              filing.error ?? "Solo projects could not be read. Try again.",
+            );
+          if (filing.data?.assignments[id])
+            await projects.assign(id, undefined);
+          active.throwIfAborted();
+        }
         updateSessionConversion(session, id, undefined);
         if (!active.aborted) {
-          notify(
-            exact.removalOnly ? "Moved to Team." : "Converted to channel.",
-            "success",
-          );
+          notify("Converted to channel.", "success");
           completed.current = true;
           setOpen(false);
         }
@@ -270,12 +249,8 @@ export function ConvertToChannel({
         close();
         if (completed.current && !signal?.aborted) onConverted?.();
       }}
-      title={removalOnly ? "Move to Team" : "Convert to channel"}
-      description={
-        removalOnly
-          ? "Remove this conversation from Solo and open it in Team. Channel settings, history and members stay the same."
-          : "Move this conversation from Solo to Team. History, Canvas, members and lifetime stay the same."
-      }
+      title="Convert to channel"
+      description="Move this conversation from Solo to Team. History, Canvas, members and lifetime stay the same."
       onOpenChange={(open) => {
         if (!open) setOpen(false);
       }}
@@ -292,7 +267,7 @@ export function ConvertToChannel({
               disabled={busy || !!receipt?.running || !!signal?.aborted}
               onClick={() => void run("finish")}
             >
-              {removalOnly ? "Move to Team" : "Finish conversion"}
+              Finish conversion
             </Button>
           ) : attempt?.status === "unconfirmed" && matchingAttempt ? (
             <Button
@@ -320,40 +295,39 @@ export function ConvertToChannel({
         </>
       }
     >
-      {!removalOnly && (
-        <Field label="Visibility" nativeLabel={false}>
-          <RadioGroup
-            aria-label="Visibility"
-            value={selectedVisibility}
-            disabled={
-              busy ||
-              converted ||
-              !!receipt?.running ||
-              sharing ||
-              !!attempt ||
-              !eligible ||
-              !!signal?.aborted
-            }
-            onValueChange={(value) => {
-              if (value === "private" || value === "public")
-                setVisibility(value);
-            }}
-          >
-            <Radio
-              value="private"
-              label="Private"
-              description="Only channel members will have access."
-            />
-            <Radio
-              value="public"
-              label="Public"
-              description="Everyone in this community will be able to view this channel’s full history."
-            />
-          </RadioGroup>
-        </Field>
-      )}
-      {converted && !removalOnly && (
-        <p role="status">Channel converted. Finish removing it from Solo.</p>
+      <Field label="Visibility" nativeLabel={false}>
+        <RadioGroup
+          aria-label="Visibility"
+          value={selectedVisibility}
+          disabled={
+            busy ||
+            converted ||
+            !!receipt?.running ||
+            sharing ||
+            !!attempt ||
+            !eligible ||
+            !!signal?.aborted
+          }
+          onValueChange={(value) => {
+            if (value === "private" || value === "public") setVisibility(value);
+          }}
+        >
+          <Radio
+            value="private"
+            label="Private"
+            description="Only channel members will have access."
+          />
+          <Radio
+            value="public"
+            label="Public"
+            description="Everyone in this community will be able to view this channel’s full history."
+          />
+        </RadioGroup>
+      </Field>
+      {converted && (
+        <p role="status">
+          Channel converted. Finish removing it from its Solo project.
+        </p>
       )}
       {sharing && !converted && (
         <p role="status">
@@ -365,7 +339,7 @@ export function ConvertToChannel({
         <p role="status">You don’t have permission to convert this chat.</p>
       )}
       {base?.canEdit && !eligible && !matchingAttempt && !canFinish && (
-        <p role="status">Only a standalone session can be converted.</p>
+        <p role="status">Only a Solo chat can be converted.</p>
       )}
       {attempt && !matchingAttempt && !converted && (
         <p role="status">

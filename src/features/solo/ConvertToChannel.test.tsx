@@ -13,7 +13,7 @@ import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { createChannelDetails } from "../relay/channel-details";
 import { createRelaySession } from "../relay/session";
 import { PublishRejected } from "../relay/outbox";
-import { sessionDescription } from "../sessions/metadata";
+import { SOLO_LABEL } from "../sessions/metadata";
 import { beginSessionShare, finishSessionShare } from "./share-attempt";
 import { sessionConversion } from "./conversion";
 import { ConvertToChannel, canConvertToChannel } from "./ConvertToChannel";
@@ -28,13 +28,12 @@ afterEach(() => {
   cleanup();
   for (const close of dispose.splice(0)) close();
 });
-function setup(description = sessionDescription()) {
+function setup(solo = true) {
   let clock = 100,
     role = "owner",
     name = "Original",
-    about = description,
     visibility = "private";
-  let labels = ["work"];
+  let labels = solo ? [SOLO_LABEL, "work"] : ["work"];
   const record = (kind: number, tags: string[][]) =>
     finalizeEvent(
       { kind, tags: [["d", id], ...tags], content: "", created_at: clock },
@@ -43,7 +42,7 @@ function setup(description = sessionDescription()) {
   const metadata = () =>
     record(39000, [
       ["name", name],
-      ["about", about],
+      ["about", "Notes"],
       ["t", "stream"],
       ...labels.map((label) => ["t", label]),
       [visibility],
@@ -58,7 +57,10 @@ function setup(description = sessionDescription()) {
     finalizeEvent(structuredClone(template), key),
   );
   const publish = vi.fn(async (event: import("../relay/events").RelayEvent) => {
-    about = "";
+    const written = event.tags.flatMap(([tag, value]) =>
+      tag === "t" && value !== undefined ? [value] : [],
+    );
+    if (written.length) labels = written.filter(Boolean);
     const choice = event.tags.find(([tag]) => tag === "visibility")?.[1];
     if (choice) visibility = choice === "open" ? "public" : "private";
     clock++;
@@ -74,31 +76,31 @@ function setup(description = sessionDescription()) {
   });
   const owner = createRelaySession(null);
   dispose.push(details.dispose, owner.dispose);
-  let placed = true;
-  const placementState = {
-    ...owner.session.soloPlacement.snapshot(),
+  const projects = (assignments: Record<string, string>) => ({
     status: "ready" as const,
-  };
-  const placementSet = vi.fn(
-    async (
-      _id: string,
-      _personal: boolean,
-      _options?: { signal?: AbortSignal },
-    ) => {
-      placed = false;
+    data: {
+      sections: [{ id: "g", name: "Project", order: 0 }],
+      assignments,
+      starred: [],
+      muted: [],
     },
-  );
-  const placementRefresh = vi.fn(async () => {});
+  });
+  const filedProjects = projects({ [id]: "g" });
+  const unfiledProjects = projects({});
+  let filed = true;
+  const unfile = vi.fn(async (_id: string, _sectionId?: string) => {
+    filed = false;
+    return { sections: [], assignments: {}, starred: [], muted: [] };
+  });
+  const projectsRefresh = vi.fn(async () => {});
   const session = {
     ...owner.session,
     channelDetails: details.capability,
-    soloPlacement: {
-      ...owner.session.soloPlacement,
-      available: true,
-      snapshot: () => placementState,
-      refresh: placementRefresh,
-      has: () => placed,
-      set: placementSet,
+    soloPreferences: {
+      ...owner.session.soloPreferences,
+      snapshot: () => (filed ? filedProjects : unfiledProjects),
+      refresh: projectsRefresh,
+      assign: unfile,
     },
   };
   const close = vi.fn();
@@ -117,11 +119,8 @@ function setup(description = sessionDescription()) {
     session,
     close,
     convertedCallback: converted,
-    placementSet,
-    placementRefresh,
-    removePlacement: () => {
-      placed = false;
-    },
+    unfile,
+    projectsRefresh,
     read,
     sign,
     publish,
@@ -132,7 +131,7 @@ function setup(description = sessionDescription()) {
       role = next;
     },
     relabel: () => {
-      labels = ["updated"];
+      labels = [...labels, "updated"];
       clock++;
     },
     rename: () => {
@@ -140,7 +139,7 @@ function setup(description = sessionDescription()) {
       clock++;
     },
     converted: (next = "private") => {
-      about = "";
+      labels = labels.filter((label) => label !== SOLO_LABEL);
       visibility = next;
       clock++;
     },
@@ -176,12 +175,10 @@ it.each(["private", "public"])(
     fireEvent.click(confirm());
     await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
     expect(h.publish).toHaveBeenCalledOnce();
-    expect(h.placementSet).toHaveBeenCalledExactlyOnceWith(id, false, {
-      signal: expect.any(AbortSignal),
-    });
+    expect(h.unfile).toHaveBeenCalledExactlyOnceWith(id, undefined);
     expect(h.convertedCallback).toHaveBeenCalledOnce();
     expect(h.publish.mock.invocationCallOrder[0]).toBeLessThan(
-      h.placementSet.mock.invocationCallOrder[0] ?? 0,
+      h.unfile.mock.invocationCallOrder[0] ?? 0,
     );
     expect(sessionConversion(h.session, id)).toBeUndefined();
     const event = h.sign.mock.calls[0]?.[0];
@@ -189,13 +186,14 @@ it.each(["private", "public"])(
     expect(event?.tags).toEqual([
       ["h", id],
       ["name", "Original"],
-      ["about", ""],
+      ["about", "Notes"],
       ...(visibility === "public" ? [["visibility", "open"]] : []),
+      ["t", "work"],
     ]);
     const saved = await h.details.capability.load(id);
     expect(saved).toMatchObject({
       name: "Original",
-      description: "",
+      description: "Notes",
       visibility,
       ttlSeconds: 86400,
       labels: ["work"],
@@ -223,9 +221,7 @@ it.each(["authority", "conflict"])(
     fireEvent.click(confirm());
     await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
     expect(h.publish).toHaveBeenCalledOnce();
-    expect(h.sign.mock.calls[0]?.[0].tags.some(([tag]) => tag === "t")).toBe(
-      false,
-    );
+    expect(h.sign.mock.calls[0]?.[0].tags).toContainEqual(["t", "work"]);
     expect((await h.details.capability.load(id)).labels).toEqual(["work"]);
   },
 );
@@ -313,46 +309,24 @@ it.each(
     expect(h.publish).toHaveBeenCalledOnce();
   },
 );
-it("conversion preserves independently changed labels without publishing a label edit", async () => {
+it("an independent label change before conversion asks for a reload", async () => {
   const h = setup();
   await ready();
   h.relabel();
   fireEvent.click(confirm());
+  expect(await screen.findByRole("alert")).toHaveTextContent("changed");
+  expect(h.publish).not.toHaveBeenCalled();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Reload session details" }),
+  );
+  await ready();
+  fireEvent.click(confirm());
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
-  expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
-    ["h", id],
-    ["name", "Original"],
-    ["about", ""],
+  expect((await h.details.capability.load(id)).labels).toEqual([
+    "work",
+    "updated",
   ]);
-  expect((await h.details.capability.load(id)).labels).toEqual(["updated"]);
 });
-
-it.each([false, true])(
-  "uncertain conversion recovers after an independent label change, remount=%s",
-  async (remount) => {
-    const h = setup();
-    h.publish.mockRejectedValueOnce(new Error("lost acknowledgement"));
-    await ready();
-    fireEvent.click(confirm());
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "may have been saved",
-    );
-    h.converted();
-    h.relabel();
-    if (remount) {
-      h.mounted.unmount();
-      render(<ConvertToChannel session={h.session} id={id} close={h.close} />);
-    }
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Check status" }),
-    );
-    await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
-    expect(h.details.capability.snapshot(id)).toBeUndefined();
-    expect(h.sign).toHaveBeenCalledOnce();
-    expect(h.publish).toHaveBeenCalledOnce();
-    expect((await h.details.capability.load(id)).labels).toEqual(["updated"]);
-  },
-);
 
 it("definitive rejection permits explicit retry without losing the confirmation", async () => {
   const h = setup();
@@ -365,10 +339,10 @@ it("definitive rejection permits explicit retry without losing the confirmation"
   await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
   expect(h.publish).toHaveBeenCalledTimes(2);
 });
-it("parent-linked session cannot convert", async () => {
-  const h = setup(sessionDescription("22222222-2222-4222-8222-222222222222"));
+it("a chat without the Solo label cannot convert", async () => {
+  const h = setup(false);
   await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent("permission"),
+    expect(screen.getByRole("status")).toHaveTextContent("Only a Solo chat"),
   );
   expect(confirm()).toBeDisabled();
   expect(h.publish).not.toHaveBeenCalled();
@@ -453,15 +427,15 @@ it("blocks an already open conversion while a share remains pending and recovers
 });
 
 it.each([false, true])(
-  "retries only Me removal after confirmed conversion, remount=%s",
+  "retries only project unfiling after confirmed conversion, remount=%s",
   async (remount) => {
     const h = setup();
-    h.placementSet.mockRejectedValueOnce(new Error("Me save unavailable"));
+    h.unfile.mockRejectedValueOnce(new Error("Projects save unavailable"));
     await ready();
     fireEvent.click(screen.getByRole("radio", { name: "Public" }));
     fireEvent.click(confirm());
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Me save unavailable",
+      "Projects save unavailable",
     );
     expect(sessionConversion(h.session, id)?.converted).toBe(true);
     expect(h.convertedCallback).not.toHaveBeenCalled();
@@ -485,43 +459,35 @@ it.each([false, true])(
       );
     }
     expect(
-      screen.getByText("Channel converted. Finish removing it from Solo."),
+      screen.getByText(
+        "Channel converted. Finish removing it from its Solo project.",
+      ),
     ).toBeVisible();
     expect(screen.getByRole("radio", { name: "Public" })).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Finish conversion" }));
     await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
     expect(h.publish).toHaveBeenCalledOnce();
     expect(h.sign).toHaveBeenCalledOnce();
-    expect(h.placementSet).toHaveBeenCalledTimes(2);
+    expect(h.unfile).toHaveBeenCalledTimes(2);
     expect(sessionConversion(h.session, id)).toBeUndefined();
   },
 );
-it("blocks conversion before metadata when Me cannot be read", async () => {
-  const h = setup();
-  h.placementRefresh.mockRejectedValueOnce(new Error("Me read failed"));
-  await ready();
-  fireEvent.click(confirm());
-  expect(await screen.findByRole("alert")).toHaveTextContent("Me read failed");
-  expect(h.publish).not.toHaveBeenCalled();
-  expect(h.placementSet).not.toHaveBeenCalled();
-  expect(sessionConversion(h.session, id)).toBeUndefined();
-});
 it.each(["visit", "unmount"])(
-  "retains converted recovery but suppresses completion after %s during Me removal",
+  "retains converted recovery but suppresses completion after %s during unfiling",
   async (retire) => {
     const h = setup();
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    h.placementSet.mockImplementationOnce(async () => {
+    h.unfile.mockImplementationOnce(async () => {
       await held;
-      h.removePlacement();
+      return { sections: [], assignments: {}, starred: [], muted: [] };
     });
     await ready();
     fireEvent.click(confirm());
     try {
-      await waitFor(() => expect(h.placementSet).toHaveBeenCalledOnce());
+      await waitFor(() => expect(h.unfile).toHaveBeenCalledOnce());
       expect(h.publish).toHaveBeenCalledOnce();
       if (retire === "visit") h.visit.abort();
       else h.mounted.unmount();
@@ -561,22 +527,7 @@ it("finishes removal when another details consumer confirmed the uncertain conve
   );
   await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
   expect(h.publish).toHaveBeenCalledOnce();
-  expect(h.placementSet).toHaveBeenCalledOnce();
-});
-it("offers explicit removal-only recovery for a retained ordinary channel without an in-process receipt", async () => {
-  const h = setup("");
-  expect(sessionConversion(h.session, id)).toBeUndefined();
-  const move = await screen.findByRole("button", {
-    name: "Move to Team",
-  });
-  expect(screen.queryByRole("radio")).toBeNull();
-  fireEvent.click(move);
-  await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
-  expect(h.publish).not.toHaveBeenCalled();
-  expect(h.sign).not.toHaveBeenCalled();
-  expect(h.placementSet).toHaveBeenCalledExactlyOnceWith(id, false, {
-    signal: expect.any(AbortSignal),
-  });
+  expect(h.unfile).toHaveBeenCalledOnce();
 });
 it("serializes conversion completion across two mounted forms", async () => {
   const h = setup();
@@ -585,13 +536,13 @@ it("serializes conversion completion across two mounted forms", async () => {
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  h.placementSet.mockImplementationOnce(async () => {
+  h.unfile.mockImplementationOnce(async () => {
     await held;
-    h.removePlacement();
+    return { sections: [], assignments: {}, starred: [], muted: [] };
   });
   fireEvent.click(confirm());
   try {
-    await waitFor(() => expect(h.placementSet).toHaveBeenCalledOnce());
+    await waitFor(() => expect(h.unfile).toHaveBeenCalledOnce());
     render(<ConvertToChannel session={h.session} id={id} close={vi.fn()} />);
     const finish = screen.getAllByRole("button", {
       name: "Finish conversion",
@@ -603,7 +554,7 @@ it("serializes conversion completion across two mounted forms", async () => {
       fireEvent.click(button);
     }
     expect(h.publish).toHaveBeenCalledOnce();
-    expect(h.placementSet).toHaveBeenCalledOnce();
+    expect(h.unfile).toHaveBeenCalledOnce();
   } finally {
     await act(async () => {
       release();

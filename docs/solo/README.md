@@ -1,57 +1,66 @@
 # Solo
 
-Solo is the owner's private filing of ordinary channels with their agents. It is
-not a separate page, message store or relay-enforced privacy mode: a Solo chat is
-a channel, opened in Messages like any other, and signed channel membership
-remains access authority.
+Solo is a private channel whose only human member is its owner, talking with
+their agents. It is not a separate page, message store or relay-enforced privacy
+mode: a Solo chat is a channel, opened in Messages like any other, and signed
+channel membership remains access authority.
 
 ## Model
 
-- **One conversation page.** Every channel opens as a Messages `conversation`
-  target. A channel carrying the session marker (`channelType: "session"`, from
-  `Buzz session (buzz.sessions/v1)` in its `about`) gets the **Solo treatment**:
-  a flat timeline that loads history on scroll, the agent-tagged composer, Share,
-  the Project control, Chat settings and Chat actions. Other channels are
-  threaded. The marker is the one remaining wire use of "session" for Solo; it
-  can be retired later at the cost of older clients.
-- **Placement decides the sidebar.** The encrypted `groups:me` preference record
-  lists which channels are filed in Solo and in which project. The sidebar's
-  All / Solo / Team filter lists Solo projects and chats above Team's channel
-  sections; it never changes the open conversation. Opening a destination reveals
-  its inventory (from placement, not from the page that opened it) unless the
-  filter is All. Solo is always on.
+- **The `buzz.solo` channel label is the one Solo fact.** It is a NIP-CL label
+  on the private channel's relay metadata, so every member and agent, including
+  remote agents without the owner's encrypted state, reads the same answer.
+  Discovery derives `channelType: "session"` from it alone. A Solo channel gets
+  the flat treatment for everyone: a timeline that loads history on scroll and
+  top-level agent replies. The creator (the relay-written `P`) also gets the
+  owner's treatment: the agent-tagged composer, Share, the Project control, Chat
+  settings and Chat actions. Both come from the channel, in the shared
+  conversation scope (`features/conversation/Conversation.tsx`), so every view
+  of a chat (the main reader or a secondary tab) composes under the same rules.
+  Other channels are threaded. Conversion to a channel clears the label.
+- **The label decides the sidebar.** The viewer's own Solo chats list under Solo;
+  every other channel, including a Solo chat someone shared with them, lists under
+  Team. The sidebar's All / Solo / Team filter lists Solo projects and chats above
+  Team's channel sections; it never changes the open conversation. Opening a
+  destination reveals its inventory unless the filter is All; an unlisted
+  conversation waits for the channel list rather than guess. Solo is always on.
+- **Projects are the only private state.** The encrypted `groups:me` preference
+  record holds Solo projects and which chat is filed in which project. It never
+  decides what is Solo.
 - **Drafts are a Messages route.** A new Solo chat is
   `{ kind: "solo-draft", project?, agent? }` on the Messages page; nothing exists
-  on the relay until the first send. Retired `buzz.me/me`, `buzz.sessions/sessions`
-  and channel `new-session` routes resolve in place to a draft or a conversation.
+  on the relay until the first send. The retired `buzz.me/me`,
+  `buzz.sessions/sessions` and channel `new-session` routes no longer exist.
 - **Projects** are Solo groups. Repositories, pull requests and issues are a
   separate destination (`buzz.repos`), not a container of chats.
 
 Display names ("Solo", "Team", "chat", "project") are presentation; code keys
-behavior on the marker and on placement, so a rename touches copy only.
+behavior on the label, so a rename touches copy only.
 
 ## Current behavior
 
-- Solo placement and groups live in the existing encrypted, account/community-scoped
-  `groups:me` preference record. Messages groups remain independent. Placement is
-  explicit, not inferred from participant count or local agent availability.
-- **Upgrade behavior:** Solo starts empty. Existing sessions, including historical
-  parent-linked sessions, remain standalone Messages rows. There is no automatic
-  migration, membership revocation, nested creation or transcript copy.
+- Solo projects and project filing live in the existing encrypted,
+  account/community-scoped `groups:me` preference record. Messages groups remain
+  independent. Records from before the label also list a `channels` placement
+  array; it is ignored and dropped on the next project write.
+- **Upgrade behavior:** chats created before the label carry only the retired
+  `Buzz session (buzz.sessions/v1)` `about` marker. Nothing reads that marker, so
+  they list under Team as ordinary private channels. There is no automatic
+  migration, membership revocation or transcript copy.
 - Projects are existing Solo projects, and Chats are ordinary private channels. New
   chats use ordinary private channels. The first send freezes the
   draft, channel ID, name, lifetime, Canvas and group defaults in the existing
-  pending-start receipt. Setup and Solo placement must succeed before sending; retries reuse that
-  ID. Draft settings remain local until first send and use Solo's defaults namespace.
-- New Solo conversations add a `personal` line to the session description
-  (`Buzz session (buzz.sessions/v1)`, then optional `parent:<uuid>`, then optional
-  `personal`). It is a routing hint for agents that cannot read the owner's
-  encrypted placement: answer as one channel-scoped, top-level conversation. It is
-  not access authority, and explicit Convert to channel clears it with the rest of the session marker.
-  Conversations created before the hint are not backfilled.
+  pending-start receipt. Setup (Canvas, project filing, agents) must succeed before
+  sending; retries reuse that ID. Draft settings remain local until first send and
+  use Solo's defaults namespace.
+- New Solo chats are created with the `buzz.solo` label and no `about` text, so
+  a relay without NIP-CL labels cannot start one. The label is a routing hint for
+  agents: answer as one channel-scoped, top-level conversation. It is not access
+  authority. The in-app agent harness reads it from the channel list; remote
+  harnesses that only read `about` need to learn the label.
 - **Share** opens the same access dialog from Solo and Messages. This flow
   preserves channel ID, history, Canvas, existing members,
-  session marker, Solo placement and groups. It neither promotes a conversation nor
+  Solo label and project filing. It neither promotes a conversation nor
   navigates to Messages. Empty-selection Done makes no writes; Share’s separate
   bottom-left Convert to channel action opens the explicit visibility confirmation.
   Name and lifetime are not sharing controls.
@@ -108,7 +117,6 @@ behavior on the marker and on placement, so a rename touches copy only.
   recipient can seed its follow-up without modifying or resending signed bytes.
   A blocked Enter submission shows “Tag an agent to send” inline. The project control follows the editor tools on the same rail;
   model/effort controls read the explicitly tagged recipients.
-  Saved placement must load before sending; unavailable evidence is not Messages.
 - Claude Code can name a Solo chat from its own generated session title after its
   first successful turn. Only the first tagged agent on the owner’s original
   message can propose the title, even when a retry has different words or tag
@@ -128,11 +136,10 @@ behavior on the marker and on placement, so a rename touches copy only.
   conversation/tool/panel tabs, pane geometry and tab persistence as any channel.
   Its main timeline is flat and full width. A single working agent's Activity
   indicator opens its profile's Activity tab locally; multiple agents or an
-  unavailable profile retain the chooser. Secondary conversations placed in Solo
-  keep owner-scoped explicit recipients and wait for placement before sending.
-- Until placement has loaded, a session-marked chat is treated as personal: it
-  can be composed but not sent. A ready, unplaced legacy session keeps the flat
-  treatment with the ordinary composer. Routes and placement never grant access.
+  unavailable profile retain the chooser. Secondary conversations of the owner's
+  Solo chat keep the same owner-scoped explicit recipients; nothing waits on the
+  encrypted project record to send. A guest in a shared Solo chat keeps the flat
+  treatment with the ordinary composer. Routes and labels never grant access.
 
 ## Organization, settings and recovery
 
@@ -145,26 +152,24 @@ retaining its independent name and lifetime. Moving
 a saved chat only changes its project assignment. Saved conversation
 settings retain the existing Canvas revision checks and explicit conflict recovery.
 
-Solo uses one bounded 16 KiB recipe record, not unlimited history storage. Admission
-checks its exact serialized size before remote channel creation and again before
-saving placement. A full record keeps the draft. **Convert to channel** is a
-separate, owner/admin-confirmed action for standalone sessions, available from
+Solo projects use one bounded 16 KiB recipe record. Only project assignments
+occupy it, so unfiled chats cost nothing; a full record refuses the filing and
+keeps the chat. **Convert to channel** is a
+separate, owner/admin-confirmed action for Solo chats, available from
 Share and the existing menus. Its Private/Public choice defaults to Private and
 warns that Public exposes the full existing history to the community. It appears
 in Messages with the same ID, history, Canvas, membership, labels and lifetime.
-After confirming metadata, conversion removes the initiating viewer's Solo placement
-and assignment, then opens the channel in Messages. Share alone never does this.
-A partial failure offers removal-only Finish conversion; after restart, an ordinary
-channel still filed in Solo offers explicit Move to Team without another metadata
-edit. The existing preference owner preserves other groups and placements. Conversion
-therefore reclaims this placement/assignment's bytes; it does not compact other records.
-Admission is not a reservation: another device can fill the record between those
-steps. Deleted/archived placements can still consume capacity. No cross-device
-atomicity, automatic compaction or new multi-record storage protocol is claimed.
+Conversion is one signed details edit that clears `buzz.solo` (keeping any other
+labels) and applies the chosen visibility; the chat moves to Team for everyone.
+It then removes the chat's project assignment, if any, and opens the channel in
+Messages. Share alone never does this. If unfiling fails, Finish conversion
+retries only that step. The existing preference owner preserves other projects
+and assignments. Deleted/archived chats can still hold an assignment. No
+cross-device atomicity, automatic compaction or new storage protocol is claimed.
 
 Share attempts retain in-process intent plus durable per-operation Outbox receipts,
 not a persisted composite transaction. Start over forgets settled choices, not
-submitted operations, confirmed access or Solo placement.
+submitted operations, confirmed access or project filing.
 An interrupted link can be retried by its exact ID in Outbox; confirmed delivery
 can be removed there before sharing to the same destination again. Unknown
 receipts remain protected. Whole-share intent does not survive an app restart.
@@ -181,7 +186,7 @@ asynchronous setup begins and sent as the third `workSessions.create` argument.
 Retries reuse the saved creation event ID: no second creation or create-then-edit.
 Local settings now store name, Canvas and lifetime together; old Canvas-only strings
 still load. Invalid stored durations are visible failures, not implicit Ongoing.
-Setup, Solo placement, and first-message ordering retain their existing owners.
+Setup and first-message ordering retain their existing owners.
 
 The **Chat settings** gear in the header opens the form directly; saved-session
 row menus retain **Chat settings…** alongside their other actions. Both open one
@@ -190,8 +195,8 @@ scrollable dialog, with **Chat name** above Workspace/Canvas
 **Lifetime** below it, and one **Save changes** action. The separate Rename editor
 and menu action have been removed. There is no separate lifetime menu or tab.
 Changed Canvas confirms first, then changed name/lifetime use one fresh signed
-channel-details operation. The session marker, privacy, history, membership and
-Solo placement remain unchanged. A no-op closes without writing. If details fail
+channel-details operation. The Solo label, privacy, history, membership and
+project filing remain unchanged. A no-op closes without writing. If details fail
 after Canvas confirms, the dialog keeps the choices
 and retry skips that confirmed Canvas revision. Partial confirmation is explained
 as an error, not presented as two independent normal save states.
@@ -200,7 +205,7 @@ Conflicts require explicit Reload while retaining the selected lifetime; an
 unconfirmed save survives modal remount and relabels the single primary action
 **Check save status**, without republishing or implicitly saving other draft
 changes. Workspace drafts keep their existing revision and conflict recovery.
-Section defaults are unchanged; parent-linked sessions have no lifetime section.
+Section defaults are unchanged; a chat without the Solo label has no lifetime section.
 Archived, cached, read-only or unauthorized lifetime writes remain excluded or
 denied by signed details. Canvas/lifetime capabilities can be independently
 unavailable; a failed read never sends an inferred default lifetime.
@@ -211,16 +216,14 @@ internal preparation or already dispatched write. No atomic rollback or composit
 app-restart journal is added. Native GUI, packaged/live-relay and renewed human
 acceptance remain separate gates.
 
-The session edit wire command is `h,name[,ttl][,t…]`; trailing `t` tags preserve
-existing channel labels and record a chosen name as described below. It never rewrites `about`,
-so the legacy session marker and optional parent/personal lines stay unchanged.
+Solo settings use the ordinary details command `h,name,about[,ttl][,t…]`. A
+chosen name sends the full label set, keeping `buzz.solo` and any other labels.
 Unchanged lifetime omits `ttl`; a changed positive canonical decimal
-(1–2147483647) sets it, and an empty value removes it. Lifetime-only changes
-omit `about`; session settings always omit visibility. Creation permits positive
-TTL only for an ordinary channel or the exact standalone session marker, never a
-parent-linked marker; empty creation TTL is rejected. Browser and native signing
-and publish guards enforce this syntax independently. The host grammar cannot
-prove parent ancestry; the shared fresh-details owner remains edit authority.
+(1–2147483647) sets it, and an empty value removes it. Settings always omit
+visibility. Creation permits a positive TTL; empty creation TTL is rejected.
+Browser and native signing and publish guards enforce this syntax independently,
+and the browser guard refuses any `about` that contains `Buzz session (`. The
+shared fresh-details owner remains edit authority.
 
 ## Optional naming
 
@@ -232,15 +235,12 @@ retries do not change it when prompt or local settings change.
 Old Canvas-only settings and pending receipts still load without a migration or
 another creation/rename operation.
 
-New session `about` metadata uses only the existing marker, optional parent line,
-and the `personal` line for Solo chats, exactly as recognized by older Buzz clients.
-Custom creation and subsequent renames do not append a `naming:` extension.
-Name/lifetime edits leave that metadata unchanged; only explicit Convert to channel
-clears `personal`. Chosen names are recorded using the existing NIP-CL channel label
+Name/lifetime edits keep the Solo label; only explicit Convert to channel clears
+it. Chosen names are recorded using the existing NIP-CL channel label
 `buzz.session.named`, added on explicitly named creation or an actual saved name
 change. Existing labels are preserved. This requires relay channel-label support;
 unsupported chosen-name writes fail before signing. Automatic-name reset remains
-deferred. Older sessions without this marker use a short ID in shared cards until
+deferred. Older sessions without this label use a short ID in shared cards until
 a name change records the chosen name; the app does not infer provenance from a
 prompt or historical title.
 Clearing a saved name silently preserves the last confirmed title without a name
@@ -251,16 +251,12 @@ one body scrollport and no reserved bottom area. The title and actions stay visi
 in ordinary short windows. If enlarged controls cannot fit, the outer dialog also
 scrolls, retaining space for a complete body control and pointer access to actions.
 Name, Project folders, Canvas and Lifetime use consistent 32px section spacing;
-labels sit 8px above their controls. Parent-linked sessions retain their existing
-details-write exclusion.
+labels sit 8px above their controls.
 
 Naming uses the existing fresh signed authority/version check and exact full details
 readback. Conflicts retain input for explicit Reload; an uncertain name/lifetime save
-is checked without republishing or implicitly saving newer Canvas drafts. Browser
-and native guards consume a shared legacy-metadata contract fixture, accepting only
-the existing marker/parent/personal grammar for creation and rejecting extensions.
-The parser remains identical to the pre-feature parser. Source compatibility and
-synthetic signed create/rename/readback coverage are not live cross-version-client
+is checked without republishing or implicitly saving newer Canvas drafts.
+Synthetic signed create/rename/readback coverage is not live cross-version-client
 acceptance.
 
 Generated sharing messages use `[Session: <chosen name or short ID>](buzz://channel/<id>)`.
@@ -282,11 +278,11 @@ remain owned by the original message. Navigation and access rules are unchanged.
 `src/bundled/channels/ChannelsPage.tsx` owns every conversation, including the
 Solo treatment (`SoloHeading`, `SoloShare`) and drafts; `SoloSections` and
 `features/channel-navigation/SoloInventory.tsx` own the Solo half of
-`app/shell/PrimarySidebar.tsx`. Drafting, settings, sharing, conversion and
-placement live in `src/features/solo`; Solo preferences use
+`app/shell/PrimarySidebar.tsx`. Drafting, settings, sharing and conversion live
+in `src/features/solo`; Solo projects use
 `src/features/relay/solo-preferences.ts` and the existing recipe capability.
-`src/features/sessions` keeps the session wire marker (`metadata.ts`, shared with
-the Rust and browser-host signers) and shared agent sessions. Existing channel,
+`src/features/sessions/metadata.ts` owns the Solo label (`SOLO_LABEL`,
+`soloLabels`, `ownSolo`); `src/features/sessions` also keeps shared agent sessions. Existing channel,
 membership, signing and Outbox owners retain their authority.
 
 Colocated tests cover admission, frozen defaults, navigation lifetime and recovery;
@@ -299,4 +295,3 @@ Human testing, packaged/native GUI, live relay, cross-account, no-wake and hoste
 CI acceptance remain separate. Narrow enlarged-text footer clipping/wrapping
 remains a presentation limitation; center hit testing and Tab reachability are
 not complete visual acceptance.
-

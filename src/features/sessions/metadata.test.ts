@@ -1,16 +1,18 @@
 import { expect, it } from "vitest";
 import {
-  SESSION_CHANNEL_DESCRIPTION,
-  sessionDescription,
-  sessionMetadata,
+  ownSolo,
   SESSION_NAMED_LABEL,
+  SOLO_LABEL,
   sessionLinkName,
+  soloLabels,
 } from "./metadata";
 
-const parent = "22222222-2222-4222-8222-222222222222";
+const id = "22222222-2222-4222-8222-222222222222";
+const owner = "a".repeat(64);
+const guest = "b".repeat(64);
 
 it("shares IDs until a chosen name is recorded, never an automatic first prompt", () => {
-  const channel = { id: parent, name: "Private first prompt" };
+  const channel = { id, name: "Private first prompt" };
   expect(sessionLinkName(channel)).toBe("22222222");
   expect(sessionLinkName({ ...channel, labels: ["work"] })).toBe("22222222");
   expect(
@@ -22,62 +24,20 @@ it("shares IDs until a chosen name is recorded, never an automatic first prompt"
   ).toBe("PR 45 fixes");
 });
 
-it("retains the exact legacy marker, parent and personal grammar", () => {
-  expect(sessionMetadata(sessionDescription())).toEqual({});
-  expect(sessionMetadata(sessionDescription(parent))).toEqual({
-    parentId: parent,
-  });
-  expect(sessionMetadata(sessionDescription(undefined, true))).toEqual({
-    personal: true,
-  });
-  expect(sessionMetadata(sessionDescription(parent, true))).toEqual({
-    parentId: parent,
-    personal: true,
-  });
-  expect(sessionDescription(undefined, true)).toBe(
-    `${SESSION_CHANNEL_DESCRIPTION}\npersonal`,
-  );
+it("marks Solo only with its channel label", () => {
+  expect(soloLabels([SOLO_LABEL])).toBe(true);
+  expect(soloLabels([SESSION_NAMED_LABEL, SOLO_LABEL])).toBe(true);
+  expect(soloLabels([SESSION_NAMED_LABEL])).toBe(false);
+  expect(soloLabels([])).toBe(false);
+  expect(soloLabels(undefined)).toBe(false);
 });
 
-it.each([
-  '{"automatic":"First prompt","explicit":true}',
-  '{"automatic":"First prompt","explicit":false}',
-  '{"explicit":true}',
-  '{"explicit":false}',
-  '{"automatic":"","explicit":false}',
-  '{"automatic":null,"explicit":true}',
-  '{"automatic":"#name","explicit":true}',
-  '{"automatic":"name ","explicit":false}',
-  '{"automatic":"name","explicit":"true"}',
-  '{"automatic":"name","explicit":true,"extra":1}',
-  '{"explicit":true,"automatic":"name"}',
-  '{"automatic":"name","automatic":"name","explicit":true}',
-  JSON.stringify({ automatic: "a".repeat(81), explicit: true }),
-])(
-  "rejects deferred naming extensions, including malformed evidence %s",
-  (json) => {
-    expect(
-      sessionMetadata(`${sessionDescription()}\nnaming:${json}`),
-    ).toBeUndefined();
-  },
-);
-
-it("rejects extra lines and malformed ancestry without changing legacy recognition", () => {
-  for (const description of [
-    undefined,
-    "",
-    "Buzz session (notes)",
-    `${SESSION_CHANNEL_DESCRIPTION}\n`,
-    `${SESSION_CHANNEL_DESCRIPTION}\nparent:`,
-    `${SESSION_CHANNEL_DESCRIPTION}\nparent:not-a-uuid`,
-    `${SESSION_CHANNEL_DESCRIPTION}\npersonal\nparent:${parent}`,
-    `${SESSION_CHANNEL_DESCRIPTION}\npersonal\npersonal`,
-    `${SESSION_CHANNEL_DESCRIPTION}\nPersonal`,
-    `${SESSION_CHANNEL_DESCRIPTION}\nme`,
-    ` ${SESSION_CHANNEL_DESCRIPTION}`,
-  ])
-    expect(sessionMetadata(description)).toBeUndefined();
-  expect(
-    sessionMetadata(`${sessionDescription()}\nnaming:{"explicit":true}\nextra`),
-  ).toBeUndefined();
+it("files a Solo chat as the viewer's own only when they created it", () => {
+  const solo = { channelType: "session", creator: owner };
+  expect(ownSolo(solo, owner)).toBe(true);
+  expect(ownSolo(solo, guest)).toBe(false);
+  expect(ownSolo(solo, undefined)).toBe(false);
+  expect(ownSolo({ channelType: "session" }, owner)).toBe(false);
+  expect(ownSolo({ channelType: "stream", creator: owner }, owner)).toBe(false);
+  expect(ownSolo(undefined, owner)).toBe(false);
 });

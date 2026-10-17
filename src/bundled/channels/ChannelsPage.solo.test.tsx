@@ -23,13 +23,8 @@ import {
   conversationTarget,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import type { KitEntry } from "../../features/channel-templates/model";
 import { writeView } from "../../shared/view-state";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
-
-type KitSnapshot = ReturnType<
-  ReturnType<typeof createRelaySession>["session"]["soloPlacement"]["snapshot"]
->;
 
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -44,31 +39,12 @@ const agent = "a".repeat(64);
 const empty: readonly never[] = [];
 const contribution = { snapshot: () => empty, subscribe: () => () => {} };
 const extensions = { tools: contribution, inline: contribution };
-// The Solo placement record that holds a chat.
-const placementOf = (channels: readonly string[]): KitEntry => ({
-  eventId: "e".repeat(64),
-  createdAt: 1,
-  record: {
-    version: 2,
-    community: "https://test.example",
-    deleted: false,
-    value: {
-      type: "groups",
-      id: "me",
-      groups: [],
-      assignments: {},
-      channels: [...channels],
-    },
-  },
-});
-
 function fixture({
-  status = "ready",
   placed = true,
   type = "session",
   target,
 }: {
-  status?: KitSnapshot["status"];
+  /** Whether the viewer created the chat, rather than joining it as a guest. */
   placed?: boolean;
   type?: "session" | "stream";
   target?: (scope: string) => OpenTarget;
@@ -82,7 +58,6 @@ function fixture({
     },
   );
   const viewer = keypair();
-  const placedEntry = placementOf([id]);
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
@@ -100,18 +75,13 @@ function fixture({
   );
   owners.push(owner);
   const scope = `https://test.example:${viewer.pubkey}`;
-  let state: KitSnapshot = {
-    ...owner.session.soloPlacement.snapshot(),
-    status,
-    // A cold load has no placement evidence until it is ready.
-    entries: placed && status === "ready" ? [placedEntry] : [],
-  };
   const listeners = new Set<() => void>();
   const channel: ChannelSummary = {
     id,
     name: "Planning",
     channelType: type,
     private: true as const,
+    creator: placed ? viewer.pubkey : agent,
     members: [viewer.pubkey, agent],
   };
   let list = { status: "ready" as const, channels: [channel] };
@@ -197,32 +167,10 @@ function fixture({
       window: () => window,
       ensure() {},
     },
-    soloPlacement: {
-      ...owner.session.soloPlacement,
-      available: true,
-      snapshot: () => state,
-      ensure() {},
-      refresh: vi.fn(async () => {}),
-      set: vi.fn(async () => {}),
-      has: (channelId: string) =>
-        state.status === "ready" &&
-        state.entries.some((entry) =>
-          entry.record.value.type === "groups"
-            ? entry.record.value.channels?.includes(channelId)
-            : false,
-        ),
-      subscribe: (listener: () => void) => {
-        listeners.add(listener);
-        return () => {
-          listeners.delete(listener);
-        };
-      },
-    },
     soloPreferences: {
       ...owner.session.soloPreferences,
       snapshot: () => ({
-        status:
-          state.status === "ready" ? ("ready" as const) : ("loading" as const),
+        status: "ready" as const,
         data: {
           sections: [{ id: "work", name: "Work", order: 0 }],
           assignments: {},
@@ -299,14 +247,6 @@ function fixture({
     send,
     scope,
     session,
-    loaded() {
-      state = {
-        ...state,
-        status: "ready",
-        entries: placed ? [placedEntry] : [],
-      };
-      for (const listener of listeners) listener();
-    },
     // Chat activity: a new summary object for the same chat.
     retitle(name: string) {
       list = { ...list, channels: [{ ...channel, name }] };
@@ -529,27 +469,12 @@ it("fails an exact message address that a pending start cannot reveal", async ()
   expect(f.complete).not.toHaveBeenCalledWith({ status: "opened" });
 });
 
-it("holds a Solo chat's composer until placement loads", async () => {
-  const f = fixture({ status: "loading" });
+it("gives the owner's Solo chat its tag requirement and project", async () => {
+  const f = fixture();
   f.mount();
   const input = await screen.findByRole("textbox", {
     name: "Message your agents",
   });
-  expect(screen.queryByRole("button", { name: "Add project" })).toBeNull();
-  // Not yet known to be personal: no send can be offered, so none is refused.
-  expect(input).toHaveAttribute("contenteditable", "false");
-  expect(f.send).not.toHaveBeenCalled();
-  act(() => f.loaded());
-  await waitFor(() => expect(input).toHaveAttribute("contenteditable", "true"));
-});
-
-it("gives a placed Solo chat its tag requirement and project once placement is ready", async () => {
-  const f = fixture({ status: "loading" });
-  f.mount();
-  const input = await screen.findByRole("textbox", {
-    name: "Message your agents",
-  });
-  act(() => f.loaded());
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Add project" })).toBeEnabled(),
   );
@@ -564,7 +489,7 @@ it("gives a placed Solo chat its tag requirement and project once placement is r
   expect(f.send).not.toHaveBeenCalled();
 });
 
-it("uses the ordinary composer for a Solo-typed chat that placement does not hold", async () => {
+it("uses the ordinary composer for a guest in a shared Solo chat", async () => {
   const f = fixture({ placed: false });
   f.mount();
   const input = await screen.findByRole("textbox", {

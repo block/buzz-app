@@ -85,10 +85,6 @@ export function SoloSections({
   onNew?: (sectionId?: string) => void;
 }) {
   useSessionConversions(session);
-  useSyncExternalStore(
-    session.soloPlacement.subscribe,
-    session.soloPlacement.snapshot,
-  );
   const shareAttempts = useSessionShareAttempts(session);
   const [copyNotice, setCopyNotice] = useState<{
     text: string;

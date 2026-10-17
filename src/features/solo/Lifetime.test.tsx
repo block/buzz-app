@@ -12,7 +12,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { createChannelDetails } from "../relay/channel-details";
 import { createRelaySession } from "../relay/session";
-import { sessionDescription } from "../sessions/metadata";
+import { SOLO_LABEL } from "../sessions/metadata";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -27,7 +27,7 @@ afterEach(() => {
   for (const close of dispose.splice(0)) close();
 });
 // Lifetime eligibility and in-flight retirement through the real details owner.
-function setup(description = sessionDescription()) {
+function setup(solo = true) {
   let clock = 100;
   let ttl: number | undefined = 86400;
   const record = (kind: number, tags: string[][]) =>
@@ -38,8 +38,9 @@ function setup(description = sessionDescription()) {
   const metadata = () =>
     record(39000, [
       ["name", "Original"],
-      ["about", description],
+      ["about", ""],
       ["t", "stream"],
+      ...(solo ? [["t", SOLO_LABEL]] : []),
       ["private"],
       ...(ttl === undefined ? [] : [["ttl", String(ttl)]]),
     ]);
@@ -84,8 +85,8 @@ const confirm = () => screen.getByRole("button", { name: "Save changes" });
 async function ready() {
   await waitFor(() => expect(confirm()).toBeEnabled());
 }
-it("parent-linked lifetime is denied", async () => {
-  const h = setup(sessionDescription("22222222-2222-4222-8222-222222222222"));
+it("a chat without the Solo label has no lifetime settings", async () => {
+  const h = setup(false);
   await waitFor(() =>
     expect(screen.queryByText("Loading session details…")).toBeNull(),
   );

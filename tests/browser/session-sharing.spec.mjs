@@ -37,12 +37,9 @@ test("a session chip opens the same authorized conversation in the channel side 
           content: event.content,
           tags: [
             ...event.tags.map((tag) =>
-              tag[0] === "name"
-                ? ["name", title]
-                : tag[0] === "about"
-                  ? ["about", "Buzz session (buzz.sessions/v1)"]
-                  : tag,
+              tag[0] === "name" ? ["name", title] : tag,
             ),
+            ["t", "buzz.solo"],
             ["t", "buzz.session.named"],
           ],
         });

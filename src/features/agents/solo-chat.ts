@@ -1,12 +1,10 @@
 import type { RelayData } from "../relay/service";
 
-/** Whether a native agent's mention continues its owner's Me chat: one
- * channel-scoped conversation that posts at channel top level. Only the
- * owner's own placement in the agent's community counts; another member's
- * filing never does. Verified ordinary channels (including converted sessions)
- * use channel routing even if another owner still has them filed in Me. Unknown
- * type/placement evidence retains the existing fail-on-unreadable behavior.
- * Callers freeze the answer for the turn it admits. */
+/** Whether a native agent's mention continues a Solo chat: one
+ * channel-scoped conversation that posts at channel top level. The channel's
+ * Solo label decides, as it does for every member and remote agent. A channel
+ * not yet known fails rather than guess the routing. Callers freeze
+ * the answer for the turn it admits. */
 export async function soloChat(
   relay: () => RelayData | undefined,
   owner: string,
@@ -15,38 +13,15 @@ export async function soloChat(
 ) {
   const snapshot = relay()?.snapshot();
   if (snapshot?.status !== "ready" || snapshot.viewer !== owner) return false;
-  const { session, scope } = snapshot;
-  const ordinary = () => {
-    const channel = session.channels
-      .list()
-      .channels.find((row) => row.id === channelId);
-    return (
-      channel?.channelType === "dm" ||
-      (!channel?.cached &&
-        (channel?.channelType === "stream" || channel?.channelType === "forum"))
-    );
-  };
   signal.throwIfAborted();
-  if (ordinary()) return false;
-  const placement = session.soloPlacement;
-  const status = () => placement.snapshot().status;
-  if (status() === "unavailable") return false;
-  if (status() !== "ready") await placement.refresh();
-  signal.throwIfAborted();
-  const after = relay()?.snapshot();
-  if (
-    after?.status !== "ready" ||
-    after.session !== session ||
-    after.scope !== scope ||
-    after.viewer !== owner
-  )
+  const { channels } = snapshot.session;
+  const list = channels.list();
+  const channel =
+    channels.get?.(channelId) ??
+    list.channels.find(({ id }) => id === channelId);
+  if (!channel && list.status !== "ready")
     throw new Error(
-      "The community changed before this was answered. Try again.",
+      `Couldn't read this community's channels to tell where to answer (${list.error ?? "not loaded"}). Try again.`,
     );
-  if (ordinary()) return false;
-  if (status() !== "ready")
-    throw new Error(
-      `Couldn't read your Solo chats to tell where to answer (${placement.snapshot().error ?? "not loaded"}). Try again.`,
-    );
-  return placement.has(channelId);
+  return channel?.channelType === "session";
 }

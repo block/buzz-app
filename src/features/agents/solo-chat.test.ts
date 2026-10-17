@@ -1,136 +1,63 @@
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import type { RelayData } from "../relay/service";
 import { soloChat } from "./solo-chat";
 
 const owner = "a".repeat(64);
-type Status = "idle" | "loading" | "ready" | "error" | "unavailable";
 
 function community({
   viewer = owner,
-  status = "ready" as Status,
-  personal = ["chat"],
-  refreshed = status,
+  status = "ready",
 }: {
   viewer?: string;
-  status?: Status;
-  personal?: string[];
-  refreshed?: Status;
+  status?: "loading" | "ready" | "error";
 } = {}) {
-  let state = status;
-  const placement = {
-    snapshot: () => ({
-      status: state,
-      ...(state === "error" ? { error: "Recipe read failed" } : {}),
-    }),
-    refresh: vi.fn(async () => {
-      state = refreshed;
-    }),
-    has: (id: string) => state === "ready" && personal.includes(id),
-  };
-  let channelType = "session";
-  let cached = false;
   const session = {
-    soloPlacement: placement,
     channels: {
       list: () => ({
+        status,
+        ...(status === "error" ? { error: "Channel read failed" } : {}),
         channels: [
-          { id: "chat", channelType, cached },
+          { id: "chat", channelType: "session" },
+          { id: "shared", channelType: "session", creator: "b".repeat(64) },
           { id: "converted", channelType: "stream" },
           { id: "dm", channelType: "dm" },
         ],
       }),
     },
   };
-  let snapshot: Record<string, unknown> = {
+  const snapshot = {
     status: "ready",
     scope: "https://relay.test:owner",
     viewer,
     session,
   };
   const relay = { snapshot: () => snapshot } as unknown as RelayData;
-  return {
-    relay: () => relay,
-    placement,
-    type: (value: string, stale = false) => {
-      channelType = value;
-      cached = stale;
-    },
-    change(next: Record<string, unknown>) {
-      snapshot = { ...snapshot, ...next };
-    },
-  };
+  return () => relay;
 }
 const signal = new AbortController().signal;
 
-it("is the owner's Me chat only when the owner's placement holds it", async () => {
-  const { relay } = community();
+it("continues a chat at top level exactly when its channel carries the Solo label", async () => {
+  const relay = community();
   await expect(soloChat(relay, owner, "chat", signal)).resolves.toBe(true);
-  await expect(soloChat(relay, owner, "other", signal)).resolves.toBe(false);
-  // DMs keep their own routing even if filed.
-  const filedDm = community({ personal: ["dm"] });
-  await expect(soloChat(filedDm.relay, owner, "dm", signal)).resolves.toBe(
-    false,
-  );
-  // Another member's filing never decides how the owner's agent posts.
-  const other = community({ viewer: "b".repeat(64) });
-  await expect(soloChat(other.relay, owner, "chat", signal)).resolves.toBe(
-    false,
-  );
-  // A host without Me has only Messages.
-  const none = community({ status: "unavailable" });
-  await expect(soloChat(none.relay, owner, "chat", signal)).resolves.toBe(
-    false,
-  );
+  // A guest's agent in a shared Solo chat follows the same flat routing.
+  await expect(soloChat(relay, owner, "shared", signal)).resolves.toBe(true);
+  for (const id of ["converted", "dm", "unknown"])
+    await expect(soloChat(relay, owner, id, signal)).resolves.toBe(false);
 });
 
-it("reads a placement that is not ready before deciding", async () => {
-  const { relay, placement } = community({
-    status: "idle",
-    refreshed: "ready",
-  });
-  await expect(soloChat(relay, owner, "chat", signal)).resolves.toBe(true);
-  expect(placement.refresh).toHaveBeenCalledOnce();
+it("answers only for the agent owner's own community view", async () => {
+  await expect(
+    soloChat(community({ viewer: "b".repeat(64) }), owner, "chat", signal),
+  ).resolves.toBe(false);
 });
 
-it("fails rather than guess Messages when the placement cannot be read", async () => {
-  const { relay } = community({ status: "error" });
-  await expect(soloChat(relay, owner, "chat", signal)).rejects.toThrow(
-    "Recipe read failed",
-  );
-});
-
-it("fails when the community changes while the placement is read", async () => {
-  const fixture = community({ status: "idle", refreshed: "ready" });
-  fixture.placement.refresh.mockImplementationOnce(async () => {
-    fixture.change({ scope: "https://relay.test:someone" });
-  });
-  await expect(soloChat(fixture.relay, owner, "chat", signal)).rejects.toThrow(
-    "The community changed",
-  );
-});
-
-it("ordinary channel behavior overrides the agent owner's retained Me filing", async () => {
-  const { relay, placement } = community({
-    personal: ["converted"],
-    status: "error",
-  });
-  await expect(soloChat(relay, owner, "converted", signal)).resolves.toBe(
-    false,
-  );
-  expect(placement.refresh).not.toHaveBeenCalled();
-});
-
-it("rechecks ordinary type after a pending placement read", async () => {
-  const f = community({ status: "loading" });
-  f.placement.refresh.mockImplementationOnce(async () => {
-    f.type("stream");
-  });
-  await expect(soloChat(f.relay, owner, "chat", signal)).resolves.toBe(false);
-});
-it("does not let cached ordinary type substitute for unreadable placement evidence", async () => {
-  const f = community({ status: "error" });
-  f.type("stream", true);
-  await expect(soloChat(f.relay, owner, "chat", signal)).rejects.toThrow(
-    "Recipe read failed",
-  );
-});
+it.each(["loading", "error"] as const)(
+  "fails rather than guess an unknown chat's routing while the channel list is %s",
+  async (status) => {
+    const relay = community({ status });
+    await expect(soloChat(relay, owner, "chat", signal)).resolves.toBe(true);
+    await expect(soloChat(relay, owner, "unknown", signal)).rejects.toThrow(
+      "Couldn't read this community's channels",
+    );
+  },
+);

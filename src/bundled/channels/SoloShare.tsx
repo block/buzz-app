@@ -144,10 +144,6 @@ export function SoloShare({
 }) {
   const notify = useToastNotification();
   useSessionConversions(session);
-  useSyncExternalStore(
-    session.soloPlacement.subscribe,
-    session.soloPlacement.snapshot,
-  );
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;

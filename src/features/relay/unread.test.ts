@@ -13,7 +13,7 @@ import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
 import { retainReadState } from "./read-state-retention";
-import { SESSION_CHANNEL_DESCRIPTION } from "../sessions/metadata";
+import { SOLO_LABEL } from "../sessions/metadata";
 import {
   keypair,
   message,
@@ -2675,7 +2675,7 @@ it("inbox groups a session's top-level timeline into one conversation, keeping i
     metadata(h.relay, "session", "Session", 11, [
       ["t", "stream"],
       ["private"],
-      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["t", SOLO_LABEL],
     ]),
   ]);
   const mention = (channel: string, content: string, at: number) =>
@@ -2728,7 +2728,7 @@ it("inbox keeps a mentioned session root with its thread so reading the thread c
     metadata(h.relay, "session", "Session", 11, [
       ["t", "stream"],
       ["private"],
-      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["t", SOLO_LABEL],
     ]),
   ]);
   const root = message(h.alice, "session", "Question", 20, [

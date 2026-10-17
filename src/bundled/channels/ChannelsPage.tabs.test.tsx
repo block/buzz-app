@@ -24,7 +24,7 @@ import {
 import { writeView } from "../../shared/view-state";
 import { useChannelTabState } from "./useChannelTabState";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
-import { sessionDescription } from "../../features/sessions/metadata";
+import { SOLO_LABEL } from "../../features/sessions/metadata";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { ChannelsPage } from "./ChannelsPage";
 
@@ -67,7 +67,7 @@ async function page(type: "stream" | "session" = "stream") {
       "Alpha",
       undefined,
       type === "session"
-        ? [["t", "stream"], ["private"], ["about", sessionDescription()]]
+        ? [["t", "stream"], ["private"], ["t", SOLO_LABEL]]
         : [["t", "stream"]],
     ),
   ];

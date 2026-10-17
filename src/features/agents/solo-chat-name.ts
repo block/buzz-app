@@ -5,7 +5,7 @@ import { canonicalDetailsName } from "../relay/channel-details-protocol";
 import { profileMentionParts } from "../messages/profile-mentions";
 import { profileKey } from "../profiles/target";
 import type { DraftRecipient } from "../messages/mention-draft";
-import { SESSION_NAMED_LABEL } from "../sessions/metadata";
+import { ownSolo, SESSION_NAMED_LABEL } from "../sessions/metadata";
 import { startingChatTitle } from "../solo/chat-title";
 
 /**
@@ -26,7 +26,12 @@ export async function nameSoloChat(
   if (snapshot?.status !== "ready" || snapshot.viewer !== owner) return;
   const { session } = snapshot;
   const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
-  if (!channel || !session.soloPlacement.has(channel)) return;
+  const solo = () =>
+    ownSolo(
+      session.channels.list().channels.find((item) => item.id === channel),
+      owner,
+    );
+  if (!channel || !solo()) return;
   const name = [...canonicalDetailsName(title.replace(/\s+/g, " "))]
     .slice(0, 120)
     .join("");
@@ -38,7 +43,7 @@ export async function nameSoloChat(
       latest?.status === "ready" &&
       latest.viewer === owner &&
       latest.session === session &&
-      session.soloPlacement.has(channel)
+      solo()
     );
   };
   // Naming is for a new chat, not an unbounded history scan. A full page cannot

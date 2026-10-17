@@ -16,7 +16,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ChannelsPage } from "../../bundled/channels/ChannelsPage";
 import type { PageNavigation } from "../navigation/service";
 import { conversationTarget } from "../channel-navigation/routes";
-import { SESSION_CHANNEL_DESCRIPTION } from "../sessions/metadata";
+import { SOLO_LABEL } from "../sessions/metadata";
 import { createRelaySession } from "../relay/session";
 import { keypair, message, roster, signed } from "../relay/testing";
 import { MessageComposer } from "./MessageComposer";
@@ -85,7 +85,7 @@ async function fixture(archived = false) {
       ["name", "Work"],
       ["t", "stream"],
       ["private"],
-      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["t", SOLO_LABEL],
       ...(archived ? [["archived", "true"]] : []),
     ],
   });
@@ -188,20 +188,7 @@ it.each([false, true])(
   "the production Solo timeline owns drops and rejects an unavailable composer (archived=%s)",
   async (archived) => {
     const h = await fixture(archived);
-    const placement = {
-      ...h.owner.session.soloPlacement.snapshot(),
-      status: "ready" as const,
-    };
-    const relaySnapshot = h.relayData.snapshot();
-    const session = {
-      ...relaySnapshot.session,
-      soloPlacement: {
-        ...relaySnapshot.session.soloPlacement,
-        snapshot: () => placement,
-      },
-    };
-    const snapshot = { ...relaySnapshot, session };
-    const relayData = { ...h.relayData, snapshot: () => snapshot };
+    const relayData = h.relayData;
     const navigation: PageNavigation = {
       entryId: "visit",
       target: conversationTarget(

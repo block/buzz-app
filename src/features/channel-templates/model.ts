@@ -35,9 +35,8 @@ export type Groups = {
   type: "groups";
   id: "me";
   groups: Group[];
+  /** Project filing only; the channel's Solo label decides what is Solo. */
   assignments: Record<string, string>;
-  /** Me placement is independent of group membership. */
-  channels?: string[];
 };
 export type KitValue = Team | Template | Groups;
 export type PayloadRecord = {
@@ -130,7 +129,7 @@ export function kitRecordFits(record: KitRecord) {
   );
 }
 export const soloCapacityMessage =
-  "Solo storage is full. Move a conversation from Solo to Team, then try again.";
+  "Solo project storage is full. Remove a chat from a project, then try again.";
 
 export function parseKitRecord(raw: unknown, community: string): KitRecord {
   const r = object(raw),
@@ -186,12 +185,9 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
       type: "groups",
       id: v.id,
       groups,
+      // Records from before the Solo label also list `channels`. Dropping
+      // it here frees that space on the next write.
       assignments: Object.fromEntries(assignments) as Record<string, string>,
-      channels: keys(
-        v.channels ?? [],
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-        1000,
-      ),
     };
   } else throw new Error("Unsupported channel recipe type");
   if (

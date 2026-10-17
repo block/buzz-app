@@ -7,7 +7,6 @@ import type { RelaySession } from "../relay/session";
 export type SessionConversion = {
   draft: ChannelDetailsDraft;
   converted?: true;
-  removalOnly?: true;
   running?: true;
 };
 const conversions = new WeakMap<
@@ -52,8 +51,5 @@ export function useSessionConversions(session: RelaySession) {
 export function conversionLabel(session: RelaySession, id: string) {
   return sessionConversion(session, id)
     ? "Finish conversion"
-    : session.channels.list().channels.find((channel) => channel.id === id)
-          ?.channelType === "stream"
-      ? "Move to Team"
-      : "Convert to channel";
+    : "Convert to channel";
 }

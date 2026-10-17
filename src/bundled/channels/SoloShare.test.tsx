@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { SOLO_LABEL } from "../../features/sessions/metadata";
 import {
   act,
   cleanup,
@@ -68,12 +69,10 @@ function fixture(direct = false) {
       source,
       metadata(relay, source, "Work", clock, [
         ["t", "stream"],
+        ["t", SOLO_LABEL],
         ["private"],
-        // Me chats carry the personal line; only explicit conversion clears it.
-        [
-          "about",
-          `Buzz session (buzz.sessions/v1)${direct ? "\npersonal" : ""}`,
-        ],
+        // The owner's own Solo chat, or one shared with them as a guest.
+        ["P", direct ? viewer.pubkey : relay.pubkey],
       ]),
     ],
     [
@@ -92,9 +91,21 @@ function fixture(direct = false) {
   let failRoster = false;
   let holdRoster: Promise<void> | undefined;
   let loseDetailsResponse = false;
-  let placed = direct;
-  const placement = vi.fn(async () => {
-    placed = false;
+  const projects = (assignments: Record<string, string>) => ({
+    status: "ready" as const,
+    data: {
+      sections: [{ id: "g", name: "Project", order: 0 }],
+      assignments,
+      starred: [],
+      muted: [],
+    },
+  });
+  const filedProjects = projects({ [source]: "g" });
+  const unfiledProjects = projects({});
+  let filed = direct;
+  const placement = vi.fn(async (_id: string, _sectionId?: string) => {
+    filed = false;
+    return { sections: [], assignments: {}, starred: [], muted: [] };
   });
   let records: readonly import("../../features/relay/outbox").OutgoingEvent[] =
     [];
@@ -112,10 +123,20 @@ function fixture(direct = false) {
       const previous = metadataEvents.get(source)?.tags ?? [];
       const ttl = value("ttl") ?? previous.find(([tag]) => tag === "ttl")?.[1];
       const visibility = value("visibility");
+      const written = event.tags.flatMap(([tag, label]) =>
+        tag === "t" ? [label ?? ""] : [],
+      );
+      const labels = written.length
+        ? written.filter(Boolean)
+        : previous.flatMap(([tag, label]) =>
+            tag === "t" && label !== "stream" ? [label ?? ""] : [],
+          );
       metadataEvents.set(
         source,
         metadata(relay, source, value("name") ?? "Work", ++clock, [
           ["t", "stream"],
+          ...labels.map((label) => ["t", label]),
+          ...previous.filter(([tag]) => tag === "P"),
           [
             visibility
               ? visibility === "open"
@@ -148,6 +169,7 @@ function fixture(direct = false) {
   );
   const owner = createRelaySession(
     {
+      channelIdentity: true,
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       scope: "https://community.test",
@@ -233,21 +255,14 @@ function fixture(direct = false) {
     },
   );
   owners.push(owner);
-  const placementState = {
-    ...owner.session.soloPlacement.snapshot(),
-    status: "ready" as const,
-  };
   const session = direct
     ? {
         ...owner.session,
-        soloPlacement: {
-          ...owner.session.soloPlacement,
-          available: true,
-          snapshot: () => placementState,
-          ensure() {},
-          set: placement,
+        soloPreferences: {
+          ...owner.session.soloPreferences,
+          snapshot: () => (filed ? filedProjects : unfiledProjects),
           refresh: async () => {},
-          has: () => placed,
+          assign: placement,
         },
       }
     : owner.session;
@@ -282,8 +297,9 @@ function fixture(direct = false) {
         source,
         metadata(relay, source, "Work", ++clock, [
           ["t", "stream"],
+          ["t", SOLO_LABEL],
           ["private"],
-          ["about", "Buzz session (buzz.sessions/v1)"],
+          ["P", direct ? viewer.pubkey : relay.pubkey],
           ["archived", String(archived)],
         ]),
       );
@@ -1052,11 +1068,10 @@ it("Me offers explicit conversion from Share while Done never promotes or remove
     ["name", "Work"],
     ["about", ""],
     ["visibility", "open"],
+    ["t", ""],
   ]);
   expect(t.members.get(source)).toEqual([t.viewer.pubkey]);
-  expect(t.placement).toHaveBeenCalledExactlyOnceWith(source, false, {
-    signal: expect.any(AbortSignal),
-  });
+  expect(t.placement).toHaveBeenCalledExactlyOnceWith(source, undefined);
   expect(t.channel()?.channelType).toBe("stream");
   await user.click(screen.getByRole("button", { name: "Share" }));
   expect(

@@ -30,6 +30,7 @@ import { ProjectControl } from "./ProjectControl";
 import { legacyAssistantDraft } from "./legacy-assistant";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
+import { ownSolo } from "../sessions/metadata";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
 import styles from "./Solo.module.css";
@@ -142,12 +143,10 @@ export function SoloDraft({
   }, [focusRequest]);
   const [pending, setPending] = useState(() => readPending(scope, draftKey));
   const selectedAgent = pending?.agent;
-  const available =
-    session.workSessions.available &&
-    (!!pending?.messageId || session.soloPlacement.available);
+  const available = session.workSessions.available;
   const [channelId] = useState(() => pending?.id ?? crypto.randomUUID());
   const [editing, setEditing] = useState(
-    // Older builds admitted untagged drafts. Preserve their creation/placement
+    // Older builds admitted untagged drafts. Preserve their creation
     // progress, but let their author add a tag before any unsigned send.
     () =>
       !!(
@@ -285,10 +284,6 @@ export function SoloDraft({
           );
       }
       if (!current.creationId) {
-        await session.soloPlacement.admit(current.id, {
-          sectionId: current.setup?.sectionId,
-        });
-        if (!mounted.current) return;
         current.creationId = session.workSessions.create(
           current.id,
           current.name,
@@ -301,23 +296,6 @@ export function SoloDraft({
       if (!mounted.current) return;
       await session.workSessions.refresh(current.id);
       if (!mounted.current) return;
-      if (!current.messageId) {
-        if (!current.placementDone) {
-          await session.soloPlacement.set(current.id, true, {
-            sectionId: current.setup?.sectionId,
-          });
-          if (!mounted.current) return;
-          current.placementDone = true;
-          save({ ...current });
-        } else {
-          await session.soloPlacement.refresh();
-          if (!mounted.current) return;
-          if (!session.soloPlacement.has(current.id))
-            throw new Error(
-              "This conversation was moved out of Solo. Review its placement before retrying.",
-            );
-        }
-      }
       if (current.setup && !current.setupDone && !current.messageId) {
         await applySessionSetup(
           session,
@@ -353,7 +331,10 @@ export function SoloDraft({
           );
           if (!mounted.current) return;
         }
-        if (!session.soloPlacement.has(current.id))
+        const created = session.channels
+          .list()
+          .channels.find((item) => item.id === current.id);
+        if (!ownSolo(created, session.viewer))
           throw new Error(
             "This conversation is no longer in Solo. Open it in Team.",
           );

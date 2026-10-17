@@ -1388,11 +1388,7 @@ function fixture(
     ),
     metadata(relayKey, "room", "Design", 10, [
       ...(options.sessionChannel
-        ? [
-            ["t", "stream"],
-            ["private"],
-            ["about", "Buzz session (buzz.sessions/v1)"],
-          ]
+        ? [["t", "stream"], ["private"], ["t", "buzz.solo"]]
         : [
             ["t", "stream"],
             ...(options.archivedChannel ? [["archived", "true"]] : []),

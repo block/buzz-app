@@ -96,7 +96,8 @@ function setup(
             id: channel,
             name: "general",
             channelType:
-              options.channelType ?? (options.me ? "session" : "stream"),
+              options.channelType ??
+              (options.me?.has(channel) ? "session" : "stream"),
             members: [],
           },
         ],
@@ -109,12 +110,6 @@ function setup(
       ensure: vi.fn(async (): Promise<void> => {}),
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
-    },
-    soloPlacement: {
-      state: { status: "ready" } as { status: string; error?: string },
-      snapshot: () => session.soloPlacement.state,
-      refresh: vi.fn(async () => {}),
-      has: (id: string) => !!options.me?.has(id),
     },
   };
   const relay = {
@@ -228,7 +223,6 @@ function setup(
     runtime,
     added,
     deliver,
-    placement: session.soloPlacement,
     published,
     claudes,
     fake,
@@ -1316,38 +1310,6 @@ async function send(claude: FakeClaude | undefined, id: string, args: object) {
   )?.response?.mcp_response?.result;
 }
 
-it("fails a session mention it cannot place until the placement can be read", async () => {
-  const mention = (id: string) =>
-    message(id, `@Claude ${id}`, {
-      created_at: 100 + Number(id),
-      tags: [
-        ["h", channel],
-        ["p", self],
-      ],
-    });
-  const { deliver, placement, published, claudes, workingUntil } = setup([], {
-    channelType: "session",
-  });
-  placement.state = { status: "error", error: "Recipe read failed" };
-  await expect(
-    deliver({ type: "mention", event: mention("1") }),
-  ).rejects.toThrow(
-    "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
-  );
-  await flush(10);
-  expect(placement.refresh).toHaveBeenCalledOnce();
-  expect(claudes().flatMap((process) => process.prompts)).toEqual([]);
-  expect(workingUntil).not.toHaveBeenCalled();
-  expect(published).toEqual([]);
-  placement.state = { status: "ready" };
-  await deliver({ type: "mention", event: mention("2") });
-  await flush(10);
-  const prompts = claudes().flatMap((process) => process.prompts);
-  expect(prompts).toHaveLength(1);
-  expect(prompts[0]).not.toContain(TOP_LEVEL_PROMPT);
-  expect(workingUntil).toHaveBeenCalledOnce();
-});
-
 it("continues an owner's Me chat as one channel session posted at the top level", async () => {
   const earlier = message("1", "Earlier in the chat");
   const first = message("2", "@Claude first", {
@@ -1415,7 +1377,7 @@ it("continues an owner's Me chat as one channel session posted at the top level"
   ]);
 });
 
-it("finishes a Me turn under its policy when the chat is shared mid-turn, and keeps the next turn's conversation while it waits", async () => {
+it("finishes a Solo turn under its policy when the chat is converted mid-turn, and keeps the next turn's conversation while it waits", async () => {
   const mention = (id: string) =>
     message(id, `@Claude ${id}`, {
       created_at: 100 + Number(id),
@@ -1568,7 +1530,6 @@ it("method calls: a session launch makes no config call on the relay session; on
     "session.read": f.read,
     "agentMemories.read": f.memoryRead,
     "profiles.ensure": f.session.profiles.ensure,
-    "soloPlacement.refresh": f.session.soloPlacement.refresh,
     publish: f.agent.publish,
     query: f.agent.query,
     upload: f.agent.upload,

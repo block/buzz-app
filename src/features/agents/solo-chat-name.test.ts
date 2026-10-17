@@ -19,6 +19,14 @@ const event = {
   ],
 } as unknown as RelayEvent;
 
+// The owner's Solo chat, as the relay lists it.
+const soloChannels = {
+  list: () => ({
+    status: "ready",
+    channels: [{ id: "chat", channelType: "session", creator: owner }],
+  }),
+};
+
 // Session identity stays stable across reads, as it does in the owning service.
 function connection(
   snapshot: () => { status: string; viewer: string; session: unknown },
@@ -42,7 +50,7 @@ it("only the first tagged agent names an unchanged new Berd chat, once", async (
     status: "ready",
     viewer: owner,
     session: {
-      soloPlacement: { has: () => true },
+      channels: soloChannels,
       read: async () => [event],
       profiles: { snapshot: () => new Map() },
       agentChoices: { snapshot: () => ({ identities: [] }) },
@@ -68,7 +76,7 @@ it("recognizes a clean starting title from signed recipient tags without strippi
     status: "ready",
     viewer: owner,
     session: {
-      soloPlacement: { has: () => true },
+      channels: soloChannels,
       read: async () => [sent],
       profiles: { snapshot: () => new Map([[first, { name: "Agent" }]]) },
       agentChoices: { snapshot: () => ({ identities: [] }) },
@@ -140,7 +148,7 @@ it.each(["bold", "bullet_list"])(
       status: "ready",
       viewer: owner,
       session: {
-        soloPlacement: { has: () => true },
+        channels: soloChannels,
         read: async () => [sent],
         profiles: { snapshot: () => new Map([[first, { name: "Agent" }]]) },
         agentChoices: { snapshot: () => ({ identities: [] }) },
@@ -175,7 +183,7 @@ it.each([first, second])(
       status: "ready",
       viewer: owner,
       session: {
-        soloPlacement: { has: () => true },
+        channels: soloChannels,
         read: vi.fn(async () => [retry, event]),
         profiles: { snapshot: () => new Map() },
         agentChoices: { snapshot: () => ({ identities: [] }) },
@@ -227,7 +235,7 @@ it.each(["empty", "full", "same-second", "unrelated", "unsent"])(
       status: "ready",
       viewer: owner,
       session: {
-        soloPlacement: { has: () => true },
+        channels: soloChannels,
         read: async () => history,
         profiles: { snapshot: () => new Map() },
         agentChoices: { snapshot: () => ({ identities: [] }) },
@@ -253,7 +261,7 @@ it.each(["history", "details"])(
     });
     const save = vi.fn();
     const session = {
-      soloPlacement: { has: () => true },
+      channels: soloChannels,
       read: async () => {
         if (stage === "history") {
           began();
@@ -309,7 +317,7 @@ it.each([false, true])(
       status: "ready",
       viewer: owner,
       session: {
-        soloPlacement: { has: () => true },
+        channels: soloChannels,
         read: async () => [sent],
         profiles: { snapshot: () => new Map([[first, { name: "Agent" }]]) },
         agentChoices: { snapshot: () => ({ identities: [] }) },

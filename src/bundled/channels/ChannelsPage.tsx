@@ -17,7 +17,7 @@ import {
   soloDraft,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import { useSoloPlacement } from "../../features/solo/placement";
+import { ownSolo } from "../../features/sessions/metadata";
 import { ProjectControl } from "../../features/solo/ProjectControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { SoloHeading } from "./SoloHeading";
@@ -198,7 +198,6 @@ function ChannelWorkspace({
         : undefined,
     [draftTarget],
   );
-  const placement = useSoloPlacement(queries);
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
@@ -571,15 +570,10 @@ function ChannelWorkspace({
     setSettings(undefined);
     afterClose("settings");
   };
-  // The Solo treatment: a flat agent conversation. Placement decides whether
-  // it is also the owner's personal chat, with tagged agents and a project.
+  // The Solo treatment: a flat agent conversation. In the owner's own chat it
+  // also files into a project; the conversation scope owns composer policy.
   const solo = current?.channelType === "session";
-  const personal = solo && !!current && placement.ids.includes(current.id);
-  const placementPending =
-    solo &&
-    !personal &&
-    placement.status !== "ready" &&
-    placement.status !== "unavailable";
+  const personal = ownSolo(current, queries.viewer);
   // Confirmations belong to this visit; a Solo conversation that leaves the
   // owner's view returns them to a new draft rather than an empty page.
   const chooseLifecycle = (
@@ -1376,7 +1370,6 @@ function ChannelWorkspace({
                 : undefined
             }
             onOpenThread={solo ? undefined : openThread}
-            solo={personal}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
             }
@@ -1454,20 +1447,12 @@ function ChannelWorkspace({
             !requestedThread &&
             !routedThread
           }
-          label={solo ? "Message your agents" : undefined}
-          chatPresentation={personal}
-          requireMention={personal}
-          activityClickOpensPanel={solo}
-          // Until placement is known, a Solo conversation is personal and
-          // waits, as the draft does, rather than offering a refused send.
-          personalConversation={personal || placementPending}
-          disabled={placementPending}
           trailingTool={
             personal ? (
               <ProjectControl
                 session={queries}
                 channelId={current.id}
-                disabled={!!current.archived || placement.status !== "ready"}
+                disabled={!!current.archived}
               />
             ) : undefined
           }

@@ -61,29 +61,17 @@ export function fixture(combined = false, canCreate = false, agents?: Agents) {
   const list = {
     status: "ready" as const,
     channels: [
-      { id, name: "Planning", channelType: "session" as const },
-      { id: other, name: "Other", channelType: "session" as const },
-    ],
-  };
-  const placement = {
-    ...base.soloPlacement.snapshot(),
-    status: "ready" as const,
-    entries: [
       {
-        eventId: "e".repeat(64),
-        createdAt: 1,
-        record: {
-          version: 2 as const,
-          community: "https://relay.test",
-          deleted: false,
-          value: {
-            type: "groups" as const,
-            id: "me" as const,
-            groups: [],
-            assignments: {},
-            channels: [id, other],
-          },
-        },
+        id,
+        name: "Planning",
+        channelType: "session" as const,
+        creator: viewer,
+      },
+      {
+        id: other,
+        name: "Other",
+        channelType: "session" as const,
+        creator: viewer,
       },
     ],
   };
@@ -105,11 +93,6 @@ export function fixture(combined = false, canCreate = false, agents?: Agents) {
     viewer,
     channelCreation: { ...base.channelCreation, available: canCreate },
     channels: { ...base.channels, list: () => list, ensureList() {} },
-    soloPlacement: {
-      ...base.soloPlacement,
-      snapshot: () => placement,
-      ensure() {},
-    },
     soloPreferences: {
       ...base.soloPreferences,
       sectionCreationWritable: canCreate,

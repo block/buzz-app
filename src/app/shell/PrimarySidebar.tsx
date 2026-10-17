@@ -26,6 +26,8 @@ import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
 import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
+import { ownSolo } from "../../features/sessions/metadata";
+import type { ChannelList } from "../../features/relay/contracts";
 
 const noSubscription = () => () => {};
 
@@ -94,11 +96,12 @@ function ScopedSidebar({
     "scope" in target &&
     target.scope &&
     relayPartition(target.scope.communityOrigin, target.scope.viewer) === scope;
-  // Placement, not the opening page, says which inventory owns a conversation.
-  const placement = connection.session?.soloPlacement;
-  const soloPlacement = useSyncExternalStore(
-    placement?.subscribe ?? noSubscription,
-    () => placement?.snapshot(),
+  // The conversation's own Solo label, not the opening page, says which
+  // inventory owns it; an unlisted conversation waits until it is known.
+  const channels = connection.session?.channels;
+  const channelList = useSyncExternalStore(
+    channels?.subscribeList ?? noSubscription,
+    () => channels?.list(),
   );
   const preferences = connection.session?.soloPreferences;
   const soloPreferences = useSyncExternalStore(
@@ -109,14 +112,15 @@ function ScopedSidebar({
   // placeholders still change height when the live inventories arrive.
   const soloReady =
     (connection.status === "ready" || connection.status === "error") &&
-    [soloPlacement?.status, soloPreferences?.status].every(
-      (status) => status !== "idle" && status !== "loading",
-    );
+    soloPreferences?.status !== "idle" &&
+    soloPreferences?.status !== "loading";
   const destination = local
     ? target.kind === "conversation"
-      ? placement?.has(target.channelId)
-        ? "solo"
-        : "team"
+      ? conversationDestination(
+          channelList,
+          target.channelId,
+          connection.session?.viewer,
+        )
       : target.kind === "page" && target.pluginId === "buzz.channels"
         ? soloDraft(target.route?.params)
           ? "solo"
@@ -260,4 +264,15 @@ function ScopedSidebar({
       )}
     </SidebarBoundary>
   );
+}
+
+/** Unknown until the channel list can say; a channel outside it is Team's. */
+function conversationDestination(
+  list: ChannelList | undefined,
+  id: string,
+  viewer: string | undefined,
+) {
+  const channel = list?.channels.find((item) => item.id === id);
+  if (!channel && list?.status !== "ready") return undefined;
+  return ownSolo(channel, viewer) ? "solo" : "team";
 }

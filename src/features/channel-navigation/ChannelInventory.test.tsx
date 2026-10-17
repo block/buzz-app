@@ -115,6 +115,7 @@ function fixture(
   const session = {
     ...owner.session,
     scope: `https://relay.test:${"a".repeat(64)}`,
+    viewer: "a".repeat(64),
     ...(sidebarPreferences ? { sidebarPreferences } : {}),
     live: { ...owner.session.live, snapshot: () => live },
     channels: {
@@ -713,7 +714,7 @@ it.each([true, false])(
   "does not nest existing sessions when plugin enabled=%s",
   async (enabled) => {
     const h = fixture();
-    h.publish("beta", { channelType: "session", parentChannelId: "alpha" });
+    h.publish("beta", { channelType: "session" });
     render(
       h.view("alpha", enabled ? <button type="button">Sessions</button> : null),
     );
@@ -1015,41 +1016,18 @@ it("a sidebar remount does not resubmit or redirect pending work", async () => {
 });
 
 // The actual mounted caller owns the Solo/Team visibility boundary.
-it("Solo placement keeps chats out of Team but ordinary streams visible", async () => {
+it("keeps the viewer's own Solo chats out of Team but shows a guest's shared one", async () => {
   const h = fixture();
-  const entries = [
-    {
-      eventId: "placement",
-      createdAt: 1,
-      record: {
-        version: 1 as const,
-        community: "https://relay.test",
-        deleted: false,
-        value: {
-          type: "groups" as const,
-          id: "me" as const,
-          groups: [],
-          assignments: {},
-          channels: ["beta"],
-        },
-      },
-    },
-  ];
-  const placement = {
-    ...h.session.soloPlacement.snapshot(),
-    status: "ready" as const,
-    entries,
-  };
-  h.session.soloPlacement = {
-    ...h.session.soloPlacement,
-    snapshot: () => placement,
-  };
-  h.publish("beta", { channelType: "session", private: true });
+  h.publish("beta", {
+    channelType: "session",
+    private: true,
+    creator: "a".repeat(64),
+  });
   render(h.view("alpha", undefined, true));
   await userEvent.click(screen.getByRole("tab", { name: "Team" }));
   await screen.findByRole("button", { name: "gamma" });
   expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
-  h.publish("beta", { channelType: "stream" });
+  h.publish("beta", { creator: "b".repeat(64) });
   expect(await screen.findByRole("button", { name: "beta" })).toBeVisible();
   expect(h.navigator.open).not.toHaveBeenCalled();
 });

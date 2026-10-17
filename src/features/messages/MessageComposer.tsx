@@ -372,9 +372,6 @@ function Composer({
       live.current = false;
     };
   }, []);
-  const parentChannelId = list.channels.find(
-    (item) => item.id === channelId,
-  )?.parentChannelId;
   const mentionRoster = useContext(DraftMentionRoster);
   const agentChoices =
     inviteAgents || !!sessionConversation || personalConversation;
@@ -1047,9 +1044,9 @@ function Composer({
     live.current &&
     permitted.current &&
     !sendAttempt.current?.signal.aborted &&
-    session.channels.list().channels.find((item) => item.id === channelId)
-      ?.parentChannelId === parentChannelId &&
-    (!personalConversation || session.soloPlacement.has(channelId));
+    (!personalConversation ||
+      session.channels.list().channels.find((item) => item.id === channelId)
+        ?.channelType === "session");
   // Only a fresh chat is seeded with the default. Once it has content, respect
   // edits and removals; accepted sends use the shared remembered-mention draft.
   const autoTagged = useRef<string | undefined>(undefined);

@@ -24,7 +24,7 @@ import { SoloDraft, resetNewChatProject } from "./SoloDraft";
 import { createWorkSessions } from "../relay/work-sessions";
 import { createOutbox } from "../relay/outbox";
 import { keypair, signed } from "../relay/testing";
-import { sessionDescription } from "../sessions/metadata";
+import { SOLO_LABEL } from "../sessions/metadata";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -73,36 +73,40 @@ function setup(available = true) {
   const messages = {
     send: vi.fn<RelaySession["messages"]["send"]>(() => "d".repeat(64)),
   };
+  const viewer = "f".repeat(64);
   let channelSnapshot = {
     channels: [
-      { id: "", channelType: "session" as const, members: existing.members },
+      {
+        id: "",
+        channelType: "session" as const,
+        creator: viewer,
+        members: existing.members,
+      },
     ],
   };
   const profileSnapshot = new Map();
-  const placed = new Set<string>();
-  const soloPlacement = {
-    available: true,
-    admit: vi.fn(
-      async (_id: string, _options: { sectionId?: string | undefined }) => {},
-    ),
-    set: vi.fn(async (id: string, personal: boolean) => {
-      if (personal) placed.add(id);
-      else placed.delete(id);
-    }),
-    has: (id: string) => placed.has(id),
-    refresh: vi.fn(async () => {}),
-  };
   const session = {
-    soloPlacement,
+    viewer,
     workSessions,
     messages,
     channels: {
       list: () => {
-        const id = workSessions.create.mock.calls[0]?.[0] ?? "";
+        // The chat a start last refreshed, or the one it just created.
+        const id =
+          (
+            workSessions.refresh.mock.calls.at(-1) as string[] | undefined
+          )?.[0] ??
+          workSessions.create.mock.calls.at(-1)?.[0] ??
+          "";
         if (channelSnapshot.channels[0]?.id !== id)
           channelSnapshot = {
             channels: [
-              { id, channelType: "session", members: existing.members },
+              {
+                id,
+                channelType: "session",
+                creator: viewer,
+                members: existing.members,
+              },
             ],
           };
         return channelSnapshot;
@@ -128,7 +132,7 @@ function setup(available = true) {
     outbox: { supports: () => true },
     media: (url: string) => url,
   } as unknown as RelaySession;
-  return { session, workSessions, messages, soloPlacement };
+  return { session, workSessions, messages };
 }
 it("uses restored explicit mentions, not a separate picker", async () => {
   const test = setup(),
@@ -498,7 +502,12 @@ it("recovers a deleted destination without duplicating the session or dropping i
   const id = "22222222-2222-4222-8222-222222222222";
   const canvas = { id: "f".repeat(64), content: "Frozen instructions" };
   const assign = vi.fn();
-  const channels = { status: "ready", channels: [{ id, members: [] }] };
+  const channels = {
+    status: "ready",
+    channels: [
+      { id, channelType: "session", creator: test.session.viewer, members: [] },
+    ],
+  };
   Object.assign(test.session, {
     canvas: { read: async () => canvas, save: vi.fn() },
     channels: {
@@ -550,35 +559,6 @@ it("recovers a deleted destination without duplicating the session or dropping i
   expect(test.messages.send).toHaveBeenCalledExactlyOnceWith(id, draft.text, [
     "a".repeat(64),
   ]);
-});
-
-it("retries Me placement on the same created channel before sending, including after remount", async () => {
-  const f = setup();
-  const user = userEvent.setup();
-  const started = vi.fn();
-  f.soloPlacement.set.mockRejectedValueOnce(new Error("Placement unavailable"));
-  writeView("me-test", "me:new-draft", taggedDraft("Private thought"));
-  const view = render(
-    <SoloDraft session={f.session} scope="me-test" onStarted={started} />,
-  );
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await screen.findByText("Placement unavailable");
-  expect(f.messages.send).not.toHaveBeenCalled();
-  const id = f.workSessions.create.mock.calls[0]?.[0];
-  if (!id) throw new Error("Missing creation");
-  view.unmount();
-  render(<SoloDraft session={f.session} scope="me-test" onStarted={started} />);
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() => expect(started).toHaveBeenCalledWith(id));
-  expect(f.workSessions.create).toHaveBeenCalledTimes(1);
-  expect(f.soloPlacement.set).toHaveBeenNthCalledWith(2, id, true, {
-    sectionId: undefined,
-  });
-  expect(f.messages.send).toHaveBeenCalledExactlyOnceWith(
-    id,
-    "@Member agent Private thought",
-    ["a".repeat(64)],
-  );
 });
 
 it("a new Me chat starts tagged with the default agent", async () => {
@@ -642,7 +622,7 @@ it("a new Me chat needs a tagged agent to send", async () => {
   expect(f.workSessions.create).not.toHaveBeenCalled();
 });
 
-it.each(["draft", "created", "placed"])(
+it.each(["draft", "created"])(
   "legacy unsigned Me start can acquire a tag without losing progress (%s)",
   async (stage) => {
     const f = setup();
@@ -652,9 +632,7 @@ it.each(["draft", "created", "placed"])(
       id,
       text: "Keep progress",
       ...(stage !== "draft" ? { creationId: "c".repeat(64) } : {}),
-      ...(stage === "placed" ? { placementDone: true } : {}),
     });
-    if (stage === "placed") await f.soloPlacement.set(id, true);
     const tools: readonly Contribution<ComposerTool>[] = [
       {
         id: "mention",
@@ -730,7 +708,7 @@ it("an interrupted Me start keeps its admitted assistant and can still send", ()
   ).not.toHaveAttribute("aria-disabled");
 });
 
-it("passes the frozen Me section into initial placement before setup and send", async () => {
+it("a resumed start keeps its frozen project filing without refiling", async () => {
   const f = setup();
   const id = "22222222-2222-4222-8222-222222222222";
   const started = vi.fn();
@@ -767,44 +745,10 @@ it("passes the frozen Me section into initial placement before setup and send", 
     .setup()
     .click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledWith(id));
-  expect(f.soloPlacement.set).toHaveBeenCalledExactlyOnceWith(id, true, {
-    sectionId: "work",
-  });
   expect(assign).not.toHaveBeenCalled();
   expect(f.messages.send).toHaveBeenCalledExactlyOnceWith(
     id,
     "@Member agent First thought",
-    ["a".repeat(64)],
-  );
-});
-
-it("keeps the Me draft and creates nothing until capacity admission succeeds", async () => {
-  const f = setup();
-  const user = userEvent.setup();
-  const started = vi.fn();
-  f.soloPlacement.admit.mockRejectedValueOnce(
-    new Error("Solo storage is full"),
-  );
-  writeView("me-full", "me:new-draft", taggedDraft("Keep this thought"));
-  const view = render(
-    <SoloDraft session={f.session} scope="me-full" onStarted={started} />,
-  );
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await screen.findByText("Solo storage is full");
-  expect(f.workSessions.create).not.toHaveBeenCalled();
-  expect(f.messages.send).not.toHaveBeenCalled();
-  const id = f.soloPlacement.admit.mock.calls[0]?.[0];
-  view.unmount();
-  render(<SoloDraft session={f.session} scope="me-full" onStarted={started} />);
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() => expect(started).toHaveBeenCalledWith(id));
-  expect(f.workSessions.create).toHaveBeenCalledOnce();
-  expect(f.soloPlacement.admit).toHaveBeenNthCalledWith(2, id, {
-    sectionId: undefined,
-  });
-  expect(f.messages.send).toHaveBeenCalledExactlyOnceWith(
-    id,
-    "@Member agent Keep this thought",
     ["a".repeat(64)],
   );
 });
@@ -1029,13 +973,14 @@ async function projectSetup() {
     },
   };
   const saveCanvas = vi.fn(async () => {});
+  const assign = vi.fn(async (_id: string, _sectionId?: string) => {});
   Object.assign(f.session, {
     soloPreferences: {
       writable: true,
       refresh: async () => {},
       snapshot: () => preferences,
       subscribe: () => () => {},
-      assign: async () => {},
+      assign,
     },
     channelKit: {
       refresh: async () => {},
@@ -1043,7 +988,7 @@ async function projectSetup() {
     },
     canvas: { read: async () => undefined, save: saveCanvas },
   });
-  return { ...f, saveCanvas };
+  return { ...f, saveCanvas, assign };
 }
 
 it.each([false, true])(
@@ -1096,9 +1041,10 @@ it.each([false, true])(
     }
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
-    expect(f.soloPlacement.set).toHaveBeenCalledWith(expect.any(String), true, {
-      sectionId: submitted ? "other" : "work",
-    });
+    expect(f.assign).toHaveBeenCalledWith(
+      expect.any(String),
+      submitted ? "other" : "work",
+    );
     expect(f.saveCanvas).toHaveBeenCalledWith(
       expect.any(String),
       submitted ? "other edited instructions" : "work instructions",
@@ -1118,9 +1064,9 @@ it("re-entering a project while a start loads its defaults keeps the submitted p
     release = resolve;
   });
   vi.spyOn(f.session.channelKit, "refresh").mockReturnValue(loading);
-  f.soloPlacement.admit.mockRejectedValueOnce(
-    new Error("Admission unavailable"),
-  );
+  f.workSessions.create.mockImplementationOnce(() => {
+    throw new Error("Admission unavailable");
+  });
   render(
     <SoloDraft
       standalone
@@ -1140,9 +1086,7 @@ it("re-entering a project while a start loads its defaults keeps the submitted p
   expect(screen.getByRole("button", { name: "Project: Other" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
-  expect(f.soloPlacement.set).toHaveBeenCalledWith(expect.any(String), true, {
-    sectionId: "other",
-  });
+  expect(f.assign).toHaveBeenCalledWith(expect.any(String), "other");
   expect(f.saveCanvas).toHaveBeenCalledWith(
     expect.any(String),
     "other instructions",
@@ -1182,9 +1126,7 @@ it("keeps a locally chosen project when its persistence fails and other draft wr
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
-    expect(f.soloPlacement.admit).toHaveBeenCalledWith(expect.any(String), {
-      sectionId: "other",
-    });
+    expect(f.assign).toHaveBeenCalledWith(expect.any(String), "other");
   } finally {
     storage.mockRestore();
   }
@@ -1302,9 +1244,7 @@ it.each(
       "other instructions",
       undefined,
     );
-    expect(f.soloPlacement.admit).toHaveBeenCalledWith(expect.any(String), {
-      sectionId: "other",
-    });
+    expect(f.assign).toHaveBeenCalledWith(expect.any(String), "other");
     expect(f.workSessions.create).toHaveBeenCalledWith(
       expect.any(String),
       "My chosen title",
@@ -1583,9 +1523,6 @@ it.each([
       readCanvas,
       saveCanvas,
       refreshAgents,
-      h.soloPlacement.admit,
-      h.soloPlacement.set,
-      h.soloPlacement.refresh,
       h.workSessions.create,
       h.workSessions.delivered,
       h.workSessions.refresh,
@@ -1630,6 +1567,7 @@ it.each([false, true])(
         id: string;
         name: string;
         channelType: "session";
+        creator: string;
         members: string[];
       }[],
     };
@@ -1647,6 +1585,7 @@ it.each([false, true])(
                 id: event.tags.find(([key]) => key === "h")?.[1] ?? "",
                 name: "Chosen title",
                 channelType: "session",
+                creator: viewer.pubkey,
                 members: [viewer.pubkey],
               })),
           };
@@ -1720,10 +1659,8 @@ it.each([false, true])(
         "name",
         explicit ? "Chosen title" : "Original prompt",
       ]);
-      expect(created?.tags).toContainEqual([
-        "about",
-        sessionDescription(undefined, true),
-      ]);
+      expect(created?.tags).toContainEqual(["t", SOLO_LABEL]);
+      expect(created?.tags.some(([key]) => key === "about")).toBe(false);
       expect(created?.tags).toContainEqual(["ttl", "600"]);
       expect(publish.mock.calls.map(([event]) => event.kind)).toEqual([
         9007, 9,

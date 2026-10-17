@@ -80,6 +80,17 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
+/** The mounted channel listed as a Solo chat. */
+const soloList = {
+  status: "ready" as const,
+  channels: [
+    {
+      id: "channel",
+      channelType: "session" as const,
+      members: [first.pubkey, second.pubkey],
+    },
+  ],
+};
 const resourceOwner = "c".repeat(64);
 const resourceRoute = {
   type: "issue",
@@ -4387,7 +4398,13 @@ it("tags a Berd draft with the default agent once and needs a tag to send", asyn
       [second.pubkey, { name: "Selected", isAgent: true }],
     ]),
   );
-  Object.assign(h.session, { soloPlacement: { has: () => true } });
+  // A Solo chat: personal sends are admitted while its label holds.
+  Object.assign(h.session, {
+    channels: {
+      ...h.session.channels,
+      list: () => soloList,
+    },
+  });
   // The default agent arrives in the empty draft as an ordinary tag.
   await waitFor(() => expect(h.input()).toHaveValue("@Selected "));
   const send = screen.getByRole("button", { name: "Send message" });
@@ -7560,7 +7577,10 @@ it.each(["thread", "solo"])(
         : { threadRootId: "root" }),
       session: {
         ...h.session,
-        soloPlacement: { has: () => true },
+        channels: {
+          ...h.session.channels,
+          list: () => soloList,
+        },
         workSessions: {
           refreshMembership: async () => ({
             id: "channel",

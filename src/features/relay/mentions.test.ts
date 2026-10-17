@@ -94,7 +94,7 @@ function setup(sessionMode = false) {
               ["d", "c"],
               ["t", "stream"],
               ["private"],
-              ["about", "Buzz session (buzz.sessions/v1)"],
+              ["t", "buzz.solo"],
             ],
           })
         : metadata(relay, "c", "General"),

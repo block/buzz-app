@@ -284,75 +284,41 @@ it("invalidates the session-owned Me projection on refreshed heads, including to
   }
 });
 
-it("round-trips independent Me placement and preserves it through group removal", async () => {
+it("drops the retired Solo channel list on the next project write", async () => {
   const f = fixture();
   try {
-    await f.session.soloPlacement.set(channel, true);
-    expect(f.session.soloPlacement.has(channel)).toBe(true);
+    f.install({ ...groups, channels: [channel, other] } as Groups);
     await f.session.soloPreferences.ensure();
-    await f.session.soloPreferences.createAndAssign(channel, {
-      id: "g",
-      name: "Work",
-    });
-    await f.session.soloPreferences.removeSection("g");
-    expect(f.session.soloPlacement.has(channel)).toBe(true);
-    await f.session.soloPlacement.set(other, true);
-    await f.session.soloPlacement.set(channel, false);
-    expect(f.session.soloPlacement.has(channel)).toBe(false);
-    expect(f.session.soloPlacement.has(other)).toBe(true);
-    expect(
-      JSON.parse(f.publish.mock.calls.at(-1)?.[0].content ?? "null").value
-        .channels,
-    ).toEqual([other]);
-    expect(f.publish.mock.calls.every(([event]) => event.kind === 30078)).toBe(
-      true,
-    );
+    await f.session.soloPreferences.assign(channel, "work");
+    const value = JSON.parse(
+      f.publish.mock.calls.at(-1)?.[0].content ?? "null",
+    ).value;
+    expect(value.channels).toBeUndefined();
+    expect(value.assignments).toEqual({ [channel]: "work", [other]: "work" });
     expect(f.assignment).not.toHaveBeenCalled();
   } finally {
     f.dispose();
   }
 });
 
-it("does not overwrite Me placement when a refresh fails, and reconciles retries against the fresh head", async () => {
+it("does not overwrite project filing when a refresh fails, and reconciles retries against the fresh head", async () => {
   const f = fixture();
   try {
-    f.install({
-      type: "groups",
-      id: "me",
-      groups: [],
-      assignments: {},
-      channels: [other],
-    });
-    await f.session.soloPlacement.refresh();
-    f.query.mockRejectedValueOnce(new Error("offline"));
-    await expect(f.session.soloPlacement.set(channel, true)).rejects.toThrow();
-    expect(f.publish).not.toHaveBeenCalled();
-    await f.session.soloPlacement.set(channel, true);
-    expect(f.session.soloPlacement.has(other)).toBe(true);
-    expect(f.session.soloPlacement.has(channel)).toBe(true);
-    const count = f.publish.mock.calls.length;
-    await f.session.soloPlacement.set(channel, true);
-    expect(f.publish).toHaveBeenCalledTimes(count);
-  } finally {
-    f.dispose();
-  }
-});
-
-it("serializes simultaneous Me placement and group edits without losing either", async () => {
-  const f = fixture();
-  try {
+    f.install(groups);
     await f.session.soloPreferences.ensure();
-    await Promise.all([
-      f.session.soloPlacement.set(channel, true),
-      f.session.soloPreferences.createAndAssign(channel, {
-        id: "g",
-        name: "Work",
-      }),
-    ]);
-    expect(f.session.soloPlacement.has(channel)).toBe(true);
-    expect(
-      f.session.soloPreferences.snapshot().data?.assignments[channel],
-    ).toBe("g");
+    f.query.mockRejectedValueOnce(new Error("offline"));
+    await expect(
+      f.session.soloPreferences.assign(channel, "work"),
+    ).rejects.toThrow();
+    expect(f.publish).not.toHaveBeenCalled();
+    await f.session.soloPreferences.assign(channel, "work");
+    expect(f.session.soloPreferences.snapshot().data?.assignments).toEqual({
+      [channel]: "work",
+      [other]: "work",
+    });
+    const count = f.publish.mock.calls.length;
+    await f.session.soloPreferences.assign(channel, "work");
+    expect(f.publish).toHaveBeenCalledTimes(count);
   } finally {
     f.dispose();
   }
@@ -361,7 +327,7 @@ it("serializes simultaneous Me placement and group edits without losing either",
 it("confirms native-shaped reordered assignment maps without losing group order", async () => {
   const f = fixture();
   try {
-    f.install({ ...groups, id: "me", channels: [other] });
+    f.install(groups);
     f.prepare.mockImplementation(async (record) =>
       JSON.stringify(record, (_key, value) =>
         value && typeof value === "object" && !Array.isArray(value)
@@ -383,120 +349,71 @@ it("confirms native-shaped reordered assignment maps without losing group order"
   }
 });
 
-it("saves initial Me placement and frozen section together within one clock second", async () => {
+it("files a new chat's frozen section once through setup", async () => {
   const f = fixture();
   try {
-    vi.mocked(Date.now).mockReturnValue(1_800_000_000_000);
-    f.install({ ...groups, id: "me", channels: [] });
-    await f.session.soloPlacement.set(channel, true, { sectionId: "work" });
-    await applySessionSetup(
-      {
-        ...f.session,
-        canvas: {
-          ...f.session.canvas,
-          read: async () => undefined,
+    f.install(groups);
+    const setup = () =>
+      applySessionSetup(
+        {
+          ...f.session,
+          canvas: { ...f.session.canvas, read: async () => undefined },
         },
-      },
-      channel,
-      { sectionId: "work", canvas: "", agents: [] },
-      () => true,
-    );
-    expect(f.publish).toHaveBeenCalledOnce();
-    expect(f.session.soloPlacement.has(channel)).toBe(true);
-    expect(
-      f.session.soloPreferences.snapshot().data?.assignments[channel],
-    ).toBe("work");
-    await f.session.soloPlacement.set(channel, true, { sectionId: "work" });
-    expect(f.publish).toHaveBeenCalledOnce();
-  } finally {
-    f.dispose();
-  }
-});
-
-it("does not place a new Me channel into a deleted section", async () => {
-  const f = fixture();
-  try {
-    await expect(
-      f.session.soloPlacement.set(channel, true, { sectionId: "gone" }),
-    ).rejects.toThrow("The section was removed");
-    expect(f.publish).not.toHaveBeenCalled();
-  } finally {
-    f.dispose();
-  }
-});
-
-it("repairs a frozen initial section without duplicating existing Me placement", async () => {
-  const f = fixture();
-  try {
-    f.install({ ...groups, id: "me", channels: [channel] });
-    await f.session.soloPlacement.set(channel, true, { sectionId: "work" });
-    expect(f.session.soloPlacement.has(channel)).toBe(true);
-    const last = f.publish.mock.calls.at(-1)?.[0];
-    if (!last) throw new Error("Missing repair");
-    expect(JSON.parse(last.content).value.channels).toEqual([channel]);
-    await f.session.soloPreferences.refresh();
-    expect(
-      f.session.soloPreferences.snapshot().data?.assignments[channel],
-    ).toBe("work");
-  } finally {
-    f.dispose();
-  }
-});
-
-it.each([false, true])(
-  "checks the exact Me capacity before saving (grouped=%s) and reclaims moved placement",
-  async (grouped) => {
-    const f = fixture();
-    const value: Groups = {
-      type: "groups",
-      id: "me",
-      groups: grouped
-        ? [{ id: "work", name: "Work", defaultTemplateId: "" }]
-        : [],
-      assignments: {},
-      channels: [],
-    };
-    const record = () => ({
-      version: 1 as const,
-      community,
-      deleted: false,
-      value,
-    });
-    let id = "";
-    for (let i = 1; i < 1000; i++) {
-      id = `00000000-0000-4000-8000-${i.toString(16).padStart(12, "0")}`;
-      value.channels?.push(id);
-      if (grouped) value.assignments[id] = "work";
-      if (!kitRecordFits(record())) {
-        value.channels?.pop();
-        delete value.assignments[id];
-        break;
-      }
-    }
-    parseKitRecord(record(), community);
-    f.install(value);
-    const options = { sectionId: grouped ? "work" : undefined };
-    try {
-      await expect(f.session.soloPlacement.admit(id, options)).rejects.toThrow(
-        "Solo storage is full",
+        channel,
+        { sectionId: "work", canvas: "", agents: [] },
+        () => true,
       );
-      await expect(
-        f.session.soloPlacement.set(id, true, options),
-      ).rejects.toThrow("Solo storage is full");
-      expect(f.publish).not.toHaveBeenCalled();
-      const removed = value.channels?.[0];
-      if (!removed) throw new Error("Missing placement");
-      await f.session.soloPlacement.set(removed, false);
-      await f.session.soloPlacement.admit(id, options);
-      await f.session.soloPlacement.set(id, true, options);
-      expect(f.session.soloPlacement.has(id)).toBe(true);
-      expect(f.session.soloPlacement.has(removed)).toBe(false);
-      await f.session.soloPreferences.ensure();
-      expect(
-        f.session.soloPreferences.snapshot().data?.assignments[removed],
-      ).toBeUndefined();
-    } finally {
-      f.dispose();
+    await setup();
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(
+      f.session.soloPreferences.snapshot().data?.assignments[channel],
+    ).toBe("work");
+    await setup();
+    expect(f.publish).toHaveBeenCalledOnce();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("checks the exact project capacity before saving and reclaims a removed filing", async () => {
+  const f = fixture();
+  const value: Groups = {
+    type: "groups",
+    id: "me",
+    groups: [{ id: "work", name: "Work", defaultTemplateId: "" }],
+    assignments: {},
+  };
+  const record = () => ({
+    version: 1 as const,
+    community,
+    deleted: false,
+    value,
+  });
+  let id = "";
+  for (let i = 1; i < 1000; i++) {
+    id = `00000000-0000-4000-8000-${i.toString(16).padStart(12, "0")}`;
+    value.assignments[id] = "work";
+    if (!kitRecordFits(record())) {
+      delete value.assignments[id];
+      break;
     }
-  },
-);
+  }
+  parseKitRecord(record(), community);
+  f.install(value);
+  try {
+    await f.session.soloPreferences.ensure();
+    await expect(f.session.soloPreferences.assign(id, "work")).rejects.toThrow(
+      "Solo project storage is full",
+    );
+    expect(f.publish).not.toHaveBeenCalled();
+    const removed = Object.keys(value.assignments)[0];
+    if (!removed) throw new Error("Missing filing");
+    await f.session.soloPreferences.assign(removed, undefined);
+    await f.session.soloPreferences.assign(id, "work");
+    const assignments = f.session.soloPreferences.snapshot().data?.assignments;
+    expect(assignments?.[id]).toBe("work");
+    expect(assignments?.[removed]).toBeUndefined();
+  } finally {
+    f.dispose();
+  }
+});

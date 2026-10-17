@@ -360,7 +360,7 @@ test.describe("personal recipients", () => {
     meAgentNames: ["Owned Honey", "Owned Brain"],
     meOutsideAgentNames: ["Outside Agent"],
   });
-  test("Me signs only explicit owned recipients and rejects an outside identity", async ({
+  test("Me signs only explicit owned recipients and never offers an outside identity, in a linked tab too", async ({
     page,
     app,
   }) => {
@@ -480,38 +480,28 @@ test.describe("personal recipients", () => {
         name: "Beta",
         exact: true,
       });
+      // The linked tab follows the same Solo policy as the main reader: the
+      // channel member outside the owner's inventory is not offered.
       await linkedSession
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
-      await page
-        .getByRole("dialog", { name: "Mention a member or agent" })
-        .getByRole("button", {
+      const linkedPicker = page.getByRole("dialog", {
+        name: "Mention a member or agent",
+      });
+      await expect(
+        linkedPicker.getByRole("button", {
+          name: `${brain.name} ${brain.pubkey}`,
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        linkedPicker.getByRole("button", {
           name: `${outsider.name} ${outsider.pubkey}`,
           exact: true,
-        })
-        .click();
-      const ordinaryComposer = linkedSession.getByRole("textbox", {
-        name: "Message your agents",
-        exact: true,
-      });
-      await ordinaryComposer.press("End");
-      await page.keyboard.insertText("Not mine");
-      await openPage(page, "Me");
-      await page
-        .getByRole("navigation", { name: "Solo conversations" })
-        .getByRole("button", { name: "Beta", exact: true })
-        .click();
-      await expect(composer).toContainText("@Outside Agent");
-      await composer.press("Enter");
-      await expect(
-        workspace.getByText(
-          "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
-          { exact: true },
-        ),
-      ).toBeVisible();
-      // Error rendering is the completion barrier: rejected admission never reaches outbox.
+        }),
+      ).toHaveCount(0);
+      await page.keyboard.press("Escape");
       expect(publications()).toHaveLength(1);
-      await expect(composer).toContainText("Not mine");
     } finally {
       releaseHead();
     }

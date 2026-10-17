@@ -51,11 +51,10 @@ test("ordinary session links cannot bypass a pending start receipt", async ({
   });
   await expect(recovered).toHaveText("Original first message");
   await expect(recovered).not.toBeEditable();
-  // The fixture cannot place Solo chats, so the saved start stays parked
-  // rather than sending around its missing setup.
+  // The saved start waits for its author to resume it; nothing sends on open.
   await expect(
     page.getByRole("button", { name: "Send message", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   expect(
     await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key),
   ).toEqual(JSON.parse(receipt));

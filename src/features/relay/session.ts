@@ -18,7 +18,7 @@ import { createPresence } from "../presence/presence";
 import { createAgentMemories } from "../agents/memory";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
-import { sessionMetadata } from "../sessions/metadata";
+import { SOLO_LABEL } from "../sessions/metadata";
 import { createMemberAdministration } from "../channel-members/administration";
 import { createChannelLifecycle } from "./channel-lifecycle";
 import { createChannelDetails } from "./channel-details";
@@ -193,8 +193,9 @@ function parseChannelCreation(
     new Set(labels).size !== labels.length
   )
     return;
+  // Solo chats start only through work sessions.
+  if (labels.includes(SOLO_LABEL)) return;
   const description = optional.find(([key]) => key === "about")?.[1]?.trim();
-  if (sessionMetadata(description) !== undefined) return;
   const ttlValue = optional.find(([key]) => key === "ttl")?.[1];
   const ttlSeconds = ttlValue === undefined ? undefined : Number(ttlValue);
   if (
@@ -1753,9 +1754,9 @@ export function createRelaySession(
           () => void channelKit.capability.refresh(),
         ),
         recoverable(
-          soloPreferences.placement.subscribe,
-          () => loadState(soloPreferences.placement.snapshot()),
-          () => void soloPreferences.placement.refresh(),
+          soloPreferences.queries.subscribe,
+          () => loadState(soloPreferences.queries.snapshot()),
+          () => void soloPreferences.queries.refresh(),
         ),
         recoverable(
           sidebarPreferences.queries.subscribe,
@@ -1874,7 +1875,6 @@ export function createRelaySession(
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
     soloPreferences: soloPreferences.queries,
-    soloPlacement: soloPreferences.placement,
     reminders: reminders?.capability,
     live,
     /** The one automatic retry owner for background reads. Undefined offline. */

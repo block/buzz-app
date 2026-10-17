@@ -1056,13 +1056,14 @@ for (const source of ["share", "sidebar"]) {
       ["name", "Alpha"],
       ["about", ""],
       ["visibility", "open"],
+      ["t", ""],
     ]);
-    const placements = (app.report.sidebarPublications ?? []).filter((entry) =>
-      entry.coordinate.startsWith("buzz-me-kit"),
-    );
-    expect(placements).toHaveLength(1);
-    expect(placements[0].blob.value.channels).toEqual([other]);
-    expect(placements[0].blob.value.assignments[id]).toBeUndefined();
+    // An unfiled chat has no project assignment to remove.
+    expect(
+      (app.report.sidebarPublications ?? []).filter((entry) =>
+        entry.coordinate.startsWith("buzz-me-kit"),
+      ),
+    ).toHaveLength(0);
     expect(
       app.report.publications.filter(({ event }) =>
         [9, 9000, 9007, 30315].includes(event.kind),
@@ -1136,12 +1137,13 @@ test("Messages conversion restores focus after its session header is replaced", 
     ["h", id],
     ["name", "Alpha"],
     ["about", ""],
+    ["t", ""],
   ]);
-  const placements = (app.report.sidebarPublications ?? []).filter((entry) =>
-    entry.coordinate.startsWith("buzz-me-kit"),
-  );
-  expect(placements).toHaveLength(1);
-  expect(placements[0].blob.value.channels).toEqual([other]);
+  expect(
+    (app.report.sidebarPublications ?? []).filter((entry) =>
+      entry.coordinate.startsWith("buzz-me-kit"),
+    ),
+  ).toHaveLength(0);
 });
 
 // Real shell layout and route remounts prove Me consumes the shared sidebar owner.
@@ -1696,7 +1698,9 @@ test("unified session naming and lifetime retain host focus and save only explic
   expect(event.tags).toEqual([
     ["h", id],
     ["name", "Make contrast meet accessibility standards"],
+    ["about", ""],
     ["ttl", "1209600"],
+    ["t", "buzz.solo"],
     ["t", "buzz.session.named"],
   ]);
   const saved = readbacks.find((entry) =>
@@ -1704,13 +1708,10 @@ test("unified session naming and lifetime retain host focus and save only explic
   );
   expect(saved).toBeDefined();
   expect(verifyEvent(saved)).toBe(true);
-  expect(saved.tags).toContainEqual([
-    "about",
-    "Buzz session (buzz.sessions/v1)",
-  ]);
   expect(saved.tags).toContainEqual(["private"]);
   expect(saved.tags.filter(([key]) => key === "t")).toEqual([
     ["t", "stream"],
+    ["t", "buzz.solo"],
     ["t", "buzz.session.named"],
   ]);
   expect(saved.tags).not.toContainEqual(["public"]);

@@ -60,7 +60,7 @@ function setup() {
           ["t", "stream"],
           ...(chosenName ? [["t", SESSION_NAMED_LABEL]] : []),
           ["private"],
-          ["about", "Buzz session (buzz.sessions/v1)"],
+          ["t", "buzz.solo"],
         ]),
         metadata(relay, channelId, "Planning", 1_700_000_000, [
           ["t", "stream"],

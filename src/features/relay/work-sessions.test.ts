@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  sessionDescription,
-  SESSION_CHANNEL_DESCRIPTION,
-} from "../sessions/metadata";
+import { SOLO_LABEL } from "../sessions/metadata";
 import { createWorkSessions } from "./work-sessions";
 import type { Outbox, OutgoingEvent } from "./outbox";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
@@ -18,7 +15,6 @@ import {
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
 import { canAddMembers } from "../channel-members/members";
-import { matchesEvent } from "./projection";
 import type { ReadFilter, RelayEvent } from "./events";
 const event = message(keypair(), "session", "Work", 1);
 
@@ -39,7 +35,7 @@ it("keeps verified session roster reads available for sends without member-add c
                 ["d", id],
                 ["t", "stream"],
                 ["private"],
-                ["about", SESSION_CHANNEL_DESCRIPTION],
+                ["t", SOLO_LABEL],
               ],
             }),
           ]
@@ -118,7 +114,7 @@ it.each([
         ["name", "Work"],
         ["visibility", "private"],
         ["channel_type", "stream"],
-        ["about", SESSION_CHANNEL_DESCRIPTION],
+        ["t", SOLO_LABEL],
       ],
     });
     let records: readonly OutgoingEvent[] = [
@@ -338,7 +334,7 @@ it("keeps a seen private creation through an access purge and reconnect", async 
       ["name", "Old session"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["t", SOLO_LABEL],
     ],
   });
   const input = { name: "Private notes", visibility: "private" as const };
@@ -899,159 +895,6 @@ it.each(["held", "failed"] as const)(
   },
 );
 
-it("confirms an agent added to a session and its parent with two concurrent exact roster reads and no rediscovery", async () => {
-  const viewer = keypair(),
-    relay = keypair(),
-    agent = keypair();
-  const parent = "11111111-1111-4111-8111-111111111111",
-    child = "22222222-2222-4222-8222-222222222222";
-  let clock = 1_700_000_000;
-  const members = new Map([
-    [parent, [viewer.pubkey]],
-    [child, [viewer.pubkey]],
-  ]);
-  // The gate's confirmations are the viewer-scoped exact roster reads. The
-  // relay holds them so the test can see both in flight before answering one.
-  let holding = false;
-  const held: {
-    id: string;
-    filters: readonly ReadFilter[];
-    release: () => void;
-  }[] = [];
-  const query = vi.fn(async (filters: readonly ReadFilter[]) => {
-    const exact = filters.find(
-      (filter) => filter.kinds?.includes(39002) && filter["#d"] && filter["#p"],
-    );
-    if (holding && exact)
-      await new Promise<void>((release) =>
-        held.push({ id: exact["#d"]?.[0] ?? "", filters, release }),
-      );
-    const events = [
-      signed(relay, {
-        kind: 39000,
-        content: "",
-        tags: [
-          ["d", parent],
-          ["t", "stream"],
-          ["name", "Team"],
-        ],
-      }),
-      signed(relay, {
-        kind: 39000,
-        content: "",
-        tags: [
-          ["d", child],
-          ["t", "stream"],
-          ["private"],
-          ["about", `Buzz session (buzz.sessions/v1)\nparent:${parent}`],
-        ],
-      }),
-      roster(relay, parent, members.get(parent) ?? [], clock),
-      roster(relay, child, members.get(child) ?? [], clock),
-    ];
-    const replica = events.map((event) =>
-      event.kind === 39002
-        ? roster(
-            relay,
-            event.tags.find(([key]) => key === "d")?.[1] ?? "",
-            [viewer.pubkey],
-            1_700_000_000,
-          )
-        : event,
-    );
-    return (
-      filters.every((filter) => filter.consistency === "strong")
-        ? events
-        : replica
-    ).filter((event) => filters.some((filter) => matchesEvent(event, filter)));
-  });
-  const owner = createRelaySession(
-    {
-      viewer: viewer.pubkey,
-      relayAuthor: relay.pubkey,
-      media: () => undefined,
-      readAgentLibrary: async () => ({
-        definitions: [],
-        identities: [{ pubkey: agent.pubkey, name: "Outside agent" }],
-      }),
-      writer: {
-        kinds: [9, 9000, 9007],
-        sign: async (template) => signed(viewer, template),
-        publish: async (event) => {
-          const target = event.tags.find(([name]) => name === "h")?.[1] ?? "";
-          members.set(target, [viewer.pubkey, agent.pubkey]);
-          clock++;
-        },
-      },
-      query,
-    },
-    { outboxStorage: { load: () => [], save: () => {} } },
-  );
-  try {
-    owner.session.channels.ensureList();
-    await vi.waitFor(() =>
-      expect(owner.session.live.snapshot().roster.state).toBe("verified"),
-    );
-    expect(
-      owner.session.channels
-        .list()
-        .channels.find((channel) => channel.id === child)?.parentChannelId,
-    ).toBe(parent);
-    await owner.session.agentLibrary.refresh();
-    const before = query.mock.calls.length;
-    holding = true;
-    const adding = owner.session.workSessions.addAgents(child, [agent.pubkey]);
-    // Both commands were acknowledged before either confirmation answered: the
-    // two targets' reads are in flight together, not one gate after the other.
-    await vi.waitFor(() =>
-      expect(held.map(({ id }) => id).sort()).toEqual([parent, child].sort()),
-    );
-    for (const { id, filters } of held)
-      expect(filters).toEqual([
-        {
-          kinds: [39002],
-          authors: [relay.pubkey],
-          "#d": [id],
-          "#p": [viewer.pubkey],
-          limit: 2,
-          consistency: "strong",
-        },
-      ]);
-    for (const { release } of held.splice(0)) release();
-    await expect(adding).resolves.toBeUndefined();
-    const list = owner.session.channels.list();
-    expect(list.status).toBe("ready");
-    for (const id of [parent, child])
-      expect(
-        list.channels.find((channel) => channel.id === id)?.members,
-      ).toContain(agent.pubkey);
-    await flush();
-    const rosterReads = query.mock.calls
-      .slice(before)
-      .map(([filters]) => filters)
-      .filter((filters) =>
-        filters.some((filter) => filter.kinds?.includes(39002)),
-      );
-    // No viewer-wide roster page followed the exact reads: the full pass was
-    // never needed. The awaited roster reads are the two pre-publish membership
-    // checks and the two confirmations, one event each.
-    expect(
-      rosterReads.filter((filters) =>
-        filters.some((filter) => filter["#p"] && !filter["#d"]),
-      ),
-    ).toHaveLength(0);
-    expect(
-      rosterReads.filter((filters) =>
-        filters.some((filter) => filter["#d"] && filter["#p"]),
-      ),
-    ).toHaveLength(2);
-    expect(rosterReads).toHaveLength(4);
-    expect(held).toHaveLength(0);
-  } finally {
-    owner.dispose();
-  }
-});
-
 it.each([true, false])(
   "confirms an exact own creation without admitting a channel missing its roster (receipt: %s)",
   async (found) => {
@@ -1203,6 +1046,11 @@ function setup(
       reader,
       controller.signal,
       receipts,
+      undefined,
+      undefined,
+      undefined,
+      reader,
+      channelCreation,
     ),
     outbox,
     channels,
@@ -1646,7 +1494,7 @@ it("starts a Solo chat using existing private-channel creation without the Sessi
       ["name", "Solo"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      ["about", "Buzz session (buzz.sessions/v1)\npersonal"],
+      ["t", SOLO_LABEL],
     ],
   });
 });
@@ -1702,7 +1550,7 @@ it("creates an ordinary stream with explicit visibility and optional description
     undefined,
   );
   for (const description of [
-    SESSION_CHANNEL_DESCRIPTION,
+    "Buzz session (buzz.sessions/v1)",
     "Buzz session (notes)",
   ]) {
     expect(() =>
@@ -1729,7 +1577,7 @@ it("recovers a lost normal-channel creation acknowledgment only with its exact v
       ["name", "Work"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["about", "Notes"],
     ],
   });
   test.setItems([{ event: creation, delivery: "unknown" }]);
@@ -1941,8 +1789,8 @@ it("standalone session creation sends validated TTL in its single durable outbox
       ["name", "Work"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      ["about", sessionDescription(undefined, true)],
       ["ttl", "600"],
+      ["t", SOLO_LABEL],
     ],
   });
   for (const ttl of [0, -1, 1.5, 2147483648, NaN])
@@ -1950,10 +1798,10 @@ it("standalone session creation sends validated TTL in its single durable outbox
   expect(h.outbox.send).toHaveBeenCalledOnce();
 });
 
-it("creates a custom title and lifetime in one legacy-compatible command without a rename", () => {
+it("creates a custom title and lifetime in one command without a rename", () => {
   const h = setup(),
     id = "11111111-1111-4111-8111-111111111111";
-  h.service.create(id, "Named", 600);
+  h.service.create(id, "Named", 600, true);
   expect(h.outbox.send).toHaveBeenCalledOnce();
   expect(h.outbox.send).toHaveBeenCalledWith({
     kind: 9007,
@@ -1963,8 +1811,9 @@ it("creates a custom title and lifetime in one legacy-compatible command without
       ["name", "Named"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      ["about", sessionDescription(undefined, true)],
       ["ttl", "600"],
+      ["t", SOLO_LABEL],
+      ["t", "buzz.session.named"],
     ],
   });
 });

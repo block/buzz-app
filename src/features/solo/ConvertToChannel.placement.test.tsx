@@ -16,10 +16,8 @@ import type { RelayEvent } from "../relay/events";
 import { coordinate, kitTag, type KitRecord } from "../channel-templates/model";
 import { soloChat } from "../agents/solo-chat";
 import type { RelayData } from "../relay/service";
-import { SoloSections } from "../../bundled/channels/SoloSections";
-import userEvent from "@testing-library/user-event";
-import { within } from "@testing-library/react";
 import { ConvertToChannel } from "./ConvertToChannel";
+import { SOLO_LABEL } from "../sessions/metadata";
 import { sessionConversion } from "./conversion";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -35,7 +33,7 @@ function fixture() {
   const viewer = keypair(),
     relayKey = keypair();
   let clock = 1_700_000_000;
-  let about = "Buzz session (buzz.sessions/v1)";
+  let labels = [SOLO_LABEL, "label"];
   const original: KitRecord = {
     version: 1,
     community,
@@ -43,7 +41,6 @@ function fixture() {
     value: {
       type: "groups",
       id: "me",
-      channels: [id, other],
       groups: [{ id: "work", name: "Work", defaultTemplateId: "template" }],
       assignments: { [id]: "work", [other]: "work" },
     },
@@ -64,7 +61,9 @@ function fixture() {
   let loseRemovalAck = false;
   const publish = vi.fn(async (event: RelayEvent) => {
     if (event.kind === 9002) {
-      about = "";
+      labels = event.tags.flatMap(([tag, value]) =>
+        tag === "t" && value ? [value] : [],
+      );
       clock++;
       failCatalog = failAfterConversion;
     } else if (event.kind === 30078) {
@@ -77,6 +76,7 @@ function fixture() {
   });
   const owner = createRelaySession(
     {
+      channelIdentity: true,
       viewer: viewer.pubkey,
       relayAuthor: relayKey.pubkey,
       scope: community,
@@ -86,13 +86,14 @@ function fixture() {
           failCatalog &&
           filters.some((filter) => filter.kinds?.includes(30078))
         )
-          throw new Error("Me catalog unavailable");
+          throw new Error("Solo catalog unavailable");
         return [
           metadata(relayKey, id, "Work", clock, [
             ["t", "stream"],
-            ["t", "label"],
+            ...labels.map((label) => ["t", label]),
             ["private"],
-            ["about", about],
+            ["about", "Notes"],
+            ["P", viewer.pubkey],
             ["ttl", "86400"],
           ]),
           signed(relayKey, {
@@ -169,10 +170,6 @@ function fixture() {
     converted,
     mount,
     viewer,
-    ordinary: () => {
-      about = "";
-      clock++;
-    },
     failAfterConversion: () => {
       failAfterConversion = true;
     },
@@ -190,7 +187,7 @@ async function submit() {
   await waitFor(() => expect(confirm).toBeEnabled());
   fireEvent.click(confirm);
 }
-it("confirms same-channel metadata before removing only its Me placement and assignment", async () => {
+it("confirms the label change before removing only its project assignment", async () => {
   const f = fixture();
   await f.mount();
   await submit();
@@ -201,40 +198,39 @@ it("confirms same-channel metadata before removing only its Me placement and ass
   expect(f.publish.mock.calls[0]?.[0].tags).toEqual([
     ["h", id],
     ["name", "Work"],
-    ["about", ""],
+    ["about", "Notes"],
+    ["t", "label"],
   ]);
   const saved = JSON.parse(f.publish.mock.calls[1]?.[0].content ?? "null");
   expect(saved.value).toEqual({
     ...f.original.value,
-    channels: [other],
     assignments: { [other]: "work" },
   });
-  expect(f.session.soloPlacement.has(id)).toBe(false);
-  expect(f.session.soloPlacement.has(other)).toBe(true);
   const details = await f.session.channelDetails.load(id);
   expect(details).toMatchObject({
     name: "Work",
-    description: "",
+    description: "Notes",
     ttlSeconds: 86400,
     labels: ["label"],
   });
   expect(sessionConversion(f.session, id)).toBeUndefined();
 });
-it("retains recovery on a failed Me read after conversion, reopens and removes without another metadata command", async () => {
+it("retains recovery on a failed project read after conversion, reopens and unfiles without another metadata command", async () => {
   const f = fixture();
   f.failAfterConversion();
   const view = await f.mount();
   await submit();
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Me catalog unavailable",
+    "Solo catalog unavailable",
   );
   expect(
-    screen.getByText("Channel converted. Finish removing it from Solo."),
+    screen.getByText(
+      "Channel converted. Finish removing it from its Solo project.",
+    ),
   ).toBeVisible();
   expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([9002]);
   expect(f.converted).not.toHaveBeenCalled();
-  // The metadata policy wins even when removal failed and the owner's record
-  // still contains this ID. No private-placement read is needed to route a stream.
+  // The cleared label routes the channel even while its project filing remains.
   const relay = {
     snapshot: () => ({
       status: "ready",
@@ -275,49 +271,7 @@ it("reconciles unknown removal from the fresh selected record without replaying 
   expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([
     9002, 30078,
   ]);
-  expect(f.session.soloPlacement.has(id)).toBe(false);
-});
-
-it("a fresh view exposes removal-only recovery in the actual Me row menu", async () => {
-  const f = fixture();
-  f.ordinary();
-  f.session.channels.ensureList();
-  await waitFor(() =>
-    expect(
-      f.session.channels.list().channels.find((channel) => channel.id === id)
-        ?.channelType,
-    ).toBe("stream"),
+  expect(f.session.soloPreferences.snapshot().data?.assignments[id]).toBe(
+    undefined,
   );
-  await f.session.soloPlacement.refresh();
-  await f.session.soloPreferences.ensure();
-  expect(sessionConversion(f.session, id)).toBeUndefined();
-  const user = userEvent.setup();
-  const opened = vi.fn();
-  render(
-    <SoloSections
-      session={f.session}
-      scope={f.session.scope}
-      sessions={[{ id, title: "Work" }]}
-      onConverted={opened}
-      renderSession={(item) => <button type="button">{item.title}</button>}
-    />,
-  );
-  const row = document.querySelector(`[data-session-menu-id="${id}"]`);
-  if (!(row instanceof HTMLElement)) throw new Error("Me row missing");
-  await user.click(
-    within(row).getByRole("button", { name: "Actions for Work" }),
-  );
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Move to Team" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Move to Team",
-  });
-  expect(within(dialog).queryByRole("radio")).toBeNull();
-  await user.click(
-    within(dialog).getByRole("button", { name: "Move to Team" }),
-  );
-  await waitFor(() => expect(opened).toHaveBeenCalledExactlyOnceWith(id));
-  expect(f.publish.mock.calls.map(([event]) => event.kind)).toEqual([30078]);
-  expect(f.session.soloPlacement.has(id)).toBe(false);
 });

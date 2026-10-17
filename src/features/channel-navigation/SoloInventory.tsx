@@ -12,9 +12,8 @@ import { useRecoveryShown } from "../relay/RecoveryNotice";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { buzzLinkTarget } from "../navigation/buzz-links";
-import { useSoloPlacement } from "../solo/placement";
+import { ownSolo } from "../sessions/metadata";
 import { resetNewChatProject } from "../solo/SoloDraft";
-import { Button } from "../../shared/design-system/ui/Button";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import channelStyles from "../../bundled/channels/Channels.module.css";
@@ -33,7 +32,6 @@ export function SoloInventory({
   target: OpenTarget;
 }) {
   const list = useChannelList(session.channels);
-  const placement = useSoloPlacement(session);
   const recoveryShown = useRecoveryShown(session.recovery);
   const selected =
     target.kind === "conversation" ? target.channelId : undefined;
@@ -76,7 +74,7 @@ export function SoloInventory({
     });
   };
   const conversations = list.channels
-    .filter((item) => !item.archived && placement.ids.includes(item.id))
+    .filter((item) => !item.archived && ownSolo(item, session.viewer))
     .sort(
       (a, b) =>
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
@@ -134,24 +132,11 @@ export function SoloInventory({
       {list.status === "error" && !recoveryShown && (
         <p role="alert">{list.error}</p>
       )}
-      {placement.status === "error" && !placement.transient ? (
-        <p role="status">
-          {placement.error}{" "}
-          <Button onClick={() => void session.soloPlacement.refresh()}>
-            Retry Solo
-          </Button>
+      {!conversations.length && list.status === "ready" && (
+        <p className={styles.listMessage}>
+          Start a conversation with your agents.
         </p>
-      ) : (
-        placement.status !== "ready" &&
-        !recoveryShown && <p role="status">Loading Solo chats…</p>
       )}
-      {!conversations.length &&
-        list.status === "ready" &&
-        placement.status === "ready" && (
-          <p className={styles.listMessage}>
-            Start a conversation with your agents.
-          </p>
-        )}
     </nav>
   );
 }

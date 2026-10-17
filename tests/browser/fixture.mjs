@@ -368,7 +368,6 @@ export const test = base.extend({
             id: "me",
             groups: [],
             assignments: {},
-            channels: meChannels,
           },
         };
         readEvents.get(community).set(
@@ -1077,9 +1076,13 @@ export const test = base.extend({
                   ...(sessionChannels.includes(id)
                     ? [
                         ["private"],
+                        ["t", "buzz.solo"],
+                        // The viewer's own Solo chats; any other is shared with them.
                         [
-                          "about",
-                          `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
+                          "P",
+                          meChannels.includes(id)
+                            ? viewer
+                            : getPublicKey(relayKey),
                         ],
                       ]
                     : []),

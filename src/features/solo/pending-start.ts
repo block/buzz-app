@@ -15,7 +15,6 @@ export type PendingStart = {
   named?: boolean;
   setup?: SessionSetup;
   setupDone?: boolean;
-  placementDone?: boolean;
 };
 const sessionId =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -43,11 +42,6 @@ export function readPending(
         id !== undefined &&
         (typeof id !== "string" || !/^[0-9a-f]{64}$/.test(id)),
     )
-  )
-    return;
-  if (
-    value.placementDone !== undefined &&
-    typeof value.placementDone !== "boolean"
   )
     return;
   return value as PendingStart;

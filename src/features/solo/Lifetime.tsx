@@ -7,7 +7,7 @@ import {
   type ChannelDetails,
 } from "../relay/channel-details-protocol";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/work-sessions";
-import { sessionMetadata } from "../sessions/metadata";
+import { soloLabels } from "../sessions/metadata";
 
 /** Presentation only: the details owner rechecks fresh signed edit authority. */
 export function canEditLifetime(
@@ -17,7 +17,6 @@ export function canEditLifetime(
   return !!(
     session.channelDetails?.available &&
     channel?.channelType === "session" &&
-    !channel.parentChannelId &&
     !channel.cached &&
     !channel.readOnly &&
     !channel.archived
@@ -52,8 +51,7 @@ export function useLifetime({
   const pending = useRef(false);
   const confirmedTtl = useRef<number | undefined>(undefined);
   const refreshBeforeSave = useRef(false);
-  const metadata = base && sessionMetadata(base.description);
-  const eligible = !!base?.canEdit && !!metadata && !metadata.parentId;
+  const eligible = !!base?.canEdit && soloLabels(base.labels);
   const matchingAttempt = !!base && matchesLifetime(base, attempt?.draft);
   // Persisted automatic-name provenance is deferred. Blank preserves the current title.
   const normalized = canonicalDetailsName(name) || confirmedName.current;
@@ -157,10 +155,9 @@ export function useLifetime({
               ? await details.load(id, active)
               : base;
             active.throwIfAborted();
-            const metadata = sessionMetadata(current.description);
-            if (!current.canEdit || !metadata || metadata.parentId)
+            if (!current.canEdit || !soloLabels(current.labels))
               throw new Error(
-                "This conversation is no longer an editable standalone session. Reload session details before changing its name or lifetime.",
+                "This conversation is no longer an editable Solo chat. Reload its details before changing its name or lifetime.",
               );
             await details.save(
               current,
@@ -194,7 +191,7 @@ export function useLifetime({
     }
   };
   return {
-    available: enabled && !metadata?.parentId,
+    available: enabled && (!base || soloLabels(base.labels)),
     base,
     name,
     nameError,
@@ -222,16 +219,15 @@ export function useLifetime({
 const noSubscribe = () => () => {};
 function matchesLifetime(
   base: ChannelDetails,
-  draft?: Pick<ChannelDetails, "name" | "description" | "visibility">,
+  draft?: Pick<
+    ChannelDetails,
+    "name" | "description" | "visibility" | "labels"
+  >,
 ) {
-  const metadata = sessionMetadata(base.description);
-  const next = sessionMetadata(draft?.description);
   return (
     !!draft &&
-    !!metadata &&
-    !metadata.parentId &&
-    !!next &&
-    !next.parentId &&
+    soloLabels(base.labels) &&
+    (draft.labels === undefined || soloLabels(draft.labels)) &&
     draft.visibility === base.visibility &&
     draft.description === base.description
   );

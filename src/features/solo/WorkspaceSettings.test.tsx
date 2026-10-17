@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createChannelDetails } from "../relay/channel-details";
-import { sessionDescription } from "../sessions/metadata";
+import { SOLO_LABEL } from "../sessions/metadata";
 import { PublishRejected } from "../relay/outbox";
 import { readView } from "../../shared/view-state";
 import { createChannelKit } from "../channel-templates/capability";
@@ -249,15 +249,15 @@ it("recreates deleted section defaults using the tombstone revision", async () =
 
 // The combined modal talks to the real signed details owner; Canvas remains its
 // independent revision/receipt boundary, held explicitly for orchestration tests.
-function combined(personal = false) {
+function combined() {
   const id = "11111111-1111-4111-8111-111111111111";
   const viewer = keypair(),
     relay = keypair();
   let ttl: number | undefined = 600,
     clock = 100,
-    description = sessionDescription(undefined, personal),
+    description = "",
     name = "Plan";
-  let labels: string[][] = [];
+  let labels: string[][] = [["t", SOLO_LABEL]];
   const record = (kind: number, tags: string[][]) =>
     signed(relay, {
       kind,
@@ -347,7 +347,7 @@ function combined(personal = false) {
       clock++;
     },
     convert: () => {
-      description = "";
+      labels = [];
       clock++;
     },
   };
@@ -499,7 +499,7 @@ it("a confirmed details check does not claim unloaded Canvas has unsaved edits",
   expect(h.publish).toHaveBeenCalledOnce();
 });
 
-it("rechecks standalone-session eligibility after recovery before saving another lifetime edit", async () => {
+it("rechecks Solo eligibility after recovery before saving another lifetime edit", async () => {
   const h = combined();
   h.publish.mockRejectedValueOnce(new Error("Lost ack"));
   await editBoth();
@@ -524,7 +524,7 @@ it("rechecks standalone-session eligibility after recovery before saving another
   );
   expect(h.sign).toHaveBeenCalledOnce();
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "no longer an editable standalone session",
+    "no longer an editable Solo chat",
   );
   expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
     "Next Canvas",
@@ -697,7 +697,9 @@ it("saves name and lifetime together after Canvas; clearing later preserves the 
   expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
     ["h", h.id],
     ["name", "Better name"],
+    ["about", ""],
     ["ttl", ""],
+    ["t", SOLO_LABEL],
     ["t", "buzz.session.named"],
   ]);
   expect(h.canvas.save.mock.invocationCallOrder[0]).toBeLessThan(
@@ -713,82 +715,77 @@ it("saves name and lifetime together after Canvas; clearing later preserves the 
   expect(h.sign).toHaveBeenCalledOnce();
   expect(await h.details.capability.load(h.id)).toMatchObject({
     name: "Better name",
-    description: sessionDescription(),
+    description: "",
   });
   expect(h.canvas.save).toHaveBeenCalledOnce();
 });
-it.each([false, true])(
-  "historical blank name preserves the saved title and personal metadata (%j)",
-  async (personal) => {
-    const h = combined(personal);
-    const name = await screen.findByRole("textbox", {
-      name: "Chat name",
+it("historical blank name preserves the saved title and Solo metadata", async () => {
+  const h = combined();
+  const name = await screen.findByRole("textbox", {
+    name: "Chat name",
+  });
+  expect(name).toHaveValue("Plan");
+  expect(name).toHaveAttribute("placeholder", "Plan");
+  expect(name).not.toHaveAccessibleDescription();
+  fireEvent.change(name, { target: { value: "  " } });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(saveChanges()).toBeEnabled();
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.canvas.save).not.toHaveBeenCalled();
+  expect(await h.details.capability.load(h.id)).toMatchObject({
+    name: "Plan",
+    description: "",
+  });
+  h.mounted.unmount();
+  render(h.view());
+  expect(await screen.findByRole("textbox", { name: "Chat name" })).toHaveValue(
+    "Plan",
+  );
+});
+it("historical blank name allows Canvas and lifetime saves without changing Solo metadata, including retry", async () => {
+  const h = combined();
+  await editBoth();
+  fireEvent.change(screen.getByRole("textbox", { name: "Chat name" }), {
+    target: { value: "" },
+  });
+  const original = Storage.prototype.setItem;
+  const storage = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, key, value) {
+      if (value === "null") throw new Error("Device full");
+      original.call(this, key, value);
     });
-    expect(name).toHaveValue("Plan");
-    expect(name).toHaveAttribute("placeholder", "Plan");
-    expect(name).not.toHaveAccessibleDescription();
-    fireEvent.change(name, { target: { value: "  " } });
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(saveChanges()).toBeEnabled();
+  try {
     fireEvent.click(saveChanges());
-    await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
-    expect(h.sign).not.toHaveBeenCalled();
-    expect(h.canvas.save).not.toHaveBeenCalled();
-    expect(await h.details.capability.load(h.id)).toMatchObject({
-      name: "Plan",
-      description: sessionDescription(undefined, personal),
-    });
-    h.mounted.unmount();
-    render(h.view());
-    expect(
-      await screen.findByRole("textbox", { name: "Chat name" }),
-    ).toHaveValue("Plan");
-  },
-);
-it.each([false, true])(
-  "historical blank name allows Canvas and lifetime saves without changing session metadata, including retry (%j)",
-  async (personal) => {
-    const h = combined(personal);
-    await editBoth();
-    fireEvent.change(screen.getByRole("textbox", { name: "Chat name" }), {
-      target: { value: "" },
-    });
-    const original = Storage.prototype.setItem;
-    const storage = vi
-      .spyOn(Storage.prototype, "setItem")
-      .mockImplementation(function (this: Storage, key, value) {
-        if (value === "null") throw new Error("Device full");
-        original.call(this, key, value);
-      });
-    try {
-      fireEvent.click(saveChanges());
-      expect(await screen.findByRole("alert")).toHaveTextContent(
-        "Changes are confirmed",
-      );
-      expect(h.close).not.toHaveBeenCalled();
-    } finally {
-      storage.mockRestore();
-    }
-    expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
-      ["h", h.id],
-      ["name", "Plan"],
-      ["ttl", ""],
-    ]);
-    expect(h.canvas.save.mock.invocationCallOrder[0]).toBeLessThan(
-      h.sign.mock.invocationCallOrder[0] ?? 0,
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Changes are confirmed",
     );
-    fireEvent.click(saveChanges());
-    await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
-    expect(h.canvas.save).toHaveBeenCalledOnce();
-    expect(h.publish).toHaveBeenCalledOnce();
-    const saved = await h.details.capability.load(h.id);
-    expect(saved).toMatchObject({
-      name: "Plan",
-      description: sessionDescription(undefined, personal),
-    });
-    expect(saved.ttlSeconds).toBeUndefined();
-  },
-);
+    expect(h.close).not.toHaveBeenCalled();
+  } finally {
+    storage.mockRestore();
+  }
+  expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
+    ["h", h.id],
+    ["name", "Plan"],
+    ["about", ""],
+    ["ttl", ""],
+  ]);
+  expect(h.canvas.save.mock.invocationCallOrder[0]).toBeLessThan(
+    h.sign.mock.invocationCallOrder[0] ?? 0,
+  );
+  fireEvent.click(saveChanges());
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.canvas.save).toHaveBeenCalledOnce();
+  expect(h.publish).toHaveBeenCalledOnce();
+  const saved = await h.details.capability.load(h.id);
+  expect(saved).toMatchObject({
+    name: "Plan",
+    description: "",
+  });
+  expect(saved.ttlSeconds).toBeUndefined();
+});
 it("a conflicted name retains input across explicit reload and rechecks real signed authority", async () => {
   const h = combined();
   await editBoth();
@@ -945,12 +942,13 @@ it("a saved title stays visible during a lifetime-only save", async () => {
   expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
     ["h", h.id],
     ["name", "Plan"],
+    ["about", ""],
     ["ttl", ""],
   ]);
 });
 
-it("renaming and clearing a personal session preserve its signed personal marker", async () => {
-  const h = combined(true);
+it("renaming and clearing a Solo chat preserve its label", async () => {
+  const h = combined();
   fireEvent.change(await screen.findByRole("textbox", { name: "Chat name" }), {
     target: { value: "Solo title" },
   });
@@ -959,11 +957,13 @@ it("renaming and clearing a personal session preserve its signed personal marker
   expect(h.sign.mock.calls[0]?.[0].tags).toEqual([
     ["h", h.id],
     ["name", "Solo title"],
+    ["about", ""],
+    ["t", SOLO_LABEL],
     ["t", "buzz.session.named"],
   ]);
   expect(await h.details.capability.load(h.id)).toMatchObject({
     name: "Solo title",
-    description: sessionDescription(undefined, true),
+    description: "",
   });
   h.mounted.unmount();
   render(h.view());
@@ -975,6 +975,6 @@ it("renaming and clearing a personal session preserve its signed personal marker
   expect(h.publish).toHaveBeenCalledOnce();
   expect(await h.details.capability.load(h.id)).toMatchObject({
     name: "Solo title",
-    description: sessionDescription(undefined, true),
+    description: "",
   });
 });

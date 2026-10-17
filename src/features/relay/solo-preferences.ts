@@ -1,4 +1,3 @@
-import { removedSectionMessage } from "../solo/workspace";
 import type { ChannelKit } from "../channel-templates/capability";
 import {
   kitRecordFits,
@@ -29,11 +28,10 @@ const empty = (): Groups => ({
   id: "me",
   groups: [],
   assignments: {},
-  channels: [],
 });
 
-// Object key order changes through native JSON maps. Only group/channel order
-// is presentation data; assignment insertion order is not.
+// Object key order changes through native JSON maps. Only group order is
+// presentation data; assignment insertion order is not.
 function comparable(value: Groups) {
   return JSON.stringify([
     value.id,
@@ -43,35 +41,12 @@ function comparable(value: Groups) {
       defaultTemplateId,
     ]),
     Object.entries(value.assignments).sort(([a], [b]) => a.localeCompare(b)),
-    value.channels ?? [],
   ]);
 }
 
-function placed(
-  value: Groups,
-  id: string,
-  personal: boolean,
-  sectionId?: string,
-) {
-  if (sectionId && !value.groups.some((group) => group.id === sectionId))
-    throw new Error(removedSectionMessage);
-  const ids = value.channels ?? [];
-  const assignments = { ...value.assignments };
-  if (!personal) delete assignments[id];
-  else if (sectionId) assignments[id] = sectionId;
-  return {
-    ...value,
-    assignments,
-    channels: personal
-      ? ids.includes(id)
-        ? ids
-        : [...ids, id]
-      : ids.filter((key) => key !== id),
-  };
-}
 function admit(value: Groups, entry: KitEntry | undefined) {
-  // With no saved record, one placement always fits. Existing records retain
-  // their exact community envelope, including its UTF-8 byte cost.
+  // With no saved record, any filing fits. Existing records retain their
+  // exact community envelope, including its UTF-8 byte cost.
   if (entry && !kitRecordFits({ ...entry.record, deleted: false, value }))
     throw new Error(soloCapacityMessage);
 }
@@ -228,48 +203,5 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
       generation.abort();
       store.dispose();
     },
-    placement: Object.freeze({
-      available: kit.available,
-      subscribe: kit.subscribe,
-      snapshot: kit.snapshot,
-      ensure: kit.ensure,
-      refresh: kit.refresh,
-      has(id: string) {
-        const state = kit.snapshot();
-        if (state.status !== "ready") return false;
-        const entry = soloGroups(state.entries);
-        return (
-          !entry?.record.deleted &&
-          entry?.record.value.type === "groups" &&
-          !!entry.record.value.channels?.includes(id)
-        );
-      },
-      admit(
-        id: string,
-        options: { signal?: AbortSignal; sectionId?: string | undefined } = {},
-      ) {
-        return serialize(async () => {
-          const { value, entry } = await current(options.signal);
-          admit(placed(value, id, true, options.sectionId), entry);
-        });
-      },
-      set(
-        id: string,
-        personal: boolean,
-        options: { signal?: AbortSignal; sectionId?: string | undefined } = {},
-      ) {
-        return serialize(async () => {
-          const { value, entry, active } = await current(options.signal);
-          const next = placed(
-            value,
-            id,
-            personal,
-            personal ? options.sectionId : undefined,
-          );
-          if (comparable(next) === comparable(value)) return;
-          await save(next, entry, active);
-        });
-      },
-    }),
   };
 }

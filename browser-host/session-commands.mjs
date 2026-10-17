@@ -1,4 +1,3 @@
-import { sessionMetadata } from "../src/features/sessions/metadata.ts";
 import { validChannelLabel } from "../src/features/relay/channel-labels.ts";
 // Host signing allowlist. No arbitrary kinds, roles or metadata edits.
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -51,7 +50,6 @@ export function validChannelCommand(event) {
     const ttl = optional.find(([name]) => name === "ttl");
     const aboutValue = about?.[1];
     const ttlValue = ttl?.[1];
-    const session = sessionMetadata(aboutValue);
     return (
       event.content === "" &&
       tags.length >= expected.length &&
@@ -68,13 +66,12 @@ export function validChannelCommand(event) {
       (!about ||
         (about.length === 2 &&
           [...aboutValue].length <= 1000 &&
-          (session !== undefined || !aboutValue.includes("Buzz session (")))) &&
+          !aboutValue.includes("Buzz session ("))) &&
       (!ttl ||
         (ttl.length === 2 &&
           /^(?:[1-9]\d*)$/.test(ttlValue) &&
           Number(ttlValue) <= 2_147_483_647 &&
-          String(Number(ttlValue)) === ttlValue &&
-          !session?.parentId))
+          String(Number(ttlValue)) === ttlValue))
     );
   }
   if (event.kind === 9000)

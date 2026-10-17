@@ -11,6 +11,15 @@ test("reaction previews and the inline picker do not reveal message hover action
   const reaction = row.locator('button[data-reaction="👍"]');
   const actions = row.getByRole("group", { name: "Message actions" });
   const body = row.locator("[data-message-action-anchor]").first();
+  const expectActionsClosed = async () => {
+    // Closed controls stay in DOM/tab order; opacity, hit testing, and native
+    // top-layer state establish that they neither paint nor intercept input.
+    await expect(actions).toHaveCSS("opacity", "0");
+    await expect(actions).toHaveCSS("pointer-events", "none");
+    await expect
+      .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
+      .toBe(false);
+  };
   const plus = row.getByTestId("reaction-row").getByRole("button", {
     name: "Add reaction",
     exact: true,
@@ -20,26 +29,29 @@ test("reaction previews and the inline picker do not reveal message hover action
   const preview = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
   await expect(preview).toBeVisible();
   await expect(preview).toContainText("Fixture Member");
-  await expect(actions).toBeHidden();
+  await expectActionsClosed();
   await body.hover();
-  await expect(actions).toBeVisible();
+  await expect(actions).toHaveCSS("opacity", "1");
+  // Finish the previous preview's exit before testing a fresh hover entry.
+  await expect(page.locator(".buzz-preview-card")).toHaveCount(0);
   await reaction.hover();
   await expect(preview).toBeVisible();
-  await expect(actions).toBeHidden();
+  await expectActionsClosed();
   await plus.hover();
-  await expect(actions).toBeHidden();
+  await expectActionsClosed();
   await plus.click();
   const picker = page.locator('em-emoji-picker input[type="search"]');
   await expect(picker).toBeVisible();
-  await expect(actions).toBeHidden();
+  await expectActionsClosed();
   await picker.press("Escape");
   await expect(picker).toHaveCount(0);
   await body.hover();
-  await expect(actions).toBeVisible();
+  await expect(actions).toHaveCSS("opacity", "1");
   await actions.getByRole("button", { name: "More message actions" }).hover();
-  await expect(actions).toBeVisible();
-  await page.mouse.move(0, 0);
-  await expect(actions).toBeHidden();
+  await expect(actions).toHaveCSS("opacity", "1");
+  // Moving the pointer alone does not end keyboard focus restored by Escape.
+  await page.mouse.click(0, 0);
+  await expectActionsClosed();
 
   // Keyboard focus still reveals message actions, so retain the paint-order
   // contract when the reactor preview and toolbar can legitimately coexist.
@@ -47,7 +59,7 @@ test("reaction previews and the inline picker do not reveal message hover action
   await reaction.focus();
   await reaction.hover();
   await expect(preview).toBeVisible();
-  await expect(actions).toBeVisible();
+  await expect(actions).toHaveCSS("opacity", "1");
   await actions.evaluate((bar) => {
     const card = document.querySelector(".buzz-preview-card[data-open]");
     const rect = card.getBoundingClientRect();

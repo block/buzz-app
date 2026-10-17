@@ -12,6 +12,11 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { AgentDefaults } from "../agents/AgentDefaults";
+import type {
+  Agents,
+  RegisteredAgentType,
+} from "../../features/agents/service";
 import type { Agent } from "../../features/agents/service";
 import { fakeSpawn } from "./goose-testing";
 import { type Config, DEFAULT_CONFIG, type GooseRuntime } from "./runtime";
@@ -925,3 +930,64 @@ for (const host of ["defaults", "create"] as const) {
     ).toHaveFocus();
   });
 }
+
+it("returns focus to the remounted defaults model after a successful Goose save", async () => {
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    supported: ["goose-claude"],
+  });
+  const setup = new GooseSetup(fake.spawn);
+  const { DefaultControl, ProviderDialogBody } = createTabs({
+    setup,
+    ...unused,
+  });
+  const types = [
+    {
+      defaults: () => ({ config: DEFAULT_CONFIG }),
+      key: "buzz.goose/goose",
+      pluginId: "buzz.goose",
+      revision: "test",
+      id: "goose",
+      title: "Goose",
+      provider: {
+        subscribe: setup.subscribe,
+        snapshot: setup.snapshot,
+        check: setup.check,
+        DefaultControl,
+        DialogBody: ProviderDialogBody,
+      },
+    },
+  ] as RegisteredAgentType[];
+  const agents = {
+    types: () => types,
+    subscribe: () => () => {},
+  } as unknown as Agents;
+  render(<AgentDefaults agents={agents} />);
+  const trigger = await screen.findByRole("button", {
+    name: /^Goose default model:/,
+  });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  fireEvent.click(trigger);
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Edit configuration" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Goose" });
+  const save = within(dialog).getByRole("button", { name: "Save defaults" });
+  await waitFor(() => expect(save).toBeEnabled());
+  const transitions: string[] = [];
+  const unsubscribe = setup.subscribe(() =>
+    transitions.push(setup.snapshot().readiness),
+  );
+  await userEvent.setup().click(save);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  unsubscribe();
+  expect(transitions).toContain("checking");
+  expect(transitions).toContain("ready");
+  expect(trigger).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Goose default model:/ }),
+    ).toHaveFocus(),
+  );
+});

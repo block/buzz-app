@@ -78,7 +78,6 @@ function ProviderDefaults({
   );
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const defaultControl = useRef<HTMLDivElement>(null);
   const checking = state.readiness === "checking";
   const label =
     state.readiness === "attention"
@@ -105,14 +104,14 @@ function ProviderDefaults({
         trailing={
           state.readiness === "ready" && DefaultControl ? (
             <div
-              ref={defaultControl}
+              ref={(node) => {
+                if (node) trigger.current = node.querySelector("button");
+              }}
               className="flex flex-wrap items-center gap-2"
             >
               <span className="text-body-sm text-subtle">Default model</span>
               <DefaultControl
                 onConfigure={() => {
-                  trigger.current =
-                    defaultControl.current?.querySelector("button") ?? null;
                   setOpen(true);
                 }}
               />

@@ -22,9 +22,10 @@ There is no comparison engine, second checkout or prescribed optimization target
 
 ## Measurements
 
-Each sample reports Chromium `Performance.getMetrics` deltas, in milliseconds,
-from immediately before the action until the timeline has visible rows and
-unchanged visible geometry for at least 200ms across at least three samples:
+The operation runs from immediately before the action until the timeline has
+visible rows and unchanged visible geometry for at least 200ms across at least
+three samples. Each sample reports Chromium `Performance.getMetrics` deltas and
+browser timings, in milliseconds:
 
 | Metric | Meaning |
 | --- | --- |
@@ -33,17 +34,41 @@ unchanged visible geometry for at least 200ms across at least three samples:
 | `styleMs` | `RecalcStyleDuration`: style recalculation |
 | `taskMs` | `TaskDuration`: main-thread task time |
 | `durationMs` | Browser wall time through the settling barrier |
+| `loafBlockingMs` | Sum of browser-reported long-animation-frame blocking, from frames overlapping the operation, including settling |
 | `firstRowsMs` | Captured browser click event to visible target rows across two rendering updates |
 
 The first-rows endpoint gives the browser a paint opportunity; it is not a
 compositor screenshot or proof that every pixel finished painting. The settle
 barrier observes row IDs/positions/heights and scroll geometry, not arbitrary
 future async work. A ten-second deadline fails the sample instead of reporting
-an unfinished operation as a win. Counter windows also include measurement
+an unfinished operation as a win.
+Counter windows also include measurement
 overhead and protocol dispatch around the action. Measured actions use browser
 input: JavaScript invoked directly through the automation protocol can be absent
 from `ScriptDuration`, even when included in `TaskDuration`. Categories overlap: do not
 sum them or interpret them as CPU percentages. No forced GC is performed.
+
+`loafBlockingMs` uses Chromium's [Long Animation Frames API](https://developer.chrome.com/docs/web-platform/long-animation-frames).
+Its `blockingDuration` accumulates blocking beyond the 50ms task budget, with
+rendering included in the longest task. It is not simply frame duration minus
+50ms, a frame count, or an FPS measure. The observer begins at measurement start;
+unsupported browsers fail explicitly rather than reporting zero. Raw
+`recording.longAnimationFrames` retains intersecting entries as `startMs`
+(relative to recording start), `durationMs` and `blockingDurationMs`.
+
+Every frame overlapping the operation contributes its entire blocking duration,
+including a frame that starts before measurement or finishes after the endpoint.
+This avoids reporting zero when a busy opening frame starts just before the
+recording marker. It is frame attribution, not exact clipping: boundary frames
+can include hover/setup work before the marker or work after the endpoint.
+Frames entirely outside the operation do not contribute.
+The API's aggregate cannot be split accurately. After counters stop, collection
+allows two further rendering opportunities and a queued task for late LoAF
+delivery. This bounded drain retains the final frame in our Chromium regression
+probe, but is not a presentation acknowledgement: unusually delayed presentation
+feedback can still omit a trailing entry. The drain is outside the existing
+duration and counter windows. Recorder overhead remains included; no subtraction
+is applied.
 
 `channel-open` measures two independent cases with fresh state:
 
@@ -55,8 +80,9 @@ sum them or interpret them as CPU percentages. No forced GC is performed.
 
 Both cases measure click-to-first-rows and browser work during opening plus
 settling. Work completed before the click earns the hover case a head start;
-remaining preparation can contribute to the measured work. Hover work is outside
-these metric windows. `work.hoverMs` records the requested lead and raw
+remaining preparation can contribute to the measured work. Browser-counter
+windows exclude pre-measurement hover work; LoAF totals include whole overlapping
+boundary frames as described above. `work.hoverMs` records the requested lead and raw
 `recording.hoverLeadMs` records the actual browser hover-to-click interval, which
 can exceed 150ms due to browser scheduling and protocol dispatch. Head-read counts
 before and during opening are diagnostic evidence; hover does not require zero
@@ -102,12 +128,13 @@ includes that marker's protocol dispatch. Gaps are clipped to those boundaries,
 including partial gaps before the first and after the last callback inside the
 window. All callbacks count, including stalls when the scroll offset is unchanged.
 The settling tail after the end marker is excluded from cadence only:
-`scriptMs`, `layoutMs`, `styleMs`, `taskMs` and `durationMs` still cover scrolling
+`scriptMs`, `layoutMs`, `styleMs`, `taskMs`, `durationMs` and `loafBlockingMs` cover scrolling
 plus settling, with the same measurement overhead.
 
 Recordings without these gesture timestamps used whole-operation cadence,
 including the settling tail. Their cadence values are not comparable with the
-new definition; rerun baselines before comparing. No summary metrics were added.
+new definition; rerun baselines before comparing. That cadence change added no
+summary metrics.
 Callback gaps expose main-thread stalls, not compositor FPS or a measured
 dropped-frame count. No generic blank-time, overlap or visual-shift verdict is
 inferred from them.

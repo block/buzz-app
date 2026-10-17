@@ -1,6 +1,7 @@
 import { test as base, expect } from "../fixture.mjs";
 import { openPage } from "../navigation.mjs";
 import { settle, virtuaIdle } from "../timeline.mjs";
+import { loafBlocking } from "./blocking.mjs";
 
 export { expect };
 export const timeline = (id) => `section[data-channel-timeline="${id}"]`;
@@ -19,7 +20,9 @@ export const heads = (app, id) =>
 function observe({ selector, ids, click, hoverMs }) {
   const allowed = new Set(ids);
   const frames = [];
+  const longAnimationFrames = [];
   let start,
+    end,
     done = false,
     firstRowsMs,
     previous,
@@ -27,6 +30,15 @@ function observe({ selector, ids, click, hoverMs }) {
     raf,
     timer,
     resolve;
+  let loafObserver, drainRaf, drainTimer;
+  const collect = (entries) => {
+    for (const entry of entries)
+      longAnimationFrames.push({
+        startMs: entry.startTime - start,
+        durationMs: entry.duration,
+        blockingDurationMs: entry.blockingDuration,
+      });
+  };
   let wheels = 0;
   let inputAt, hoverAt;
   let gestureStartMs, gestureEndMs;
@@ -49,6 +61,8 @@ function observe({ selector, ids, click, hoverMs }) {
   document.addEventListener("click", clicked, true);
   document.addEventListener("pointerover", hovered, true);
   function stop(error) {
+    if (end !== undefined) return;
+    end = performance.now();
     cancelAnimationFrame(raf);
     clearTimeout(timer);
     document.removeEventListener("wheel", wheel);
@@ -66,7 +80,7 @@ function observe({ selector, ids, click, hoverMs }) {
           ? undefined
           : inputAt - hoverAt,
       inputDelayMs: inputAt === undefined ? undefined : inputAt - start,
-      durationMs: performance.now() - start,
+      durationMs: end - start,
     });
   }
   function sample() {
@@ -129,7 +143,19 @@ function observe({ selector, ids, click, hoverMs }) {
       );
     },
     start() {
+      if (
+        !PerformanceObserver.supportedEntryTypes.includes(
+          "long-animation-frame",
+        )
+      )
+        throw new Error(
+          "Chromium does not support long-animation-frame entries",
+        );
       start = performance.now();
+      loafObserver = new PerformanceObserver((list) =>
+        collect(list.getEntries()),
+      );
+      loafObserver.observe({ type: "long-animation-frame", buffered: false });
       quietSince = start;
       timer = setTimeout(
         () => stop("Timeline did not settle within 10s"),
@@ -145,7 +171,31 @@ function observe({ selector, ids, click, hoverMs }) {
       done = true;
     },
     result: () => result,
-    stop: () => stop("Measurement interrupted"),
+    async longFrames() {
+      // stop() runs inside rAF, before Chromium finalizes that frame's entry.
+      // Allow two rendering opportunities plus a task for presentation-delayed
+      // delivery, outside the pinned duration and CDP counters. This is bounded,
+      // not an acknowledgement of compositor presentation (see performance.md).
+      await new Promise((r) => {
+        drainRaf = requestAnimationFrame(() => {
+          drainRaf = requestAnimationFrame(() => {
+            drainTimer = setTimeout(r, 0);
+          });
+        });
+      });
+      collect(loafObserver.takeRecords());
+      loafObserver.disconnect();
+      return longAnimationFrames.filter(
+        (entry) =>
+          entry.startMs < end - start && entry.startMs + entry.durationMs > 0,
+      );
+    },
+    stop() {
+      stop("Measurement interrupted");
+      cancelAnimationFrame(drainRaf);
+      clearTimeout(drainTimer);
+      loafObserver?.disconnect();
+    },
   };
 }
 
@@ -237,12 +287,16 @@ export const test = base.extend({
           await observer.evaluate((o) => o.done());
           recording = await observer.evaluate((o) => o.result());
           const after = await read();
+          recording.longAnimationFrames = await observer.evaluate((o) =>
+            o.longFrames(),
+          );
           for (const key of Object.keys(counters)) {
             sample.metrics[key] = after[key] - before[key];
             expect(sample.metrics[key], key).toBeGreaterThanOrEqual(0);
           }
           sample.recording = recording;
           sample.metrics.durationMs = recording.durationMs;
+          sample.metrics.loafBlockingMs = loafBlocking(recording);
           if (click) {
             sample.metrics.firstRowsMs = recording.firstRowsMs;
             sample.work.headReadsDuring =

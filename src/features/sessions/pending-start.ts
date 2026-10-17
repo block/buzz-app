@@ -16,6 +16,8 @@ export type PendingStart = {
   setup?: SessionSetup;
   setupDone?: boolean;
   placementDone?: boolean;
+  /** Tab-local files the first message carries; reload loses them. */
+  attachmentCount?: number | undefined;
 };
 const sessionId =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -48,6 +50,11 @@ export function readPending(
   if (
     value.placementDone !== undefined &&
     typeof value.placementDone !== "boolean"
+  )
+    return;
+  if (
+    value.attachmentCount !== undefined &&
+    !(Number.isSafeInteger(value.attachmentCount) && value.attachmentCount > 0)
   )
     return;
   return value as PendingStart;

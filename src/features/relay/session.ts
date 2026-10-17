@@ -1903,6 +1903,33 @@ export function createRelaySession(
                 throw new UploadError("denied");
               return result;
             },
+            // A chat being started has no channel to check yet. Media access is
+            // community-wide, not channel-scoped; its first send stays guarded.
+            ...(writes.outbox.supports(9007)
+              ? {
+                  async uploadForNewChat(
+                    file: File,
+                    signal: AbortSignal,
+                    progress?: UploadProgress,
+                  ) {
+                    const combined = AbortSignal.any([
+                      signal,
+                      lifetime.signal,
+                      uploadLifetime.signal,
+                    ]);
+                    combined.throwIfAborted();
+                    if (closed) throw new UploadError("denied");
+                    const result = await uploadAttachment(
+                      file,
+                      combined,
+                      progress,
+                    );
+                    combined.throwIfAborted();
+                    if (closed) throw new UploadError("denied");
+                    return result;
+                  },
+                }
+              : {}),
           })
         : undefined,
     // Feedback text is private to the operator inbox; uploaded files retain

@@ -21,6 +21,7 @@ export function NewSessionView({
   return (
     <section
       className={styles.work}
+      data-attachment-drop-zone=""
       aria-label={
         parentName
           ? `New session in ${parentName}`

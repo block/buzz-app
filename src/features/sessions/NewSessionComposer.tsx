@@ -33,6 +33,7 @@ import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
+import type { AttachmentDraft } from "../messages/attachment-draft";
 import { sessionRecipients } from "./recipients";
 import styles from "./Sessions.module.css";
 
@@ -171,13 +172,16 @@ export function NewSessionComposer({
   const [editing, setEditing] = useState(
     // Older builds admitted untagged drafts. Preserve their creation/placement
     // progress, but let their author add a tag before any unsigned send.
+    // An unsent start with files stays editable: they may need retry,
+    // removal, or reattachment after this view closed or the app reloaded.
     () =>
       !!(
-        personal &&
         pending &&
         !pending.messageId &&
-        !pending.agent &&
-        !mentionDraft(pending.draft).recipients.length
+        (pending.attachmentCount ||
+          (personal &&
+            !pending.agent &&
+            !mentionDraft(pending.draft).recipients.length))
       ),
   );
   const [busy, setBusy] = useState(false);
@@ -197,7 +201,8 @@ export function NewSessionComposer({
       );
     setPending(next);
   };
-  async function start(draft: MentionDraft) {
+  async function start(draft: MentionDraft, files: AttachmentDraft) {
+    const selected = files.snapshot().length;
     if (
       submitting.current ||
       !(pending?.text ?? composerMarkdown(draft)).trim() ||
@@ -263,6 +268,23 @@ export function NewSessionComposer({
         throw new Error(
           lifetimeError ?? "Parent-linked sessions cannot set a lifetime.",
         );
+      if (!current.messageId) {
+        // Files are tab-local; a recovered start must not silently drop them.
+        if (current.attachmentCount && !selected) {
+          delete current.attachmentCount;
+          save(current);
+          throw new Error(
+            "The files attached to this message are no longer here. Attach them again, or send to continue without them.",
+          );
+        }
+        current.attachmentCount = selected || undefined;
+      }
+      // Finish uploads before anything is created, so a failed file blocks
+      // the start instead of leaving an empty chat behind.
+      const uploaded = current.messageId
+        ? []
+        : await files.prepareForSend(new AbortController().signal);
+      if (!mounted.current) return;
       save(current); // Freeze validated name and lifetime before the first asynchronous start operation.
       if (current.setup !== undefined) {
         current.setup = parseSessionSetup(current.setup);
@@ -445,6 +467,7 @@ export function NewSessionComposer({
           current.id,
           current.text,
           recipients,
+          ...(uploaded.length ? [uploaded] : []),
         );
         save({ ...current });
       }
@@ -470,6 +493,7 @@ export function NewSessionComposer({
       writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-project`, null);
+      files.clear();
       setPending(undefined);
       onStarted(current.id);
     } catch (reason) {
@@ -551,8 +575,9 @@ export function NewSessionComposer({
           receiptOnly: !!pending?.messageId,
           locked: busy || (!!pending && !editing),
           disabled: busy || !available,
-          submit: (draft) => {
-            void start(draft);
+          attachments: true,
+          submit: (draft, files) => {
+            void start(draft, files);
           },
         }}
       />

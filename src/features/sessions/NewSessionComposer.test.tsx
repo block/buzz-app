@@ -2424,3 +2424,193 @@ it.each(["remember", "off", "unavailable", "existing"])(
     }
   },
 );
+
+it("uploads files as soon as they are attached to a new chat, then sends them", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  const attachment = {
+    name: "notes.txt",
+    url: `https://relay.test/media/${"f".repeat(64)}.txt`,
+    type: "text/plain",
+    size: 5,
+    sha256: "f".repeat(64),
+  };
+  const upload = vi.fn();
+  const uploadForNewChat = vi.fn(async () => attachment);
+  Object.assign(test.session, { attachments: { upload, uploadForNewChat } });
+  render(
+    <NewSessionComposer
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+    />,
+  );
+  await user.type(screen.getByRole("textbox"), "See attached");
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  expect(test.workSessions.create).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(uploadForNewChat).toHaveBeenCalledOnce();
+  expect(upload).not.toHaveBeenCalled();
+  expect(test.messages.send).toHaveBeenCalledWith(
+    test.workSessions.create.mock.calls[0]?.[0],
+    "See attached",
+    ["a".repeat(64)],
+    [attachment],
+  );
+});
+
+it("a file dropped anywhere on the new chat page attaches to its composer", async () => {
+  const test = setup();
+  const uploadForNewChat = vi.fn(async () => ({
+    name: "notes.txt",
+    url: `https://relay.test/media/${"f".repeat(64)}.txt`,
+    type: "text/plain",
+    size: 5,
+    sha256: "f".repeat(64),
+  }));
+  Object.assign(test.session, {
+    attachments: { upload: vi.fn(), uploadForNewChat },
+  });
+  render(
+    <NewSessionComposer
+      standalone
+      personal
+      session={test.session}
+      scope="test"
+      onStarted={vi.fn()}
+    />,
+  );
+  const page = screen.getByRole("region", { name: "New chat" });
+  const dataTransfer = {
+    types: ["Files"],
+    files: [new File(["notes"], "notes.txt", { type: "text/plain" })],
+    dropEffect: "uninitialized",
+  };
+  fireEvent.dragEnter(page, { dataTransfer });
+  expect(
+    await screen.findByText("Drop files into this conversation"),
+  ).toBeInTheDocument();
+  fireEvent.drop(page, { dataTransfer });
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  expect(screen.queryByText("Drop files into this conversation")).toBeNull();
+});
+
+it("a failed upload blocks a new chat before anything is created", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  const uploadForNewChat = vi.fn(async () => {
+    throw new Error("Upload failed. Retry or remove this file.");
+  });
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  render(
+    <NewSessionComposer
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+    />,
+  );
+  await user.type(screen.getByRole("textbox"), "See attached");
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Retry notes.txt" }),
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  expect(test.workSessions.create).not.toHaveBeenCalled();
+  expect(test.messages.send).not.toHaveBeenCalled();
+});
+
+it("a recovered start says when its attached files were lost, then sends without them", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  Object.assign(test.session, {
+    attachments: { uploadForNewChat: vi.fn(async () => ({})) },
+  });
+  writeView("test", "sessions:pending", {
+    id: "22222222-2222-4222-8222-222222222222",
+    text: "See attached",
+    name: "See attached",
+    attachmentCount: 1,
+  });
+  render(
+    <NewSessionComposer
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The files attached to this message are no longer here.",
+  );
+  expect(test.workSessions.create).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(test.messages.send).toHaveBeenCalledWith(
+    "22222222-2222-4222-8222-222222222222",
+    "See attached",
+    ["a".repeat(64)],
+  );
+});
+
+it("resumes a new chat's interrupted upload after navigating away and back", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  const attachment = {
+    name: "notes.txt",
+    url: `https://relay.test/media/${"f".repeat(64)}.txt`,
+    type: "text/plain",
+    size: 5,
+    sha256: "f".repeat(64),
+  };
+  const uploadForNewChat = vi.fn(
+    (_file: File, signal: AbortSignal) =>
+      new Promise<typeof attachment>((_resolve, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason)),
+      ),
+  );
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  const view = render(
+    <NewSessionComposer
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+    />,
+  );
+  await user.type(screen.getByRole("textbox"), "See attached");
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  view.unmount();
+
+  uploadForNewChat.mockImplementation(async () => attachment);
+  render(
+    <NewSessionComposer
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+    />,
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledTimes(2));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(test.messages.send).toHaveBeenCalledWith(
+    test.workSessions.create.mock.calls[0]?.[0],
+    "See attached",
+    ["a".repeat(64)],
+    [attachment],
+  );
+});

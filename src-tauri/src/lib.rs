@@ -33,7 +33,10 @@ mod identity;
 mod nsec_backup;
 mod nsec_backup_choice;
 mod nsec_backup_config;
-use nsec_backup::{nsec_backup_available, nsec_backup_retry, nsec_backup_session, NsecBackupHost};
+use nsec_backup::{
+    nsec_backup_available, nsec_backup_retry, nsec_backup_session, nsec_restore_begin,
+    nsec_restore_cancel, nsec_restore_install, nsec_restore_wait, NsecBackupHost,
+};
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
@@ -504,6 +507,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         nsec_backup_available,
         nsec_backup_session,
         nsec_backup_retry,
+        nsec_restore_begin,
+        nsec_restore_wait,
+        nsec_restore_install,
+        nsec_restore_cancel,
         app_agents::app_agent_list,
         app_agents::app_agent_create,
         app_agents::app_agent_portable,

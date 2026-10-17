@@ -30,6 +30,9 @@ mod host_mcp;
 mod host_process;
 mod host_request;
 mod identity;
+mod nsec_backup_choice;
+mod nsec_backup_config;
+use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
 
@@ -433,6 +436,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_import,
         identity_create,
         identity_export,
+        nsec_backup_choice,
+        nsec_backup_set_choice,
         identity_prepare_remote_agent_authorization,
         identity_sign_builderlab_binding,
         enterprise_login_gate,

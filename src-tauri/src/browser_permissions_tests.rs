@@ -64,6 +64,8 @@ fn native_command_permissions_allow_only_main_webview() {
         "identity_import",
         "identity_create",
         "identity_export",
+        "nsec_backup_choice",
+        "nsec_backup_set_choice",
         "relay_sign",
         "identity_prepare_remote_agent_authorization",
         "identity_sign_builderlab_binding",

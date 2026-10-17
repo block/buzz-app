@@ -10,6 +10,7 @@ fn paths_for(root: &Path, service: &str) -> Paths {
         key_lock: root.join(key_lock_name(service)),
         ownership: root.join(AGENT_OWNERSHIP),
         app_data: root.join("app"),
+        backups: root.join("nsec-backups").join(service),
         others: vec![root.join("webkit")],
     }
 }
@@ -122,6 +123,38 @@ fn sign_out_without_wipe_removes_only_the_key_and_marker() {
     );
     assert!(removed.get());
     assert_eq!(listing(dir.path()), before);
+}
+
+#[test]
+fn backup_choice_is_kept_on_plain_signout_and_erased_only_in_its_key_store_scope() {
+    for wipe in [false, true] {
+        let (dir, paths) = fixture();
+        let other = dir.path().join("nsec-backups/identity.debug");
+        for root in [&paths.backups, &other] {
+            fs::create_dir_all(root).unwrap();
+            fs::write(root.join("choice.json"), b"synthetic public consent").unwrap();
+        }
+        mark(&paths, wipe, false);
+        assert!(boot(&paths, no_agents, || Ok(())).is_ok());
+        assert!(!paths.marker.exists());
+        assert_eq!(paths.backups.join("choice.json").exists(), !wipe);
+        assert!(other.join("choice.json").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn backup_choice_erase_refuses_a_linked_parent_without_touching_its_destination() {
+    let (dir, paths) = fixture();
+    let outside = tempfile::tempdir().unwrap();
+    fs::create_dir(outside.path().join("identity")).unwrap();
+    let retained = outside.path().join("identity/choice.json");
+    fs::write(&retained, b"synthetic public consent").unwrap();
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("nsec-backups")).unwrap();
+    mark(&paths, true, false);
+    assert!(boot(&paths, no_agents, || panic!("key must not be touched")).is_err());
+    assert!(paths.marker.exists());
+    assert_eq!(fs::read(retained).unwrap(), b"synthetic public consent");
 }
 
 #[test]

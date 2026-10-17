@@ -77,6 +77,11 @@ client inputs must match that service's namespace. Synthetic HTTP/storage tests
 do not establish live sign-in, KMS or installed-app
 secure-storage acceptance. No backend provisioning or activation is part of this change.
 
+Identity setup offers Restore when secure storage confirms that no local key is present.
+The existing restore UI presents the current identity and explicit previous-identity
+selection. Restoring a key does not enable automatic backup or change its saved
+consent; no consent selection UI is added in this stack.
+
 A shared credential blob can reduce repeated OS prompts by caching many credentials
 after one read. For this one human key, one cached item retains that read-once benefit without
 coupling human writes to agent credentials or old-app blob writers. This is not a

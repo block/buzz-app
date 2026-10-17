@@ -6,6 +6,8 @@ import type {
   ChannelQueries,
   ChannelWindow,
 } from "../relay/contracts";
+import { ReadError } from "../relay/errors";
+import type { LiveCallbacks } from "../relay/live";
 import { createRelaySession } from "../relay/session";
 import {
   bounds,
@@ -298,5 +300,68 @@ it("decides on the refreshed head, not the expired one that held the message", a
     );
   } finally {
     c.store.dispose();
+  }
+});
+
+it("waits for a queued catch-up retry instead of deciding on its earlier failure", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  /** The next channel head read; profile reads get nothing. */
+  const read = () => {
+    for (;;) {
+      const entry = wire.next();
+      if (entry.filters[0]?.["#h"]) return entry;
+      entry.respond([]);
+    }
+  };
+  try {
+    const channels = owner.session.channels;
+    live.receive([roster(relay, "a", [viewer.pubkey])]);
+    const older = message(alice, "a", "older", 10);
+    const page = (...rows: ReturnType<typeof message>[]) => [
+      ...rows,
+      bounds(relay, "a", "head", {
+        has_more: true,
+        next_cursor: { created_at: 10, id: older.id },
+      }),
+    ];
+    channels.ensure("a");
+    read().respond(page(older));
+    await flush();
+    // The stream reconnects and its catch-up read fails.
+    live.state({ status: "connected", routes: [] });
+    live.established("a");
+    await flush();
+    read().fail(new ReadError("unavailable", "Relay unavailable", 503));
+    await flush();
+    expect(channels.window("a")).toMatchObject({
+      status: "ready",
+      freshness: "cached",
+      error: expect.any(String),
+    });
+    // The target arrived while the stream was down.
+    const target = message(alice, "a", "target", 20);
+    const view = renderHook(() => useMessageOpening(channels, "a", target.id));
+    await act(flush);
+    // Opening demands the channel, which queues a retry: not yet a failure.
+    expect(view.result.current).toBeUndefined();
+    const retry = read();
+    await act(async () => {
+      retry.respond(page(target, older));
+      await flush();
+    });
+    expect(view.result.current).toBe(true);
+  } finally {
+    owner.dispose();
   }
 });

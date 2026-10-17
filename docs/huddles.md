@@ -255,7 +255,10 @@ creator recorded in relay-signed metadata, establishes a Huddle. The receipt
 must declare a private stream with the Huddle parent marker. Later edits to the
 name, description or lifetime cannot turn an ordinary channel into a Huddle or
 change an established Huddle's parent. Receipts are retained with signed discovery
-metadata in the local cache.
+metadata in the local cache. Strong exact-channel resolution awaits creation
+proof from the writer, even after an earlier replica lookup found no receipt.
+Proof-read failures reject that resolution so invitation recovery can use its
+existing bounded retries; newer accepted metadata remains the proof source.
 
 Rooms without that evidence, including legacy Huddles whose creation events did
 not include their room ID, remain accessible as ordinary channels. A missing or

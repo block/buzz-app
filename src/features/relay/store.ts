@@ -962,9 +962,12 @@ export function createChannelStore(
       // Missing, corrupt or unavailable device storage never blocks fresh reads.
     }
   }
-  // One bounded receipt lookup per metadata version; no content access is granted.
+  // Background reads deduplicate metadata versions; strong resolution revisits proof.
   const creationReads = new Map<string, string>();
-  function readCreations(events: readonly RelayEvent[]) {
+  async function readCreations(
+    events: readonly RelayEvent[],
+    settings?: ChannelReadOptions,
+  ) {
     if (!transport || !discovery || options.cachedOnly) return;
     const filters = events.flatMap((event) => {
       const id = tag(event, "d");
@@ -976,13 +979,17 @@ export function createChannelStore(
         discovery.metadataVersion(id)?.id !== event.id ||
         discovery.get(id)?.huddle ||
         !identity.creator ||
-        creationReads.get(id) === event.id
+        (settings?.consistency !== "strong" &&
+          creationReads.get(id) === event.id)
       )
         return [];
       creationReads.set(id, event.id);
       return [
         {
           kinds: [9007],
+          ...(settings?.consistency
+            ? { consistency: settings.consistency }
+            : {}),
           authors: [identity.creator],
           "#h": [id],
           limit: 1,
@@ -994,18 +1001,21 @@ export function createChannelStore(
     const controller = new AbortController();
     controllers.add(controller);
     const reader = transport;
-    void (async () => {
+    return (async () => {
       // The shared reader accepts at most four filters per request.
       for (let offset = 0; offset < filters.length; offset += 4) {
         const receipts = await reader.read(filters.slice(offset, offset + 4), {
-          signal: controller.signal,
+          signal: settings?.signal
+            ? AbortSignal.any([settings.signal, controller.signal])
+            : controller.signal,
         });
+        settings?.signal?.throwIfAborted();
         if (disposed || generation !== epoch || controller.signal.aborted)
-          return;
+          throw new DOMException("Stale creation resolution", "AbortError");
         applyDiscovery(receipts.filter((event) => event.kind === 9007));
       }
     })()
-      .catch(() => {
+      .catch((error) => {
         // Unavailable proof leaves an ordinary channel. A later metadata refresh
         // may retry; never turn a failed proof read into loss of channel access.
         for (const event of events) {
@@ -1013,6 +1023,7 @@ export function createChannelStore(
           if (id && creationReads.get(id) === event.id)
             creationReads.delete(id);
         }
+        throw error;
       })
       .finally(() => controllers.delete(controller));
   }
@@ -1021,6 +1032,7 @@ export function createChannelStore(
     complete?: ReadonlySet<string>,
     started?: ReadonlyMap<string, RelayEvent>,
     cached = false,
+    readProof = true,
   ) {
     if (disposed || !transport || !discovery) return;
     if (!cached) discoveryObserved = true;
@@ -1111,7 +1123,8 @@ export function createChannelStore(
         if (windows.has(channel.id)) queries.ensure(channel.id);
       }
     }
-    if (!cached && !disposed) readCreations(events);
+    if (!cached && !disposed && readProof)
+      void readCreations(events).catch(() => {});
     return !disposed && appliedEpoch === epoch;
   }
   /** Apply roster authority as soon as it succeeds; names are a separate,
@@ -1506,7 +1519,8 @@ export function createChannelStore(
       (id) =>
         !discovery.authorized(id) ||
         discovery.get(id)?.cached ||
-        !discovery.metadataVersion(id),
+        !discovery.metadataVersion(id) ||
+        (settings?.consistency === "strong" && !discovery.get(id)?.huddle),
     );
     if (!ids.length) return;
     if (ids.length > 128) throw new Error("Too many search result channels");
@@ -1583,10 +1597,16 @@ export function createChannelStore(
     for (const id of ids) checkedMetadata.add(id);
     // A bounded exact roster fills omissions from capped discovery. Apply grants
     // before private metadata so a newly resolved member never transiently loses access.
-    applyDiscovery([
-      ...events.filter((event) => event.kind === 39002),
-      ...events.filter((event) => event.kind !== 39002),
-    ]);
+    applyDiscovery(
+      [
+        ...events.filter((event) => event.kind === 39002),
+        ...events.filter((event) => event.kind !== 39002),
+      ],
+      undefined,
+      undefined,
+      false,
+      settings?.consistency !== "strong",
+    );
     if (resumed) setList(list, true);
     // Exact viewer-scoped omission is complete for this ID, unlike a capped
     // global roster. Cached membership cannot fall back to public metadata.
@@ -1621,6 +1641,14 @@ export function createChannelStore(
       } else if (!discovery.named(id))
         throw new Error("Channel metadata capacity unavailable");
     }
+    if (settings?.consistency === "strong")
+      await readCreations(
+        ids.flatMap((id) => {
+          const current = discovery.metadataVersion(id);
+          return current ? [current] : [];
+        }),
+        settings,
+      );
   }
   /** Find active public channels the viewer has not joined, by name.
    * The relay has no metadata text search, so this reads every page of

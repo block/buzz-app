@@ -99,6 +99,8 @@ it("adds a room member, recovers the signed invitation after discovery, and keep
             return filters.some(
               (filter) =>
                 !(event.kind === 44100 && filter["#h"]) &&
+                // The replica has not replayed the new creation receipt yet.
+                !(event.kind === 9007 && filter.consistency !== "strong") &&
                 matchesEvent(event, filter),
             );
           });

@@ -11,6 +11,7 @@ import {
   bounds,
   flush,
 } from "../relay/testing";
+import type { LiveCallbacks } from "../relay/live";
 import { createRelaySession } from "../relay/session";
 import { huddleDescription, huddleLifecycle } from "./lifecycle";
 const parent = "00000000-0000-4000-8000-000000000001",
@@ -348,7 +349,14 @@ it.each(["missing", "failed"])(
   "keeps ordinary access when creation evidence is %s",
   async (result) => {
     const wire = scriptedTransport(author.pubkey, relay.pubkey);
-    const owner = createRelaySession(wire.transport);
+    let live!: LiveCallbacks;
+    const owner = createRelaySession({
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    });
     try {
       owner.session.channels.ensureList();
       wire
@@ -378,6 +386,96 @@ it.each(["missing", "failed"])(
         name: "Huddle",
       });
       expect(owner.session.channels.get?.(room)?.huddle).toBeUndefined();
+      // Writer resolution must revisit the same metadata version and await proof.
+      const strong = async (fail: boolean) => {
+        let settled = false;
+        const resolution = owner.session.channels
+          .resolve?.([room], {
+            consistency: "strong",
+          })
+          .then(
+            () => {
+              settled = true;
+              return undefined;
+            },
+            (error: unknown) => {
+              settled = true;
+              return error;
+            },
+          );
+        await vi.waitFor(() =>
+          expect(
+            wire.pending.some((r) => r.filters[0]?.kinds?.includes(39000)),
+          ).toBe(true),
+        );
+        const metadataIndex = wire.pending.findIndex((r) =>
+          r.filters[0]?.kinds?.includes(39000),
+        );
+        if (result === "missing") {
+          // A newer live version wins while the writer metadata read is held.
+          live.receive([
+            metadata(relay, room, "Renamed", 31, [
+              ["P", author.pubkey],
+              ["private"],
+              ["about", huddleDescription(parent)],
+            ]),
+          ]);
+          await vi.waitFor(() =>
+            expect(
+              wire.pending.some((r) => r.filters[0]?.kinds?.includes(9007)),
+            ).toBe(true),
+          );
+          const background = wire.pending.findIndex((r) =>
+            r.filters[0]?.kinds?.includes(9007),
+          );
+          wire.pending.splice(background, 1)[0]?.respond([]);
+          await flush();
+        }
+        wire.pending
+          .splice(metadataIndex, 1)[0]
+          ?.respond([
+            roster(relay, room, [author.pubkey]),
+            metadata(relay, room, "Huddle", 30, [
+              ["P", author.pubkey],
+              ["private"],
+              ["about", huddleDescription(parent)],
+            ]),
+          ]);
+        await vi.waitFor(() =>
+          expect(
+            wire.pending.some((r) => r.filters[0]?.kinds?.includes(9007)),
+          ).toBe(true),
+        );
+        const proofIndex = wire.pending.findIndex((r) =>
+          r.filters[0]?.kinds?.includes(9007),
+        );
+        const proof = wire.pending.splice(proofIndex, 1)[0];
+        expect(proof?.filters[0]?.consistency).toBe("strong");
+        expect(settled).toBe(false);
+        if (fail)
+          proof?.fail(new Error("Writer receipt temporarily unavailable"));
+        else
+          proof?.respond([
+            signed(author, {
+              kind: 9007,
+              created_at: 10,
+              content: "",
+              tags: [
+                ["h", room],
+                ["visibility", "private"],
+                ["channel_type", "stream"],
+                ["about", huddleDescription(parent)],
+              ],
+            }),
+          ]);
+        return resolution;
+      };
+      if (result === "failed") expect(await strong(true)).toBeInstanceOf(Error);
+      expect(await strong(false)).toBeUndefined();
+      expect(owner.session.channels.get?.(room)).toMatchObject({
+        huddle: true,
+        parentChannelId: parent,
+      });
     } finally {
       owner.dispose();
     }

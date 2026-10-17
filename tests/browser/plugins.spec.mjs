@@ -41,7 +41,7 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   await button(page, "Notes").click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
   await expect(button(page, "Notes")).toHaveCount(0);
   await expect(card(page, "Notes")).toHaveCount(0);
@@ -167,7 +167,7 @@ test("Me places companion plugins in its new-conversation state and removes disa
   await button(page, "Notes").click();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
   await openPage(page, "Me");
   await expect(card(page, "Notes")).toHaveCount(0);

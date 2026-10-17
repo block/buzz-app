@@ -153,7 +153,9 @@ test("Me Activity opens the agent's profile locally, restores per conversation a
   await expect(panel).toBeVisible();
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   await page
     .getByRole("switch", { name: "Enable Agent Activity", exact: true })
     .click();

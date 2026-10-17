@@ -354,8 +354,11 @@ test("disabling Sessions keeps independent lifecycle actions available", async (
 
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
-  const plugins = page.getByRole("region", { name: "Plugins", exact: true });
+  await button(page, "Manage plugins").click();
+  const plugins = page.getByRole("region", {
+    name: "Manage plugins",
+    exact: true,
+  });
   const toggle = plugins.getByRole("switch", {
     name: "Enable Sessions",
     exact: true,

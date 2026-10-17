@@ -284,9 +284,11 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Plugins", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Manage plugins", exact: true })
+      .click();
     const toggle = page
-      .getByRole("region", { name: "Plugins", exact: true })
+      .getByRole("region", { name: "Manage plugins", exact: true })
       .getByRole("switch", { name: "Enable Solo", exact: true });
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-checked", String(enabled));

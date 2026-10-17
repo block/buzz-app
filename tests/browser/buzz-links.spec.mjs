@@ -633,7 +633,7 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   ).toBeVisible();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await page
     .getByRole("switch", { name: "Enable Links", exact: true })
     .uncheck();

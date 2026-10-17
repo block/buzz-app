@@ -1086,9 +1086,11 @@ test("Move and Create stay available on Projects with Sessions disabled", async 
   await open(page, app);
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   const toggle = page
-    .getByRole("region", { name: "Plugins", exact: true })
+    .getByRole("region", { name: "Manage plugins", exact: true })
     .getByRole("switch", { name: "Enable Sessions", exact: true });
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "false");

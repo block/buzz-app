@@ -162,7 +162,7 @@ it("opens Plugins from the account menu and switches back to profile settings", 
   const settings = await screen.findByRole("region", { name: "Settings" });
   expect(
     await within(settings).findByRole("region", {
-      name: "Plugins",
+      name: "Manage plugins",
     }),
   ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Your profile" }));

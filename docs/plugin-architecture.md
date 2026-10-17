@@ -121,7 +121,7 @@ focus restoration and error boundary. The plugin body supplies Connection and,
 when supported, explicit-save Defaults sections. It also marks active install or
 authentication work as blocking and supplies its cancellation control. Only
 active registered types appear there; plugin activation remains owned by
-Settings → Plugins. Provider defaults are versioned device preferences, not
+Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
 
 A plugin, bundled or installed, can add a tool to every agent session in the
@@ -293,10 +293,13 @@ retention. Plugin enablement controls visibility without changing capture settin
 
 ### Settings cards
 
-`ctx.settingsCards.register({ id, title, icon, component })` contributes a card under
-Settings → Messages, not a new route. Adding `group` instead gives the card its own
-Settings destination under that labelled navigation group; its section id is the
-contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
+`ctx.settingsCards.register({ id, title, icon, component })` contributes a Settings
+destination under the selected community. Adding `group` places it under that
+labelled navigation group instead; the existing `"App"` group appears as **Buzz**.
+Adding `personal: true` also lists a community card under **Personal space**, for
+cards such as Pair mobile that collect their own community address; it cannot be
+combined with `group` or `section`.
+Its section id is the contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
 uses the shared design-system icon gateway; the host supplies a fallback when omitted.
 Cards receive `active()` and use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
@@ -306,13 +309,13 @@ The channel template extension point (`ctx.channelTemplates`) was removed with t
 v1 Agents system. The host sidebar owns channel groups and the existing + creation
 buttons. Channel templates are now device-local (`buzz.channel-templates.v1`,
 `features/channel-templates/local.ts`): a name, agent pubkeys, Agents team ids
-and a starting Canvas, managed under Settings → Channel templates. Picking one in
+and a starting Canvas, managed under Settings → Buzz → Channel templates. Picking one in
 Create resolves its agents and its teams' members to those that are the owner's
 agents in this community and sends them with the Canvas as ordinary channel setup,
 which the session applies and retries as before.
 
 Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
-under Settings → Communities. It manages Block-hosted relays through a Builderlab
+under Settings → Plugins → Builderlab hosting. It manages Block-hosted relays through a Builderlab
 account: browser sign-in, binding the local Buzz identity (a locally signed kind
 24243 challenge), and create/archive/unarchive/transfer. A server-declared,
 default-off capability also exposes owner deletion for archived communities. The
@@ -391,7 +394,7 @@ not cross-version capability negotiation.
 ### Optional Canvas todos
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
-it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
+it under Settings → Plugins → Manage plugins. Its channel-header ListChecks button opens a right-hand
 side panel, grouping items as To do, In progress and Done, with add, a per-item status
 selector, check/uncheck, one optional assignee per item, automatic
 saving after each action, and explicit Refresh. It uses shared controls and theme
@@ -511,7 +514,7 @@ so this mechanism does not promise persistent agent sessions or drafts. The bund
 Bestie page currently supplies art and truthful not-connected copy, with no send
 control, agent API or top-bar launcher. Both browser and Rust native/CLI catalogs
 keep it bundled but off by default; saved enabled or disabled flags still win.
-Enable it under Settings → Plugins.
+Enable it under Settings → Plugins → Manage plugins.
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.
@@ -731,7 +734,7 @@ A signed installation can only update from the same publisher; remove and
 reinstall to choose a different publisher. Signing identifies an author, but
 does not sandbox plugin code or make a publisher trustworthy.
 
-Desktop Settings → Plugins loads a folder with the native folder picker, or an
+Desktop Settings → Plugins → Manage plugins loads a folder with the native folder picker, or an
 HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional branch
 or tag is separate from the repository URL; GitHub `tree` URLs are rejected with
 guidance rather than ambiguously splitting branch names and subfolders. Discovery
@@ -742,7 +745,7 @@ another plugin without fetching again. New plugins stay disabled. Updates match
 an enabled update may activate immediately except in safe mode. The UI warns before
 that action and shows declared host access, including changes. Installed artifacts do
 not watch/pull the source. Plugins installed from a folder keep the selected folder
-path for Settings → Plugins → Reload while disabled;
+path for Settings → Plugins → Manage plugins → Reload while disabled;
 reloading reads the recorded candidate folder and requires the manifest ID to stay the
 same. Reload rejects changed host declarations; use Load from folder to review and
 install that revision. Enabled plugins must be disabled before reload so memory-only

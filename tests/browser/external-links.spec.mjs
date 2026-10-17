@@ -77,7 +77,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
 
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await page.getByRole("switch", { name: "Enable GitHub" }).click();
   await openMessages(page);
   await expect(panel).toHaveCount(0);
@@ -88,7 +88,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
 
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await page.getByRole("switch", { name: "Enable GitHub" }).click();
   await openMessages(page);
   await link(page, github).focus();

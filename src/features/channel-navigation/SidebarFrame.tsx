@@ -1,3 +1,4 @@
+import { SidebarNavigation } from "../../shared/design-system/ui/SidebarNavigation";
 import type { ReactNode } from "react";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import styles from "../../bundled/channels/Channels.module.css";
@@ -35,7 +36,9 @@ export function SidebarFrame({
       aria-busy={busy}
       data-buzz-launch-pending={launchPending}
     >
-      <div className={styles.sidebar}>{children}</div>
+      <div className={styles.sidebar}>
+        <SidebarNavigation>{children}</SidebarNavigation>
+      </div>
     </Panel>
   );
 }

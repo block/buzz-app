@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { test, expect } from "./fixture.mjs";
 import { open, wheel } from "./timeline.mjs";
+import { closeSettings } from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 test.use({
@@ -272,10 +273,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   // Disabling the activity UI clears only its display evidence.
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   expect(app.relay.sockets).toHaveLength(sockets);
-  await page
-    .getByRole("complementary", { name: "Settings sidebar" })
-    .getByRole("button", { name: "Back", exact: true })
-    .click();
+  await closeSettings(page);
   await page.locator('[data-channel-id="alpha"]').click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
@@ -297,10 +295,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await enabled;
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   app.observer(activity("turn_liveness", "alpha", "after-reset"), firstKey);
-  await page
-    .getByRole("complementary", { name: "Settings sidebar" })
-    .getByRole("button", { name: "Back", exact: true })
-    .click();
+  await closeSettings(page);
   await page.locator('[data-channel-id="alpha"]').click();
   // Only the fresh agent returns; the disabled generation's evidence is gone.
   await expect(trigger).toHaveAccessibleName(onlyFirst);
@@ -1037,10 +1032,7 @@ test.describe("host archive durability", () => {
       }
     };
     expect(count()).toBe(0);
-    await page
-      .getByRole("complementary", { name: "Settings sidebar" })
-      .getByRole("button", { name: "Back", exact: true })
-      .click();
+    await closeSettings(page);
     await page.screenshot({
       path: test.info().outputPath("archive-cleared.png"),
     });

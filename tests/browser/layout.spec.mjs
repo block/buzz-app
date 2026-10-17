@@ -1,9 +1,13 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import {
+  closeSettings,
   openPage,
+  openSettings,
   pageChoices,
   selectPage,
   selectSettingsSection,
+  settingsDialog,
+  settingsSections,
   settleShellToggle,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -148,20 +152,12 @@ async function shellFits(page, width) {
   const disclosure = button(page, "Show navigation");
   const collapsed = await disclosure.isVisible();
   if (collapsed) await disclosure.click();
-  const inSettings = await page
-    .getByRole("region", { name: "Settings", exact: true })
-    .isVisible();
-  const destinations = inSettings
-    ? page
-        .getByRole("navigation", { name: "Settings sections" })
-        .getByRole("button")
-    : sidebarDestinations(page);
-  if (inSettings) await expect(destinations.first()).toBeVisible();
-  else await expect(destinations).toHaveText(destinationTitles);
+  // Settings is a modal with its own navigation; the shell is measured with
+  // Settings closed.
+  const destinations = sidebarDestinations(page);
+  await expect(destinations).toHaveText(destinationTitles);
   const sidebar = await box(
-    page.getByRole("complementary", {
-      name: inSettings ? "Settings sidebar" : "Channel sidebar",
-    }),
+    page.getByRole("complementary", { name: "Channel sidebar" }),
   );
   const first = await box(destinations.first());
   const last = await box(destinations.last());
@@ -431,13 +427,14 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     await page.setViewportSize({ width, height });
     await shellFits(page, width);
     await expect(composer).toBeInViewport();
-    await button(page, "Your profile").click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await expect(
-      page.getByRole("region", { name: "Settings", exact: true }),
-    ).toBeVisible();
-    if (width <= 650) await button(page, "Show navigation").click();
-    await openPage(page, "Multiplayer");
+    // Settings is a modal over the retained conversation at every width; narrow
+    // modals stack their own navigation above the detail.
+    await openSettings(page);
+    const modal = await box(settingsDialog(page));
+    expect(modal.x).toBeGreaterThanOrEqual(0);
+    expect(modal.x + modal.width).toBeLessThanOrEqual(width);
+    await expect(settingsSections(page)).toBeInViewport();
+    await closeSettings(page);
     await expect(composer).toHaveJSProperty("value", "Layout draft");
     await expect(page.locator("[data-message-id]").last()).toBeInViewport();
   }
@@ -476,12 +473,12 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   await expect(
     hiddenDestinations.and(page.locator("[aria-current]")),
   ).toHaveText(["Projects"]);
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await expect(
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toHaveValue("Fixture Reader");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // Settings is the only open dialog.
+  await expect(page.getByRole("dialog")).toHaveCount(1);
   await selectSettingsSection(page, "Plugins");
   // Channels has no off switch; use another page to exercise UI activation.
   const projects = page.getByRole("switch", {
@@ -489,7 +486,9 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     exact: true,
   });
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  // Header search is inert behind Settings; close it to read the palette.
   const expectProjectsChoice = async (count) => {
+    await closeSettings(page);
     const choices = await pageChoices(page);
     // Messages proves the Pages group rendered before counting Projects.
     await expect(
@@ -504,6 +503,8 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
   await expectProjectsChoice(0);
+  await openSettings(page);
+  await selectSettingsSection(page, "Plugins");
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "true");
   await expectProjectsChoice(1);
@@ -814,22 +815,39 @@ companionTest(
     await button(page, "Close Companion fixture panel").click();
     await expect(launch).toBeFocused();
     await launch.click();
-    await button(page, "Your profile").click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    // Settings is a modal over the retained workspace: the companion and its
+    // launcher stay mounted behind it, hidden from assistive technology.
+    const retainedCompanion = page.getByRole("complementary", {
+      name: "Companion fixture",
+      exact: true,
+      includeHidden: true,
+    });
+    const retainedLaunch = page
+      .getByRole("button", {
+        name: "Companion fixture",
+        exact: true,
+        includeHidden: true,
+      })
+      .and(page.locator("button[aria-expanded]"));
+    await openSettings(page);
     await selectSettingsSection(page, "Plugins");
-    await expect(companion).toHaveCount(1);
+    await expect(companion).toHaveCount(0);
+    await expect(retainedCompanion).toHaveCount(1);
+    await expect(retainedLaunch).toHaveCount(1);
     const enabled = page.getByRole("switch", {
       name: "Enable Companion fixture",
       exact: true,
     });
     await enabled.click();
-    await expect(launch).toHaveCount(0);
-    await expect(companion).toHaveCount(0);
+    await expect(retainedLaunch).toHaveCount(0);
+    await expect(retainedCompanion).toHaveCount(0);
     await expect(enabled).toBeFocused();
-    // The closing dock is already aria-hidden, but still narrows Settings.
-    // Wait for its removal before the next click can race the layout expansion.
+    // Wait for the closing dock's removal before the next click.
     await expect(page.locator("[data-panel-dock]")).toHaveCount(0);
     await enabled.click();
+    await expect(retainedLaunch).toHaveCount(1);
+    await expect(retainedCompanion).toHaveCount(0);
+    await closeSettings(page);
     await expect(launch).toBeVisible();
     await expect(companion).toHaveCount(0);
     await launch.click();
@@ -905,10 +923,6 @@ companionTest(
     await button(page, "Close Companion fixture panel").click();
     await launch.click();
     await expect(companion).toHaveCount(1);
-    await button(page, "Your profile").click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await selectSettingsSection(page, "Plugins");
-    await expect(companion).toHaveCount(1);
     for (const [width, height] of [
       [800, 600],
       [480, 400],
@@ -920,18 +934,33 @@ companionTest(
       await expect(
         button(page, "Close Companion fixture panel"),
       ).toBeInViewport();
+      // The Settings modal fits each width over the retained, inert companion.
+      await openSettings(page);
+      const modal = await box(settingsDialog(page));
+      expect(modal.x).toBeGreaterThanOrEqual(0);
+      expect(modal.y).toBeGreaterThanOrEqual(0);
+      expect(modal.x + modal.width).toBeLessThanOrEqual(width);
+      expect(modal.y + modal.height).toBeLessThanOrEqual(height);
+      await expect(companion).toHaveCount(0);
+      await expect(retainedCompanion).toHaveCount(1);
+      await closeSettings(page);
+      await expect(
+        button(page, "Close Companion fixture panel"),
+      ).toBeInViewport();
     }
     await button(page, "Close Companion fixture panel").click();
     await expect(companion).toHaveCount(0);
     await expect(launch).toHaveAttribute("aria-expanded", "false");
     await expect(launch).toBeFocused();
 
-    // Plugin catalogs can outgrow the viewport. Closing restores the launcher,
-    // not a Settings row: reach the toggle with real input, not scrollIntoView.
-    // Settings details own scrolling independently of the sidebar.
-    const settingsPage = page
-      .getByRole("region", { name: "Settings", exact: true })
-      .locator(":scope > div");
+    // Plugin catalogs can outgrow the viewport: reach the toggle with real
+    // input, not scrollIntoView. Narrow modals scroll their stacked navigation
+    // and detail together.
+    await openSettings(page);
+    await selectSettingsSection(page, "Plugins");
+    const settingsPage = settingsDialog(page).locator(
+      ".buzz-dialog-navigation-layout",
+    );
     await expect(enabled).not.toBeInViewport();
     const viewport = await box(settingsPage);
     await page.mouse.move(
@@ -968,6 +997,8 @@ companionTest(
     await enabled.click();
     await expect(enabled).toHaveAttribute("aria-checked", "false");
     await expect(enabled).toBeFocused();
+    await expect(retainedLaunch).toHaveCount(0);
+    await closeSettings(page);
     await expect(launch).toHaveCount(0);
   },
 );
@@ -982,12 +1013,12 @@ todosOverlapTest(
   async ({ page, app }) => {
     await page.setViewportSize({ width: 1440, height: 950 });
     await open(page, app);
-    await button(page, "Your profile").click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     await selectSettingsSection(page, "Plugins");
     await page
       .getByRole("switch", { name: "Enable Todos", exact: true })
       .click();
+    await closeSettings(page);
     await openPage(page, "Multiplayer");
     const todos = page.getByRole("region", {
       name: "Todos panel",
@@ -1221,8 +1252,8 @@ test("Projects directory fits the workspace and page navigation survives plugin 
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
-  // Header search owns page navigation, including while narrow Settings
-  // collapses the sidebar; its Pages group must preserve plugin ordering.
+  // Header search owns page navigation; its Pages group must preserve plugin
+  // ordering. It is inert behind the Settings modal, so Settings closes first.
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const titles = [
     "Solo",
@@ -1298,8 +1329,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
       path: testInfo.outputPath(`projects-${width}.png`),
     });
   }
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await selectSettingsSection(page, "Plugins");
   const projects = page.getByRole("switch", {
     name: "Enable Projects",
@@ -1307,6 +1337,7 @@ test("Projects directory fits the workspace and page navigation survives plugin 
   });
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
+  await closeSettings(page);
   await expectPageOrder([
     "Solo",
     "Multiplayer",
@@ -1318,8 +1349,11 @@ test("Projects directory fits the workspace and page navigation survives plugin 
     "Workflows",
   ]);
   await closeSearch();
+  await openSettings(page);
+  await selectSettingsSection(page, "Plugins");
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "true");
+  await closeSettings(page);
   // Re-enabled Projects registered last; navigation surfaces must still sort it.
   await expectPageOrder(titles);
   await selectPage(page, "Projects");

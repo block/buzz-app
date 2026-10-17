@@ -188,7 +188,7 @@
 .sidebar {
   --section-icon-size: 0.9375rem;
   /* Rows and section headers share one height and one trailing slot. */
-  /* The compact sidebar row height (Channels' .sidebar rows), as in Berd. */
+  /* Match main's compact sidebar row height and trailing action slots. */
   --session-action-size: calc(var(--space-6) + var(--space-1));
   /* Berd's 12px row inset: leading text and trailing glyphs share it. */
   --session-row-inset: var(--space-3);

@@ -1,4 +1,9 @@
-import { openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { connect } from "node:net";
 import { once } from "node:events";
@@ -39,13 +44,17 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   await button(page, "Close Companion fixture panel").click();
   await expect(draft).toHaveValue("Keep the page instance");
   await button(page, "Notes").click();
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Plugins");
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
+  // The workspace behind Settings is hidden; inspect it after closing.
+  await closeSettings(page);
   await expect(button(page, "Notes")).toHaveCount(0);
   await expect(card(page, "Notes")).toHaveCount(0);
+  await openSettings(page);
+  await selectSettingsSection(page, "Plugins");
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
+  await closeSettings(page);
   await expect(button(page, "Notes")).toBeVisible();
   await expect(card(page, "Notes")).toHaveCount(0);
   await companionLauncher(page, "Companion fixture").click();
@@ -165,10 +174,10 @@ test("Me places companion plugins in its new-conversation state and removes disa
   await expect(card(page, "Notes")).toHaveCount(0);
   await expect(card(page, "Companion fixture")).toHaveCount(1);
   await button(page, "Notes").click();
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Plugins");
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
+  await closeSettings(page);
   await openPage(page, "Me");
   await expect(card(page, "Notes")).toHaveCount(0);
   await expect(button(page, "Notes")).toHaveCount(0);

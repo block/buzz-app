@@ -1,4 +1,9 @@
-import { openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { holdReadingFocus } from "./reading.mjs";
@@ -280,20 +285,14 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   // Disabling Me preserves the remaining attention and lifecycle
   // actions in the same divider-free menu.
   const toggleMe = async (enabled) => {
-    await page
-      .getByRole("button", { name: "Your profile", exact: true })
-      .click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Plugins", exact: true }).click();
+    await openSettings(page);
+    await selectSettingsSection(page, "Plugins");
     const toggle = page
       .getByRole("region", { name: "Plugins", exact: true })
       .getByRole("switch", { name: "Enable Solo", exact: true });
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
-    await page
-      .getByRole("complementary", { name: "Settings sidebar" })
-      .getByRole("button", { name: "Back", exact: true })
-      .click();
+    await closeSettings(page);
     await expect(beta).toBeVisible();
   };
   await toggleMe(false);

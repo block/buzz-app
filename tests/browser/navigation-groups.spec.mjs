@@ -1,5 +1,10 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { holdReadingFocus } from "./reading.mjs";
@@ -1084,14 +1089,14 @@ test("Move and Create stay available on Projects with Sessions disabled", async 
   app,
 }) => {
   await open(page, app);
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Plugins");
   const toggle = page
     .getByRole("region", { name: "Plugins", exact: true })
     .getByRole("switch", { name: "Enable Sessions", exact: true });
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await closeSettings(page);
   await openPage(page, "Projects");
   const projects = page.getByRole("heading", { name: "Projects", exact: true });
   await expect(projects).toBeVisible();

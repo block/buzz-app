@@ -1,4 +1,11 @@
-import { settleShellToggle, openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  settingsDialog,
+  settingsSections,
+  settleShellToggle,
+} from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -401,22 +408,32 @@ test("top bar uses consistent square controls and translucent ghost fills", asyn
   ).toBeVisible();
 });
 
-// Real responsive layout owns the Settings overlay and the desktop sidebar.
+// Real responsive layout owns the Settings modal and the desktop sidebar.
+// Settings has its own navigation; the shell sidebar toggle and its collapsed
+// state stay mounted behind it, inert, and work again on close.
 test("Settings retains the sidebar toggle across desktop and narrow layouts", async ({
   page,
   app,
 }) => {
   await open(page, app);
   await page.getByRole("button", { name: "Hide Channel sidebar" }).click();
-  await page.getByRole("button", { name: "Your profile" }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const sidebar = page.getByRole("complementary", {
-    name: "Settings sidebar",
+    name: "Channel sidebar",
     exact: true,
   });
   const toggle = page.locator("[data-shell-sidebar-toggle]");
+  const inert = () =>
+    toggle.evaluate(
+      (element) => !!element.closest('[aria-hidden="true"], [inert]'),
+    );
   await expect(toggle).toHaveCount(1);
-  await expect(toggle).toHaveAccessibleName("Show sidebar");
+  await expect(toggle).toHaveAttribute("aria-label", "Show Channel sidebar");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(await inert()).toBe(true);
+  await expect(settingsSections(page)).toBeInViewport();
+  await closeSettings(page);
+  await expect(toggle).toHaveAccessibleName("Show Channel sidebar");
   await expect(sidebar).not.toBeVisible();
   await toggle.click();
   await expect(sidebar).toBeVisible();
@@ -428,15 +445,21 @@ test("Settings retains the sidebar toggle across desktop and narrow layouts", as
 
   await page.setViewportSize({ width: 600, height: 950 });
   await expect(toggle).toHaveAccessibleName("Show navigation");
+  // Narrow Settings stacks its own navigation; the drawer toggle stays inert.
+  await openSettings(page);
+  await expect(settingsSections(page)).toBeInViewport();
+  await expect(toggle).toHaveAttribute("aria-label", "Show navigation");
+  expect(await inert()).toBe(true);
+  await closeSettings(page);
   await toggle.click();
   await expect(sidebar).toBeVisible();
   await expect(toggle).toHaveAccessibleName("Hide navigation");
-  await sidebar.getByRole("button", { name: "Back", exact: true }).focus();
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).focus();
   await page.keyboard.press("Escape");
   await expect(sidebar).not.toBeVisible();
   await expect(toggle).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 950 });
-  await expect(toggle).toHaveAccessibleName("Show sidebar");
+  await expect(toggle).toHaveAccessibleName("Show Channel sidebar");
   await toggle.click();
   await expect(sidebar).toBeVisible();
 });
@@ -948,20 +971,31 @@ fillSidebar(
       }).toPass({ timeout: 10_000 });
     }
 
-    await page
-      .getByRole("button", { name: "Your profile", exact: true })
-      .click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    const settings = page.getByRole("complementary", {
-      name: "Settings sidebar",
+    // Settings sections share one fill width inside the modal's navigation.
+    await openSettings(page);
+    const settings = settingsSections(page);
+    const appearance = settings.getByRole("button", {
+      name: "Appearance",
+      exact: true,
     });
-    const back = settings.getByRole("button", { name: "Back", exact: true });
     const profile = settings.getByRole("button", {
       name: "Profile",
       exact: true,
     });
     await expect(profile).toHaveAttribute("aria-current", "page");
-    expect(await fillBounds(profile)).toEqual(await fillBounds(back));
+    // Compare rows after the modal's entrance motion, not across its frames.
+    await settingsDialog(page).evaluate((dialog) =>
+      Promise.allSettled(
+        dialog
+          .getAnimations({ subtree: true })
+          .filter(
+            (animation) =>
+              animation.effect?.getComputedTiming().endTime !== Infinity,
+          )
+          .map((animation) => animation.finished),
+      ),
+    );
+    expect(await fillBounds(profile)).toEqual(await fillBounds(appearance));
   },
 );
 

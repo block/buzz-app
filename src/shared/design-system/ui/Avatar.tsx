@@ -28,9 +28,11 @@ function rememberAvatar(src: string) {
 function AvatarArtwork({
   src,
   fallback,
+  loading,
 }: {
   src: string;
   fallback: ReactNode;
+  loading: "eager" | "lazy" | undefined;
 }) {
   const [status, setStatus] = useState<ImageStatus>("loading");
   const [showFallback, setShowFallback] = useState(false);
@@ -62,7 +64,7 @@ function AvatarArtwork({
         src={src}
         data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
-        loading={previouslyLoaded ? "eager" : "lazy"}
+        loading={loading ?? (previouslyLoaded ? "eager" : "lazy")}
         decoding="async"
         referrerPolicy="no-referrer"
         onLoad={() => {
@@ -89,6 +91,7 @@ export function Avatar({
   size = "default",
   shape = "circle",
   statusBadge,
+  loading,
 }: {
   src?: string | null | undefined;
   alt: string;
@@ -97,6 +100,8 @@ export function Avatar({
   size?: AvatarSize;
   shape?: "circle" | "squircle";
   statusBadge?: "online" | "away" | "offline" | undefined;
+  /** Immediate visible editors may bypass lazy scheduling, never image readiness. */
+  loading?: "eager" | "lazy";
 }) {
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   const content = fallbackContent ?? initial;
@@ -119,7 +124,12 @@ export function Avatar({
         aria-hidden={!alt || undefined}
       >
         {src ? (
-          <AvatarArtwork key={src} src={src} fallback={content} />
+          <AvatarArtwork
+            key={src}
+            src={src}
+            fallback={content}
+            loading={loading}
+          />
         ) : (
           <span aria-hidden="true">{content}</span>
         )}

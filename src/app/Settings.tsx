@@ -1,3 +1,5 @@
+import { SidebarNavigation } from "../shared/design-system/ui/SidebarNavigation";
+import { CommunityAddress } from "./CommunityAddress";
 import type { Agents } from "../features/agents/service";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
@@ -147,8 +149,10 @@ export function Settings({
   useLayoutEffect(() => {
     if (selected !== "profile" || !departureFocus.current) return;
     departureFocus.current = false;
-    document.getElementById("main-content")?.focus({ preventScroll: true });
-  }, [selected]);
+    document
+      .getElementById(navigationPane ? "settings-content" : "main-content")
+      ?.focus({ preventScroll: true });
+  }, [selected, navigationPane]);
   useEffect(() => {
     if (
       departure &&
@@ -188,14 +192,306 @@ export function Settings({
     () => groupPlugins(catalog?.plugins ?? []),
     [catalog?.plugins],
   );
-  return (
+  const detail = (
     <div
-      className={`${styles.root} ${navigationPane ? styles.navigationPane : ""}`}
+      className={`${styles.detail} buzz-settings-page`}
+      data-integrated={navigationPane || undefined}
     >
-      <Panel
-        aria-label={navigationPane ? "Settings" : undefined}
-        aria-labelledby={navigationPane ? undefined : "settings-title"}
-      >
+      <div hidden={selected !== "notifications"}>
+        <NotificationSettings
+          notifications={notifications}
+          active={selected === "notifications"}
+        />
+      </div>
+      <div hidden={selected !== "appearance"}>
+        <AppearanceSettings
+          appearance={appearance}
+          active={selected === "appearance"}
+        />
+      </div>
+      <div hidden={selected !== "shortcuts"}>
+        <ShortcutSettings
+          shortcuts={shortcuts}
+          bindings={shortcutBindings}
+          plugins={plugins}
+        />
+      </div>
+      <div hidden={selected !== "agents"}>
+        <AgentSettings
+          agents={agents}
+          archive={
+            <ArchiveSettings
+              relay={communities.relay}
+              community={selectedCommunity?.name}
+              active={selected === "agents"}
+            />
+          }
+          active={selected === "agents"}
+        />
+      </div>
+      <div hidden={selected !== "updates"}>
+        <UpdateSettings updates={updates} active={selected === "updates"} />
+      </div>
+      {contributed.map(
+        (card) =>
+          selected === card.key && (
+            <OwnedContribution key={card.key} entry={card} registry={cards}>
+              {(entry, active) => {
+                const Card = entry.component;
+                return (
+                  <Card
+                    active={active}
+                    {...(!card.group && selectedCommunity
+                      ? { community: selectedCommunity }
+                      : {})}
+                  />
+                );
+              }}
+            </OwnedContribution>
+          ),
+      )}
+      {departureCommunity && selected === "leave-community" && (
+        <CommunityDepartureSettings
+          key={`${client.viewer}:${departureCommunity.id}`}
+          communities={communities}
+          community={departureCommunity}
+          onPending={(pending) => {
+            onDeparturePending?.(pending);
+            setDeparture(
+              pending
+                ? { community: departureCommunity, viewer: client.viewer }
+                : null,
+            );
+          }}
+          onRemoved={() => {
+            departureFocus.current = true;
+            if (onSection) onSection("profile");
+            else setSelected("profile");
+          }}
+        />
+      )}
+      <div hidden={selected !== "profile"}>
+        <ProfileSettings
+          key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
+          communities={communities}
+          community={selectedCommunity}
+          identity={identity}
+          active={selected === "profile"}
+        />
+      </div>
+      {developerMode && (
+        <div hidden={selected !== "developer"}>
+          <DeveloperSettings relay={communities.relay} />
+        </div>
+      )}
+      <div hidden={selected !== "plugins"}>
+        <section aria-labelledby="plugin-settings-title">
+          <Header
+            id="plugin-settings-title"
+            title="Plugins"
+            subtitle={
+              !plugins.imports
+                ? "Open the desktop app to load plugins from a folder or Git repository."
+                : undefined
+            }
+          />
+          {catalog ? (
+            <PluginImport
+              plugins={plugins}
+              catalog={catalog}
+              busy={busy}
+              authorizeGit={async (repository) => {
+                const connection = communities.relay.snapshot();
+                return connection.status === "ready"
+                  ? ((await connection.session.authorizeGit?.(repository)) ??
+                      null)
+                  : null;
+              }}
+            />
+          ) : configuration.status === "recovery" ? (
+            <RecoveryScreen plugins={plugins} />
+          ) : (
+            <p role="status">
+              Plugin settings are unavailable. Profile and Appearance still
+              work.
+            </p>
+          )}
+          <div className="overflow-hidden">
+            <div>
+              {externalPluginsPaused && (
+                <p role="status" className="text-body-sm text-subtle">
+                  External plugins are paused for this launch. Your saved
+                  enabled settings are unchanged; you can still manage plugins
+                  here.
+                </p>
+              )}
+              {selected === "plugins" && refreshError && (
+                <ToastNotice
+                  title="Plugin settings couldn’t refresh"
+                  description={`Showing the last available configuration; retrying automatically. ${refreshError}`}
+                />
+              )}
+              {selected === "plugins" && error && (
+                <ToastNotice
+                  title="Plugin change wasn’t confirmed"
+                  description={`Check the current settings before trying again. ${error}`}
+                  onDismiss={plugins.dismissError}
+                  closeLabel="Dismiss"
+                />
+              )}
+            </div>
+            <div className="grid grid-cols-1 gap-section-gap">
+              {pluginGroups.map((group) => (
+                <section
+                  aria-labelledby={`plugin-category-${group.id}`}
+                  key={group.id}
+                >
+                  <InlineHeader
+                    id={`plugin-category-${group.id}`}
+                    title={
+                      <span className={styles.pluginCategoryTitle}>
+                        <span>{group.label}</span>
+                        <span className={styles.pluginCount}>
+                          {group.plugins.length}
+                          <span className="sr-only">
+                            {group.plugins.length === 1
+                              ? " plugin"
+                              : " plugins"}
+                          </span>
+                        </span>
+                      </span>
+                    }
+                  />
+                  <SettingsGroup>
+                    {group.plugins.map((plugin) => {
+                      const id = plugin.manifest.id;
+                      const essentialMarker = isEssentialPlugin(plugin) && (
+                        <span
+                          className="text-caption"
+                          role="img"
+                          aria-label="Essential"
+                          title="Essential"
+                        >
+                          ✨
+                        </span>
+                      );
+                      const running = activation[id];
+                      const failure =
+                        plugin.error ??
+                        (running?.revision === plugin.revision
+                          ? running.error
+                          : null);
+                      return (
+                        <article
+                          className="py-1"
+                          data-preference-description-layout="wide"
+                          key={id}
+                        >
+                          {/* Channels is required and has no enable/disable control. */}
+                          {isRequiredPlugin(plugin) ? (
+                            <PreferenceRow
+                              icon={<SquaresFourIcon size={20} />}
+                              title={plugin.manifest.name}
+                              subtitle={plugin.manifest.description}
+                              trailing={
+                                <span className={styles.pluginControls}>
+                                  {essentialMarker}
+                                  <span className="text-body-sm text-subtle">
+                                    Required
+                                  </span>
+                                </span>
+                              }
+                            />
+                          ) : (
+                            <PreferenceRow
+                              icon={<SquaresFourIcon size={20} />}
+                              title={plugin.manifest.name}
+                              subtitle={plugin.manifest.description}
+                              controlId={`${pluginControlPrefix}-${id}`}
+                              accessibleTitle={`Enable ${plugin.manifest.name}`}
+                              trailing={(labelProps) => (
+                                <span className={styles.pluginControls}>
+                                  {essentialMarker}
+                                  <Switch
+                                    {...labelProps}
+                                    id={`${pluginControlPrefix}-${id}`}
+                                    aria-label={`Enable ${plugin.manifest.name}`}
+                                    checked={plugin.enabled}
+                                    readOnly={busy}
+                                    aria-disabled={busy}
+                                    onClick={(event) =>
+                                      event.currentTarget.focus()
+                                    }
+                                    onCheckedChange={() => {
+                                      if (busy) return;
+                                      void plugins.change(
+                                        plugin.enabled ? "disable" : "enable",
+                                        id,
+                                      );
+                                    }}
+                                  />
+                                </span>
+                              )}
+                            />
+                          )}
+                          {failure && (
+                            <p role="alert" className="error text-body-sm">
+                              {failure}
+                            </p>
+                          )}
+                          <div className="actions items-center">
+                            {plugin.previous && (
+                              <Button
+                                type="button"
+                                disabled={
+                                  busy || !!plugin.rollbackBlockedReason
+                                }
+                                onClick={() => plugins.change("rollback", id)}
+                              >
+                                Roll back
+                              </Button>
+                            )}
+                            {plugin.rollbackBlockedReason && (
+                              <span className="text-body-sm text-muted">
+                                {plugin.rollbackBlockedReason}
+                              </span>
+                            )}
+                            {plugin.reloadable && !plugin.enabled && (
+                              <Button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => plugins.reload(id)}
+                              >
+                                Reload
+                              </Button>
+                            )}
+                            {plugin.source === "external" && (
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                disabled={busy}
+                                onClick={() => plugins.change("remove", id)}
+                              >
+                                Delete
+                              </Button>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </SettingsGroup>
+                </section>
+              ))}
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+  if (navigationPane) return detail;
+  return (
+    <div className={styles.root}>
+      <Panel aria-labelledby="settings-title">
         <div className={styles.layout}>
           <aside className={styles.sidebar}>
             <div className={styles.sidebarHeader}>
@@ -204,338 +500,38 @@ export function Settings({
               </h1>
             </div>
             <nav aria-label="Settings sections" className={styles.navigation}>
-              {groups.map((group) => (
-                <NavigationSection key={group.id} label={group.label}>
-                  {group.sections.map(({ id, label, icon: Icon }) => (
-                    <NavigationItem
-                      label={label}
-                      icon={Icon && <Icon aria-hidden="true" size={18} />}
-                      selected={selected === id}
-                      type="button"
-                      key={id}
-                      aria-current={selected === id ? "page" : undefined}
-                      onClick={(event) => {
-                        event.currentTarget.focus();
-                        if (onSection) onSection(id);
-                        else setSelected(id);
-                      }}
+              <SidebarNavigation wrapSections>
+                {departureCommunity && (
+                  <NavigationSection>
+                    <CommunityAddress
+                      communities={communities}
+                      community={departureCommunity}
                     />
-                  ))}
-                </NavigationSection>
-              ))}
+                  </NavigationSection>
+                )}
+                {groups.map((group) => (
+                  <NavigationSection key={group.id} label={group.label}>
+                    {group.sections.map(({ id, label, icon: Icon }) => (
+                      <NavigationItem
+                        label={label}
+                        icon={Icon && <Icon aria-hidden="true" size={18} />}
+                        selected={selected === id}
+                        type="button"
+                        key={id}
+                        aria-current={selected === id ? "page" : undefined}
+                        onClick={(event) => {
+                          event.currentTarget.focus();
+                          if (onSection) onSection(id);
+                          else setSelected(id);
+                        }}
+                      />
+                    ))}
+                  </NavigationSection>
+                ))}
+              </SidebarNavigation>
             </nav>
           </aside>
-          <div className={`${styles.detail} buzz-settings-page`}>
-            {navigationPane && <h1 className="sr-only">Settings</h1>}
-            <div hidden={selected !== "notifications"}>
-              <NotificationSettings
-                notifications={notifications}
-                active={selected === "notifications"}
-              />
-            </div>
-            <div hidden={selected !== "appearance"}>
-              <AppearanceSettings
-                appearance={appearance}
-                active={selected === "appearance"}
-              />
-            </div>
-            <div hidden={selected !== "shortcuts"}>
-              <ShortcutSettings
-                shortcuts={shortcuts}
-                bindings={shortcutBindings}
-                plugins={plugins}
-              />
-            </div>
-            <div hidden={selected !== "agents"}>
-              <AgentSettings
-                agents={agents}
-                archive={
-                  <ArchiveSettings
-                    relay={communities.relay}
-                    community={selectedCommunity?.name}
-                    active={selected === "agents"}
-                  />
-                }
-                active={selected === "agents"}
-              />
-            </div>
-            <div hidden={selected !== "updates"}>
-              <UpdateSettings
-                updates={updates}
-                active={selected === "updates"}
-              />
-            </div>
-            {contributed.map(
-              (card) =>
-                selected === card.key && (
-                  <OwnedContribution
-                    key={card.key}
-                    entry={card}
-                    registry={cards}
-                  >
-                    {(entry, active) => {
-                      const Card = entry.component;
-                      return (
-                        <Card
-                          active={active}
-                          {...(!card.group && selectedCommunity
-                            ? { community: selectedCommunity }
-                            : {})}
-                        />
-                      );
-                    }}
-                  </OwnedContribution>
-                ),
-            )}
-            {departureCommunity && selected === "leave-community" && (
-              <CommunityDepartureSettings
-                key={`${client.viewer}:${departureCommunity.id}`}
-                communities={communities}
-                community={departureCommunity}
-                onPending={(pending) => {
-                  onDeparturePending?.(pending);
-                  setDeparture(
-                    pending
-                      ? { community: departureCommunity, viewer: client.viewer }
-                      : null,
-                  );
-                }}
-                onRemoved={() => {
-                  departureFocus.current = true;
-                  if (onSection) onSection("profile");
-                  else setSelected("profile");
-                }}
-              />
-            )}
-            <div hidden={selected !== "profile"}>
-              <ProfileSettings
-                key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
-                communities={communities}
-                community={selectedCommunity}
-                identity={identity}
-                active={selected === "profile"}
-              />
-            </div>
-            {developerMode && (
-              <div hidden={selected !== "developer"}>
-                <DeveloperSettings relay={communities.relay} />
-              </div>
-            )}
-            <div hidden={selected !== "plugins"}>
-              <section aria-labelledby="plugin-settings-title">
-                <Header
-                  id="plugin-settings-title"
-                  title="Plugins"
-                  subtitle={
-                    !plugins.imports
-                      ? "Open the desktop app to load plugins from a folder or Git repository."
-                      : undefined
-                  }
-                />
-                {catalog ? (
-                  <PluginImport
-                    plugins={plugins}
-                    catalog={catalog}
-                    busy={busy}
-                    authorizeGit={async (repository) => {
-                      const connection = communities.relay.snapshot();
-                      return connection.status === "ready"
-                        ? ((await connection.session.authorizeGit?.(
-                            repository,
-                          )) ?? null)
-                        : null;
-                    }}
-                  />
-                ) : configuration.status === "recovery" ? (
-                  <RecoveryScreen plugins={plugins} />
-                ) : (
-                  <p role="status">
-                    Plugin settings are unavailable. Profile and Appearance
-                    still work.
-                  </p>
-                )}
-                <div className="overflow-hidden">
-                  <div>
-                    {externalPluginsPaused && (
-                      <p role="status" className="text-body-sm text-subtle">
-                        External plugins are paused for this launch. Your saved
-                        enabled settings are unchanged; you can still manage
-                        plugins here.
-                      </p>
-                    )}
-                    {selected === "plugins" && refreshError && (
-                      <ToastNotice
-                        title="Plugin settings couldn’t refresh"
-                        description={`Showing the last available configuration; retrying automatically. ${refreshError}`}
-                      />
-                    )}
-                    {selected === "plugins" && error && (
-                      <ToastNotice
-                        title="Plugin change wasn’t confirmed"
-                        description={`Check the current settings before trying again. ${error}`}
-                        onDismiss={plugins.dismissError}
-                        closeLabel="Dismiss"
-                      />
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 gap-section-gap">
-                    {pluginGroups.map((group) => (
-                      <section
-                        aria-labelledby={`plugin-category-${group.id}`}
-                        key={group.id}
-                      >
-                        <InlineHeader
-                          id={`plugin-category-${group.id}`}
-                          title={
-                            <span className={styles.pluginCategoryTitle}>
-                              <span>{group.label}</span>
-                              <span className={styles.pluginCount}>
-                                {group.plugins.length}
-                                <span className="sr-only">
-                                  {group.plugins.length === 1
-                                    ? " plugin"
-                                    : " plugins"}
-                                </span>
-                              </span>
-                            </span>
-                          }
-                        />
-                        <SettingsGroup>
-                          {group.plugins.map((plugin) => {
-                            const id = plugin.manifest.id;
-                            const essentialMarker = isEssentialPlugin(
-                              plugin,
-                            ) && (
-                              <span
-                                className="text-caption"
-                                role="img"
-                                aria-label="Essential"
-                                title="Essential"
-                              >
-                                ✨
-                              </span>
-                            );
-                            const running = activation[id];
-                            const failure =
-                              plugin.error ??
-                              (running?.revision === plugin.revision
-                                ? running.error
-                                : null);
-                            return (
-                              <article
-                                className="py-1"
-                                data-preference-description-layout="wide"
-                                key={id}
-                              >
-                                {/* Channels is required and has no enable/disable control. */}
-                                {isRequiredPlugin(plugin) ? (
-                                  <PreferenceRow
-                                    icon={<SquaresFourIcon size={20} />}
-                                    title={plugin.manifest.name}
-                                    subtitle={plugin.manifest.description}
-                                    trailing={
-                                      <span className={styles.pluginControls}>
-                                        {essentialMarker}
-                                        <span className="text-body-sm text-subtle">
-                                          Required
-                                        </span>
-                                      </span>
-                                    }
-                                  />
-                                ) : (
-                                  <PreferenceRow
-                                    icon={<SquaresFourIcon size={20} />}
-                                    title={plugin.manifest.name}
-                                    subtitle={plugin.manifest.description}
-                                    controlId={`${pluginControlPrefix}-${id}`}
-                                    accessibleTitle={`Enable ${plugin.manifest.name}`}
-                                    trailing={(labelProps) => (
-                                      <span className={styles.pluginControls}>
-                                        {essentialMarker}
-                                        <Switch
-                                          {...labelProps}
-                                          id={`${pluginControlPrefix}-${id}`}
-                                          aria-label={`Enable ${plugin.manifest.name}`}
-                                          checked={plugin.enabled}
-                                          readOnly={busy}
-                                          aria-disabled={busy}
-                                          onClick={(event) =>
-                                            event.currentTarget.focus()
-                                          }
-                                          onCheckedChange={() => {
-                                            if (busy) return;
-                                            void plugins.change(
-                                              plugin.enabled
-                                                ? "disable"
-                                                : "enable",
-                                              id,
-                                            );
-                                          }}
-                                        />
-                                      </span>
-                                    )}
-                                  />
-                                )}
-                                {failure && (
-                                  <p
-                                    role="alert"
-                                    className="error text-body-sm"
-                                  >
-                                    {failure}
-                                  </p>
-                                )}
-                                <div className="actions items-center">
-                                  {plugin.previous && (
-                                    <Button
-                                      type="button"
-                                      disabled={
-                                        busy || !!plugin.rollbackBlockedReason
-                                      }
-                                      onClick={() =>
-                                        plugins.change("rollback", id)
-                                      }
-                                    >
-                                      Roll back
-                                    </Button>
-                                  )}
-                                  {plugin.rollbackBlockedReason && (
-                                    <span className="text-body-sm text-muted">
-                                      {plugin.rollbackBlockedReason}
-                                    </span>
-                                  )}
-                                  {plugin.reloadable && !plugin.enabled && (
-                                    <Button
-                                      type="button"
-                                      disabled={busy}
-                                      onClick={() => plugins.reload(id)}
-                                    >
-                                      Reload
-                                    </Button>
-                                  )}
-                                  {plugin.source === "external" && (
-                                    <Button
-                                      type="button"
-                                      variant="destructive"
-                                      disabled={busy}
-                                      onClick={() =>
-                                        plugins.change("remove", id)
-                                      }
-                                    >
-                                      Delete
-                                    </Button>
-                                  )}
-                                </div>
-                              </article>
-                            );
-                          })}
-                        </SettingsGroup>
-                      </section>
-                    ))}
-                  </div>
-                </div>
-              </section>
-            </div>
-          </div>
+          {detail}
         </div>
       </Panel>
     </div>

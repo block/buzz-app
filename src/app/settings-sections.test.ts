@@ -56,7 +56,7 @@ it.each([
     [
       [
         "community",
-        "Primary",
+        "Community",
         ["profile", "example/groups", "other/groups", "leave-community"],
       ],
       ["administration", "Administration", ["example/membership"]],

@@ -22,7 +22,7 @@ import { CommunityRailItem, MEMBERSHIP_SECTION } from "./CommunityRailItem";
 import { communityDestination } from "./destination";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import styles from "./Communities.module.css";
-import { fetchCommunityIcon } from "./community-icon";
+import { communityIcons, fetchCommunityIcon } from "./community-icon";
 import { useCommunityRole } from "./useCommunityRole";
 
 const noSubscription = () => () => {};
@@ -101,7 +101,8 @@ export function CommunityRail({
   );
   const invites = !!onOpenTarget && membershipAvailable;
   const role = useCommunityRole(invites ? session : undefined, client.viewer);
-  const [icons, setIcons] = useState<Record<string, string>>({});
+  const icons = communityIcons(communities);
+  useSyncExternalStore(icons.subscribe, icons.snapshot);
   const membershipIds = client.memberships
     .map((membership) => membership.id)
     .join("\n");
@@ -121,7 +122,7 @@ export function CommunityRail({
           try {
             const icon = await fetchCommunityIcon(id, controller.signal);
             if (icon !== undefined && !controller.signal.aborted)
-              setIcons((previous) => ({ ...previous, [id]: icon }));
+              icons.remember(id, icon);
           } catch {
             // Unreachable relay: retain saved icon or initials.
           }
@@ -130,7 +131,7 @@ export function CommunityRail({
     );
     void Promise.all(workers);
     return () => controller.abort();
-  }, [client.status, client.relayAvailable, membershipIds]);
+  }, [client.status, client.relayAvailable, membershipIds, icons]);
   const select = (id: string | null) => {
     if (onSelect) onSelect(id);
     else communities.select(id);
@@ -210,7 +211,7 @@ export function CommunityRail({
             <CommunityRailItem
               key={membership.id}
               membership={membership}
-              icon={icons[membership.id] ?? membership.icon}
+              icon={icons.resolve(membership)}
               selected={selected}
               viewer={client.viewer}
               session={selected ? session : undefined}

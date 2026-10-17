@@ -11,6 +11,13 @@ disabled optional plugins
 from page choices; a retained destination whose provider is unavailable displays
 an explicit failure with retry instead of silently selecting another page.
 Browser controls, host shortcuts and toolbar arrows traverse the same visit history.
+Settings sections are destinations presented as a modal over the last workspace.
+The host retains that workspace presentation while Settings is current, without
+allowing it to complete or redirect the modal's navigation. Returning to the same
+visit resumes its request with preserved focus intent; page removal, scope changes,
+failed ingress and other destinations revoke it. Cold Settings links have no retained
+workspace and Close falls back to Messages. Cross-community Settings still selects
+its addressed community, retiring the previous scope rather than retaining access.
 Settings sections are destinations. Personal-space page visits use explicit null
 scope, distinct from a plugin's unspecified community scope. Focus-only skip links
 do not add visits. Plugin recovery remains available in Settings → Plugins without
@@ -46,10 +53,16 @@ semantic tokens, UI authoring rules and the local component reference.
   Presentation is keyed by full contribution identity, not plugin-local IDs.
 - `AppShell.tsx` owns the 48px header, vertical page navigation, contributed panel
   launchers, Settings access, community rail, and page frames. Page navigation sits
-  above the channel list outside Settings, using its saved sidebar width
-  and resize behavior. Settings replaces that region with `SettingsSidebar.tsx`,
-  preserving the same width (220px minimum) and returning to the previous view
-  with Back. `App.tsx` composes `features/channel-navigation/ChannelSidebar`
+  above the channel list, using its saved sidebar width and resize behavior.
+  Settings opens in the shared expanded Dialog with an integrated sidebar; the
+  workspace remains mounted underneath. Its portal fills the shell's workspace
+  frame (community rail, navigation, main content and companion panels), excluding
+  the app header, with equal inline gutters matching the main page’s right gutter.
+  The frame sits outside the content query container so fixed
+  modal backdrops still block the entire webview. Native traffic lights remain in
+  their reserved titlebar area. The shared compact dialog header centers its title
+  and Close action without a large empty band. Close and Escape return to the original
+  workspace visit, including after navigating through several Settings sections. `App.tsx` composes `features/channel-navigation/ChannelSidebar`
   through an ordinary render prop; there is no portal or plugin contract expansion.
   Sidebar session state resets on scope/connection generation without remounting
   unrelated pages. Its own error boundary keeps page navigation and Settings usable.
@@ -59,8 +72,8 @@ semantic tokens, UI authoring rules and the local component reference.
   Show navigation button to preserve readable content at 200% text size. The
   220px disclosure overlays content, supports Escape, and keeps sidebar state
   mounted. A navigation selection closes the phone drawer and hands focus to the
-  main content; this includes conversation and Settings-section selections.
-  Me, Messages, Agents, desktop Settings, and any selected primary page share an
+  main content for conversation selections. Settings owns its navigation inside
+  the modal instead. Me, Messages, Agents and any selected primary page share an
   animated header toggle; hiding the sidebar preserves its mounted state and saved
   width. Pages without a Channel or Me-specific label use generic "Hide sidebar" /
   "Show sidebar" labels. Reduced motion disables the transition. Non-primary
@@ -86,23 +99,38 @@ semantic tokens, UI authoring rules and the local component reference.
   pages reached through search or links; their sidebar selection and route remain
   exact. Its tab labels the active child panel, and activating Messages from a
   child returns to the existing conversation view. More pages indicates this
-  containing area with `aria-current="true"` (not `page`). Me and Settings remain
-  separate; missing/unregistered destinations do not borrow Messages selection.
+  containing area with `aria-current="true"` (not `page`). Me remains
+  separate; Settings leaves workspace selection unchanged. Missing/unregistered destinations do not borrow Messages selection.
   The shell owns one joined Panel around navigation and page content, with a
   16px outer gutter (8px on narrow screens). Nested Panels keep their opaque
   fill and clipping but drop individual borders, radii, and shadows. Layout
   owners add one-pixel semantic dividers. Document pages scroll inside the
   remaining viewport.
-- `SettingsSidebar.tsx` presents community and app sections in the shell's
-  replacement sidebar. `Settings.tsx` renders the selected detail pane and retains
-  drafts across section changes. The detail pane scrolls independently and keeps
-  an accessible level-one Settings heading. Standalone Settings fixtures retain
-  their embedded navigation, which becomes a compact row at narrow widths.
+- `SettingsSidebar.tsx` composes shared SidebarNavigation with
+  NavigationSection/NavigationItem content inside Dialog's integrated navigation.
+  The same composition wraps SidebarFrame (Solo/Multiplayer) and session history,
+  preserving main's compact gray row appearance while features retain scrolling,
+  unread, disclosure and drag behavior. `Settings.tsx` supplies the detail without
+  another Panel, padding or scrollport. The modal owns the Settings title and
+  persistent Close action; sections keep their centered reading column and forms.
+  Standalone fixtures retain embedded navigation.
   Native buttons use normal Tab/Enter navigation and expose the current section.
   `ProfileSettings.tsx` edits the local default inline with Save and Cancel,
   sharing fields and validation with community setup. Cancel restores the saved
   profile; switching sections retains an unsaved draft while Settings is open.
-  Leaving Settings discards that draft. Saving does not publish to communities.
+  Closing Settings discards that draft, as leaving the former page did.
+  Profile opens from the selected session’s already-verified kind-0 event while
+  refreshing through that session, without another profile cache or retained
+  Settings mount. Save waits for the fresh read; avatar editing stays available
+  and completed uploads update only the latest draft’s picture. Its compact
+  avatar preview uses the active session’s existing thumbnail media resolver,
+  sharing the header’s cached URL without re-registering that destination or
+  asking for original-size artwork. Visible editor avatars load eagerly; real
+  image completion still owns readiness and failed-image fallback. A refresh keeps
+  typed fields and updates untouched ones. Cold reads preserve form geometry;
+  shared LoadingRegion delays status feedback for one second and shows errors
+  immediately above the form with Retry. Community Save publishes only to its
+  addressed community; Personal Profile updates the device-local default.
   Plugin rows retain accessible native-button switches and show only names and
   controls. A Folder/Git import area above the list previews plugin subfolders and
   requires explicit install/update; its draft survives section switching, but
@@ -125,9 +153,18 @@ maximize/restore and close buttons in the header, including during identity
 setup. While the parser-loaded launch overlay keeps app content inert, a
 window-control header is portalled to the document body above the overlay; the
 launch owner removes it when the normal identity or shell header becomes usable.
-Drag regions are limited to the header background; controls remain clickable.
-On macOS, double-clicking that
-background follows the current system title-bar preference (Fill/Zoom, Minimize,
+Drag regions are limited to the header background; controls remain clickable
+when no modal is open. Shared Dialog and AlertDialog backdrops preserve dragging
+only over the shell’s marked empty titlebar regions. A host-provided drag handler
+hit-tests behind portal layers without forwarding clicks to blocked controls.
+A press on the empty titlebar is a click until the held mouse moves at least
+four physical CSS pixels. A click dismisses ordinary Dialogs; crossing that
+threshold starts native dragging once and suppresses the trailing click. Release,
+cancel and lost capture clear only the pending gesture; the next press resets the
+close fence. A caller opt-out or in-flight close lock still prevents dismissal. Confirmations retain
+their deliberate Cancel/confirm policy.
+Without a modal, double-clicking that
+background on macOS follows the current system title-bar preference (Fill/Zoom, Minimize,
 or no action); changing the preference does not require restarting Buzz. Other
 platforms retain Tauri's native drag-region behavior. The main-window capability
 grants titlebar dragging and the internal maximize action used by that
@@ -228,6 +265,9 @@ The rail reads saved-community NIP-11 icons through the same-origin broker with 
 most two concurrent optional reads, including inactive communities without
 opening sessions; slow icon responses cannot occupy all foreground connections.
 Unavailable or unsupported images fall back to a saved icon or name initial.
+Discovered artwork is shared with the Settings community address through an
+in-memory projection scoped to the Communities instance. Both prefer the same
+validated discovered icon over saved artwork; Settings adds no metadata request.
 Each saved community has a context menu (right-click, the ContextMenu key or
 Shift+F10, labelled “Actions for <name>”) built from the shared context-menu
 primitives, in the original's order: Mark all as read, then Copy community URL,

@@ -6,8 +6,18 @@ import { ChannelNavigationProvider } from "../features/channel-navigation/Channe
 import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
+import { ModalWindowDragProvider } from "../shared/design-system/ui/ModalWindowDrag";
+import { modalWindowDragHandlers } from "./shell/title-bar";
+import { isTauri } from "@tauri-apps/api/core";
+import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
@@ -27,7 +37,7 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
-import { setLaunchReady } from "./launch";
+import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
@@ -42,7 +52,9 @@ export function App({ services }: { services: AppServices }) {
     return identity.subscribe(update);
   }, [identity]);
   return (
-    <>
+    <ModalWindowDragProvider
+      value={isTauri() ? modalWindowDragHandlers : undefined}
+    >
       <LaunchWindowControls />
       {services.identity ? (
         <IdentitySetup identity={services.identity}>
@@ -51,13 +63,16 @@ export function App({ services }: { services: AppServices }) {
       ) : (
         <ConnectedApp services={services} />
       )}
-    </>
+    </ModalWindowDragProvider>
   );
 }
 
 function ConnectedApp({ services }: { services: AppServices }) {
   const { plugins } = services;
+  const [workspaceElement, setWorkspaceElement] =
+    useState<HTMLDivElement | null>(null);
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
+  const launching = useSyncExternalStore(subscribeLaunch, launchVisible);
   const [departure, setDeparture] = useState<PendingSettingsDeparture | null>(
     null,
   );
@@ -82,6 +97,28 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
+  const settingsFocus = useRef<HTMLElement | null>(null);
+  const wasSettings = useRef(false);
+  const workspaceEntry = useRef<string | undefined>(undefined);
+  const settingsReturnEntry = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!settings) workspaceEntry.current = route.state.entry.id;
+    else if (!wasSettings.current)
+      settingsReturnEntry.current = workspaceEntry.current;
+    wasSettings.current = settings;
+  }, [settings, route.state.entry.id]);
+  useEffect(() => {
+    const remember = (event: FocusEvent) => {
+      if (
+        !wasSettings.current &&
+        event.target instanceof HTMLElement &&
+        !event.target.closest('[role="menu"], [role="dialog"]')
+      )
+        settingsFocus.current = event.target;
+    };
+    document.addEventListener("focusin", remember);
+    return () => document.removeEventListener("focusin", remember);
+  }, []);
   const retryFocus = useRef<string | undefined>(undefined);
   // A passive effect runs after the destination's own mount focus, so this
   // only fills in when focus would otherwise be left on the body.
@@ -93,7 +130,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
       retryFocus.current === route.state.attempt.id &&
       document.activeElement === document.body
     )
-      document.getElementById("main-content")?.focus({ preventScroll: true });
+      document
+        .getElementById(settings ? "settings-content" : "main-content")
+        ?.focus({ preventScroll: true });
     retryFocus.current = undefined;
   }, [restoring, settings, route.state.attempt]);
   useEffect(() => {
@@ -125,7 +164,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
         services.appearance,
         () => {
           void services.navigation.open({ version: 1, kind: "settings" });
-          document.getElementById("main-content")?.focus();
         },
         true,
       ),
@@ -135,8 +173,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
     () => registerNavigationShortcuts(services.shortcuts, services.navigation),
     [services],
   );
-  const presentation = route.page
-    ? pagePresentation(route.page)
+  const workspace = route.workspace;
+  const presentation = workspace.page
+    ? pagePresentation(workspace.page)
     : shellPresentation.settings;
   const selectedPanel = launcher.selected;
   const companion = selectedPanel && (
@@ -148,7 +187,11 @@ function ConnectedApp({ services }: { services: AppServices }) {
       close={launcher.close}
     />
   );
-  const pageOwnsCompanion = !!route.page?.companion;
+  const pageOwnsCompanion =
+    !!workspace.page?.companion &&
+    (settings
+      ? !!workspace.request
+      : !route.failure && !route.waiting && route.state.status !== "failed");
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -163,6 +206,56 @@ function ConnectedApp({ services }: { services: AppServices }) {
         </picture>
       </div>
     );
+  const openSettingsSection = (section: string) => {
+    const client = services.communities.snapshot();
+    void services.navigation.open({
+      version: 1,
+      kind: "settings",
+      section,
+      ...(client.viewer && client.selected
+        ? {
+            scope: {
+              viewer: client.viewer,
+              communityOrigin: communityDestination(client.selected).url,
+            },
+          }
+        : { scope: null }),
+    });
+  };
+  const destinationFailure = (
+    <div role="alert" className="notice">
+      <h1>This destination couldn’t open</h1>
+      <p>
+        {(route.state.reason ?? route.failure) === "denied"
+          ? "This target needs its original account and an already joined community."
+          : route.state.ingress && !route.state.retryable
+            ? "This link is invalid or unsupported."
+            : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
+      </p>
+      {(!route.state.ingress || route.state.retryable) && (
+        <Button
+          type="button"
+          onClick={(event) => {
+            const focused = event.currentTarget === document.activeElement;
+            const before = services.navigation.snapshot().attempt.id;
+            route.retry();
+            // Retry can remove this control and briefly unmount the
+            // shell; hand focus to main only once it has fallen away.
+            const after = services.navigation.snapshot().attempt.id;
+            retryFocus.current =
+              focused && after !== before ? after : undefined;
+          }}
+        >
+          Retry navigation
+        </Button>
+      )}
+      {!settings && (
+        <Button type="button" onClick={() => select("settings")}>
+          Open Settings
+        </Button>
+      )}
+    </div>
+  );
   return (
     <ToastProvider
       portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
@@ -170,46 +263,20 @@ function ConnectedApp({ services }: { services: AppServices }) {
       <ChannelNavigationProvider relay={services.relay}>
         <AgentsContext.Provider value={services.agents}>
           <AppShell
+            workspaceRef={setWorkspaceElement}
             sidebar={(pageNavigation) =>
-              settings ? (
-                <SettingsSidebar
-                  cards={services.settingsCards}
-                  communities={services.communities}
-                  {...(route.target.kind === "settings" && route.target.section
-                    ? { selected: route.target.section }
-                    : {})}
-                  onBack={route.leaveSettings}
-                  onSection={(section) => {
-                    const client = services.communities.snapshot();
-                    void services.navigation.open({
-                      version: 1,
-                      kind: "settings",
-                      section,
-                      ...(client.viewer && client.selected
-                        ? {
-                            scope: {
-                              viewer: client.viewer,
-                              communityOrigin: communityDestination(
-                                client.selected,
-                              ).url,
-                            },
-                          }
-                        : { scope: null }),
-                    });
-                  }}
-                />
-              ) : route.selected === "buzz.me/me" ? (
+              workspace.selected === "buzz.me/me" ? (
                 <MeSidebar
                   relay={services.relay}
                   navigator={services.navigation}
-                  target={route.target}
+                  target={workspace.target}
                 />
               ) : (
                 <ChannelSidebar
                   relay={services.relay}
                   navigator={services.navigation}
                   agents={services.agents}
-                  target={route.target}
+                  target={workspace.target}
                   meEnabled={route.pages.some(
                     (page) => page.key === "buzz.me/me",
                   )}
@@ -249,105 +316,31 @@ function ConnectedApp({ services }: { services: AppServices }) {
             }
             companion={pageOwnsCompanion ? undefined : companion}
             pages={startup === "ready" ? route.pages : []}
-            selected={route.selected}
-            navigationAttempt={route.state.attempt.id}
+            selected={workspace.selected}
+            navigationAttempt={workspace.attempt}
             onSelect={select}
             tone={presentation.tone}
             workspace={
-              startup === "ready" && route.page?.layout === "workspace"
+              startup === "ready" && workspace.page?.layout === "workspace"
             }
           >
             <UpdateNotice updates={services.updates} />
-            {startup === "recovery" && !settings ? (
+            {!settings && startup === "recovery" ? (
               <RecoveryScreen plugins={plugins} />
-            ) : (!route.state.ingress && route.failure) ||
-              route.state.status === "failed" ? (
-              <div role="alert" className="notice">
-                <h1>This destination couldn’t open</h1>
-                <p>
-                  {(route.state.reason ?? route.failure) === "denied"
-                    ? "This target needs its original account and an already joined community."
-                    : route.state.ingress && !route.state.retryable
-                      ? "This link is invalid or unsupported."
-                      : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
-                </p>
-                {(!route.state.ingress || route.state.retryable) && (
-                  <Button
-                    type="button"
-                    onClick={(event) => {
-                      const focused =
-                        event.currentTarget === document.activeElement;
-                      const before = services.navigation.snapshot().attempt.id;
-                      route.retry();
-                      // Retry can remove this control and briefly unmount the
-                      // shell; hand focus to main only once it has fallen away.
-                      const after = services.navigation.snapshot().attempt.id;
-                      retryFocus.current =
-                        focused && after !== before ? after : undefined;
-                    }}
-                  >
-                    Retry navigation
-                  </Button>
-                )}
-                <Button type="button" onClick={() => select("settings")}>
-                  Open Settings
-                </Button>
-              </div>
-            ) : route.waiting ? (
+            ) : !settings &&
+              ((!route.state.ingress && route.failure) ||
+                route.state.status === "failed") ? (
+              destinationFailure
+            ) : !settings && route.waiting ? (
               <p role="status">Opening destination…</p>
-            ) : settings ? (
-              <Settings
-                agents={services.agents}
-                plugins={plugins}
-                cards={services.settingsCards}
-                communities={services.communities}
-                identity={services.identity}
-                appearance={services.appearance}
-                shortcuts={services.shortcuts}
-                shortcutBindings={services.shortcutBindings}
-                notifications={services.notifications}
-                updates={services.updates}
-                navigation={route.request}
-                navigationPane
-                onDeparturePending={(pending) => {
-                  const client = services.communities.snapshot();
-                  const attempt = route.state.attempt;
-                  if (pending && client.viewer && client.selected)
-                    setDeparture({
-                      attempt,
-                      viewer: client.viewer,
-                      communityId: client.selected,
-                    });
-                  else if (!pending)
-                    setDeparture((current) =>
-                      current?.attempt === attempt ? null : current,
-                    );
-                }}
-                onSection={(section) => {
-                  const client = services.communities.snapshot();
-                  void services.navigation.open({
-                    version: 1,
-                    kind: "settings",
-                    section,
-                    ...(client.viewer && client.selected
-                      ? {
-                          scope: {
-                            viewer: client.viewer,
-                            communityOrigin: communityDestination(
-                              client.selected,
-                            ).url,
-                          },
-                        }
-                      : { scope: null }),
-                  });
-                }}
-              />
-            ) : startup === "loading" ? (
-              <p role="status">Opening destination…</p>
-            ) : route.page ? (
+            ) : startup === "loading" || restoring ? (
+              settings ? null : (
+                <p role="status">Opening destination…</p>
+              )
+            ) : workspace.page ? (
               <PageView
-                page={route.page}
-                navigation={route.request}
+                page={workspace.page}
+                navigation={workspace.request}
                 companion={pageOwnsCompanion ? companion : undefined}
                 companionOpening={
                   pageOwnsCompanion ? launcher.opening : undefined
@@ -355,6 +348,81 @@ function ConnectedApp({ services }: { services: AppServices }) {
               />
             ) : null}
           </AppShell>
+          <Dialog
+            // The inert launch surface would swallow the modal's initial focus.
+            open={settings && !launching}
+            title="Settings"
+            closeLabel="Close Settings"
+            size="expanded"
+            container={workspaceElement}
+            navigation={{
+              label: "Settings sections",
+              content: (
+                <SettingsSidebar
+                  cards={services.settingsCards}
+                  communities={services.communities}
+                  {...(route.target.kind === "settings" && route.target.section
+                    ? { selected: route.target.section }
+                    : {})}
+                  onSection={openSettingsSection}
+                />
+              ),
+            }}
+            onOpenChange={(open) => {
+              if (!open) route.leaveSettings();
+            }}
+            finalFocus={() => {
+              // Only a return to the visit Settings covered restores the prior
+              // focus; a destination opened from Settings starts at main.
+              const returning =
+                services.navigation.snapshot().entry.id ===
+                settingsReturnEntry.current;
+              return returning &&
+                settingsFocus.current?.isConnected &&
+                settingsFocus.current !== document.body
+                ? settingsFocus.current
+                : (document.getElementById("main-content") ?? false);
+            }}
+          >
+            <div id="settings-content" tabIndex={-1}>
+              {(!route.state.ingress && route.failure) ||
+              route.state.status === "failed" ? (
+                destinationFailure
+              ) : route.waiting ? (
+                <p role="status">Opening destination…</p>
+              ) : (
+                <Settings
+                  agents={services.agents}
+                  plugins={plugins}
+                  cards={services.settingsCards}
+                  communities={services.communities}
+                  identity={services.identity}
+                  appearance={services.appearance}
+                  shortcuts={services.shortcuts}
+                  shortcutBindings={services.shortcutBindings}
+                  notifications={services.notifications}
+                  updates={services.updates}
+                  navigation={route.request}
+                  navigationPane
+                  onDeparturePending={(pending) => {
+                    const client = services.communities.snapshot();
+                    const attempt = route.state.attempt;
+                    if (pending && client.viewer && client.selected)
+                      setDeparture({
+                        attempt,
+                        viewer: client.viewer,
+                        communityId: client.selected,
+                      });
+                    else if (!pending)
+                      setDeparture((current) =>
+                        current?.attempt === attempt ? null : current,
+                      );
+                  }}
+                  onSection={openSettingsSection}
+                />
+              )}
+            </div>
+          </Dialog>
         </AgentsContext.Provider>
       </ChannelNavigationProvider>
     </ToastProvider>

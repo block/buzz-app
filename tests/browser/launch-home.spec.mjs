@@ -1,4 +1,4 @@
-import { openPage, pageChoices } from "./navigation.mjs";
+import { closeSettings, openPage, pageChoices } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ pluginFixtures: true });
@@ -143,6 +143,8 @@ test("Channels stays enabled despite saved disabled settings and has no switch",
   await expect(
     page.getByRole("switch", { name: "Enable Channels", exact: true }),
   ).toHaveCount(0);
+  // The workspace behind Settings is inert; close it before opening a page.
+  await closeSettings(page);
   await openPage(page, "Multiplayer");
   await expect(messages(page)).toBeVisible();
 });

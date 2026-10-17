@@ -306,7 +306,28 @@
     min-width: 0;
   }
   .shell-body {
-    @apply relative flex min-h-0 min-w-0 flex-1 pl-0 pr-2 pb-2 sm:pl-0 sm:pr-4 sm:pb-4;
+    @apply relative flex min-h-0 min-w-0 flex-1 pl-0;
+    padding-inline-end: var(--shell-workspace-gutter);
+    padding-bottom: var(--shell-workspace-gutter);
+  }
+  /* Keep the modal portal outside the query container so its fixed backdrop
+     still blocks the whole window, including the header and community rail. */
+  .shell-workspace {
+    --shell-workspace-gutter: var(--space-2);
+    @apply relative flex min-h-0 min-w-0 flex-1;
+  }
+  @media (min-width: 40rem) {
+    .shell-workspace {
+      --shell-workspace-gutter: var(--space-4);
+    }
+  }
+  .shell-dialog-frame {
+    position: absolute;
+    inset: 0 var(--shell-workspace-gutter) var(--shell-workspace-gutter);
+    pointer-events: none;
+  }
+  .shell-dialog-frame > * {
+    pointer-events: auto;
   }
   .shell-content {
     @apply relative flex h-full min-h-0 min-w-0 flex-1;

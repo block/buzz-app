@@ -1,4 +1,10 @@
-import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
+import {
+  chooseColorMode,
+  closeSettings,
+  openSettings,
+  selectSettingsSection,
+  settingsDialog,
+} from "./navigation.mjs";
 import { openPage, pageChoices } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
@@ -7,8 +13,7 @@ test.use({ historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function openPlugins(page, origin) {
   await page.goto(origin);
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await selectSettingsSection(page, "Plugins");
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
@@ -178,13 +183,22 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
               continue;
             }
             if (label.classList.contains("sr-only")) continue;
-            const text = document.createRange();
-            text.selectNodeContents(label);
-            for (const line of text.getClientRects()) {
-              if (line.left < bounds.left || line.right > bounds.right)
-                failures.push(
-                  `${label.textContent}: setting label overflows section`,
-                );
+            // Visually hidden suffixes are clipped; measure only visible text.
+            const walker = document.createTreeWalker(
+              label,
+              NodeFilter.SHOW_TEXT,
+            );
+            while (walker.nextNode()) {
+              if (walker.currentNode.parentElement.closest(".sr-only"))
+                continue;
+              const text = document.createRange();
+              text.selectNodeContents(walker.currentNode);
+              for (const line of text.getClientRects()) {
+                if (line.left < bounds.left || line.right > bounds.right)
+                  failures.push(
+                    `${label.textContent}: setting label overflows section`,
+                  );
+              }
             }
           }
           for (const button of root.querySelectorAll("button.buzz-button")) {
@@ -300,13 +314,17 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
         path: info.outputPath(`appearance-${scale}-${width}-${mode}.png`),
       });
       // Icon buttons grow with the interface while keeping their square shape.
+      // The shell toolbar stays mounted, though hidden, behind the modal.
       await expect(
-        page.getByRole("button", { name: "Search Buzz", exact: true }),
+        page.getByRole("button", {
+          name: "Search Buzz",
+          exact: true,
+          includeHidden: true,
+        }),
       ).toHaveAttribute("data-icon-size", "sm");
       await expect
         .poll(() =>
-          page
-            .getByRole("region", { name: "Settings", exact: true })
+          settingsDialog(page)
             .locator("button[data-icon-size]")
             .evaluateAll(
               (buttons, scale) =>
@@ -448,6 +466,7 @@ test("leaving Settings discards a late preview without installing", async ({
   });
   await button(page, "Load from folder").click();
   await expect(page.getByText(/Reading plugin folders/)).toBeVisible();
+  await closeSettings(page);
   await openPage(page, "Projects");
   await page.evaluate(() => window.resolveImport());
   await expect
@@ -501,6 +520,7 @@ test("checked-in local examples activate and work independently", async ({
     await expect(toggle).toHaveAttribute("aria-checked", "false");
     await toggle.click();
   }
+  await closeSettings(page);
   await openPage(page, "Counter playground");
   await button(page, "Clicked 0 times").click();
   await expect(button(page, "Clicked 1 times")).toBeVisible();
@@ -509,10 +529,10 @@ test("checked-in local examples activate and work independently", async ({
   await expect(page.getByRole("main").getByRole("status")).toHaveText(
     "12 characters",
   );
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await selectSettingsSection(page, "Plugins");
   await page.getByRole("switch", { name: "Enable Counter playground" }).click();
+  await closeSettings(page);
   const navigation = await pageChoices(page);
   await expect(
     navigation.getByRole("option", { name: "Counter playground", exact: true }),

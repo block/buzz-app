@@ -1,5 +1,10 @@
 import { checkDurationConsumer } from "./duration-layout.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -352,9 +357,8 @@ test("disabling Sessions keeps independent lifecycle actions available", async (
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
 
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Plugins");
   const plugins = page.getByRole("region", { name: "Plugins", exact: true });
   const toggle = plugins.getByRole("switch", {
     name: "Enable Sessions",
@@ -363,6 +367,7 @@ test("disabling Sessions keeps independent lifecycle actions available", async (
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "false");
 
+  await closeSettings(page);
   await openPage(page, "Multiplayer");
   // Lifecycle is independent of Sessions and retains its unavailable-host explanation.
   for (const keyboard of [false, true]) {
@@ -555,16 +560,7 @@ for (const destination of [
         .getByRole("button", { name, exact: true });
     const leave = async () => {
       if (destination === "Settings") {
-        await button(page, "Your profile").click();
-        await page
-          .getByRole("menuitem", { name: "Settings", exact: true })
-          .click();
-        await expect(
-          page.getByRole("complementary", {
-            name: "Settings sidebar",
-            exact: true,
-          }),
-        ).toBeVisible();
+        await openSettings(page);
       } else {
         await openPage(
           page,
@@ -572,10 +568,16 @@ for (const destination of [
         );
       }
       if (destination === "Settings") {
+        // The Settings modal retains the sidebar behind it, hidden from
+        // assistive technology and inert until Settings closes.
         await expect(sidebar).toHaveCount(0);
-        expect(await node.evaluate((element) => element.isConnected)).toBe(
-          false,
-        );
+        expect(
+          await node.evaluate(
+            (element) =>
+              element.isConnected &&
+              !!element.closest('[aria-hidden="true"], [inert]'),
+          ),
+        ).toBe(true);
       } else {
         await expect(sidebar).toBeVisible();
         expect(await node.evaluate((element) => element.isConnected)).toBe(
@@ -590,11 +592,7 @@ for (const destination of [
         page.getByRole("region", { name: "Channel message history" }),
       ).toHaveCount(0);
       if (destination === "Back/Forward") await button(page, "Go back").click();
-      else if (destination === "Settings")
-        await page
-          .getByRole("complementary", { name: "Settings sidebar" })
-          .getByRole("button", { name: "Back", exact: true })
-          .click();
+      else if (destination === "Settings") await closeSettings(page);
       else await openPage(page, "Multiplayer");
     };
     await group.locator("summary").click();
@@ -604,7 +602,7 @@ for (const destination of [
     await leave();
     await expect(group).not.toHaveAttribute("open");
     if (destination === "Settings")
-      // Settings replaces the sidebar; returning to the same channel restores
+      // Settings retains the sidebar; returning to the same channel keeps
       // the saved position instead of revealing it again.
       await expect
         .poll(() => sidebar.evaluate((element) => element.scrollTop))

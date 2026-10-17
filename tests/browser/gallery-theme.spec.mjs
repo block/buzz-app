@@ -1,7 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
+import {
+  chooseColorMode,
+  openSettings,
+  selectSettingsSection,
+  settingsDialog,
+} from "./navigation.mjs";
 
 // Browser boundary: real thread-to-gallery wiring, computed CSS, and host
 // appearance updates across windows while the gallery and draft stay mounted.
@@ -63,13 +68,13 @@ test("an open image gallery follows host appearance while retaining its dark sta
   const other = await context.newPage();
   try {
     await other.goto(app.origin);
-    await other
-      .getByRole("button", { name: "Your profile", exact: true })
-      .click();
-    await other
-      .getByRole("menuitem", { name: "Settings", exact: true })
-      .click();
-    await expect(other.getByRole("main")).toBeFocused();
+    await openSettings(other);
+    await expect(
+      settingsDialog(other).getByRole("button", {
+        name: "Close Settings",
+        exact: true,
+      }),
+    ).toBeFocused();
     await selectSettingsSection(other, "Appearance");
     for (const [index, mode] of ["light", "dark", "light"].entries()) {
       await chooseColorMode(other, mode === "light" ? "Light" : "Dark");

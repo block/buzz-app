@@ -1,11 +1,15 @@
-import { openPage, selectSettingsSection } from "./navigation.mjs";
+import {
+  closeSettings,
+  openSettings,
+  openPage,
+  selectSettingsSection,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function plugins(page) {
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await selectSettingsSection(page, "Plugins");
 }
 
@@ -32,6 +36,7 @@ test("Bestie opts in without changing the other bundled defaults and survives re
   await expect(bestie).toBeChecked();
   await page.reload();
   await expect(bestie).toBeChecked();
+  await closeSettings(page);
   await openPage(page, "Messages");
   await expect(
     page
@@ -51,6 +56,8 @@ test("Bestie opts in without changing the other bundled defaults and survives re
   await expect(bestie).not.toBeChecked();
   await page.reload();
   await expect(bestie).not.toBeChecked();
+  // The workspace behind Settings is hidden from the accessibility tree.
+  await closeSettings(page);
   await expect(button(page, "Bestie")).toHaveCount(0);
 });
 
@@ -88,14 +95,17 @@ test("Community admin toggle removes and restores the working Invite destination
   });
   await admin.click();
   await expect(admin).not.toBeChecked();
+  await closeSettings(page);
   await menu();
   await expect(invite).toHaveCount(0);
   await expect(
     page.getByRole("menuitem", { name: "Community settings", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+  await plugins(page);
   await admin.click();
   await expect(admin).toBeChecked();
+  await closeSettings(page);
   await menu();
   await invite.click();
   await expect(

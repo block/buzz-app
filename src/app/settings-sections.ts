@@ -92,7 +92,7 @@ export function settingsSections(
       ? [
           {
             id: "community",
-            label: community.name,
+            label: "Community",
             sections: [
               profile,
               ...cards

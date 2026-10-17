@@ -1,3 +1,4 @@
+import { SidebarNavigation } from "../../shared/design-system/ui/SidebarNavigation";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { channelIcon } from "../../features/channels/channel-icon";
@@ -68,26 +69,28 @@ export function SessionsWorkspace({
       <div className={styles.workspace}>
         <Panel as="aside" aria-label="Session history">
           <div className={`${channelStyles.sidebar} ${styles.sidebar}`}>
-            <nav className={styles.history} aria-label="Session sections">
-              {session ? (
-                <SessionSections
-                  session={session}
-                  scope={scope}
-                  sessions={sessions}
-                  renderSession={renderSession}
-                  onNew={onNew}
-                />
-              ) : (
-                sessions.map(renderSession)
-              )}
-              {listStatus ??
-                (!sessions.length && (
-                  <p className={styles.listMessage}>
-                    Your conversations will appear here after your first
-                    message.
-                  </p>
-                ))}
-            </nav>
+            <SidebarNavigation>
+              <nav className={styles.history} aria-label="Session sections">
+                {session ? (
+                  <SessionSections
+                    session={session}
+                    scope={scope}
+                    sessions={sessions}
+                    renderSession={renderSession}
+                    onNew={onNew}
+                  />
+                ) : (
+                  sessions.map(renderSession)
+                )}
+                {listStatus ??
+                  (!sessions.length && (
+                    <p className={styles.listMessage}>
+                      Your conversations will appear here after your first
+                      message.
+                    </p>
+                  ))}
+              </nav>
+            </SidebarNavigation>
           </div>
         </Panel>
         <Panel as="div">

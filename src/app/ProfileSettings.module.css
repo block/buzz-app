@@ -28,3 +28,8 @@
   overflow-wrap: anywhere;
   user-select: all;
 }
+
+/* Keep the actual form geometry, without showing another scope's default data. */
+.editor[data-placeholder] {
+  visibility: hidden;
+}

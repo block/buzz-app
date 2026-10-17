@@ -1,5 +1,9 @@
 import { test, expect } from "./fixture.mjs";
-import { selectSettingsSection } from "./navigation.mjs";
+import {
+  closeSettings,
+  selectSettingsSection,
+  settingsDialog,
+} from "./navigation.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
 
@@ -21,6 +25,8 @@ test("account avatar opens profile Settings after a failed connection", async ({
     .getByRole("button", { name: "Open Settings", exact: true })
     .click();
   await selectSettingsSection(page, "Appearance");
+  // The account menu sits behind the Settings modal; reach it after closing.
+  await closeSettings(page);
   const trigger = page.getByRole("button", {
     name: "Your profile",
     exact: true,
@@ -35,7 +41,7 @@ test("account avatar opens profile Settings after a failed connection", async ({
   await expect(
     page.getByRole("region", { name: "Profile", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("main")).toBeFocused();
+  await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
 });
 
 // Portaled submenus need real hit testing, collision handling and keyboard focus.
@@ -128,10 +134,11 @@ test("account menu choices remain reachable across themes, widths and enlarged t
   await trigger.click();
   await menu.getByRole("menuitem", { name: "Plugins", exact: true }).click();
   await expect(menu).toHaveCount(0);
-  await expect(page.getByRole("main")).toBeFocused();
+  await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
   await expect(
     page.getByRole("region", { name: "Plugins", exact: true }),
   ).toBeVisible();
+  await closeSettings(page);
   await trigger.click();
   await menu.getByRole("menuitem", { name: /, edit profile$/ }).click();
   await expect(

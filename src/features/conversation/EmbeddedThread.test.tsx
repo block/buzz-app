@@ -52,10 +52,14 @@ vi.mock("../messages/MessageRow", () => ({
   ),
 }));
 vi.mock("../messages/MessageComposer", () => ({
-  MessageComposer: ({ sessionConversation }: MessageComposerProps) => (
+  MessageComposer: ({
+    sessionConversation,
+    personalConversation,
+  }: MessageComposerProps) => (
     <section
       aria-label="Composer"
       data-session-conversation={String(!!sessionConversation)}
+      data-personal-conversation={String(!!personalConversation)}
       data-deletion={String(!!useMessageDeletion())}
     />
   ),
@@ -89,6 +93,7 @@ afterEach(() => {
 function fixture(
   channelType: "stream" | "session" = "stream",
   operations: readonly OutgoingEvent[] = [],
+  creator?: string,
 ) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -135,7 +140,7 @@ function fixture(
   const viewer = "a".repeat(64);
   const channels = {
     channels: [
-      { id: "c", name: "Channel", channelType, members: [viewer] },
+      { id: "c", name: "Channel", channelType, members: [viewer], creator },
       { id: "d", name: "Other", channelType, members: [viewer] },
     ],
   };
@@ -291,6 +296,20 @@ it.each([
     expect(composer).toHaveAttribute(
       "data-session-conversation",
       sessionConversation,
+    );
+  },
+);
+
+it.each([
+  ["the viewer's own", "true", "a".repeat(64)],
+  ["someone else's", "false", "b".repeat(64)],
+] as const)(
+  "the reply composer in %s Solo chat gets personal composition=%s",
+  (_, personalConversation, creator) => {
+    render(<EmbeddedThread {...fixture("session", [], creator).props} />);
+    expect(screen.getByLabelText("Composer")).toHaveAttribute(
+      "data-personal-conversation",
+      personalConversation,
     );
   },
 );

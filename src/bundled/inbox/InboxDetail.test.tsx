@@ -18,6 +18,7 @@ import { apply as registerLinks } from "../links";
 import type { LinkRenderer } from "../../features/conversation/contracts";
 import type { Contribution } from "../../plugins/contributions";
 import linkStyles from "../../shared/InlineReference.module.css";
+import type { InboxItem } from "../../features/relay/inbox";
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { createRelaySession } from "../../features/relay/session";
@@ -334,6 +335,156 @@ async function opened(h: Awaited<ReturnType<typeof fixture>>) {
   expect(row).toHaveFocus();
   return { reader, editor, row };
 }
+async function sessionFixture(laterCount: number) {
+  const viewer = keypair(),
+    agent = keypair(),
+    relay = keypair();
+  const mention = message(agent, "room", "Older mention", 20, [
+    ["p", viewer.pubkey],
+  ]);
+  const later = Array.from({ length: laterCount }, (_, index) =>
+    message(agent, "room", `Later update ${index}`, 21 + index),
+  );
+  const events = [
+    roster(relay, "room", [viewer.pubkey, agent.pubkey], 10),
+    metadata(relay, "room", "Session", 10, [
+      ["t", "stream"],
+      ["private"],
+      ["about", "Buzz session (buzz.sessions/v1)"],
+    ]),
+    mention,
+    ...later,
+  ];
+  let live!: LiveCallbacks;
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      query: async (filters) =>
+        filters.flatMap((filter) =>
+          events
+            .filter((event) => matchesEvent(event, filter))
+            .sort(
+              (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+            )
+            .slice(0, filter.limit),
+        ),
+      media: (url) => url,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    {
+      outboxStorage: { load: () => [], save: () => {} },
+      readStateStorage: {
+        update: async (change) => change(undefined),
+        close() {},
+      },
+      readPublisherLock: async (_signal, work) => work(),
+    },
+  );
+  owners.push(owner);
+  live.state({ status: "connected", routes: [] });
+  // History arrives only through reads, as after a restart.
+  live.receive(events.slice(0, 2));
+  owner.session.channels.ensureList();
+  await waitFor(() =>
+    expect(owner.session.channels.get?.("room")?.channelType).toBe("session"),
+  );
+  const item: InboxItem = {
+    id: `message:room:${mention.id}`,
+    channelId: "room",
+    target: { kind: "message", channelId: "room", messageId: mention.id },
+    messageId: mention.id,
+    latestMessageId: mention.id,
+    messageIds: [mention.id],
+    authorId: agent.pubkey,
+    preview: "Older mention",
+    createdAt: mention.created_at,
+    mentioned: true,
+    messages: [
+      { id: mention.id, createdAt: mention.created_at, mentioned: true },
+    ],
+    thread: false,
+    unreadCount: 0,
+    manual: false,
+    readThrough: [],
+  };
+  const open = () =>
+    render(
+      <InboxDetail
+        host={
+          {
+            relay: {
+              snapshot: () => ({
+                status: "ready",
+                session: owner.session,
+                scope: owner.session.scope,
+              }),
+            },
+            navigation: navigator,
+            panels: {
+              subscribe: () => () => {},
+              snapshot: () => emptyPanels,
+              resolve: () => undefined,
+            },
+          } as unknown as ConversationHostServices
+        }
+        item={item}
+        target={{ channelId: "room", messageId: mention.id }}
+        session={owner.session}
+        scope={{ viewer: viewer.pubkey, communityOrigin: "https://relay.test" }}
+        navigator={navigator}
+        channelName="Session"
+        onBack={() => {}}
+      />,
+    );
+  const rows = () => owner.session.channels.window("room").rows;
+  return { owner, live, agent, events, mention, open, rows };
+}
+// jsdom does not lay out virtual rows; assert the window and the reader kind.
+function expectTimeline() {
+  const preview = screen.getByRole("region", { name: "Conversation preview" });
+  expect(
+    within(preview).getByLabelText("Channel message history"),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("complementary", { name: "Thread" })).toBeNull();
+}
+it("pages an older session target into its conversation instead of isolating it", async () => {
+  // One more than a head page, so the target starts outside the window.
+  const h = await sessionFixture(21);
+  h.open();
+  await waitFor(() =>
+    expect(h.rows().some((row) => row.id === h.mention.id)).toBe(true),
+  );
+  expect(h.rows().at(-1)?.content).toBe("Later update 20");
+  expectTimeline();
+});
+it("keeps a session target live when it opens from a cached window", async () => {
+  const h = await sessionFixture(2);
+  h.owner.session.channels.ensure("room");
+  await waitFor(() =>
+    expect(h.owner.session.channels.window("room").freshness).toBe("verified"),
+  );
+  // A dropped stream leaves the retained window readable but unverified.
+  act(() => h.live.state({ status: "retrying", routes: [] }));
+  expect(h.owner.session.channels.window("room").freshness).toBe("cached");
+  h.open();
+  act(() => {
+    h.live.state({ status: "connected", routes: [] });
+    h.live.established(["room"]);
+  });
+  await waitFor(() =>
+    expect(h.owner.session.channels.window("room").freshness).toBe("verified"),
+  );
+  const arrival = message(h.agent, "room", "Fresh arrival", 40);
+  h.events.push(arrival);
+  act(() => h.live.receive([arrival]));
+  await waitFor(() => expect(h.rows().at(-1)?.id).toBe(arrival.id));
+  expectTimeline();
+});
+
 it("opens the captured message from the channel heading", async () => {
   const h = await fixture();
   await opened(h);

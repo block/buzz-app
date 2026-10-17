@@ -2635,7 +2635,7 @@ it("inbox groups relevant conversations, preserves read rows and exact unread re
     latestMessageId: newer.id,
     mentioned: true,
     unreadCount: 2,
-    preview: "First reply",
+    preview: "Mentioned reply",
   });
   expect(before.items[0]).toMatchObject({
     channelId: "dm",
@@ -2719,6 +2719,43 @@ it("inbox groups a session's top-level timeline into one conversation, keeping i
   for (const step of session()[1]?.readThrough ?? [])
     await h.session.unread.markThrough(step.target, step.messageId);
   expect(session().map((item) => item.unreadCount)).toEqual([1, 0]);
+});
+
+it("inbox describes a session row by its newest top-level message, not only its Inbox evidence", () => {
+  const h = setup();
+  h.grant("session");
+  h.emit([
+    metadata(h.relay, "session", "Session", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["about", SESSION_CHANNEL_DESCRIPTION],
+    ]),
+  ]);
+  const ping = message(h.alice, "session", "Ping", 20, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const update = message(h.alice, "session", "Later update", 21);
+  h.emit([
+    ping,
+    update,
+    message(h.viewer, "session", "My answer", 22),
+    message(h.alice, "session", "Side reply", 23, [
+      ["e", ping.id, "", "reply"],
+    ]),
+    message(h.alice, "session", "Agent note", 24, [["audience", "agents"]]),
+  ]);
+  const item = h.session.unread
+    .inbox()
+    .items.find((item) => item.id === "session:session");
+  expect(item).toMatchObject({
+    messageId: ping.id,
+    messageIds: [ping.id],
+    unreadCount: 1,
+    authorId: h.alice.pubkey,
+    preview: "Later update",
+    createdAt: 21,
+  });
+  expect(item?.mention).toMatchObject({ preview: "Ping", createdAt: 20 });
 });
 
 it("inbox keeps a mentioned session root with its thread so reading the thread clears it", async () => {

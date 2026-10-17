@@ -17,12 +17,15 @@ import styles from "./Inbox.module.css";
 export function ChannelPreview({
   channelName,
   anchor,
+  anchorAt,
   draft = false,
   onDraftSaved,
 }: {
   /** The conversation's preview label, such as a DM's participants. */
   channelName: string;
   anchor?: string | undefined;
+  /** The anchor's `created_at`, so an older target can be paged into view. */
+  anchorAt?: number | undefined;
   draft?: boolean;
   onDraftSaved?: () => void;
 }) {
@@ -45,9 +48,26 @@ export function ChannelPreview({
       !anchor ||
       opening?.anchor === anchor ||
       window.status === "idle" ||
-      window.status === "loading"
+      window.status === "loading" ||
+      window.loadingOlder ||
+      // Wait for the revalidation a cached window is already owed; deciding
+      // now would freeze this visit in the isolated reader.
+      (window.freshness === "cached" && !window.error)
     )
       return;
+    // Page an older target into this conversation instead of isolating it.
+    if (
+      anchorAt !== undefined &&
+      window.status === "ready" &&
+      !window.error &&
+      window.hasMore &&
+      !window.historyLimited &&
+      (window.rows[0]?.createdAt ?? -Infinity) >= anchorAt &&
+      !window.rows.some((row) => row.id === anchor)
+    ) {
+      session.channels.loadOlder(channelId);
+      return;
+    }
     // Same canonical decision as Channels: freeze this attempt after the head
     // settles; later live arrivals must not switch an exact reader's presentation.
     setOpening({
@@ -57,7 +77,7 @@ export function ChannelPreview({
         window.freshness !== "cached" &&
         window.rows.some((row) => row.id === anchor && !row.threadRootId),
     });
-  }, [anchor, opening, window]);
+  }, [anchor, anchorAt, opening, window, session, channelId]);
   const channel = session.channels.get?.(channelId);
   // Saved drafts open the current head without mutating canonical scroll intent.
   useEffect(() => {

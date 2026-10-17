@@ -24,7 +24,7 @@ Inbox now renders chat-only DMs, mentions and participating threads through
 `session.unread.inbox()`, with independent Activity type and Sender filters and
 an independent Unread only toggle. Sender classification uses `session.agentChoices` and
 cached/profile-backed identity evidence, never a new inventory or name heuristic.
-The Mentions activity filter uses explicit mention messages for each conversation's preview, sender, ordering, resume point and unread count. A later ordinary reply does not make a read mention unread again. DMs remain direct activity rather than mentions merely because their recipient is tagged. All activity and Threads retain their conversation-wide projections.
+The Mentions activity filter uses explicit mention messages for each conversation's preview, sender, ordering, resume point and unread count. A later ordinary reply does not make a read mention unread again. DMs remain direct activity rather than mentions merely because their recipient is tagged. All activity and Threads retain their conversation-wide projections. A row shows its newest message and sender, matching its time, while opening it still resumes at the oldest unread message. A session's top-level row shows the newest top-level message from anyone else, skipping messages addressed only to agents, even one that is not Inbox evidence, and is ordered by it; unread counts still come only from evidence.
 Rows retain exact IDs and current names while `inboxFeed.incomplete` marks only
 specific group members awaiting their stored edit/deletion closure. Those rows
 say “Preview updating…” or “Preview unavailable. Retry inbox.”; other rows stay
@@ -53,7 +53,10 @@ resumes playback or replays an old pending seek. Explicit Play is required.
 
 Opening a row captures channel, message and optional thread root, then uses the
 existing channel window or an exact shared thread reader to reveal even an older
-target outside the newest bounded page. A late verified root can regroup a
+target outside the newest bounded page. A DM or session timeline first pages
+older history back to the target's time; only a target still missing there opens
+in the thread reader. A cached window revalidates before that choice, so a
+reconnect cannot freeze the visit in the thread reader. A late verified root can regroup a
 conversation without changing the captured visit or canonical origin. Reading
 is saved by the shared unread owner; failed actions retain their captured Retry
 unless the visit/access/session or a newer intent retires it. A DM Retry reuses

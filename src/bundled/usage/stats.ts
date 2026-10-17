@@ -1,0 +1,266 @@
+// What Usage shows, from the session snapshots each agent's type reports: the
+// period's cost, tokens and sessions, and the previous period's cost. A count
+// the harness did not record is unknown, never zero: totals add what is known
+// and say when something went uncounted.
+import type {
+  Agent,
+  SessionUsage,
+  UsageObservation,
+} from "../../features/agents/service";
+import { claudeModel, estimateCost } from "./pricing";
+
+/** One agent's sessions, as its type's `usage` read them. */
+export type AgentUsage = Readonly<{
+  agent: Agent;
+  /** The agent type's key. */
+  harness: string;
+  sessions: readonly SessionUsage[];
+}>;
+/** The sum of the known values: `partial` when some went uncounted, without
+ * a `value` when none was known. */
+export type Total = Readonly<{ value?: number; partial: boolean }>;
+export type Day = Readonly<{
+  start: number;
+  /** Known cost by harness. */
+  costs: ReadonlyMap<string, number>;
+}>;
+export type Stats = Readonly<{
+  cost: Total;
+  previousCost: Total;
+  /** Input, output and cache tokens together. */
+  tokens: Total;
+  output: Total;
+  /** Cache reads as a share of the prompt tokens; undefined before any. */
+  cacheHit?: Total;
+  /** Sessions active in the period, whether or not they recorded usage. */
+  sessions: number;
+  /** Of them, those whose latest read missed something. */
+  incomplete: number;
+  days: readonly Day[];
+  /** Agents with sessions in the period, costliest first. */
+  agents: readonly Readonly<{
+    agent: Agent;
+    harness: string;
+    /** The model most of its known cost went to. */
+    model?: string;
+    cost: Total;
+    sessions: number;
+  }>[];
+  /** The period's costliest sessions. */
+  costliest: readonly Readonly<{
+    agent: Agent;
+    harness: string;
+    session: SessionUsage;
+    cost: Total;
+    tokens: number;
+  }>[];
+  /** Models used in the period with no recorded cost or known rates. */
+  unpriced: readonly string[];
+}>;
+
+const COSTLIEST = 5;
+const KINDS = ["input", "output", "cacheRead", "cacheWrite"] as const;
+
+/** A `Total` being added up. */
+class Sum {
+  value = 0;
+  known = false;
+  partial = false;
+  add(value: number | undefined, partial = false) {
+    if (value === undefined) this.partial = true;
+    else {
+      this.value += value;
+      this.known = true;
+      this.partial ||= partial;
+    }
+  }
+  /** Adds another sum as it stands, its unknowns too. */
+  include(other: Sum) {
+    this.value += other.value;
+    this.known ||= other.known;
+    this.partial ||= other.partial;
+  }
+  total(): Total {
+    return this.known || !this.partial
+      ? { value: this.value, partial: this.partial }
+      : { partial: true };
+  }
+}
+const known = (total: Total) => total.value ?? 0;
+
+/** The request's cost as the harness recorded it, else as estimated. */
+const price = (observation: UsageObservation) =>
+  observation.cost
+    ? { usd: observation.cost.usd, partial: false }
+    : estimateCost(observation.model, observation.tokens);
+
+/** Local midnight `days` days before `at`'s. */
+export function dayStart(at: number, days = 0) {
+  const date = new Date(at);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - days);
+  return date.getTime();
+}
+
+/** The `days` days ending today, `now` being in the last. Sessions should
+ * reach back to `since(now, days)`, so the previous period can be compared. */
+export const since = (now: number, days: number) => dayStart(now, 2 * days - 1);
+
+/** A new read's snapshots over those kept from earlier, as `SessionUsage`
+ * says: a complete snapshot replaces the session's earlier one; an incomplete
+ * one leaves it, with the new read's gaps; sessions the read missed stay. */
+export function merge(
+  kept: readonly SessionUsage[],
+  read: readonly SessionUsage[],
+): SessionUsage[] {
+  const sessions = new Map(kept.map((session) => [session.id, session]));
+  for (const session of read) {
+    const earlier = sessions.get(session.id);
+    sessions.set(
+      session.id,
+      earlier && session.gaps.length
+        ? { ...earlier, gaps: session.gaps }
+        : session,
+    );
+  }
+  return [...sessions.values()];
+}
+
+export function stats(
+  usage: readonly AgentUsage[],
+  now: number,
+  days: number,
+): Stats {
+  const start = dayStart(now, days - 1);
+  const previous = dayStart(now, 2 * days - 1);
+  const dayStarts = Array.from({ length: days }, (_, index) =>
+    dayStart(now, days - 1 - index),
+  );
+  const dayCosts = dayStarts.map(() => new Map<string, number>());
+  const dayOf = (at: number) => {
+    let index = dayStarts.length - 1;
+    while (index > 0 && (dayStarts[index] ?? 0) > at) index -= 1;
+    return dayCosts[index];
+  };
+  const cost = new Sum();
+  const previousCost = new Sum();
+  const tokens = new Sum();
+  const output = new Sum();
+  const read = new Sum();
+  const prompt = new Sum();
+  const unpriced = new Set<string>();
+  const agents: Stats["agents"][number][] = [];
+  const sessions: Stats["costliest"][number][] = [];
+  let incomplete = 0;
+  for (const { agent, harness, sessions: list } of usage) {
+    const models = new Map<string, number>();
+    const agentCost = new Sum();
+    let agentSessions = 0;
+    for (const session of list) {
+      const active = session.lastAt >= start;
+      const gap = session.gaps.length > 0;
+      const sessionCost = new Sum();
+      let count = 0;
+      for (const observation of session.observations) {
+        if (observation.at < previous) continue;
+        const spent = price(observation);
+        if (observation.at < start) {
+          previousCost.add(spent?.usd, spent?.partial || gap);
+          continue;
+        }
+        sessionCost.add(spent?.usd, spent?.partial);
+        if (!spent) unpriced.add(observation.model);
+        else {
+          models.set(
+            observation.model,
+            (models.get(observation.model) ?? 0) + spent.usd,
+          );
+          const day = dayOf(observation.at);
+          day?.set(harness, (day.get(harness) ?? 0) + spent.usd);
+        }
+        for (const kind of KINDS) {
+          tokens.add(observation.tokens[kind]);
+          count += observation.tokens[kind] ?? 0;
+        }
+        output.add(observation.tokens.output);
+        const { input, cacheRead, cacheWrite } = observation.tokens;
+        if (
+          input === undefined ||
+          cacheRead === undefined ||
+          cacheWrite === undefined
+        ) {
+          read.add(undefined);
+          continue;
+        }
+        read.add(cacheRead);
+        prompt.add(input + cacheRead + cacheWrite);
+      }
+      if (!active) continue;
+      if (gap) {
+        incomplete += 1;
+        // What the read missed may be in the period.
+        for (const sum of [sessionCost, tokens, output, read])
+          sum.partial = true;
+      }
+      agentSessions += 1;
+      agentCost.include(sessionCost);
+      sessions.push({
+        agent,
+        harness,
+        session,
+        cost: sessionCost.total(),
+        tokens: count,
+      });
+    }
+    if (!agentSessions) continue;
+    const model = [...models].sort((a, b) => b[1] - a[1])[0]?.[0];
+    cost.include(agentCost);
+    agents.push({
+      agent,
+      harness,
+      ...(model ? { model } : {}),
+      cost: agentCost.total(),
+      sessions: agentSessions,
+    });
+  }
+  const hit = read.total();
+  return {
+    cost: cost.total(),
+    previousCost: previousCost.total(),
+    tokens: tokens.total(),
+    output: output.total(),
+    // Every prompt token is uncached input, a cache read or a cache write.
+    ...(prompt.value
+      ? {
+          cacheHit: {
+            value: known(hit) / prompt.value,
+            partial: hit.partial,
+          },
+        }
+      : read.partial
+        ? { cacheHit: { partial: true } }
+        : {}),
+    sessions: sessions.length,
+    incomplete,
+    days: dayStarts.map((day, index) => ({
+      start: day,
+      costs: dayCosts[index] ?? new Map<string, number>(),
+    })),
+    agents: agents.sort(
+      (a, b) => known(b.cost) - known(a.cost) || b.sessions - a.sessions,
+    ),
+    costliest: sessions
+      .sort((a, b) => known(b.cost) - known(a.cost) || b.tokens - a.tokens)
+      .slice(0, COSTLIEST),
+    unpriced: [...unpriced].sort(),
+  };
+}
+
+/** A Claude model id as its name, e.g. `claude-opus-5-5` as Claude Opus 5.5;
+ * other ids unchanged. */
+export function modelName(model: string) {
+  const match = /^claude-([a-z]+)-(\d+(?:-\d+)?)$/.exec(claudeModel(model));
+  if (!match?.[1] || !match[2]) return model;
+  const family = match[1].charAt(0).toUpperCase() + match[1].slice(1);
+  return `Claude ${family} ${match[2].replace("-", ".")}`;
+}

@@ -572,6 +572,12 @@
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
   --status-offline: var(--neutral-8);
+  /* Chart series marks, in this order; validated as a set for colour-vision
+   * separation and 3:1 against the panel. Text never uses them. */
+  --chart-series-1: var(--blue-10);
+  --chart-series-2: var(--orange-10);
+  --chart-series-3: var(--green-10);
+  --chart-series-4: var(--purple-9);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
   --text-accent: var(--purple-12);
@@ -655,6 +661,11 @@
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
   --status-offline: var(--neutral-10);
+  /* Dark steps stay in the band where no series outshines the others. */
+  --chart-series-1: var(--blue-9);
+  --chart-series-2: var(--orange-8);
+  --chart-series-3: var(--green-9);
+  --chart-series-4: var(--purple-10);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
   --text-accent: var(--purple-12);

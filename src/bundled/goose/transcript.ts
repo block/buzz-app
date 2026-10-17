@@ -23,12 +23,17 @@ const STEER = "new-message-arrived-while-you-were-working";
 
 type Json = Record<string, unknown>;
 /** A message as goose saves it. */
-type Message = {
+export type Message = {
   id?: string | null;
   role: string;
   created: number;
   content: Json[];
-  metadata?: { userVisible?: boolean; steer?: boolean };
+  metadata?: {
+    userVisible?: boolean;
+    steer?: boolean;
+    usage?: unknown;
+    inference?: unknown;
+  };
 };
 /** A place the agent talks in: a channel, or a thread in one. */
 export type Place = Readonly<{ channelId: string; root?: string }>;
@@ -307,6 +312,13 @@ async function messages(goose: GooseProcess, sessionId: string) {
   ) as Message[];
 }
 
+/** A listed session's messages; none for one goose deleted since it listed it. */
+const listed = (goose: GooseProcess, sessionId: string) =>
+  messages(goose, sessionId).catch((error): Message[] => {
+    if (/not found/i.test(String(error))) return [];
+    throw error;
+  });
+
 /** What a session's transcript is read for: one session, or every session the
  * agent ran for a place. */
 export type Lookup = Readonly<{
@@ -332,14 +344,32 @@ export class GooseHistory {
       for (const row of await list(goose, cwd, agent)) {
         if (rows.length >= RECENT_LIMIT) break;
         signal.throwIfAborted();
-        // One goose deleted since it listed it is left out.
-        const read = await messages(goose, row.sessionId).catch((error) => {
-          if (/not found/i.test(String(error))) return [];
-          throw error;
-        });
+        const read = await listed(goose, row.sessionId);
         if (opening(read)?.("Agent") === agent) rows.push(row);
       }
       return rows;
+    });
+  }
+
+  /** The agent's sessions in `workspace` used since `since`, with their
+   * messages: those whose first prompt names its pubkey, `agent`. */
+  sessions(
+    agent: string,
+    workspace: string,
+    since: number,
+    signal: AbortSignal,
+  ) {
+    return this.with(signal, async (goose, spawn) => {
+      const cwd = await absolute(spawn, workspace);
+      const found: { sessionId: string; messages: Message[] }[] = [];
+      for (const row of await list(goose, cwd, agent)) {
+        if (row.at < since) continue;
+        signal.throwIfAborted();
+        const read = await listed(goose, row.sessionId);
+        if (opening(read)?.("Agent") === agent)
+          found.push({ sessionId: row.sessionId, messages: read });
+      }
+      return found;
     });
   }
 

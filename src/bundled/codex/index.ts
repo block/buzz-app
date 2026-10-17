@@ -2,11 +2,12 @@ import { isTauri } from "@tauri-apps/api/core";
 import { ownerReads } from "../../features/agents/reads";
 import type { PluginModule } from "../../plugins/api";
 import { CodexLogoIcon } from "../../shared/design-system/icons";
-import { config, defaults, validWorkspace } from "./config";
+import { type Config, config, defaults, validWorkspace } from "./config";
 import { codexRun, TYPE_ID } from "./run";
 import { CodexRuntime } from "./runtime";
 import { CodexSetup, withScript } from "./setup";
 import { CodexProvider, createTabs } from "./tabs";
+import { readUsage } from "./usage";
 /** How often Buzz's copy of Codex looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
 export const inject = ["agents", "host"];
@@ -82,7 +83,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   const { Create, CreateModel, ProviderDialogBody, SettingsTab, ActivityTab } =
     createTabs(providerController, runtime, start, setup);
-  ctx.agents.register({
+  ctx.agents.register<Config>({
     id: TYPE_ID,
     title: "Codex",
     icon: CodexLogoIcon,
@@ -126,6 +127,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     migrationWarning: "Any commands Codex left running will stop.",
     summary: (agent) => config(agent.config).model || "Codex",
+    ...(spawn && {
+      usage: (agent, { since, signal }) =>
+        readUsage(spawn, agent, since, signal),
+    }),
     provider: {
       snapshot: providerController.snapshot,
       subscribe: providerController.subscribe,

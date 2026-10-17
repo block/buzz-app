@@ -10,6 +10,7 @@ import { ClaudeDefaults } from "./defaults";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup, withScript } from "./setup";
 import { createTabs } from "./tabs";
+import { readUsage } from "./usage";
 
 export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
@@ -108,6 +109,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ];
     },
     summary: (agent) => config(agent.config).model || "Claude",
+    ...(spawn && {
+      usage: (agent, { since, signal }) =>
+        readUsage(
+          spawn,
+          config(agent.config).workspace,
+          agent.pubkey,
+          runtime.conversations(agent.pubkey).map((saved) => saved.sessionId),
+          since,
+          signal,
+        ),
+    }),
     provider: {
       snapshot: setup.providerSnapshot,
       subscribe: setup.subscribe,

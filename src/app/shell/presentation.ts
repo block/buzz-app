@@ -3,6 +3,7 @@ import {
   BellIcon,
   BestieIcon,
   BrowserIcon,
+  ChartBarIcon,
   ChatsCircleIcon,
   FolderSimpleIcon,
   GearIcon,
@@ -51,6 +52,7 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.projects/projects", FolderSimpleIcon],
   ["buzz.agents/agents", RobotIcon],
   ["buzz.workflows/workflows", LightningIcon],
+  ["buzz.usage/usage", ChartBarIcon],
 ]);
 type PagePresentation = Readonly<{
   label: string;

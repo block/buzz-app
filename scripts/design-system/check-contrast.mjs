@@ -182,6 +182,11 @@ const BOUNDARY_ROLES = [
   "--status-avatar-online-border",
   "--status-away",
   "--status-offline",
+  // Chart marks need 3:1 against the surfaces a chart sits on.
+  "--chart-series-1",
+  "--chart-series-2",
+  "--chart-series-3",
+  "--chart-series-4",
 ];
 
 const TINT_PAIRS = [
@@ -304,7 +309,12 @@ for (const [mode, map] of Object.entries(modes)) {
             "--affordance-floating-hover",
             "--neutral-4",
           ]
-        : BOUNDARY_SURFACES;
+        : role.startsWith("--chart-series-")
+          ? // Charts sit on panels; a popover only shows a swatch beside its label.
+            BOUNDARY_SURFACES.filter(
+              (surface) => surface !== "--surface-popover",
+            )
+          : BOUNDARY_SURFACES;
     for (const surface of surfaces) {
       const borderColor = resolve(map, role);
       const surfaceColor = resolve(map, surface);

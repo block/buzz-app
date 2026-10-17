@@ -918,9 +918,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const about = summary ?? (prior && tag(prior, "summary"));
     // The newest version wins, so a write must be dated after the one it
     // replaces.
-    const wait = prior ? (prior.created_at + 1) * 1000 - Date.now() : 0;
-    if (wait > 5000) throw new Error("The note was just changed; try again.");
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    const after = prior ? (prior.created_at + 1) * 1000 : 0;
+    if (after - Date.now() > 5000)
+      throw new Error("The note was just changed; try again.");
+    await waitUntil(after);
     const saved = await client.publish({
       kind: NOTE,
       content: body,
@@ -972,9 +973,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!head && !(await tools.metadata(channel))) throw unseen(channel);
     if (content === undefined) return head?.content || "No canvas.";
     // The newest canvas wins, so a write must be dated after the current one.
-    const wait = head ? (head.created_at + 1) * 1000 - Date.now() : 0;
-    if (wait > 5000) throw new Error("The canvas was just changed; try again.");
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    const after = head ? (head.created_at + 1) * 1000 : 0;
+    if (after - Date.now() > 5000)
+      throw new Error("The canvas was just changed; try again.");
+    await waitUntil(after);
     await client.publish({ kind: 40100, content, tags: [["h", channel]] });
     return "saved";
   },
@@ -1564,6 +1566,13 @@ function noteSlug(value: unknown) {
       `Bad note name ${String(value)}: use up to 80 of a-z, 0-9, - _ and .`,
     );
   return value;
+}
+
+/** Waits until `at`. A timer can fire a moment early, which would date the
+ * write in the second it must follow. */
+async function waitUntil(at: number) {
+  while (Date.now() < at)
+    await new Promise((resolve) => setTimeout(resolve, at - Date.now()));
 }
 
 /** Each author's newest version of each note, newest first. */

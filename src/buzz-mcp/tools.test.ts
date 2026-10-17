@@ -1078,6 +1078,33 @@ it("waits past the existing canvas timestamp before publishing", async () => {
   }
 });
 
+it("keeps waiting when the timer fires a moment early", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(100_500);
+    const { client } = fake([event({ kind: 40100, content: "old" })]);
+    const timer = globalThis.setTimeout;
+    const early = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(((run: () => void, ms: number) =>
+        timer(run, Math.max(0, ms - 1))) as typeof setTimeout);
+    const publish = client.publish;
+    client.publish = vi.fn(async (template) => {
+      expect(Date.now()).toBe(101_000);
+      return publish(template);
+    });
+    const write = callTool(client, { channel: "chan" }, "canvas", {
+      text: "new",
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    early.mockRestore();
+    await expect(write).resolves.toBe("saved");
+    expect(client.publish).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("publishes the first canvas only after finding visible channel metadata", async () => {
   const { client, published } = fake([
     event({ kind: 39000, tags: [["d", "chan"]] }),
@@ -1797,17 +1824,26 @@ it("publishes a note in the CLI's shape, keeping what an update leaves out", asy
     ["t", "ops"],
     ["published_at", "90"],
   ]);
+  vi.useFakeTimers();
+  vi.setSystemTime(200_000);
   const { client: again, published: updates } = fake([...community, prior], {
     keep: true,
   });
-  await callTool(again, {}, "notes_set", { name: "plan", text: "v2" });
-  await callTool(again, {}, "notes_set", {
-    name: "plan",
-    text: "v3",
-    title: "New",
-    summary: "",
-    tags: [],
-  });
+  try {
+    await callTool(again, {}, "notes_set", { name: "plan", text: "v2" });
+    // The next version waits for the second after v2.
+    const v3 = callTool(again, {}, "notes_set", {
+      name: "plan",
+      text: "v3",
+      title: "New",
+      summary: "",
+      tags: [],
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(v3).resolves.toBe(`saved 30023:${me}:plan`);
+  } finally {
+    vi.useRealTimers();
+  }
   expect(updates).toEqual([
     {
       kind: 30023,

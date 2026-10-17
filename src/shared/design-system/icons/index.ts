@@ -490,6 +490,8 @@ export const BrainIcon = defineIcon("tabler", TablerBrainIcon);
 import TablerThinkingHighIcon from "@tabler/icons-react/dist/esm/icons/IconThinkingHigh.mjs";
 export const ThinkingHighIcon = defineIcon("tabler", TablerThinkingHighIcon);
 
+import TablerMetaLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandMeta.mjs";
+export const MetaLogoIcon = defineIcon("tabler", TablerMetaLogoIcon);
 import TablerFileTypePdfIcon from "@tabler/icons-react/dist/esm/icons/IconFileTypePdf.mjs";
 export const FileTypePdfIcon = defineIcon("tabler", TablerFileTypePdfIcon);
 

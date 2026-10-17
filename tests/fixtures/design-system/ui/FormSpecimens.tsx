@@ -528,6 +528,38 @@ export function WorkspaceCombobox({
   );
 }
 
+function PopupSearchExample() {
+  const options = ["Anthropic", "Databricks", "OpenAI"];
+  const [value, setValue] = useState<string | null>("Databricks");
+  const [query, setQuery] = useState("");
+  return (
+    <Combobox.Root
+      items={options}
+      value={value}
+      onValueChange={setValue}
+      inputValue={query}
+      onInputValueChange={setQuery}
+      onOpenChange={(open) => {
+        if (open) setQuery("");
+      }}
+      autoHighlight
+    >
+      <Combobox.Trigger label="Provider">
+        {value ?? "Choose a provider"}
+      </Combobox.Trigger>
+      <Combobox.Popup search empty="No matching providers.">
+        <Combobox.List>
+          {(item: string) => (
+            <Combobox.Item key={item} value={item}>
+              {item}
+            </Combobox.Item>
+          )}
+        </Combobox.List>
+      </Combobox.Popup>
+    </Combobox.Root>
+  );
+}
+
 export function ComboboxExamples() {
   const [state, setState] = useState<ExampleState>("ready");
   return (
@@ -543,6 +575,7 @@ export function ComboboxExamples() {
 ${workspaceComboboxCode}`}
       >
         <WorkspaceCombobox />
+        <PopupSearchExample />
         <WorkspaceCombobox label="Compact row choice" compact />
         <WorkspaceCombobox label="Read-only choices" readOnly />
         <WorkspaceCombobox label="Disabled choices" disabled />

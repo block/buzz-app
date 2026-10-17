@@ -35,6 +35,7 @@ export function AgentDefaults({ agents }: { agents: Agents }) {
       <InlineHeader title="AI defaults" />
       <SettingsGroup>
         {types.map((type) => {
+          if (!type.provider) return null;
           const fallback = (
             <PreferenceRow
               title={type.title}
@@ -54,11 +55,7 @@ export function AgentDefaults({ agents }: { agents: Agents }) {
               key={contributionKey(type)}
               fallback={fallback}
             >
-              {type.provider ? (
-                <ProviderDefaults type={type} provider={type.provider} />
-              ) : (
-                fallback
-              )}
+              <ProviderDefaults type={type} provider={type.provider} />
             </ContributionBoundary>
           );
         })}
@@ -81,12 +78,14 @@ function ProviderDefaults({
   );
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const defaultControl = useRef<HTMLDivElement>(null);
   const checking = state.readiness === "checking";
   const label =
     state.readiness === "attention"
       ? (state.attentionLabel ?? `Set up ${type.title}`)
       : type.title;
   const Icon = type.icon;
+  const DefaultControl = provider.DefaultControl;
   const select = () => {
     if (state.readiness === "attention" && provider.attentionAction) {
       try {
@@ -104,27 +103,43 @@ function ProviderDefaults({
         title={type.title}
         icon={Icon && <Icon size={20} />}
         trailing={
-          <Button
-            ref={trigger}
-            size="sm"
-            aria-label={`${label}, ${state.readiness}`}
-            aria-busy={checking || undefined}
-            disabled={checking}
-            onClick={select}
-          >
-            {checking && (
-              <CircleNotchIcon
-                size={17}
-                aria-hidden="true"
-                className="motion-safe:animate-spin"
+          state.readiness === "ready" && DefaultControl ? (
+            <div
+              ref={defaultControl}
+              className="flex flex-wrap items-center gap-2"
+            >
+              <span className="text-body-sm text-subtle">Default model</span>
+              <DefaultControl
+                onConfigure={() => {
+                  trigger.current =
+                    defaultControl.current?.querySelector("button") ?? null;
+                  setOpen(true);
+                }}
               />
-            )}
-            {checking
-              ? "Checking…"
-              : state.readiness === "attention"
-                ? label
-                : "Configure"}
-          </Button>
+            </div>
+          ) : (
+            <Button
+              ref={trigger}
+              size="sm"
+              aria-label={`${label}, ${state.readiness}`}
+              aria-busy={checking || undefined}
+              disabled={checking}
+              onClick={select}
+            >
+              {checking && (
+                <CircleNotchIcon
+                  size={17}
+                  aria-hidden="true"
+                  className="motion-safe:animate-spin"
+                />
+              )}
+              {checking
+                ? "Checking…"
+                : state.readiness === "attention"
+                  ? label
+                  : "Edit configuration"}
+            </Button>
+          )
         }
       />
       {open && (

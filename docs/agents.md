@@ -97,6 +97,13 @@ error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
 dialog can close. Disabled or unloaded types remain in Settings → Plugins.
 
+Goose's Settings → AI defaults contribution reads and writes Goose's own
+configuration through `GooseSetup`. Provider keys stay in Goose's secret store;
+Buzz keeps no separate Goose defaults store. Readiness requires a working
+`goose-acp` and a configured default provider. The per-agent provider/model
+fields remain overrides. Types without a provider contribution have no AI
+defaults row; a failed contribution retains the unavailable fallback.
+
 Workspace, instructions and session scope are always per-agent. Claude and Codex
 model/thinking choices may instead be blank, which means inherited rather than
 rewritten. Their effective order is explicit agent override, saved device-wide
@@ -766,3 +773,19 @@ on channel/access changes. Saved metrics remain
 subject to the independent 90-day/byte eviction policy above, so loaded history
 is never a completeness guarantee. Restored usage is display-only and cannot
 establish working, typing, or online status.
+
+
+### Model-menu design exception
+
+The AI defaults and Goose creation controls intentionally use the shared Menu
+for family → model → effort navigation, as explicitly requested in product
+review. This is a scoped exception to DESIGN.md's Select/Combobox form-value
+guidance. Keep the selected model and effort accessible, preserve compact chip
+appearance and truncation, and offer a trailing action to restore inheritance
+without duplicating the current model as the first option. Provider selection
+continues to use a searchable Combobox.
+
+Provider dropdowns are intentionally text-only. The model control shows the
+selected model family icon, not the Goose runtime or Databricks/provider mark,
+as explicitly confirmed by the product owner. Goose device defaults have no
+reset action: omitting a model in Goose retains its stored provider model.

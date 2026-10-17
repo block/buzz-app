@@ -751,7 +751,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "combobox",
     name: "Combobox",
     purpose:
-      "Search and choose from a set of options. The field includes a browse control and a shared option popup.",
+      "Search and choose from a set of options. The field includes a browse control and a shared option popup. A dropdown trigger can place search inside the popup.",
     behavior:
       "Base UI owns keyboard navigation and selection; callers own filtering, custom values and async discovery.",
     variants: ["default", "compact", "loading", "disabled"],

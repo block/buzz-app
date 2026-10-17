@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Spawn } from "./goose";
 import { fakeSpawn } from "./goose-testing";
 import { GooseSetup, keyLabel } from "./setup";
@@ -294,5 +294,106 @@ describe("keyLabel", () => {
     expect(keyLabel("OLLAMA_HOST")).toBe("Host");
     expect(keyLabel("AZURE_OPENAI_ENDPOINT_URL")).toBe("Openai endpoint URL");
     expect(keyLabel("TOKEN")).toBe("Token");
+  });
+});
+
+it("checks Goose config readiness and writes defaults through Goose", async () => {
+  const { setup: goose, fake } = setup();
+  await goose.check();
+  expect(goose.snapshot().readiness).toBe("ready");
+  await goose.saveDefaults({ provider: "ollama", model: "llama4" });
+  expect((await goose.providers()).defaults).toEqual({
+    provider: "ollama",
+    model: "llama4",
+  });
+  expect(goose.snapshot()).toMatchObject({
+    readiness: "ready",
+    blocking: false,
+  });
+  expect(fake.geese.every((process) => process.killed)).toBe(true);
+});
+
+it("requires a configured default provider and recovers after setup", async () => {
+  const { setup: goose } = setup({ defaults: {} });
+  await goose.check();
+  expect(goose.snapshot().readiness).toBe("attention");
+  await goose.saveDefaults({ provider: "ollama", model: "" });
+  expect(goose.snapshot().readiness).toBe("ready");
+});
+
+it("reports unavailable Goose as needing attention", async () => {
+  const goose = new GooseSetup(undefined);
+  await goose.check();
+  expect(goose.snapshot().readiness).toBe("attention");
+  await expect(
+    goose.saveDefaults({ provider: "ollama", model: "qwen3" }),
+  ).rejects.toThrow();
+  expect(goose.snapshot().blocking).toBe(false);
+});
+
+it("invalidates runtime defaults only after a successful save", async () => {
+  const fake = fakeSpawn({ providers: PROVIDERS });
+  const changed = vi.fn();
+  const goose = new GooseSetup(fake.spawn, changed);
+  await goose.check();
+  expect(changed).not.toHaveBeenCalled();
+  await goose.saveDefaults({ provider: "ollama", model: "qwen3" });
+  expect(changed).toHaveBeenCalledTimes(1);
+  const unavailable = new GooseSetup(undefined, changed);
+  await expect(
+    unavailable.saveDefaults({ provider: "ollama", model: "" }),
+  ).rejects.toThrow();
+  expect(changed).toHaveBeenCalledTimes(1);
+});
+
+it("blocks dismissal throughout credential persistence and clears blocking on failure", async () => {
+  const { setup: goose } = setup();
+  await goose.check();
+  let reject!: (reason: Error) => void;
+  const gate = new Promise<void>((_, fail) => {
+    reject = fail;
+  });
+  const save = vi.spyOn(goose, "save").mockReturnValue(gate);
+  const pending = goose.saveDefaults(
+    { provider: "ollama", model: "qwen3" },
+    { OLLAMA_HOST: "host" },
+  );
+  const result = expect(pending).rejects.toThrow("key failure");
+  try {
+    await Promise.resolve();
+    expect(save).toHaveBeenCalledOnce();
+    expect(goose.snapshot().blocking).toBe(true);
+  } finally {
+    reject(new Error("key failure"));
+  }
+  await result;
+  expect(goose.snapshot().blocking).toBe(false);
+});
+
+it("invalidates inherited sessions when a fresh check finds external defaults changes", async () => {
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "ollama", modelId: "qwen3" },
+  });
+  const changed = vi.fn();
+  const goose = new GooseSetup(fake.spawn, changed);
+  await goose.check();
+  await new GooseSetup(fake.spawn).saveDefaults({
+    provider: "ollama",
+    model: "llama4",
+  });
+  await goose.check();
+  expect(changed).toHaveBeenCalledTimes(1);
+  await goose.check();
+  expect(changed).toHaveBeenCalledTimes(1);
+});
+
+it("retains the stored provider model when a defaults save omits the model", async () => {
+  const { setup: goose } = setup();
+  await goose.saveDefaults({ provider: "ollama", model: "llama4" });
+  await goose.saveDefaults({ provider: "ollama", model: "" });
+  expect((await goose.providers()).defaults).toEqual({
+    provider: "ollama",
+    model: "llama4",
   });
 });

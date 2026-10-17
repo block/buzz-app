@@ -522,7 +522,7 @@
   overflow-y: auto;
   /* Leave room for floating-surface elevation inside the scroll boundary. */
   padding: var(--space-3);
-  z-index: calc(var(--layer-dialog-backdrop) - 1);
+  z-index: var(--layer-toast);
   font-family: inherit;
   pointer-events: none;
 }

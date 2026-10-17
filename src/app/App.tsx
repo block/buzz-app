@@ -37,7 +37,7 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
-import { setLaunchReady } from "./launch";
+import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
   const identity = services.identity;
@@ -72,6 +72,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const [workspaceElement, setWorkspaceElement] =
     useState<HTMLDivElement | null>(null);
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
+  const launching = useSyncExternalStore(subscribeLaunch, launchVisible);
   const [departure, setDeparture] = useState<PendingSettingsDeparture | null>(
     null,
   );
@@ -98,9 +99,14 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const settings = route.target.kind === "settings";
   const settingsFocus = useRef<HTMLElement | null>(null);
   const wasSettings = useRef(false);
+  const workspaceEntry = useRef<string | undefined>(undefined);
+  const settingsReturnEntry = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
+    if (!settings) workspaceEntry.current = route.state.entry.id;
+    else if (!wasSettings.current)
+      settingsReturnEntry.current = workspaceEntry.current;
     wasSettings.current = settings;
-  }, [settings]);
+  }, [settings, route.state.entry.id]);
   useEffect(() => {
     const remember = (event: FocusEvent) => {
       if (
@@ -336,7 +342,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
             ) : null}
           </AppShell>
           <Dialog
-            open={settings}
+            // The inert launch surface would swallow the modal's initial focus.
+            open={settings && !launching}
             title="Settings"
             closeLabel="Close Settings"
             size="expanded"
@@ -357,12 +364,18 @@ function ConnectedApp({ services }: { services: AppServices }) {
             onOpenChange={(open) => {
               if (!open) route.leaveSettings();
             }}
-            finalFocus={() =>
-              settingsFocus.current?.isConnected &&
-              settingsFocus.current !== document.body
+            finalFocus={() => {
+              // Only a return to the visit Settings covered restores the prior
+              // focus; a destination opened from Settings starts at main.
+              const returning =
+                services.navigation.snapshot().entry.id ===
+                settingsReturnEntry.current;
+              return returning &&
+                settingsFocus.current?.isConnected &&
+                settingsFocus.current !== document.body
                 ? settingsFocus.current
-                : (document.getElementById("main-content") ?? false)
-            }
+                : (document.getElementById("main-content") ?? false);
+            }}
           >
             <div id="settings-content" tabIndex={-1}>
               {(!route.state.ingress && route.failure) ||

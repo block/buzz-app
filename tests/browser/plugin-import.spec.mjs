@@ -1,6 +1,14 @@
 import { pluginAction } from "./plugin-settings.mjs";
-import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
-import { openPage, pageChoices, pageChoice } from "./navigation.mjs";
+import {
+  chooseColorMode,
+  closeSettings,
+  openPage,
+  openSettings,
+  pageChoice,
+  pageChoices,
+  selectSettingsSection,
+  settingsDialog,
+} from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 
@@ -8,8 +16,7 @@ test.use({ historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function openPlugins(page, origin) {
   await page.goto(origin);
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
@@ -366,13 +373,17 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
         path: info.outputPath(`appearance-${scale}-${width}-${mode}.png`),
       });
       // Icon buttons grow with the interface while keeping their square shape.
+      // The shell toolbar stays mounted, though hidden, behind the modal.
       await expect(
-        page.getByRole("button", { name: "Search Buzz", exact: true }),
+        page.getByRole("button", {
+          name: "Search Buzz",
+          exact: true,
+          includeHidden: true,
+        }),
       ).toHaveAttribute("data-icon-size", "sm");
       await expect
         .poll(() =>
-          page
-            .getByRole("region", { name: "Settings", exact: true })
+          settingsDialog(page)
             .locator("button[data-icon-size]")
             .evaluateAll(
               (buttons, scale) =>
@@ -808,6 +819,7 @@ test("checked-in local examples activate and work independently", async ({
       `Disable ${sample.manifest.name}`,
     );
   }
+  await closeSettings(page);
   await openPage(page, "Counter playground");
   await button(page, "Clicked 0 times").click();
   await expect(button(page, "Clicked 1 times")).toBeVisible();
@@ -816,10 +828,10 @@ test("checked-in local examples activate and work independently", async ({
   await expect(page.getByRole("main").getByRole("status")).toHaveText(
     "12 characters",
   );
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
   await pluginAction(page, "Counter playground").click();
+  await closeSettings(page);
   const navigation = await pageChoices(page, "Counter playground");
   await expect(pageChoice(navigation, "Counter playground")).toHaveCount(0);
   await page

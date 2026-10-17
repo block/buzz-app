@@ -1184,7 +1184,8 @@ check and “Copied” while hovered/focused; keep screen-reader status and touc
 feedback with the action owner. Pointer offsets clear the physical cursor silhouette
 rather than following text-scale spacing. Real pointer geometry needs browser/native
 inspection; DOM tests do not establish placement.
-Overlay layers keep menus and hints above dialogs.
+Overlay layers keep toasts, then menus and hints, above dialogs, so feedback a
+dialog raises stays visible.
 Adding a hint must preserve the host's keyboard contract. A focus-opened tooltip
 can consume Escape before a panel's Back handler; the existing PanelSubview
 controls expose this conflict. Preserve their accessible names and current Back

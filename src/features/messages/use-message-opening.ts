@@ -79,15 +79,17 @@ export function useMessageOpening(
     window.hasMore &&
     !window.historyLimited &&
     pages.current.count < SEEK_PAGES;
-  if (key && deciding && (found || (!window.loadingOlder && !seekable)))
+  // A page or head read in flight can still change the answer.
+  const busy = window.loadingOlder || !!window.refreshing;
+  if (key && deciding && (found || (!busy && !seekable)))
     setDecided({ key, inTimeline: found });
   useEffect(() => {
-    if (!key || !deciding || found || !seekable || window.loadingOlder) return;
-    pages.current.count += 1;
+    if (!key || !deciding || found || !seekable || busy) return;
     channels.loadOlder(channelId);
-    // The store declined the read, so no page will come.
-    if (!channels.window(channelId).loadingOlder)
-      setDecided({ key, inTimeline: false });
-  }, [key, deciding, found, seekable, window, channels, channelId]);
+    const after = channels.window(channelId);
+    if (after.loadingOlder) pages.current.count += 1;
+    // Declined with no read in flight: no page will come.
+    else if (!after.refreshing) setDecided({ key, inTimeline: false });
+  }, [key, deciding, found, seekable, busy, channels, channelId]);
   return key && decided?.key === key ? decided.inTimeline : undefined;
 }

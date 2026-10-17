@@ -648,6 +648,9 @@ export function createChannelStore(
     const generation = state.generation;
     const controller = new AbortController();
     state.controller = controller;
+    // Shown rows wait on this head read; a seek must not treat it as the end.
+    if (!cursor && state.snapshot.status === "ready")
+      setWindow(state, { refreshing: true });
     try {
       if (prepared && !cursor) {
         const head = await requestHead(state.channelId, "foreground");
@@ -716,6 +719,14 @@ export function createChannelStore(
       );
     } finally {
       if (state.controller === controller) state.controller = undefined;
+      // Aborted reads end here too; a newer head read keeps the flag.
+      if (
+        !state.controller &&
+        state.snapshot.refreshing &&
+        !disposed &&
+        windows.get(state.channelId) === state
+      )
+        setWindow(state, { refreshing: undefined });
     }
   }
   async function hydrate() {

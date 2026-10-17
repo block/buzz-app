@@ -6,6 +6,16 @@ import type {
   ChannelQueries,
   ChannelWindow,
 } from "../relay/contracts";
+import { createRelaySession } from "../relay/session";
+import {
+  bounds,
+  flush,
+  keypair,
+  message,
+  metadata,
+  roster,
+  scriptedTransport,
+} from "../relay/testing";
 import { SEEK_PAGES, useMessageOpening } from "./use-message-opening";
 
 /** A channel whose history is `pages` pages of top-level rows, oldest first;
@@ -154,4 +164,78 @@ it("reads no window without a message", () => {
   const view = renderHook(() => useMessageOpening(c.queries, "c", undefined));
   expect(view.result.current).toBeUndefined();
   expect(c.queries.ensure).not.toHaveBeenCalled();
+});
+
+it("waits for a head refresh before reading older pages for the message", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  let clock = 1_000_000;
+  const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+  /** The next channel read; profile reads get nothing. */
+  const read = () => {
+    for (;;) {
+      const entry = scripted.next();
+      if (entry.filters[0]?.["#h"]) return entry;
+      entry.respond([]);
+    }
+  };
+  const store = createRelaySession(scripted.transport, {
+    prepared: true,
+    now: () => clock,
+  });
+  try {
+    const channels = store.session.channels;
+    channels.ensureList();
+    scripted
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "a"),
+      ]);
+    await flush();
+    const target = message(alice, "a", "target", 10);
+    const newer = message(alice, "a", "newer", 20);
+    const head = [
+      newer,
+      bounds(relay, "a", "head", {
+        has_more: true,
+        next_cursor: { created_at: 20, id: newer.id },
+      }),
+    ];
+    channels.ensure("a");
+    read().respond(head);
+    await flush();
+    expect(channels.window("a")).toMatchObject({
+      status: "ready",
+      freshness: "verified",
+    });
+    // Past the head's freshness lease, opening the channel refreshes its head.
+    clock += 61_000;
+    const view = renderHook(() => useMessageOpening(channels, "a", target.id));
+    const refresh = read();
+    expect(scripted.pending).toHaveLength(0);
+    // A busy head is not missing history: no decision yet.
+    expect(view.result.current).toBeUndefined();
+    await act(async () => {
+      refresh.respond(head);
+      await flush();
+    });
+    expect(view.result.current).toBeUndefined();
+    const older = read();
+    expect(older.filters[0]?.until).toBe(20);
+    await act(async () => {
+      older.respond([
+        target,
+        bounds(relay, "a", `20:${newer.id}`, {
+          has_more: false,
+          next_cursor: null,
+        }),
+      ]);
+      await flush();
+    });
+    expect(view.result.current).toBe(true);
+  } finally {
+    store.dispose();
+  }
 });

@@ -592,7 +592,8 @@ export function subscribeRelayTraffic(
                       kinds: telemetryKinds(),
                       "#p": [viewer],
                     }
-                  : { kinds: [44100, 44101], "#p": [viewer] },
+                  : // 24100/24101: NIP-CL system channel notices.
+                    { kinds: [44100, 44101, 24100, 24101], "#p": [viewer] },
           ];
       send([
         "REQ",

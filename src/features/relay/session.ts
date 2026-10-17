@@ -2335,7 +2335,7 @@ export function createRelaySession(
       // An exact lookup may extend a ready list, never certify initial discovery.
       // A full pass already scheduled covers every grant in the same burst.
       if (
-        hint.kind !== 44100 ||
+        (hint.kind !== 44100 && hint.kind !== 24100) ||
         destinations.length !== 1 ||
         !id ||
         rosterTimer !== undefined ||
@@ -2562,10 +2562,11 @@ export function createRelaySession(
       );
       // Signed membership notifications are hints, not roster authority. Schedule
       // before visibility filtering, because a newly granted channel may be denied locally.
+      // A system channel sends 24100/24101 instead of 44100/44101 (NIP-CL).
       confirmMembershipHints(
         events.filter(
           (event) =>
-            [44100, 44101].includes(event.kind) &&
+            [44100, 44101, 24100, 24101].includes(event.kind) &&
             event.pubkey === transport.relayAuthor &&
             event.tags.some(
               ([name, value]) => name === "p" && value === transport.viewer,

@@ -336,6 +336,70 @@ it("a named member-added hint confirms only that channel and preserves verified 
   }
 });
 
+it("a system channel member-added hint admits that channel without listing it", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.live.receive([membershipHint(h, "records", 24100)]);
+    await flush();
+    await flush();
+    expect(h.wire.pending).toHaveLength(1);
+    const exact = h.wire.next();
+    expect(exact.filters).toEqual(exactFilters(h, ["records"]));
+    exact.respond([
+      metadata(h.relay, "records", "Records", undefined, [
+        ["private"],
+        ["hidden"],
+        ["t", "system"],
+      ]),
+      signed(h.relay, {
+        kind: 39002,
+        content: "",
+        tags: [
+          ["d", "records"],
+          ["t", "system"],
+          ["p", h.viewer.pubkey],
+        ],
+      }),
+    ]);
+    await flush();
+    await flush();
+    expect(h.owner.session.channels.get?.("records")).toMatchObject({
+      id: "records",
+      channelType: "system",
+      members: [h.viewer.pubkey],
+    });
+    expect(h.owner.session.channels.list()).toMatchObject({
+      status: "ready",
+      channels: [],
+    });
+    expect(h.owner.session.live.snapshot().roster.state).toBe("verified");
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("a system channel member-removed hint keeps the full roster refresh", async () => {
+  const h = setup();
+  try {
+    await readyRoster(h);
+    h.live.receive([membershipHint(h, "records", 24101)]);
+    await flush();
+    await flush();
+    expect(h.wire.pending).toHaveLength(1);
+    const full = h.wire.next();
+    expect(full.filters[0]?.kinds).toEqual([39002]);
+    expect(full.filters[0]?.["#d"]).toBeUndefined();
+    expect(full.filters[0]?.consistency).toBe("strong");
+    full.respond([]);
+    await flush();
+    expect(h.wire.pending).toHaveLength(0);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it.each(["removal", "held", "empty", "ambiguous"])(
   "a %s membership hint keeps the full roster refresh",
   async (scenario) => {

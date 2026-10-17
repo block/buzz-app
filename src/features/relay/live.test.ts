@@ -84,7 +84,7 @@ it("uses independent explicit channel routes and self-p globals; equal interests
   expect(h.first.requests().map((r) => r[2])).toEqual([
     { kinds: [0, 10100, 30177], since: expect.any(Number), limit: 500 },
     {
-      kinds: [44100, 44101],
+      kinds: [44100, 44101, 24100, 24101],
       "#p": [h.key.pubkey],
       since: expect.any(Number),
       limit: 500,

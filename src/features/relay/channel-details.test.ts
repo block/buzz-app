@@ -11,7 +11,7 @@ import {
 import { PublishRejected } from "./outbox";
 import type { RelayEvent } from "./events";
 import { createRelaySession } from "./session";
-import { SESSION_NAMED_LABEL, SOLO_LABEL } from "../sessions/metadata";
+import { SESSION_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { ReadFilter } from "./events";
 
 const key = new Uint8Array(32).fill(2),

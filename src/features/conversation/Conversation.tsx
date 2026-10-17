@@ -22,7 +22,7 @@ import {
 } from "../messages/MessageManagement";
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
-import { ownSolo } from "../sessions/metadata";
+import { ownSolo } from "../solo/labels";
 import {
   ConversationHost,
   type ConversationHostServices,

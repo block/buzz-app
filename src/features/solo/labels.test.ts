@@ -5,7 +5,7 @@ import {
   SOLO_LABEL,
   sessionLinkName,
   soloLabels,
-} from "./metadata";
+} from "./labels";
 
 const id = "22222222-2222-4222-8222-222222222222";
 const owner = "a".repeat(64);

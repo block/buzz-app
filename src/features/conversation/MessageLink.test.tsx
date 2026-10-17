@@ -19,7 +19,7 @@ import { MessageLink, resolveLink } from "./MessageLink";
 import { createRelaySession } from "../relay/session";
 import { matchesEvent } from "../relay/projection";
 import { keypair, signed } from "../relay/testing";
-import { SESSION_NAMED_LABEL, SOLO_LABEL } from "../sessions/metadata";
+import { SESSION_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import { sessionLinkMessage } from "../solo/share";
 import { MessageMarkdown } from "../messages/MessageMarkdown";
 import { ConversationPresentation } from "./ConversationPresentation";

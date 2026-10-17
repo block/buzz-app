@@ -16,7 +16,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ChannelsPage } from "../../bundled/channels/ChannelsPage";
 import type { PageNavigation } from "../navigation/service";
 import { conversationTarget } from "../channel-navigation/routes";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 import { createRelaySession } from "../relay/session";
 import { keypair, message, roster, signed } from "../relay/testing";
 import { MessageComposer } from "./MessageComposer";

@@ -1,5 +1,5 @@
 import { channelTtl, channelVisibility } from "./channel-details-protocol";
-import { soloLabels } from "../sessions/metadata";
+import { soloLabels } from "../solo/labels";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";

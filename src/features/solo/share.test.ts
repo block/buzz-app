@@ -6,7 +6,7 @@ import type { RelayEvent } from "../relay/events";
 import { beginSessionShare, finishSessionShare } from "./share-attempt";
 import { PublishRejected } from "../relay/outbox";
 import { SHARED_SESSION_TOPIC } from "../sessions/shared-session-marker";
-import { SESSION_NAMED_LABEL } from "../sessions/metadata";
+import { SESSION_NAMED_LABEL } from "./labels";
 import {
   destinationShareAudience,
   grantSessionAccess,

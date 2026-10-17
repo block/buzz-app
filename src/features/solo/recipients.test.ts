@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { sessionRecipients } from "./recipients";
+import { soloRecipients } from "./recipients";
 import type { ChannelSummary, Profile } from "../relay/contracts";
 const viewer = "a".repeat(64),
   agent = "b".repeat(64),
@@ -18,7 +18,7 @@ const channel: ChannelSummary = {
 const profiles = new Map<string, Profile>();
 it("uses only roster members and deduplicates a known sole agent", () => {
   expect(
-    sessionRecipients(
+    soloRecipients(
       { ...channel, members: [viewer, agent, agent] },
       profiles,
       library,
@@ -27,7 +27,7 @@ it("uses only roster members and deduplicates a known sole agent", () => {
     ),
   ).toEqual([agent]);
   expect(
-    sessionRecipients(
+    soloRecipients(
       { ...channel, members: [viewer] },
       profiles,
       library,
@@ -38,11 +38,11 @@ it("uses only roster members and deduplicates a known sole agent", () => {
 });
 it("does not confuse a missing profile with a human or guess from display names", () => {
   const multiple = { ...channel, members: [viewer, agent, other] };
-  expect(() =>
-    sessionRecipients(multiple, profiles, library, viewer, []),
-  ).toThrow(/loading/);
+  expect(() => soloRecipients(multiple, profiles, library, viewer, [])).toThrow(
+    /loading/,
+  );
   expect(
-    sessionRecipients(
+    soloRecipients(
       multiple,
       new Map([[other, { name: "Agent" }]]),
       library,
@@ -51,7 +51,7 @@ it("does not confuse a missing profile with a human or guess from display names"
     ),
   ).toEqual([agent]);
   expect(() =>
-    sessionRecipients(
+    soloRecipients(
       multiple,
       new Map([[other, { name: "Agent", isAgent: true }]]),
       library,
@@ -61,11 +61,11 @@ it("does not confuse a missing profile with a human or guess from display names"
   ).toThrow(/multiple/);
 });
 it("preserves explicit recipients and leaves ordinary channels unchanged", () => {
+  expect(soloRecipients(channel, profiles, library, viewer, [other])).toEqual([
+    other,
+  ]);
   expect(
-    sessionRecipients(channel, profiles, library, viewer, [other]),
-  ).toEqual([other]);
-  expect(
-    sessionRecipients(
+    soloRecipients(
       { ...channel, channelType: "stream" },
       profiles,
       library,
@@ -82,7 +82,7 @@ it("does not mistake an agent-library refresh for evidence of a sole agent", () 
     [other, { name: "Shared agent", isAgent: true }],
   ]);
   expect(() =>
-    sessionRecipients(
+    soloRecipients(
       multiple,
       knownProfiles,
       { ...library, status: "loading", identities: [] },
@@ -91,7 +91,7 @@ it("does not mistake an agent-library refresh for evidence of a sole agent", () 
     ),
   ).toThrow(/loading/);
   expect(() =>
-    sessionRecipients(
+    soloRecipients(
       multiple,
       knownProfiles,
       { ...library, status: "loading" },

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createChannelDetails } from "../relay/channel-details";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "./labels";
 import { PublishRejected } from "../relay/outbox";
 import { readView } from "../../shared/view-state";
 import { createChannelKit } from "../channel-templates/capability";
@@ -22,7 +22,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { WorkspaceSettings } from "./WorkspaceSettings";
-import { readWorkspace, sectionTemplateId, workspaceCanvas } from "./workspace";
+import { readWorkspace, projectTemplateId, workspaceCanvas } from "./workspace";
 
 beforeEach(() => {
   localStorage.clear();
@@ -164,7 +164,7 @@ it("saves section defaults as an existing relay template without writing section
   expect(save).toHaveBeenCalledWith(
     expect.objectContaining({
       type: "template",
-      id: await sectionTemplateId("work"),
+      id: await projectTemplateId("work"),
       canvas: expect.stringContaining("Work carefully"),
     }),
     undefined,

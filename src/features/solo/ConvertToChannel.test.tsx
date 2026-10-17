@@ -13,9 +13,9 @@ import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { createChannelDetails } from "../relay/channel-details";
 import { createRelaySession } from "../relay/session";
 import { PublishRejected } from "../relay/outbox";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "./labels";
 import { beginSessionShare, finishSessionShare } from "./share-attempt";
-import { sessionConversion } from "./conversion";
+import { chatConversion } from "./conversion";
 import { ConvertToChannel, canConvertToChannel } from "./ConvertToChannel";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -180,7 +180,7 @@ it.each(["private", "public"])(
     expect(h.publish.mock.invocationCallOrder[0]).toBeLessThan(
       h.unfile.mock.invocationCallOrder[0] ?? 0,
     );
-    expect(sessionConversion(h.session, id)).toBeUndefined();
+    expect(chatConversion(h.session, id)).toBeUndefined();
     const event = h.sign.mock.calls[0]?.[0];
     expect(event?.kind).toBe(9002);
     expect(event?.tags).toEqual([
@@ -437,7 +437,7 @@ it.each([false, true])(
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Projects save unavailable",
     );
-    expect(sessionConversion(h.session, id)?.converted).toBe(true);
+    expect(chatConversion(h.session, id)?.converted).toBe(true);
     expect(h.convertedCallback).not.toHaveBeenCalled();
     expect(h.close).not.toHaveBeenCalled();
     expect(
@@ -469,7 +469,7 @@ it.each([false, true])(
     expect(h.publish).toHaveBeenCalledOnce();
     expect(h.sign).toHaveBeenCalledOnce();
     expect(h.unfile).toHaveBeenCalledTimes(2);
-    expect(sessionConversion(h.session, id)).toBeUndefined();
+    expect(chatConversion(h.session, id)).toBeUndefined();
   },
 );
 it.each(["visit", "unmount"])(
@@ -499,7 +499,7 @@ it.each(["visit", "unmount"])(
     }
     expect(h.convertedCallback).not.toHaveBeenCalled();
     expect(h.close).not.toHaveBeenCalled();
-    expect(sessionConversion(h.session, id)?.converted).toBe(true);
+    expect(chatConversion(h.session, id)?.converted).toBe(true);
   },
 );
 
@@ -513,7 +513,7 @@ it("finishes removal when another details consumer confirmed the uncertain conve
   h.converted();
   await h.session.channelDetails.check(id);
   expect(h.session.channelDetails.snapshot(id)).toBeUndefined();
-  expect(sessionConversion(h.session, id)?.converted).not.toBe(true);
+  expect(chatConversion(h.session, id)?.converted).not.toBe(true);
   render(
     <ConvertToChannel
       session={h.session}

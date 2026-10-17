@@ -12,7 +12,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { createChannelDetails } from "../relay/channel-details";
 import { createRelaySession } from "../relay/session";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "./labels";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 
 const id = "11111111-1111-4111-8111-111111111111";

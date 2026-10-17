@@ -38,7 +38,7 @@ import {
 import { BuzzLinkPreview, ChannelLinkPreview } from "./BuzzLinkPreview";
 import { useChannelReference } from "./channel-reference";
 import { messageViewKey } from "../messages/view-key";
-import { sessionLinkName } from "../sessions/metadata";
+import { sessionLinkName } from "../solo/labels";
 import styles from "./LinkPreview.module.css";
 
 const empty: readonly Contribution<LinkRenderer>[] = [];

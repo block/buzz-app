@@ -12,9 +12,9 @@ import { readView, writeView } from "../../shared/view-state";
 import {
   emptyWorkspace,
   readWorkspace,
-  sectionTemplateId,
-  sectionDefault,
-  sectionTemplate,
+  projectTemplateId,
+  projectDefault,
+  projectTemplate,
   workspaceCanvas,
   type Workspace,
 } from "./workspace";
@@ -94,7 +94,7 @@ export function WorkspaceSettings({
         const kit = session.channelKit.snapshot();
         if (kit.status !== "ready")
           throw new Error(kit.error ?? "Section defaults are unavailable.");
-        const id = await sectionTemplateId(target.id);
+        const id = await projectTemplateId(target.id);
         if (!active()) return;
         // Tombstones still own the revision even though they supply no defaults.
         const entry = kit.entries.find(
@@ -102,7 +102,7 @@ export function WorkspaceSettings({
             entry.record.value.type === "template" &&
             entry.record.value.id === id,
         );
-        const template = sectionDefault(kit.entries, target.id, id);
+        const template = projectDefault(kit.entries, target.id, id);
         setRecipeId(id);
         setEntries(kit.entries);
         setLineup(template ?? emptyLineup());
@@ -214,7 +214,7 @@ export function WorkspaceSettings({
           (target.kind === "section" || canvas !== confirmedCanvas.current)
         ) {
           if (target.kind === "section") {
-            const template = sectionTemplate(
+            const template = projectTemplate(
               session.scope,
               recipeId,
               target.name,

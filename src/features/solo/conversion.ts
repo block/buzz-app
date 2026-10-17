@@ -4,24 +4,24 @@ import type { RelaySession } from "../relay/session";
 
 /** In-process orchestration only. Details and Me preferences own signed writes
  * and durable uncertainty; this receipt never authorizes either operation. */
-export type SessionConversion = {
+export type ChatConversion = {
   draft: ChannelDetailsDraft;
   converted?: true;
   running?: true;
 };
 const conversions = new WeakMap<
   RelaySession,
-  ReadonlyMap<string, SessionConversion>
+  ReadonlyMap<string, ChatConversion>
 >();
 const listeners = new WeakMap<RelaySession, Set<() => void>>();
-const empty: ReadonlyMap<string, SessionConversion> = new Map();
-export function sessionConversion(session: RelaySession, id: string) {
+const empty: ReadonlyMap<string, ChatConversion> = new Map();
+export function chatConversion(session: RelaySession, id: string) {
   return conversions.get(session)?.get(id);
 }
-export function updateSessionConversion(
+export function updateChatConversion(
   session: RelaySession,
   id: string,
-  value: SessionConversion | undefined,
+  value: ChatConversion | undefined,
 ) {
   const next = new Map(conversions.get(session));
   if (value) next.set(id, value);
@@ -29,7 +29,7 @@ export function updateSessionConversion(
   conversions.set(session, next);
   for (const notify of listeners.get(session) ?? []) notify();
 }
-export function useSessionConversions(session: RelaySession) {
+export function useChatConversions(session: RelaySession) {
   return useSyncExternalStore(
     useCallback(
       (notify: () => void) => {
@@ -49,7 +49,7 @@ export function useSessionConversions(session: RelaySession) {
   );
 }
 export function conversionLabel(session: RelaySession, id: string) {
-  return sessionConversion(session, id)
+  return chatConversion(session, id)
     ? "Finish conversion"
     : "Convert to channel";
 }

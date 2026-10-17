@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 import { createWorkSessions } from "./work-sessions";
 import type { Outbox, OutgoingEvent } from "./outbox";
 import type { ChannelQueries, ChannelSummary } from "./contracts";

@@ -12,7 +12,7 @@ import { useRecoveryShown } from "../relay/RecoveryNotice";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { buzzLinkTarget } from "../navigation/buzz-links";
-import { ownSolo } from "../sessions/metadata";
+import { ownSolo } from "../solo/labels";
 import { resetNewChatProject } from "../solo/SoloDraft";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";

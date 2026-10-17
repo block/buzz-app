@@ -1,7 +1,7 @@
 # Sharing a live session
 
-Sharing uses ordinary channel membership. Solo placement is private client-side
-organization, independent of access; see [Solo](README.md).
+Sharing uses ordinary channel membership. Solo project filing is private
+client-side organization, independent of access; see [Solo](README.md).
 
 ## Current sharing behavior
 
@@ -108,46 +108,44 @@ queued operations; a deliberately new attempt may post another link.
 
 ## Explicit conversion, separate from Share
 
-The product owner approved this distinction on 2026-10-14: **Share** keeps session
-behavior and Solo placement; **Convert to channel** removes the initiating viewer's
-Solo placement and opens the same conversation in Messages, for either Private or
-Public. It changes organization and conversation behavior, never creates a new
-conversation or copies history.
+The product owner approved this distinction on 2026-10-14: **Share** keeps the
+Solo label and project filing; **Convert to channel** removes the Solo label and
+the initiating viewer's project filing, so the same conversation becomes an
+ordinary Team channel, either Private or Public. It changes organization and
+conversation behavior for every member, never creates a new conversation or
+copies history.
 
-Share’s bottom-left footer, the Solo chat header overflow and personal-row menu offer
-**Convert to channel** for a verified standalone session. `ConvertSession.tsx`
-reuses the shared Dialog, Field, Private/Public RadioGroup and Button. Private is
-the default; Public warns that the community can view the full existing history.
-Draft recipient selections are never granted by conversion. Conversion is disabled
-while a share is pending; recover or Start over that share first. Cancel writes
-nothing and returns focus to the retained initiating control.
+Share’s bottom-left footer, the Solo chat header overflow and the Solo row menu
+offer **Convert to channel** for the viewer's own Solo chat.
+`src/features/solo/ConvertToChannel.tsx` reuses the shared Dialog, Field,
+Private/Public RadioGroup and Button. Private is the default; Public warns that the
+community can view the full existing history. Draft recipient selections are never
+granted by conversion. Conversion is disabled while a share is pending; recover or
+Start over that share first. Cancel writes nothing and returns focus to the
+retained initiating control.
 
 The sequence is explicit, not atomic:
 
-1. Read current Solo preferences before admitting conversion. Confirm one signed
-   kind-9002 command through the existing `channelDetails` owner. Fresh metadata,
-   owner/admin authority, conflict checks, altered-signature rejection and exact
-   readback remain unchanged. Clear the session marker and apply the chosen
-   visibility; preserve name, lifetime and labels. Omit unchanged TTL/visibility
-   and all label intent, so unrelated relabeling cannot overwrite or strand recovery.
-2. Use `mePlacement.set(id, false, {signal})` to remove only this viewer's placement
-   and assignment. Its existing encrypted account/community record, serialization,
-   fresh revision checks, selected-head confirmation and Outbox own persistence.
-   Other groups, conversations, defaults, memberships and other people's placement
-   are untouched. A false `has()` during loading/error is not proof of removal.
-3. After confirmed removal, announce **Converted to channel.** and open the same
-   channel ID in Team from Solo. If already in Messages, retain the current
-   conversation and restore focus to Channel actions. No new grant, notification,
-   agent wake or transcript write occurs.
+1. Confirm one signed kind-9002 command through the existing `channelDetails`
+   owner. Fresh metadata, owner/admin authority, conflict checks,
+   altered-signature rejection and exact readback remain unchanged. The edit
+   removes `buzz.solo` from the channel's labels and applies the chosen
+   visibility; name, lifetime and other labels are preserved.
+2. Refresh Solo projects and, if this viewer filed the chat in one, clear only
+   that assignment through `soloPreferences.assign(id, undefined)`. Its encrypted
+   account/community record, serialization and Outbox own persistence. Other
+   projects, conversations, defaults, memberships and other people's filing are
+   untouched.
+3. Announce **Converted to channel.** and open the same channel ID in Team. No
+   new grant, notification, agent wake or transcript write occurs.
 
-The form lives outside type-dependent Messages chrome and outside the disappearing
-Solo row. Replacement-composer autofocus does not steal its focus. Actual navigation,
-connection replacement and unmount fence subsequent steps and late completion;
-already-enqueued writes still belong to their existing durable owners. No completion
-navigation is sent to a superseded visit. Navigation itself uses the host's existing
-opening/error recovery, not a new relay operation.
+The form lives outside the disappearing Solo row. Replacement-composer autofocus
+does not steal its focus. Actual navigation, connection replacement and unmount
+fence subsequent steps and late completion; already-enqueued writes still belong to
+their existing durable owners. No completion navigation is sent to a superseded
+visit.
 
-### Partial success and removal recovery
+### Partial success and recovery
 
 An uncertain metadata publication offers **Check status**, never automatic resend.
 The pending details owner retains exact selected visibility; **Reload session
@@ -157,34 +155,26 @@ conversion receipt without another kind-9002 command.
 
 `conversion.ts` retains only session-local orchestration intent and the confirmed
 metadata phase, with a shared running guard. It is not permission evidence or a
-new persistent transaction. After metadata success but failed/unconfirmed placement
-removal, the dialog says **Channel converted. Finish removing it from Solo.**
-**Finish conversion** retries only the existing preference operation. Closing and
-reopening from the Solo menu/Share or Messages header retains that recovery. A fresh
-record already omitting the ID confirms removal without another publication; an
-unresolved older write stays under the existing Outbox guard and recovery.
-
-Restart/session replacement loses the orchestration receipt, not access or the
-channel. A verified ordinary channel still in the viewer's Solo offers explicit
-**Move to Team** in Solo's menu/Share. This removal-only action reads current
-metadata and uses the same preference writer, with no metadata rewrite or inferred
-conversion provenance. It also provides a deliberate way to clear older ordinary
-channels retained in Solo. No automatic cleanup of someone else's private filing.
+persistent transaction. After the label edit succeeds but project unfiling fails,
+the dialog says **Channel converted. Finish removing it from its Solo project.**
+**Finish conversion** re-reads details, confirms the label is gone and the
+settings are unchanged, and retries only the preference write. Restart loses the
+orchestration receipt, not access or the channel: the conversation is already an
+ordinary Team channel, and a leftover project assignment for a channel without the
+label is ignored by Solo.
 
 ### Ordinary behavior after conversion
 
-Verified ordinary stream/forum type overrides retained Solo placement in the shared
-`meChat` decision. Subsequent Claude/Codex/native-runner turns use ordinary channel
-reply/typing policy, even if another agent owner still has this ID in Solo. Already
-admitted turns retain their frozen policy; conversion does not cancel running work.
-Unknown/cached type evidence does not masquerade as verified ordinary metadata.
-No runtime rewrite or new agent authority is added. Old Solo routes use type-correct
-composer flags and ordinary recipient controls for an ordinary channel.
+Without the label, every member and agent reads the conversation as an ordinary
+channel. Subsequent Claude/Codex/native-runner turns use ordinary channel
+reply/typing policy. Already admitted turns retain their frozen policy;
+conversion does not cancel running work. No runtime rewrite or new agent authority
+is added. Old Solo routes use type-correct composer flags and ordinary recipient
+controls for an ordinary channel.
 
-The same ID, history, Canvas, members, labels and lifetime remain. Messages' sidebar
-continues to show verified ordinary streams during partial removal; this is channel
-type evidence, not conversion provenance. Public uses the existing `visibility=open`
-wire tag and does not introduce an enforceable View-only role.
+The same ID, history, Canvas, members, other labels and lifetime remain. Public
+uses the existing `visibility=open` wire tag and does not introduce an enforceable
+View-only role.
 
 ## Explicitly deferred or blocked
 

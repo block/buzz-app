@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { webcrypto } from "node:crypto";
-import { sectionTemplateId } from "./workspace";
+import { projectTemplateId } from "./workspace";
 import { composerDOMFixture } from "../messages/composer-testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -19,7 +19,7 @@ import { SoloDraft, resetNewChatProject } from "./SoloDraft";
 import { createWorkSessions } from "../relay/work-sessions";
 import { createOutbox } from "../relay/outbox";
 import { keypair, signed } from "../relay/testing";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "./labels";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -219,7 +219,7 @@ it.each([false, true])(
       const test = setup();
       const sequence: string[] = [];
       const onStarted = vi.fn();
-      const id = await sectionTemplateId("work");
+      const id = await projectTemplateId("work");
       const canvasSave = vi.fn(async (_channel: string, _content: string) => {
         sequence.push("canvas");
         if (failure) throw new Error("Canvas save failed");
@@ -268,7 +268,7 @@ it.each([false, true])(
         <SoloDraft
           session={test.session}
           scope="test"
-          sectionId="work"
+          projectId="work"
           onStarted={onStarted}
         />,
       );
@@ -450,7 +450,7 @@ it.each([false, true])(
           standalone
           session={f.session}
           scope="me-settings"
-          sectionId="me-only"
+          projectId="me-only"
           onStarted={() => {}}
         />
       );
@@ -569,7 +569,7 @@ async function projectSetup() {
       record: {
         value: {
           type: "template",
-          id: await sectionTemplateId(id),
+          id: await projectTemplateId(id),
           canvas: `${id} instructions`,
           agents: [],
           teamIds: [],
@@ -616,7 +616,7 @@ it("re-entering a mounted project clears changed defaults", async () => {
   render(
     <SoloDraft
       standalone
-      sectionId="work"
+      projectId="work"
       session={f.session}
       scope={scope}
       onStarted={started}
@@ -659,7 +659,7 @@ it("keeps a locally chosen project when its persistence fails and other draft wr
   try {
     render(
       <SoloDraft
-        sectionId="work"
+        projectId="work"
         session={f.session}
         scope={scope}
         onStarted={started}
@@ -685,7 +685,7 @@ it("a new chat opened for a project starts in that project", async () => {
   const f = await projectSetup();
   render(
     <SoloDraft
-      sectionId="work"
+      projectId="work"
       session={f.session}
       scope="me-project-start"
       onStarted={vi.fn()}
@@ -705,7 +705,7 @@ it("inherits the project's defaults for two consecutive new chats", async () => 
       <SoloDraft
         session={f.session}
         scope="repeat-project"
-        sectionId="work"
+        projectId="work"
         onStarted={started}
       />,
     );
@@ -748,7 +748,7 @@ it.each(
         standalone
         session={f.session}
         scope="switch-project"
-        sectionId={fromProject ? "work" : undefined}
+        projectId={fromProject ? "work" : undefined}
         onStarted={started}
       />
     );
@@ -909,7 +909,7 @@ it.each([
       <SoloDraft
         session={h.session}
         scope="test"
-        sectionId="work"
+        projectId="work"
         onStarted={started}
       />,
     );

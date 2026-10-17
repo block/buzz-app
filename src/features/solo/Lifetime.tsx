@@ -7,7 +7,7 @@ import {
   type ChannelDetails,
 } from "../relay/channel-details-protocol";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/work-sessions";
-import { soloLabels } from "../sessions/metadata";
+import { soloLabels } from "./labels";
 
 /** Presentation only: the details owner rechecks fresh signed edit authority. */
 export function canEditLifetime(

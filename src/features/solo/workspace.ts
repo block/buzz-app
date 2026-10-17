@@ -139,15 +139,15 @@ export function readWorkspace(content: string): Workspace {
 }
 
 /** One existing encrypted template record per project. */
-export async function sectionTemplateId(sectionId: string) {
+export async function projectTemplateId(projectId: string) {
   const hash = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(sectionId),
+    new TextEncoder().encode(projectId),
   );
   return `me-section-${Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 /** The defaults record new chats in a project copy; validated for publication. */
-export function sectionTemplate(
+export function projectTemplate(
   scope: string,
   id: string,
   sectionName: string,
@@ -182,9 +182,9 @@ export function templateEntry(entries: readonly KitEntry[], id: string) {
       entry.record.value.id === id,
   );
 }
-export function sectionDefault(
+export function projectDefault(
   entries: readonly KitEntry[],
-  sectionId: string,
+  projectId: string,
   overrideId: string,
   requireDefault = false,
 ) {
@@ -195,7 +195,7 @@ export function sectionDefault(
   )?.record.value;
   const defaultId =
     groups?.type === "groups"
-      ? groups.groups.find((group) => group.id === sectionId)?.defaultTemplateId
+      ? groups.groups.find((group) => group.id === projectId)?.defaultTemplateId
       : undefined;
   const fallback = defaultId
     ? templateEntry(entries, defaultId)?.record.value
@@ -206,41 +206,41 @@ export function sectionDefault(
     );
   return fallback?.type === "template" ? fallback : undefined;
 }
-export type SessionSetup = {
-  sectionId?: string;
+export type ChatSetup = {
+  projectId?: string;
   canvas: string;
   agents: string[];
 };
-export function parseSessionSetup(raw: unknown): SessionSetup {
+export function parseChatSetup(raw: unknown): ChatSetup {
   if (
     !raw ||
     typeof raw !== "object" ||
-    ("sectionId" in raw &&
-      raw.sectionId !== undefined &&
-      (typeof raw.sectionId !== "string" ||
-        !raw.sectionId ||
-        raw.sectionId.length > 256))
+    ("projectId" in raw &&
+      raw.projectId !== undefined &&
+      (typeof raw.projectId !== "string" ||
+        !raw.projectId ||
+        raw.projectId.length > 256))
   )
     throw new Error("Invalid saved session section.");
   const lineup = parseLineup({ ...raw, teamIds: [] });
   return {
-    ...("sectionId" in raw && typeof raw.sectionId === "string"
-      ? { sectionId: raw.sectionId }
+    ...("projectId" in raw && typeof raw.projectId === "string"
+      ? { projectId: raw.projectId }
       : {}),
     canvas: lineup.canvas,
     agents: lineup.agents,
   };
 }
-export async function loadSessionSetup(
+export async function loadChatSetup(
   session: RelaySession,
-  sectionId: string,
-): Promise<SessionSetup> {
+  projectId: string,
+): Promise<ChatSetup> {
   const store = session.soloPreferences;
   await store.refresh();
   const preferences = store.snapshot();
   if (
     !store.writable ||
-    !preferences.data?.sections.some((section) => section.id === sectionId)
+    !preferences.data?.sections.some((section) => section.id === projectId)
   )
     throw new Error(
       "This section is unavailable. Refresh sections before starting a session.",
@@ -252,13 +252,13 @@ export async function loadSessionSetup(
       kit.error ??
         "Project defaults couldn’t load. Retry before starting the chat.",
     );
-  const template = sectionDefault(
+  const template = projectDefault(
     kit.entries,
-    sectionId,
-    await sectionTemplateId(sectionId),
+    projectId,
+    await projectTemplateId(projectId),
     true,
   );
-  if (!template) return { sectionId, canvas: "", agents: [] };
+  if (!template) return { projectId, canvas: "", agents: [] };
   if (template.agents.length || template.teamIds.length) {
     await session.agentChoices.refresh("templates");
     const choices = session.agentChoices.snapshot();
@@ -295,18 +295,18 @@ export async function loadSessionSetup(
       kit.entries,
       templateAgentChoices(choices, roster),
     ).map((agent) => agent.pubkey);
-    return { sectionId, canvas: template.canvas, agents };
+    return { projectId, canvas: template.canvas, agents };
   }
-  return { sectionId, canvas: template.canvas, agents: [] };
+  return { projectId, canvas: template.canvas, agents: [] };
 }
 
 export const removedSectionMessage =
   "The section was removed. Continue without a section to retry.";
 
-export async function applySessionSetup(
+export async function applyChatSetup(
   session: RelaySession,
   channelId: string,
-  setup: SessionSetup,
+  setup: ChatSetup,
   active: () => boolean,
 ) {
   if (!active()) return;
@@ -319,7 +319,7 @@ export async function applySessionSetup(
   if (!head && setup.canvas)
     await session.canvas.save(channelId, setup.canvas, undefined);
   if (!active()) return;
-  if (setup.sectionId) {
+  if (setup.projectId) {
     const store = session.soloPreferences;
     await store.refresh();
     if (!active()) return;
@@ -328,12 +328,12 @@ export async function applySessionSetup(
       throw new Error("Sections couldn’t load. Retry before continuing setup.");
     if (
       !preferences.data.sections.some(
-        (section) => section.id === setup.sectionId,
+        (section) => section.id === setup.projectId,
       )
     )
       throw new Error(removedSectionMessage);
-    if (store.snapshot().data?.assignments[channelId] !== setup.sectionId)
-      await store.assign(channelId, setup.sectionId);
+    if (store.snapshot().data?.assignments[channelId] !== setup.projectId)
+      await store.assign(channelId, setup.projectId);
   }
   if (!active()) return;
   if (setup.agents.length)

@@ -37,7 +37,7 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
-import { sessionRecipients } from "../solo/recipients";
+import { soloRecipients } from "../solo/recipients";
 import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
@@ -1140,7 +1140,7 @@ function Composer({
     const recipients = personalConversation
       ? [...explicit]
       : [
-          ...sessionRecipients(
+          ...soloRecipients(
             channel,
             session.profiles.snapshot(),
             session.agentChoices.snapshot(),

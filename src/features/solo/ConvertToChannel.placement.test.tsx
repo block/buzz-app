@@ -17,8 +17,8 @@ import { coordinate, kitTag, type KitRecord } from "../channel-templates/model";
 import { soloChat } from "../agents/solo-chat";
 import type { RelayData } from "../relay/service";
 import { ConvertToChannel } from "./ConvertToChannel";
-import { SOLO_LABEL } from "../sessions/metadata";
-import { sessionConversion } from "./conversion";
+import { SOLO_LABEL } from "./labels";
+import { chatConversion } from "./conversion";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const other = "22222222-2222-4222-8222-222222222222";
@@ -213,7 +213,7 @@ it("confirms the label change before removing only its project assignment", asyn
     ttlSeconds: 86400,
     labels: ["label"],
   });
-  expect(sessionConversion(f.session, id)).toBeUndefined();
+  expect(chatConversion(f.session, id)).toBeUndefined();
 });
 it("retains recovery on a failed project read after conversion, reopens and unfiles without another metadata command", async () => {
   const f = fixture();
@@ -264,7 +264,7 @@ it("reconciles unknown removal from the fresh selected record without replaying 
     ([event]) => event.kind === 30078,
   )?.[0];
   expect(removal).toBeDefined();
-  expect(sessionConversion(f.session, id)?.converted).toBe(true);
+  expect(chatConversion(f.session, id)?.converted).toBe(true);
   act(() => f.recover());
   fireEvent.click(screen.getByRole("button", { name: "Finish conversion" }));
   await waitFor(() => expect(f.converted).toHaveBeenCalledOnce());

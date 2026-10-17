@@ -23,7 +23,7 @@ import {
 } from "../../features/solo/share-attempt";
 import {
   conversionLabel,
-  useSessionConversions,
+  useChatConversions,
 } from "../../features/solo/conversion";
 import { subscribeView, viewRevision } from "../../shared/view-state";
 import {
@@ -143,7 +143,7 @@ export function SoloShare({
   signal?: AbortSignal | undefined;
 }) {
   const notify = useToastNotification();
-  useSessionConversions(session);
+  useChatConversions(session);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;

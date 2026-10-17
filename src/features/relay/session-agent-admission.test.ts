@@ -4,7 +4,7 @@ import { PublishRejected } from "./outbox";
 import { keypair, roster, signed } from "./testing";
 import { matchesEvent } from "./projection";
 import type { RelayEvent } from "./events";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 
 function setup() {
   const viewer = keypair(),

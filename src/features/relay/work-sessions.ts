@@ -1,6 +1,6 @@
 import { canonicalDetailsName } from "./channel-details-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
-import { SESSION_NAMED_LABEL, SOLO_LABEL } from "../sessions/metadata";
+import { SESSION_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { Outbox } from "./outbox";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";

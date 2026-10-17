@@ -10,7 +10,7 @@ import type { ReadFilter, RelayEvent } from "../relay/events";
 import { foldMessages } from "../relay/fold";
 import type { RelaySession } from "../relay/session";
 import { sessionLinkMessage } from "../solo/share";
-import { SESSION_NAMED_LABEL } from "../sessions/metadata";
+import { SESSION_NAMED_LABEL } from "../solo/labels";
 import { sharedSessionIds } from "./shared-session-marker";
 
 export type SharedSessionCursor = Readonly<{

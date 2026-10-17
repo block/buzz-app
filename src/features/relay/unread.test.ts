@@ -13,7 +13,7 @@ import type { ChannelStoreOptions } from "./store";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
 import { retainReadState } from "./read-state-retention";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 import {
   keypair,
   message,

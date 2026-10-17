@@ -13,7 +13,7 @@ import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
 import type { MemberAdditionIntent } from "../channel-members/members";
 import { messageLinkParts } from "../messages/message-link-parts";
-import { sessionLinkName } from "../sessions/metadata";
+import { sessionLinkName } from "./labels";
 
 /** Sharing changes access, never presentation or Me placement. */
 export function canShareConversation(

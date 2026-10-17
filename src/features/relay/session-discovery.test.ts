@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { DiscoveryState } from "./discovery";
 import { keypair, roster, signed } from "./testing";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 it("recognizes only relay-authorized private streams with the Solo label", () => {
   const viewer = keypair(),
     relay = keypair();

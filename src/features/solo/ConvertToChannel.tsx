@@ -13,12 +13,12 @@ import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { sessionShareAttempt, useSessionShareAttempts } from "./share-attempt";
 import {
-  sessionConversion,
-  updateSessionConversion,
-  useSessionConversions,
-  type SessionConversion,
+  chatConversion,
+  updateChatConversion,
+  useChatConversions,
+  type ChatConversion,
 } from "./conversion";
-import { SOLO_LABEL, soloLabels } from "../sessions/metadata";
+import { SOLO_LABEL, soloLabels } from "./labels";
 import { applySharedChannelDetails } from "./share";
 
 /** Presentation gating only; fresh signed details authorize the actual write. */
@@ -30,7 +30,7 @@ export function canConvertToChannel(
     session.channelDetails?.available &&
     channel &&
     (channel.channelType === "session" ||
-      !!sessionConversion(session, channel.id)) &&
+      !!chatConversion(session, channel.id)) &&
     !channel.cached &&
     !channel.readOnly &&
     !channel.archived
@@ -58,7 +58,7 @@ export function ConvertToChannel({
 }) {
   const details = session.channelDetails;
   const sharing = useSessionShareAttempts(session).has(id);
-  const receipt = useSessionConversions(session).get(id);
+  const receipt = useChatConversions(session).get(id);
   const converted = !!receipt?.converted;
   const notify = useToastNotification();
   const attempt = useSyncExternalStore(details.subscribe, () =>
@@ -143,13 +143,13 @@ export function ConvertToChannel({
     pending.current = true;
     setBusy(true);
     setError("");
-    let exact: SessionConversion | undefined;
+    let exact: ChatConversion | undefined;
     try {
       if (action === "reload") {
         const next = await details.load(id, active);
         if (!active.aborted) setBase(next);
       } else {
-        if (sessionConversion(session, id)?.running)
+        if (chatConversion(session, id)?.running)
           throw new Error("Conversion is already in progress in another view.");
         if (
           action !== "finish" &&
@@ -165,7 +165,7 @@ export function ConvertToChannel({
             "Finish sharing or choose Start over before converting.",
           );
         if (!base && !receipt) return;
-        exact = sessionConversion(session, id) ?? {
+        exact = chatConversion(session, id) ?? {
           draft: {
             name: base?.name ?? "",
             description: base?.description ?? "",
@@ -175,7 +175,7 @@ export function ConvertToChannel({
           },
         };
         exact.running = true;
-        updateSessionConversion(session, id, exact);
+        updateChatConversion(session, id, exact);
         if (!exact.converted) {
           if (action === "check") await details.check(id, active);
           else if (action === "finish") {
@@ -198,7 +198,7 @@ export function ConvertToChannel({
               active,
             );
           exact.converted = true;
-          updateSessionConversion(session, id, exact);
+          updateChatConversion(session, id, exact);
         }
         active.throwIfAborted();
         // A channel is no longer filed in a Solo project.
@@ -215,7 +215,7 @@ export function ConvertToChannel({
             await projects.assign(id, undefined);
           active.throwIfAborted();
         }
-        updateSessionConversion(session, id, undefined);
+        updateChatConversion(session, id, undefined);
         if (!active.aborted) {
           notify("Converted to channel.", "success");
           completed.current = true;
@@ -228,8 +228,8 @@ export function ConvertToChannel({
     } finally {
       if (exact) {
         delete exact.running;
-        if (sessionConversion(session, id) === exact)
-          updateSessionConversion(
+        if (chatConversion(session, id) === exact)
+          updateChatConversion(
             session,
             id,
             exact.converted || details.snapshot(id) ? exact : undefined,

@@ -19,7 +19,7 @@ import { matchesEvent } from "../../features/relay/projection";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ChannelsPage } from "./ChannelsPage";
-import { SOLO_LABEL } from "../../features/sessions/metadata";
+import { SOLO_LABEL } from "../../features/solo/labels";
 import type { RelayEvent } from "../../features/relay/events";
 
 composerDOMFixture();

@@ -8,8 +8,8 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
   emptyWorkspace,
-  sectionTemplate,
-  sectionTemplateId,
+  projectTemplate,
+  projectTemplateId,
   workspaceCanvas,
   type Workspace,
 } from "./workspace";
@@ -60,7 +60,7 @@ export function NewProject({
       // Validate defaults before anything is published.
       const canvas = workspaceCanvas(workspace);
       const template = canvas
-        ? sectionTemplate(session.scope, await sectionTemplateId(id), trimmed, {
+        ? projectTemplate(session.scope, await projectTemplateId(id), trimmed, {
             ...emptyLineup(),
             canvas,
           })

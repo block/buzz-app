@@ -1,6 +1,6 @@
 import {
   conversionLabel,
-  useSessionConversions,
+  useChatConversions,
 } from "../../features/solo/conversion";
 import {
   sessionShareAttempt,
@@ -82,9 +82,9 @@ export function SoloSections({
   scope: string;
   sessions: readonly SessionListItem[];
   renderSession: (item: SessionListItem) => ReactNode;
-  onNew?: (sectionId?: string) => void;
+  onNew?: (projectId?: string) => void;
 }) {
-  useSessionConversions(session);
+  useChatConversions(session);
   const shareAttempts = useSessionShareAttempts(session);
   const [copyNotice, setCopyNotice] = useState<{
     text: string;
@@ -174,9 +174,9 @@ export function SoloSections({
       rows: sessions.filter((item) => !ids.has(assigned[item.id] ?? "")),
     },
   ];
-  const move = (id: string, sectionId?: string) => {
-    const saving = preferences.assign(id, sectionId);
-    toggle(sectionId ?? "", true);
+  const move = (id: string, projectId?: string) => {
+    const saving = preferences.assign(id, projectId);
+    toggle(projectId ?? "", true);
     setRowFocus(id);
     void saving.catch(() => {
       // A rollback remounts the original row. Do not steal focus if the user moved on.

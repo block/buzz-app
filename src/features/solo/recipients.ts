@@ -2,7 +2,7 @@ import type { AgentLibrarySnapshot } from "../agents/library";
 import type { ChannelSummary, Profile } from "../relay/contracts";
 
 /** Classification never grants access: candidates must be in the current relay roster. */
-export function sessionAgents(
+export function soloAgents(
   channel: ChannelSummary | undefined,
   profiles: ReadonlyMap<string, Profile>,
   library: AgentLibrarySnapshot & { complete?: boolean },
@@ -21,7 +21,7 @@ export function sessionAgents(
   return members.filter((key) => known.has(key) || profiles.get(key)?.isAgent);
 }
 
-export function sessionRecipients(
+export function soloRecipients(
   channel: ChannelSummary | undefined,
   profiles: ReadonlyMap<string, Profile>,
   library: AgentLibrarySnapshot & { complete?: boolean },
@@ -29,7 +29,7 @@ export function sessionRecipients(
   explicit: readonly string[],
 ): readonly string[] {
   if (channel?.channelType !== "session" || explicit.length) return explicit;
-  const agents = sessionAgents(channel, profiles, library, viewer);
+  const agents = soloAgents(channel, profiles, library, viewer);
   if (!agents)
     throw new Error(
       "Session participants are still loading. Retry or @mention an agent.",

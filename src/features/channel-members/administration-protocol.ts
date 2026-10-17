@@ -1,5 +1,5 @@
 import type { EventTemplate } from "nostr-tools";
-import { soloLabels } from "../sessions/metadata.ts";
+import { soloLabels } from "../solo/labels.ts";
 import { channelIdentity } from "../relay/channel-labels.ts";
 import type { RelayEvent } from "../relay/events.ts";
 import {

@@ -13,7 +13,7 @@ import {
   type ChannelDetailsDraft,
 } from "./channel-details-protocol";
 import { channelIdentityUnsupported } from "./channel-labels";
-import { SESSION_NAMED_LABEL, soloLabels } from "../sessions/metadata";
+import { SESSION_NAMED_LABEL, soloLabels } from "../solo/labels";
 
 export type DetailsAttempt = Readonly<{
   draft: ChannelDetailsDraft;

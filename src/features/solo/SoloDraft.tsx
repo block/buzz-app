@@ -7,11 +7,7 @@ import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GearIcon } from "../../shared/design-system/icons";
-import {
-  applySessionSetup,
-  loadSessionSetup,
-  parseSessionSetup,
-} from "./workspace";
+import { applyChatSetup, loadChatSetup, parseChatSetup } from "./workspace";
 import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
@@ -26,7 +22,7 @@ import { useDefaultAgent } from "./default-agent";
 import { ProjectControl } from "./ProjectControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
-import { ownSolo } from "../sessions/metadata";
+import { ownSolo } from "./labels";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
 import styles from "./Solo.module.css";
@@ -50,11 +46,11 @@ function readDraftSettings(scope: string, draftKey: string) {
   };
 }
 
-export function resetNewChatProject(scope: string, sectionId: string) {
-  const key = `me:section:${sectionId}`;
-  const selected = readView<unknown>(scope, `${key}:new-project`, sectionId);
+export function resetNewChatProject(scope: string, projectId: string) {
+  const key = `me:section:${projectId}`;
+  const selected = readView<unknown>(scope, `${key}:new-project`, projectId);
   // Instructions belong to the previous project; name and lifetime stay.
-  if (selected !== sectionId)
+  if (selected !== projectId)
     writeView(scope, `${key}:settings`, {
       ...readDraftSettings(scope, key),
       canvas: undefined,
@@ -66,7 +62,7 @@ export function SoloDraft({
   session,
   scope,
   onStarted,
-  sectionId,
+  projectId,
   extensions,
   standalone = false,
   focusRequest = 0,
@@ -80,9 +76,9 @@ export function SoloDraft({
   session: RelaySession;
   scope: string;
   onStarted: (id: string) => void;
-  sectionId?: string | undefined;
+  projectId?: string | undefined;
 }) {
-  const draftKey = sectionId ? `me:section:${sectionId}` : "me";
+  const draftKey = projectId ? `me:section:${projectId}` : "me";
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
@@ -91,9 +87,9 @@ export function SoloDraft({
     const saved = readView<unknown>(
       scope,
       `${draftKey}:new-project`,
-      sectionId ?? "",
+      projectId ?? "",
     );
-    return typeof saved === "string" ? saved : (sectionId ?? "");
+    return typeof saved === "string" ? saved : (projectId ?? "");
   });
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const [draftSettings, setDraftSettings] = useState(() =>
@@ -113,9 +109,9 @@ export function SoloDraft({
       const nextSettings = viewRevision(scope, settingsKey);
       if (nextProject !== undefined && nextProject !== projectRevision) {
         projectRevision = nextProject;
-        const project = readView<unknown>(scope, projectKey, sectionId ?? "");
+        const project = readView<unknown>(scope, projectKey, projectId ?? "");
         setSelectedProject(
-          typeof project === "string" ? project : (sectionId ?? ""),
+          typeof project === "string" ? project : (projectId ?? ""),
         );
       }
       if (nextSettings !== undefined && nextSettings !== settingsRevision) {
@@ -123,7 +119,7 @@ export function SoloDraft({
         setDraftSettings(readDraftSettings(scope, draftKey));
       }
     });
-  }, [scope, draftKey, sectionId]);
+  }, [scope, draftKey, projectId]);
   const prompt = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (focusRequest)
@@ -177,13 +173,13 @@ export function SoloDraft({
       if (errors.name) throw new Error(errors.name);
       if (errors.lifetime) throw new Error(errors.lifetime);
       let setup = selectedProject
-        ? await loadSessionSetup(session, selectedProject)
+        ? await loadChatSetup(session, selectedProject)
         : undefined;
       if (!mounted.current) return;
       if (draftCanvas !== undefined)
-        setup = parseSessionSetup({
+        setup = parseChatSetup({
           ...(setup ?? {
-            ...(selectedProject ? { sectionId: selectedProject } : {}),
+            ...(selectedProject ? { projectId: selectedProject } : {}),
             agents: [],
           }),
           canvas: draftCanvas,
@@ -222,7 +218,7 @@ export function SoloDraft({
       writeView(scope, `${draftKey}:new-project`, null);
       if (setup) {
         try {
-          await applySessionSetup(session, channelId, setup, () => true);
+          await applyChatSetup(session, channelId, setup, () => true);
         } catch (reason) {
           // Missing project setup leaves a working chat; never hold the message.
           console.warn("Solo project setup did not finish", reason);
@@ -336,7 +332,7 @@ export function SoloDraft({
         <DraftSettings
           finalFocus={settingsTrigger}
           session={session}
-          sectionId={selectedProject || undefined}
+          projectId={selectedProject || undefined}
           canvas={draftCanvas}
           name={draftSettings.name}
           ttlSeconds={draftSettings.ttlSeconds}

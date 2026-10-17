@@ -12,7 +12,7 @@ import {
 } from "react";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
-import { ownSolo } from "../sessions/metadata";
+import { ownSolo } from "../solo/labels";
 import type { RelayData } from "../relay/service";
 import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";

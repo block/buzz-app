@@ -2,10 +2,10 @@ import { expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { parseKitRecord } from "../channel-templates/model";
 import {
-  applySessionSetup,
-  loadSessionSetup,
+  applyChatSetup,
+  loadChatSetup,
   readWorkspace,
-  sectionTemplateId,
+  projectTemplateId,
   workspaceCanvas,
 } from "./workspace";
 
@@ -18,11 +18,11 @@ it("round trips folders, worktrees and Canvas through existing template records"
   const canvas = workspaceCanvas(workspace);
   expect(readWorkspace(canvas)).toEqual(workspace);
   expect(canvas).toContain("origin/develop");
-  const id = await sectionTemplateId("section-one");
+  const id = await projectTemplateId("section-one");
   // Existing project defaults records are found by this exact id.
   expect(id).toMatch(/^me-section-[0-9a-f]{64}$/);
-  expect(id).toBe(await sectionTemplateId("section-one"));
-  expect(id).not.toBe(await sectionTemplateId("section-two"));
+  expect(id).toBe(await projectTemplateId("section-one"));
+  expect(id).not.toBe(await projectTemplateId("section-two"));
   const record = parseKitRecord(
     {
       version: 1,
@@ -116,7 +116,7 @@ it("loads exact section defaults and blocks when the catalog fails", async () =>
       record: {
         value: {
           type: "template",
-          id: await sectionTemplateId("work"),
+          id: await projectTemplateId("work"),
           canvas: "Work here",
           agents: [],
           teamIds: [],
@@ -124,50 +124,50 @@ it("loads exact section defaults and blocks when the catalog fails", async () =>
       },
     },
   ];
-  expect(await loadSessionSetup(f.session, "work")).toEqual({
-    sectionId: "work",
+  expect(await loadChatSetup(f.session, "work")).toEqual({
+    projectId: "work",
     canvas: "Work here",
     agents: [],
   });
   f.kit.status = "error";
-  await expect(loadSessionSetup(f.session, "work")).rejects.toThrow(
+  await expect(loadChatSetup(f.session, "work")).rejects.toThrow(
     "defaults couldn’t load",
   );
 });
 it("applies Canvas before placement and agents, and resumes without replacing an existing Canvas", async () => {
   const f = fixture();
   const setup = {
-    sectionId: "work",
+    projectId: "work",
     canvas: "Use /repo",
     agents: ["a".repeat(64)],
   };
-  await applySessionSetup(f.session, "channel", setup, () => true);
+  await applyChatSetup(f.session, "channel", setup, () => true);
   expect(f.calls).toEqual(["canvas", "placement", "agents"]);
-  await applySessionSetup(f.session, "channel", setup, () => true);
+  await applyChatSetup(f.session, "channel", setup, () => true);
   expect(f.raw.canvas.save).toHaveBeenCalledTimes(1);
   expect(f.raw.soloPreferences.assign).toHaveBeenCalledTimes(1);
   f.changeCanvas("Someone edited this");
   await expect(
-    applySessionSetup(f.session, "channel", setup, () => true),
+    applyChatSetup(f.session, "channel", setup, () => true),
   ).rejects.toThrow("different Canvas");
 });
 it("stops after failed Canvas or revoked lifetime before placing or inviting", async () => {
   const f = fixture();
   f.raw.canvas.save.mockRejectedValueOnce(new Error("Relay unavailable"));
   await expect(
-    applySessionSetup(
+    applyChatSetup(
       f.session,
       "channel",
-      { sectionId: "work", canvas: "Context", agents: [] },
+      { projectId: "work", canvas: "Context", agents: [] },
       () => true,
     ),
   ).rejects.toThrow("Relay unavailable");
   expect(f.raw.soloPreferences.assign).not.toHaveBeenCalled();
   expect(f.raw.workSessions.addAgents).not.toHaveBeenCalled();
-  await applySessionSetup(
+  await applyChatSetup(
     f.session,
     "channel",
-    { sectionId: "work", canvas: "Context", agents: [] },
+    { projectId: "work", canvas: "Context", agents: [] },
     () => false,
   );
   expect(f.raw.canvas.read).toHaveBeenCalledTimes(1);
@@ -177,11 +177,11 @@ it("checks an empty frozen Canvas before placing or inviting on retry", async ()
   const f = fixture();
   f.changeCanvas("Written on another device");
   await expect(
-    applySessionSetup(
+    applyChatSetup(
       f.session,
       "channel",
       {
-        sectionId: "work",
+        projectId: "work",
         canvas: "",
         agents: ["a".repeat(64)],
       },
@@ -195,7 +195,7 @@ it("accepts matching empty Canvas without publishing a new revision", async () =
   const f = fixture();
   for (const existing of [false, true]) {
     if (existing) f.changeCanvas("");
-    await applySessionSetup(
+    await applyChatSetup(
       f.session,
       "channel",
       { canvas: "", agents: [] },
@@ -226,7 +226,7 @@ it.each([
       record: {
         value: {
           type: "template",
-          id: await sectionTemplateId("work"),
+          id: await projectTemplateId("work"),
           canvas: "",
           agents: [pubkey],
           teamIds: [],
@@ -271,11 +271,11 @@ it.each([
     },
   });
   if (state === "eligible" || state === "managed-partial")
-    expect(await loadSessionSetup(f.session, "work")).toMatchObject({
+    expect(await loadChatSetup(f.session, "work")).toMatchObject({
       agents: [pubkey],
     });
   else
-    await expect(loadSessionSetup(f.session, "work")).rejects.toThrow(
+    await expect(loadChatSetup(f.session, "work")).rejects.toThrow(
       state === "archive-error" || state === "incomplete" || rosterIncomplete
         ? "couldn’t load"
         : "unavailable",
@@ -285,7 +285,7 @@ it.each([
     if (rosterIncomplete) expect(refreshRoster).toHaveBeenCalledOnce();
     complete = true;
     rosterIncomplete = false;
-    expect(await loadSessionSetup(f.session, "work")).toMatchObject({
+    expect(await loadChatSetup(f.session, "work")).toMatchObject({
       agents: [pubkey],
     });
   }
@@ -297,10 +297,10 @@ it("does not offer deleted-section recovery when section refresh fails", async (
     snapshot: () => ({ status: "error", data: undefined }),
   });
   await expect(
-    applySessionSetup(
+    applyChatSetup(
       f.session,
       "channel",
-      { sectionId: "work", canvas: "", agents: [] },
+      { projectId: "work", canvas: "", agents: [] },
       () => true,
     ),
   ).rejects.toThrow("Sections couldn’t load");

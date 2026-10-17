@@ -279,8 +279,8 @@ Solo treatment (`SoloHeading`, `SoloShare`) and drafts; `SoloSections` and
 `app/shell/PrimarySidebar.tsx`. Drafting, settings, sharing and conversion live
 in `src/features/solo`; Solo projects use
 `src/features/relay/solo-preferences.ts` and the existing recipe capability.
-`src/features/sessions/metadata.ts` owns the Solo label (`SOLO_LABEL`,
-`soloLabels`, `ownSolo`); `src/features/sessions` also keeps shared agent sessions. Existing channel,
+`src/features/solo/labels.ts` owns the Solo label (`SOLO_LABEL`,
+`soloLabels`, `ownSolo`); `src/features/sessions` keeps shared agent sessions. Existing channel,
 membership, signing and Outbox owners retain their authority.
 
 Colocated tests cover admission, frozen defaults, navigation lifetime and recovery;

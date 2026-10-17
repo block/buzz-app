@@ -26,7 +26,7 @@ import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
 import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
-import { ownSolo } from "../../features/sessions/metadata";
+import { ownSolo } from "../../features/solo/labels";
 import type { ChannelList } from "../../features/relay/contracts";
 
 const noSubscription = () => () => {};

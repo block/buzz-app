@@ -13,7 +13,7 @@ import {
   sessionReferenceIds,
 } from "./shared-session-marker";
 import { sessionLinkMessage } from "../solo/share";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 
 const key = new Uint8Array(32).fill(1);
 const event = (kind: number, tags: string[][], content = "", created_at = 10) =>

@@ -8,7 +8,7 @@ import type { ReadFilter, RelayEvent } from "../relay/events";
 import { PublishRejected } from "../relay/outbox";
 import { createRelaySession } from "../relay/session";
 import { matchesEvent } from "../relay/projection";
-import { SOLO_LABEL } from "../sessions/metadata";
+import { SOLO_LABEL } from "../solo/labels";
 import { createMemberAdministration } from "./administration";
 import {
   memberAuthority,

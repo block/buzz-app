@@ -24,7 +24,7 @@ import {
 import { writeView } from "../../shared/view-state";
 import { useChannelTabState } from "./useChannelTabState";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
-import { SOLO_LABEL } from "../../features/sessions/metadata";
+import { SOLO_LABEL } from "../../features/solo/labels";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { ChannelsPage } from "./ChannelsPage";
 

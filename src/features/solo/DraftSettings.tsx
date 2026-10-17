@@ -15,7 +15,7 @@ import styles from "./WorkspaceSettings.module.css";
 import { WorkspaceFields } from "./WorkspaceFields";
 import {
   emptyWorkspace,
-  loadSessionSetup,
+  loadChatSetup,
   readWorkspace,
   workspaceCanvas,
 } from "./workspace";
@@ -23,7 +23,7 @@ import {
 /** Edits only the local draft; first-send owns remote setup and its retry receipt. */
 export function DraftSettings({
   session,
-  sectionId,
+  projectId,
   canvas,
   name = "",
   save,
@@ -32,7 +32,7 @@ export function DraftSettings({
   finalFocus,
 }: {
   session: RelaySession;
-  sectionId?: string | undefined;
+  projectId?: string | undefined;
   canvas?: string | undefined;
   name?: string | undefined;
   ttlSeconds?: number | undefined;
@@ -74,9 +74,7 @@ export function DraftSettings({
       try {
         const content =
           canvas ??
-          (sectionId
-            ? (await loadSessionSetup(session, sectionId)).canvas
-            : "");
+          (projectId ? (await loadChatSetup(session, projectId)).canvas : "");
         if (!active) return;
         try {
           setWorkspace(readWorkspace(content));
@@ -92,7 +90,7 @@ export function DraftSettings({
     return () => {
       active = false;
     };
-  }, [session, sectionId, canvas, attempt]);
+  }, [session, projectId, canvas, attempt]);
   return (
     <Dialog
       open

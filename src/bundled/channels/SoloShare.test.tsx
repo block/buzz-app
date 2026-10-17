@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { SOLO_LABEL } from "../../features/sessions/metadata";
+import { SOLO_LABEL } from "../../features/solo/labels";
 import {
   act,
   cleanup,

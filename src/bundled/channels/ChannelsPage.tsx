@@ -16,7 +16,7 @@ import {
   soloDraft,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import { ownSolo } from "../../features/sessions/metadata";
+import { ownSolo } from "../../features/solo/labels";
 import { ProjectControl } from "../../features/solo/ProjectControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { SoloHeading } from "./SoloHeading";
@@ -37,7 +37,7 @@ import {
   parseBuzzLink,
 } from "../../features/navigation/buzz-links";
 import { SoloMessageTarget } from "../../features/solo/SoloMessageTarget";
-import { useSessionConversions } from "../../features/solo/conversion";
+import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -514,7 +514,7 @@ function ChannelWorkspace({
     };
   }, [currentId, composingMessage, draft]);
 
-  const conversions = useSessionConversions(queries);
+  const conversions = useChatConversions(queries);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const [conversion, setConversion] = useState<{
     channelId: string;
@@ -1511,7 +1511,7 @@ function ChannelWorkspace({
                 navigation?.focus === "preserve" ? 0 : (navigation?.signal ?? 0)
               }
               agent={draft.agent}
-              sectionId={draft.project}
+              projectId={draft.project}
               session={queries}
               scope={scope}
               extensions={extensions}

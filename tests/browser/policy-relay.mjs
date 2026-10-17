@@ -366,9 +366,10 @@ export function policyRelay({
           );
         }
         if (filters.length !== 1) {
-          // Sidebar preferences read only these four exact own-author coordinates.
-          expect(filters).toHaveLength(4);
+          // Sidebar preferences read only these five exact own-author coordinates.
+          expect(filters).toHaveLength(5);
           expect(filters.map((filter) => filter["#d"]?.[0]).sort()).toEqual([
+            "channel-filter",
             "channel-mutes",
             "channel-sections",
             "channel-sort",

@@ -411,23 +411,46 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                 }
             }
         }
-        "channel-sort" => {
+        "channel-sort" | "channel-filter" => {
             let groups = data
                 .get("groups")
                 .and_then(|v| v.as_object())
                 .ok_or_else(invalid)?;
+            if coordinate == "channel-filter" {
+                if let Some(windows) = data.get("activeWindowSeconds") {
+                    let windows = windows.as_object().ok_or_else(invalid)?;
+                    if windows.len() > 104
+                        || windows.iter().any(|(group, value)| {
+                            group.trim().is_empty()
+                                || group.encode_utf16().count() > 264
+                                || !value.as_u64().is_some_and(|seconds| {
+                                    (86400..=31536000).contains(&seconds) && seconds % 86400 == 0
+                                })
+                        })
+                    {
+                        return Err(invalid());
+                    }
+                }
+            }
             if groups.len() > 104
-                || groups
-                    .iter()
-                    .any(|(group, mode)| group.encode_utf16().count() > 264 || !mode.is_string())
+                || groups.iter().any(|(group, mode)| {
+                    group.encode_utf16().count() > 264
+                        || !mode.is_string()
+                        || (coordinate == "channel-filter"
+                            && !matches!(mode.as_str(), Some("all" | "unreads" | "active")))
+                })
             {
                 return Err(invalid());
             }
         }
+
         _ => return Err(invalid()),
     }
     if let Some(meta) = data.get("meta") {
-        if matches!(coordinate, "channel-sections" | "channel-sort") {
+        if matches!(
+            coordinate,
+            "channel-sections" | "channel-sort" | "channel-filter"
+        ) {
             validate_sidebar_meta(coordinate, meta)?;
             let projection = project_sidebar_meta(coordinate, meta);
             let projected = projection.as_object().ok_or_else(invalid)?;
@@ -488,10 +511,15 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
     {
         return Err(invalid());
     }
-    let valid = if coordinate == "channel-sort" {
+    let valid = if matches!(coordinate, "channel-sort" | "channel-filter") {
         map(meta.get("g"), 264, |v| {
             reg(v, |v| {
-                v.is_null() || matches!(v.as_str(), Some("alpha" | "recent"))
+                v.is_null()
+                    || if coordinate == "channel-filter" {
+                        matches!(v.as_str(), Some("unreads" | "active"))
+                    } else {
+                        matches!(v.as_str(), Some("alpha" | "recent"))
+                    }
             })
         })
     } else {
@@ -521,7 +549,7 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
 // metadata's live counts to the existing projection limits above.
 fn project_sidebar_meta(coordinate: &str, meta: &serde_json::Value) -> serde_json::Value {
     use serde_json::{json, Value};
-    if coordinate == "channel-sort" {
+    if matches!(coordinate, "channel-sort" | "channel-filter") {
         let groups: serde_json::Map<_, _> = meta["g"]
             .as_object()
             .into_iter()
@@ -566,7 +594,7 @@ fn project_sidebar_meta(coordinate: &str, meta: &serde_json::Value) -> serde_jso
 pub(crate) fn sidebar_coordinate(value: &str) -> bool {
     matches!(
         value,
-        "channel-sections" | "channel-stars" | "channel-mutes" | "channel-sort"
+        "channel-sections" | "channel-stars" | "channel-mutes" | "channel-sort" | "channel-filter"
     )
 }
 
@@ -630,11 +658,11 @@ impl IdentityHost {
             let State::Ready(key) = &identity.state else {
                 return Err("Set up your identity first".into());
             };
-            if events.len() > 4
+            if events.len() > 5
                 || serde_json::to_vec(&events)
                     .map_err(|_| "Invalid sidebar records")?
                     .len()
-                    > 768 * 1024
+                    > 960 * 1024
             {
                 return Err("Invalid sidebar records".into());
             }

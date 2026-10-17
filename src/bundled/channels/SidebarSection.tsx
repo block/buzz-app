@@ -1,3 +1,4 @@
+import { SidebarActiveDialog, activeWindowLabel } from "./SidebarActiveDialog";
 import { FadingLabel } from "./FadingLabel";
 import {
   useId,
@@ -19,15 +20,18 @@ import {
   MenuSubmenuPopup,
   MenuSubmenuTrigger,
   MenuTrigger,
+  MenuTrailing,
 } from "../../shared/design-system/ui/Menu";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
   ArrowsDownUpIcon,
   CaretDownIcon,
-  CaretUpIcon,
+  ChatsCircleIcon,
+  ChatUnreadIcon,
   DotsThreeIcon,
   PlusIcon,
+  SlidersHorizontalIcon,
   TextAaIcon,
   TimerIcon,
   TrashIcon,
@@ -36,8 +40,11 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import type { RelaySession } from "../../features/relay/session";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { SidebarFilter } from "./useSidebarFilters";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
 import { SidebarStarIcon } from "./SidebarStarIcon";
+import { ChannelSidebarMenuItem } from "./ChannelSidebarMenuItem";
 import styles from "./Channels.module.css";
 
 export function SidebarSection({
@@ -51,6 +58,8 @@ export function SidebarSection({
   createChannel,
   newMessage,
   sort,
+  filter,
+  channels,
   dropRef,
   dropTarget = false,
   dropEdge,
@@ -82,6 +91,21 @@ export function SidebarSection({
         change: (mode: "alpha" | "recent") => void;
       }
     | undefined;
+  filter?:
+    | {
+        value: SidebarFilter;
+        disabled?: boolean;
+        activeWindowSeconds?: number | undefined;
+        change: (mode: SidebarFilter, seconds?: number) => unknown;
+      }
+    | undefined;
+  channels?:
+    | {
+        rows: readonly ChannelSummary[];
+        selected?: string | undefined;
+        select: (id: string) => void;
+      }
+    | undefined;
   dropRef?: Ref<HTMLDivElement> | undefined;
   dropTarget?: boolean;
   /** Where a dragged group would land relative to this one. */
@@ -104,6 +128,7 @@ export function SidebarSection({
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
+  const [activeOpen, setActiveOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState("");
   const canRemove = !!onRemove && sectionKey.startsWith("group:");
@@ -192,6 +217,106 @@ export function SidebarSection({
               )}
             />
             <MenuPopup align="end" aria-label={`More actions for ${title}`}>
+              {filter && (
+                <MenuSubmenu>
+                  <MenuSubmenuTrigger>
+                    <MenuIcon>
+                      <SlidersHorizontalIcon size={14} />
+                    </MenuIcon>
+                    Filter
+                  </MenuSubmenuTrigger>
+                  <MenuSubmenuPopup
+                    aria-label={`Filter ${title}`}
+                    finalFocus={false}
+                  >
+                    <MenuRadioGroup
+                      value={filter.value}
+                      onValueChange={(mode) => {
+                        if (mode === "active") return;
+                        void Promise.resolve(
+                          filter.change(mode as SidebarFilter),
+                        ).catch(() => {});
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <MenuRadioItem
+                        disabled={filter.disabled}
+                        closeOnClick={false}
+                        value="all"
+                      >
+                        <MenuIcon>
+                          <ChatsCircleIcon size={14} />
+                        </MenuIcon>
+                        All
+                      </MenuRadioItem>
+                      <MenuRadioItem
+                        disabled={filter.disabled}
+                        closeOnClick={false}
+                        value="unreads"
+                      >
+                        <MenuIcon>
+                          <ChatUnreadIcon size={14} />
+                        </MenuIcon>
+                        Unreads
+                      </MenuRadioItem>
+                      <MenuRadioItem
+                        disabled={filter.disabled}
+                        closeOnClick={false}
+                        value="active"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          setActiveOpen(true);
+                        }}
+                      >
+                        <MenuIcon>
+                          <TimerIcon size={14} />
+                        </MenuIcon>
+                        Active in the last
+                        {filter.value === "active" && (
+                          <MenuTrailing>
+                            {activeWindowLabel(filter.activeWindowSeconds)}
+                          </MenuTrailing>
+                        )}
+                      </MenuRadioItem>
+                    </MenuRadioGroup>
+                    {channels &&
+                      filter.value !== "all" &&
+                      channels.rows.length > 0 && (
+                        <>
+                          <MenuSeparator />
+                          {channels.rows.map((channel) => {
+                            const select = () => {
+                              onToggle(true);
+                              channels.select(channel.id);
+                              setMenuOpen(false);
+                            };
+                            return session ? (
+                              <ChannelSidebarMenuItem
+                                key={channel.id}
+                                channel={channel}
+                                session={session}
+                                selected={channels.selected === channel.id}
+                                onSelect={select}
+                              />
+                            ) : (
+                              <MenuItem
+                                key={channel.id}
+                                aria-current={
+                                  channels.selected === channel.id
+                                    ? "page"
+                                    : undefined
+                                }
+                                onClick={select}
+                              >
+                                {channel.name}
+                              </MenuItem>
+                            );
+                          })}
+                        </>
+                      )}
+                  </MenuSubmenuPopup>
+                </MenuSubmenu>
+              )}
               {sort && (
                 <MenuSubmenu>
                   <MenuSubmenuTrigger>
@@ -227,21 +352,6 @@ export function SidebarSection({
                   </MenuSubmenuPopup>
                 </MenuSubmenu>
               )}
-              <MenuItem
-                onClick={() => {
-                  onToggle(!open);
-                  setMenuOpen(false);
-                }}
-              >
-                <MenuIcon>
-                  {open ? (
-                    <CaretUpIcon size={14} />
-                  ) : (
-                    <CaretDownIcon size={14} />
-                  )}
-                </MenuIcon>
-                {open ? "Collapse section" : "Expand section"}
-              </MenuItem>
               {move && (
                 <>
                   <MenuItem
@@ -297,6 +407,14 @@ export function SidebarSection({
               title="New message"
               onClick={newMessage}
               icon={<PlusIcon strokeWidth={2.5} size={15} />}
+            />
+          )}
+          {activeOpen && filter && (
+            <SidebarActiveDialog
+              seconds={filter.activeWindowSeconds}
+              apply={(seconds) => filter.change("active", seconds)}
+              close={() => setActiveOpen(false)}
+              finalFocus={actionsTrigger}
             />
           )}
           {canRemove && (

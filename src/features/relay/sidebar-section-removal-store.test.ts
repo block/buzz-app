@@ -531,3 +531,64 @@ it.each([true, false])(
     }
   },
 );
+
+it("confirms the filter reset before section removal and leaves failures retryable", async () => {
+  const saved: SidebarPreferences = {
+    ...data,
+    filters: { "section:work": "unreads", channels: "active" },
+  };
+  const calls: string[] = [];
+  const filter = vi.fn(async () => {
+    calls.push("filter");
+    return {
+      filters: { channels: "active" as const },
+      activeWindowSeconds: {},
+    };
+  });
+  filter.mockRejectedValueOnce(new Error("filter not confirmed"));
+  const remove = vi.fn(async () => {
+    calls.push("remove");
+    return removed;
+  });
+  const store = createSidebarPreferencesStore(
+    async () => saved,
+    true,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      calls.push("sort");
+      return data.sort ?? {};
+    },
+    undefined,
+    remove,
+    false,
+    undefined,
+    undefined,
+    filter,
+  );
+  try {
+    await store.queries.ensure();
+    await expect(store.queries.removeSection("work")).rejects.toThrow(
+      "filter not confirmed",
+    );
+    expect(remove).not.toHaveBeenCalled();
+    expect(store.queries.snapshot().data?.sections).toEqual(data.sections);
+    await store.queries.removeSection("work");
+    expect(filter).toHaveBeenLastCalledWith(
+      "section:work",
+      "all",
+      ["work"],
+      expect.any(AbortSignal),
+      null,
+    );
+    expect(calls).toEqual(["sort", "sort", "filter", "remove"]);
+    expect(store.queries.snapshot().data).toMatchObject({
+      ...removed,
+      filters: { channels: "active" },
+    });
+  } finally {
+    store.dispose();
+  }
+});

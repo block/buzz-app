@@ -13,6 +13,9 @@ import type {
   SidebarPreferences,
   SidebarSortMode,
   SidebarSortMutator,
+  SidebarFilterMode,
+  SidebarFilterMutator,
+  SidebarFilterSettings,
 } from "./sidebar-preferences";
 
 type MoveDestination =
@@ -29,6 +32,12 @@ type SortFailure = Readonly<{
   mode: SidebarSortMode;
   error: string;
 }>;
+type FilterFailure = Readonly<{
+  group: string;
+  mode: SidebarFilterMode;
+  activeWindowSeconds?: number | null;
+  error: string;
+}>;
 type OrderFailure = Readonly<{
   sectionId: string;
   sectionIds: readonly string[];
@@ -42,6 +51,7 @@ type Snapshot = Readonly<{
   transient?: true;
   cached?: true;
   sortErrors?: readonly SortFailure[];
+  filterErrors?: readonly FilterFailure[];
   moves?: readonly (MoveIntent & { pending: boolean; error?: string })[];
   orderError?: OrderFailure;
 }>;
@@ -61,6 +71,7 @@ export function createSidebarPreferencesStore(
   groupsOnly = false,
   writeOrder?: SidebarSectionOrderMutator,
   createSection?: SidebarSectionCreationMutator,
+  writeFilter?: SidebarFilterMutator,
 ) {
   const listeners = new Set<() => void>();
   const empty = (): Snapshot =>
@@ -157,6 +168,46 @@ export function createSidebarPreferencesStore(
     return next;
   };
 
+  let nextFilterMutation = 0;
+  const latestFilter = new Map<string, number>();
+  const failedFilters = new Map<string, FilterFailure>();
+  const pendingFilters = new Map<
+    number,
+    {
+      group: string;
+      mode: SidebarFilterMode;
+      activeWindowSeconds?: number | null;
+    }
+  >();
+  const withFilter = (
+    filters: Readonly<Record<string, SidebarFilterMode>>,
+    group: string,
+    mode: SidebarFilterMode,
+  ) => {
+    const next = { ...filters };
+    if (mode === "all") delete next[group];
+    else next[group] = mode;
+    return next;
+  };
+  const withPendingFilters = (
+    filters: Readonly<Record<string, SidebarFilterMode>>,
+  ) => {
+    let next = filters;
+    for (const pending of pendingFilters.values())
+      next = withFilter(next, pending.group, pending.mode);
+    return next;
+  };
+
+  const withPendingWindows = () => {
+    const windows = { ...confirmed?.activeWindowSeconds };
+    for (const pending of pendingFilters.values()) {
+      if (pending.activeWindowSeconds === null) delete windows[pending.group];
+      else if (pending.activeWindowSeconds !== undefined)
+        windows[pending.group] = pending.activeWindowSeconds;
+    }
+    return windows;
+  };
+
   const retained = (data: SidebarPreferences): SidebarPreferences =>
     Object.freeze({
       sections: Object.freeze(
@@ -166,11 +217,18 @@ export function createSidebarPreferencesStore(
       starred: Object.freeze([...data.starred]),
       muted: Object.freeze([...data.muted]),
       ...(data.sort ? { sort: Object.freeze({ ...data.sort }) } : {}),
+      ...(data.filters ? { filters: Object.freeze({ ...data.filters }) } : {}),
+      ...(data.activeWindowSeconds
+        ? {
+            activeWindowSeconds: Object.freeze({ ...data.activeWindowSeconds }),
+          }
+        : {}),
     });
   const publish = (next: Snapshot) => {
     const {
       moves: _moves,
       sortErrors: _errors,
+      filterErrors: _filterErrors,
       orderError: _order,
       ...state
     } = next;
@@ -188,6 +246,9 @@ export function createSidebarPreferencesStore(
       ...state,
       ...(failedSorts.size
         ? { sortErrors: Object.freeze([...failedSorts.values()]) }
+        : {}),
+      ...(failedFilters.size
+        ? { filterErrors: Object.freeze([...failedFilters.values()]) }
         : {}),
       ...(moves.length ? { moves: Object.freeze(moves) } : {}),
       ...(failedOrder ? { orderError: failedOrder } : {}),
@@ -214,11 +275,18 @@ export function createSidebarPreferencesStore(
             ...(readTransient ? { transient: true as const } : {}),
           }),
       data: retained(
-        withPendingMoves(
-          pendingSorts.size
-            ? { ...confirmed, sort: withPendingSorts(confirmed.sort ?? {}) }
-            : confirmed,
-        ),
+        withPendingMoves({
+          ...confirmed,
+          ...(pendingSorts.size
+            ? { sort: withPendingSorts(confirmed.sort ?? {}) }
+            : {}),
+          ...(pendingFilters.size
+            ? {
+                filters: withPendingFilters(confirmed.filters ?? {}),
+                activeWindowSeconds: withPendingWindows(),
+              }
+            : {}),
+        }),
       ),
     });
   };
@@ -419,6 +487,19 @@ export function createSidebarPreferencesStore(
         if (!confirmed)
           throw new Error("Sidebar section removal is unavailable");
         confirmed = { ...confirmed, sort };
+        if (writeFilter) {
+          const settings = await writeFilter(
+            group,
+            "all",
+            confirmed.sections.map(({ id }) => id),
+            writeSignal,
+            null,
+          );
+          if (closed || generation !== writeGeneration || !confirmed)
+            throw new Error("Sidebar section removal is unavailable");
+          writeSignal.throwIfAborted();
+          confirmed = { ...confirmed, ...settings };
+        }
         mutation++;
         project();
         const next = await removeSection(sectionId, writeSignal);
@@ -478,6 +559,14 @@ export function createSidebarPreferencesStore(
         rows(data.starred, "starred"),
         rows(data.muted, "muted"),
         { version: 1, groups: data.sort ?? {} },
+        undefined,
+        data.filters === undefined && data.activeWindowSeconds === undefined
+          ? undefined
+          : {
+              version: 1,
+              groups: data.filters ?? {},
+              activeWindowSeconds: data.activeWindowSeconds,
+            },
       );
       // Display-only: do not initialize the confirmed mutation base from disk.
       publish({
@@ -679,6 +768,105 @@ export function createSidebarPreferencesStore(
         );
         return run;
       },
+      dismissFilterError(group: string) {
+        failedFilters.delete(group);
+        publish(snapshot);
+      },
+      get filterWritable() {
+        return (
+          !closed &&
+          !!writeFilter &&
+          !!confirmed &&
+          readFailure === undefined &&
+          !snapshot.cached
+        );
+      },
+      setFilter(
+        group: string,
+        mode: SidebarFilterMode,
+        sectionIds: readonly string[],
+        signal?: AbortSignal,
+        activeWindowSeconds?: number | null,
+      ) {
+        if (
+          closed ||
+          !writeFilter ||
+          !confirmed ||
+          readFailure !== undefined ||
+          snapshot.cached
+        )
+          return Promise.reject(
+            new Error("Sidebar filtering is read-only in this host"),
+          );
+        const writeGeneration = generation;
+        const writeSignal = AbortSignal.any([
+          writeLifetime.signal,
+          ...(signal ? [signal] : []),
+        ]);
+        if (writeSignal.aborted) return Promise.reject(writeSignal.reason);
+        const id = ++nextFilterMutation;
+        pendingFilters.set(id, {
+          group,
+          mode,
+          ...(activeWindowSeconds === undefined ? {} : { activeWindowSeconds }),
+        });
+        latestFilter.set(group, id);
+        failedFilters.delete(group);
+        mutation++;
+        project();
+        const settle = (settings?: SidebarFilterSettings) => {
+          if (closed || generation !== writeGeneration || !confirmed) return;
+          confirmed = {
+            ...confirmed,
+            ...(settings ?? {}),
+          };
+          pendingFilters.delete(id);
+          project();
+        };
+        const run = writeQueue
+          .catch(() => {})
+          .then(async () => {
+            if (closed || generation !== writeGeneration)
+              throw new Error("Sidebar filtering is unavailable");
+            try {
+              writeSignal.throwIfAborted();
+              const settings = await writeFilter(
+                group,
+                mode,
+                sectionIds,
+                writeSignal,
+                activeWindowSeconds,
+              );
+              if (closed || generation !== writeGeneration)
+                throw new Error("Sidebar filtering is unavailable");
+              writeSignal.throwIfAborted();
+              mutation++;
+              settle(settings);
+              return settings;
+            } catch (error) {
+              if (!closed && generation === writeGeneration) {
+                mutation++;
+                if (!writeSignal.aborted && latestFilter.get(group) === id)
+                  failedFilters.set(group, {
+                    group,
+                    mode,
+                    ...(activeWindowSeconds === undefined
+                      ? {}
+                      : { activeWindowSeconds }),
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                  });
+              }
+              settle();
+              throw error;
+            }
+          });
+        writeQueue = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run;
+      },
       get muteWritable() {
         return !!writeMute && !snapshot.cached;
       },
@@ -783,6 +971,9 @@ export function createSidebarPreferencesStore(
       pendingSorts.clear();
       latestSort.clear();
       failedSorts.clear();
+      pendingFilters.clear();
+      latestFilter.clear();
+      failedFilters.clear();
       readFailure = undefined;
       pendingMoves.clear();
       failedMoves.clear();
@@ -804,6 +995,9 @@ export function createSidebarPreferencesStore(
       pendingSorts.clear();
       latestSort.clear();
       failedSorts.clear();
+      pendingFilters.clear();
+      latestFilter.clear();
+      failedFilters.clear();
       readFailure = undefined;
       pendingMoves.clear();
       failedMoves.clear();

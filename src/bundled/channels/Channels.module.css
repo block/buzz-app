@@ -808,6 +808,20 @@ html[data-keyboard-navigation]
   white-space: nowrap;
   border: 0;
 }
+.channelMenuLabel {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.channelMenuLabel[data-ordinary] {
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-semibold);
+}
+.channelMenuIndicators {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
 .priorityDot,
 .threadActivityDot {
   display: block;

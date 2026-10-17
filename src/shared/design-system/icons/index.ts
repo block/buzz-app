@@ -98,6 +98,14 @@ import TablerChatCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessage
 export const ChatCircleIcon = defineIcon("tabler", TablerChatCircleIcon);
 import TablerChatsCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessages.mjs";
 export const ChatsCircleIcon = defineIcon("tabler", TablerChatsCircleIcon);
+import { ChatUnreadArtwork } from "./ChatUnread";
+export const ChatUnreadIcon = defineIcon("custom", ChatUnreadArtwork, {
+  meaning: "Conversations with unread messages",
+  category: "Message filtering",
+  provenance:
+    "Designer-requested adaptation of the MIT-licensed Tabler MessageCircle geometry with an unread dot.",
+  intendedSizes: [{ width: 14, height: 14 }],
+});
 import TablerCheckIcon from "@tabler/icons-react/dist/esm/icons/IconCheck.mjs";
 export const CheckIcon = defineIcon("tabler", TablerCheckIcon);
 import TablerChecksIcon from "@tabler/icons-react/dist/esm/icons/IconChecks.mjs";

@@ -1,14 +1,10 @@
 import { useState, useSyncExternalStore, type ReactNode } from "react";
-import { isTauri } from "@tauri-apps/api/core";
-import {
-  hasIntegratedWindowControls,
-  WindowControls,
-} from "../../app/shell/WindowControls";
-import { macTitleBarDragHandlers } from "../../app/shell/title-bar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Input } from "../../shared/design-system/ui/Input";
 import type { Identity } from "./service";
+import { SetupWindowHeader } from "./SetupWindowHeader";
 
+/** Key import/create gate; the app's first launch now uses Welcome instead. */
 export function IdentitySetup({
   identity,
   children,
@@ -19,20 +15,10 @@ export function IdentitySetup({
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
   const [importing, setImporting] = useState(false);
   const [nsec, setNsec] = useState("");
-  const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
-  const integratedWindowControls = hasIntegratedWindowControls();
   if (state.status === "ready") return children;
   return (
     <main className="p-8" aria-labelledby="identity-setup-title">
-      {(macDesktop || integratedWindowControls) && (
-        <header
-          className="-mx-8 -mt-8 mb-8 flex h-14 items-center justify-end px-3"
-          data-tauri-drag-region={integratedWindowControls || undefined}
-          {...(macDesktop ? macTitleBarDragHandlers : {})}
-        >
-          <WindowControls />
-        </header>
-      )}
+      <SetupWindowHeader />
       <h1 id="identity-setup-title" className="text-heading">
         Your Buzz identity
       </h1>

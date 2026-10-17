@@ -1,10 +1,149 @@
 # Packaged human identity and relay access
 
-Native macOS, Windows and Linux without the live development broker offer
-**Use an existing key** or **Create a new identity**. These are alternatives. Import accepts an nsec,
-validates its checksum and secp256k1 scalar, and persists that exact key before
-adopting its public identity. It never generates a replacement after an import,
-read or write failure. Denied/unavailable/corrupt storage is not first run.
+Native macOS, Windows and Linux without the live development broker open on a
+welcome screen when no human key exists on this device: **Buzz** — "Your people,
+your agents, your projects — all in one place." — with **Connect with Builderlab**,
+a live **Community URL** field with **Join** beside it (the same field and
+normalisation as Join a community below), and **Scan a QR code**, shown disabled as
+*Coming soon*. Connect runs the bundled Builderlab plugin's browser sign-in under
+that plugin's own native network grant; that credential is not yet shared with
+Settings → Integrations → Builderlab. A failed or canceled sign-in shows the
+error with **Back** to the welcome screen.
+
+A URL given on the welcome screen is looked up first, before sign-in and before
+any key exists: **Join** opens the same **Finding community** page described
+below, which sends only the two unauthenticated GETs, so a typo, an unreachable
+relay or a non-Buzz address fails there with the same classified copy; **Cancel**
+(and **Retry**, when offered) behave as below, except that Cancel returns to the
+welcome screen with the address kept in the field. A found community decides
+which sign-in follows: `discoverAuthentication` in
+`src/features/identity/builderlab-tenants.ts` matches the community's hostname,
+then its NIP-11 `self` key, against the
+[`BUZZ_BUILDERLAB_TENANTS` build table](configuration.md#builderlab-tenant-table-build-input).
+A match starts Builderlab sign-in at once at that tenant's portal (the same
+browser sign-in, exchange and account check, at the row's `loginOrigin` instead
+of `BUZZ_BUILDERLAB_URL`), and the welcome screen shows it pending (**Cancel
+sign-in**, with the field disabled). Cancel sign-in, and **Back** from a sign-in
+or setup failure, return to the welcome screen with the address kept and do not
+look it up again. A community no row hosts is not known to be Builderlab-hosted,
+so it skips sign-in entirely and goes straight to setup with the key alone.
+
+Success continues to a **Setting up Buzz** page that shows the current step
+beside a spinner. It runs *Finding communities* — only when no community URL
+was supplied on the welcome screen — and then *Checking for a backed-up key*;
+both are placeholders marked `[TODO]` that wait two seconds each until their
+backends exist (`src/features/identity/setup.ts`), and the lookup always
+answers that no key was found. Setup then pauses on **Set up your key**: it
+says no backed-up key was found for the signed-in email and that Builderlab
+can keep a copy so you can sign in on other devices, and offers **Manage my
+keys for me** and two smaller choices, **I want to manage my own key** and
+**I already have a key**. Manage runs **Creating keys** — the only
+step that does real work: it generates a Nostr key through the same native
+create command as the key setup screen, so the next launch opens as a
+returning user — then *Backing up your key*, a `[TODO]` placeholder; nothing
+is uploaded yet. Managing your own key runs **Creating keys** alone and pauses
+on **Your private identity key**: the nsec, shown on arrival (see [UI and
+sensitive data](#ui-and-sensitive-data)) with **Copy private key**, a checkbox
+*I’ve saved my private key somewhere safe*, and two actions — **Please back
+this up for me**, which runs the backup placeholder, and **Continue without
+backing up**, enabled only once the box is ticked. The page reads the key
+through the same `identity_export` command Settings → Profile uses; there is no
+save-to-file. **I already have a key** opens **Enter your private key** while
+setup stays paused: a masked private-key field — paste or type an `nsec1…` key,
+or drop or choose a text file of at most 1 KiB whose first line is one — with
+**Reveal private key**, a live *Public identity* npub preview under a valid key
+(never hex), and classified messages for anything else: a NIP-49 `ncryptsec1…`
+backup is refused as *Password-protected backups aren’t supported here yet*
+(the app has no NIP-49 decryption), other text as *That doesn’t look like a
+valid nsec*. **Back** returns to Set up your key with the typed key discarded;
+**Continue with this key**, enabled only for a valid nsec, stores it through the
+same native import command as the key setup screen (`identity_import`, which
+takes the nsec as typed) behind *Importing your key…*. A native refusal — an
+invalid key, or a key already saved in this slot — appears under the field with
+the form kept. An imported key is already backed up wherever it came from, so
+it skips the backup and reveal pages. Key-only setup (a community no tenant hosts) has no account to
+look a backup up in or back up to, so it runs **Creating keys** alone with no
+choice or reveal page. A failed step shows **Couldn’t finish setup** with the
+error and **Back** to the welcome screen. Setup then lands on
+**Join Community** for the address given on the welcome screen, looked up again
+(the policy may have changed meanwhile), or otherwise on **Join a community**:
+a **Community URL** field with **Join** beside it, and **Scan a QR code** and
+**Create a community**, both *Coming soon*. No invite list is shown; nothing
+serves pending invites yet.
+
+The URL field is live. A typed address may omit its scheme (`relay.example.com`
+is read as `wss://relay.example.com`); `wss://` and `https://` are accepted in any
+case, while `ws://`/`http://`, credentials, paths, queries and fragments are not
+(`enteredRelayOrigin` in `src/features/communities/destination.ts`). **Join** is
+enabled once the address is valid; Enter submits, and an invalid address shows
+*Please enter a valid community URL* under the field.
+
+Join opens **Finding community** (`src/features/communities/FindCommunity.tsx`,
+reusable by later flows): the hostname with a spinner and **Cancel**, which
+returns to Join a community with the typed address intact — however the user
+arrived there — and discards any late answer. The page reads the relay's NIP-11
+document and `/api/join-policy` in parallel through the identity-free native
+`relay_http` GET path. Those two unauthenticated GETs are the only pre-join
+traffic: nothing is signed with the device's key until the user chooses to join.
+On success it shows **Join Community**: only what the relay publishes — the
+icon if set and the hostname — plus, when the deployment has a join policy, *I am
+18 years of age or older.* (if age attestation is required) and *I agree to the
+Buzz Terms of Service and Privacy Policy.*, whose links open the relay's
+`/api/join-policy/terms` and `/privacy` pages outside the app. No name,
+description, member count, owner or invite badge is shown: none is knowable
+before joining. **Join** sits to the right of **Cancel**, as in every dialog
+footer, and is always labelled Join: shown consent boxes gate it, they do not
+rename it. Lookup failures are classified, not echoed: an unreachable relay or an
+unusable policy answer offers **Cancel** and **Retry** (a missing policy counts as
+"none" only once NIP-11 confirmed a Buzz relay); a non-Buzz address or a Buzz
+relay with no community bound to that host offers **Cancel** only.
+
+**Join** is the same join the rail's Add-a-community dialog performs when no
+invite code is typed, through the same owner (`communities.joined` in
+`src/features/communities/service.ts`, [communities](communities.md)): a signed
+profile read (`inspectProfile`: NIP-11 again, then a NIP-98-signed `POST /query`
+for the key's own kind 0) proves the relay admits this key, then the membership —
+the canonical origin as id, the hostname as name, the NIP-11 icon if set — is
+saved to this device and selected, and the gate lifts into the app on that
+community. While the read is in flight the page shows *Joining…* with Join and
+Cancel disabled. The join itself publishes nothing: no kind 0, no policy receipt
+or invite claim. The ticked boxes are the client's record of consent, as on the dialog's
+code-less path; a relay that requires an invite answers the read with 401/403,
+shown as **This community needs an invite**. Admins admit people by npub, so
+that page tells the user to send their public key to a community administrator
+and shows it as the full npub (never hex or an abbreviation) under *Your public
+key (npub)* with **Copy** and an inline copied/could-not-copy status, plus the
+note that it is their public identity and safe to share. **Try again** repeats
+the same join for that community, so an admin's add takes effect without
+retyping the address; **Back** returns to the find page (the typed address stays
+in the URL field behind it). There is no invite code field. A relay that cannot
+be reached shows the lookup's unreachable copy; a device record that will not
+save shows the service's storage message. Both offer **Back**. An existing relay
+profile seeds the empty local default.
+
+When the saved membership is the key's first (the device record held none
+before the join; a record restored with the key, or the `VITE_BUZZ_OPEN_RELAY`
+development seed, counts as having communities), the gate stays up for **Set up
+your profile** (`src/features/identity/ProfileStep.tsx`): the shared profile
+fields — avatar, required display name, optional description — prefilled from
+the relay's existing profile, or otherwise with the local part of the Builderlab
+email as the name (blank after key-only setup). **Continue** publishes the kind 0 to that one relay through
+the same signed `relay_sign` + `POST /events` route Settings → Profile uses
+(skipped when an existing relay profile is left unchanged), keeps the result as
+the device's local default for later joins, and enters the app on the community.
+Unlike Settings → Profile and the Add-a-community dialog, it does not read the
+profile back after the accepted receipt. A rejected publish stays on the step
+with the error inline and the draft intact. **Skip for now** enters the app with
+the membership alone and publishes nothing; Settings → Profile remains the
+editor. A key that already had a community enters the app directly.
+Denied/unavailable/corrupt storage is not first run and keeps the **Retry
+secure storage access** path.
+
+The key import/create screen (`IdentitySetup`) is no longer shown on first
+launch; the fixture below still renders it. Import accepts an nsec, validates its
+checksum and secp256k1 scalar, and persists that exact key before adopting its
+public identity. It never generates a replacement after an import, read or write
+failure.
 
 One native owner keeps the key in memory after successful restore. The new
 create-only secure-storage item is service `dev.local.buzz.foundation.identity` in release
@@ -51,7 +190,15 @@ npub and hex public key can be copied. The nsec is absent from the rendered fiel
 until Reveal; Copy can fetch it without revealing it. Hide, leaving Profile,
 window blur and document hiding retire pending reveals and clear the displayed
 secret. Failed private-key actions report fixed errors. Copy deliberately leaves
-the key on the OS clipboard; the UI warns about that.
+the key on the OS clipboard; the UI warns about that. The one exception is the
+first-run **Your private identity key** page, which fetches and shows the nsec on
+arrival (`PrivateKey` with `initiallyRevealed`): choosing to keep the only copy
+is the gesture. The same Hide, blur, hiding and unmount rules clear it there,
+and Reveal is offered again once it is hidden. The first-run **Enter your
+private key** page is the other: the typed, pasted or file-read nsec lives only
+in that page's state, masked until **Reveal private key**, and crosses IPC once,
+on **Continue with this key**, through `identity_import`; leaving the page
+discards it, and nothing logs or persists it.
 
 The app UI passes a private string through IPC only during explicit import/export
 interaction. JavaScript/IPC string memory is not guaranteed zeroized. Native
@@ -302,7 +449,8 @@ Use the existing environment-free fixture Vite config:
 bin/pnpm exec vite --config tests/fixtures/agent-control.vite.mjs --port 1547
 ```
 
-Open `/tests/fixtures/identity.html`. It uses mock IPC and an in-memory public
+Open `/tests/fixtures/identity.html`. It renders the key import/create screen
+(not the first-launch welcome) with mock IPC and an in-memory public
 fixture key, not an OS credential store or a relay. Import accepts only the
 displayed fixture key. Reset and simulated restart affect fixture state only. **Never enter a real
 nsec.** Browser exercises prove UI behavior, not secure native persistence.

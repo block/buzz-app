@@ -210,18 +210,22 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 /// The `BUZZ_BUILDERLAB_URL` build input's origin, or empty when unconfigured.
 pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
+/// Every Builderlab login origin the bundled plugin may reach: `BUILDERLAB_ORIGIN`
+/// and each distinct `BUZZ_BUILDERLAB_TENANTS` login origin, as build.rs joined them.
+pub fn builderlab_origins() -> Vec<String> {
+    env!("BUZZ_BUILDERLAB_ORIGINS")
+        .split(',')
+        .filter(|origin| !origin.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
 pub fn bundled_manifests() -> Vec<Manifest> {
     let mut builderlab: Manifest = serde_json::from_str(include_str!(
         "../../../src/bundled/builderlab/manifest.json"
     ))
     .expect("builderlab manifest");
-    let origin = BUILDERLAB_ORIGIN;
     builderlab.host = Some(HostGrants {
-        network_origins: if origin.is_empty() {
-            vec![]
-        } else {
-            vec![origin.into()]
-        },
+        network_origins: builderlab_origins(),
         ..HostGrants::default()
     });
     vec![
@@ -1868,14 +1872,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
         let grants = manager.host_grants("block.builderlab", "bundled").unwrap();
-        assert_eq!(
-            grants.network_origins,
-            if env!("BUZZ_BUILDERLAB_ORIGIN").is_empty() {
-                vec![]
-            } else {
-                vec![env!("BUZZ_BUILDERLAB_ORIGIN").to_owned()]
-            }
-        );
+        assert_eq!(grants.network_origins, super::builderlab_origins());
+        // The build URL's origin, when configured, is always granted first.
+        if !super::BUILDERLAB_ORIGIN.is_empty() {
+            assert_eq!(grants.network_origins[0], super::BUILDERLAB_ORIGIN);
+        }
         assert!(grants.commands.is_empty());
         assert!(manager
             .host_grants("block.builderlab", "wrong-revision")

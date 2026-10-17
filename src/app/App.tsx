@@ -1,5 +1,5 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
-import { IdentitySetup } from "../features/identity/IdentitySetup";
+import { Welcome } from "../features/identity/Welcome";
 import { MeSidebar } from "../bundled/me/MeSidebar";
 import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
@@ -45,9 +45,12 @@ export function App({ services }: { services: AppServices }) {
     <>
       <LaunchWindowControls />
       {services.identity ? (
-        <IdentitySetup identity={services.identity}>
+        <Welcome
+          identity={services.identity}
+          communities={services.communities}
+        >
           <ConnectedApp services={services} />
-        </IdentitySetup>
+        </Welcome>
       ) : (
         <ConnectedApp services={services} />
       )}

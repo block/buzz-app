@@ -91,9 +91,7 @@ test("window controls stay usable through the launch overlay and identity handof
         ),
       )
       .toBe(2);
-    await expect(
-      page.getByRole("heading", { name: "Your Buzz identity" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Buzz" })).toBeVisible();
     expect(errors.unexplained()).toEqual([]);
   } finally {
     await page.evaluate(() => window.windowChrome?.restore()).catch(() => {});

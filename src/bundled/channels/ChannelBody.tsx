@@ -18,7 +18,10 @@ export const ChannelBody = memo(function ChannelBody({
   navigation,
   onContentReady,
   activityLane,
+  solo = false,
 }: {
+  /** The Solo treatment: a flat, chat-style timeline that loads history on scroll. */
+  solo?: boolean | undefined;
   onContentReady?(channelId: string): void;
   /** The channel composer follows this body and shows conversation activity. */
   activityLane?: boolean | undefined;
@@ -113,6 +116,8 @@ export const ChannelBody = memo(function ChannelBody({
       revealMessageId={revealMessageId}
       navigation={navigation}
       activityLane={activityLane}
+      chatPresentation={solo}
+      historyControl={solo ? "scroll" : "button"}
     />
   );
 });

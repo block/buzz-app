@@ -106,6 +106,9 @@ for (const own of [true, false]) {
     await row.getByText("Room for actions", { exact: true }).hover();
     await expect(actions).toHaveAttribute("data-placement", "above");
     await expect(actions).not.toHaveCSS("box-shadow", "none");
+    // Park the pointer first: after the resize, its narrow-pane position can
+    // land on a sidebar activity badge whose hover popover covers the row.
+    await page.mouse.move(0, 0);
     await page.setViewportSize({ width: 1000, height: 1200 });
     await page.locator("html").evaluate((node) => {
       node.style.setProperty("--buzz-text-scale", "2");

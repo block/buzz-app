@@ -145,7 +145,7 @@ test("older session root and reply links fetch and reveal inline, then sending r
     }
   }
   const composer = page.getByRole("textbox", {
-    name: "Message this session",
+    name: "Message your agents",
     exact: true,
   });
   await composer.fill("Continue the session from an older link");
@@ -356,9 +356,8 @@ test.describe("Me layout", () => {
       workspace.getByRole("heading", { name: "Alpha", exact: true }),
     ).toBeVisible();
     await expectReachable();
-    await sidebar
-      .getByRole("button", { name: "New chat", exact: true })
-      .click();
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
     await expect(composer).toHaveText("Scaled session draft");
     await page.evaluate(() =>
       document.documentElement.style.setProperty("--buzz-text-scale", "1"),
@@ -367,8 +366,8 @@ test.describe("Me layout", () => {
   });
 });
 
-// The same session column is also hosted by Channels, outside SessionsWorkspace.
-test("Channels session columns use their available width at 200%", async ({
+// A session-marked channel uses the full conversation width in Messages.
+test("Channels session conversations use their available width at 200%", async ({
   page,
   app,
 }) => {
@@ -388,7 +387,7 @@ test("Channels session columns use their available width at 200%", async ({
     exact: true,
   });
   const composer = conversation.getByRole("textbox", {
-    name: "Message this session",
+    name: "Message your agents",
     exact: true,
   });
   await expect
@@ -397,7 +396,7 @@ test("Channels session columns use their available width at 200%", async ({
         const r = el.getBoundingClientRect();
         const panel = el.closest("article").getBoundingClientRect();
         const column = el
-          .closest('[class*="_column_"]')
+          .closest("[data-attachment-drop-zone]")
           .getBoundingClientRect();
         return (
           column.width > panel.width * 0.9 &&

@@ -362,8 +362,11 @@ export class ClaudeRuntime {
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     const topLevel =
-      (await this.reads(agent.pubkey)?.meChat(agent.owner, channel, signal)) ??
-      false;
+      (await this.reads(agent.pubkey)?.soloChat(
+        agent.owner,
+        channel,
+        signal,
+      )) ?? false;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);

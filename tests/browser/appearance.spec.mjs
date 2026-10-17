@@ -42,7 +42,7 @@ async function expectMode(page, mode, inSettings = false) {
   await expect(
     page
       .getByRole("complementary", {
-        name: inSettings ? "Settings sidebar" : "Channel sidebar",
+        name: inSettings ? "Settings sidebar" : "Sidebar",
         exact: true,
       })
       .getByRole("navigation", {

@@ -84,7 +84,7 @@ retain navigation semantics except for the wide shell topbar described in
 chrome, preserve a meaningful destination focus target, such as a named content
 region. Do not add a duplicate title or discard the focus handoff just because the
 shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
-body filters and list/detail ownership; [Sessions](../../bundled/sessions/SessionsPage.tsx)
+body filters and list/detail ownership; [Solo chats](../../bundled/channels/ChannelsPage.tsx)
 demonstrates a working area with a persistent composer. Neither is a blanket visual
 template: check the adoption review before copying their surrounding chrome.
 
@@ -496,6 +496,11 @@ glass remains; the flat shell does not establish a general glass contrast guaran
 
 ### Match controls to their surface
 
+Shell control groups use `Panel shape="capsule"` to share the workspace panel
+fill and shadow with rounded ends. Layout and overflow remain shell-owned.
+
+Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
+a capsule track and raised capsule selection (for example, sidebar scope).
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
 Chrome tab and route-navigation groups use a shared `affordance-subtle` capsule,
@@ -616,6 +621,17 @@ both themes, portals, supported states and actual product flows before adoption
 is called complete; token math alone cannot validate the CSS cascade.
 
 ## Controls
+
+Navigation labels are controls, not selectable document text. `NavigationItem`,
+tabs, and sidebar section/project disclosure headings prevent text selection,
+including when opening a context menu. Keep this behavior on the navigation
+control, not the shared context-menu trigger: messages, inline message links,
+and readable content remain selectable. Editable fields retain normal selection.
+Channel and chat sidebar rows whose context menu is visible keep their hover
+treatment through dismissal, without changing the selected destination. Selected
+rows retain their selected treatment. `ContextMenuTrigger` exposes
+`data-context-menu-present` for this visible lifetime, including the exit fade;
+features keep the row's treatment with its existing surface owner.
 
 Button and IconButton share prominent, subtle, ghost, inverted, destructive,
 outline and link emphasis. Inverted is for an inverse surface; link keeps its
@@ -814,12 +830,15 @@ Name it with PopoverTitle or aria-label; PopoverDescription connects
 supporting copy. Hover opening is optional and remains configured by its feature.
 Use `padding="none"` for an embedded picker that owns its internal spacing, such as
 emoji/GIF content.
-Menus and popovers use a quicker version of the form dropdown motion: 75ms entry
-and 60ms exit (half the state/fast duration tokens), a 2px offset and blur-to-sharp
-opacity fade. Movement uses
-easing-settle; opacity and filter use easing-state. The offset follows the actual
-placement side toward the trigger, including collision flips and nested menus.
-This extends the designer-requested blur exception to these anchored surfaces.
+Dropdown menus, submenus, and popovers use a quicker version of the form dropdown
+motion: 75ms entry and 60ms exit (half the state/fast duration tokens), a 2px offset
+and blur-to-sharp opacity fade. Movement uses easing-settle; opacity and filter use
+easing-state. The offset follows the actual placement side toward the trigger,
+including collision flips and nested menus. This extends the designer-requested
+blur exception to these anchored surfaces. Context menus appear immediately,
+without an entrance fade, movement, or blur; dismissal retains only the 60ms
+opacity fade. The shared menu root owns this distinction, so dropdowns opened
+inside a context-menu target and nested submenus keep their ordinary motion.
 Keyboard navigation and reduced motion remove transitions, movement, and blur. The Just
 Design Menu, Popover and ChoiceRow pages
 show these contracts and their compositions.
@@ -1538,17 +1557,17 @@ For full-page destinations, compose native-button `NavigationItem variant="pill"
 inside `nav.chrome-navigation`. It shares the chrome tab material and selected fill
 but keeps normal Tab/Enter and `aria-current="page"` semantics. Do not give route
 buttons a tablist/tabpanel relationship when selection moves focus to main content.
-The wide shell topbar is the deliberate exception: Solo and Multiplayer use
-`Tabs variant="chrome"` linked to the retained, labelled page panel. Arrow keys
+The wide shell topbar is the deliberate exception: global destinations use
+`Tabs variant="segmented"` linked to the retained, labelled page panel. Arrow keys
 move focus without selecting; Enter, Space or pointer selection changes the page
 while focus stays on its tab. The host passes per-opening focus intent so page
 autofocus does not override that handoff. Explicit content openings, including
 New conversation, retain their destination focus. This is not a general route-tab
 recipe: toolbar destinations and More pages overflow retain button semantics.
-Multiplayer represents the containing area for registered sidebar/default-placement
+Messages represents the containing area for registered sidebar/default-placement
 pages, while their sidebar selection and route remain exact. Its tab stays linked
 to the active child panel. The shell opts into Tabs' `onReselect` to return from a
-child to Multiplayer without changing ordinary active-tab behavior elsewhere. More
+child to Messages without changing ordinary active-tab behavior elsewhere. More
 pages marks that containing area with `aria-current="true"`, reserving `page` for
 an exact destination. Settings and independent header pages stay separate.
 

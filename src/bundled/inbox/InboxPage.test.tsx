@@ -3330,7 +3330,7 @@ it("Inbox session activity with multiple agents requires an explicit recipient",
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
   expect(
     await screen.findByText(
-      "There are multiple agents in this session. @mention who should respond.",
+      "There are multiple agents in this chat. @mention who should respond.",
     ),
   ).toBeInTheDocument();
   expect(h.published).toEqual([]);

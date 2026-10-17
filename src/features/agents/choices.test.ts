@@ -3,7 +3,7 @@ import { createLocalAgents } from "./local";
 import { localAgentsFixture } from "./local-testing";
 import { createAgentLibrary } from "./library";
 import { createAgentChoices, templateAgentChoices } from "./choices";
-import { sessionRecipients } from "../sessions/recipients";
+import { sessionRecipients } from "../solo/recipients";
 import type { IdentityArchiveSnapshot } from "../relay/identity-archives";
 
 const viewer = "aa".repeat(32);

@@ -49,7 +49,7 @@ test("search opens a new Solo session with one of the viewer's agents", async ({
     }),
   ).toBeVisible();
   // This browser fixture cannot start Solo sessions (it says so below the
-  // composer). NewSessionComposer tests cover the first message.
+  // composer). SoloDraft tests cover the first message.
   await page.screenshot({
     path: testInfo.outputPath("session.png"),
     clip: { x: 0, y: 0, width: 1440, height: 905 },

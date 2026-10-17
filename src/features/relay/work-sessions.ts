@@ -554,30 +554,19 @@ export function createWorkSessions(
         active,
       );
     },
-    create(
-      id: string,
-      title: string,
-      parentId?: string,
-      ttlSeconds?: number,
-      personal = false,
-      named = false,
-    ) {
+    create(id: string, title: string, ttlSeconds?: number, named = false) {
       writer();
       identifier(id);
-      if (parentId) identifier(parentId);
       if (named && !channelIdentity) throw channelIdentityUnsupported();
       if (!title.trim() || [...title].length > 120)
         throw new Error("Use a session title between 1 and 120 characters.");
       if (
         ttlSeconds !== undefined &&
-        (parentId ||
-          !Number.isInteger(ttlSeconds) ||
+        (!Number.isInteger(ttlSeconds) ||
           ttlSeconds <= 0 ||
           ttlSeconds > 2_147_483_647)
       )
         throw new Error("Choose a valid standalone session duration.");
-      if (parentId === id)
-        throw new Error("A session cannot be its own parent.");
       return writer().send({
         kind: 9007,
         content: "",
@@ -586,7 +575,7 @@ export function createWorkSessions(
           ["name", title],
           ["visibility", "private"],
           ["channel_type", "stream"],
-          ["about", sessionDescription(parentId, personal)],
+          ["about", sessionDescription(undefined, true)],
           ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
           ...(named ? channelLabelTags([SESSION_NAMED_LABEL]) : []),
         ],

@@ -96,7 +96,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     exact: true,
   });
   const composer = beta.getByRole("textbox", {
-    name: "Message this session",
+    name: "Message your agents",
     exact: true,
   });
   await expect(composer).toBeVisible();

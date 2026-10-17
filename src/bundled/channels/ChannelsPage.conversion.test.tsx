@@ -110,14 +110,14 @@ function fixture() {
   );
   const placementSet = vi.fn(async () => {});
   const placementState = {
-    ...owner.session.mePlacement.snapshot(),
+    ...owner.session.soloPlacement.snapshot(),
     status: "ready" as const,
   };
   const session = {
     ...owner.session,
     channelDetails: { ...owner.session.channelDetails, save },
-    mePlacement: {
-      ...owner.session.mePlacement,
+    soloPlacement: {
+      ...owner.session.soloPlacement,
       available: true,
       snapshot: () => placementState,
       refresh: async () => {},
@@ -162,7 +162,6 @@ function fixture() {
         <ChannelsPage
           relay={relay}
           panels={{ ...contribution, register() {}, resolve: () => undefined }}
-          pages={contribution}
           navigation={navigation}
         />
       </ToastProvider>
@@ -197,7 +196,7 @@ async function openConversion() {
   await waitFor(() => expect(confirm).toBeEnabled());
   return { user, trigger, dialog, confirm };
 }
-it("Messages conversion survives signed type replacement, announces completion and focuses the replacement header", async () => {
+it("Messages conversion survives signed type replacement, announces completion and focuses the channel composer", async () => {
   const t = fixture();
   const { user, dialog, confirm } = await openConversion();
   try {
@@ -224,7 +223,7 @@ it("Messages conversion survives signed type replacement, announces completion a
   expect(await screen.findByText("Converted to channel.")).toBeVisible();
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Channel actions" }),
+      screen.getByRole("textbox", { name: "Message #Work" }),
     ).toHaveFocus(),
   );
   expect(t.sign).toHaveBeenCalledOnce();
@@ -298,7 +297,7 @@ it("Messages header reopens removal recovery after confirmed metadata and a fail
   expect(t.publish).toHaveBeenCalledOnce();
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Channel actions" }),
+      screen.getByRole("textbox", { name: "Message #Work" }),
     ).toHaveFocus(),
   );
 });

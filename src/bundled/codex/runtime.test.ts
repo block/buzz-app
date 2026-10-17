@@ -260,9 +260,9 @@ function fixture(
           channels: [{ id: "channel", name: "test", channelType: "stream" }],
         }),
       },
-      mePlacement: {
+      soloPlacement: {
         state: { status: "ready" } as { status: string; error?: string },
-        snapshot: () => snapshot.session.mePlacement.state,
+        snapshot: () => snapshot.session.soloPlacement.state,
         refresh: vi.fn(async () => {}),
         has: (id: string) => personal.has(id),
       },
@@ -3150,7 +3150,7 @@ it("fails a session mention it cannot place until the placement can be read", as
   f.snapshot.session.channels.list = () => ({
     channels: [{ id: "channel", name: "test", channelType: "session" }],
   });
-  const placement = f.snapshot.session.mePlacement;
+  const placement = f.snapshot.session.soloPlacement;
   placement.state = { status: "error", error: "Recipe read failed" };
   await expect(f.runtime.run(f.delivery("@Codex hi"))).rejects.toThrow(
     "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
@@ -3201,7 +3201,7 @@ it("method calls: a thread and a turn make no relay-session call beyond the turn
     "agentMemories.open": f.memoryOpen,
     "memoryView.refresh": f.memoryView.refresh,
     "profiles.ensure": session.profiles.ensure,
-    "mePlacement.refresh": session.mePlacement.refresh,
+    "soloPlacement.refresh": session.soloPlacement.refresh,
     publish: f.publish,
     query: f.query,
     upload: f.upload,

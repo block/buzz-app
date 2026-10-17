@@ -11,10 +11,7 @@ import {
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { ChannelBody } from "./ChannelBody";
-import {
-  SessionColumn,
-  SessionHeading,
-} from "../../features/sessions/SessionPresentation";
+import { SoloColumn, SoloTitle } from "../../features/solo/SoloPresentation";
 import type { ConversationTab as Tab } from "./useChannelTabState";
 import type { PageNavigation } from "../../features/navigation/service";
 import styles from "./ChannelTabs.module.css";
@@ -83,7 +80,7 @@ export function ConversationTab({
         aria-label={`Conversation in ${channel.name}`}
       >
         <MessageManagementStatus />
-        {sessionConversation && <SessionHeading channel={channel} />}
+        {sessionConversation && <SoloTitle channel={channel} />}
         {tab.kind === "thread" ? (
           <ConversationThread
             active={active}
@@ -98,7 +95,7 @@ export function ConversationTab({
             close={close}
           />
         ) : (
-          <SessionColumn enabled={sessionConversation}>
+          <SoloColumn enabled={sessionConversation}>
             <ChannelBody
               viewer={session.viewer}
               cached={!!channel.cached}
@@ -108,10 +105,10 @@ export function ConversationTab({
               revealMessageId={sent}
             />
             <ConversationComposer
-              label={sessionConversation ? "Message this session" : undefined}
+              label={sessionConversation ? "Message your agents" : undefined}
               onSend={setSent}
             />
-          </SessionColumn>
+          </SoloColumn>
         )}
       </section>
     </ConversationChannel>

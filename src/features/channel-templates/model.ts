@@ -129,8 +129,8 @@ export function kitRecordFits(record: KitRecord) {
     new TextEncoder().encode(JSON.stringify(record)).length <= KIT_RECORD_BYTES
   );
 }
-export const meCapacityMessage =
-  "Solo storage is full. Move a conversation from Solo to Multiplayer, then try again.";
+export const soloCapacityMessage =
+  "Solo storage is full. Move a conversation from Solo to Team, then try again.";
 
 export function parseKitRecord(raw: unknown, community: string): KitRecord {
   const r = object(raw),
@@ -210,7 +210,7 @@ export function parseKitRecord(raw: unknown, community: string): KitRecord {
   if (!kitRecordFits(result))
     throw new Error(
       value.type === "groups"
-        ? meCapacityMessage
+        ? soloCapacityMessage
         : "This saved recipe exceeds 16 KiB; shorten its Canvas or selections",
     );
   return result;

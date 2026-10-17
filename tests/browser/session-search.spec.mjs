@@ -45,11 +45,11 @@ test("global search opens a legacy session without restoring nested sidebar rows
   await expect(dialog).toHaveCount(0);
   await expect(child).toBeHidden();
   await expect(
-    page.getByRole("textbox", { name: "Message this session", exact: true }),
+    page.getByRole("textbox", { name: "Message your agents", exact: true }),
   ).toBeVisible();
 
   // Remount so accidental onToggle persistence cannot be hidden by local state.
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await openPage(page, "Messages");
   await expect(disclosure).not.toHaveAttribute("open");
   await section.locator("summary").focus();

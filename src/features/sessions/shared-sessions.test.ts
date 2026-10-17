@@ -12,8 +12,8 @@ import {
   sharedSessionTags,
   sessionReferenceIds,
 } from "./shared-session-marker";
-import { sessionLinkMessage } from "./share";
-import { sessionDescription } from "./metadata";
+import { sessionLinkMessage } from "../solo/share";
+import { sessionDescription } from "../sessions/metadata";
 
 const key = new Uint8Array(32).fill(1);
 const event = (kind: number, tags: string[][], content = "", created_at = 10) =>

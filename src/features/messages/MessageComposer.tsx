@@ -1,9 +1,9 @@
 import { stageSessionCards } from "./composer-session-cards";
 import { sessionReferenceIds } from "../sessions/shared-session-marker";
 import { ComposerSessionCards } from "./ComposerSessionCards";
-import { legacyAssistantDraft } from "../sessions/legacy-assistant";
+import { legacyAssistantDraft } from "../solo/legacy-assistant";
 import { rememberAgentsPreference } from "./mention-preferences";
-import { pendingSessionDraft } from "../sessions/pending-start";
+import { pendingSoloDraft } from "../solo/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { messageButtonStyle } from "../../shared/theme/bubble-color";
 import { TypingPresentation } from "../conversation/typing-presentation";
@@ -38,7 +38,7 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
-import { sessionRecipients } from "../sessions/recipients";
+import { sessionRecipients } from "../solo/recipients";
 import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
@@ -1049,7 +1049,7 @@ function Composer({
     !sendAttempt.current?.signal.aborted &&
     session.channels.list().channels.find((item) => item.id === channelId)
       ?.parentChannelId === parentChannelId &&
-    (!personalConversation || session.mePlacement.has(channelId));
+    (!personalConversation || session.soloPlacement.has(channelId));
   // Only a fresh chat is seeded with the default. Once it has content, respect
   // edits and removals; accepted sends use the shared remembered-mention draft.
   const autoTagged = useRef<string | undefined>(undefined);
@@ -1183,7 +1183,7 @@ function Composer({
     return recipients;
   }
   function requireCompletedSessionStart() {
-    if (pendingSessionDraft(scope, channelId))
+    if (pendingSoloDraft(scope, channelId))
       throw new Error(
         "Finish setting up this conversation in Solo before sending messages.",
       );

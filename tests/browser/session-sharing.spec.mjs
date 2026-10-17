@@ -91,7 +91,7 @@ test("a session chip opens the same authorized conversation in the channel side 
     conversation.getByRole("region", { name: "Channel message history" }),
   ).toBeVisible();
   await expect(
-    conversation.getByRole("textbox", { name: "Message this session" }),
+    conversation.getByRole("textbox", { name: "Message your agents" }),
   ).toBeVisible();
   await expect(
     destination.getByRole("textbox", { name: "Message #Alpha" }),
@@ -103,7 +103,7 @@ test("a session chip opens the same authorized conversation in the channel side 
       .getBoundingClientRect();
     const pane = element.getBoundingClientRect();
     const composer = element
-      .querySelector('[aria-label="Message this session"]')
+      .querySelector('[aria-label="Message your agents"]')
       .closest("form")
       .getBoundingClientRect();
     return {
@@ -126,7 +126,7 @@ test("a session chip opens the same authorized conversation in the channel side 
       await page.setViewportSize({ width, height: 850 });
       await expect.poll(captionGap).toBe(2);
       await expect(
-        conversation.getByRole("textbox", { name: "Message this session" }),
+        conversation.getByRole("textbox", { name: "Message your agents" }),
       ).toBeInViewport();
       await page.screenshot({
         path: test.info().outputPath(`session-pane-${mode}-${width}.png`),
@@ -717,5 +717,21 @@ test.describe("Messages Share navigation", () => {
     await expect(
       dialog.getByRole("combobox", { name: "People or channel" }),
     ).toHaveValue("");
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Chat settings", exact: true })
+      .click();
+    const settings = page.getByRole("dialog", {
+      name: "Chat settings",
+      exact: true,
+    });
+    await expect(settings).toBeVisible();
+    const following = app.append(
+      "primary",
+      "alpha",
+      "Another visit retires chat settings",
+    );
+    await openSession(page, app, "alpha", following.id);
+    await expect(settings).toHaveCount(0);
   });
 });

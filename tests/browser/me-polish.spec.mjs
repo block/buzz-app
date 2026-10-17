@@ -233,7 +233,7 @@ test.describe("Berd-style Me organization", () => {
       name: "Solo conversations",
     });
     // Stable identity: after reload an unread count joins the accessible label.
-    const row = sidebar.locator(`[data-me-channel-id="${id}"]`);
+    const row = sidebar.locator(`[data-solo-channel-id="${id}"]`);
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
     await page.getByRole("menuitem", { name: "New project…" }).click();
@@ -880,32 +880,67 @@ test("Share grants access and posts a link without promoting or moving Me", asyn
 
 // App composition boundary: signed metadata switches Messages discoverability
 // without a route handoff, a new conversation, or a Me preference write.
-test("explicit conversion moves the same conversation from Me to Messages and keeps history", async ({
-  page,
-  app,
-}) => {
-  await page.goto(app.origin);
-  await openPage(page, "Me");
-  const sidebar = page.getByRole("navigation", { name: "Solo conversations" });
-  const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
-  await row.click();
-  await expect(
-    page.getByText(`primary ${id} message 0`, { exact: false }),
-  ).toBeVisible();
-  const shareTrigger = page.getByRole("button", { name: "Share", exact: true });
-  await shareTrigger.click();
-  const share = page.getByRole("dialog", { name: "Share session" });
-  const shareConvert = share.getByRole("button", {
-    name: "Convert to channel",
-    exact: true,
-  });
-  await expect(shareConvert).toBeEnabled();
-  for (const width of [390, 950, 1280]) {
-    await page.setViewportSize({ width, height: 850 });
-    await expect(shareConvert).toBeInViewport();
+for (const source of ["share", "sidebar"]) {
+  test(`explicit conversion moves the same conversation from Me to Messages and keeps history via ${source}`, async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Me");
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
+    const row = sidebar.getByRole("button", { name: "Alpha", exact: true });
+    await row.click();
     await expect(
-      share.getByRole("button", { name: "Done", exact: true }),
-    ).toBeInViewport();
+      page.getByText(`primary ${id} message 0`, { exact: false }),
+    ).toBeVisible();
+    const shareTrigger = page.getByRole("button", {
+      name: "Share",
+      exact: true,
+    });
+    await shareTrigger.click();
+    const share = page.getByRole("dialog", { name: "Share session" });
+    const shareConvert = share.getByRole("button", {
+      name: "Convert to channel",
+      exact: true,
+    });
+    await expect(shareConvert).toBeEnabled();
+    for (const width of [390, 950, 1280]) {
+      await page.setViewportSize({ width, height: 850 });
+      await expect(shareConvert).toBeInViewport();
+      await expect(
+        share.getByRole("button", { name: "Done", exact: true }),
+      ).toBeInViewport();
+      await expect
+        .poll(() =>
+          shareConvert.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            return element.contains(
+              document.elementFromPoint(
+                rect.x + rect.width / 2,
+                rect.y + rect.height / 2,
+              ),
+            );
+          }),
+        )
+        .toBe(true);
+    }
+    await page.setViewportSize({ width: 390, height: 850 });
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+    );
+    await share.getByRole("combobox", { name: "People or channel" }).focus();
+    let tabs = 0;
+    while (
+      tabs < 20 &&
+      !(await shareConvert.evaluate((el) => el === document.activeElement))
+    ) {
+      await page.keyboard.press("Tab");
+      tabs++;
+    }
+    await expect(shareConvert).toBeFocused();
+    await expect(shareConvert).toBeInViewport();
     await expect
       .poll(() =>
         shareConvert.evaluate((element) => {
@@ -919,157 +954,138 @@ test("explicit conversion moves the same conversation from Me to Messages and ke
         }),
       )
       .toBe(true);
-  }
-  await page.setViewportSize({ width: 390, height: 850 });
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
-  );
-  await share.getByRole("combobox", { name: "People or channel" }).focus();
-  let tabs = 0;
-  while (
-    tabs < 20 &&
-    !(await shareConvert.evaluate((el) => el === document.activeElement))
-  ) {
-    await page.keyboard.press("Tab");
-    tabs++;
-  }
-  await expect(shareConvert).toBeFocused();
-  await expect(shareConvert).toBeInViewport();
-  await expect
-    .poll(() =>
-      shareConvert.evaluate((element) => {
-        const rect = element.getBoundingClientRect();
-        return element.contains(
-          document.elementFromPoint(
-            rect.x + rect.width / 2,
-            rect.y + rect.height / 2,
-          ),
-        );
-      }),
-    )
-    .toBe(true);
-  await page.screenshot({
-    path: test.info().outputPath("share-convert-enlarged-390.png"),
-  });
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
-  );
-  await shareConvert.focus();
-  await page.keyboard.press("Enter");
-  const dialog = page.getByRole("dialog", {
-    name: "Convert to channel",
-    exact: true,
-  });
-  await expect(share).not.toBeVisible();
-  await expect(
-    dialog.getByRole("radio", { name: "Private", exact: true }),
-  ).toBeChecked();
-  await expect(
-    dialog.getByRole("radio", { name: "Public", exact: true }),
-  ).toHaveAccessibleDescription(
-    "Everyone in this community will be able to view this channel’s full history.",
-  );
-  const convert = dialog.getByRole("button", {
-    name: "Convert to channel",
-    exact: true,
-  });
-  await expect(convert).toBeEnabled();
-  for (const mode of ["light", "dark"]) {
-    await page.evaluate((value) => {
-      document.documentElement.dataset.colorMode = value;
-    }, mode);
-    for (const width of [390, 950, 1280]) {
-      await page.setViewportSize({ width, height: 850 });
-      await expect(convert).toBeEnabled();
-      await expect(convert).toBeInViewport();
-      await page.screenshot({
-        path: test.info().outputPath(`convert-${mode}-${width}.png`),
-      });
+    await page.screenshot({
+      path: test.info().outputPath("share-convert-enlarged-390.png"),
+    });
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+    );
+    await shareConvert.focus();
+    await page.keyboard.press("Enter");
+    const dialog = page.getByRole("dialog", {
+      name: "Convert to channel",
+      exact: true,
+    });
+    await expect(share).not.toBeVisible();
+    await expect(
+      dialog.getByRole("radio", { name: "Private", exact: true }),
+    ).toBeChecked();
+    await expect(
+      dialog.getByRole("radio", { name: "Public", exact: true }),
+    ).toHaveAccessibleDescription(
+      "Everyone in this community will be able to view this channel’s full history.",
+    );
+    const convert = dialog.getByRole("button", {
+      name: "Convert to channel",
+      exact: true,
+    });
+    await expect(convert).toBeEnabled();
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((value) => {
+        document.documentElement.dataset.colorMode = value;
+      }, mode);
+      for (const width of [390, 950, 1280]) {
+        await page.setViewportSize({ width, height: 850 });
+        await expect(convert).toBeEnabled();
+        await expect(convert).toBeInViewport();
+        await page.screenshot({
+          path: test.info().outputPath(`convert-${mode}-${width}.png`),
+        });
+      }
     }
-  }
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty("--buzz-text-scale", "2"),
-  );
-  await expect(convert).toBeEnabled();
-  await page.screenshot({
-    path: test.info().outputPath("convert-enlarged.png"),
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+    );
+    await expect(convert).toBeEnabled();
+    await page.screenshot({
+      path: test.info().outputPath("convert-enlarged.png"),
+    });
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    await expect(convert).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Enter");
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+    );
+    await expect(dialog).not.toBeVisible();
+    await expect(shareTrigger).toBeFocused();
+    expect(app.report.detailsPublications ?? []).toHaveLength(0);
+    if (source === "share") {
+      await shareTrigger.click();
+      await shareConvert.click();
+    } else {
+      await row.focus();
+      await row.press("Shift+F10");
+      await page
+        .getByRole("menuitem", { name: "Convert to channel", exact: true })
+        .click();
+    }
+    await expect(convert).toBeEnabled();
+    const publicChoice = dialog.getByRole("radio", {
+      name: "Public",
+      exact: true,
+    });
+    await publicChoice.click();
+    await expect(publicChoice).toBeChecked();
+    expect(app.report.detailsPublications ?? []).toHaveLength(0);
+    await convert.click();
+    await expect(dialog).not.toBeVisible();
+    await expect(
+      page.getByText("Converted to channel.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Channel actions" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    ).toBeFocused();
+    await expect(sidebar).toBeVisible();
+    await expect(sidebar.locator(`[data-solo-channel-id="${id}"]`)).toHaveCount(
+      0,
+    );
+    await expect(
+      page.getByText(`primary ${id} message 0`, { exact: false }),
+    ).toBeVisible();
+    expect(app.report.detailsPublications).toHaveLength(1);
+    const event = app.report.detailsPublications[0];
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.kind).toBe(9002);
+    expect(event.tags).toEqual([
+      ["h", id],
+      ["name", "Alpha"],
+      ["about", ""],
+      ["visibility", "open"],
+    ]);
+    const placements = (app.report.sidebarPublications ?? []).filter((entry) =>
+      entry.coordinate.startsWith("buzz-me-kit"),
+    );
+    expect(placements).toHaveLength(1);
+    expect(placements[0].blob.value.channels).toEqual([other]);
+    expect(placements[0].blob.value.assignments[id]).toBeUndefined();
+    expect(
+      app.report.publications.filter(({ event }) =>
+        [9, 9000, 9007, 30315].includes(event.kind),
+      ),
+    ).toHaveLength(0);
+    await openPage(page, "Messages");
+    const messages = page.getByRole("button", { name: "Alpha", exact: true });
+    await expect(messages).toBeVisible();
+    await messages.click();
+    await expect(
+      page.getByText(`primary ${id} message 0`, { exact: false }),
+    ).toBeVisible();
+    await openPage(page, "Me");
+    await expect(row).toHaveCount(0);
+    await expect(
+      sidebar.getByRole("button", { name: "Beta", exact: true }),
+    ).toBeVisible();
   });
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).focus();
-  await page.keyboard.press("Tab");
-  await expect(convert).toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await page.keyboard.press("Enter");
-  await page.evaluate(() =>
-    document.documentElement.style.setProperty("--buzz-text-scale", "1"),
-  );
-  await expect(dialog).not.toBeVisible();
-  await expect(shareTrigger).toBeFocused();
-  expect(app.report.detailsPublications ?? []).toHaveLength(0);
-  await row.focus();
-  await row.press("Shift+F10");
-  await page
-    .getByRole("menuitem", { name: "Convert to channel", exact: true })
-    .click();
-  await expect(convert).toBeEnabled();
-  const publicChoice = dialog.getByRole("radio", {
-    name: "Public",
-    exact: true,
-  });
-  await publicChoice.click();
-  await expect(publicChoice).toBeChecked();
-  expect(app.report.detailsPublications ?? []).toHaveLength(0);
-  await convert.click();
-  await expect(dialog).not.toBeVisible();
-  await expect(
-    page.getByText("Converted to channel.", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Channel actions" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeFocused();
-  await expect(sidebar).toHaveCount(0);
-  await expect(
-    page.getByText(`primary ${id} message 0`, { exact: false }),
-  ).toBeVisible();
-  expect(app.report.detailsPublications).toHaveLength(1);
-  const event = app.report.detailsPublications[0];
-  expect(verifyEvent(event)).toBe(true);
-  expect(event.kind).toBe(9002);
-  expect(event.tags).toEqual([
-    ["h", id],
-    ["name", "Alpha"],
-    ["about", ""],
-    ["visibility", "open"],
-  ]);
-  const placements = (app.report.sidebarPublications ?? []).filter((entry) =>
-    entry.coordinate.startsWith("buzz-me-kit"),
-  );
-  expect(placements).toHaveLength(1);
-  expect(placements[0].blob.value.channels).toEqual([other]);
-  expect(placements[0].blob.value.assignments[id]).toBeUndefined();
-  expect(
-    app.report.publications.filter(({ event }) =>
-      [9, 9000, 9007, 30315].includes(event.kind),
-    ),
-  ).toHaveLength(0);
-  await openPage(page, "Messages");
-  const messages = page.getByRole("button", { name: "Alpha", exact: true });
-  await expect(messages).toBeVisible();
-  await messages.click();
-  await expect(
-    page.getByText(`primary ${id} message 0`, { exact: false }),
-  ).toBeVisible();
-  await openPage(page, "Me");
-  await expect(row).toHaveCount(0);
-  await expect(
-    sidebar.getByRole("button", { name: "Beta", exact: true }),
-  ).toBeVisible();
-});
 
-// Browser-only: native modal focus handoff to a replacement Messages header.
-// The held metadata/completion ordering matrix lives in the mounted page test.
+  // Browser-only: native modal focus handoff to a replacement Messages header.
+  // The held metadata/completion ordering matrix lives in the mounted page test.
+}
+
 test("Messages conversion restores focus after its session header is replaced", async ({
   page,
   app,
@@ -1109,7 +1125,7 @@ test("Messages conversion restores focus after its session header is replaced", 
     page.getByText("Converted to channel.", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Channel actions" }),
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeFocused();
   await expect(
     page.getByText(`primary ${id} message 0`, { exact: false }),
@@ -1148,17 +1164,17 @@ test("Me and Messages share one resizable sidebar width", async ({
   });
   await page.goto(app.origin);
   await openPage(page, "Me");
-  await expect.poll(() => width("Solo sidebar")).toBe(260);
+  await expect.poll(() => width("Sidebar")).toBe(260);
   await handle.press("End");
-  await expect.poll(() => width("Solo sidebar")).toBe(520);
+  await expect.poll(() => width("Sidebar")).toBe(520);
   await openPage(page, "Messages");
-  await expect.poll(() => width("Channel sidebar")).toBe(520);
+  await expect.poll(() => width("Sidebar")).toBe(520);
   await handle.press("Home");
-  await expect.poll(() => width("Channel sidebar")).toBe(220);
+  await expect.poll(() => width("Sidebar")).toBe(220);
   await openPage(page, "Me");
-  await expect.poll(() => width("Solo sidebar")).toBe(220);
+  await expect.poll(() => width("Sidebar")).toBe(220);
   await page.reload();
-  await expect.poll(() => width("Solo sidebar")).toBe(220);
+  await expect.poll(() => width("Sidebar")).toBe(220);
 });
 
 test("unified session naming and lifetime retain host focus and save only explicit changes", async ({
@@ -1181,19 +1197,19 @@ test("unified session naming and lifetime retain host focus and save only explic
   await page.goto(app.origin);
   await openPage(page, "Me");
   const actions = page.getByRole("button", {
-    name: "Session settings",
+    name: "Chat settings",
     exact: true,
   });
   await actions.click();
   const settings = page.getByRole("dialog", {
-    name: "Session settings",
+    name: "Chat settings",
     exact: true,
   });
   const canvas = settings.getByRole("textbox", { name: /^Instructions/ });
   await expect(canvas).toBeVisible();
   await canvas.fill("Keep this local draft");
   const draftName = settings.getByRole("textbox", {
-    name: "Session name (optional)",
+    name: "Chat name (optional)",
     exact: true,
   });
   await draftName.fill("Make contrast meet accessibility standards");
@@ -1598,12 +1614,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     await page.setViewportSize({ width: 1280, height: 850 });
     await save.focus();
   };
-  await inspect(
-    settings,
-    draftSave,
-    "draft-lifetime",
-    "Session name (optional)",
-  );
+  await inspect(settings, draftSave, "draft-lifetime", "Chat name (optional)");
   await expect(draftSave).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(settings).not.toBeVisible();
@@ -1626,7 +1637,7 @@ test("unified session naming and lifetime retain host focus and save only explic
   ).toBeVisible();
   await actions.click();
   const lifetime = page.getByRole("dialog", {
-    name: "Session settings",
+    name: "Chat settings",
     exact: true,
   });
   const save = lifetime.getByRole("button", {
@@ -1646,7 +1657,7 @@ test("unified session naming and lifetime retain host focus and save only explic
   await page.keyboard.press("ArrowDown");
   await expect(temporary).toBeChecked();
   await lifetime.getByRole("button", { name: "Increase duration" }).click();
-  await inspect(lifetime, save, "session-lifetime", "Session name");
+  await inspect(lifetime, save, "session-lifetime", "Chat name");
   await expect(save).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Enter");
@@ -1656,7 +1667,7 @@ test("unified session naming and lifetime retain host focus and save only explic
   await row.focus();
   await row.press("Shift+F10");
   await page
-    .getByRole("menuitem", { name: "Session settings…", exact: true })
+    .getByRole("menuitem", { name: "Chat settings…", exact: true })
     .click();
   await expect(save).toBeEnabled();
   await expect(ongoing).toBeChecked();
@@ -1668,7 +1679,7 @@ test("unified session naming and lifetime retain host focus and save only explic
     .click();
   await lifetime.getByRole("button", { name: "Increase duration" }).click();
   await lifetime
-    .getByRole("textbox", { name: "Session name", exact: true })
+    .getByRole("textbox", { name: "Chat name", exact: true })
     .fill("Make contrast meet accessibility standards");
   await save.click();
   await expect(lifetime).not.toBeVisible();
@@ -1716,7 +1727,7 @@ test("unified session naming and lifetime retain host focus and save only explic
   await renamedRow.focus();
   await renamedRow.press("Shift+F10");
   await page
-    .getByRole("menuitem", { name: "Session settings…", exact: true })
+    .getByRole("menuitem", { name: "Chat settings…", exact: true })
     .click();
   await expect(save).toBeEnabled();
   await expect(temporary).toHaveAccessibleDescription(

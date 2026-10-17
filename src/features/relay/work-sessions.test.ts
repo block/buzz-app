@@ -1633,37 +1633,12 @@ it("permits editing only after a definitive rejection, never an uncertain send",
   expect(test.outbox.dismiss).toHaveBeenCalledWith(event.id);
 });
 
-it("starts a standalone session using existing private-channel creation without the Sessions extension", () => {
+it("starts a Solo chat using existing private-channel creation without the Sessions extension", () => {
   const test = setup();
   const id = "11111111-1111-4111-8111-111111111111";
   expect(test.service.available).toBe(true);
-  test.service.create(id, "Work");
+  test.service.create(id, "Solo");
   expect(test.outbox.send).toHaveBeenCalledWith({
-    kind: 9007,
-    content: "",
-    tags: [
-      ["h", id],
-      ["name", "Work"],
-      ["visibility", "private"],
-      ["channel_type", "stream"],
-      ["about", "Buzz session (buzz.sessions/v1)"],
-    ],
-  });
-  const parent = "22222222-2222-4222-8222-222222222222";
-  test.service.create(id, "Child", parent);
-  expect(test.outbox.send).toHaveBeenLastCalledWith({
-    kind: 9007,
-    content: "",
-    tags: [
-      ["h", id],
-      ["name", "Child"],
-      ["visibility", "private"],
-      ["channel_type", "stream"],
-      ["about", `${SESSION_CHANNEL_DESCRIPTION}\nparent:${parent}`],
-    ],
-  });
-  test.service.create(id, "Solo", undefined, undefined, true);
-  expect(test.outbox.send).toHaveBeenLastCalledWith({
     kind: 9007,
     content: "",
     tags: [
@@ -1671,11 +1646,9 @@ it("starts a standalone session using existing private-channel creation without 
       ["name", "Solo"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      ["about", `${SESSION_CHANNEL_DESCRIPTION}\npersonal`],
+      ["about", "Buzz session (buzz.sessions/v1)\npersonal"],
     ],
   });
-  expect(() => test.service.create(id, "Child", id)).toThrow(/own parent/);
-  expect(test.outbox.send).toHaveBeenCalledTimes(3);
 });
 
 it("creates an ordinary stream with explicit visibility and optional description", () => {
@@ -1959,7 +1932,7 @@ it.each([
 it("standalone session creation sends validated TTL in its single durable outbox command", () => {
   const h = setup();
   const id = "11111111-1111-4111-8111-111111111111";
-  h.service.create(id, "Work", undefined, 600);
+  h.service.create(id, "Work", 600);
   expect(h.outbox.send).toHaveBeenCalledWith({
     kind: 9007,
     content: "",
@@ -1968,24 +1941,19 @@ it("standalone session creation sends validated TTL in its single durable outbox
       ["name", "Work"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      ["about", SESSION_CHANNEL_DESCRIPTION],
+      ["about", sessionDescription(undefined, true)],
       ["ttl", "600"],
     ],
   });
   for (const ttl of [0, -1, 1.5, 2147483648, NaN])
-    expect(() => h.service.create(id, "Work", undefined, ttl)).toThrow(
-      "duration",
-    );
-  expect(() =>
-    h.service.create(id, "Work", "22222222-2222-4222-8222-222222222222", 600),
-  ).toThrow("standalone");
+    expect(() => h.service.create(id, "Work", ttl)).toThrow("duration");
   expect(h.outbox.send).toHaveBeenCalledOnce();
 });
 
 it("creates a custom title and lifetime in one legacy-compatible command without a rename", () => {
   const h = setup(),
     id = "11111111-1111-4111-8111-111111111111";
-  h.service.create(id, "Named", undefined, 600);
+  h.service.create(id, "Named", 600);
   expect(h.outbox.send).toHaveBeenCalledOnce();
   expect(h.outbox.send).toHaveBeenCalledWith({
     kind: 9007,
@@ -1995,7 +1963,7 @@ it("creates a custom title and lifetime in one legacy-compatible command without
       ["name", "Named"],
       ["visibility", "private"],
       ["channel_type", "stream"],
-      ["about", sessionDescription()],
+      ["about", sessionDescription(undefined, true)],
       ["ttl", "600"],
     ],
   });

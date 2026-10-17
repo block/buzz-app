@@ -103,9 +103,9 @@ function setup(
       ensure: vi.fn(async () => {}),
       snapshot: () => new Map(),
     },
-    mePlacement: {
+    soloPlacement: {
       state: { status: "ready" } as { status: string; error?: string },
-      snapshot: () => session.mePlacement.state,
+      snapshot: () => session.soloPlacement.state,
       refresh: vi.fn(async () => {}),
       has: (id: string) => !!options.me?.has(id),
     },
@@ -114,7 +114,12 @@ function setup(
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
   const core = vi.fn(async () => options.core);
-  const runtime = new GooseRuntime(host, () => relay, core);
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  } as Storage;
+  const runtime = new GooseRuntime(host, () => relay, core, storage);
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,
@@ -161,7 +166,7 @@ function setup(
     published,
     read,
     runtime,
-    placement: session.mePlacement,
+    placement: session.soloPlacement,
     memoryOpen: session.agentMemories.open,
   };
 }

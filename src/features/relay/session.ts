@@ -1,12 +1,12 @@
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
-import { createMePreferences, meGroups } from "./me-preferences";
+import { createSoloPreferences, soloGroups } from "./solo-preferences";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import type { LocalAgents } from "../agents/local";
-import type { GitRead } from "../projects/git";
-import { projectDestinations } from "../projects/destinations";
+import type { GitRead } from "../repos/git";
+import { repoDestinations } from "../repos/destinations";
 import { createAgentChoices, templateAgentChoices } from "../agents/choices";
 import { parseLineup } from "../channel-templates/model";
 import { createChannelKit } from "../channel-templates/capability";
@@ -826,7 +826,7 @@ export function createRelaySession(
   );
   canAccess = channels.canAccess;
   retainedChannelEvent = channels.retainedEvent;
-  const projects = projectDestinations(async (filters, signal) => {
+  const repositories = repoDestinations(async (filters, signal) => {
     const bound = AbortSignal.any([signal, lifetime.signal]);
     bound.throwIfAborted();
     const events = await requests.reader.read(filters, { signal: bound });
@@ -1277,7 +1277,7 @@ export function createRelaySession(
     canWrite: (id) => !closed && channels.canParticipate(id),
     delivered: workSessions.delivered,
   });
-  const mePreferences = createMePreferences(
+  const soloPreferences = createSoloPreferences(
     channelKit.capability,
     lifetime.signal,
   );
@@ -1401,14 +1401,14 @@ export function createRelaySession(
         : undefined;
     })(),
   );
-  let meHead: string | undefined;
-  const stopMeGroups = channelKit.capability.subscribe(() => {
+  let soloHead: string | undefined;
+  const stopSoloGroups = channelKit.capability.subscribe(() => {
     const state = channelKit.capability.snapshot();
     if (state.status !== "ready") return;
-    const nextMe = meGroups(state.entries)?.eventId;
-    if (nextMe !== meHead) {
-      meHead = nextMe;
-      void mePreferences.queries.refresh();
+    const nextSolo = soloGroups(state.entries)?.eventId;
+    if (nextSolo !== soloHead) {
+      soloHead = nextSolo;
+      void soloPreferences.queries.refresh();
     }
   });
   type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
@@ -1753,9 +1753,9 @@ export function createRelaySession(
           () => void channelKit.capability.refresh(),
         ),
         recoverable(
-          mePreferences.placement.subscribe,
-          () => loadState(mePreferences.placement.snapshot()),
-          () => void mePreferences.placement.refresh(),
+          soloPreferences.placement.subscribe,
+          () => loadState(soloPreferences.placement.snapshot()),
+          () => void soloPreferences.placement.refresh(),
         ),
         recoverable(
           sidebarPreferences.queries.subscribe,
@@ -1873,8 +1873,8 @@ export function createRelaySession(
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
-    mePreferences: mePreferences.queries,
-    mePlacement: mePreferences.placement,
+    soloPreferences: soloPreferences.queries,
+    soloPlacement: soloPreferences.placement,
     reminders: reminders?.capability,
     live,
     /** The one automatic retry owner for background reads. Undefined offline. */
@@ -2046,7 +2046,7 @@ export function createRelaySession(
     agentChoices,
     inboxFeed,
     workflows: workflows.capability,
-    projects,
+    repositories,
     projectGit: transport?.projectGit
       ? {
           async read(input: GitRead, signal: AbortSignal) {
@@ -2684,7 +2684,7 @@ export function createRelaySession(
         catchupQueue.clear();
         dropHintConfirmations();
         requests.invalidate();
-        projects.clearHomes();
+        repositories.clearHomes();
         agentLibrary.clear();
         archives.clear();
         workflows.interrupt();
@@ -2835,7 +2835,7 @@ export function createRelaySession(
         activityRosterKey = undefined;
         typing.clear();
         sidebarPreferences.clear();
-        mePreferences.clear();
+        soloPreferences.clear();
         channelKit.clear();
         lifecycle.clear();
         details.clear();
@@ -2848,7 +2848,7 @@ export function createRelaySession(
         unread.clear();
         inboxFeed.clear();
         requests.invalidate();
-        projects.clearHomes();
+        repositories.clearHomes();
         profiles.clear();
         emoji.clear();
         statuses.clear();
@@ -2867,11 +2867,11 @@ export function createRelaySession(
       }
     },
     dispose() {
-      stopMeGroups();
+      stopSoloGroups();
       closed = true;
       stopLiveRecovery();
       recovery?.dispose();
-      projects.clearHomes();
+      repositories.clearHomes();
       typing.dispose();
       lifetime.abort();
       activity.dispose();
@@ -2881,7 +2881,7 @@ export function createRelaySession(
       stopActivityRoster();
       stopActivityPreferences();
       sidebarPreferences.dispose();
-      mePreferences.dispose();
+      soloPreferences.dispose();
       // Before requests.dispose(): lifecycle rereads retired shared reads
       // until its own controllers abort.
       lifecycle.dispose();

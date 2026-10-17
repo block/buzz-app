@@ -1,6 +1,6 @@
 import { validateRecording, type VoiceRecording } from "../relay/voice-media";
 import { useState, useSyncExternalStore } from "react";
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import {
   UPLOAD_MAX_BYTES,
   UploadError,
@@ -68,13 +68,14 @@ export function transferAttachmentDraft(
   to.receive(from.take());
 }
 
-const drafts = new WeakMap<RelaySession, Map<string, AttachmentDraft>>();
+const drafts = new WeakMap<ComposerSession, Map<string, AttachmentDraft>>();
+
 export const MAX_ATTACHMENT_FILES = 10;
 const MAX_RETAINED_BYTES = 2 * UPLOAD_MAX_BYTES;
 
 /** Tab-local files survive navigation, not reload. Delivery remains outbox-owned. */
 export function attachmentDraft(
-  session: RelaySession,
+  session: ComposerSession,
   key: string,
   channelId: string,
 ): AttachmentDraft {
@@ -170,7 +171,10 @@ export function attachmentDraft(
       transfer: undefined,
     });
     try {
-      const prepared = await prepareAttachment(item.file, combined);
+      const prepared = await (attachments.prepare ?? prepareAttachment)(
+        item.file,
+        combined,
+      );
       combined.throwIfAborted();
       task.update(item.id, { status: "uploading" });
       const result = await abortable(
@@ -349,7 +353,10 @@ export function attachmentDraft(
       return uploaded;
     },
     remove(id: string) {
+      const uploaded = items.find((item) => item.id === id)?.uploaded;
+      if (uploaded) session.attachments?.release?.(uploaded);
       active.get(id)?.controller.abort();
+
       active.delete(id);
       pending.delete(id);
       items = items.filter((item) => item.id !== id);
@@ -369,6 +376,8 @@ export function attachmentDraft(
       pump();
     },
     clear() {
+      for (const item of items)
+        if (item.uploaded) session.attachments?.release?.(item.uploaded);
       cancelActive();
       items = [];
       emit();
@@ -402,7 +411,7 @@ export function attachmentDraft(
 
 /** A confirmed deletion discards only this session's exact scoped composer files.
  * A missing store is a no-op; do not allocate a draft merely to clear it. */
-export function clearAttachmentDraft(session: RelaySession, key: string) {
+export function clearAttachmentDraft(session: ComposerSession, key: string) {
   const owners = drafts.get(session);
   const store = owners?.get(key);
   if (!store) return;
@@ -411,7 +420,7 @@ export function clearAttachmentDraft(session: RelaySession, key: string) {
 }
 
 export function useAttachmentDraft(
-  session: RelaySession,
+  session: ComposerSession,
   key: string,
   channelId: string,
 ) {

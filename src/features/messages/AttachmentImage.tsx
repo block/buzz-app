@@ -14,6 +14,7 @@ export function AttachmentImage({
   source,
   cached = false,
   onOpenReview,
+  onOpenLink,
   keepMounted,
   label = "Open image attachment",
 }: {
@@ -22,6 +23,7 @@ export function AttachmentImage({
   source: string | undefined;
   cached?: boolean;
   onOpenReview?: (attachment: Attachment, seconds: number) => void;
+  onOpenLink?: ((url: string) => boolean) | undefined;
   /** Pins the owning row in a virtualized list; returns the release. */
   keepMounted?: (() => () => void) | undefined;
 }) {
@@ -112,7 +114,7 @@ export function AttachmentImage({
           event.preventDefault();
           prepareReviewEntrance(event);
           if (onOpenReview) onOpenReview(attachment, 0);
-          else setViewerOpen(true);
+          else if (!onOpenLink?.(attachment.url)) setViewerOpen(true);
         }}
       >
         {/* Retargeting retires both the DOM pixels and all pending callbacks before

@@ -195,6 +195,7 @@ export function createChannelStore(
     : null;
   // Restored metadata needs confirmation independently of roster progress/retries.
   const pendingMetadata = new Set<string>();
+  const checkedMetadata = new Set<string>();
   const heads = new ByteLru<Head>(maxHeads, maxHeadBytes);
   const windows = new Map<string, WindowState>();
   const tails = new ByteLru<{
@@ -231,11 +232,22 @@ export function createChannelStore(
       listeners.delete(callback);
     };
   }
+  function metadataPending(id: string) {
+    return discovery &&
+      !discovery.metadataVersion(id) &&
+      !checkedMetadata.has(id)
+      ? true
+      : undefined;
+  }
   function setList(next: ChannelList, discoveryChanged = false) {
     const previous = new Map(
       list.channels.map((channel) => [channel.id, channel]),
     );
+    const retained = new Set(next.channels.map((channel) => channel.id));
+    for (const id of checkedMetadata)
+      if (!retained.has(id)) checkedMetadata.delete(id);
     const channels = next.channels.map((channel) => {
+      const pending = metadataPending(channel.id);
       const preview =
         messagePreview(windows.get(channel.id)?.snapshot.rows) ??
         tails.peek(channel.id)?.preview ??
@@ -244,12 +256,14 @@ export function createChannelStore(
       return old &&
         old.name === channel.name &&
         old.description === channel.description &&
+        old.metadataPending === pending &&
         old.visibility === channel.visibility &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
         old.private === channel.private &&
         old.channelType === channel.channelType &&
         old.parentChannelId === channel.parentChannelId &&
+        old.huddle === channel.huddle &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
         old.ttlSeconds === channel.ttlSeconds &&
@@ -264,7 +278,7 @@ export function createChannelStore(
           (id, index) => id === channel.participants?.[index],
         )
         ? old
-        : Object.freeze({ ...channel, preview });
+        : Object.freeze({ ...channel, metadataPending: pending, preview });
     });
     const sameChannels =
       channels.length === list.channels.length &&
@@ -905,7 +919,7 @@ export function createChannelStore(
         saved.savedAt > now() ||
         now() - saved.savedAt > 86_400_000 ||
         !Array.isArray(saved.events) ||
-        saved.events.length > 2048 ||
+        saved.events.length > 3072 ||
         byteSize(saved) > 8 * 1024 * 1024
       )
         return;
@@ -947,6 +961,60 @@ export function createChannelStore(
     } catch {
       // Missing, corrupt or unavailable device storage never blocks fresh reads.
     }
+  }
+  // One bounded receipt lookup per metadata version; no content access is granted.
+  const creationReads = new Map<string, string>();
+  function readCreations(events: readonly RelayEvent[]) {
+    if (!transport || !discovery || options.cachedOnly) return;
+    const filters = events.flatMap((event) => {
+      const id = tag(event, "d");
+      const identity = channelIdentity(event);
+      if (
+        event.kind !== 39000 ||
+        event.pubkey !== transport.relayAuthor ||
+        !id ||
+        discovery.metadataVersion(id)?.id !== event.id ||
+        discovery.get(id)?.huddle ||
+        !identity.creator ||
+        creationReads.get(id) === event.id
+      )
+        return [];
+      creationReads.set(id, event.id);
+      return [
+        {
+          kinds: [9007],
+          authors: [identity.creator],
+          "#h": [id],
+          limit: 1,
+        },
+      ];
+    });
+    if (!filters.length) return;
+    const generation = epoch;
+    const controller = new AbortController();
+    controllers.add(controller);
+    const reader = transport;
+    void (async () => {
+      // The shared reader accepts at most four filters per request.
+      for (let offset = 0; offset < filters.length; offset += 4) {
+        const receipts = await reader.read(filters.slice(offset, offset + 4), {
+          signal: controller.signal,
+        });
+        if (disposed || generation !== epoch || controller.signal.aborted)
+          return;
+        applyDiscovery(receipts.filter((event) => event.kind === 9007));
+      }
+    })()
+      .catch(() => {
+        // Unavailable proof leaves an ordinary channel. A later metadata refresh
+        // may retry; never turn a failed proof read into loss of channel access.
+        for (const event of events) {
+          const id = tag(event, "d");
+          if (id && creationReads.get(id) === event.id)
+            creationReads.delete(id);
+        }
+      })
+      .finally(() => controllers.delete(controller));
   }
   function applyDiscovery(
     events: readonly RelayEvent[],
@@ -1043,6 +1111,7 @@ export function createChannelStore(
         if (windows.has(channel.id)) queries.ensure(channel.id);
       }
     }
+    if (!cached && !disposed) readCreations(events);
     return !disposed && appliedEpoch === epoch;
   }
   /** Apply roster authority as soon as it succeeds; names are a separate,
@@ -1053,9 +1122,14 @@ export function createChannelStore(
     // pause they retain an obligation, not another request with a deadline.
     if (force) listAgain = true;
     if (strong) strongListAgain = true;
+    if (!listBusy && performance.now() < listRetryAt) {
+      // A newly mounted reader still needs a settled result for its retry.
+      // Publish the existing error without bypassing the relay's cooldown.
+      if (list.status === "error") setList(list, true);
+      return;
+    }
     if (
       listBusy ||
-      performance.now() < listRetryAt ||
       (!listAgain &&
         list.status === "ready" &&
         rosterRefresh.state === "verified")
@@ -1328,6 +1402,8 @@ export function createChannelStore(
           { signal: controller.signal },
         );
         if (disposed || generation !== epoch) return;
+        for (const id of wanted.slice(offset, offset + DISCOVERY_LIMIT))
+          checkedMetadata.add(id);
         applyDiscovery(metadata);
         if (disposed || generation !== epoch) return;
       }
@@ -1427,7 +1503,10 @@ export function createChannelStore(
     if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
     const ids = [...new Set(channelIds)].filter(
-      (id) => !discovery.authorized(id) || discovery.get(id)?.cached,
+      (id) =>
+        !discovery.authorized(id) ||
+        discovery.get(id)?.cached ||
+        !discovery.metadataVersion(id),
     );
     if (!ids.length) return;
     if (ids.length > 128) throw new Error("Too many search result channels");
@@ -1501,6 +1580,7 @@ export function createChannelStore(
       )
         resumed = discovery.resume(id) || resumed;
     }
+    for (const id of ids) checkedMetadata.add(id);
     // A bounded exact roster fills omissions from capped discovery. Apply grants
     // before private metadata so a newly resolved member never transiently loses access.
     applyDiscovery([
@@ -1894,6 +1974,7 @@ export function createChannelStore(
   }
   async function clearCache() {
     epoch++;
+    creationReads.clear();
     hydration = undefined;
     revealHydration?.();
     initialHydration = new Promise<void>((resolve) => {
@@ -2144,7 +2225,10 @@ export function createChannelStore(
   }
   const queries: ChannelQueries = Object.freeze({
     list: () => list,
-    get: (id: string) => discovery?.get(id),
+    get: (id: string) => {
+      const channel = discovery?.get(id);
+      return channel && { ...channel, metadataPending: metadataPending(id) };
+    },
     resolve,
     searchPublic,
     findLabeled,
@@ -2438,8 +2522,9 @@ export function createChannelStore(
         for (const event of events) {
           if (
             incomingIds.has(event.id) ||
-            ![9, 40002, 40008, 40099, 40003, 5, 9005, 7, 39005].includes(
-              event.kind,
+            !(
+              channelRowKind(event.kind) ||
+              [40003, 5, 9005, 7, 39005].includes(event.kind)
             )
           )
             continue;
@@ -2517,6 +2602,7 @@ export function createChannelStore(
   ) {
     const hadHydration = hydration !== undefined;
     epoch++;
+    creationReads.clear();
     revokedEpoch = epoch;
     hydration = undefined;
     revealHydration?.();
@@ -2599,6 +2685,7 @@ export function createChannelStore(
     unsubscribeLocal?.();
     unsubscribeProfiles();
     epoch++;
+    creationReads.clear();
     media.dispose();
     for (const controller of controllers) controller.abort();
     for (const state of windows.values()) {

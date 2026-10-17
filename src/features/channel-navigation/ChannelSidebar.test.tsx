@@ -11,6 +11,9 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi, assert } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { DiscoveryState } from "../relay/discovery";
+import { keypair, metadata, roster, signed } from "../relay/testing";
+import { huddleDescription } from "../huddle/lifecycle";
 import { createRelaySession } from "../relay/session";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import type {
@@ -560,6 +563,143 @@ it.each(["Laptop", "Channels", "Starred"])(
     }
   },
 );
+
+it("keeps Huddle rooms out of the sidebar before and after metadata arrives", async () => {
+  const h = fixture();
+  const relay = keypair(),
+    viewer = keypair();
+  const room = "11111111-1111-4111-8111-111111111111";
+  const parent = "22222222-2222-4222-8222-222222222222";
+  const discovery = new DiscoveryState(viewer.pubkey, relay.pubkey);
+  discovery.accept(roster(relay, room, [viewer.pubkey]));
+  discovery.accept(roster(relay, "legacy", [viewer.pubkey]));
+  discovery.accept(metadata(relay, "legacy", "Legacy channel"));
+  let list: ChannelList = {
+    ...h.list,
+    channels: [
+      ...h.list.channels,
+      ...discovery
+        .channels()
+        .map((channel) =>
+          channel.id === room ? { ...channel, metadataPending: true } : channel,
+        ),
+      {
+        id: "private",
+        name: "Private project",
+        channelType: "stream",
+        visibility: "private",
+      },
+    ],
+  };
+  h.session.channels.list = () => list;
+  const mounted = render(h.view("alpha"));
+  expect(
+    await screen.findByRole("button", { name: "Private project" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: room.slice(0, 8) })).toBeNull();
+  discovery.accept(
+    metadata(relay, room, "Call room", 30, [
+      ["private"],
+      ["about", huddleDescription(parent)],
+      ["P", viewer.pubkey],
+    ]),
+  );
+  discovery.accept(
+    signed(viewer, {
+      kind: 9007,
+      created_at: 10,
+      content: "",
+      tags: [
+        ["h", room],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ["about", huddleDescription(parent)],
+      ],
+    }),
+  );
+  list = {
+    ...list,
+    channels: [
+      ...list.channels.filter((c) => c.id !== room && c.id !== "legacy"),
+      ...discovery.channels(),
+    ],
+  };
+  mounted.rerender(h.view("alpha"));
+  expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Legacy channel" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Private project" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Call room" })).toBeNull();
+});
+
+it("keeps unproven trial rooms ordinary despite signed expiry metadata", async () => {
+  const h = fixture();
+  const relay = keypair(),
+    viewer = keypair();
+  const discovery = new DiscoveryState(viewer.pubkey, relay.pubkey);
+  const legacy = "33333333-3333-4333-8333-333333333333";
+  const cases = [
+    {
+      id: "trial",
+      name: "Huddle",
+      tags: [["private"], ["ttl", "3600"]],
+      hidden: false,
+    },
+    {
+      id: legacy,
+      name: `huddle-${legacy.slice(0, 8)}`,
+      tags: [["private"], ["ttl", "60"], ["archived", "true"]],
+      hidden: false,
+    },
+    { id: "ordinary", name: "Huddle", tags: [["private"]], hidden: false },
+    {
+      id: "expiring",
+      name: "Private project",
+      tags: [["private"], ["ttl", "3600"]],
+      hidden: false,
+    },
+    {
+      id: "public",
+      name: "Huddle",
+      tags: [["public"], ["ttl", "3600"]],
+      hidden: false,
+    },
+    {
+      id: "invalid",
+      name: "Huddle",
+      tags: [["private"], ["ttl", "broken"]],
+      hidden: false,
+    },
+  ];
+  for (const item of cases) {
+    discovery.accept(roster(relay, item.id, [viewer.pubkey]));
+    discovery.accept(
+      metadata(relay, item.id, item.name, 30, [["t", "stream"], ...item.tags]),
+    );
+    expect(discovery.get(item.id)?.huddle === true).toBe(item.hidden);
+    // Presentation classification neither removes membership nor invents parent access.
+    expect(discovery.authorized(item.id)).toBe(true);
+    expect(discovery.get(item.id)?.parentChannelId).toBeUndefined();
+  }
+  const list = {
+    ...h.list,
+    channels: [...h.list.channels, ...discovery.channels()],
+  };
+  h.session.channels.list = () => list;
+  render(h.view("alpha"));
+  expect(
+    await screen.findByRole("button", {
+      name: "Private projectTemporary channel. Cleans up after 1 hour without activity.",
+    }),
+  ).toBeVisible();
+  expect(
+    screen.getAllByRole("button", {
+      name: /^Huddle(?:Temporary channel\. Cleans up after 1 hour without activity\.)?$/,
+    }),
+  ).toHaveLength(4);
+  expect(
+    screen.queryByRole("button", { name: `huddle-${legacy.slice(0, 8)}` }),
+  ).toBeNull();
+});
 
 it("rejects a deferred header Create section after its navigation origin retires", async () => {
   const preferences = createSidebarPreferencesStore(

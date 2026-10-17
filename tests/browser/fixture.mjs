@@ -2205,6 +2205,7 @@ export const test = base.extend({
           ? testInfo.outputPath("archive.sqlite3")
           : undefined,
         sign: (template) => finalizeEvent(template, userKey),
+        channelMetadata: (id, tags) => sign(39000, [["d", id], ...tags]),
         signRelay: (template) => finalizeEvent(template, relayKey),
         membershipSnapshot(role) {
           expect(["owner", "admin", "member"]).toContain(role);

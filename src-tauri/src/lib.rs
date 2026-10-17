@@ -17,6 +17,11 @@ use browser::{
 mod app_agents;
 mod deep_links;
 mod dock;
+mod huddle_window;
+use huddle_window::{
+    huddle_window_action, huddle_window_open, huddle_window_reset_incoming, huddle_window_update,
+    huddle_window_watch, HuddleWindow,
+};
 #[cfg(test)]
 #[path = "enterprise_adapter_url.rs"]
 mod enterprise_adapter_url;
@@ -46,6 +51,7 @@ use identity::{
     identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
     identity_restore, identity_sign_builderlab_binding, IdentityHost,
 };
+use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 use relay::{
     media_copy_image, media_download, media_stream_base, relay_agent_library,
     relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
@@ -423,6 +429,15 @@ async fn update_restart<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 }
 fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        huddle_window_reset_incoming,
+        huddle_window_open,
+        huddle_window_update,
+        huddle_window_watch,
+        huddle_window_action,
+        huddle_open,
+        huddle_close,
+        huddle_pcm,
+        huddle_touch,
         pairing::pairing_account,
         pairing::pairing_start,
         pairing::pairing_status,
@@ -688,6 +703,8 @@ pub fn run() {
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())
         .manage(pairing::Pairing::default())
+        .manage(Huddles::default())
+        .manage(HuddleWindow::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
@@ -728,6 +745,7 @@ pub fn run() {
                 webview.state::<pairing::Pairing>().cancel_all();
                 webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
                 // Processes belong to the page that started them.
+                webview.state::<Huddles>().stop_all();
                 webview.state::<HostProcesses>().stop_all();
                 webview.state::<HostMcpServers>().stop_all();
             }

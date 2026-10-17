@@ -454,6 +454,8 @@ export function SessionShare({
         .filter(
           (item) =>
             item.id !== channel.id &&
+            !item.huddle &&
+            !item.metadataPending &&
             !item.readOnly &&
             !item.cached &&
             !item.archived &&

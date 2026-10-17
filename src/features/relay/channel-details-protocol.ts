@@ -66,7 +66,9 @@ export function detailsDraftErrors(draft: ChannelDetailsDraft) {
         ? "Use a description of at most 1,000 characters."
         : draft.description.includes("Buzz session (")
           ? 'Remove "Buzz session (" from the description; that text is used by Buzz for work sessions.'
-          : undefined,
+          : draft.description.includes("Buzz Huddle (")
+            ? 'Remove "Buzz Huddle (" from the description; that text is used by Buzz for Huddles.'
+            : undefined,
     lifetime:
       draft?.ttlSeconds !== undefined &&
       (!Number.isInteger(draft.ttlSeconds) ||

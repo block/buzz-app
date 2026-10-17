@@ -18,6 +18,8 @@ export type ChannelSummary = Readonly<{
   name: string;
   /** Ordinary channel prose; session machine metadata is not a description. */
   description?: string | undefined;
+  /** Initial classification is unresolved until the metadata read completes. */
+  metadataPending?: boolean | undefined;
   /** Explicit signed visibility; absent means unknown, not public. */
   visibility?: "public" | "private" | undefined;
   preview?: string | undefined;
@@ -36,6 +38,8 @@ export type ChannelSummary = Readonly<{
   private?: true;
   /** Presentation-only parent from signed channel metadata; never grants access. */
   parentChannelId?: string | undefined;
+  /** Marked Huddle room; presented through its parent conversation, not the sidebar. */
+  huddle?: true;
   /** Metadata update time used for stable work-history ordering. */
   updatedAt?: number;
   archived?: true;
@@ -121,6 +125,11 @@ export type ChannelMessage = Readonly<{
     truncated: boolean;
   }>;
   membership?: MembershipChange;
+  huddle?: Readonly<{
+    room: string;
+    state: "started" | "ended";
+    endedAt?: number;
+  }>;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
   /** Offsets in `content` where attachment removal joined once-separate text; a

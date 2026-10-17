@@ -24,6 +24,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { writeView } from "../../shared/view-state";
 import { meTarget } from "../me/routes";
+import { MeSidebar } from "../me/MeSidebar";
 import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import {
@@ -194,6 +195,10 @@ function fixture(
     resolve: () => true,
   };
   const open = vi.fn(async () => ({ status: "opened" as const }));
+  const navigator = {
+    open,
+    snapshot: () => ({ attempt: { signal: abort.signal } }),
+  } as unknown as Navigation;
   const archive: ArchiveShortcut = {};
   const page = (visible = true) => (
     <ChannelNavigationProvider relay={relay}>
@@ -203,7 +208,7 @@ function fixture(
           panels={{ ...contribution, register() {}, resolve: () => undefined }}
           extensions={extensions}
           navigation={navigation}
-          navigator={{ open } as unknown as Navigation}
+          navigator={navigator}
           archive={archive}
         />
       )}
@@ -224,6 +229,8 @@ function fixture(
     open,
     scope,
     session,
+    relay,
+    navigator,
     update(next: KitSnapshot) {
       state = next;
       for (const listener of listeners) listener();
@@ -356,7 +363,15 @@ it.each([false, true])(
 it("keeps failed placement read-only and restores sending after confirmed preferences", async () => {
   const f = fixture("loading");
   writeView(f.scope, `draft:${id}`, "Saved thought");
-  f.mount();
+  const page = f.mount();
+  // The sidebar owns placement retries; the retained page preserves the draft.
+  const sidebar = render(
+    <MeSidebar
+      relay={f.relay}
+      navigator={f.navigator}
+      target={meTarget(f.scope, id)}
+    />,
+  );
   act(() =>
     f.update({
       ...f.state,
@@ -371,9 +386,11 @@ it("keeps failed placement read-only and restores sending after confirmed prefer
   act(() =>
     f.update({ ...f.state, status: "error", error: "Preferences offline" }),
   );
-  expect(screen.getByText("Preferences offline")).toBeVisible();
+  expect(within(page.container).getByText("Preferences offline")).toBeVisible();
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
-  await userEvent.click(screen.getByRole("button", { name: "Retry Solo" }));
+  await userEvent.click(
+    within(sidebar.container).getByRole("button", { name: "Retry Solo" }),
+  );
   expect(f.refresh).toHaveBeenCalledOnce();
   act(() => f.update({ ...f.state, status: "ready" }));
   await waitFor(() =>

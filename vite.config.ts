@@ -74,6 +74,14 @@ export default defineConfig(async ({ command, mode }) => {
         openRelay ? defaultOrigin : "",
       ),
     },
+    build: {
+      rollupOptions: {
+        input: {
+          main: fileURLToPath(new URL("index.html", import.meta.url)),
+          huddle: fileURLToPath(new URL("huddle.html", import.meta.url)),
+        },
+      },
+    },
     clearScreen: false,
     // Keep build artifacts and coverage pages out of dependency discovery.
     optimizeDeps: {

@@ -86,8 +86,14 @@ export function InboxDetail({
   const channel = list.channels.find(
     (candidate) => candidate.id === item.channelId,
   );
+  const excluded = !!(channel?.huddle || channel?.metadataPending);
+  useLayoutEffect(() => {
+    if (excluded) onBack();
+  }, [excluded, onBack]);
   const available =
     !!channel &&
+    !channel.huddle &&
+    !channel.metadataPending &&
     !channel.cached &&
     !channel.archived &&
     !channel.readOnly &&

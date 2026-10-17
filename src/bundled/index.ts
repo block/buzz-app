@@ -3,6 +3,8 @@ import * as voiceNotes from "./voice-notes";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
+import huddlesManifest from "./huddles/manifest.json";
+import * as huddles from "./huddles";
 import builderlabManifest from "./builderlab/manifest.json";
 import * as builderlab from "./builderlab";
 import * as todos from "./todos";
@@ -61,6 +63,11 @@ import relayStaffManifest from "./relay-staff/manifest.json";
 import * as relayStaff from "./relay-staff";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...huddlesManifest, apiVersion: 1 },
+    module: huddles,
+    enabledByDefault: true,
+  },
   {
     manifest: { ...voiceNotesManifest, apiVersion: 1 },
     module: voiceNotes,

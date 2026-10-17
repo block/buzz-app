@@ -105,6 +105,7 @@ const communityState = {
   profile: { name: "Buzz User", picture: "" },
   memberships: [{ id: "primary", name: "Primary" }],
   selected: "primary",
+  sync: { known: [], outbox: [] },
 };
 const host = {
   plugins: { subscribe: () => () => {}, snapshot: () => pluginState },

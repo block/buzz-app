@@ -86,6 +86,18 @@ export async function inspectProfile(id: string, session?: RelaySession) {
   };
   return { existing, profile, exists: !!event };
 }
+/** One bounded signed read against a saved community's relay, to show whether
+ * this identity can still read there. Only the answer's kind matters (see
+ * `readErrorKind`): a refusal or an unreachable relay rejects, and what the
+ * relay returns is never looked at. */
+export async function checkCommunityAccess(id: string, signal: AbortSignal) {
+  const transport = await connectCommunityTransport(id, signal);
+  signal.throwIfAborted();
+  await transport.query(
+    [{ kinds: [0], authors: [transport.viewer], limit: 1 }],
+    signal,
+  );
+}
 export async function publishProfile(
   id: string,
   profile: PersonalProfile,

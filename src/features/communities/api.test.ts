@@ -1,7 +1,16 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { communityRequest } from "./api";
+import { checkCommunityAccess, communityRequest } from "./api";
+import { connectCommunityTransport } from "./connection";
 
-afterEach(() => vi.unstubAllGlobals());
+vi.mock("./connection", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./connection")>()),
+  connectCommunityTransport: vi.fn(),
+}));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.mocked(connectCommunityTransport).mockReset();
+});
 
 it("registers an unvisited destination before its scoped read, without a session", async () => {
   let release!: () => void;
@@ -79,4 +88,39 @@ it("does not read when cancelled during registration", async () => {
     ),
   ).rejects.toMatchObject({ name: "AbortError" });
   expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it("checks access with one signed read of the viewer's own profile and never reads what comes back", async () => {
+  const viewer = "cd".repeat(32);
+  const query = vi.fn(async () => [
+    { kind: 0, pubkey: viewer, content: "not json", created_at: 1, id: "e" },
+  ]);
+  vi.mocked(connectCommunityTransport).mockResolvedValue({
+    viewer,
+    query,
+  } as unknown as Awaited<ReturnType<typeof connectCommunityTransport>>);
+  const signal = new AbortController().signal;
+  await expect(
+    checkCommunityAccess("https://primary.example", signal),
+  ).resolves.toBeUndefined();
+  expect(connectCommunityTransport).toHaveBeenCalledWith(
+    "https://primary.example",
+    signal,
+  );
+  expect(query).toHaveBeenCalledTimes(1);
+  expect(query).toHaveBeenCalledWith(
+    [{ kinds: [0], authors: [viewer], limit: 1 }],
+    signal,
+  );
+  // The relay's answer, or no answer, is the caller's to classify.
+  query.mockRejectedValueOnce(new Error("Relay read failed (403)"));
+  await expect(
+    checkCommunityAccess("https://primary.example", signal),
+  ).rejects.toThrow("Relay read failed (403)");
+  const aborted = new AbortController();
+  aborted.abort();
+  await expect(
+    checkCommunityAccess("https://primary.example", aborted.signal),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(query).toHaveBeenCalledTimes(2);
 });

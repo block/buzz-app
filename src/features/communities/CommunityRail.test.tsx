@@ -70,6 +70,7 @@ function harness({
     status: "ready",
     relayAvailable: true,
     profile: { name: "", picture: "" },
+    sync: { known: [], outbox: [] },
     viewer,
     selected,
     memberships: [
@@ -189,7 +190,8 @@ const items = (menu: HTMLElement) =>
     .map((item) => item.textContent);
 /** Session contract requests to the broker. The rail verifies the roster
  * against the relay authority its session already holds, so it makes none;
- * icon discovery is separate. */
+ * icon discovery is separate, and the native-only access check does not run
+ * against the broker (see `CommunityRail.native.test.tsx`). */
 const sessionRequests = (fetch: ReturnType<typeof vi.fn>) =>
   fetch.mock.calls
     .map(([url]) => String(url))
@@ -977,6 +979,65 @@ it("leaving the selected community lands on Personal space, and the last one lea
     `/api/relay/${encodeURIComponent(primary)}/leave`,
     `/api/relay/${encodeURIComponent(secondary)}/leave`,
   ]);
+});
+
+it("says that the community list is not synced while uploads wait, and why", async () => {
+  const user = userEvent.setup();
+  const h = harness();
+  const op = { url: "wss://primary.example", removed: false };
+  h.update({ sync: { known: [], outbox: [op] } });
+  render(<CommunityRail communities={h.communities} />);
+  // No sync owner has reported (no Builderlab plugin, no configured service,
+  // or a browser build): the queue is nobody's promise, so nothing is said.
+  expect(screen.queryByRole("status")).toBeNull();
+  // An owner that is signed out: signing in is what would drain the queue.
+  h.update({ syncStatus: { phase: "signed-out", pending: 1 } });
+  const status = screen.getByRole("status");
+  expect(status).toHaveTextContent(
+    "Community list not synced. Sign in to Builderlab to sync your community list.",
+  );
+  await user.hover(status);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Sign in to Builderlab to sync your community list.",
+  );
+  for (const [syncStatus, reason] of [
+    [{ phase: "syncing", pending: 1 }, "Syncing your community list…"],
+    [
+      { phase: "pending", pending: 1 },
+      "Changes to your community list are waiting to sync.",
+    ],
+    [
+      {
+        phase: "error",
+        pending: 1,
+        error: "Builderlab can’t save more communities for this account.",
+      },
+      "Builderlab can’t save more communities for this account.",
+    ],
+  ] as const) {
+    h.update({ syncStatus });
+    expect(screen.getByRole("status")).toHaveTextContent(reason);
+  }
+  expect(
+    screen.getByRole("navigation", { name: "Communities" }),
+  ).toContainElement(screen.getByRole("status"));
+  // The acknowledged upload leaves nothing to say, whatever the owner reports.
+  h.update({
+    sync: { known: [op.url], outbox: [] },
+    syncStatus: { phase: "synced", pending: 0 },
+  });
+  expect(screen.queryByRole("status")).toBeNull();
+  h.update({ syncStatus: { phase: "error", pending: 0, error: "Stale" } });
+  expect(screen.queryByRole("status")).toBeNull();
+  // A service without the routes yet is nothing to show, queue or not.
+  h.update({
+    sync: { known: [], outbox: [op] },
+    syncStatus: { phase: "unavailable", pending: 1 },
+  });
+  expect(screen.queryByRole("status")).toBeNull();
+  // The owner withdrawing its report (plugin disabled) withdraws the indicator.
+  h.update({ syncStatus: undefined });
+  expect(screen.queryByRole("status")).toBeNull();
 });
 
 it("does not discover saved community icons without a relay host", async () => {

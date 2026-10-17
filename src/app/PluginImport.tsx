@@ -29,6 +29,9 @@ function hostGrants(manifest: PluginManifest): string[] {
     ...(manifest.host?.mcp
       ? ["MCP servers: tools served to local agents over loopback HTTP"]
       : []),
+    ...(manifest.host?.plugins
+      ? ["Manage plugins: install, turn on or off, and remove plugins"]
+      : []),
   ];
 }
 

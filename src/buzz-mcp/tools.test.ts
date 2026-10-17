@@ -2139,15 +2139,19 @@ it("never moves its own repository, or starts a second one", async () => {
   ).rejects.toThrow("has no repository");
 });
 
-it("says a member's new repository does not count for the channel", async () => {
-  const { client } = fake([
+it("lets only a lead or a lead's agent start the channel's repository", async () => {
+  const { client, published } = fake([
     event({ kind: 39000, tags: [["d", "chan"]] }),
-    hive({ [me]: "member" }),
+    hive({ [me]: "member", [owner]: "owner" }),
   ]);
   git(client);
   await expect(
     callTool(client, { channel: "chan" }, "repo", { create: "hive" }),
-  ).rejects.toThrow("counts only from its owner or an admin");
+  ).rejects.toThrow("Only a channel's owner or an admin, or their agent");
+  expect(published).toEqual([]);
+  Object.assign(client, { owner });
+  await callTool(client, { channel: "chan" }, "repo", { create: "hive" });
+  expect(published).toHaveLength(1);
 });
 
 it("refuses Git where the host holds no key", async () => {

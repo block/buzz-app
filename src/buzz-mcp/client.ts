@@ -76,6 +76,8 @@ export type Memory = Readonly<{
 
 export interface BuzzClient {
   readonly pubkey: string;
+  /** The agent's owner, as its host records it. */
+  readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
   readonly relayAuthor?: string | undefined;
   readonly signingAuthority?: string | undefined;

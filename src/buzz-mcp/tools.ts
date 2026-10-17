@@ -1033,6 +1033,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ]);
       if (mine)
         throw new Error(`You already have a repository named ${create}.`);
+      if (!(await leads(tools, channel, client.pubkey, client.owner)))
+        throw new Error(
+          "Only a channel's owner or an admin, or their agent, can start its repository.",
+        );
       // Members may push; no one may rewrite or delete a branch.
       const created = await client.publish({
         kind: 30617,
@@ -1044,10 +1048,6 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
           ["buzz-protect", "refs/heads/*", "no-force-push", "no-delete"],
         ],
       });
-      if (!(await leads(tools, channel, created)))
-        throw new Error(
-          "Created, but a channel's repository counts only from its owner or an admin, or their agent.",
-        );
       found = [created];
     }
     const name = optional(args, "repo");
@@ -1742,18 +1742,25 @@ async function repos(tools: Tools, channel: string) {
     (event) => tag(event, "buzz-channel") === channel,
   );
   const trusted = await Promise.all(
-    bound.map((event) => leads(tools, channel, event)),
+    bound.map(async (event) =>
+      leads(tools, channel, event.pubkey, await attestedOwner(event)),
+    ),
   );
   return bound.filter((_, index) => trusted[index]);
 }
 
-/** Whether `event` is by an owner or admin of `channel`, or their agent. */
-async function leads(tools: Tools, channel: string, event: BuzzEvent) {
-  const owner = await attestedOwner(event);
+/** Whether `author`, or the `owner` it acts for, is an owner or admin of
+ * `channel`. */
+async function leads(
+  tools: Tools,
+  channel: string,
+  author: string,
+  owner: string | undefined,
+) {
   return (await tools.members(channel)).some(
     (member) =>
       (member.role === "owner" || member.role === "admin") &&
-      (member.pubkey === event.pubkey || member.pubkey === owner),
+      (member.pubkey === author || member.pubkey === owner),
   );
 }
 

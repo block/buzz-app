@@ -3,7 +3,39 @@ import { config, type Config } from "./runtime";
 
 export type ClaudeProviderDefaults = Readonly<{ model: string }>;
 const NATIVE_DEFAULTS: ClaudeProviderDefaults = Object.freeze({ model: "" });
-const STORAGE_KEY = "buzz.claude-code.provider-defaults.v1";
+export const DEFAULTS_KEY = "buzz.claude-code.provider-defaults.v1";
+
+/** The saved defaults; Claude Code's own, blank, when none are saved or
+ * they are malformed. */
+export function readDefaults(
+  storage: Pick<AgentStore, "get">,
+): ClaudeProviderDefaults {
+  try {
+    const value: unknown = JSON.parse(storage.get(DEFAULTS_KEY) ?? "null");
+    if (
+      value &&
+      typeof value === "object" &&
+      (value as { version?: unknown }).version === 1 &&
+      typeof (value as { model?: unknown }).model === "string"
+    )
+      return Object.freeze({ model: (value as { model: string }).model });
+  } catch {
+    // Malformed local preferences preserve Claude Code's native default.
+  }
+  return NATIVE_DEFAULTS;
+}
+
+/** An agent's settings: its own model, else the defaults'. */
+export function resolveConfig(
+  raw: unknown,
+  defaults: ClaudeProviderDefaults,
+): Config {
+  const explicit = config(raw);
+  return {
+    ...explicit,
+    model: explicit.model.trim() ? explicit.model : defaults.model,
+  };
+}
 
 /** Device-wide defaults are separate from agent records; a blank agent value
  * inherits this store and a blank store value leaves Claude Code in charge. */
@@ -12,7 +44,7 @@ export class ClaudeDefaults {
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly storage: AgentStore = localStore()) {
-    this.state = this.read();
+    this.state = readDefaults(storage);
   }
 
   snapshot = () => this.state;
@@ -21,35 +53,14 @@ export class ClaudeDefaults {
     return () => this.listeners.delete(listener);
   };
   resolve(raw: unknown): Config {
-    const explicit = config(raw);
-    return {
-      ...explicit,
-      model: explicit.model.trim() ? explicit.model : this.state.model,
-    };
+    return resolveConfig(raw, this.state);
   }
   /** Settles once the defaults are saved, and only then uses them; rejects,
    * keeping the saved ones, when they could not be saved. */
   async save(next: ClaudeProviderDefaults) {
     const { model } = next;
-    await this.storage.set(STORAGE_KEY, JSON.stringify({ version: 1, model }));
+    await this.storage.set(DEFAULTS_KEY, JSON.stringify({ version: 1, model }));
     this.state = Object.freeze({ model });
     for (const listener of this.listeners) listener();
-  }
-  private read(): ClaudeProviderDefaults {
-    try {
-      const value: unknown = JSON.parse(
-        this.storage.get(STORAGE_KEY) ?? "null",
-      );
-      if (
-        value &&
-        typeof value === "object" &&
-        (value as { version?: unknown }).version === 1 &&
-        typeof (value as { model?: unknown }).model === "string"
-      )
-        return Object.freeze({ model: (value as { model: string }).model });
-    } catch {
-      // Malformed local preferences preserve Claude Code's native default.
-    }
-    return NATIVE_DEFAULTS;
   }
 }

@@ -102,7 +102,9 @@ export function useFloatingActionBar(
     const bar = barRef.current;
     if (!floating || !row || !bar) return;
     // Top-layer descendants don't contribute to :hover or :focus-within.
+    const reactions = "[data-message-reactions]";
     let hovered = row.matches(":hover") || bar.matches(":hover");
+    if (row.querySelector(reactions)?.matches(":hover")) hovered = false;
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.
     const keyboardFocus = () =>
@@ -118,11 +120,18 @@ export function useFloatingActionBar(
       setRevealed(next);
     };
     const enter = () => {
-      hovered = true;
+      hovered = !row.querySelector(reactions)?.matches(":hover");
       update();
     };
     const leave = () => {
       hovered = false;
+      update();
+    };
+    // Reactions are part of the row, but own their hover interaction. Track
+    // transitions within the row as well as entry from outside it.
+    const over = (event: PointerEvent) => {
+      hovered =
+        event.target instanceof Element && !event.target.closest(reactions);
       update();
     };
     const focusIn = () => update();
@@ -135,6 +144,7 @@ export function useFloatingActionBar(
     };
     row.addEventListener("pointerenter", enter);
     row.addEventListener("pointerleave", leave);
+    row.addEventListener("pointerover", over);
     row.addEventListener("focusin", focusIn);
     row.addEventListener("focusout", focusOut);
     const observer = new MutationObserver(() => {
@@ -151,6 +161,7 @@ export function useFloatingActionBar(
     return () => {
       row.removeEventListener("pointerenter", enter);
       row.removeEventListener("pointerleave", leave);
+      row.removeEventListener("pointerover", over);
       row.removeEventListener("focusin", focusIn);
       row.removeEventListener("focusout", focusOut);
       observer.disconnect();

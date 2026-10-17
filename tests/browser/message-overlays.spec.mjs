@@ -1,22 +1,53 @@
 import { test, expect } from "./source-fixture.mjs";
 import { settle } from "./timeline.mjs";
 
-// Real paint order and clipping cannot be established by DOM component tests.
-test("reaction previews paint above floating message actions", async ({
+// Browser-only: real nested hover, deferred toolbar mounting, and top-layer
+// visibility must agree with the production reaction row and preview wiring.
+test("reaction previews and the inline picker do not reveal message hover actions", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap&narrow");
   const row = page.locator("[data-message-id]").first();
   const reaction = row.locator('button[data-reaction="👍"]');
+  const actions = row.getByRole("group", { name: "Message actions" });
+  const body = row.locator("[data-message-action-anchor]").first();
+  const plus = row.getByTestId("reaction-row").getByRole("button", {
+    name: "Add reaction",
+    exact: true,
+  });
+  // Enter an untouched row directly through its reactions, not its body.
   await reaction.hover();
   const preview = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
   await expect(preview).toBeVisible();
-  const actions = row.getByRole("group", { name: "Message actions" });
-  await expect
-    .poll(() => actions.evaluate((el) => el.matches(":popover-open")))
-    .toBe(true);
-  // Force the real toolbar into the preview's footprint to probe paint order
-  // independently of content length and font geometry. Keep its top-layer order.
+  await expect(preview).toContainText("Fixture Member");
+  await expect(actions).toBeHidden();
+  await body.hover();
+  await expect(actions).toBeVisible();
+  await reaction.hover();
+  await expect(preview).toBeVisible();
+  await expect(actions).toBeHidden();
+  await plus.hover();
+  await expect(actions).toBeHidden();
+  await plus.click();
+  const picker = page.locator('em-emoji-picker input[type="search"]');
+  await expect(picker).toBeVisible();
+  await expect(actions).toBeHidden();
+  await picker.press("Escape");
+  await expect(picker).toHaveCount(0);
+  await body.hover();
+  await expect(actions).toBeVisible();
+  await actions.getByRole("button", { name: "More message actions" }).hover();
+  await expect(actions).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(actions).toBeHidden();
+
+  // Keyboard focus still reveals message actions, so retain the paint-order
+  // contract when the reactor preview and toolbar can legitimately coexist.
+  await page.keyboard.press("Tab");
+  await reaction.focus();
+  await reaction.hover();
+  await expect(preview).toBeVisible();
+  await expect(actions).toBeVisible();
   await actions.evaluate((bar) => {
     const card = document.querySelector(".buzz-preview-card[data-open]");
     const rect = card.getBoundingClientRect();
@@ -28,8 +59,6 @@ test("reaction previews paint above floating message actions", async ({
     .poll(() =>
       preview.evaluate((card) => {
         const rect = card.getBoundingClientRect();
-        // Supplemental cards ignore pointer input. Temporarily enable it solely
-        // for this paint probe, restoring the real interaction policy afterwards.
         card.style.pointerEvents = "auto";
         const hit = document.elementFromPoint(rect.left + 10, rect.top + 10);
         card.style.pointerEvents = "";
@@ -37,10 +66,6 @@ test("reaction previews paint above floating message actions", async ({
       }),
     )
     .toBe(true);
-  await page.mouse.move(0, 0);
-  await expect(page.locator(".buzz-preview-card")).toHaveCount(0);
-  await reaction.hover();
-  await expect(preview).toBeVisible();
 });
 
 test("video speed options escape the thread and restore focus after selection and Escape", async ({

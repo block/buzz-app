@@ -99,6 +99,7 @@
     "allow-jev-classifier-set-key",
     "allow-jev-classifier-clear-key",
     "allow-jev-classify",
+    "allow-decide",
 
     "allow-title-bar-double-click",
     "allow-notification-show",

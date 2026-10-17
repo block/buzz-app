@@ -15,6 +15,7 @@ use browser::{
     browser_status,
 };
 mod app_agents;
+mod decisions;
 mod deep_links;
 mod dock;
 #[cfg(test)]
@@ -517,6 +518,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
         jev::jev_classify,
+        decisions::decide,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]
@@ -687,6 +689,7 @@ pub fn run() {
         .manage(identity)
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())
+        .manage(decisions::DecisionsHost::new())
         .manage(pairing::Pairing::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)

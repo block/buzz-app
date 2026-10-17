@@ -533,9 +533,9 @@ Plugin manifests may include display-only discovery metadata:
   "id": "example.invoices",
   "name": "Invoices",
   "apiVersion": 1,
-  "description": "Reconcile invoices without leaving Buzz.",
+  "description": "Reconcile invoices from the Invoices page.",
   "discovery": {
-    "category": "finance",
+    "category": "productivity",
     "tags": ["Accounting", "Invoice Management"]
   }
 }
@@ -560,6 +560,70 @@ security-bearing manifest fields remain strict.
 Hosts released before these metadata fields were introduced reject `description`
 and `discovery` as unknown manifest keys. Publishers targeting those hosts must
 omit both fields; using slug tags does not make them compatible.
+
+### Writing plugin discovery metadata
+
+Choose one primary category by the plugin's purpose. The current Settings
+categories are defined in [`src/app/plugin-categories.ts`](../src/app/plugin-categories.ts):
+
+| Category ID | Settings label | Use for |
+| --- | --- | --- |
+| `communication` | Communication | Composing, reading and navigating conversations. |
+| `productivity` | Productivity | Tasks, reminders and personal work. |
+| `agents` | Agents | Agent runtimes, configuration and activity. |
+| `developer-tools-and-integrations` | Developer tools & integrations | Developer workflows and connections to other products. |
+| `people-and-communities` | People & communities | Profiles, membership and community or relay administration. |
+
+These are host-recognized choices, not a closed manifest enum. Omitted or
+unrecognized categories appear under Other. For bundled plugins, the catalog test
+checks that every category is one of the recognized IDs. External authors can use
+other valid slugs, but should use a recognized one when it fits.
+
+Write the description as **what the plugin does and where to find it**. Name the
+primary entry point when it is not obvious, using the labels people see in Buzz:
+"Record voice notes from the message composer and play them in conversations."
+For a plugin spanning several surfaces, cover the main action and result here;
+leave the walkthrough to its README. Avoid feature inventories, implementation
+details and repeating an obvious page name just to fill the byte budget.
+
+Use readable tags for useful topics or search terms that the category and
+description do not already explain. Categories describe purpose; they do not list
+every UI surface a plugin touches. Discovery tags must not claim host-curated
+status, permissions, signing, provenance or runtime health; the host owns those
+decisions and states.
+
+### Writing the plugin README
+
+Use `README.md` to explain the experience beyond the short description. Include:
+
+- **What it does:** a short overview of the user benefit.
+- **Where you'll find it:** the entry points and visible labels, such as a
+  composer action, page, side panel or Settings section. Explain multiple surfaces
+  here rather than turning the category into a surface list.
+- **Setup and requirements:** configuration, supported hosts and required host
+  services; explain what is unavailable on an unsupported host.
+- **How to use it and its limits:** the main workflow, relevant data storage or
+  network behavior, and what resets on navigation, disable or reload.
+
+For example, a voice-note plugin's location section could read:
+
+```markdown
+## Where you'll find it
+
+Record from the microphone button in the message composer. Voice notes appear
+as playable attachments in conversations.
+```
+
+Use ordinary Markdown and links; do not rely on raw HTML, remote images or
+embedded data URLs. Put the README beside `manifest.json` and `plugin.js` in the
+built plugin folder; a repository-level README is not automatically included.
+The [packaging rules below](#loading-from-folders-and-repositories) cover the
+README/icon size limits, reserved filenames and signature coverage. Packaging
+content does not guarantee that every host version displays it.
+See the [example authoring walkthrough](../examples/plugins/README.md#add-discovery-metadata-and-a-readme)
+for a manifest with these optional fields.
+
+### Declaring host access
 
 Plugins can separately declare host access in `manifest.json`:
 

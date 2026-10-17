@@ -21,7 +21,6 @@ test("shared navigation preserves drafts and history across Solo and header page
   await expect(topbar.getByRole("tab")).toHaveText([
     "Messages",
     "Reminders",
-    "Projects",
     "Agents",
     "Workflows",
   ]);
@@ -53,6 +52,12 @@ test("shared navigation preserves drafts and history across Solo and header page
     page.getByRole("textbox", { name: "Message your agents", exact: true }),
   ).toBeFocused();
   await messages.click();
+  // The header keeps the current Messages route, including a Solo draft.
+  // Pick the original conversation from the shared sidebar to restore its draft.
+  await page
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .getByRole("button", { name: "Alpha", exact: true })
+    .click();
   await expect(composer).toHaveText("Keep this draft");
   const reminders = topbar.getByRole("tab", { name: "Reminders", exact: true });
   const indicator = topbar.locator(".buzz-tabs-indicator");
@@ -309,7 +314,6 @@ test("header pages remain reachable without overlap through scale and resize", a
       await expect(choices.getByRole("button")).toHaveText([
         "Messages",
         "Reminders",
-        "Projects",
         "A deliberately long topbar destination",
         "Agents",
         "Toolbar destination",

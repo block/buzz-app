@@ -143,7 +143,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     .poll(async () => (await sidebar.boundingBox())?.width)
     .toBeGreaterThan(keyboardWidth + 100);
   const resized = await sidebar.boundingBox();
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await openPage(page, "Messages");
   await expect
     .poll(async () => (await sidebar.boundingBox())?.width)
@@ -230,9 +230,9 @@ sessionSidebar(
     await openPage(page, "Messages");
     await expect(page.locator('[data-channel-id="alpha"]')).toBeVisible();
 
-    await openPage(page, "Projects");
+    await openPage(page, "Workflows");
     await expect(
-      page.getByRole("heading", { name: "Projects", exact: true }),
+      page.getByRole("heading", { name: "Workflows", exact: true }),
     ).toBeVisible();
     const channels = page
       .getByRole("navigation", { name: "Subscribed channels" })
@@ -330,7 +330,7 @@ sessionSidebar(
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(create).toBeFocused();
     await expect(
-      page.getByRole("heading", { name: "Projects", exact: true }),
+      page.getByRole("heading", { name: "Workflows", exact: true }),
     ).toBeVisible();
     await openPage(page, "Messages");
     const conversation = page.getByRole("article", { name: "Conversation" });
@@ -340,7 +340,7 @@ sessionSidebar(
   },
 );
 
-test("disabling Sessions keeps independent lifecycle actions available", async ({
+test("lifecycle actions remain available with Solo always on", async ({
   page,
   app,
 }) => {
@@ -358,15 +358,12 @@ test("disabling Sessions keeps independent lifecycle actions available", async (
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   const plugins = page.getByRole("region", { name: "Plugins", exact: true });
-  const toggle = plugins.getByRole("switch", {
-    name: "Enable Sessions",
-    exact: true,
-  });
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await expect(
+    plugins.getByRole("switch", { name: /^Enable (Sessions|Solo)$/ }),
+  ).toHaveCount(0);
 
   await openPage(page, "Messages");
-  // Lifecycle is independent of Sessions and retains its unavailable-host explanation.
+  // Lifecycle retains its unavailable-host explanation with Solo always on.
   for (const keyboard of [false, true]) {
     if (keyboard) {
       await button(page, "Alpha").focus();
@@ -437,7 +434,7 @@ test("navigation reveals the current sidebar entry without moving a visible one"
   const alpha = sidebar.locator('[data-channel-id="alpha"]');
   const projects = page
     .getByRole("navigation", { name: "Topbar pages" })
-    .getByRole("tab", { name: "Projects", exact: true });
+    .getByRole("tab", { name: "Workflows", exact: true });
   const group = sidebar
     .locator("details")
     .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
@@ -445,7 +442,7 @@ test("navigation reveals the current sidebar entry without moving a visible one"
   expect(await toBottom()).toBeGreaterThan(100);
   await expect(alpha).not.toBeInViewport();
   // Search navigation reveals a page entry.
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await expect(projects).toHaveAttribute("aria-selected", "true");
   await expect(projects).toBeInViewport({ ratio: 1 });
   // History navigation reveals a channel row.
@@ -508,7 +505,7 @@ test("a reveal while the narrow drawer is closed runs when the drawer opens", as
   const alpha = page.locator(
     'nav[aria-label="Subscribed channels"] [data-channel-id="alpha"]',
   );
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await button(page, "Show navigation").click();
   await expect(sidebar).toBeVisible();
   const bottom = await sidebar.evaluate((element) => {
@@ -527,13 +524,7 @@ test("a reveal while the narrow drawer is closed runs when the drawer opens", as
   await expect(alpha).toBeInViewport({ ratio: 1 });
 });
 
-for (const destination of [
-  "Projects",
-  "Agents",
-  "Workflows",
-  "Settings",
-  "Back/Forward",
-]) {
+for (const destination of ["Agents", "Workflows", "Settings", "Back/Forward"]) {
   test(`sidebar state survives Messages → ${destination} → Messages`, async ({
     page,
     app,
@@ -574,7 +565,7 @@ for (const destination of [
       } else {
         await openPage(
           page,
-          destination === "Back/Forward" ? "Projects" : destination,
+          destination === "Back/Forward" ? "Workflows" : destination,
         );
       }
       if (destination === "Settings") {
@@ -588,7 +579,7 @@ for (const destination of [
           true,
         );
         await expect(
-          pageEntry(destination === "Back/Forward" ? "Projects" : destination),
+          pageEntry(destination === "Back/Forward" ? "Workflows" : destination),
         ).toBeInViewport({ ratio: 1 });
         await toBottom();
       }
@@ -624,7 +615,7 @@ for (const destination of [
       await expect(
         page.getByRole("region", { name: "Channel message history" }),
       ).toHaveCount(0);
-      await expect(pageEntry("Projects")).toBeInViewport({ ratio: 1 });
+      await expect(pageEntry("Workflows")).toBeInViewport({ ratio: 1 });
       await toBottom();
       await button(page, "Go back").click();
       await expect(group).not.toHaveAttribute("open");
@@ -649,7 +640,7 @@ test("community picker stays available across pages and restores focus after joi
     }),
   ).toBeVisible();
   await selectCommunity(page, "Secondary");
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await expect(rail).toBeVisible();
   await expect(
     page.getByRole("dialog", { name: "Switch community", exact: true }),

@@ -4,7 +4,6 @@ import {
   BestieIcon,
   BrowserIcon,
   ChatsCircleIcon,
-  FolderSimpleIcon,
   GearIcon,
   LightningIcon,
   RobotIcon,
@@ -21,12 +20,10 @@ export const shellPresentation = {
 // Navigation order is host policy, never plugin activation timing. Match full
 // contribution keys so an external page's local ID cannot claim a bundled slot.
 const bundledOrder = [
-  "buzz.me/me",
   "buzz.channels/channels",
   "buzz.inbox/inbox",
   "buzz.reminders/reminders",
   "buzz.bestie/bestie",
-  "buzz.projects/projects",
 ];
 export function orderPages(pages: readonly RegisteredPage[]) {
   const rank = (page: RegisteredPage) => {
@@ -48,17 +45,15 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.inbox/inbox", BellIcon],
   ["buzz.reminders/reminders", AlarmIcon],
   ["buzz.bestie/bestie", BestieIcon],
-  ["buzz.projects/projects", FolderSimpleIcon],
   ["buzz.agents/agents", RobotIcon],
   ["buzz.workflows/workflows", LightningIcon],
 ]);
 /** Resolve host navigation policy once, independently of icons and registrations. */
 export function pagePlacement(page: RegisteredPage) {
-  if (!page.primary || page.key === "buzz.me/me") return undefined;
+  if (!page.primary) return undefined;
   switch (page.key) {
     case "buzz.channels/channels":
     case "buzz.reminders/reminders":
-    case "buzz.projects/projects":
     case "buzz.agents/agents":
     case "buzz.workflows/workflows":
       return "topbar";

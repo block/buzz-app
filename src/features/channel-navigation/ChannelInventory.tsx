@@ -12,7 +12,7 @@ import {
 } from "react";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
-import { useMePlacement } from "../sessions/personal";
+import { ownSolo } from "../solo/labels";
 import type { RelayData } from "../relay/service";
 import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
@@ -36,7 +36,7 @@ import {
 import type { ChannelSummary } from "../relay/contracts";
 import { useChannelRowMenu } from "../../bundled/channels/useChannelRowMenu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
-import { RecoveryNotice, useRecoveryShown } from "../relay/RecoveryNotice";
+import { useRecoveryShown } from "../relay/RecoveryNotice";
 import { clientMetrics } from "../developer/client-metrics";
 import {
   BellIcon,
@@ -101,8 +101,8 @@ export function ChannelInventory({
   agents,
   target,
   queries,
-  meEnabled = false,
   cached,
+  layoutReady = true,
   connectionError,
   scope,
   viewer,
@@ -113,8 +113,9 @@ export function ChannelInventory({
   agents?: Agents | undefined;
   target: OpenTarget;
   queries: RelaySession;
-  meEnabled?: boolean | undefined;
   cached: boolean;
+  /** Other inventories sharing this viewport must settle before restoring it. */
+  layoutReady?: boolean;
   connectionError?: string | undefined;
   scope: string;
   viewer?: string | undefined;
@@ -122,7 +123,6 @@ export function ChannelInventory({
 }) {
   const list = useChannelList(queries.channels);
   const recoveryShown = useRecoveryShown(queries.recovery);
-  const placement = useMePlacement(queries);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const startup = useSidebarStartup(queries, list, preferences);
   const [activityErrorDismissed, setActivityErrorDismissed] = useState(false);
@@ -152,7 +152,8 @@ export function ChannelInventory({
   const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);
   const sidebar = useSidebarView(
     scope,
-    startup.ready &&
+    layoutReady &&
+      startup.ready &&
       list.status === "ready" &&
       (preferences.status !== "loading" || !!preferences.cached),
     // The sidebar entry a destination selects, not its message or thread.
@@ -205,9 +206,8 @@ export function ChannelInventory({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
-      (!meEnabled ||
-        !placement.ids.includes(channel.id) ||
-        (!channel.cached && channel.channelType === "stream")) &&
+      // Solo lists the viewer's own Solo chats.
+      !ownSolo(channel, queries.viewer) &&
       (!preparingDm ||
         preparingDm.existing.has(channel.id) ||
         channel.channelType !== "dm" ||
@@ -723,7 +723,7 @@ export function ChannelInventory({
           <MenuIcon>
             <MinusIcon size={14} />
           </MenuIcon>
-          Remove from Multiplayer
+          Remove from Team
         </MenuItem>,
       );
     }
@@ -899,11 +899,8 @@ export function ChannelInventory({
     },
     before: (
       <>
-        {/* Network and relay outages for templates, Me placement, saved
-              preferences, hidden conversations and live updates recover
-              through one automatic owner. Other failures need the user and
-              keep their own message and Retry. */}
-        {!cached && <RecoveryNotice recovery={queries.recovery} />}
+        {/* The sidebar mounts the one automatic relay-recovery notice.
+              Other failures need the user and keep their own message and Retry. */}
         {kitState.status === "error" && !kitState.transient && (
           <p role="alert">
             {kitState.error}{" "}

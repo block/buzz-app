@@ -230,7 +230,7 @@ test("joined header seams, drag feedback, and pointer-only overlay motion", asyn
 });
 
 // Actual grid geometry and resize input need a browser, including the host fallback.
-for (const destination of ["Messages", "Projects", "Me"]) {
+for (const destination of ["Messages", "Workflows", "Me"]) {
   test(`${destination} main and secondary panels resize without resetting content`, async ({
     page,
     app,
@@ -296,7 +296,7 @@ for (const destination of ["Messages", "Projects", "Me"]) {
     await handle.press("Home");
     await expect
       .poll(async () => (await dock.boundingBox()).width)
-      .toBeCloseTo(destination === "Messages" ? 316 : 300, 0);
+      .toBeCloseTo(destination === "Workflows" ? 300 : 316, 0);
     await handle.press("End");
     expect(
       await dock.evaluate(
@@ -333,7 +333,7 @@ for (const destination of ["Messages", "Projects", "Me"]) {
   });
 }
 
-for (const destination of ["Messages", "Projects", "Me"]) {
+for (const destination of ["Messages", "Workflows", "Me"]) {
   test(`${destination} desktop panel closes immediately and reopens at its saved width`, async ({
     page,
     app,

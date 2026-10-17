@@ -3,7 +3,6 @@ import { openChannelDetails } from "./channel-details.mjs";
 import {
   openPage,
   pageChoices,
-  selectPage,
   selectSettingsSection,
   settleShellToggle,
 } from "./navigation.mjs";
@@ -136,7 +135,7 @@ async function link(page, app, target) {
   });
 }
 async function shellFits(page, width) {
-  // The Projects page renders no toggle at wide widths, so settle only when
+  // The Workflows page renders no toggle at wide widths, so settle only when
   // the drawer is in play.
   if (width <= 650) await settleShellToggle(page);
   const disclosure = button(page, "Show navigation");
@@ -227,9 +226,9 @@ scroll(
     await settle(page);
     expect(await box(shell)).toEqual(bounds);
 
-    // Projects has no overflowing content: gestures must leave the shell in place.
-    await openPage(page, "Projects");
-    await page.getByRole("heading", { name: "Projects", exact: true }).hover();
+    // Workflows has no overflowing content: gestures must leave the shell in place.
+    await openPage(page, "Workflows");
+    await page.getByRole("heading", { name: "Workflows", exact: true }).hover();
     for (const [x, y] of [
       [0, -600],
       [0, 600],
@@ -461,12 +460,10 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     )
     .click();
   await expect(composer).toBeInViewport();
-  await openPage(page, "Projects");
-  // Search selection and the header share page state, so Projects is current.
-  // Projects moves focus to its heading once the directory opens.
-  await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
-  ).toBeFocused();
+  await openPage(page, "Workflows");
+  // Search selection and the header share page state, so Workflows is current.
+  // The host focuses main when the independent page opens.
+  await expect(page.getByRole("main")).toBeFocused();
   const hiddenDestinations = sidebarDestinations(page, { includeHidden: true });
   await expect(hiddenDestinations).toHaveText(destinationTitles);
   await expect(
@@ -475,7 +472,11 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   await expect(
     page
       .getByRole("navigation", { name: "Topbar pages", includeHidden: true })
-      .getByRole("tab", { name: "Projects", exact: true, includeHidden: true }),
+      .getByRole("tab", {
+        name: "Workflows",
+        exact: true,
+        includeHidden: true,
+      }),
   ).toHaveAttribute("aria-selected", "true");
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
@@ -486,28 +487,28 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   await selectSettingsSection(page, "Plugins");
   // Channels has no off switch; use another page to exercise UI activation.
   const projects = page.getByRole("switch", {
-    name: "Enable Projects",
+    name: "Enable Workflows",
     exact: true,
   });
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
-  const expectProjectsChoice = async (count) => {
+  const expectWorkflowsChoice = async (count) => {
     const choices = await pageChoices(page);
-    // Messages proves the Pages group rendered before counting Projects.
+    // Messages proves the Pages group rendered before counting Workflows.
     await expect(
       choices.getByRole("option", { name: "Messages", exact: true }),
     ).toBeVisible();
     await expect(
-      choices.getByRole("option", { name: "Projects", exact: true }),
+      choices.getByRole("option", { name: "Workflows", exact: true }),
     ).toHaveCount(count);
     await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
   };
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "false");
-  await expectProjectsChoice(0);
+  await expectWorkflowsChoice(0);
   await projects.click();
   await expect(projects).toHaveAttribute("aria-checked", "true");
-  await expectProjectsChoice(1);
+  await expectWorkflowsChoice(1);
 });
 
 test("narrow link panels begin after the rendered sidebar", async ({
@@ -1222,24 +1223,19 @@ companionReadingTest(
   },
 );
 
-test("Projects directory fits the workspace and page navigation survives plugin re-enable order", async ({
+test("repository views have no header destination and page search survives plugin re-enable order", async ({
   page,
   app,
-}, testInfo) => {
+}) => {
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
-  // Header search owns page navigation, including while narrow Settings
-  // collapses the sidebar; its Pages group must preserve plugin ordering.
-  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const titles = [
-    "Solo",
     "Messages",
     "Inbox",
     "Reminders",
     "Bestie",
-    "Projects",
     "Agents",
-    "Sessions (now in Solo)",
+    "Repository",
     "Workflows",
   ];
   const expectPageOrder = async (expected) => {
@@ -1248,94 +1244,25 @@ test("Projects directory fits the workspace and page navigation survives plugin 
       ...expected,
       "Settings",
     ]);
-    return choices;
-  };
-  const closeSearch = async () => {
     await page.keyboard.press("Escape");
-    await expect(search).toHaveCount(0);
   };
   await expectPageOrder(titles);
-  await selectPage(page, "Projects");
-  const surface = page.getByRole("region", { name: "Projects", exact: true });
-  const title = surface.getByRole("heading", {
-    name: "Projects",
-    level: 1,
-    exact: true,
-  });
-  await expect(title).toBeVisible();
-  const directory = surface.locator(".projects-page");
-  const subtitle = surface.getByText("Recent projects and repositories", {
-    exact: true,
-  });
-  const empty = surface.getByText("No recent projects or repositories found.", {
-    exact: true,
-  });
-  await expect(subtitle).toBeVisible();
-  await expect(empty).toBeVisible();
-  await expect(title).toBeFocused();
-  for (const [width, height] of [
-    [1280, 832],
-    [390, 844],
-  ]) {
-    await page.setViewportSize({ width, height });
-    const bounds = await box(surface);
-    const workspace = await box(surface.locator("..").locator(".."));
-    const heading = await box(title);
-    near(bounds.x, workspace.x);
-    near(bounds.y, workspace.y);
-    near(bounds.width, workspace.width);
-    near(bounds.height, workspace.height);
-    const padding = await directory.evaluate((element) => ({
-      left: Number.parseFloat(getComputedStyle(element).paddingLeft),
-      top: Number.parseFloat(getComputedStyle(element).paddingTop),
-    }));
-    near(heading.x, bounds.x + padding.left);
-    near(heading.y, bounds.y + padding.top);
-    const description = await box(subtitle);
-    const emptyState = await box(empty);
-    expect(description.y).toBeGreaterThanOrEqual(heading.y + heading.height);
-    expect(emptyState.y).toBeGreaterThanOrEqual(
-      description.y + description.height,
-    );
-    await expect(empty).toBeInViewport();
-    await expect(directory).toHaveCSS("overflow", "auto");
-    await expect(surface).toHaveCSS("overflow", "hidden");
-    await shellFits(page, width);
-    await page.screenshot({
-      path: testInfo.outputPath(`projects-${width}.png`),
-    });
-  }
+  await expect(
+    page.getByRole("tab", { name: "Repository", exact: true }),
+  ).toHaveCount(0);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await selectSettingsSection(page, "Plugins");
-  const projects = page.getByRole("switch", {
-    name: "Enable Projects",
+  const repositories = page.getByRole("switch", {
+    name: "Enable Repositories",
     exact: true,
   });
-  await projects.click();
-  await expect(projects).toHaveAttribute("aria-checked", "false");
-  await expectPageOrder([
-    "Solo",
-    "Messages",
-    "Inbox",
-    "Reminders",
-    "Bestie",
-    "Agents",
-    "Sessions (now in Solo)",
-    "Workflows",
-  ]);
-  await closeSearch();
-  await projects.click();
-  await expect(projects).toHaveAttribute("aria-checked", "true");
-  // Re-enabled Projects registered last; navigation surfaces must still sort it.
+  await repositories.click();
+  await expect(repositories).toHaveAttribute("aria-checked", "false");
+  await expectPageOrder(titles.filter((title) => title !== "Repository"));
+  await repositories.click();
+  await expect(repositories).toHaveAttribute("aria-checked", "true");
   await expectPageOrder(titles);
-  await selectPage(page, "Projects");
-  await expect(title).toBeVisible();
-  // The narrow drawer is closed here, but the sidebar keeps the same order
-  // for its primary rows.
-  await expect(sidebarDestinations(page, { includeHidden: true })).toHaveText(
-    destinationTitles,
-  );
 });
 
 // Real App navigation must retire page-local targets, without closing the

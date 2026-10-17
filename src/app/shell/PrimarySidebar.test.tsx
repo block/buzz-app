@@ -5,7 +5,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import { readView, writeView } from "../../shared/view-state";
-import { meTarget } from "../../bundled/me/routes";
+import {
+  conversationTarget,
+  soloDraftTarget,
+} from "../../features/channel-navigation/routes";
 
 import { fixture, owners, id, viewer, scope } from "./sidebar-testing";
 stubAvatarBrowserApis();
@@ -19,7 +22,7 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   const f = fixture(true);
   const all = screen.getByRole("tab", { name: "All" });
   const solo = screen.getByRole("tab", { name: "Solo" });
-  const multiplayer = screen.getByRole("tab", { name: "Team" });
+  const team = screen.getByRole("tab", { name: "Team" });
   expect(all).toHaveAttribute("aria-selected", "true");
   expect(screen.getByRole("button", { name: "New" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
@@ -27,14 +30,14 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
     screen.getAllByRole("separator", { name: "Resize sidebar" }),
   ).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Chats" }));
-  await user.click(multiplayer);
+  await user.click(team);
   expect(
     screen.queryByRole("button", { name: "New chat" }),
   ).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
   expect(screen.getByRole("tabpanel", { name: "Team" })).toHaveAttribute(
     "id",
-    multiplayer.getAttribute("aria-controls"),
+    team.getAttribute("aria-controls"),
   );
   await user.click(solo);
   expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
@@ -43,10 +46,10 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
     "false",
   );
   await user.keyboard("{ArrowRight}");
-  expect(multiplayer).toHaveFocus();
+  expect(team).toHaveFocus();
   expect(solo).toHaveAttribute("aria-selected", "true");
   await user.keyboard("{Enter}");
-  expect(multiplayer).toHaveAttribute("aria-selected", "true");
+  expect(team).toHaveAttribute("aria-selected", "true");
   await user.click(all);
   expect(f.open).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "New" }));
@@ -54,7 +57,7 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
   ).toEqual(["New chat", "New project", "New DM", "New channel"]);
   await user.click(screen.getByRole("menuitem", { name: "New chat" }));
-  expect(f.open).toHaveBeenCalledWith(meTarget(scope, "new", undefined));
+  expect(f.open).toHaveBeenCalledWith(soloDraftTarget(scope));
 });
 
 it("opens the direct message composer from New even in the Solo filter", async () => {
@@ -117,7 +120,7 @@ it("does not navigate to a replaced session after project creation completes", a
     finish = resolve;
   });
   const create = vi
-    .spyOn(f.session.mePreferences, "createSection")
+    .spyOn(f.session.soloPreferences, "createSection")
     .mockReturnValue(pending);
   await user.click(screen.getByRole("button", { name: "New" }));
   await user.click(
@@ -151,7 +154,7 @@ it("retains scope across Settings remounts and reveals navigation outside the fi
     "aria-selected",
     "true",
   );
-  f.navigate(meTarget(scope, "new"));
+  f.navigate(soloDraftTarget(scope));
   expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -167,25 +170,11 @@ it("retains scope across Settings remounts and reveals navigation outside the fi
     "true",
   );
   await user.click(screen.getByRole("tab", { name: "All" }));
-  f.navigate(meTarget(scope, id));
+  f.navigate(conversationTarget(scope, id));
   expect(screen.getByRole("tab", { name: "All" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-});
-
-it("omits the scope switcher and Solo creation when Solo is disabled", async () => {
-  const user = userEvent.setup();
-  const f = fixture(true);
-  f.meEnabled(false);
-  expect(
-    screen.queryByRole("tablist", { name: "Navigation scope" }),
-  ).not.toBeInTheDocument();
-  expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "New" }));
-  expect(
-    (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-  ).toEqual(["New DM", "New channel"]);
 });
 
 it.each([
@@ -274,7 +263,7 @@ it("header channel creation expands the saved destination without changing other
 it("reveals Solo when New chat reopens the same destination after filtering it out", async () => {
   const f = fixture(true);
   const user = userEvent.setup();
-  f.navigate(meTarget(scope));
+  f.navigate(soloDraftTarget(scope));
   await user.click(screen.getByRole("tab", { name: "Team" }));
   expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
     "aria-selected",
@@ -289,13 +278,16 @@ it("reveals Solo when New chat reopens the same destination after filtering it o
 });
 
 const soloFailure = vi.hoisted(() => ({ active: false }));
-vi.mock("../../bundled/me/MeSidebar", async (original) => {
-  const actual = await original<typeof import("../../bundled/me/MeSidebar")>();
+vi.mock("../../features/channel-navigation/SoloInventory", async (original) => {
+  const actual =
+    await original<
+      typeof import("../../features/channel-navigation/SoloInventory")
+    >();
   return {
     ...actual,
-    MeSidebar: (props: Parameters<typeof actual.MeSidebar>[0]) => {
+    SoloInventory: (props: Parameters<typeof actual.SoloInventory>[0]) => {
       if (soloFailure.active) throw new Error("Solo inventory failed");
-      return <actual.MeSidebar {...props} />;
+      return <actual.SoloInventory {...props} />;
     },
   };
 });

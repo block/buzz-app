@@ -4,7 +4,9 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { MeSidebar } from "../../bundled/me/MeSidebar";
+import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
+import { soloDraft } from "../../features/channel-navigation/routes";
+import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import { ChannelInventory } from "../../features/channel-navigation/ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
@@ -24,16 +26,16 @@ import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
 import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
+import { ownSolo } from "../../features/solo/labels";
+import type { ChannelList } from "../../features/relay/contracts";
 
-type Filter = "all" | "solo" | "multiplayer";
+const noSubscription = () => () => {};
+
+type Filter = "all" | "solo" | "team";
 const filters = [
   { value: "all", label: "All", panelId: "sidebar-all" },
   { value: "solo", label: "Solo", panelId: "sidebar-solo" },
-  {
-    value: "multiplayer",
-    label: "Team",
-    panelId: "sidebar-multiplayer",
-  },
+  { value: "team", label: "Team", panelId: "sidebar-team" },
 ] as const;
 
 type Props = {
@@ -41,7 +43,6 @@ type Props = {
   navigator: Navigation;
   agents?: Agents | undefined;
   target: OpenTarget;
-  meEnabled?: boolean | undefined;
   children: ReactNode;
 };
 
@@ -80,9 +81,12 @@ function ScopedSidebar({
     );
     return {
       filter:
-        saved?.filter === "solo" || saved?.filter === "multiplayer"
-          ? saved.filter
-          : ("all" as Filter),
+        saved?.filter === "solo"
+          ? "solo"
+          : // Saved before Team was named.
+            saved?.filter === "team" || saved?.filter === "multiplayer"
+            ? "team"
+            : ("all" as Filter),
       location:
         typeof saved?.location === "string" ? saved.location : undefined,
     };
@@ -92,12 +96,35 @@ function ScopedSidebar({
     "scope" in target &&
     target.scope &&
     relayPartition(target.scope.communityOrigin, target.scope.viewer) === scope;
+  // The conversation's own Solo label, not the opening page, says which
+  // inventory owns it; an unlisted conversation waits until it is known.
+  const channels = connection.session?.channels;
+  const channelList = useSyncExternalStore(
+    channels?.subscribeList ?? noSubscription,
+    () => channels?.list(),
+  );
+  const preferences = connection.session?.soloPreferences;
+  const soloPreferences = useSyncExternalStore(
+    preferences?.subscribe ?? noSubscription,
+    () => preferences?.snapshot(),
+  );
+  // A cached startup session has no Solo capabilities yet; its unavailable
+  // placeholders still change height when the live inventories arrive.
+  const soloReady =
+    (connection.status === "ready" || connection.status === "error") &&
+    soloPreferences?.status !== "idle" &&
+    soloPreferences?.status !== "loading";
   const destination = local
-    ? target.kind === "conversation" ||
-      (target.kind === "page" && target.pluginId === "buzz.channels")
-      ? "multiplayer"
-      : target.kind === "page" && target.pluginId === "buzz.me"
-        ? "solo"
+    ? target.kind === "conversation"
+      ? conversationDestination(
+          channelList,
+          target.channelId,
+          connection.session?.viewer,
+        )
+      : target.kind === "page" && target.pluginId === "buzz.channels"
+        ? soloDraft(target.route?.params)
+          ? "solo"
+          : "team"
         : undefined
     : undefined;
   const location = destination ? targetKey(target) : undefined;
@@ -115,69 +142,49 @@ function ScopedSidebar({
   }, [scope, view]);
   const filter = view.filter;
   const setFilter = (filter: Filter) => setView({ filter, location });
-  const visibleFilter = props.meEnabled ? filter : "multiplayer";
-  const panelId = props.meEnabled ? `sidebar-${visibleFilter}` : undefined;
+  const panelId = `sidebar-${filter}`;
   const header = (
     <>
-      {props.meEnabled && (
-        <div className={styles.sidebarControls}>
-          <div className={styles.sidebarScope}>
-            <Tabs
-              label="Navigation scope"
-              variant="segmented"
-              value={visibleFilter}
-              items={filters}
-              onValueChange={setFilter}
-            />
-          </div>
+      <div className={styles.sidebarControls}>
+        <div className={styles.sidebarScope}>
+          <Tabs
+            label="Navigation scope"
+            variant="segmented"
+            value={filter}
+            items={filters}
+            onValueChange={setFilter}
+          />
         </div>
-      )}
+      </div>
       {props.children && (
         <div className={styles.destinations}>{props.children}</div>
       )}
     </>
   );
-  const solo = props.meEnabled && (
-    <div
-      className={styles.sidebarGroup}
-      hidden={visibleFilter === "multiplayer"}
-    >
-      {visibleFilter === "all" && (
-        <div className={styles.sidebarScopeLabel}>
-          <InlineHeader title={<span className="text-standard">Solo</span>} />
-        </div>
-      )}
-      <MeSidebar
-        relay={props.relay}
-        navigator={props.navigator}
-        target={props.target}
-      />
-    </div>
-  );
-  const teamLabel = visibleFilter === "all" && (
-    <div className={styles.teamHeading}>
+  const label = (title: string) =>
+    filter === "all" && (
       <div className={styles.sidebarScopeLabel}>
-        <InlineHeader title={<span className="text-standard">Team</span>} />
+        <InlineHeader title={<span className="text-standard">{title}</span>} />
       </div>
-    </div>
-  );
+    );
   return (
     <SidebarBoundary
       key={`${scope}:${connection.generation}`}
       header={header}
       panelId={panelId}
     >
-      {connection.status === "ready" || connection.cached ? (
+      {connection.session &&
+      (connection.status === "ready" || connection.cached) ? (
         <ChannelInventory
           relay={props.relay}
           navigator={props.navigator}
           agents={props.agents}
           target={props.target}
-          meEnabled={props.meEnabled}
           queries={connection.session}
           scope={scope}
           viewer={connection.viewer}
           cached={!!connection.cached}
+          layoutReady={filter === "team" || soloReady}
           connectionError={connection.error}
           render={({
             sidebar,
@@ -195,14 +202,34 @@ function ScopedSidebar({
                 panelId={panelId}
                 {...frame}
               >
+                {/* Relay outages for every inventory recover through one
+                    automatic owner; its notice is the single Retry. */}
+                {!connection.cached && (
+                  <RecoveryNotice recovery={connection.session.recovery} />
+                )}
                 {before}
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
-                  {solo}
+                  <section
+                    aria-label="Solo"
+                    className={styles.sidebarGroup}
+                    hidden={filter === "team"}
+                  >
+                    {label("Solo")}
+                    <SoloInventory
+                      key={`${scope}:${connection.generation}`}
+                      session={connection.session}
+                      scope={scope}
+                      navigator={props.navigator}
+                      target={props.target}
+                    />
+                  </section>
                   <div
                     className={styles.sidebarGroup}
-                    hidden={visibleFilter === "solo"}
+                    hidden={filter === "solo"}
                   >
-                    {teamLabel}
+                    {filter === "all" && (
+                      <div className={styles.teamHeading}>{label("Team")}</div>
+                    )}
                     {content}
                   </div>
                 </SidebarUnread>
@@ -223,8 +250,6 @@ function ScopedSidebar({
             }
           >
             <SidebarList>
-              {solo}
-              <div hidden={visibleFilter === "solo"}>{teamLabel}</div>
               <p className={styles.connectionMessage}>
                 {connection.status === "connecting"
                   ? "Connecting to your relay…"
@@ -239,4 +264,15 @@ function ScopedSidebar({
       )}
     </SidebarBoundary>
   );
+}
+
+/** Unknown until the channel list can say; a channel outside it is Team's. */
+function conversationDestination(
+  list: ChannelList | undefined,
+  id: string,
+  viewer: string | undefined,
+) {
+  const channel = list?.channels.find((item) => item.id === id);
+  if (!channel && list?.status !== "ready") return undefined;
+  return ownSolo(channel, viewer) ? "solo" : "team";
 }

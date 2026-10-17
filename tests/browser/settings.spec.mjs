@@ -541,7 +541,7 @@ confirmedPresence(
       await expect(profileContent).toHaveCount(0);
       await expect(pluginContent).toBeVisible();
       await expect(
-        page.getByRole("switch", { name: "Enable Projects" }),
+        page.getByRole("switch", { name: "Enable Workflows" }),
       ).toBeVisible();
       const settingsRegion = page.getByRole("region", {
         name: "Settings",

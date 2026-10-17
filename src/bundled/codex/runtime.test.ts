@@ -257,14 +257,15 @@ function fixture(
       agentMemories: { open: memoryOpen, read: memoryRead },
       channels: {
         list: () => ({
-          channels: [{ id: "channel", name: "test", channelType: "stream" }],
+          status: "ready",
+          channels: [
+            {
+              id: "channel",
+              name: "test",
+              channelType: personal.has("channel") ? "session" : "stream",
+            },
+          ],
         }),
-      },
-      mePlacement: {
-        state: { status: "ready" } as { status: string; error?: string },
-        snapshot: () => snapshot.session.mePlacement.state,
-        refresh: vi.fn(async () => {}),
-        has: (id: string) => personal.has(id),
       },
     },
   };
@@ -1231,6 +1232,7 @@ it.each([
   async ({ channelType, scope, whole }) => {
     const f = fixture();
     vi.spyOn(f.snapshot.session.channels, "list").mockReturnValue({
+      status: "ready",
       channels: [{ id: "channel", name: "test", channelType }],
     });
     const otherRoot = "e".repeat(64);
@@ -3029,11 +3031,8 @@ describe("programs", () => {
   });
 });
 
-/** Files the fixture's channel in its owner's Me. */
+/** Labels the fixture's channel a Solo chat; deleting it converts the chat. */
 function inMe(f: ReturnType<typeof fixture>) {
-  f.snapshot.session.channels.list = () => ({
-    channels: [{ id: "channel", name: "test", channelType: "session" }],
-  });
   f.personal.add("channel");
   return f.personal;
 }
@@ -3115,7 +3114,7 @@ it("continues an owner's Me chat as one channel conversation posted at the top l
   ]);
 });
 
-it("finishes a Me turn under its policy when the chat is shared mid-turn", async () => {
+it("finishes a Solo turn under its policy when the chat is converted mid-turn", async () => {
   const f = fixture();
   const personal = inMe(f);
   const channelScope = (delivery: Delivery) => ({
@@ -3126,7 +3125,7 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn", async
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   personal.delete("channel");
   await f.runtime.run(channelScope(f.delivery("@Codex after share")));
-  // The shared chat's request waits for the Me turn instead of steering in.
+  // The converted chat's request waits for the Solo turn instead of steering in.
   await f.tool("send", { audience: "everyone", text: "Progress" });
   expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(0);
   expect(f.starts()).toHaveLength(1);
@@ -3145,21 +3144,20 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn", async
   ]);
 });
 
-it("fails a session mention it cannot place until the placement can be read", async () => {
+it("fails a mention in a channel it cannot see yet until the channel list loads", async () => {
   const f = fixture();
+  const ready = f.snapshot.session.channels.list;
   f.snapshot.session.channels.list = () => ({
-    channels: [{ id: "channel", name: "test", channelType: "session" }],
+    status: "loading",
+    channels: [],
   });
-  const placement = f.snapshot.session.mePlacement;
-  placement.state = { status: "error", error: "Recipe read failed" };
   await expect(f.runtime.run(f.delivery("@Codex hi"))).rejects.toThrow(
-    "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
+    "Couldn't read this community's channels to tell where to answer (not loaded). Try again.",
   );
-  expect(placement.refresh).toHaveBeenCalledOnce();
   expect(f.starts()).toEqual([]);
   expect(f.workingUntil).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
-  placement.state = { status: "ready" };
+  f.snapshot.session.channels.list = ready;
   await f.runtime.run(f.delivery("@Codex again"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(inputText(f.starts()[0])).toContain("reply_to");
@@ -3180,17 +3178,6 @@ it("keeps Messages routing for a channel filed in someone else's Me", async () =
   expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
 });
 
-it("a converted stream uses threaded replies despite an agent owner's retained Me entry", async () => {
-  const f = fixture();
-  f.personal.add("channel");
-  await f.runtime.run(f.delivery("@Codex converted"));
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  expect(inputText(f.starts()[0])).toContain("reply_to");
-  await f.complete(0, "DONE");
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
-  expect(tagsOf(f)[0]).toContainEqual(["e", root, "", "reply"]);
-});
-
 it("method calls: a thread and a turn make no relay-session call beyond the turn's message-context reads (launch-boundary.test.ts runs the real service path)", async () => {
   const f = fixture();
   const session = f.snapshot.session;
@@ -3201,7 +3188,6 @@ it("method calls: a thread and a turn make no relay-session call beyond the turn
     "agentMemories.open": f.memoryOpen,
     "memoryView.refresh": f.memoryView.refresh,
     "profiles.ensure": session.profiles.ensure,
-    "mePlacement.refresh": session.mePlacement.refresh,
     publish: f.publish,
     query: f.query,
     upload: f.upload,

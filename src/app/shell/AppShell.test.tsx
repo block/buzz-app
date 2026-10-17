@@ -255,7 +255,7 @@ it("keeps built-in sidebar controls available before page contributions load", (
     "true",
   );
 
-  rerender(shell("buzz.me/me"));
+  rerender(shell("settings"));
   expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute(
     "aria-expanded",
     "true",
@@ -616,12 +616,11 @@ it.each([false, true])(
     services = current;
     const onSelect = vi.fn();
     const entries: RegisteredPage[] = [
-      { key: "buzz.me/me", title: "Me", placement: "topbar" },
       { key: "buzz.channels/channels", title: "Channels", placement: "topbar" },
       { key: "buzz.inbox/inbox", title: "Inbox", placement: "sidebar" },
       { key: "buzz.bestie/bestie", title: "Bestie", placement: "sidebar" },
       {
-        key: "buzz.projects/projects",
+        key: "fixture.projects/projects",
         title: "Projects",
         placement: "sidebar",
       },
@@ -704,7 +703,7 @@ it.each([false, true])(
     expect(
       within(nav).queryByRole("tab", { name: "Bestie" }),
     ).not.toBeInTheDocument();
-    rerender(shell("buzz.projects/projects"));
+    rerender(shell("fixture.projects/projects"));
     expect(document.getElementById("shell-navigation")).toHaveAttribute(
       "aria-hidden",
       "false",
@@ -732,7 +731,7 @@ it.each([false, true])(
       "aria-current",
       "page",
     );
-    rerender(shell("buzz.me/me"));
+    rerender(shell("buzz.inbox/inbox"));
     expect(messages).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeVisible();
     const panel = screen.getByRole("tabpanel", { name: "Messages" });
@@ -744,12 +743,12 @@ it.each([false, true])(
       focus: "preserve",
     });
     await userEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
-    rerender(shell("buzz.projects/projects"));
+    rerender(shell("fixture.projects/projects"));
     expect(document.getElementById("shell-navigation")).toHaveAttribute(
       "aria-hidden",
       "true",
     );
-    rerender(shell("buzz.me/me"));
+    rerender(shell("buzz.inbox/inbox"));
     expect(screen.getByRole("button", { name: "Show sidebar" })).toBeVisible();
     rerender(shell("settings"));
     expect(

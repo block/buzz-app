@@ -17,7 +17,7 @@ import { readProjectGit } from "./project-git.mjs";
 import {
   communityGitRepository,
   parseGitRead,
-} from "../src/features/projects/git.ts";
+} from "../src/features/repos/git.ts";
 import { validateMemberAdministrationTemplate } from "../src/features/channel-members/administration-protocol.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";

@@ -382,7 +382,7 @@ test("keyboard selection follows its action while recent conversations arrive ab
       .getByRole("option");
     const projects = dialog
       .getByRole("group", { name: "Actions" })
-      .getByRole("option", { name: "Projects", exact: true });
+      .getByRole("option", { name: "Workflows", exact: true });
     await expect(projects).toBeVisible();
     // The connected palette is mounted, but its channel list is still held.
     await expect(
@@ -411,7 +411,7 @@ test("keyboard selection follows its action while recent conversations arrive ab
     await input.press("Enter");
     await expect(dialog).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: "Projects", exact: true }),
+      page.getByRole("heading", { name: "Workflows", exact: true }),
     ).toBeVisible();
   } finally {
     holding = false;

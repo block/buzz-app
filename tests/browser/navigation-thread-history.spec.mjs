@@ -861,7 +861,7 @@ test("header openings keep focus while a main-pane thread is retained", async ({
     name: "Messages",
     exact: true,
   });
-  const projects = topbar.getByRole("tab", { name: "Projects", exact: true });
+  const projects = topbar.getByRole("tab", { name: "Workflows", exact: true });
   const inbox = page
     .getByRole("navigation", { name: "Pages" })
     .getByRole("button", { name: "Inbox", exact: true });

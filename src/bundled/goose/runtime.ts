@@ -28,7 +28,7 @@ import {
   type StandaloneTurn,
   type TurnResult,
 } from "../../features/agents/service";
-import { meChat } from "../../features/agents/me-chat";
+import { soloChat } from "../../features/agents/solo-chat";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -257,7 +257,7 @@ export class GooseRuntime {
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     // Frozen for the turn: its key, prompt, tools and posts all follow it.
-    const topLevel = await meChat(
+    const topLevel = await soloChat(
       () => this.relay(agent.pubkey),
       agent.owner,
       channel,

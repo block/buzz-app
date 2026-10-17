@@ -67,7 +67,6 @@ function mount(selected = "child") {
             id: "child",
             name: "Plan the release",
             channelType: "session",
-            parentChannelId: parent.id,
           },
         ]}
         draft={true}

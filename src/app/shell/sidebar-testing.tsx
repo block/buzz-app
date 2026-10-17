@@ -8,12 +8,12 @@ import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { ChannelNavigationProvider } from "../../features/channel-navigation/ChannelNavigationState";
 import type { OpenTarget } from "../../features/navigation/targets";
-import { NewMenu } from "../../app/shell/NewMenu";
+import { NewMenu } from "./NewMenu";
 import type { Agents } from "../../features/agents/service";
-import { PrimarySidebar } from "../../app/shell/PrimarySidebar";
+import { PrimarySidebar } from "./PrimarySidebar";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import { MeSidebar } from "../../bundled/me/MeSidebar";
-import { meTarget } from "../../bundled/me/routes";
+import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
+import { conversationTarget } from "../../features/channel-navigation/routes";
 
 export const owners: ReturnType<typeof createRelaySession>[] = [];
 export const id = "11111111-1111-4111-8111-111111111111";
@@ -61,29 +61,17 @@ export function fixture(combined = false, canCreate = false, agents?: Agents) {
   const list = {
     status: "ready" as const,
     channels: [
-      { id, name: "Planning", channelType: "session" as const },
-      { id: other, name: "Other", channelType: "session" as const },
-    ],
-  };
-  const placement = {
-    ...base.mePlacement.snapshot(),
-    status: "ready" as const,
-    entries: [
       {
-        eventId: "e".repeat(64),
-        createdAt: 1,
-        record: {
-          version: 2 as const,
-          community: "https://relay.test",
-          deleted: false,
-          value: {
-            type: "groups" as const,
-            id: "me" as const,
-            groups: [],
-            assignments: {},
-            channels: [id, other],
-          },
-        },
+        id,
+        name: "Planning",
+        channelType: "session" as const,
+        creator: viewer,
+      },
+      {
+        id: other,
+        name: "Other",
+        channelType: "session" as const,
+        creator: viewer,
       },
     ],
   };
@@ -105,13 +93,8 @@ export function fixture(combined = false, canCreate = false, agents?: Agents) {
     viewer,
     channelCreation: { ...base.channelCreation, available: canCreate },
     channels: { ...base.channels, list: () => list, ensureList() {} },
-    mePlacement: {
-      ...base.mePlacement,
-      snapshot: () => placement,
-      ensure() {},
-    },
-    mePreferences: {
-      ...base.mePreferences,
+    soloPreferences: {
+      ...base.soloPreferences,
       sectionCreationWritable: canCreate,
       snapshot: () => preferences,
       ensure: async () => {},
@@ -168,9 +151,8 @@ export function fixture(combined = false, canCreate = false, agents?: Agents) {
       attempt: { id: String(attempt), signal: new AbortController().signal },
     }),
   } as unknown as Navigation;
-  let target: OpenTarget = meTarget(scope, other);
+  let target: OpenTarget = conversationTarget(scope, other);
   let sidebarVisible = true;
-  let meEnabled = true;
   const publish = () => {
     for (const listener of listeners) listener();
   };
@@ -179,25 +161,24 @@ export function fixture(combined = false, canCreate = false, agents?: Agents) {
       <ToastProvider>
         {combined ? (
           <>
-            <NewMenu
-              relay={relay}
-              navigator={navigator}
-              agents={agents}
-              meEnabled={meEnabled}
-            />
+            <NewMenu relay={relay} navigator={navigator} agents={agents} />
             {sidebarVisible && (
               <PrimarySidebar
                 relay={relay}
                 navigator={navigator}
                 target={target}
-                meEnabled={meEnabled}
               >
                 <button type="button">Inbox</button>
               </PrimarySidebar>
             )}
           </>
         ) : (
-          <MeSidebar relay={relay} navigator={navigator} target={target} />
+          <SoloInventory
+            session={snapshot.session}
+            scope={scope}
+            navigator={navigator}
+            target={target}
+          />
         )}
       </ToastProvider>
     </ChannelNavigationProvider>
@@ -211,10 +192,6 @@ export function fixture(combined = false, canCreate = false, agents?: Agents) {
     },
     sidebar(visible: boolean) {
       sidebarVisible = visible;
-      rendered.rerender(tree());
-    },
-    meEnabled(enabled: boolean) {
-      meEnabled = enabled;
       rendered.rerender(tree());
     },
     connection(change: Partial<RelaySnapshot>) {

@@ -21,7 +21,7 @@ import {
   roster,
   signed,
 } from "../relay/testing";
-import { SessionMessageTarget } from "../sessions/SessionMessageTarget";
+import { SoloMessageTarget } from "../solo/SoloMessageTarget";
 import type { PageNavigation } from "../navigation/service";
 import { MessageManagement } from "./MessageManagement";
 import { MessageComposer } from "./MessageComposer";
@@ -580,7 +580,7 @@ it.each(["save", "changed", "deleted", "aborted"] as const)(
       await authorize(owner);
       render(
         <MessageManagement session={owner.session} channelId="channel">
-          <SessionMessageTarget
+          <SoloMessageTarget
             session={owner.session}
             scope="exact-session-edit"
             channelId="channel"

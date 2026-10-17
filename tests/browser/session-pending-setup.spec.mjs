@@ -23,11 +23,12 @@ test("ordinary session links cannot bypass a pending start receipt", async ({
   app,
 }) => {
   const scope = `https://primary.example:${app.viewer}`;
-  const key = `buzz-view.v1:${JSON.stringify([scope, "sessions:section:work:pending"])}`;
+  const key = `buzz-view.v1:${JSON.stringify([scope, "me:section:work:pending"])}`;
   const receipt = JSON.stringify({
     id: pendingChannel,
     text: "Original first message",
     creationId: "c".repeat(64),
+    agent: "a".repeat(64),
     setup: { sectionId: "work", canvas: "Frozen instructions", agents: [] },
     setupDone: false,
   });
@@ -45,23 +46,18 @@ test("ordinary session links cannot bypass a pending start receipt", async ({
     await openTarget(page, { ...target(app), channelId: pendingChannel }),
   ).toEqual({ status: "opened" });
   const recovered = page.getByRole("textbox", {
-    name: "Message this session",
+    name: "Message your agents",
     exact: true,
   });
   await expect(recovered).toHaveText("Original first message");
   await expect(recovered).not.toBeEditable();
-  // Retrying must reconcile the saved creation, never send around missing setup.
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "The saved operation could not be confirmed",
-  );
+  // The saved start waits for its author to resume it; nothing sends on open.
+  await expect(
+    page.getByRole("button", { name: "Send message", exact: true }),
+  ).toBeEnabled();
   expect(
     await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key),
-  ).toEqual({
-    ...JSON.parse(receipt),
-    name: "Original first message",
-    draft: { text: "Original first message", recipients: [] },
-  });
+  ).toEqual(JSON.parse(receipt));
   expect(
     app.report.publications.filter(({ event }) => event.kind === 9),
   ).toHaveLength(0);
@@ -83,7 +79,7 @@ test("ordinary session links cannot bypass a pending start receipt", async ({
     .toBe("opened");
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
   const composer = page.getByRole("textbox", {
-    name: "Message this session",
+    name: "Message your agents",
     exact: true,
   });
   await composer.fill("Cannot skip setup");

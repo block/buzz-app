@@ -589,7 +589,7 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   await expect(starred).toHaveCount(0);
   await page.unroute("**/sidebar-star");
   // Failures live in the session, not in a menu or mounted Messages page.
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await openPage(page, "Messages");
   await error.getByRole("button", { name: "Retry move" }).click();
   await expect(starred).toBeFocused();
@@ -987,7 +987,7 @@ test.use({
   developmentReact: true,
   historyCounts: { alpha: 1, beta: 1 },
 });
-test("Projects → Messages keeps saved groups, selected channel, and a visible entry's scroll on every frame without re-decoding", async ({
+test("Workflows → Messages keeps saved groups, selected channel, and a visible entry's scroll on every frame without re-decoding", async ({
   page,
   app,
 }) => {
@@ -1003,7 +1003,7 @@ test("Projects → Messages keeps saved groups, selected channel, and a visible 
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await openPage(page, "Projects");
+  await openPage(page, "Workflows");
   await expect(sidebar).toBeVisible();
   // Navigation reveals the current entry; keep Beta in view at a nonzero
   // offset so the warm return has no reason to move the list.
@@ -1079,7 +1079,7 @@ test("Projects → Messages keeps saved groups, selected channel, and a visible 
 
 // Browser-owned integration: app-level plugin toggles, the persistent sidebar's
 // menu/dialog portals, and encrypted saves while Messages is not mounted.
-test("Move and Create stay available on Projects with Sessions disabled", async ({
+test("Move and Create stay available on Workflows with Solo always on", async ({
   page,
   app,
 }) => {
@@ -1087,13 +1087,16 @@ test("Move and Create stay available on Projects with Sessions disabled", async 
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
-  const toggle = page
-    .getByRole("region", { name: "Plugins", exact: true })
-    .getByRole("switch", { name: "Enable Sessions", exact: true });
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-checked", "false");
-  await openPage(page, "Projects");
-  const projects = page.getByRole("heading", { name: "Projects", exact: true });
+  await expect(
+    page
+      .getByRole("region", { name: "Plugins", exact: true })
+      .getByRole("switch", { name: /^Enable (Sessions|Solo)$/ }),
+  ).toHaveCount(0);
+  await openPage(page, "Workflows");
+  const projects = page.getByRole("heading", {
+    name: "Workflows",
+    exact: true,
+  });
   await expect(projects).toBeVisible();
   const node = await sidebar(page).elementHandle();
   const menu = await openMove(page, rowIn(page, "group:work"));

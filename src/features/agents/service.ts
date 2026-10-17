@@ -106,10 +106,10 @@ import {
   type Team,
   type Unfinished,
 } from "./store";
-import { meChat } from "./me-chat";
+import { soloChat } from "./solo-chat";
 import { readCheckpoints, writeCheckpoints } from "./catch-up";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
-import { nameMeChat } from "./me-chat-name";
+import { nameSoloChat } from "./solo-chat-name";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -1063,13 +1063,13 @@ export class AgentsService extends Service implements Agents {
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
       activity: localActivity,
-      meChat: (agent, channel, signal) =>
-        meChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
+      soloChat: (agent, channel, signal) =>
+        soloChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
       remembered: (pubkey, slug, body) =>
         this.coreMemory.wrote(pubkey, slug, body),
       finished: (pubkey) => void this.coreMemory.refresh(pubkey),
       named: (agent, event, title) =>
-        void nameMeChat(
+        void nameSoloChat(
           this.relay(agent.pubkey),
           agent.owner,
           agent.pubkey,

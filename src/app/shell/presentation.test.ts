@@ -30,16 +30,15 @@ function page(key: string, title: string, icon?: string): RegisteredPage {
   };
 }
 
-const me = page("buzz.me/me", "Me");
 const messages = page("buzz.channels/channels", "Channels");
 const inbox = page("buzz.inbox/inbox", "Inbox");
 const bestie = page("buzz.bestie/bestie", "Bestie");
-const projects = page("buzz.projects/projects", "Projects");
+const projects = page("fixture.projects/projects", "Projects");
 
 test("bundled page order ignores activation order without mutating the registry", () => {
-  const input = Object.freeze([projects, bestie, messages, inbox, me]);
-  expect(orderPages(input)).toEqual([me, messages, inbox, bestie, projects]);
-  expect(input).toEqual([projects, bestie, messages, inbox, me]);
+  const input = Object.freeze([projects, bestie, messages, inbox]);
+  expect(orderPages(input)).toEqual([messages, inbox, bestie, projects]);
+  expect(input).toEqual([projects, bestie, messages, inbox]);
   expect(orderPages([messages, projects])).toEqual([messages, projects]);
   expect(orderPages([projects])).toEqual([projects]);
   expect(orderPages([])).toEqual([]);
@@ -55,11 +54,11 @@ test("other pages sort by label then full key and cannot claim bundled slots", (
     messages,
     inbox,
     bestie,
-    projects,
     alpha,
     alpha2,
     foreignInbox,
     sameId,
+    projects,
     zulu,
   ];
   expect(orderPages([...expected].reverse())).toEqual(expected);
@@ -138,7 +137,6 @@ describe("page mark precedence", () => {
 
 describe("header area selection", () => {
   const entries: RegisteredPage[] = [
-    { ...me, primary: true, placement: "topbar" },
     { ...messages, primary: true, placement: "topbar" },
     inbox,
     {
@@ -148,7 +146,6 @@ describe("header area selection", () => {
     },
     { ...page("buzz.agents/agents", "Agents"), primary: true },
     { ...page("buzz.workflows/workflows", "Workflows"), primary: true },
-    { ...page("buzz.sessions/sessions", "Sessions"), primary: false },
     page("example.sidebar/me", "External sidebar"),
     {
       ...page("example.header/main", "External header"),
@@ -172,9 +169,7 @@ describe("header area selection", () => {
     ["buzz.reminders/reminders", "buzz.reminders/reminders"],
     ["buzz.agents/agents", "buzz.agents/agents"],
     ["buzz.workflows/workflows", "buzz.workflows/workflows"],
-    ["buzz.sessions/sessions", "buzz.channels/channels"],
     ["example.sidebar/me", "buzz.channels/channels"],
-    ["buzz.me/me", "buzz.channels/channels"],
     ["settings", "settings"],
     ["example.header/main", "example.header/main"],
     ["example.tools/main", "example.tools/main"],
@@ -192,14 +187,6 @@ describe("header area selection", () => {
       expect(headerPageSelection(registered, inbox.key)).toBe(inbox.key);
     }
   });
-  test("Me belongs to Messages even when its placement is omitted", () => {
-    expect(
-      headerPageSelection(
-        [...entries.filter((entry) => entry.key !== me.key), me],
-        me.key,
-      ),
-    ).toBe(messages.key);
-  });
 });
 
 test.each([undefined, "sidebar", "topbar", "toolbar"] as const)(
@@ -214,12 +201,5 @@ test.each([undefined, "sidebar", "topbar", "toolbar"] as const)(
     expect(headerPageSelection([registered, inbox], inbox.key)).toBe(
       messages.key,
     );
-    expect(
-      pagePlacement({
-        ...me,
-        primary: true,
-        ...(placement ? { placement } : {}),
-      }),
-    ).toBeUndefined();
   },
 );

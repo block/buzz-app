@@ -254,7 +254,7 @@ for (const channel of channels) {
         ["t", channel.type === "dm" ? "dm" : "stream"],
         ...(channel.type === "dm" ? [["hidden"]] : []),
         ...(channel.type === "session"
-          ? [["private"], ["about", "Buzz session (buzz.sessions/v1)"]]
+          ? [["private"], ["t", "buzz.solo"]]
           : []),
       ],
       "",

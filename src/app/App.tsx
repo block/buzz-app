@@ -175,9 +175,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 relay={services.relay}
                 navigator={services.navigation}
                 agents={services.agents}
-                meEnabled={route.pages.some(
-                  (page) => page.key === "buzz.me/me",
-                )}
               />
             }
             sidebar={(pageNavigation) =>
@@ -214,9 +211,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
                   navigator={services.navigation}
                   agents={services.agents}
                   target={route.target}
-                  meEnabled={route.pages.some(
-                    (page) => page.key === "buzz.me/me",
-                  )}
                 >
                   {pageNavigation}
                 </PrimarySidebar>

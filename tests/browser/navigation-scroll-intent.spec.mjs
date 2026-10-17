@@ -21,18 +21,19 @@ for (const cachedStartup of [false, true]) {
       page,
       app,
     }) => {
-      // This journey owns channel-only restoration, including genuine cold startup.
-      // Keep Solo hydration out of the inventory geometry across community changes.
-      await page.addInitScript(() => {
-        localStorage.setItem(
-          "buzzodz.plugins.v1",
-          JSON.stringify({ version: 2, enabled: { "buzz.me": false } }),
-        );
-      });
       await open(page, app);
       const sidebar = page.getByRole("navigation", {
         name: "Subscribed channels",
       });
+      // Save the settled combined inventory, before cold-loading it with Team
+      // preferences held. Solo's two independent reads also change its height.
+      const solo = page.getByRole("navigation", { name: "Solo conversations" });
+      await expect(
+        solo.getByText("Start a conversation with your agents."),
+      ).toBeVisible();
+      await expect(
+        solo.getByText("Loading sections…", { exact: true }),
+      ).toHaveCount(0);
       // Save a nonzero position, then cold-load that community with preferences held.
       await sidebar.evaluate((element) => {
         element.scrollTop = 900;
@@ -92,9 +93,9 @@ for (const cachedStartup of [false, true]) {
         ).toHaveCount(0);
         // Device preferences now restore the saved position before the held
         // network refresh. Subsequent user intent must still win over that refresh.
-        expect(await sidebar.evaluate((element) => element.scrollTop)).toBe(
-          cachedStartup ? 900 : 0,
-        );
+        await expect
+          .poll(() => sidebar.evaluate((element) => element.scrollTop))
+          .toBe(cachedStartup ? 900 : 0);
         if (action === "scroll event pending") {
           // Model compositor movement visible before the main-thread scroll
           // callback. The restoration must inspect the current position too.

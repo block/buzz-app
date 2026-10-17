@@ -71,9 +71,11 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   // Start outside Messages so its header activation owns preserve-focus intent.
   // Settings also reads the community profile through /session, racing this gate.
   await page.goto(
-    `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "page", pluginId: "buzz.me", pageId: "me" }))}`,
+    `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "page", pluginId: "buzz.workflows", pageId: "workflows" }))}`,
   );
-  await expect.poll(async () => (await entry(page)).target.pageId).toBe("me");
+  await expect
+    .poll(async () => (await entry(page)).target.pageId)
+    .toBe("workflows");
   const messages = page.getByRole("tab", { name: "Messages", exact: true });
   await messages.focus();
   await messages.press("Enter");
@@ -118,17 +120,15 @@ test("Skip to content focuses main without adding a visit or dropping Back", asy
   app,
 }) => {
   await open(page, app);
-  await openPage(page, "Projects");
-  await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
-  ).toBeFocused();
+  await openPage(page, "Workflows");
+  await expect(page.getByRole("main")).toBeFocused();
   const before = await entry(page);
   const url = page.url();
   const skip = page.getByRole("link", { name: "Skip to content", exact: true });
   await skip.focus();
   await skip.press("Enter");
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible({ timeout: 1500 });
   await expect(page.getByRole("main")).toBeFocused();
   expect(await entry(page)).toEqual(before);
@@ -182,7 +182,7 @@ launchTest(
     });
     await expect(page.locator("#buzz-launch")).toHaveCount(0);
     await expect(failed).toBeVisible();
-    await openPage(page, "Projects");
+    await openPage(page, "Workflows");
     await expect(failed).toBeHidden();
     await page.getByRole("tab", { name: "Agents", exact: true }).click();
     await page.evaluate(() => {

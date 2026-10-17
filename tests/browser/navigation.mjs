@@ -12,6 +12,12 @@ export async function openPage(page, name, { connected = true } = {}) {
   await expect(
     page.getByRole("button", { name: /^Community switcher:/ }),
   ).toBeVisible();
+  if (name === "Me" || name === "Solo") {
+    // Solo is not a page: it is a new Solo draft in Messages.
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
+    return;
+  }
   await pageChoices(page);
   await selectPage(page, name, { connected });
 }

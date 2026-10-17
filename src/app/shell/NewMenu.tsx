@@ -8,9 +8,9 @@ import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { splitPartition } from "../../features/relay/partition";
-import { NewProject } from "../../features/sessions/NewProject";
-import { resetNewChatProject } from "../../features/sessions/NewSessionComposer";
-import { meTarget } from "../../bundled/me/routes";
+import { NewProject } from "../../features/solo/NewProject";
+import { resetNewChatProject } from "../../features/solo/SoloDraft";
+import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -24,7 +24,6 @@ import { PlusIcon } from "../../shared/design-system/icons";
 type Props = {
   relay: RelayData;
   navigator: Navigation;
-  meEnabled: boolean;
   agents?: Agents | undefined;
 };
 
@@ -43,14 +42,13 @@ export function NewMenu(props: Props) {
 function ReadyNewMenu({
   relay,
   navigator,
-  meEnabled,
   agents,
   session,
   available,
 }: Props & { session: RelaySession; available: boolean }) {
   useSyncExternalStore(
-    session.mePreferences.subscribe,
-    session.mePreferences.snapshot,
+    session.soloPreferences.subscribe,
+    session.soloPreferences.snapshot,
   );
   const preferences = useSidebarPreferences(session.sidebarPreferences);
   const pendingChannel = useSyncExternalStore(
@@ -80,25 +78,22 @@ function ReadyNewMenu({
           }
         />
         <MenuPopup>
-          {meEnabled && (
-            <>
-              <MenuItem
-                onClick={() => {
-                  if (current()) void navigator.open(meTarget(session.scope));
-                }}
-              >
-                New chat
-              </MenuItem>
-              <MenuItem
-                disabled={!session.mePreferences.sectionCreationWritable}
-                onClick={() => {
-                  if (current()) setCreatingProject(true);
-                }}
-              >
-                New project
-              </MenuItem>
-            </>
-          )}
+          <MenuItem
+            onClick={() => {
+              if (current())
+                void navigator.open(soloDraftTarget(session.scope));
+            }}
+          >
+            New chat
+          </MenuItem>
+          <MenuItem
+            disabled={!session.soloPreferences.sectionCreationWritable}
+            onClick={() => {
+              if (current()) setCreatingProject(true);
+            }}
+          >
+            New project
+          </MenuItem>
           <MenuItem
             disabled={!scope}
             onClick={() => {
@@ -143,13 +138,15 @@ function ReadyNewMenu({
       {creatingProject && (
         <NewProject
           session={session}
-          create={(section) => session.mePreferences.createSection(section)}
+          create={(section) => session.soloPreferences.createSection(section)}
           close={() => setCreatingProject(false)}
           finalFocus={trigger}
           onCreated={(id) => {
             if (!current()) return;
-            resetNewChatProject(session.scope, true, id);
-            void navigator.open(meTarget(session.scope, "new", id));
+            resetNewChatProject(session.scope, id);
+            void navigator.open(
+              soloDraftTarget(session.scope, { project: id }),
+            );
           }}
         />
       )}

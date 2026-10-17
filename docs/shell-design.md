@@ -26,25 +26,23 @@ semantic tokens, UI authoring rules and the local component reference.
   styles live in Tailwind's base layer, so utilities can override them normally.
   Existing feature CSS variables remain available for incremental adoption.
 - `src/app/shell/presentation.ts` owns page labels, icons and navigation ordering.
-  Me comes first, then Messages, Inbox, Reminders, Bestie and Projects; other contributed pages
+  Messages comes first, then Inbox, Reminders and Bestie; other contributed pages
   follow by displayed label with a full contribution-key tie-breaker. Sidebar
   navigation and page search share this ordering, independent of plugin
   activation/re-enable order. Primary pages choose `sidebar` (default), `topbar`
   (header segments) or `toolbar` (top-right icon) placement for contributed pages.
-  Solo and Multiplayer instead share `PrimarySidebar`: All (the default), Solo,
-  and Team filter the left navigation without opening a destination or
-  changing the current conversation. The filter remains available above one
-  shared scrollport, including in the narrow navigation drawer. All shows Solo
-  projects and chats above Multiplayer channel sections. A capsule scope control sits at the top of the sidebar.
-  Inbox and Bestie remain in the sidebar; other built-in global page links live in the header capsule. The header plus opens the New
-  menu for chat, project, DM and channel creation. Both inventories stay mounted when filtered, retaining section state.
-  The old sidebar brand marks are omitted. Solo reuses the channel sidebar's
-  surface, resize owner, row treatment, section heading recipe and section gaps.
-  Me remains an optional, default-enabled workspace in the current community;
-  disabling it leaves Multiplayer navigation. Settings keeps its own sidebar.
-  Scoped Me routes still own content selection; see [Sessions](sessions/README.md)
-  for placement rules and the relay privacy boundary. Messages remains the default
-  destination and opens from channel rows and search.
+  `PrimarySidebar` is the conversation sidebar: a capsule All / Solo / Team
+  filter above one shared scrollport, Solo projects and chats above Team's channel
+  sections, one relay-recovery notice, and the connection fallback. The filter
+  never opens a destination or changes the open conversation; a new destination
+  reveals the inventory its placement belongs to unless the filter is All. Both
+  inventories stay mounted when filtered, retaining section state, and share the
+  channel sidebar's surface, resize owner, row treatment and section recipes.
+  Inbox and Bestie remain in the sidebar; other built-in global page links live in
+  the header capsule. The header plus opens the New menu for chat, project, DM
+  and channel creation. Every conversation, Solo or Team, opens in Messages; see
+  [Solo](solo/README.md) for the Solo treatment, placement and the relay privacy
+  boundary. Messages is the default destination.
   Page search lists every active page, including non-primary pages.
   Disabling an optional plugin removes its navigation entry.
   Channels is presented as Messages. Legacy tone props are retained for
@@ -55,7 +53,7 @@ semantic tokens, UI authoring rules and the local component reference.
   flat sidebar/history controls at the left, window-centered destinations flanked by
   separate creation and Search capsules, and flat community/profile controls at the right. Outer content
   padding uses the same panel-gap token as the space between panes.
-  Messages, Reminders, Projects, Agents and Workflows use header segments,
+  Messages, Reminders, Agents and Workflows use header segments,
   preserving contributed placement for other plugins. The community trigger opens
   a shared Popover containing NavigationItem rows with their existing context menus;
   this richer picker retains community actions as well as switching. Arrow keys,
@@ -79,7 +77,7 @@ semantic tokens, UI authoring rules and the local component reference.
   220px disclosure overlays content, supports Escape, and keeps sidebar state
   mounted. A navigation selection closes the phone drawer and hands focus to the
   main content; this includes conversation and Settings-section selections.
-  Me, Messages, Agents, desktop Settings, and any selected primary page share an
+  Messages, Agents, desktop Settings, and any selected primary page share an
   animated header toggle; hiding the sidebar preserves its mounted state and saved
   width. The toggle uses "Hide sidebar" / "Show sidebar" on every page, and the
   combined Solo and Team sidebar is labelled "Sidebar". Reduced motion disables the transition. Non-primary
@@ -237,8 +235,10 @@ Avatar artwork uses the shared source/media owner, with initials on missing/fail
 pictures or a person icon when unnamed. No sample person's photo is used as the
 user's identity. See [community/profile ownership](communities.md).
 `PageSearch.tsx` uses a native modal dialog for focus containment, Escape dismissal,
-and searching available page destinations. Projects is a bundled, enabled-by-default
-page scaffold with only a centered title; Apps waits for a functional destination.
+and searching available page destinations. Repository, PR and issue views live in
+the enabled-by-default `buzz.repos` plugin, reachable through entity links without
+a primary header destination. The retired Projects container has no directory or
+entity type; old project links show a removal notice. Apps waits for a functional destination.
 `CommunityPicker.tsx` opens Personal space, saved communities and Join/Create
 from the active-community button beside the profile. The picker is the sole
 community selector. It reads saved-community NIP-11 icons through the same-origin broker with at

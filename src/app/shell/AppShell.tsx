@@ -96,10 +96,8 @@ export function AppShell({
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
-  const meNavigation = selected === "buzz.me/me";
   const collapsibleSidebar =
     channelsNavigation ||
-    meNavigation ||
     selected === "settings" ||
     pages.some((page) => page.key === selected && page.primary);
   const [sidebarOpen, setSidebarOpen] = useState(true);

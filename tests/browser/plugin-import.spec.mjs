@@ -17,17 +17,15 @@ async function nativeImports(page, samples = []) {
     window.isTauri = true;
     window.importCalls = [];
     window.importDelay = false;
-    const plugins = ["channels", "github", "bestie", "projects"].map(
-      (name) => ({
-        manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
-        source: "bundled",
-        enabled: true,
-        revision: "bundled",
-        previous: null,
-        reloadable: false,
-        error: null,
-      }),
-    );
+    const plugins = ["channels", "github", "bestie", "repos"].map((name) => ({
+      manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
+      source: "bundled",
+      enabled: true,
+      revision: "bundled",
+      previous: null,
+      reloadable: false,
+      error: null,
+    }));
     const ready = () => ({
       status: "ready",
       externalPluginsPaused: false,
@@ -456,7 +454,7 @@ test("leaving Settings discards a late preview without installing", async ({
   });
   await button(page, "Load from folder").click();
   await expect(page.getByText(/Reading plugin folders/)).toBeVisible();
-  await openPage(page, "Projects");
+  await openPage(page, "Repository");
   await page.evaluate(() => window.resolveImport());
   await expect
     .poll(() =>

@@ -105,7 +105,7 @@ test("navigation menus do not highlight labels while message text and editors re
   const conversations = page.getByRole("navigation", {
     name: "Solo conversations",
   });
-  const chat = conversations.locator(`[data-me-channel-id="${chatId}"]`);
+  const chat = conversations.locator(`[data-solo-channel-id="${chatId}"]`);
   const chatLabel = chat.getByText("Solo conversation", { exact: true });
   await expectNoSelection(page, chatLabel);
   await chatLabel.click({
@@ -156,7 +156,7 @@ test("context menus appear immediately and retain their source highlight through
       const source =
         surface === "channel"
           ? page.locator('[data-channel-id="beta"]')
-          : page.locator(`[data-me-channel-id="${chatId}"]`);
+          : page.locator(`[data-solo-channel-id="${chatId}"]`);
       const name = surface === "channel" ? "Beta" : "Solo conversation";
       const menu = page.getByRole("menu", {
         name: `Actions for ${name}`,

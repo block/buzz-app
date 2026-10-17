@@ -62,11 +62,10 @@ import { KeyboardShortcut } from "../../../../src/shared/design-system/ui/Keyboa
 
 function ThemePickerSpecimen() {
   const [value, setValue] = useState<ThemeMode>("system");
-  return (
-    <ThemePicker value={value} onValueChange={setValue} messageColor="blue" />
-  );
+  return <ThemePicker value={value} onValueChange={setValue} />;
 }
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
+import { StepSlider } from "../../../../src/shared/design-system/ui/StepSlider";
 import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
 import { SwitchPreferenceRow } from "../../../../src/shared/design-system/ui/SwitchPreferenceRow";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
@@ -1560,6 +1559,56 @@ function InlineChipSpecimen() {
   );
 }
 
+const STEPS = [
+  { value: "neutral", label: "Snoozin’" },
+  { value: "touch", label: "Hummin’" },
+  { value: "more", label: "Swarmin’" },
+  { value: "full", label: "Buzzin’" },
+];
+
+function StepSliderSpecimen() {
+  const [value, setValue] = useState("touch");
+  return (
+    <SpecimenFrame
+      code={`<PreferenceRow
+  title="Vibe level"
+  trailing={(label) => (
+    <StepSlider
+      aria-labelledby={label["aria-labelledby"]}
+      steps={steps}
+      value={value}
+      onValueChange={setValue}
+    />
+  )}
+/>
+<StepSlider aria-label="Vibe level" steps={steps} value="full" disabled />`}
+    >
+      <div className="component-specimen-stack">
+        <SettingsGroup>
+          <PreferenceRow
+            title="Vibe level"
+            trailing={(label) => (
+              <StepSlider
+                aria-labelledby={label["aria-labelledby"]}
+                steps={STEPS}
+                value={value}
+                onValueChange={setValue}
+              />
+            )}
+          />
+        </SettingsGroup>
+        <StepSlider
+          aria-label="Disabled vibe level"
+          steps={STEPS}
+          value="full"
+          onValueChange={() => {}}
+          disabled
+        />
+      </div>
+    </SpecimenFrame>
+  );
+}
+
 function SwitchSpecimen() {
   const [checked, setChecked] = useState(false);
   const [busyChecked, setBusyChecked] = useState(true);
@@ -1946,6 +1995,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   select: SelectExamples,
   combobox: ComboboxExamples,
   switch: SwitchSpecimen,
+  "step-slider": StepSliderSpecimen,
   "settings-group": () => (
     <div className="grid gap-8">
       <div>

@@ -49,7 +49,7 @@
   button:not([aria-current="page"])
   .sessionRow
   > [data-channel-unread-title="true"] {
-  color: var(--affordance-prominent);
+  color: var(--affordance-prominent-mark);
   font-weight: var(--type-weight-medium);
 }
 

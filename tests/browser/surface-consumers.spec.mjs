@@ -139,8 +139,10 @@ for (const mode of ["light", "dark"]) {
         .locator("[data-session-menu-id]")
         .filter({ has: page.getByRole("button", alpha) });
       await page.mouse.move(1, 1);
-      const selected =
-        mode === "dark" ? "rgb(51, 51, 51)" : "rgb(232, 232, 232)";
+      const selected = await resolvedColor(
+        sidebar,
+        "var(--affordance-selected)",
+      );
       await expect(session).toHaveAttribute("aria-current", "page");
       await expect(row).toHaveCSS("background-color", selected);
       await expect(session).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");

@@ -152,6 +152,13 @@ html[data-keyboard-navigation] .row:focus-within .chevronIcon {
   color: var(--text-navigation-unread);
   font-weight: var(--type-weight-semibold);
 }
+/* Unread labels on a hovered or selected row follow the row's ink too. */
+.row:is(:hover, [data-selected])[data-ordinary] .label,
+.row:is(:hover, [data-selected])
+  .childLabel
+  > [data-channel-unread-title="true"] {
+  color: var(--text-row);
+}
 .sessions.sessions [data-buzz-ui][data-variant="row"] {
   border-radius: var(--radius-row);
 }

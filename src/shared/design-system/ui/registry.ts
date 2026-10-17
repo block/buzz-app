@@ -48,6 +48,7 @@ export const BASE_UI_PARTS = {
     module: "@base-ui/react/combobox",
   },
   switch: { name: "Switch", docs: "switch", module: "@base-ui/react/switch" },
+  slider: { name: "Slider", docs: "slider", module: "@base-ui/react/slider" },
   tabs: { name: "Tabs", docs: "tabs", module: "@base-ui/react/tabs" },
   accordion: {
     name: "Accordion",
@@ -416,6 +417,21 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     owner: "desktop-new Design system",
     source: "shared/design-system/ui/Switch.tsx",
     baseUi: [BASE_UI_PARTS.switch],
+    composes: [],
+  },
+  {
+    slug: "step-slider",
+    name: "Step slider",
+    purpose:
+      "Choose one of a few ordered steps, such as how much of the app the accent colors.",
+    behavior:
+      "Base UI owns dragging, snapping and keyboard steps. Each step is a visible stop; the thumb announces the step's name, which also appears beneath it.",
+    variants: ["each step", "disabled"],
+    status: "proposed",
+    collection: "components",
+    owner: "desktop-new Design system",
+    source: "shared/design-system/ui/StepSlider.tsx",
+    baseUi: [BASE_UI_PARTS.slider],
     composes: [],
   },
   {

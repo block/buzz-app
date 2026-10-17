@@ -222,7 +222,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
                   `${button.textContent}: content overflows button`,
                 );
             }
-            const palette = button.closest("[data-message-colors]");
+            const palette = button.closest("[data-accent-colors]");
             const visibleBounds = palette?.getBoundingClientRect() ?? box;
             if (
               visibleBounds.left < bounds.left ||
@@ -267,7 +267,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       ).toHaveCount(scale === 100 ? 0 : 1);
       await page.evaluate(() => document.fonts.ready);
       await checkButtons(appearance, scale);
-      const colors = appearance.locator("[data-message-colors] button");
+      const colors = appearance.locator("[data-accent-colors] button");
       await colors.first().focus();
       await page.keyboard.press("Shift+Tab");
       await page.keyboard.press("Tab");
@@ -279,7 +279,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
             colors.nth(index).evaluate((button) => {
               const box = button.getBoundingClientRect();
               const palette = button
-                .closest("[data-message-colors]")
+                .closest("[data-accent-colors]")
                 .getBoundingClientRect();
               const style = getComputedStyle(button);
               const ring =

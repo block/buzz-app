@@ -886,7 +886,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   display: grid;
   place-items: center;
   background: var(--affordance-prominent);
-  color: var(--text-inverse);
+  color: var(--text-on-prominent);
   opacity: 0;
 }
 .mentionRecipients

@@ -297,8 +297,8 @@
   width: var(--space-4);
   height: var(--space-4);
   border-radius: var(--radius-pill);
-  background: var(--affordance-prominent);
-  box-shadow: 0 0 0 2px var(--affordance-prominent);
+  background: var(--affordance-prominent-mark);
+  box-shadow: 0 0 0 2px var(--affordance-prominent-mark);
 }
 .unreadDmAvatar + .unreadDmAvatar {
   margin-inline-start: calc(-1 * var(--space-1h));
@@ -688,7 +688,7 @@ html[data-keyboard-navigation]
   height: 4.5rem;
   border-radius: var(--radius-pill);
   background: var(--affordance-prominent);
-  color: var(--text-inverse);
+  color: var(--text-on-prominent);
 }
 .settingsDetails {
   border: 1px solid var(--border-standard);
@@ -816,7 +816,7 @@ html[data-keyboard-navigation]
   width: 0.375rem;
   height: 0.375rem;
   border-radius: 50%;
-  background: var(--affordance-prominent);
+  background: var(--affordance-prominent-mark);
 }
 .threadActivityDot {
   cursor: help;
@@ -1012,4 +1012,11 @@ html[data-keyboard-navigation]
   flex: 1;
   flex-direction: column;
   min-height: 0;
+}
+
+/* Hovered and selected rows take the row's paired ink, so navigation text
+   follows the fill instead of staying gray on an accent row. */
+.sidebar [data-variant="row"]:is(:hover, [data-selected]),
+.sidebar :is(:hover, [data-selected]) > * > [data-variant="row"] {
+  color: var(--text-row);
 }

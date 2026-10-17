@@ -524,7 +524,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
   }
 });
 
-test("priority dots stay aligned and use semantic primary color in both modes", async ({
+test("priority dots stay aligned and use the prominent mark color in both modes", async ({
   page,
   app,
 }, info) => {
@@ -574,7 +574,9 @@ test("priority dots stay aligned and use semantic primary color in both modes", 
     const primary = await page.evaluate(() => {
       const root = getComputedStyle(document.documentElement);
       const probe = document.createElement("span");
-      probe.style.backgroundColor = root.getPropertyValue("--primary");
+      probe.style.backgroundColor = root.getPropertyValue(
+        "--affordance-prominent-mark",
+      );
       document.body.append(probe);
       const color = getComputedStyle(probe).backgroundColor;
       probe.remove();

@@ -5,7 +5,6 @@ import { legacyAssistantDraft } from "../sessions/legacy-assistant";
 import { rememberAgentsPreference } from "./mention-preferences";
 import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
-import { messageButtonStyle } from "../../shared/theme/bubble-color";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -1938,7 +1937,6 @@ function Composer({
               }
               size="toolbar"
               type="submit"
-              style={messageButtonStyle}
               aria-label={editing.target ? "Save changes" : "Send message"}
               title={
                 editing.target

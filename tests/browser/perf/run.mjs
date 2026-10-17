@@ -9,11 +9,13 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 const cases = [
   "channel-open-cold",
   "channel-open-hover",
+  "channel-open-cold-markdown",
   "scroll-short",
   "scroll-long",
   "scroll-paging-fast",
   "scroll-paging-delayed",
   "scroll-paging-fast-keyboard",
+  "scroll-paging-fast-markdown",
 ];
 // A case name selects only that case; a group selects every case it prefixes.
 const groups = ["all", "channel-open", "scroll-paging"];

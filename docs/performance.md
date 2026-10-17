@@ -79,8 +79,10 @@ is applied.
 - `channel-open-hover` gives the same unopened channel a 150ms hover head start,
   then clicks whether preparation is finished or still running. CPU throttling
   applies during hover too. There is no response-completion or idle wait.
+- `channel-open-cold-markdown` repeats the cold case with the
+  [Markdown corpus](#corpus-variants).
 
-Both cases measure click-to-first-rows and browser work during opening plus
+Every case measures click-to-first-rows and browser work during opening plus
 settling. Work completed before the click earns the hover case a head start;
 remaining preparation can contribute to the measured work. Browser-counter
 windows exclude pre-measurement hover work; LoAF totals include whole overlapping
@@ -113,6 +115,7 @@ All scroll scenarios use the same observer, counters, fresh contexts and result 
 | `scroll-paging-fast` | Repeated 2500px upward gestures at 25,000px/s through 640 mixed-height messages, with 100ms added older-response delay, until the oldest message is visible |
 | `scroll-paging-delayed` | The same complete traversal with 500ms added older-response delay |
 | `scroll-paging-fast-keyboard` | `scroll-paging-fast` in keyboard modality |
+| `scroll-paging-fast-markdown` | `scroll-paging-fast` through the [Markdown corpus](#corpus-variants) |
 
 The long case loads older pages without traversing them first, so the gesture
 encounters rows the virtualizer has not yet mounted/measured. Setup waits for
@@ -190,6 +193,20 @@ Callback gaps expose main-thread stalls, not compositor FPS or a measured
 dropped-frame count. No generic blank-time, overlap or visual-shift verdict is
 inferred from them.
 
+## Corpus variants
+
+The default corpus is inert prose: an identifying line plus repeated sentences,
+authored by the viewer. An opt-in fixture option changes one property of it, so a
+variant differs from its base case only there.
+
+`markdownMessages` (the `-markdown` cases) ends seven rows in eight with common
+chat content after the same height-varying text: colon prose, a second
+paragraph, a bare URL and a Markdown link, an `@mention` bound to a fixture
+profile, a nested bullet list with inline code and emphasis, a fenced code block,
+or a quote with emphasis and strikethrough. The eighth row stays inert prose.
+Lists are bullets only, because browser helpers find the timeline through its
+single ordered list.
+
 ## Results and iteration
 
 JSON contains raw per-frame geometry, work evidence, all samples and per-metric
@@ -215,7 +232,8 @@ controlled comparison. The runner does not decide which tradeoffs are acceptable
 
 This is Chromium-local evidence with modeled backend responses (immediate except
 for the named paging delays),
-HTTP interception (which disables HTTP cache), preloaded fonts and text content.
+HTTP interception (which disables HTTP cache), preloaded fonts and text content
+from one author.
 It does not measure production network latency, media, native hosting, WebKit,
 long-session memory growth or application startup. Add those as explicit workloads
 when needed rather than changing the meaning of existing samples.

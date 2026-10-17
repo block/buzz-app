@@ -3,13 +3,18 @@ import { scrollCadence } from "./cadence.mjs";
 
 const count = 640;
 // Each variant changes one condition of scroll-paging-fast.
-for (const [name, olderPageDelayMs, modality] of [
-  ["scroll-paging-fast", 100, "pointer"],
-  ["scroll-paging-delayed", 500, "pointer"],
-  ["scroll-paging-fast-keyboard", 100, "keyboard"],
+for (const [name, olderPageDelayMs, modality, options] of [
+  ["scroll-paging-fast", 100, "pointer", {}],
+  ["scroll-paging-delayed", 500, "pointer", {}],
+  ["scroll-paging-fast-keyboard", 100, "keyboard", {}],
+  ["scroll-paging-fast-markdown", 100, "pointer", { markdownMessages: true }],
 ])
   test.describe(name, () => {
-    test.use({ historyCounts: { alpha: count, beta: 1 }, olderPageDelayMs });
+    test.use({
+      historyCounts: { alpha: count, beta: 1 },
+      olderPageDelayMs,
+      ...options,
+    });
     for (let i = 1; i <= repeats; i++)
       test(`${name} sample ${i}`, async ({ page, app, perf }) => {
         await perf.setup("alpha");

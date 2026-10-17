@@ -798,8 +798,13 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
     let shutdown = || async { Ok(()) };
     let identity = app.state::<crate::identity::IdentityHost>().inner().clone();
     let pairing = app.state::<crate::pairing::Pairing>().inner().clone();
+    let backup = app
+        .state::<crate::nsec_backup::NsecBackupHost>()
+        .inner()
+        .clone();
     // Close the signer and any pairing that already holds a copy of the key.
     let close = || {
+        backup.close();
         identity.close();
         pairing.close();
     };

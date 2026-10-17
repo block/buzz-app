@@ -77,7 +77,7 @@ export function createIdentity() {
     importKey: (nsec: string) => run("identity_import", nsec),
     create: () => run("identity_create"),
     exportKey: () => invoke<string>("identity_export"),
-    /** Public consent only; reading or saving it does not start a backup. */
+    /** Public consent only; enabling it wakes the configured native uploader after sign-in. */
     getBackupChoice: () => invoke<BackupChoice>("nsec_backup_choice"),
     /** Pass the key returned by getBackupChoice so a stale selection cannot affect another key. */
     setBackupChoice: (pubkey: string, automatic: boolean) =>

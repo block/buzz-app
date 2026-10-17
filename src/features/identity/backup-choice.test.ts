@@ -5,7 +5,7 @@ import { createIdentity } from "./service";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 afterEach(() => vi.resetAllMocks());
 
-it("exposes explicit backup choices without delaying identity readiness or starting an upload", async () => {
+it("exposes explicit backup choices without delaying identity readiness or issuing an upload command", async () => {
   const pubkey = "ab".repeat(32);
   const choice = { available: true, pubkey, automatic: null };
   const choiceError = new Error("Could not save choice");

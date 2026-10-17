@@ -9,7 +9,6 @@ use std::{
 
 type Result<T> = std::result::Result<T, String>;
 const FAILED: &str = "Could not read or save your identity backup choice.";
-const UNAVAILABLE: &str = "Identity backup is unavailable in this build.";
 
 #[derive(Serialize)]
 pub(crate) struct BackupChoice {
@@ -112,7 +111,7 @@ pub(crate) fn read(path: &Path, config: &Config, pubkey: &str) -> Result<BackupC
     })
 }
 
-async fn set(
+pub(crate) async fn set(
     identity: &IdentityHost,
     path: &Path,
     config: &Config,
@@ -167,12 +166,13 @@ pub(crate) async fn nsec_backup_choice(
 
 #[tauri::command]
 pub(crate) async fn nsec_backup_set_choice(
+    host: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
     identity: tauri::State<'_, IdentityHost>,
     pubkey: String,
     automatic: bool,
 ) -> Result<BackupChoice> {
-    let config = config()?.ok_or(UNAVAILABLE)?;
-    set(&identity, &path()?, &config, &pubkey, automatic).await
+    host.set_choice(identity.inner().clone(), &pubkey, automatic)
+        .await
 }
 
 #[cfg(test)]

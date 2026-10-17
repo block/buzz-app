@@ -616,6 +616,7 @@ dependencies = [
  "block2",
  "buzz-agent-controller",
  "buzz-credential-store",
+ "buzz-nsec-backup",
  "buzz-pairing",
  "buzzodz-plugins",
  "bytes",

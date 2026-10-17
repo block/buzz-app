@@ -37,6 +37,36 @@ old Buzz service/account and copy the selected agent key into this app's separat
 agent namespace; it never writes the old blob.
 No user key belongs in release configuration.
 
+## Automatic backup
+
+Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and
+`BUZZ_NSEC_BACKUP_NAMESPACE` back up a local identity only after an explicit saved
+automatic-backup choice, Builderlab or Hosted communities login, and matching key
+binding. Unset, self-managed, corrupt or mismatched consent prevents all backup
+requests, including retries. These are paired
+native build-process inputs; unset leaves the feature disabled. The service URL
+includes its API prefix and must use HTTPS. Existing login credentials are accepted
+only for the matching trusted build origin. Without a qualifying login, backup
+defers without opening a browser or delaying identity readiness.
+
+The native host validates enrollment and seals with the reviewed HPKE v1 protocol.
+Only encrypted pending bytes and public completion metadata are saved in the OS
+account's `.buzz-foundation/nsec-backups/<human credential service>` folder, scoped
+separately for debug and release. A shared lock serializes cooperating
+copies. Pending bytes and IDs survive restart; later login/binding/key-install
+events retry them, including a coalesced follow-up when an event arrives during an
+active pass. Upload success requires a matching stored receipt. Backup
+failure never replaces or deletes the local identity.
+
+Plain signout retains backup records; Sign out and erase removes this credential
+service's records through the existing resumable wipe before clearing its marker.
+
+Rollout requires the backend backup endpoints, private-organization
+authorization, database migration, and configured KMS recipient/permissions. The
+client inputs must match that service's namespace. Synthetic HTTP/storage tests
+do not establish live sign-in, KMS or installed-app
+secure-storage acceptance. No backend provisioning or activation is part of this change.
+
 A shared credential blob can reduce repeated OS prompts by caching many credentials
 after one read. For this one human key, one cached item retains that read-once benefit without
 coupling human writes to agent credentials or old-app blob writers. This is not a
@@ -188,8 +218,10 @@ matches the owner in their saved attestation, checked before their key is read.
 ## Automatic backup consent hooks
 
 The native identity service exposes `getBackupChoice()` and
-`setBackupChoice(pubkey, automatic)`. These are public metadata APIs; they do not
-expose a private key, contact a server, or change identity readiness. No onboarding
+`setBackupChoice(pubkey, automatic)`. These APIs expose public metadata and do not
+change identity readiness. Reading a choice does not contact a server; saving
+automatic backup wakes the existing native uploader if a session is connected.
+No onboarding
 or settings selection is added here. A future selection must disclose that Block
 can recover the key, including an imported key used elsewhere, before saving
 `automatic: true`. Account sign-in and key creation/import do not imply consent.
@@ -202,12 +234,12 @@ main WebView can read or save the choice.
 Plain sign-out retains the choice; sign-out and erase removes it through the
 existing resumable wipe, without erasing the other key-custody namespace.
 
-The original upload stack must consume `nsec_backup_choice::read` before any
+The native uploader consumes `nsec_backup_choice::read` before any
 backup request and retain its returned value through the upload. Its shared file
 lease prevents a successful choice change from racing an admitted upload across
 app copies. Saving a choice reports busy while such a lease is held. Disabling
 automatic backup governs future uploads and does not delete existing backups.
-This hooks-only change supplies no uploader. It is the base of the draft stack:
+The consent hooks are the base of the draft stack:
 #1137 consent hooks → #1106 gated uploader → #1107 recovery → #1101 restore UI.
 
 ## Packaged connection

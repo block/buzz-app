@@ -33,7 +33,9 @@ it("releases Memory on leaving and reads fresh memories on return", async () => 
   };
   render(
     <AgentTabs
-      agents={{ save: vi.fn() } as unknown as Agents}
+      agents={
+        { save: vi.fn(), configHistory: () => undefined } as unknown as Agents
+      }
       agent={agent}
       type={undefined}
       channels={[]}

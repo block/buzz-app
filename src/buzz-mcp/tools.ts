@@ -921,7 +921,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const wait = prior ? (prior.created_at + 1) * 1000 - Date.now() : 0;
     if (wait > 5000) throw new Error("The note was just changed; try again.");
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-    await client.publish({
+    const saved = await client.publish({
       kind: NOTE,
       content: body,
       tags: [
@@ -935,6 +935,17 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ],
       ],
     });
+    // The community accepts a write that loses to another version of the
+    // same second, so only a read shows whether this one is the note now.
+    const [current] = latestNotes(
+      await client.query([
+        { kinds: [NOTE], authors: [client.pubkey], "#d": [name], limit: 1 },
+      ]),
+    );
+    if (current?.id !== saved.id)
+      throw new Error(
+        `conflict: note ${name} now holds another version${current ? ` (${current.id}, ${time(current.created_at)})` : ""}, not this text. Read it with notes_get, then write again.`,
+      );
     return `saved ${NOTE}:${client.pubkey}:${name}`;
   },
 
@@ -1563,7 +1574,13 @@ function latestNotes(events: readonly BuzzEvent[]) {
     if (event.kind !== NOTE || name === undefined) continue;
     const key = `${event.pubkey}:${name}`;
     const seen = latest.get(key);
-    if (!seen || seen.created_at < event.created_at) latest.set(key, event);
+    // Of two versions from the same second, the lower id is kept.
+    if (
+      !seen ||
+      seen.created_at < event.created_at ||
+      (seen.created_at === event.created_at && event.id < seen.id)
+    )
+      latest.set(key, event);
   }
   return [...latest.values()].sort((a, b) => b.created_at - a.created_at);
 }

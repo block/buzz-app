@@ -24,7 +24,12 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 
 /** A community with `events` in it, answering filters by kind and a few tags,
  * newest first and a page at a time, as the relay does. */
-function fake(events: readonly BuzzEvent[] = []) {
+function fake(
+  events: readonly BuzzEvent[] = [],
+  { keep = false }: { keep?: boolean } = {},
+) {
+  // With keep, a publication joins the community as a fresh event.
+  const kept: BuzzEvent[] = [];
   const published: Template[] = [];
   const matches = (filter: Filter, item: BuzzEvent) => {
     const tag = (name: string) =>
@@ -50,7 +55,7 @@ function fake(events: readonly BuzzEvent[] = []) {
   const client: BuzzClient = {
     pubkey: me,
     query: vi.fn(async (filters: readonly Filter[]) => {
-      const newest = [...events].sort(
+      const newest = [...events, ...kept].sort(
         (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
       );
       const found = filters.map((filter) =>
@@ -62,7 +67,16 @@ function fake(events: readonly BuzzEvent[] = []) {
     }),
     publish: vi.fn(async (template: Template) => {
       published.push(template);
-      return event({ ...template, pubkey: me, id: "e".repeat(64) });
+      const signed = keep
+        ? event({
+            ...template,
+            pubkey: me,
+            id: `${published.length}`.padStart(64, "e"),
+            created_at: Math.floor(Date.now() / 1000),
+          })
+        : event({ ...template, pubkey: me, id: "e".repeat(64) });
+      if (keep) kept.push(signed);
+      return signed;
     }),
     upload: vi.fn(async (_data: Uint8Array, mime: string) => ({
       url: "https://relay/media/x.png",
@@ -1743,7 +1757,7 @@ it("lists your notes by default, or everyone's, newest first", async () => {
 });
 
 it("publishes a note in the CLI's shape, keeping what an update leaves out", async () => {
-  const { client, published } = fake(community);
+  const { client, published } = fake(community, { keep: true });
   await expect(
     callTool(client, {}, "notes_set", { name: "plan", text: "draft" }),
   ).rejects.toThrow("title is required for a new note.");
@@ -1783,7 +1797,9 @@ it("publishes a note in the CLI's shape, keeping what an update leaves out", asy
     ["t", "ops"],
     ["published_at", "90"],
   ]);
-  const { client: again, published: updates } = fake([...community, prior]);
+  const { client: again, published: updates } = fake([...community, prior], {
+    keep: true,
+  });
   await callTool(again, {}, "notes_set", { name: "plan", text: "v2" });
   await callTool(again, {}, "notes_set", {
     name: "plan",
@@ -1819,6 +1835,38 @@ it("publishes a note in the CLI's shape, keeping what an update leaves out", asy
   expect(vi.mocked(again.query).mock.calls[0]?.[0]).toEqual([
     { kinds: [30023], authors: [me], "#d": ["plan"], limit: 1 },
   ]);
+});
+
+it("reports a conflict when another write of the same second wins", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(100_500);
+    const { client, published } = fake([...community, note(me, "plan", 100)], {
+      keep: true,
+    });
+    // Both read version 100 and wait for second 101. The relay keeps the
+    // lower id of the two and accepts the other as a duplicate.
+    const first = callTool(client, {}, "notes_set", {
+      name: "plan",
+      text: "mine",
+    });
+    const second = callTool(client, {}, "notes_set", {
+      name: "plan",
+      text: "theirs",
+    }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(first).resolves.toBe(`saved 30023:${me}:plan`);
+    expect(await second).toBeInstanceOf(Error);
+    expect(((await second) as Error).message).toBe(
+      `conflict: note plan now holds another version (${"1".padStart(64, "e")}, 1970-01-01T00:01Z), not this text. Read it with notes_get, then write again.`,
+    );
+    expect(published.map((template) => template.content)).toEqual([
+      "mine",
+      "theirs",
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("deletes only your own note, by its address", async () => {

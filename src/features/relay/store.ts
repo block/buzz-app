@@ -2639,12 +2639,22 @@ export function createChannelStore(
     clearCache,
     dispose,
     /** A disconnected stream invalidates a head's freshness lease, not its content.
-     * Inactive cached heads will revalidate when demanded, without an all-roster read. */
+     * Inactive cached heads will revalidate when demanded, without an all-roster read.
+     * The session drops its queued catch-ups with the stream, so an empty window
+     * that only a queued catch-up marked loading becomes idle: the next ensure()
+     * reads it again. Running reads settle their own windows when cancelled. */
     staleHeads() {
       for (const [id, head] of heads.entries())
         heads.set(id, { ...head, cached: true });
       for (const state of windows.values())
-        setWindow(state, { freshness: "cached" });
+        setWindow(state, {
+          freshness: "cached",
+          ...(state.snapshot.status === "loading" &&
+          !state.snapshot.rows.length &&
+          !state.controller
+            ? { status: "idle" }
+            : {}),
+        });
     },
     /** Revalidate only a retained reader after establishing the stream. An unopened
      * channel needs no eager HTTP head; its normal ensure() owns that finite handoff. */

@@ -448,3 +448,88 @@ it("waits for a queued retry of an empty failed channel while catch-up slots are
     owner.dispose();
   }
 });
+
+it("reads an empty channel again when the stream drops before its queued retry runs", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  const heads = () => wire.pending.filter((entry) => entry.filters[0]?.["#h"]);
+  /** The pending head read for one channel; profile reads get nothing. */
+  const take = (id: string) => {
+    for (const entry of [...wire.pending])
+      if (!entry.filters[0]?.["#h"]) {
+        wire.pending.splice(wire.pending.indexOf(entry), 1);
+        entry.respond([]);
+      }
+    const index = wire.pending.findIndex((entry) =>
+      entry.filters[0]?.["#h"]?.includes(id),
+    );
+    const [entry] = index < 0 ? [] : wire.pending.splice(index, 1);
+    assert(entry, `no pending read for ${id}`);
+    return entry;
+  };
+  const empty = (id: string) => [
+    bounds(relay, id, "head", { has_more: false, next_cursor: null }),
+  ];
+  try {
+    const channels = owner.session.channels;
+    live.receive(
+      ["a", "b", "c"].map((id) => roster(relay, id, [viewer.pubkey])),
+    );
+    for (const id of ["b", "c"]) {
+      channels.ensure(id);
+      take(id).respond(empty(id));
+      await flush();
+    }
+    // "a" never loaded: its first read failed, and so did its catch-up.
+    channels.ensure("a");
+    take("a").fail(new ReadError("unavailable", "Relay unavailable", 503));
+    await flush();
+    live.state({ status: "connected", routes: [] });
+    live.established("a");
+    await flush();
+    take("a").fail(new ReadError("unavailable", "Relay unavailable", 503));
+    await flush();
+    // Hold both catch-up slots, so the retry for "a" stays queued.
+    live.established("c");
+    live.established("b");
+    await flush();
+    take("c");
+    channels.ensure("b");
+    await flush();
+    take("b");
+    const target = message(alice, "a", "target", 20);
+    const first = renderHook(() => useMessageOpening(channels, "a", target.id));
+    await act(flush);
+    expect(heads()).toEqual([]);
+    expect(channels.window("a").status).toBe("loading");
+    // The stream drops before the queued retry is dispatched.
+    await act(async () => {
+      live.state({ status: "connecting", routes: [] });
+      await flush();
+    });
+    expect(channels.window("a").status).not.toBe("loading");
+    first.unmount();
+    // Reopening reads the channel over HTTP instead of waiting for the stream.
+    const view = renderHook(() => useMessageOpening(channels, "a", target.id));
+    await act(flush);
+    expect(view.result.current).toBeUndefined();
+    const read = take("a");
+    await act(async () => {
+      read.respond([target, ...empty("a")]);
+      await flush();
+    });
+    expect(view.result.current).toBe(true);
+  } finally {
+    owner.dispose();
+  }
+});

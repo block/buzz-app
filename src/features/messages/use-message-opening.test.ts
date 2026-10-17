@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { assert, expect, it, vi } from "vitest";
 import type {
   ChannelMessage,
   ChannelQueries,
@@ -358,6 +358,89 @@ it("waits for a queued catch-up retry instead of deciding on its earlier failure
     const retry = read();
     await act(async () => {
       retry.respond(page(target, older));
+      await flush();
+    });
+    expect(view.result.current).toBe(true);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("waits for a queued retry of an empty failed channel while catch-up slots are busy", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    alice = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  /** The pending head read for one channel; profile reads get nothing. */
+  const take = (id: string) => {
+    for (const entry of [...wire.pending])
+      if (!entry.filters[0]?.["#h"]) {
+        wire.pending.splice(wire.pending.indexOf(entry), 1);
+        entry.respond([]);
+      }
+    const index = wire.pending.findIndex((entry) =>
+      entry.filters[0]?.["#h"]?.includes(id),
+    );
+    const [entry] = index < 0 ? [] : wire.pending.splice(index, 1);
+    assert(entry, `no pending read for ${id}`);
+    return entry;
+  };
+  const empty = (id: string) => [
+    bounds(relay, id, "head", { has_more: false, next_cursor: null }),
+  ];
+  try {
+    const channels = owner.session.channels;
+    live.receive(
+      ["a", "b", "c"].map((id) => roster(relay, id, [viewer.pubkey])),
+    );
+    for (const id of ["b", "c"]) {
+      channels.ensure(id);
+      take(id).respond(empty(id));
+      await flush();
+    }
+    // "a" never loaded: its first read failed, and so did its catch-up.
+    channels.ensure("a");
+    take("a").fail(new ReadError("unavailable", "Relay unavailable", 503));
+    await flush();
+    live.state({ status: "connected", routes: [] });
+    live.established("a");
+    await flush();
+    take("a").fail(new ReadError("unavailable", "Relay unavailable", 503));
+    await flush();
+    expect(channels.window("a")).toMatchObject({ status: "error", rows: [] });
+    // Hold both catch-up slots with other channels' reads.
+    live.established("c");
+    live.established("b");
+    await flush();
+    const first = take("c");
+    channels.ensure("b");
+    await flush();
+    const second = take("b");
+    const target = message(alice, "a", "target", 20);
+    const view = renderHook(() => useMessageOpening(channels, "a", target.id));
+    await act(flush);
+    // The retry is queued behind the busy slots: not yet a failure.
+    expect(wire.pending.filter((entry) => entry.filters[0]?.["#h"])).toEqual(
+      [],
+    );
+    expect(view.result.current).toBeUndefined();
+    await act(async () => {
+      first.respond(empty("c"));
+      second.respond(empty("b"));
+      await flush();
+    });
+    expect(view.result.current).toBeUndefined();
+    const retry = take("a");
+    await act(async () => {
+      retry.respond([target, ...empty("a")]);
       await flush();
     });
     expect(view.result.current).toBe(true);

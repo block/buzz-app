@@ -2714,13 +2714,19 @@ export function createChannelStore(
         ...[...windows.keys()].reverse(),
       ]),
     ],
-    /** A catch-up head read is queued: the rows wait to be revalidated, and an
-     * earlier failure is no longer the answer. catchUp settles it again. */
+    /** A catch-up head read is queued: the rows wait to be revalidated, an
+     * empty window is loading, and an earlier failure is no longer the answer.
+     * catchUp settles it again. */
     catchUpQueued(channelId: string) {
       const head = heads.peek(channelId);
       if (head) heads.set(channelId, { ...head, cached: true });
       const state = windows.get(channelId);
-      if (state) setWindow(state, { freshness: "cached", error: undefined });
+      if (state)
+        setWindow(state, {
+          freshness: "cached",
+          error: undefined,
+          ...(state.snapshot.rows.length ? {} : { status: "loading" }),
+        });
     },
     diagnostics: () => ({
       heads: heads.stats(),

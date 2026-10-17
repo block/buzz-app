@@ -413,6 +413,13 @@ function Composer({
     return caption;
   }, [value]);
   const draft = value.text;
+  const recipientKey = JSON.stringify(
+    value.recipients.map(({ pubkey, name }) => ({ pubkey, name })),
+  );
+  const recipients = useMemo(
+    () => JSON.parse(recipientKey) as readonly MentionRecipient[],
+    [recipientKey],
+  );
   const valueRef = useRef(value);
   // Model and effort picked for mentioned agents' next run; cleared by each send.
   const [picks, setPicks] = useState<MentionPicks>({});
@@ -1905,6 +1912,7 @@ function Composer({
                     threadRootId={threadRootId}
                     disabled={editingDisabled}
                     inviteAgents={agentChoices && !editing.target}
+                    recipients={recipients}
                     insertText={(text) => insert(text)}
                     insertMention={insertMention}
                     insertMentions={insertMentions}

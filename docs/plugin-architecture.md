@@ -1068,7 +1068,10 @@ selected recipient metadata. Token renderers are display-only while editing.
 Names pasted as text never create notification intent.
 
 Tools receive `insertText`, `insertMention({ pubkey, name })`,
-`insertMentions([{ pubkey, name }, …])`, `insertResource` and `focus` commands.
+`insertMentions([{ pubkey, name }, …])`, `insertResource` and `focus` commands,
+and read-only `recipients`: the draft's selected mentions as `{ pubkey, name }` in
+draft order, so a tool can act for whoever the draft addresses. The array keeps its
+identity until the recipients change.
 Mention insertion atomically records visible text and exact notification intent;
 `true` means the edit was accepted, **not** that membership or delivery succeeded.
 The host serializes successive commands using the latest draft and selection,

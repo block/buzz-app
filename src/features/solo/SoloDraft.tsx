@@ -3,18 +3,15 @@ import {
   detailsDraftErrors,
 } from "../relay/channel-details-protocol";
 import { startingChatTitle } from "./chat-title";
-import { readPending, type PendingStart } from "./pending-start";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GearIcon } from "../../shared/design-system/icons";
 import {
   applySessionSetup,
-  removedSectionMessage,
   loadSessionSetup,
   parseSessionSetup,
 } from "./workspace";
-import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
@@ -27,7 +24,6 @@ import {
 import { MessageComposer } from "../messages/MessageComposer";
 import { useDefaultAgent } from "./default-agent";
 import { ProjectControl } from "./ProjectControl";
-import { legacyAssistantDraft } from "./legacy-assistant";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { ownSolo } from "../sessions/metadata";
@@ -56,8 +52,6 @@ function readDraftSettings(scope: string, draftKey: string) {
 
 export function resetNewChatProject(scope: string, sectionId: string) {
   const key = `me:section:${sectionId}`;
-  // A submitted start owns its frozen project and must remain recoverable.
-  if (readPending(scope, key)) return;
   const selected = readView<unknown>(scope, `${key}:new-project`, sectionId);
   // Instructions belong to the previous project; name and lifetime stay.
   if (selected !== sectionId)
@@ -76,12 +70,10 @@ export function SoloDraft({
   extensions,
   standalone = false,
   focusRequest = 0,
-  resumeDraftKey,
   agent,
 }: {
   /** Start with this agent chosen, as when search opens a new session with it. */
   agent?: string | undefined;
-  resumeDraftKey?: string | undefined;
   standalone?: boolean;
   focusRequest?: number | AbortSignal;
   extensions?: ConversationExtensions | undefined;
@@ -90,12 +82,10 @@ export function SoloDraft({
   onStarted: (id: string) => void;
   sectionId?: string | undefined;
 }) {
-  const draftKey =
-    resumeDraftKey ?? (sectionId ? `me:section:${sectionId}` : "me");
+  const draftKey = sectionId ? `me:section:${sectionId}` : "me";
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft: the one the route names, else the
-  // default. An interrupted start keeps the assistant its receipt was
-  // admitted with.
+  // default.
   const defaultAgent = useDefaultAgent(session, scope, agent);
   const [selectedProject, setSelectedProject] = useState(() => {
     const saved = readView<unknown>(
@@ -141,21 +131,12 @@ export function SoloDraft({
         ?.querySelector<HTMLElement>('textarea, [contenteditable="true"]')
         ?.focus();
   }, [focusRequest]);
-  const [pending, setPending] = useState(() => readPending(scope, draftKey));
-  const selectedAgent = pending?.agent;
   const available = session.workSessions.available;
-  const [channelId] = useState(() => pending?.id ?? crypto.randomUUID());
-  const [editing, setEditing] = useState(
-    // Older builds admitted untagged drafts. Preserve their creation
-    // progress, but let their author add a tag before any unsigned send.
-    () =>
-      !!(
-        pending &&
-        !pending.messageId &&
-        !pending.agent &&
-        !mentionDraft(pending.draft).recipients.length
-      ),
-  );
+  const [channelId] = useState(() => crypto.randomUUID());
+  // A retry in this view confirms the channel it already requested instead of
+  // creating another. Nothing about a start is saved: once the chat exists,
+  // its ordinary composer draft holds anything not yet sent.
+  const creation = useRef<string>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const submitting = useRef(false);
@@ -166,242 +147,120 @@ export function SoloDraft({
       mounted.current = false;
     };
   }, []);
-  const save = (next: PendingStart) => {
-    if (!writeView(scope, `${draftKey}:pending`, next))
-      throw new Error(
-        "Your session start couldn’t be saved on this device. No further changes were sent.",
-      );
-    setPending(next);
-  };
   async function start(draft: MentionDraft) {
-    if (
-      submitting.current ||
-      !(pending?.text ?? composerMarkdown(draft)).trim() ||
-      !available
-    )
-      return;
+    const text = composerMarkdown(draft);
+    if (submitting.current || !text.trim() || !available) return;
     submitting.current = true;
     setBusy(true);
-    setEditing(false);
     setError(undefined);
-    const current: PendingStart = pending
-      ? {
-          ...pending,
-          ...(!pending.messageId
-            ? { text: composerMarkdown(draft), draft }
-            : {}),
-        }
-      : {
-          id: channelId,
-          ttlSeconds: draftSettings.ttlSeconds,
-          named:
-            typeof draftSettings.name === "string" &&
-            !!canonicalDetailsName(draftSettings.name),
-          name:
-            typeof draftSettings.name === "string"
-              ? canonicalDetailsName(draftSettings.name) ||
-                startingChatTitle(draft)
-              : draftSettings.name,
-          text: composerMarkdown(draft),
-          draft,
-        };
-
-    const mentions = mentionDraft(current.draft).recipients.map(
-      (item) => item.pubkey,
-    );
-    if (!current.messageId) {
-      if (!mentions.length && selectedAgent) current.agent = selectedAgent;
-      else delete current.agent;
-    }
     const recipients = [
-      ...new Set(
-        mentions.length ? mentions : current.agent ? [current.agent] : [],
-      ),
+      ...new Set(mentionDraft(draft).recipients.map((item) => item.pubkey)),
     ];
+    const named =
+      typeof draftSettings.name === "string" &&
+      !!canonicalDetailsName(draftSettings.name);
+    const name =
+      typeof draftSettings.name === "string"
+        ? canonicalDetailsName(draftSettings.name) || startingChatTitle(draft)
+        : draftSettings.name;
+    const { ttlSeconds } = draftSettings;
+    let opened = false;
     try {
-      if (current.name !== undefined && typeof current.name !== "string")
-        throw new Error("The saved session name could not be verified.");
-      // Receipts from before optional naming have no frozen title.
-      if (!current.name)
-        current.name = startingChatTitle(
-          pending?.draft ?? pending?.text ?? current.draft ?? current.text,
-        );
+      if (typeof name !== "string")
+        throw new Error("The chat name could not be verified.");
       const errors = detailsDraftErrors({
-        name: current.name ?? "Session",
+        name,
         description: "",
         visibility: "private",
-        ttlSeconds: current.ttlSeconds,
+        ttlSeconds,
       });
-      if (current.name !== undefined && errors.name)
-        throw new Error(errors.name);
+      if (errors.name) throw new Error(errors.name);
       if (errors.lifetime) throw new Error(errors.lifetime);
-      save(current); // Freeze validated name and lifetime before the first asynchronous start operation.
-      if (current.setup !== undefined) {
-        current.setup = parseSessionSetup(current.setup);
-        if (
-          current.setup.sectionId &&
-          current.setup.sectionId !== selectedProject
-        )
-          throw new Error(
-            "The saved session belongs to a different section. Reopen its original section to retry.",
-          );
-      }
-      if (selectedProject && !current.setup && !current.creationId) {
-        current.setup = await loadSessionSetup(session, selectedProject);
-        if (!mounted.current) return;
-      }
-      if (!current.setup && !current.creationId && draftCanvas !== undefined) {
-        current.setup = parseSessionSetup({
-          ...(selectedProject ? { sectionId: selectedProject } : {}),
-          canvas: draftCanvas,
-          agents: [],
-        });
-      } else if (
-        current.setup &&
-        !current.creationId &&
-        !pending?.setup &&
-        draftCanvas !== undefined
-      ) {
-        current.setup = parseSessionSetup({
-          ...current.setup,
+      let setup = selectedProject
+        ? await loadSessionSetup(session, selectedProject)
+        : undefined;
+      if (!mounted.current) return;
+      if (draftCanvas !== undefined)
+        setup = parseSessionSetup({
+          ...(setup ?? {
+            ...(selectedProject ? { sectionId: selectedProject } : {}),
+            agents: [],
+          }),
           canvas: draftCanvas,
         });
-      }
-      save(current);
-      if (!current.messageId) {
-        await session.agentChoices.refresh();
-        if (!mounted.current) return;
-        if (
-          [...recipients, ...(current.setup?.agents ?? [])].some(
-            (key) =>
-              !session.agentChoices
-                .snapshot()
-                .selectable.some((agent) => agent.pubkey === key),
-          )
+      await session.agentChoices.refresh();
+      if (!mounted.current) return;
+      if (
+        [...recipients, ...(setup?.agents ?? [])].some(
+          (key) =>
+            !session.agentChoices
+              .snapshot()
+              .selectable.some((agent) => agent.pubkey === key),
         )
-          throw new Error(
-            "Solo chats can only use your available agents. Check mentions and section defaults.",
-          );
-      }
-      if (!current.creationId) {
-        current.creationId = session.workSessions.create(
-          current.id,
-          current.name,
-          current.ttlSeconds,
-          current.named === true,
-        );
-        save({ ...current });
-      }
-      await session.workSessions.delivered(current.creationId);
-      if (!mounted.current) return;
-      await session.workSessions.refresh(current.id);
-      if (!mounted.current) return;
-      if (current.setup && !current.setupDone && !current.messageId) {
-        await applySessionSetup(
-          session,
-          current.id,
-          current.setup,
-          () => mounted.current,
-        );
-        if (!mounted.current) return;
-        current.setupDone = true;
-        save({ ...current });
-      }
-      if (!current.messageId && current.agent && !mentions.length) {
-        if (!current.invitationId) {
-          current.invitationId = session.workSessions.invite(
-            current.id,
-            current.agent,
-          );
-          save({ ...current });
-        }
-        await session.workSessions.delivered(current.invitationId);
-        if (!mounted.current) return;
-        await session.workSessions.refresh(current.id, {
-          member: current.agent,
-        });
-        if (!mounted.current) return;
-      }
-      if (!current.messageId) {
-        if (mentions.length) {
-          await session.workSessions.addAgents(
-            current.id,
-            recipients,
-            () => mounted.current,
-          );
-          if (!mounted.current) return;
-        }
-        const created = session.channels
-          .list()
-          .channels.find((item) => item.id === current.id);
-        if (!ownSolo(created, session.viewer))
-          throw new Error(
-            "This conversation is no longer in Solo. Open it in Team.",
-          );
-        current.messageId = session.messages.send(
-          current.id,
-          current.text,
-          recipients,
-        );
-        save({ ...current });
-      }
-      await session.workSessions.delivered(current.messageId);
-      if (!mounted.current) return;
-      // Never overwrite a draft already opened or edited in another window.
-      const source = mentionDraft(current.draft);
-      if (current.agent && !source.recipients.length) {
-        await session.agentChoices.refresh();
-        if (!mounted.current) return;
-      }
-      const next =
-        current.agent && !source.recipients.length
-          ? legacyAssistantDraft(session, current.agent)
-          : rememberedMentions(session, source, recipients);
-      if (replaceView(scope, `draft:${current.id}`, null, next) === "failed")
+      )
         throw new Error(
-          "Your follow-up draft couldn’t be saved on this device. Retry to finish opening the chat.",
+          "Solo chats can only use your available agents. Check mentions and project defaults.",
         );
-      writeView(scope, `${draftKey}:pending`, null);
+      creation.current ??= session.workSessions.create(
+        channelId,
+        name,
+        ttlSeconds,
+        named,
+      );
+      // Once requested, the chat finishes starting even if this view closes.
+      await session.workSessions.delivered(creation.current);
+      await session.workSessions.refresh(channelId);
+      // The chat exists. From here its own composer keeps the text, so an
+      // interruption leaves an ordinary chat to send from.
+      if (replaceView(scope, `draft:${channelId}`, null, draft) === "failed")
+        throw new Error(
+          "Your message couldn’t be saved on this device. Retry to finish opening the chat.",
+        );
+      opened = true;
       writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-project`, null);
-      setPending(undefined);
-      onStarted(current.id);
+      if (setup) {
+        try {
+          await applySessionSetup(session, channelId, setup, () => true);
+        } catch (reason) {
+          // Missing project setup leaves a working chat; never hold the message.
+          console.warn("Solo project setup did not finish", reason);
+        }
+      }
+      await session.workSessions.addAgents(channelId, recipients, () => true);
+      const created = session.channels
+        .list()
+        .channels.find((item) => item.id === channelId);
+      if (!ownSolo(created, session.viewer))
+        throw new Error(
+          "This conversation is no longer in Solo. Open it in Team.",
+        );
+      session.messages.send(channelId, text, recipients);
+      writeView(
+        scope,
+        `draft:${channelId}`,
+        rememberedMentions(session, draft, recipients),
+      );
+      if (mounted.current) onStarted(channelId);
     } catch (reason) {
-      if (!current.messageId && mounted.current) setEditing(true);
-      setError(reason instanceof Error ? reason.message : String(reason));
+      if (!mounted.current) return;
+      // The chat exists with the text in its composer; finish sending there.
+      if (opened) {
+        onStarted(channelId);
+        return;
+      }
+      // A rejected creation made no chat: drop it so a retry requests anew.
+      const failed = creation.current;
+      if (failed && session.workSessions.failed(failed)) {
+        creation.current = undefined;
+        await session.workSessions.discardFailed(failed).catch(() => {});
+      }
+      if (mounted.current)
+        setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       submitting.current = false;
-      setBusy(false);
-    }
-  }
-  const failedId =
-    pending &&
-    [pending.messageId, pending.invitationId, pending.creationId].find(
-      (id) => id && session.workSessions.failed(id),
-    );
-  async function editFailed() {
-    if (!pending || !failedId || busy) return;
-    setBusy(true);
-    try {
-      await session.workSessions.discardFailed(failedId);
-      if (failedId === pending.creationId) {
-        writeView(scope, `${draftKey}:pending`, null);
-        setPending(undefined);
-      } else {
-        const next = { ...pending };
-        if (failedId === next.invitationId) {
-          delete next.invitationId;
-          delete next.agent;
-        } else delete next.messageId;
-        save(next);
-      }
-      setEditing(true);
-      setError(undefined);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
   const composer = (
@@ -417,8 +276,7 @@ export function SoloDraft({
         label="Message your agents"
         inviteAgents
         defaultMention={defaultAgent}
-        // An interrupted start keeps the assistant its receipt was admitted with.
-        requireMention={!selectedAgent && !pending?.messageId}
+        requireMention
         trailingTool={
           session.soloPreferences ? (
             <ProjectControl
@@ -436,15 +294,13 @@ export function SoloDraft({
                 setDraftSettings(next);
                 writeView(scope, `${draftKey}:settings`, next);
               }}
-              disabled={busy || !!pending}
+              disabled={busy}
             />
           ) : undefined
         }
         submission={{
           draftKey: `${draftKey}:new-draft`,
-          initialDraft: pending?.draft ?? pending?.text,
-          receiptOnly: !!pending?.messageId,
-          locked: busy || (!!pending && !editing),
+          locked: busy,
           disabled: busy || !available,
           submit: (draft) => {
             void start(draft);
@@ -457,41 +313,7 @@ export function SoloDraft({
           saved.
         </p>
       )}
-      {pending?.agent && (
-        <p className={styles.availability}>
-          Recovering an earlier send with a saved agent recipient.
-        </p>
-      )}
       {error && <p role="alert">{error}</p>}
-      {error === removedSectionMessage &&
-        pending?.setup?.sectionId &&
-        !pending.setupDone &&
-        !pending.messageId && (
-          <Button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              try {
-                if (!pending.setup) return;
-                const { sectionId: _sectionId, ...setup } = pending.setup;
-                save({ ...pending, setup });
-                setError(undefined);
-                setEditing(true);
-              } catch (reason) {
-                setError(
-                  reason instanceof Error ? reason.message : String(reason),
-                );
-              }
-            }}
-          >
-            Continue without section
-          </Button>
-        )}
-      {error && failedId && (
-        <Button type="button" disabled={busy} onClick={() => void editFailed()}>
-          Edit and retry
-        </Button>
-      )}
     </div>
   );
   if (!standalone) return composer;
@@ -504,7 +326,7 @@ export function SoloDraft({
           aria-label="Chat settings"
           title="Chat settings"
           icon={<GearIcon size="1rem" aria-hidden="true" />}
-          disabled={busy || !!pending}
+          disabled={busy}
           onClick={() => setSettingsOpen(true)}
         />
       }

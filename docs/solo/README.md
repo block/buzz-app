@@ -48,11 +48,16 @@ behavior on the label, so a rename touches copy only.
   they list under Team as ordinary private channels. There is no automatic
   migration, membership revocation or transcript copy.
 - Projects are existing Solo projects, and Chats are ordinary private channels. New
-  chats use ordinary private channels. The first send freezes the
-  draft, channel ID, name, lifetime, Canvas and group defaults in the existing
-  pending-start receipt. Setup (Canvas, project filing, agents) must succeed before
-  sending; retries reuse that ID. Draft settings remain local until first send and
-  use Solo's defaults namespace.
+  chats use ordinary private channels. The first send creates the chat, moves
+  the draft into that chat's ordinary composer draft, applies project setup
+  (Canvas, project filing, default agents), then sends through the same
+  admission as any Solo send: missing tagged agents are added, then the message
+  is queued. Nothing about the start is saved separately. A retry in the same
+  view reuses the requested channel; after an interruption the chat exists with
+  the text still in its composer. Setup that fails or is interrupted leaves a
+  working chat without that setup; it never holds the message. Draft settings
+  remain local until first send and use Solo's defaults namespace. Start
+  receipts (`me:*:pending`) from earlier builds are ignored.
 - New Solo chats are created with the `buzz.solo` label and no `about` text, so
   a relay without NIP-CL labels cannot start one. The label is a routing hint for
   agents: answer as one channel-scoped, top-level conversation. It is not access
@@ -112,9 +117,7 @@ behavior on the label, so a rename touches copy only.
   once, only with that exact eligible agent and remembering enabled. Existing
   prose, attachments, edited drafts and opt-out consume the old choice without
   replacing current intent. Failed draft persistence preserves it for retry.
-  It is never a continuing routing fallback. A legacy pending creation keeps
-  the exact recipient admitted in its receipt; after delivery, that eligible
-  recipient can seed its follow-up without modifying or resending signed bytes.
+  It is never a continuing routing fallback.
   A blocked Enter submission shows “Tag an agent to send” inline. The project control follows the editor tools on the same rail;
   model/effort controls read the explicitly tagged recipients.
 - Claude Code can name a Solo chat from its own generated session title after its
@@ -181,12 +184,10 @@ offers the existing Ongoing/Temporary duration control for standalone drafts:
 Ongoing means no automatic archive; Temporary defaults to seven days and archives
 after the selected duration without activity. Existing custom values are retained.
 
-The validated `ttlSeconds` is frozen in the local first-attempt receipt before
-asynchronous setup begins and sent as the third `workSessions.create` argument.
-Retries reuse the saved creation event ID: no second creation or create-then-edit.
-Local settings now store name, Canvas and lifetime together; old Canvas-only strings
-still load. Invalid stored durations are visible failures, not implicit Ongoing.
-Setup and first-message ordering retain their existing owners.
+The validated `ttlSeconds` is sent as the third `workSessions.create` argument;
+there is no create-then-edit. Local settings store name, Canvas and lifetime
+together; old Canvas-only strings still load. Invalid stored durations are visible
+failures, not implicit Ongoing.
 
 The **Chat settings** gear in the header opens the form directly; saved-session
 row menus retain **Chat settings…** alongside their other actions. Both open one
@@ -229,11 +230,9 @@ shared fresh-details owner remains edit authority.
 
 New and saved sessions use the same Chat settings form. A blank new name retains
 the first-prompt automatic title (80 code points, canonicalized like relay names).
-Explicit names use the shared canonical 1–120-code-point validation. The first
-attempt freezes the chosen or first-prompt title before any asynchronous setup;
-retries do not change it when prompt or local settings change.
-Old Canvas-only settings and pending receipts still load without a migration or
-another creation/rename operation.
+Explicit names use the shared canonical 1–120-code-point validation.
+Old Canvas-only settings still load without a migration or another
+creation/rename operation.
 
 Name/lifetime edits keep the Solo label; only explicit Convert to channel clears
 it. Chosen names are recorded using the existing NIP-CL channel label
@@ -244,8 +243,7 @@ deferred. Older sessions without this label use a short ID in shared cards until
 a name change records the chosen name; the app does not infer provenance from a
 prompt or historical title.
 Clearing a saved name silently preserves the last confirmed title without a name
-write or validation error. Other settings can still save. Old pending receipts without a frozen name derive it from their original first
-prompt, not an edited retry draft.
+write or validation error. Other settings can still save.
 The form uses the shared content-sized dialog and its normal footer spacing, with
 one body scrollport and no reserved bottom area. The title and actions stay visible
 in ordinary short windows. If enlarged controls cannot fit, the outer dialog also

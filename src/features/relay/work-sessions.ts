@@ -559,26 +559,6 @@ export function createWorkSessions(
         ],
       });
     },
-    invite(id: string, pubkey: string) {
-      identifier(id);
-      const target = channels
-        .list()
-        .channels.find((channel) => channel.id === id);
-      if (target?.channelType !== "session")
-        throw new Error("Manage this channel’s participants in its settings.");
-      if (!/^[0-9a-f]{64}$/.test(pubkey))
-        throw new Error("Choose a valid participant.");
-      if (!new Set(agents?.selectable() ?? []).has(pubkey))
-        throw new Error("Choose an agent from your agent library.");
-      return writer().send({
-        kind: 9000,
-        content: "",
-        tags: [
-          ["h", id],
-          ["p", pubkey],
-        ],
-      });
-    },
     failed(id: string) {
       return (
         (receipts ?? outbox)

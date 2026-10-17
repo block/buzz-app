@@ -357,21 +357,6 @@ it("rejects a stale cached identity after the current library refresh fails", as
   }
 });
 
-it("rejects a stale cached identity from a standalone session picker", async () => {
-  const test = setup();
-  try {
-    await test.ready();
-    test.failLibraryRefresh();
-    await test.owner.session.agentLibrary.refresh();
-    expect(() =>
-      test.owner.session.workSessions.invite(test.standalone, test.agent),
-    ).toThrow(/agent library/);
-    expect(test.publish).not.toHaveBeenCalled();
-  } finally {
-    test.owner.dispose();
-  }
-});
-
 it("stops additional invitations when the composing view closes during admission", async () => {
   const test = setup();
   let active = true;

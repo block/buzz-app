@@ -7140,42 +7140,6 @@ it.each(["disabled", "retarget", "unmount"])(
   },
 );
 
-it("rechecks session setup before publishing after a background upload", async () => {
-  const channelId = "22222222-2222-4222-8222-222222222222";
-  const h = mount({ channelId });
-  const gate = deferred<ReturnType<typeof uploadDescriptor>>();
-  const upload = vi.fn(() => gate.promise);
-  h.rerender(
-    <ToastProvider>
-      <MessageComposer
-        session={{ ...h.session, attachments: { upload } }}
-        scope="scope"
-        channelId={channelId}
-        channelName="General"
-      />
-    </ToastProvider>,
-  );
-  h.fill("Keep this draft");
-  fireEvent.change(screen.getByLabelText("Choose attachments"), {
-    target: { files: [new NodeFile(["notes"], "notes.txt")] },
-  });
-  fireEvent.submit(
-    screen.getByRole("form", { name: "Send a message to General" }),
-  );
-  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
-  writeView("scope", "me:section:work:pending", {
-    id: channelId,
-    text: "Original start",
-    creationId: "c".repeat(64),
-    setup: { sectionId: "work", canvas: "Frozen", agents: [] },
-  });
-  await act(async () => gate.resolve(uploadDescriptor()));
-  await waitFor(() => expect(h.input()).toHaveValue("Keep this draft"));
-  expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.messages.reply).not.toHaveBeenCalled();
-  expect(within(screen.getByRole("form")).getByText("notes.txt")).toBeVisible();
-});
-
 it("keeps snapshot paste from taking the attachment slot reserved for a recording", async () => {
   const empty: readonly never[] = [];
   const tools: readonly Contribution<ComposerTool>[] = [

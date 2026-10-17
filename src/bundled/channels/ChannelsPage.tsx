@@ -1,5 +1,4 @@
 import { profileActivityViewTarget } from "../../features/profiles/target";
-import { pendingSoloDraft } from "../../features/solo/pending-start";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -81,7 +80,7 @@ import type {
   Attachment,
   ChannelSummary,
 } from "../../features/relay/contracts";
-import { readView, writeView, subscribeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
@@ -455,35 +454,6 @@ function ChannelWorkspace({
     }
   }, [cached, current, navigation]);
   const currentId = current?.id;
-  const pendingStart = useSyncExternalStore(
-    useCallback((notify) => subscribeView(scope, notify), [scope]),
-    () => (currentId ? pendingSoloDraft(scope, currentId) : undefined),
-  );
-  useEffect(() => {
-    if (
-      !pendingStart ||
-      !current ||
-      current.cached ||
-      resolving ||
-      navigation?.signal.aborted ||
-      navigation?.target.kind !== "conversation"
-    )
-      return;
-    // Recovery replaces the timeline, so it owns completion of the plain route.
-    // An exact address cannot be claimed opened without revealing its message.
-    navigation.complete(
-      requestedMessage || requestedThread
-        ? { status: "failed", reason: "unavailable" }
-        : { status: "opened" },
-    );
-  }, [
-    pendingStart,
-    current,
-    resolving,
-    navigation,
-    requestedMessage,
-    requestedThread,
-  ]);
   const canvasOpen =
     !!canvasOrigin &&
     canvasOrigin.channelId === currentId &&
@@ -599,7 +569,7 @@ function ChannelWorkspace({
   });
   // Mail's Archive chord opens the same confirmation as the chat actions menu.
   const archivable =
-    solo && !pendingStart && !current?.readOnly && !current?.cached
+    solo && !current?.readOnly && !current?.cached
       ? current?.archived
         ? undefined
         : current
@@ -1532,21 +1502,6 @@ function ChannelWorkspace({
                 setSent({ channelId, id });
                 select(channelId);
               }}
-            />
-          ) : pendingStart && currentId ? (
-            <SoloDraft
-              key={pendingStart}
-              standalone
-              resumeDraftKey={pendingStart}
-              sectionId={
-                pendingStart.includes(":section:")
-                  ? pendingStart.split(":section:")[1]
-                  : undefined
-              }
-              session={queries}
-              scope={scope}
-              extensions={extensions}
-              onStarted={select}
             />
           ) : draft ? (
             <SoloDraft

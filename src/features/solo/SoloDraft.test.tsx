@@ -13,11 +13,6 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type {
-  ComposerTool,
-  ConversationExtensions,
-} from "../conversation/contracts";
-import type { Contribution } from "../../plugins/contributions";
 import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
@@ -64,7 +59,6 @@ function setup(available = true) {
     available,
     addAgents: vi.fn(async () => {}),
     create: vi.fn<RelaySession["workSessions"]["create"]>(() => "c".repeat(64)),
-    invite: vi.fn(() => "e".repeat(64)),
     delivered: vi.fn<RelaySession["workSessions"]["delivered"]>(async () => {}),
     refresh: vi.fn(async () => {}),
     failed: (_id: string) => false,
@@ -152,13 +146,38 @@ it("uses restored explicit mentions, not a separate picker", async () => {
   await user.keyboard("{Enter}");
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
   const id = test.workSessions.create.mock.calls[0]?.[0];
-  expect(test.workSessions.invite).not.toHaveBeenCalled();
   expect(test.workSessions.addAgents.mock.calls).toEqual([
     [id, ["b".repeat(64)], expect.any(Function)],
   ]);
   expect(test.messages.send).toHaveBeenCalledWith(id, "@Outside agent Help", [
     "b".repeat(64),
   ]);
+});
+it("retries a rejected creation as a new request after discarding it", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  let rejected = true;
+  test.workSessions.failed = (id: string) => rejected && id === "c".repeat(64);
+  test.workSessions.discardFailed.mockImplementation(async () => {
+    rejected = false;
+  });
+  test.workSessions.delivered.mockRejectedValueOnce(
+    new Error("Channel creation rejected"),
+  );
+  render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await user.type(screen.getByRole("textbox"), "Try again");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Channel creation rejected",
+  );
+  expect(test.workSessions.discardFailed).toHaveBeenCalledWith("c".repeat(64));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(test.workSessions.create).toHaveBeenCalledTimes(2);
+  expect(test.messages.send).toHaveBeenCalledOnce();
 });
 it("cannot send on an unsupported community", async () => {
   const test = setup(false),
@@ -171,41 +190,14 @@ it("cannot send on an unsupported community", async () => {
   expect(test.workSessions.create).not.toHaveBeenCalled();
 });
 
-it("discards a recovered draft with a malformed session identifier", async () => {
-  const test = setup(),
-    onStarted = vi.fn(),
-    user = userEvent.setup();
-  writeView("test", "me:pending", {
-    id: "f".repeat(36),
-    text: "Stale draft",
-  });
-  writeView("test", "me:new-draft", taggedDraft("Fresh start"));
-  render(
-    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
-  );
-  const input = screen.getByRole("textbox");
-  expect(input).toHaveTextContent("Fresh start");
-  expect(input).not.toHaveTextContent("Stale draft");
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
-  expect(test.workSessions.create).toHaveBeenCalledWith(
-    expect.stringMatching(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    ),
-    "Fresh start",
-    undefined,
-    false,
-  );
-});
-
-it("keeps the prompt through an uncertain delivery and retries without duplicate writes", async () => {
+it("keeps the prompt through an uncertain creation and retries it without another create", async () => {
   const test = setup(),
     onStarted = vi.fn(),
     user = userEvent.setup();
   test.workSessions.delivered.mockRejectedValueOnce(
     new Error("Still waiting for delivery"),
   );
-  const view = render(
+  render(
     <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
   );
   await user.type(screen.getByRole("textbox"), "Recover this prompt");
@@ -213,125 +205,14 @@ it("keeps the prompt through an uncertain delivery and retries without duplicate
   await screen.findByRole("alert");
   expect(screen.getByRole("textbox")).toHaveTextContent("Recover this prompt");
   expect(test.messages.send).not.toHaveBeenCalled();
-  view.unmount();
-  render(
-    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
-  );
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
   expect(test.workSessions.create).toHaveBeenCalledOnce();
   expect(test.messages.send).toHaveBeenCalledOnce();
 });
 
-it("recovers a legacy submitted agent recipient without offering a new picker", async () => {
-  const test = setup(),
-    started = vi.fn();
-  const id = "22222222-2222-4222-8222-222222222222";
-  writeView("test", "me:pending", {
-    id,
-    text: "Continue",
-    creationId: "c".repeat(64),
-    agent: "b".repeat(64),
-  });
-  render(<SoloDraft session={test.session} scope="test" onStarted={started} />);
-  expect(screen.queryByRole("button", { name: "Choose an agent" })).toBeNull();
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() => expect(started).toHaveBeenCalledWith(id));
-  expect(test.workSessions.create).not.toHaveBeenCalled();
-  expect(test.workSessions.invite).toHaveBeenCalledExactlyOnceWith(
-    id,
-    "b".repeat(64),
-  );
-  expect(test.messages.send).toHaveBeenCalledExactlyOnceWith(id, "Continue", [
-    "b".repeat(64),
-  ]);
-});
-
-it.each([true, false])(
-  "restores effective recipients without replaying an overridden invitation: sent=%s",
-  async (sent) => {
-    const test = setup(),
-      onStarted = vi.fn(),
-      user = userEvent.setup();
-    const id = "22222222-2222-4222-8222-222222222222";
-    const draft = {
-      text: "@Member agent Continue",
-      recipients: [
-        { pubkey: "a".repeat(64), name: "Member agent", start: 0, end: 13 },
-      ],
-    };
-    writeView("test", "me:pending", {
-      id,
-      text: draft.text,
-      draft,
-      agent: "b".repeat(64),
-      creationId: "c".repeat(64),
-      invitationId: "e".repeat(64),
-      ...(sent ? { messageId: "d".repeat(64) } : {}),
-    });
-    render(
-      <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
-    );
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
-    expect(test.workSessions.create).not.toHaveBeenCalled();
-    expect(test.workSessions.invite).not.toHaveBeenCalled();
-    expect(test.workSessions.delivered).not.toHaveBeenCalledWith(
-      "e".repeat(64),
-    );
-    if (sent) {
-      expect(test.workSessions.addAgents).not.toHaveBeenCalled();
-      expect(test.messages.send).not.toHaveBeenCalled();
-    } else {
-      expect(test.workSessions.addAgents.mock.calls).toEqual([
-        [id, ["a".repeat(64)], expect.any(Function)],
-      ]);
-      expect(test.messages.send).toHaveBeenCalledExactlyOnceWith(
-        id,
-        draft.text,
-        ["a".repeat(64)],
-      );
-    }
-  },
-);
-
-it("keeps edits after discarding a failed session send and remounting", async () => {
-  const t = setup();
-  const user = userEvent.setup();
-  const onStarted = vi.fn();
-  const id = "d".repeat(64);
-  let failed = true;
-  t.workSessions.failed = (eventId) => failed && eventId === id;
-  t.workSessions.discardFailed = vi.fn(async () => {
-    failed = false;
-  });
-  t.workSessions.delivered.mockImplementation(async (eventId) => {
-    if (failed && eventId === id) throw new Error("Not sent");
-  });
-  const mount = () =>
-    render(
-      <SoloDraft session={t.session} scope="test" onStarted={onStarted} />,
-    );
-  writeView("test", "me:new-draft", taggedDraft("Original draft"));
-  const page = mount();
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Edit and retry" }),
-  );
-  await user.type(screen.getByRole("textbox"), "Corrected ");
-  page.unmount();
-  mount();
-  expect(screen.getByRole("textbox")).toHaveTextContent("Corrected");
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
-  expect(t.messages.send.mock.calls[1]?.[1]).toContain("Corrected");
-  expect(t.messages.send.mock.calls[1]?.[2]).toEqual(["a".repeat(64)]);
-});
-
 it.each([false, true])(
-  "applies section defaults before first send and blocks failed setup (failure=%s)",
+  "applies section defaults before first send; failed setup still opens the chat (failure=%s)",
   async (failure) => {
     vi.stubGlobal("crypto", webcrypto);
     try {
@@ -396,23 +277,11 @@ it.each([false, true])(
         screen.getByRole("textbox", { name: "Message your agents" }),
       );
       await user.keyboard("{Enter}");
-      if (failure) {
-        expect(await screen.findByText("Canvas save failed")).toBeVisible();
-        expect(test.messages.send).not.toHaveBeenCalled();
-        expect(onStarted).not.toHaveBeenCalled();
-        expect(sequence).toEqual(["canvas"]);
-        canvasSave.mockResolvedValue({ id: "f".repeat(64) });
-        await user.click(
-          screen.getByRole("textbox", { name: "Message your agents" }),
-        );
-        await user.keyboard("{Enter}");
-        await waitFor(() => expect(onStarted).toHaveBeenCalled());
-        expect(test.workSessions.create).toHaveBeenCalledTimes(1);
-        expect(canvasSave.mock.calls[1]?.[1]).toBe("Use /repo");
-      } else {
-        await waitFor(() => expect(onStarted).toHaveBeenCalled());
-        expect(sequence).toEqual(["canvas", "placement", "send"]);
-      }
+      await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+      expect(test.workSessions.create).toHaveBeenCalledOnce();
+      expect(sequence).toEqual(
+        failure ? ["canvas", "send"] : ["canvas", "placement", "send"],
+      );
     } finally {
       vi.unstubAllGlobals();
     }
@@ -478,13 +347,6 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
     "Unknown creation",
   );
   expect(test.workSessions.create.mock.calls[0]?.[2]).toBe(604800);
-  mounted.unmount();
-  // A changed local setting must not replace the frozen first-attempt lifetime.
-  writeView("test", "me:settings", {
-    canvas: "Other settings",
-    ttlSeconds: 86400,
-  });
-  render(view());
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalled());
   expect(test.workSessions.create).toHaveBeenCalledOnce();
@@ -494,71 +356,6 @@ it("edits draft settings before creation, restores them, and applies Canvas befo
     undefined,
   );
   expect(order).toEqual(["canvas", "send"]);
-});
-
-it("recovers a deleted destination without duplicating the session or dropping its Canvas", async () => {
-  const test = setup();
-  const onStarted = vi.fn();
-  const id = "22222222-2222-4222-8222-222222222222";
-  const canvas = { id: "f".repeat(64), content: "Frozen instructions" };
-  const assign = vi.fn();
-  const channels = {
-    status: "ready",
-    channels: [
-      { id, channelType: "session", creator: test.session.viewer, members: [] },
-    ],
-  };
-  Object.assign(test.session, {
-    canvas: { read: async () => canvas, save: vi.fn() },
-    channels: {
-      list: () => channels,
-      subscribeList: () => () => {},
-    },
-    soloPreferences: {
-      refresh: async () => {},
-      snapshot: () => ({
-        status: "ready",
-        data: { sections: [], assignments: {} },
-      }),
-      assign,
-    },
-  });
-  const draft = taggedDraft("Continue my work");
-  writeView("test", "me:section:deleted:pending", {
-    id,
-    text: draft.text,
-    draft,
-    creationId: "c".repeat(64),
-    setup: { sectionId: "deleted", canvas: canvas.content, agents: [] },
-  });
-  const view = () => (
-    <SoloDraft
-      session={test.session}
-      scope="test"
-      sectionId="deleted"
-      resumeDraftKey="me:section:deleted"
-      onStarted={onStarted}
-    />
-  );
-  const first = render(view());
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await screen.findByText(
-    "The section was removed. Continue without a section to retry.",
-  );
-  expect(test.messages.send).not.toHaveBeenCalled();
-  await user.click(
-    screen.getByRole("button", { name: "Continue without section" }),
-  );
-  first.unmount();
-  render(view());
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() => expect(onStarted).toHaveBeenCalledWith(id));
-  expect(test.workSessions.create).not.toHaveBeenCalled();
-  expect(assign).not.toHaveBeenCalled();
-  expect(test.messages.send).toHaveBeenCalledExactlyOnceWith(id, draft.text, [
-    "a".repeat(64),
-  ]);
 });
 
 it("a new Me chat starts tagged with the default agent", async () => {
@@ -620,137 +417,6 @@ it("a new Me chat needs a tagged agent to send", async () => {
     "true",
   );
   expect(f.workSessions.create).not.toHaveBeenCalled();
-});
-
-it.each(["draft", "created"])(
-  "legacy unsigned Me start can acquire a tag without losing progress (%s)",
-  async (stage) => {
-    const f = setup();
-    const scope = `legacy-untagged-${stage}`;
-    const id = "22222222-2222-4222-8222-222222222222";
-    writeView(scope, "me:pending", {
-      id,
-      text: "Keep progress",
-      ...(stage !== "draft" ? { creationId: "c".repeat(64) } : {}),
-    });
-    const tools: readonly Contribution<ComposerTool>[] = [
-      {
-        id: "mention",
-        key: "test/mention",
-        pluginId: "test",
-        revision: "1",
-        title: "Mention",
-        component: ({ insertMention }) => (
-          <button
-            type="button"
-            onClick={() =>
-              insertMention({ pubkey: "a".repeat(64), name: "Member agent" })
-            }
-          >
-            Tag agent
-          </button>
-        ),
-      },
-    ];
-    const extensions: ConversationExtensions = {
-      tools: { snapshot: () => tools, subscribe: () => () => {} },
-      inline: { snapshot: () => [], subscribe: () => () => {} },
-    };
-    const started = vi.fn();
-    render(
-      <SoloDraft
-        session={f.session}
-        scope={scope}
-        extensions={extensions}
-        onStarted={started}
-      />,
-    );
-    const editor = screen.getByRole("textbox") as HTMLTextAreaElement;
-    expect(editor.readOnly).toBe(false);
-    expect(
-      screen.getByRole("button", { name: "Send message" }),
-    ).toHaveAttribute("aria-disabled", "true");
-    // Actual typing can edit the retained unsigned draft; existing signed receipt
-    // recovery tests remain the owner of immutable dispatched recipients.
-    editor.value = "Keep progress revised";
-    fireEvent.input(editor);
-    expect(editor).toHaveTextContent("Keep progress revised");
-    expect(f.workSessions.create).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Tag agent" }));
-    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(started).toHaveBeenCalledWith(id));
-    expect(f.workSessions.create).toHaveBeenCalledTimes(
-      stage === "draft" ? 1 : 0,
-    );
-    expect(f.messages.send).toHaveBeenCalledExactlyOnceWith(
-      id,
-      expect.stringContaining("Keep progress revised"),
-      ["a".repeat(64)],
-    );
-  },
-);
-
-it("an interrupted Me start keeps its admitted assistant and can still send", () => {
-  const f = setup();
-  const id = "22222222-2222-4222-8222-222222222222";
-  writeView("me-pending", "me:pending", {
-    id,
-    text: "Retry this thought",
-    agent: "b".repeat(64),
-    invitationId: "e".repeat(64),
-    creationId: "c".repeat(64),
-  });
-  render(
-    <SoloDraft session={f.session} scope="me-pending" onStarted={vi.fn()} />,
-  );
-  expect(
-    screen.getByRole("button", { name: "Send message" }),
-  ).not.toHaveAttribute("aria-disabled");
-});
-
-it("a resumed start keeps its frozen project filing without refiling", async () => {
-  const f = setup();
-  const id = "22222222-2222-4222-8222-222222222222";
-  const started = vi.fn();
-  const assign = vi.fn();
-  const preferences = {
-    status: "ready",
-    data: { sections: [{ id: "work" }], assignments: { [id]: "work" } },
-  };
-  Object.assign(f.session, {
-    canvas: { read: async () => undefined },
-    soloPreferences: {
-      refresh: async () => {},
-      snapshot: () => preferences,
-      assign,
-    },
-  });
-  writeView("me-section", "me:section:work:pending", {
-    id,
-    text: "@Member agent First thought",
-    draft: taggedDraft("First thought"),
-    creationId: "c".repeat(64),
-    setup: { sectionId: "work", canvas: "", agents: [] },
-  });
-  render(
-    <SoloDraft
-      session={f.session}
-      scope="me-section"
-      sectionId="work"
-      resumeDraftKey="me:section:work"
-      onStarted={started}
-    />,
-  );
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() => expect(started).toHaveBeenCalledWith(id));
-  expect(assign).not.toHaveBeenCalled();
-  expect(f.messages.send).toHaveBeenCalledExactlyOnceWith(
-    id,
-    "@Member agent First thought",
-    ["a".repeat(64)],
-  );
 });
 
 it.each([false, true])(
@@ -846,23 +512,15 @@ it.each([false, true])(
   },
 );
 
-it.each(["draft", "nonnumber draft", "receipt"])(
+it.each(["draft", "nonnumber draft"])(
   "invalid stored %s lifetime fails visibly without a new create",
   async (source) => {
     const h = setup();
     writeView("test", "me:new-draft", taggedDraft("Keep this draft"));
-    if (source !== "receipt")
-      writeView("test", "me:settings", {
-        canvas: "",
-        ttlSeconds: source === "draft" ? -1 : "broken",
-      });
-    else
-      writeView("test", "me:pending", {
-        id: existing.id,
-        text: "Keep this draft",
-        ttlSeconds: -1,
-        creationId: "c".repeat(64),
-      });
+    writeView("test", "me:settings", {
+      canvas: "",
+      ttlSeconds: source === "draft" ? -1 : "broken",
+    });
     const user = userEvent.setup();
     render(<SoloDraft session={h.session} scope="test" onStarted={() => {}} />);
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -873,49 +531,6 @@ it.each(["draft", "nonnumber draft", "receipt"])(
     expect(h.workSessions.delivered).not.toHaveBeenCalled();
   },
 );
-
-it("freezes lifetime even when the first create fails before receiving an event ID", async () => {
-  const h = setup(),
-    user = userEvent.setup(),
-    started = vi.fn();
-  Object.assign(h.session, {
-    canvas: { read: async () => undefined, save: vi.fn(async () => {}) },
-  });
-  h.workSessions.create.mockImplementationOnce(() => {
-    throw new Error("Creation unavailable");
-  });
-  writeView("test", "me:settings", { ttlSeconds: 600 });
-  writeView("test", "me:new-draft", taggedDraft("Keep this prompt"));
-  const view = () => (
-    <SoloDraft
-      standalone
-      session={h.session}
-      scope="test"
-      onStarted={started}
-    />
-  );
-  const mounted = render(view());
-  await user.click(screen.getByRole("button", { name: "Chat settings" }));
-  const temporary = await screen.findByRole("radio", { name: /^Temporary/ });
-  await user.click(screen.getByRole("radio", { name: /^Ongoing/ }));
-  await user.click(temporary);
-  expect(temporary).toHaveAccessibleDescription(
-    "Archives after 10 minutes without activity.",
-  );
-  await user.click(screen.getByRole("button", { name: "Save changes" }));
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Creation unavailable",
-  );
-  mounted.unmount();
-  writeView("test", "me:settings", { ttlSeconds: 86400 });
-  render(view());
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() => expect(started).toHaveBeenCalledOnce());
-  expect(h.workSessions.create.mock.calls.map((call) => call[2])).toEqual([
-    600, 600,
-  ]);
-});
 
 it("invalid stored Canvas is safely editable without dropping a malformed lifetime", async () => {
   const h = setup(),
@@ -991,82 +606,13 @@ async function projectSetup() {
   return { ...f, saveCanvas, assign };
 }
 
-it.each([false, true])(
-  "re-entering a mounted project clears changed defaults and preserves pending starts (pending=%s)",
-  async (submitted) => {
-    const f = await projectSetup();
-    const started = vi.fn();
-    const scope = `project-reset-${submitted}`;
-    const key = "me:section:work";
-    writeView(scope, `${key}:new-project`, "other");
-    writeView(scope, `${key}:settings`, "other edited instructions");
-    if (submitted)
-      writeView(scope, `${key}:pending`, {
-        id: "22222222-2222-4222-8222-222222222222",
-        text: "@Member agent Keep me",
-        draft: taggedDraft("Keep me"),
-        setup: {
-          sectionId: "other",
-          agents: [],
-          canvas: "other edited instructions",
-        },
-      });
-    render(
-      <SoloDraft
-        standalone
-        sectionId="work"
-        session={f.session}
-        scope={scope}
-        onStarted={started}
-      />,
-    );
-    expect(
-      screen.getByRole("button", { name: "Project: Other" }),
-    ).toBeVisible();
-    act(() => resetNewChatProject(scope, "work"));
-    expect(
-      await screen.findByRole("button", {
-        name: submitted ? "Project: Other" : "Project: Work",
-      }),
-    ).toBeVisible();
-    if (!submitted) {
-      await userEvent.click(
-        screen.getByRole("button", { name: "Chat settings" }),
-      );
-      expect(
-        await screen.findByRole("textbox", { name: /^Instructions/ }),
-      ).toHaveValue("work instructions");
-      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-      await userEvent.type(screen.getByRole("textbox"), "Start in Work");
-    }
-    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(started).toHaveBeenCalledOnce());
-    expect(f.assign).toHaveBeenCalledWith(
-      expect.any(String),
-      submitted ? "other" : "work",
-    );
-    expect(f.saveCanvas).toHaveBeenCalledWith(
-      expect.any(String),
-      submitted ? "other edited instructions" : "work instructions",
-      undefined,
-    );
-  },
-);
-
-it("re-entering a project while a start loads its defaults keeps the submitted project", async () => {
+it("re-entering a mounted project clears changed defaults", async () => {
   const f = await projectSetup();
   const started = vi.fn();
-  const user = userEvent.setup();
-  const scope = "project-reset-loading";
-  writeView(scope, "me:section:work:new-project", "other");
-  let release = () => {};
-  const loading = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  vi.spyOn(f.session.channelKit, "refresh").mockReturnValue(loading);
-  f.workSessions.create.mockImplementationOnce(() => {
-    throw new Error("Admission unavailable");
-  });
+  const scope = "project-reset";
+  const key = "me:section:work";
+  writeView(scope, `${key}:new-project`, "other");
+  writeView(scope, `${key}:settings`, "other edited instructions");
   render(
     <SoloDraft
       standalone
@@ -1076,20 +622,23 @@ it("re-entering a project while a start loads its defaults keeps the submitted p
       onStarted={started}
     />,
   );
-  await user.type(screen.getByRole("textbox"), "Start in Other");
-  await user.click(screen.getByRole("button", { name: "Send message" }));
-  act(() => resetNewChatProject(scope, "work"));
-  release();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Admission unavailable",
-  );
   expect(screen.getByRole("button", { name: "Project: Other" })).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Send message" }));
+  act(() => resetNewChatProject(scope, "work"));
+  expect(
+    await screen.findByRole("button", { name: "Project: Work" }),
+  ).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Chat settings" }));
+  expect(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+  ).toHaveValue("work instructions");
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await userEvent.type(screen.getByRole("textbox"), "Start in Work");
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
-  expect(f.assign).toHaveBeenCalledWith(expect.any(String), "other");
+  expect(f.assign).toHaveBeenCalledWith(expect.any(String), "work");
   expect(f.saveCanvas).toHaveBeenCalledWith(
     expect.any(String),
-    "other instructions",
+    "work instructions",
     undefined,
   );
 });
@@ -1254,119 +803,6 @@ it.each(
   },
 );
 
-it.each([false, true])(
-  "editing a failed invitation clears the assistant consistently (remount=%s)",
-  async (remount) => {
-    const f = setup();
-    const user = userEvent.setup();
-    const started = vi.fn();
-    const invitation = "e".repeat(64);
-    f.workSessions.failed = (id) => id === invitation;
-    f.workSessions.delivered.mockImplementation(async (id) => {
-      if (id === invitation) throw new Error("Invitation rejected");
-    });
-    writeView("failed-agent", "me:pending", {
-      id: "22222222-2222-4222-8222-222222222222",
-      text: "Keep the text",
-      agent: "b".repeat(64),
-      creationId: "c".repeat(64),
-      invitationId: invitation,
-    });
-    const view = () => (
-      <SoloDraft session={f.session} scope="failed-agent" onStarted={started} />
-    );
-    let mounted = render(view());
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    await screen.findByText("Invitation rejected");
-    await user.click(screen.getByRole("button", { name: "Edit and retry" }));
-    if (remount) {
-      mounted.unmount();
-      mounted = render(view());
-    }
-    // Editing preserves the prose and demands a fresh tagged recipient.
-    const input = screen.getByRole("textbox");
-    await user.click(input);
-    await user.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
-    fireEvent.input(input, { target: { textContent: "" } });
-    // Restore a tagged draft through the same saved editor boundary on remount.
-    mounted.unmount();
-    writeView("failed-agent", "me:new-draft", taggedDraft("Keep the text"));
-    mounted = render(view());
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(started).toHaveBeenCalledOnce());
-    expect(f.workSessions.invite).not.toHaveBeenCalled();
-    expect(f.workSessions.discardFailed).toHaveBeenCalledWith(invitation);
-    expect(f.messages.send).toHaveBeenCalledWith(
-      expect.any(String),
-      "@Member agent Keep the text",
-      ["a".repeat(64)],
-    );
-    mounted.unmount();
-  },
-);
-
-it.each([
-  { invited: true, saved: "a".repeat(64), mentioned: false },
-  { invited: true, saved: undefined, mentioned: false },
-  { invited: false, saved: undefined, mentioned: false },
-  { invited: false, saved: "", mentioned: false },
-  { invited: true, saved: undefined, mentioned: true },
-])(
-  "restores receipt routing (invited=$invited, saved=$saved, mentioned=$mentioned)",
-  async ({ invited, saved, mentioned }) => {
-    const f = setup();
-    const started = vi.fn();
-    const id = "22222222-2222-4222-8222-222222222222";
-    const recipient = "b".repeat(64);
-    if (saved !== undefined)
-      writeView("receipt-routing", "me:new-agent", saved);
-    writeView("receipt-routing", "me:pending", {
-      id,
-      text: mentioned ? "@Member agent Continue" : "Continue",
-      ...(mentioned
-        ? {
-            draft: {
-              text: "@Member agent Continue",
-              recipients: [
-                {
-                  pubkey: "a".repeat(64),
-                  name: "Member agent",
-                  start: 0,
-                  end: 13,
-                },
-              ],
-            },
-          }
-        : {}),
-      agent: recipient,
-      creationId: "c".repeat(64),
-      ...(invited ? { invitationId: "e".repeat(64) } : {}),
-    });
-    render(
-      <SoloDraft
-        session={f.session}
-        scope="receipt-routing"
-        onStarted={started}
-      />,
-    );
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(started).toHaveBeenCalledWith(id));
-    expect(f.messages.send).toHaveBeenCalledWith(
-      id,
-      mentioned ? "@Member agent Continue" : "Continue",
-      mentioned ? ["a".repeat(64)] : [recipient],
-    );
-    if (invited) expect(f.workSessions.invite).not.toHaveBeenCalled();
-    else expect(f.workSessions.invite).toHaveBeenCalledWith(id, recipient);
-    if (!mentioned)
-      expect(f.workSessions.refresh).toHaveBeenCalledWith(id, {
-        member: recipient,
-      });
-  },
-);
-
 it("allows changing an unavailable assistant before any remote creation", async () => {
   const f = setup();
   const user = userEvent.setup();
@@ -1413,36 +849,6 @@ it("allows changing an unavailable assistant before any remote creation", async 
   );
 });
 
-it.each(["", "Make contrast accessible"])(
-  "freezes the chosen or first-prompt name %j before asynchronous setup",
-  async (name) => {
-    const h = setup(),
-      user = userEvent.setup(),
-      started = vi.fn();
-    writeView("test", "me:settings", { name, ttlSeconds: 600 });
-    writeView("test", "me:new-draft", taggedDraft("Original prompt"));
-    h.workSessions.create.mockImplementationOnce(() => {
-      throw new Error("Unavailable");
-    });
-    const view = () => (
-      <SoloDraft session={h.session} scope="test" onStarted={started} />
-    );
-    const mounted = render(view());
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Unavailable");
-    mounted.unmount();
-    writeView("test", "me:settings", { name: "Later name" });
-    render(view());
-    await user.click(screen.getByRole("textbox"));
-    await user.keyboard("{Control>}a{/Control}Replacement prompt");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(started).toHaveBeenCalledOnce());
-    for (const call of h.workSessions.create.mock.calls) {
-      expect(call[1]).toBe(name || "Original prompt");
-    }
-    expect(h.messages.send).toHaveBeenCalledOnce();
-  },
-);
 it("draft naming shares the existing Save and persists locally without creation", async () => {
   const h = setup(),
     user = userEvent.setup();
@@ -1470,14 +876,13 @@ it("draft naming shares the existing Save and persists locally without creation"
 });
 
 it.each([
-  { source: "draft", fields: { name: null } },
-  { source: "draft", fields: { name: 7 } },
-  { source: "draft", fields: { name: { invalid: true } } },
-  { source: "draft", fields: { name: "x".repeat(121) } },
-  { source: "receipt", fields: { name: { invalid: true } } },
+  { fields: { name: null } },
+  { fields: { name: 7 } },
+  { fields: { name: { invalid: true } } },
+  { fields: { name: "x".repeat(121) } },
 ])(
-  "rejects malformed persisted naming before start side effects: $source $fields",
-  async ({ source, fields }) => {
+  "rejects malformed persisted naming before start side effects: $fields",
+  async ({ fields }) => {
     const h = setup(),
       user = userEvent.setup(),
       started = vi.fn();
@@ -1499,14 +904,7 @@ it.each([
     });
     const key = "me:section:work";
     writeView("test", `${key}:new-draft`, taggedDraft("Keep this draft"));
-    if (source === "draft") writeView("test", `${key}:settings`, fields);
-    else
-      writeView("test", `${key}:pending`, {
-        id: existing.id,
-        text: "@Member agent Keep this draft",
-        draft: taggedDraft("Keep this draft"),
-        ...fields,
-      });
+    writeView("test", `${key}:settings`, fields);
     render(
       <SoloDraft
         session={h.session}
@@ -1526,7 +924,6 @@ it.each([
       h.workSessions.create,
       h.workSessions.delivered,
       h.workSessions.refresh,
-      h.workSessions.invite,
       h.workSessions.addAgents,
       h.messages.send,
       started,
@@ -1674,37 +1071,6 @@ it.each([false, true])(
   },
 );
 
-it.each([
-  { fields: { name: "Frozen title" }, title: "Frozen title" },
-  { fields: { name: "" }, title: "Original receipt prompt" },
-  { fields: {}, title: "Original receipt prompt" },
-])(
-  "recovers pending receipts without changing original intent: $fields",
-  async ({ fields, title }) => {
-    const h = setup(),
-      user = userEvent.setup(),
-      started = vi.fn();
-    const draft = taggedDraft("Original receipt prompt");
-    writeView("test", "me:pending", {
-      id: existing.id,
-      text: draft.text,
-      draft,
-      ...fields,
-    });
-    render(<SoloDraft session={h.session} scope="test" onStarted={started} />);
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(started).toHaveBeenCalledOnce());
-    expect(h.workSessions.create).toHaveBeenCalledWith(
-      existing.id,
-      title,
-      undefined,
-      false,
-    );
-    expect(h.workSessions.create).toHaveBeenCalledOnce();
-    expect(h.messages.send).toHaveBeenCalledOnce();
-  },
-);
-
 it("starts a new chat with a session card and no caption", async () => {
   const h = setup(),
     started = vi.fn(),
@@ -1758,40 +1124,7 @@ it.each([false, true])(
   },
 );
 
-it("discarding a failed legacy creation removes its invisible recipient", async () => {
-  const f = setup();
-  writeView("discard-agent", "me:pending", {
-    id: "22222222-2222-4222-8222-222222222222",
-    text: "Legacy thought",
-    agent: "b".repeat(64),
-    creationId: "c".repeat(64),
-  });
-  f.workSessions.failed = () => true;
-  f.workSessions.delivered.mockRejectedValueOnce(
-    new Error("Creation rejected"),
-  );
-  render(
-    <SoloDraft session={f.session} scope="discard-agent" onStarted={vi.fn()} />,
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-  await userEvent.click(
-    await screen.findByRole("button", { name: "Edit and retry" }),
-  );
-  await waitFor(() =>
-    expect(screen.queryByText(/Recovering an earlier send/)).toBeNull(),
-  );
-  expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  const form = screen.getByRole("textbox").closest("form");
-  if (!form) throw new Error("Missing composer form");
-  fireEvent.submit(form);
-  expect(f.workSessions.invite).not.toHaveBeenCalled();
-  expect(f.messages.send).not.toHaveBeenCalled();
-});
-
-it.each(["remember", "off", "existing", "storage-failure"])(
+it.each(["remember", "off", "storage-failure"])(
   "first Solo send transfers all tagged agents into the saved chat draft (%s)",
   async (mode) => {
     const { readView } = await import("../../shared/view-state");
@@ -1808,17 +1141,6 @@ it.each(["remember", "off", "existing", "storage-failure"])(
     writeView("first-followup", "me:new-draft", {
       ...tags,
       text: `${tags.text}Start here`,
-    });
-    const create = f.workSessions.create.getMockImplementation();
-    if (!create) throw new Error("Missing creation fixture");
-    f.workSessions.create.mockImplementation((...args) => {
-      if (mode === "existing")
-        writeView(
-          "first-followup",
-          `draft:${args[0]}`,
-          "Another window's draft",
-        );
-      return create(...args);
     });
     if (mode === "off") setRememberAgentsPreference(false);
     const setItem = Storage.prototype.setItem;
@@ -1843,7 +1165,7 @@ it.each(["remember", "off", "existing", "storage-failure"])(
       );
       if (mode === "storage-failure") {
         expect(await screen.findByRole("alert")).toHaveTextContent(
-          "follow-up draft couldn’t be saved",
+          "message couldn’t be saved",
         );
         expect(started).not.toHaveBeenCalled();
         storage.mockRestore();
@@ -1856,70 +1178,13 @@ it.each(["remember", "off", "existing", "storage-failure"])(
       expect(f.workSessions.create).toHaveBeenCalledOnce();
       const id = started.mock.calls[0]?.[0];
       expect(readView("first-followup", `draft:${id}`, null)).toEqual(
-        mode === "existing"
-          ? "Another window's draft"
-          : mode === "off"
-            ? { text: "", recipients: [] }
-            : tags,
+        mode === "off" ? { text: "", recipients: [] } : tags,
       );
       expect(f.messages.send.mock.calls[0]?.[2]).toEqual(
         recipients.map((r) => r.pubkey),
       );
     } finally {
       storage.mockRestore();
-      setRememberAgentsPreference(true);
-    }
-  },
-);
-
-it.each(["remember", "off", "unavailable", "existing"])(
-  "recovered signed legacy recipient carries into the follow-up without resending (%s)",
-  async (mode) => {
-    const { readView } = await import("../../shared/view-state");
-    const { setRememberAgentsPreference } = await import(
-      "../messages/mention-preferences"
-    );
-    const f = setup();
-    const id = "22222222-2222-4222-8222-222222222222";
-    writeView("legacy-next", "me:pending", {
-      id,
-      text: "Original plain request",
-      agent: "b".repeat(64),
-      creationId: "c".repeat(64),
-      messageId: "d".repeat(64),
-    });
-    if (mode === "existing")
-      writeView("legacy-next", `draft:${id}`, "Keep another draft");
-    if (mode === "off") setRememberAgentsPreference(false);
-    if (mode === "unavailable") {
-      const choices = f.session.agentChoices.snapshot();
-      vi.spyOn(f.session.agentChoices, "snapshot").mockReturnValue({
-        ...choices,
-        selectable: [],
-      });
-    }
-    const started = vi.fn();
-    render(
-      <SoloDraft session={f.session} scope="legacy-next" onStarted={started} />,
-    );
-    try {
-      await userEvent.click(
-        screen.getByRole("button", { name: "Send message" }),
-      );
-      await waitFor(() => expect(started).toHaveBeenCalledWith(id));
-      expect(f.messages.send).not.toHaveBeenCalled();
-      expect(f.workSessions.create).not.toHaveBeenCalled();
-      const saved = readView("legacy-next", `draft:${id}`, null);
-      if (mode === "existing") expect(saved).toBe("Keep another draft");
-      else
-        expect(saved).toMatchObject({
-          text: mode === "remember" ? "@Outside agent " : "",
-          recipients:
-            mode === "remember"
-              ? [{ pubkey: "b".repeat(64), name: "Outside agent" }]
-              : [],
-        });
-    } finally {
       setRememberAgentsPreference(true);
     }
   },

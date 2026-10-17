@@ -254,14 +254,6 @@ function fixture({
     },
   };
 }
-const pendingReceipt = (sectionId: string) => ({
-  id,
-  text: "Recover",
-  creationId: "c".repeat(64),
-  agent,
-  setup: { sectionId, canvas: "Frozen instructions", agents: [] },
-});
-
 it("confirms Archive from the shortcut, then opens a new Solo draft", async () => {
   const f = fixture();
   f.mount();
@@ -293,14 +285,6 @@ it("offers no Archive shortcut outside a Solo chat", async () => {
   const f = fixture({ type: "stream" });
   f.mount();
   await screen.findByRole("textbox", { name: "Message #Planning" });
-  expect(f.archive.current).toBeUndefined();
-});
-
-it("offers no Archive shortcut while a pending start is recovering", async () => {
-  const f = fixture();
-  writeView(f.scope, "me:pending", pendingReceipt("work"));
-  f.mount();
-  await screen.findByRole("region", { name: "New chat" });
   expect(f.archive.current).toBeUndefined();
 });
 
@@ -426,47 +410,34 @@ it("tags a Solo draft route's agent in the new chat", async () => {
   ).toBeVisible();
 });
 
-it.each(["work", "deleted"])(
-  "resumes a pending start through its original receipt (project %s)",
-  async (sectionId) => {
-    const f = fixture();
-    writeView(
-      f.scope,
-      `me:section:${sectionId}:pending`,
-      pendingReceipt(sectionId),
-    );
-    f.mount();
-    const region = await screen.findByRole("region", { name: "New chat" });
-    const input = within(region).getByRole("textbox", {
-      name: "Message your agents",
-    });
-    expect(input).toHaveTextContent("Recover");
-    expect(input).toHaveAttribute("contenteditable", "false");
-    expect(screen.queryByLabelText("Channel message history")).toBeNull();
-    // Recovery replaces the timeline, so it completes the plain route.
-    await waitFor(() =>
-      expect(f.complete).toHaveBeenCalledWith({ status: "opened" }),
-    );
-  },
-);
-
-it("fails an exact message address that a pending start cannot reveal", async () => {
-  const f = fixture({
-    target: (scope) => ({
-      ...conversationTarget(scope, id),
-      messageId: "d".repeat(64),
-    }),
-  });
-  writeView(f.scope, "me:pending", pendingReceipt("work"));
+// Codex upgrade defect: an earlier build saved a start receipt for a chat
+// it marked only in its description. Without the Solo label that chat is an
+// ordinary Team conversation, and the stale receipt must not reclaim it.
+it("opens an unlabeled pre-upgrade chat with a stale start receipt as a normal Team chat", async () => {
+  const f = fixture({ type: "stream" });
+  const receipt = {
+    id,
+    text: "Recover",
+    creationId: "c".repeat(64),
+    agent,
+    setup: { sectionId: "work", canvas: "Frozen instructions", agents: [] },
+  };
+  writeView(f.scope, "me:pending", receipt);
+  writeView(f.scope, "me:section:work:pending", receipt);
   f.mount();
-  await screen.findByRole("region", { name: "New chat" });
+  const input = await screen.findByRole("textbox", {
+    name: "Message #Planning",
+  });
+  expect(screen.queryByRole("region", { name: "New chat" })).toBeNull();
+  expect(screen.getByLabelText("Channel message history")).toBeVisible();
   await waitFor(() =>
-    expect(f.complete).toHaveBeenCalledWith({
-      status: "failed",
-      reason: "unavailable",
-    }),
+    expect(f.complete).toHaveBeenCalledWith({ status: "opened" }),
   );
-  expect(f.complete).not.toHaveBeenCalledWith({ status: "opened" });
+  const user = userEvent.setup();
+  await user.click(input);
+  await user.keyboard("Still works{Enter}");
+  await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+  expect(f.send.mock.calls[0]?.slice(0, 2)).toEqual([id, "Still works"]);
 });
 
 it("gives the owner's Solo chat its tag requirement and project", async () => {

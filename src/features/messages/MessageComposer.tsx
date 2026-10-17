@@ -3,7 +3,6 @@ import { sessionReferenceIds } from "../sessions/shared-session-marker";
 import { ComposerSessionCards } from "./ComposerSessionCards";
 import { legacyAssistantDraft } from "../solo/legacy-assistant";
 import { rememberAgentsPreference } from "./mention-preferences";
-import { pendingSoloDraft } from "../solo/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { messageButtonStyle } from "../../shared/theme/bubble-color";
 import { TypingPresentation } from "../conversation/typing-presentation";
@@ -237,8 +236,6 @@ export type MessageComposerProps = {
     initialDraft?: MentionDraft | string | undefined;
     /** A durable operation overrides disposable view state during recovery. */
     recoveredDraft?: MentionDraft | undefined;
-    /** Confirm/retry an already submitted operation without fresh admission. */
-    receiptOnly?: boolean;
     locked: boolean;
     disabled: boolean;
     submit: (draft: MentionDraft) => void;
@@ -1179,12 +1176,6 @@ function Composer({
     }
     return recipients;
   }
-  function requireCompletedSessionStart() {
-    if (pendingSoloDraft(scope, channelId))
-      throw new Error(
-        "Finish setting up this conversation in Solo before sending messages.",
-      );
-  }
   async function send() {
     if (!permitted.current || voice.isCapturing()) return;
     if (editing.target) {
@@ -1254,10 +1245,6 @@ function Composer({
     const capturedPicks = picks;
     const capturedRunPicks = { ...picks, ...resolvedPicks.current };
     try {
-      if (submission?.receiptOnly) {
-        submission.submit(captured);
-        return;
-      }
       if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
         throw new Error(
           "A selected recipient is archived. Remove it before sending.",
@@ -1278,7 +1265,6 @@ function Composer({
         submission.submit(captured);
         return;
       }
-      requireCompletedSessionStart();
       let references: readonly string[] = [];
       let recipients = captured.recipients.map((item) => item.pubkey);
       if (sessionConversation || personalConversation) {
@@ -1353,7 +1339,6 @@ function Composer({
       );
       // Destination and content are fixed here; a background send never retargets.
       const publish = (uploaded: readonly UploadedAttachment[]) => {
-        requireCompletedSessionStart();
         return threadRootId
           ? session.messages.reply(
               channelId,

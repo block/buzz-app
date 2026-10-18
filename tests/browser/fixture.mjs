@@ -924,6 +924,8 @@ export const test = base.extend({
         .map((entry) => entry.event);
     };
     const answer = (community, filter) => {
+      // These ordinary fixture channels have no Huddle creation receipt.
+      if (filter.kinds?.length === 1 && filter.kinds[0] === 9007) return [];
       // The real relay can return both current metadata and rosters in one query.
       if (filter.kinds?.includes(39000) && filter.kinds?.includes(39002))
         return [39000, 39002].flatMap((kind) =>
@@ -2042,7 +2044,13 @@ export const test = base.extend({
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
         expect(body.length).toBeGreaterThan(0);
-        expect(body.length).toBeLessThanOrEqual(3);
+        expect(body.length).toBeLessThanOrEqual(
+          body.every(
+            (filter) => filter.kinds?.length === 1 && filter.kinds[0] === 9007,
+          )
+            ? 4
+            : 3,
+        );
         const filter = body[0];
         const result = [
           ...new Map(

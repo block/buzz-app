@@ -243,7 +243,8 @@ Discovery excludes expired or future starts. Ordinary search, completion, profil
 and exact channel navigation exclude Huddle rooms. Ordinary Inbox drafts and
 message notifications also exclude marked Huddle rooms and withhold rooms whose
 metadata is pending. Saved Huddle drafts remain available in the Huddle composer. Invited requests retire on a
-matching relay end. Room invitations expire after 60 seconds. Invited outsiders
+matching relay end. Incoming DM calls and room invitations expire after 60 seconds, independently of
+the room lifetime; an expired prompt does not end the call or remove later Join access. Invited outsiders
 cannot receive the private parent's end event, so their prompt may remain until
 that deadline; stored metadata does not reflect every automatic archive. Joining
 still rechecks current room access on the relay.

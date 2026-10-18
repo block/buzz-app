@@ -974,6 +974,7 @@ export function createChannelStore(
       const identity = channelIdentity(event);
       if (
         event.kind !== 39000 ||
+        tag(event, "t") !== "stream" ||
         event.pubkey !== transport.relayAuthor ||
         !id ||
         discovery.metadataVersion(id)?.id !== event.id ||
@@ -1005,6 +1006,10 @@ export function createChannelStore(
       // The shared reader accepts at most four filters per request.
       for (let offset = 0; offset < filters.length; offset += 4) {
         const receipts = await reader.read(filters.slice(offset, offset + 4), {
+          priority:
+            settings?.consistency === "strong"
+              ? (settings.priority ?? "foreground")
+              : "background",
           signal: settings?.signal
             ? AbortSignal.any([settings.signal, controller.signal])
             : controller.signal,

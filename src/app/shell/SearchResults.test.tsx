@@ -756,7 +756,11 @@ it.each(["stream", "forum", "solo"] as const)(
           name: /Past project/,
         }),
       );
-      expect(screen.getByText("Archived channel")).toBeTruthy();
+      expect(
+        screen.getByText(
+          channelType === "solo" ? "Archived chat" : "Archived channel",
+        ),
+      ).toBeTruthy();
       expect(open).toHaveBeenCalledExactlyOnceWith("archive");
     } finally {
       cleanup();
@@ -3373,6 +3377,7 @@ it("excludes proven Huddles but keeps ordinary hits after mutable metadata chang
   let live: LiveCallbacks | undefined;
   const marker = (id: string, time: number) =>
     metadata(relay, id, id, time, [
+      ["t", "stream"],
       ["private"],
       ["P", viewer.pubkey],
       [

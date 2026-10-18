@@ -29,6 +29,7 @@ import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import { ChannelJoinNotice } from "../../features/messages/ChannelJoinNotice";
 import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
+import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import {
@@ -1269,6 +1270,7 @@ function ChannelWorkspace({
             key={`${current.id}:${!!current.archived}`}
             channelId={current.id}
             lifecycle={queries.channelLifecycle}
+            noun={lifecycleNoun(current)}
             choose={(action, trigger) =>
               handoff.openLifecycle(current, action, trigger)
             }

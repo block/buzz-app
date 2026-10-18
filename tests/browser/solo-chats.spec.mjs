@@ -54,7 +54,12 @@ test("chat row menus open Share with the chat's people and restore focus", async
     name: "Actions for Alpha",
     exact: true,
   });
-  await expect(menu).toBeVisible();
+  // Lifecycle items mount after each opening's permission read.
+  const lifecycleReady = menu.getByRole("menuitem", {
+    name: "Delete chat",
+    exact: true,
+  });
+  await expect(lifecycleReady).toBeVisible();
   const actions = await menu.getByRole("menuitem").allTextContents();
   expect(actions).toContain("Share…");
   await page.keyboard.press("Escape");
@@ -65,7 +70,7 @@ test("chat row menus open Share with the chat's people and restore focus", async
   await sidebar
     .getByRole("button", { name: "Actions for Alpha", exact: true })
     .click();
-  await expect(menu).toBeVisible();
+  await expect(lifecycleReady).toBeVisible();
   expect(await menu.getByRole("menuitem").allTextContents()).toEqual(actions);
   await page.keyboard.press("Escape");
   await row.focus();

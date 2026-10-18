@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createHuddleRequests, type HuddleRequest } from "./requests";
+import { recentHuddles } from "./discovery";
 import { createRelaySession } from "../relay/session";
 import type { RelaySnapshot, RelayData } from "../relay/service";
 import type { ChannelSummary } from "../relay/contracts";
@@ -210,9 +211,16 @@ it("does not interrupt calls and retires ended or inaccessible requests", () => 
 });
 it("expires requests and disposes observers on connection replacement", () => {
   const h = harness();
-  h.publish(event(48100));
+  const start = event(48100);
+  h.publish(start);
   expect(h.get()).toBeDefined();
-  vi.advanceTimersByTime(3600_000);
+  vi.advanceTimersByTime(59_999);
+  expect(h.get()?.room).toBe(room);
+  vi.advanceTimersByTime(1);
+  expect(h.get()).toBeUndefined();
+  // Expiring an abandoned call prompt does not end or hide its joinable room.
+  expect(recentHuddles([start], dm, authority.pubkey)[0]?.id).toBe(room);
+  h.requests.refresh();
   expect(h.get()).toBeUndefined();
   h.replace();
   expect(h.views.size).toBe(0);

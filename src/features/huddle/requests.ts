@@ -4,6 +4,8 @@ import type { HuddleDestination } from "./bridge";
 import { recentHuddles } from "./discovery";
 import { huddleRoom } from "./lifecycle";
 
+const REQUEST_LIFETIME_SECONDS = 60;
+
 export type HuddleRequest = {
   room: string;
   creator: string;
@@ -65,7 +67,7 @@ export function createHuddleRequests(
             (room) =>
               room.startedAt >= since &&
               room.startedAt <= now &&
-              room.startedAt + 3600 > now &&
+              room.startedAt + REQUEST_LIFETIME_SECONDS > now &&
               room.creator !== connection?.viewer &&
               channel.members?.includes(room.creator) &&
               !dismissed.has(room.id),
@@ -81,7 +83,7 @@ export function createHuddleRequests(
         event.pubkey !== session.relayAuthor ||
         event.created_at < since ||
         event.created_at > now ||
-        event.created_at + 60 <= now ||
+        event.created_at + REQUEST_LIFETIME_SECONDS <= now ||
         !event.tags.some(
           ([key, value]) => key === "p" && value === connection?.viewer,
         )
@@ -194,16 +196,19 @@ export function createHuddleRequests(
       .map((event) => event.created_at);
     let deadline = future.length ? Math.min(...future) : undefined;
     if (next) {
-      // Outsiders cannot receive the private parent's end event. Bound their
-      // invitation prompt instead of relying on stale discovery metadata.
-      const lifetime = invitations.some((invite) => invite === next)
-        ? 60
-        : 3600;
-      deadline = Math.min(deadline ?? Infinity, next.startedAt + lifetime);
+      // Ringing expires independently of the room's one-hour discoverable lifetime.
+      deadline = Math.min(
+        deadline ?? Infinity,
+        next.startedAt + REQUEST_LIFETIME_SECONDS,
+      );
     }
     for (const event of snapshot.events) {
       const retry = retries.get(event.id);
-      if (retry && retry.at > now && retry.at < event.created_at + 60) {
+      if (
+        retry &&
+        retry.at > now &&
+        retry.at < event.created_at + REQUEST_LIFETIME_SECONDS
+      ) {
         deadline = Math.min(deadline ?? Infinity, retry.at);
       }
     }

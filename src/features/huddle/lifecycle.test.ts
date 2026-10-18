@@ -44,6 +44,7 @@ it("projects actual Huddle history cards and marked room metadata through the re
         metadata(relay, room, "Huddle", 30, [
           ["private"],
           ["about", huddleDescription(parent)],
+          ["t", "stream"],
           ["P", author.pubkey],
         ]),
       ]);
@@ -256,6 +257,7 @@ it("resolves missing metadata for an already authorized Huddle", async () => {
         metadata(relay, room, "Huddle", 30, [
           ["private"],
           ["about", huddleDescription(parent)],
+          ["t", "stream"],
           ["P", author.pubkey],
         ]),
       ]);
@@ -301,6 +303,7 @@ it("fetches creation evidence in bounded batches after startup membership commit
         rooms.flatMap((id) => [
           roster(relay, id, [author.pubkey]),
           metadata(relay, id, "Huddle", 30, [
+            ["t", "stream"],
             ["P", author.pubkey],
             ["private"],
             ["about", huddleDescription(parent)],
@@ -364,6 +367,7 @@ it.each(["missing", "failed"])(
         .respond([
           roster(relay, room, [author.pubkey]),
           metadata(relay, room, "Huddle", 30, [
+            ["t", "stream"],
             ["P", author.pubkey],
             ["private"],
             ["about", huddleDescription(parent)],
@@ -415,6 +419,7 @@ it.each(["missing", "failed"])(
           // A newer live version wins while the writer metadata read is held.
           live.receive([
             metadata(relay, room, "Renamed", 31, [
+              ["t", "stream"],
               ["P", author.pubkey],
               ["private"],
               ["about", huddleDescription(parent)],
@@ -436,6 +441,7 @@ it.each(["missing", "failed"])(
           ?.respond([
             roster(relay, room, [author.pubkey]),
             metadata(relay, room, "Huddle", 30, [
+              ["t", "stream"],
               ["P", author.pubkey],
               ["private"],
               ["about", huddleDescription(parent)],
@@ -490,7 +496,11 @@ it("does not publish late creation evidence after session disposal", async () =>
     .next()
     .respond([
       roster(relay, room, [author.pubkey]),
-      metadata(relay, room, "Huddle", 30, [["P", author.pubkey], ["private"]]),
+      metadata(relay, room, "Huddle", 30, [
+        ["t", "stream"],
+        ["P", author.pubkey],
+        ["private"],
+      ]),
     ]);
   await vi.waitFor(() =>
     expect(wire.pending.some((r) => r.filters[0]?.kinds?.includes(9007))).toBe(
@@ -521,4 +531,64 @@ it("does not publish late creation evidence after session disposal", async () =>
   expect(owner.session.channels.list().channels.some((c) => c.huddle)).toBe(
     false,
   );
+});
+
+it("limits advisory creation proof to streams in the background and keeps writer resolution foreground", async () => {
+  const types = ["dm", "forum", "system", "stream"];
+  const events = types.flatMap((type) => [
+    roster(relay, type, [author.pubkey]),
+    signed(relay, {
+      kind: 39000,
+      created_at: 30,
+      content: "",
+      tags: [
+        ["d", type],
+        ["name", type],
+        ["t", type],
+        ["P", author.pubkey],
+      ],
+    }),
+  ]);
+  const wire = scriptedTransport(author.pubkey, relay.pubkey);
+  const query = vi.fn<typeof wire.transport.query>(async (filters) =>
+    events.filter((event) =>
+      filters.some(
+        (filter) =>
+          filter.kinds?.includes(event.kind) &&
+          (!filter["#d"] ||
+            filter["#d"].includes(
+              event.tags.find(([key]) => key === "d")?.[1] ?? "",
+            )),
+      ),
+    ),
+  );
+  const owner = createRelaySession({ ...wire.transport, query });
+  try {
+    owner.session.channels.ensureList();
+    await vi.waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    await vi.waitFor(() =>
+      expect(
+        query.mock.calls.some(([filters]) => filters[0]?.kinds?.includes(9007)),
+      ).toBe(true),
+    );
+    await flush();
+    const proofs = () =>
+      query.mock.calls.filter(([filters]) => filters[0]?.kinds?.includes(9007));
+    expect(proofs()).toHaveLength(1);
+    expect(proofs()[0]?.[0]).toEqual([
+      { kinds: [9007], authors: [author.pubkey], "#h": ["stream"], limit: 1 },
+    ]);
+    expect(proofs()[0]?.[3]).toBe("background");
+    await owner.session.channels.resolve?.(["stream"], {
+      consistency: "strong",
+    });
+    expect(proofs()).toHaveLength(2);
+    expect(proofs()[1]?.[0][0]?.consistency).toBe("strong");
+    expect(proofs()[1]?.[3]).toBe("foreground");
+    expect(owner.session.channels.get?.("stream")?.huddle).toBeUndefined();
+  } finally {
+    owner.dispose();
+  }
 });

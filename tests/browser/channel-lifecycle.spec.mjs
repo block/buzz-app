@@ -490,9 +490,7 @@ test.describe("Solo chat lifecycle", () => {
       exact: true,
     });
     await header.click();
-    await page
-      .getByRole("menuitem", { name: "Archive channel", exact: true })
-      .click();
+    await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
     const archive = page.getByRole("dialog", {
       name: "Archive channel: Lifecycle channel",
     });

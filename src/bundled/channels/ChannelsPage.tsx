@@ -261,6 +261,10 @@ function ChannelWorkspace({
     },
     [navigator, viewer, scope],
   );
+  // A send or open that finishes behind the Settings modal must not navigate
+  // away from Settings, which would discard its unsaved edits.
+  const behindSettings = () =>
+    navigator?.snapshot().entry.target.kind === "settings";
   const select = useCallback(
     (id: string) => {
       navigate(id);
@@ -1514,10 +1518,11 @@ function ChannelWorkspace({
               onPreparing={(pubkeys) => handoff?.prepareDm(pubkeys)}
               onOpened={(channelId) => {
                 handoff?.clearPreparingDm();
-                select(channelId);
+                if (!behindSettings()) select(channelId);
               }}
               onStarted={(channelId, id) => {
                 handoff?.clearPreparingDm();
+                if (behindSettings()) return;
                 setSent({ channelId, id });
                 select(channelId);
               }}

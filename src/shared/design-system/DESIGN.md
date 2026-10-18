@@ -1076,10 +1076,9 @@ Composer pickers reuse PopoverPopup and anchor above the whole composer with a
 
 Dialog composes a Base UI modal with a shared title, optional description, body,
 close button and actions. Pending operations set preventClose so Escape and the
-close button agree. It retains the app's explicit dismissal behavior: outside
-clicks do not discard a form by default. Channel-management modals explicitly
-opt into `dismissOnOutsideClick` and reuse their Cancel/Close path, including
-nested confirmations that dismiss only their own layer. `preventClose` blocks
+close button agree. Ordinary dialogs dismiss on outside click through their
+Cancel/Close path, including nested confirmations that dismiss only their own
+layer; protected forms and one-time content set `dismissOnOutsideClick={false}`. `preventClose` blocks
 pointer dismissal as well as Escape and Close. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
 An explicit finalFocus applies only while focus is still in the closing popup

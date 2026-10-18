@@ -1,4 +1,9 @@
-import { openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  settingsDialog,
+} from "./navigation.mjs";
 import { upper, settle } from "./timeline.mjs";
 import { test as base, expect } from "./playwright-test.mjs";
 import { preview } from "./vite-server.mjs";
@@ -759,5 +764,48 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   await page.reload();
   await expect(sidebarDm).toBeVisible();
   expect(app.commands).toHaveLength(2);
+  expect(app.errors.unexplained()).toEqual([]);
+});
+
+test("a send finishing behind Settings keeps Settings and its unsaved edit", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Message Avery Chen", exact: true })
+    .fill("Sent while Settings is open");
+  app.holdDelivery();
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect
+    .poll(() => app.publications.filter((event) => event.kind === 9).length)
+    .toBe(1);
+  await openSettings(page);
+  const name = settingsDialog(page).getByRole("textbox", {
+    name: "Display name",
+    exact: true,
+  });
+  await name.fill("Unsaved name");
+  app.confirm();
+  // The new DM joins the retained sidebar behind the modal without leaving it.
+  await expect(
+    page.locator('[aria-label="Channel sidebar"] button', {
+      hasText: "Avery Chen",
+    }),
+  ).toHaveCount(1);
+  // The send has finished once its status clears behind the modal.
+  await expect(page.getByText("Sending message…")).toHaveCount(0);
+  expect(decodeURIComponent(new URL(page.url()).hash)).toContain(
+    '"kind":"settings"',
+  );
+  await expect(settingsDialog(page)).toBeVisible();
+  await expect(name).toHaveValue("Unsaved name");
+  await closeSettings(page);
+  await expect(
+    page
+      .getByRole("complementary", { name: "Channel sidebar" })
+      .getByRole("button", { name: "Avery Chen", exact: true }),
+  ).toBeVisible();
   expect(app.errors.unexplained()).toEqual([]);
 });

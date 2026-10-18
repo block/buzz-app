@@ -996,7 +996,11 @@ to a content-sized confirmation without collapsing its scrollport. Expanded and
 side-sheet compositions are unchanged.
 
 
-Use Accordion for collapsible sections. Form sections pass `keepMounted` so
+Use Accordion for collapsible sections. Plugin access declarations opt into `animate`:
+Base UI owns height-transition presence with the shared settle tokens, while
+`motion/react` fades the panel between states. Keyboard activation and reduced
+motion switch immediately. Other accordions retain their existing behavior.
+ Form sections pass `keepMounted` so
 collapsing them preserves local input state; leave the default for static content.
 Use `variant="form"` when the surrounding form owns spacing. It removes outer
 margins while keeping the shared row and panel padding. Adjacent disclosure rows

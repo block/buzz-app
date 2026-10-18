@@ -679,6 +679,7 @@ export function PluginImport({
                       <section aria-label="Declared scopes">
                         <p className="m-0">This plugin asks Buzz to:</p>
                         <Accordion
+                          animate
                           key={selected}
                           items={declaredDetails.map((grant) =>
                             scopeItem(grant),
@@ -695,6 +696,7 @@ export function PluginImport({
                       >
                         <p className="m-0 font-medium">Removed:</p>
                         <Accordion
+                          animate
                           items={removedDetails.map((grant) =>
                             scopeItem(grant, true),
                           )}

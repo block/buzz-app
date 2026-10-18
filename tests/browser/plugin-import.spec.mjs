@@ -845,6 +845,21 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   }
   await details.press("Enter");
   await expect(details).toHaveAttribute("aria-expanded", "false");
+  // Pointer expansion uses the shared height transition and Motion content fade.
+  await details.click();
+  const panel = summaryList.locator(".buzz-accordion-panel").first();
+  await expect(panel).toHaveCSS("transition-property", "height");
+  await expect(panel.locator(":scope > div")).toHaveCSS("opacity", "1");
+  await expect(codeRegion).toBeVisible();
+  await details.click();
+  await expect(codeRegion).toHaveCount(0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await details.click();
+  await expect(panel).toHaveCSS("transition-property", "none");
+  await expect(panel.locator(":scope > div")).toHaveCSS("opacity", "1");
+  await details.click();
+  await expect(codeRegion).toHaveCount(0);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   for (const [width, mode] of [
     [900, "light"],
     [480, "dark"],

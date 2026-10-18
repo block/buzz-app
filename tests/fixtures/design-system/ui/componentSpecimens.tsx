@@ -1985,6 +1985,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   accordion: () => (
     <SpecimenFrame
       code={`<Accordion
+  animate
   items={[
     {
       value: "purpose",
@@ -2037,6 +2038,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     >
       <InlineHeader title="Active section" />
       <Accordion
+        animate
         variant="section"
         items={[
           {

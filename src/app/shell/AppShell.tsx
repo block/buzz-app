@@ -69,7 +69,7 @@ export function AppShell({
   ) => void;
   tone: string;
   workspace?: boolean;
-  /** Centered modal frame below window chrome, including the community rail. */
+  /** Centered modal frame below window chrome. */
   workspaceRef?: Ref<HTMLDivElement>;
   sidebar?: (pages: ReactNode) => ReactNode;
   communities: Communities;

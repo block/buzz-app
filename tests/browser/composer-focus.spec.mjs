@@ -81,7 +81,7 @@ test("a conversation mounting behind an open menu keeps the menu open", async ({
   });
   // Settings is a modal over the retained conversation, so leave through a
   // page that replaces the conversation instead.
-  await openPage(page, "Projects");
+  await openPage(page, "Repository");
   await expect(input).toHaveCount(0);
   const trigger = page.getByRole("button", {
     name: "Your profile",

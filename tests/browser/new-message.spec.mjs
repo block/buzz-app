@@ -790,7 +790,7 @@ test("a send finishing behind Settings keeps Settings and its unsaved edit", asy
   app.confirm();
   // The new DM joins the retained sidebar behind the modal without leaving it.
   await expect(
-    page.locator('[aria-label="Channel sidebar"] button', {
+    page.locator('[aria-label="Sidebar"] button', {
       hasText: "Avery Chen",
     }),
   ).toHaveCount(1);
@@ -804,7 +804,7 @@ test("a send finishing behind Settings keeps Settings and its unsaved edit", asy
   await closeSettings(page);
   await expect(
     page
-      .getByRole("complementary", { name: "Channel sidebar" })
+      .getByRole("complementary", { name: "Sidebar", exact: true })
       .getByRole("button", { name: "Avery Chen", exact: true }),
   ).toBeVisible();
   expect(app.errors.unexplained()).toEqual([]);

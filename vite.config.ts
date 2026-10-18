@@ -70,6 +70,12 @@ export default defineConfig(async ({ command, mode }) => {
       "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(
         env.BUZZ_BUILDERLAB_URL ?? "",
       ),
+      "import.meta.env.VITE_BUZZ_GOOGLE_OAUTH_CLIENT_ID": JSON.stringify(
+        env.BUZZ_GOOGLE_OAUTH_CLIENT_ID ?? "",
+      ),
+      "import.meta.env.VITE_BUZZ_GOOGLE_OAUTH_CLIENT_SECRET": JSON.stringify(
+        env.BUZZ_GOOGLE_OAUTH_CLIENT_SECRET ?? "",
+      ),
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(
         openRelay ? defaultOrigin : "",
       ),

@@ -22,6 +22,7 @@ it("claims recognised services and Buzz entities by default and unknown websites
   let renderer: LinkRenderer | undefined;
   apply({
     conversation: { registerLink: (value: LinkRenderer) => (renderer = value) },
+    get: () => undefined,
   } as never);
   const order = renderer?.order;
   if (typeof order !== "function")

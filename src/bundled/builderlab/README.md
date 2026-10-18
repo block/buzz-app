@@ -37,12 +37,12 @@ is confirmed. On another device, removal resolves the ID from the signed-in
 account's list; an unknown key is refused. Existing Settings-created
 agents are not migrated into this type.
 
-- `oauth/` owns browser handoff, code exchange, account verification, and the
-  plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
-  `session.credential()` provides access to it. The session handles cancellation,
-  sign-out, and disposal.
-- `login/` owns the login experience: pending state, cancellation, retry, email
-  display, and sign-out.
+- `oauth/` owns Builderlab's code exchange and account verification.
+  `browserCredential()` returns a verified `Credential`; `session.credential()`
+  provides access to it. The browser handoff, PKCE pair, plugin-lifetime session
+  (cancellation, sign-out, disposal) and the login card are the shared
+  `src/shared/oauth/` modules, which the bundled Links plugin's Google sign-in
+  also uses; `oauth/session.ts` and `login/` specialise them for Builderlab.
 - `agents/` lists the signed-in account's remote agents beneath login, with
   refresh and retry. Settings directs people to the **Agents** tab to create,
   edit instructions and delete agents. Listing does not activate agents or

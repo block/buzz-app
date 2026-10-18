@@ -1181,6 +1181,7 @@ it("uses the normal message link renderer in Inbox detail", async () => {
         });
       },
     },
+    get: () => undefined,
   } as never);
   const noContributions: never[] = [];
   const empty = { snapshot: () => noContributions, subscribe: () => () => {} };

@@ -1,7 +1,17 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { Host } from "../../../features/host/service";
+import {
+  browserCallback,
+  callbackCode,
+  nativeBridge,
+  pkceChallenge,
+  type BrowserBridge,
+} from "../../../shared/oauth/native-bridge";
 
-export const browserLoginAvailable = () => isTauri();
+export {
+  browserLoginAvailable,
+  type BrowserBridge,
+  type OAuthCallback,
+} from "../../../shared/oauth/native-bridge";
 
 /** The configured HTTPS origin is granted to this plugin at build time. */
 export function oauthTarget(
@@ -36,31 +46,6 @@ export type Credential = Readonly<{
   }>;
 }>;
 
-export type OAuthCallback = Readonly<{
-  parameters: readonly (readonly [string, string])[];
-}>;
-export type BrowserBridge = {
-  begin(options: {
-    authorizationUrl: string;
-    callbackPath: string;
-    useState?: boolean;
-  }): Promise<{ id: string; callbackUrl: string }>;
-  wait(id: string): Promise<OAuthCallback>;
-  cancel(id: string): Promise<void>;
-};
-const nativeBridge: BrowserBridge = {
-  begin: (options) => invoke("oauth_callback_begin", options),
-  wait: (id) => invoke("oauth_callback_wait", { id }),
-  cancel: (id) => invoke("oauth_callback_cancel", { id }),
-};
-
-function base64url(bytes: Uint8Array) {
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
 /** Acquire and verify a credential. No UI, storage, or authenticated API consumers. */
 export async function browserCredential(
   host: Host,
@@ -69,44 +54,18 @@ export async function browserCredential(
 ): Promise<Credential> {
   signal.throwIfAborted();
   const target = oauthTarget();
-  let id: string | undefined;
-  const path = `/callback/${crypto.randomUUID()}`;
-  const login = new URL(`${target}/v1/auth/login`);
-  const cancel = () => {
-    if (id) void bridge.cancel(id).catch(() => {});
-  };
   try {
-    const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
-    const digest = await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(verifier),
-    );
+    const { verifier, challenge } = await pkceChallenge();
     signal.throwIfAborted();
+    const login = new URL(`${target}/v1/auth/login`);
     login.search = new URLSearchParams({
       type: "cli",
       product: "builderlab",
-      code_challenge: base64url(new Uint8Array(digest)),
+      code_challenge: challenge,
       code_challenge_method: "S256",
     }).toString();
-    const attempt = await bridge.begin({
-      authorizationUrl: login.href,
-      callbackPath: path,
-      useState: true,
-    });
-    id = attempt.id;
-    signal.addEventListener("abort", cancel, { once: true });
-    signal.throwIfAborted();
-    const response = await bridge.wait(id);
-    signal.throwIfAborted();
-    const parameters = new URLSearchParams(
-      response.parameters.map(([name, value]) => [name, value]),
-    );
-    if (parameters.has("error"))
-      throw new Error("Browser sign-in failed. Try again.");
-    const codes = parameters.getAll("code");
-    const code = codes[0];
-    if (codes.length !== 1 || !code || code.length > 4096)
-      throw new Error("Invalid Builderlab callback code.");
+    const { parameters } = await browserCallback(bridge, signal, login.href);
+    const code = callbackCode(parameters, "Builderlab");
     const request = async (
       path: string,
       credential?: string,
@@ -166,8 +125,5 @@ export async function browserCredential(
     throw error instanceof Error
       ? error
       : new Error("Could not complete Builderlab sign-in. Try again.");
-  } finally {
-    signal.removeEventListener("abort", cancel);
-    if (id) await bridge.cancel(id);
   }
 }

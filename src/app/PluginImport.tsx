@@ -697,16 +697,22 @@ export function PluginImport({
                     )}
                     <section
                       aria-label="Plugin safety"
-                      className="mt-4 border-l-2 border-warning pl-3"
+                      className="mt-4 flex items-start gap-3"
                     >
-                      <p className="m-0 flex items-center gap-2 font-medium text-warning">
-                        <WarningCircleIcon size={20} aria-hidden="true" />
-                        Plugins aren’t sandboxed
-                      </p>
-                      <p className="mb-0 mt-1">
-                        They may access more than the declarations above. Only
-                        install code you trust.
-                      </p>
+                      <WarningCircleIcon
+                        size={20}
+                        className="shrink-0 text-warning"
+                        aria-hidden="true"
+                      />
+                      <div>
+                        <p className="m-0 font-medium text-warning">
+                          Plugins aren’t sandboxed
+                        </p>
+                        <p className="mb-0 mt-1 text-muted">
+                          They may access more than the declarations above. Only
+                          install code you trust.
+                        </p>
+                      </div>
                     </section>
                   </section>
                 )}

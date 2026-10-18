@@ -46,6 +46,7 @@ import {
   MenuPopup,
   MenuItem,
   MenuIcon,
+  MenuSeparator,
   MenuSubmenu,
   MenuSubmenuTrigger,
   MenuSubmenuPopup,
@@ -59,6 +60,7 @@ import {
   GearIcon,
   HashIcon,
   PencilSimpleIcon,
+  ShareIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { Navigation } from "../../features/navigation/controller";
@@ -340,8 +342,32 @@ export function SoloProjects({
                         <MenuItem
                           onClick={() => setSharing({ id: item.id, visit })}
                         >
-                          Share…
+                          <MenuIcon>
+                            <ShareIcon size={16} />
+                          </MenuIcon>
+                          Share
                         </MenuItem>
+                        {canEditLifetime(
+                          session,
+                          channels.channels.find(
+                            (channel) => channel.id === item.id,
+                          ),
+                        ) && (
+                          <MenuItem
+                            onClick={() =>
+                              setChatSettings({
+                                item,
+                                visit,
+                                rename: true,
+                              })
+                            }
+                          >
+                            <MenuIcon>
+                              <PencilSimpleIcon size={16} />
+                            </MenuIcon>
+                            Rename
+                          </MenuItem>
+                        )}
                         {canConvertToChannel(
                           session,
                           channels.channels.find(
@@ -361,6 +387,7 @@ export function SoloProjects({
                             {conversionLabel(session, item.id)}
                           </MenuItem>
                         )}
+                        <MenuSeparator />
                         <MenuSubmenu>
                           <MenuSubmenuTrigger disabled={!preferences.writable}>
                             <MenuIcon>
@@ -417,28 +444,8 @@ export function SoloProjects({
                             </MenuItem>
                           </MenuSubmenuPopup>
                         </MenuSubmenu>
+                        <MenuSeparator />
 
-                        {canEditLifetime(
-                          session,
-                          channels.channels.find(
-                            (channel) => channel.id === item.id,
-                          ),
-                        ) && (
-                          <MenuItem
-                            onClick={() =>
-                              setChatSettings({
-                                item,
-                                visit,
-                                rename: true,
-                              })
-                            }
-                          >
-                            <MenuIcon>
-                              <PencilSimpleIcon size={16} />
-                            </MenuIcon>
-                            Rename
-                          </MenuItem>
-                        )}
                         {handoff && (
                           <ChannelLifecycleMenu
                             channelId={item.id}
@@ -504,7 +511,7 @@ export function SoloProjects({
                       aria-label={`New chat in ${project.name}`}
                       title={`New chat in ${project.name}`}
                       icon={
-                        <span className="shell-page-icon">
+                        <span className={styles.conversationIcon}>
                           <PlusIcon size={16} strokeWidth={2.5} />
                         </span>
                       }

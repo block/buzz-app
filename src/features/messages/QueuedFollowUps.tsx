@@ -34,6 +34,15 @@ export function QueuedFollowUps({
               )}
             </div>
             <div className={styles.actions}>
+              <IconButton
+                data-remove-action
+                variant="destructive-quiet"
+                shape="inset"
+                size="sm"
+                aria-label="Remove queued message"
+                icon={<TrashIcon size={16} strokeWidth={1.5} />}
+                onClick={() => queue.remove(entry.id)}
+              />
               <Button
                 variant="subtle-muted"
                 size="caption"
@@ -42,14 +51,6 @@ export function QueuedFollowUps({
               >
                 Send
               </Button>
-              <IconButton
-                variant="destructive-quiet"
-                shape="inset"
-                size="sm"
-                aria-label="Remove queued message"
-                icon={<TrashIcon size={16} strokeWidth={1.5} />}
-                onClick={() => queue.remove(entry.id)}
-              />
             </div>
           </li>
         ))}

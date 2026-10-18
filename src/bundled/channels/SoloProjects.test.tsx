@@ -81,6 +81,7 @@ function fixture(projectName = "Work") {
   const view = (
     preferences: ReturnType<typeof store>["queries"],
     scope = "viewer:community",
+    unread: unknown = owner.session.unread,
   ) => (
     <SoloProjects
       onNew={onNew}
@@ -88,6 +89,7 @@ function fixture(projectName = "Work") {
         {
           ...owner.session,
           soloPreferences: preferences,
+          unread,
           canvas: { available: false },
           channels: { list: () => channels, subscribeList: () => () => {} },
         } as unknown as RelaySession
@@ -322,6 +324,56 @@ it("opens the exact project from an empty project's New chat row", async () => {
     row.focus();
     await user.keyboard("{Enter}");
     expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+  } finally {
+    store.dispose();
+  }
+});
+
+it("marks a chat read from its row menu and reports a failed save", async () => {
+  const h = fixture();
+  const store = h.store();
+  const user = userEvent.setup();
+  const markChannelRead = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Read state unavailable"))
+    .mockResolvedValue(undefined);
+  const snapshot = (channelId: string, observedCount: number) => ({
+    target: { kind: "channel", channelId },
+    observedCount,
+    attentionCount: 0,
+    manual: "none",
+    coverage: "observed",
+    freshness: "observed",
+  });
+  const unreadChat = snapshot("chat", 3);
+  const readChat = snapshot("other", 0);
+  const unread = {
+    sync: () => ({ capability: "frontier-sync" }),
+    snapshot: (target: { channelId: string }) =>
+      target.channelId === "chat" ? unreadChat : readChat,
+    subscribe: () => () => {},
+    markChannelRead,
+    markUnreadLocal: vi.fn(),
+  };
+  render(h.view(store.queries, "viewer:community", unread));
+  try {
+    const actions = screen.getByRole("button", {
+      name: "Actions for Planning",
+    });
+    await user.click(actions);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as Read" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Read state unavailable",
+    );
+    await user.click(actions);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as Read" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(markChannelRead).toHaveBeenNthCalledWith(2, "chat");
   } finally {
     store.dispose();
   }

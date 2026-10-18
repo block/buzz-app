@@ -54,9 +54,14 @@ test("chat row menus open Share with the chat's people and restore focus", async
     name: "Actions for Alpha",
     exact: true,
   });
-  await expect(menu).toBeVisible();
+  // Lifecycle items mount after each opening's permission read.
+  const lifecycleReady = menu.getByRole("menuitem", {
+    name: "Delete chat",
+    exact: true,
+  });
+  await expect(lifecycleReady).toBeVisible();
   const actions = await menu.getByRole("menuitem").allTextContents();
-  expect(actions).toContain("Share…");
+  expect(actions).toContain("Share");
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("heading", { name: "New chat", exact: true }),
@@ -65,13 +70,13 @@ test("chat row menus open Share with the chat's people and restore focus", async
   await sidebar
     .getByRole("button", { name: "Actions for Alpha", exact: true })
     .click();
-  await expect(menu).toBeVisible();
+  await expect(lifecycleReady).toBeVisible();
   expect(await menu.getByRole("menuitem").allTextContents()).toEqual(actions);
   await page.keyboard.press("Escape");
   await row.focus();
   await row.press("Shift+F10");
   await expect(menu).toBeVisible();
-  await menu.getByRole("menuitem", { name: "Share…", exact: true }).click();
+  await menu.getByRole("menuitem", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", {
     name: "Share chat",
     exact: true,
@@ -367,7 +372,7 @@ test("Share grants access and posts a link without promoting or moving the Solo 
     page.getByText(`primary ${id} message 0`, { exact: false }),
   ).toBeVisible();
   await row.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Share…", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share chat" });
   const search = dialog.getByRole("combobox", { name: "People or channel" });
   await search.fill("Aria");

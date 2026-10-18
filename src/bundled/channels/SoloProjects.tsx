@@ -1,5 +1,3 @@
-import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
-import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import {
   conversionLabel,
   useChatConversions,
@@ -14,6 +12,12 @@ import {
 } from "../../features/solo/ConvertToChannel";
 import { SoloShare, ChatAccessIndicator } from "./SoloShare";
 import { canEditLifetime } from "../../features/solo/Lifetime";
+import { ChannelReadMenuItem } from "./ChannelReadMenuItem";
+import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
+import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
+import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useDroppable } from "@dnd-kit/core";
@@ -90,8 +94,8 @@ export function SoloProjects({
   renderChat: (item: ChatListItem) => ReactNode;
   onNew?: (projectId?: string) => void;
 }) {
-  const handoff = useChannelNavigation();
   useChatConversions(session);
+  const handoff = useChannelNavigation();
   const shareAttempts = useSoloShareAttempts(session);
   const [copyNotice, setCopyNotice] = useState<{
     text: string;
@@ -148,12 +152,13 @@ export function SoloProjects({
   const currentVisit = useRef(visit);
   currentVisit.current = visit;
   const [chatSettings, setChatSettings] = useState<{
-    item: ChatListItem;
     rename?: boolean;
+    item: ChatListItem;
     visit: AbortSignal | undefined;
   }>();
   const [deleting, setDeleting] = useState<string>();
   const [projectError, setProjectError] = useState("");
+  const [readError, setReadError] = useState<{ id: string; message: string }>();
   const [animate, setAnimate] = useState(false);
   const [rowFocus, setRowFocus] = useState<string>();
   useLayoutEffect(() => {
@@ -196,6 +201,34 @@ export function SoloProjects({
       setRowFocus(id);
     });
   };
+  // Matches the open chat's own actions menu: leaving the open chat returns to
+  // a new Solo draft, unless the user has already moved on.
+  const chooseLifecycle = (
+    channel: ChannelSummary,
+    action: ChannelLifecycleAction,
+  ) => {
+    const trigger =
+      document.querySelector<HTMLElement>(
+        `[data-solo-menu-id="${CSS.escape(channel.id)}"] button`,
+      ) ?? undefined;
+    const current = navigationController?.snapshot();
+    const leavesOpenChat =
+      action !== "unarchive" &&
+      current?.entry.target.kind === "conversation" &&
+      current.entry.target.channelId === channel.id;
+    // Let the menu restore focus before opening confirmation.
+    requestAnimationFrame(() =>
+      handoff?.openLifecycle(channel, action, trigger, undefined, {
+        close() {
+          if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+        },
+        completed() {
+          if (leavesOpenChat && !current.attempt.signal.aborted)
+            void navigationController?.open(soloDraftTarget(scope));
+        },
+      }),
+    );
+  };
   const toggle = (id: string, open: boolean) => {
     const next = open
       ? collapsed.filter((key) => key !== id)
@@ -225,6 +258,11 @@ export function SoloProjects({
       {projectError && (
         <p role="alert" className={styles.listMessage}>
           {projectError}
+        </p>
+      )}
+      {readError && (
+        <p role="alert" className={styles.listMessage}>
+          {readError.message}
         </p>
       )}
       <ChannelSidebarDnd
@@ -322,185 +360,214 @@ export function SoloProjects({
                 </Collapsible.Trigger>
               </ChatActionsMenu>
               <Collapsible.Panel className={styles.projectPanel}>
-                {project.rows.map((item) => (
-                  <ChatActionsMenu
-                    key={item.id}
-                    id={item.id}
-                    title={item.title}
-                    indicator={
-                      <ChatAccessIndicator
-                        session={session}
-                        channel={channels.channels.find(
-                          (channel) => channel.id === item.id,
-                        )}
-                        onClick={() => setSharing({ id: item.id, visit })}
-                      />
-                    }
-                    className={styles.organizedRow}
-                    content={
-                      <>
-                        <MenuItem
+                {project.rows.map((item) => {
+                  const channel = channels.channels.find(
+                    (channel) => channel.id === item.id,
+                  );
+                  return (
+                    <ChatActionsMenu
+                      key={item.id}
+                      id={item.id}
+                      title={item.title}
+                      indicator={
+                        <ChatAccessIndicator
+                          session={session}
+                          channel={channels.channels.find(
+                            (channel) => channel.id === item.id,
+                          )}
                           onClick={() => setSharing({ id: item.id, visit })}
-                        >
-                          <MenuIcon>
-                            <ShareIcon size={16} />
-                          </MenuIcon>
-                          Share
-                        </MenuItem>
-                        {canEditLifetime(
-                          session,
-                          channels.channels.find(
-                            (channel) => channel.id === item.id,
-                          ),
-                        ) && (
-                          <MenuItem
-                            onClick={() =>
-                              setChatSettings({
-                                item,
-                                visit,
-                                rename: true,
-                              })
-                            }
-                          >
-                            <MenuIcon>
-                              <PencilSimpleIcon size={16} />
-                            </MenuIcon>
-                            Rename
-                          </MenuItem>
-                        )}
-                        {canConvertToChannel(
-                          session,
-                          channels.channels.find(
-                            (channel) => channel.id === item.id,
-                          ),
-                        ) && (
-                          <MenuItem
-                            disabled={shareAttempts.has(item.id)}
-                            onClick={() => {
-                              if (!soloShareAttempt(session, item.id))
-                                setConverting({ id: item.id, visit });
-                            }}
-                          >
-                            <MenuIcon>
-                              <HashIcon size={16} />
-                            </MenuIcon>
-                            {conversionLabel(session, item.id)}
-                          </MenuItem>
-                        )}
-                        <MenuSeparator />
-                        <MenuSubmenu>
-                          <MenuSubmenuTrigger disabled={!preferences.writable}>
-                            <MenuIcon>
-                              <FolderSimpleIcon size={16} />
-                            </MenuIcon>
-                            Move to
-                          </MenuSubmenuTrigger>
-                          <MenuSubmenuPopup aria-label="Project">
-                            {project.id && (
-                              <MenuItem onClick={() => move(item.id)}>
-                                Chats
-                              </MenuItem>
-                            )}
-                            {groups.map((group) => (
-                              <MenuItem
-                                key={group.id}
-                                onClick={() => move(item.id, group.id)}
-                              >
-                                {group.name}
-                              </MenuItem>
-                            ))}
-                            <MenuItem onClick={() => setCreatingFor(item)}>
-                              New project…
-                            </MenuItem>
-                          </MenuSubmenuPopup>
-                        </MenuSubmenu>
-                        <MenuSubmenu>
-                          <MenuSubmenuTrigger>
-                            <MenuIcon>
-                              <CopyIcon size={16} />
-                            </MenuIcon>
-                            Copy
-                          </MenuSubmenuTrigger>
-                          <MenuSubmenuPopup aria-label="Copy chat">
-                            <MenuItem
-                              onClick={() => void copy(item.title, "Chat name")}
-                            >
-                              Copy chat name
-                            </MenuItem>
-                            <MenuItem
-                              onClick={() => void copy(item.id, "Chat ID")}
-                            >
-                              Copy chat ID
-                            </MenuItem>
-                            <MenuItem
-                              onClick={() =>
-                                void copy(
-                                  `buzz://channel/${encodeURIComponent(item.id)}`,
-                                  "Chat link",
+                        />
+                      }
+                      className={styles.organizedRow}
+                      content={
+                        <>
+                          {session.unread.sync().capability ===
+                            "frontier-sync" && (
+                            <ChannelReadMenuItem
+                              unread={session.unread}
+                              channelId={item.id}
+                              pending={false}
+                              closeOnClick
+                              run={(action) =>
+                                action().then(
+                                  () =>
+                                    setReadError((current) =>
+                                      current?.id === item.id
+                                        ? undefined
+                                        : current,
+                                    ),
+                                  (error: unknown) =>
+                                    setReadError({
+                                      id: item.id,
+                                      message:
+                                        error instanceof Error
+                                          ? error.message
+                                          : "Read state couldn’t be saved. Try again.",
+                                    }),
                                 )
                               }
-                            >
-                              Copy link to chat
-                            </MenuItem>
-                          </MenuSubmenuPopup>
-                        </MenuSubmenu>
-                        <MenuSeparator />
-
-                        {handoff && (
-                          <ChannelLifecycleMenu
-                            channelId={item.id}
-                            lifecycle={session.channelLifecycle}
-                            archiveLabel="Archive"
-                            archiveOnly
-                            separator={false}
-                            disabled={false}
-                            choose={(action) => {
-                              const channel = channels.channels.find(
-                                (candidate) => candidate.id === item.id,
-                              );
-                              if (channel)
-                                handoff.openLifecycle(
-                                  channel,
-                                  action,
-                                  document.querySelector<HTMLElement>(
-                                    `[data-solo-menu-id="${item.id}"] button`,
-                                  ) ?? undefined,
-                                  visit,
-                                );
-                            }}
-                          />
-                        )}
-                        <MenuItem
-                          disabled={
-                            (!session.canvas.available &&
-                              !canEditLifetime(
-                                session,
-                                channels.channels.find(
-                                  (channel) => channel.id === item.id,
-                                ),
-                              )) ||
-                            !!channels.channels.find(
+                            />
+                          )}
+                          <MenuItem
+                            onClick={() => setSharing({ id: item.id, visit })}
+                          >
+                            <MenuIcon>
+                              <ShareIcon size={16} />
+                            </MenuIcon>
+                            Share
+                          </MenuItem>
+                          {canEditLifetime(
+                            session,
+                            channels.channels.find(
                               (channel) => channel.id === item.id,
-                            )?.readOnly
-                          }
-                          onClick={() => setChatSettings({ item, visit })}
-                        >
-                          <MenuIcon>
-                            <GearIcon size={16} />
-                          </MenuIcon>
-                          Chat settings…
-                        </MenuItem>
-                      </>
-                    }
-                  >
-                    <DraggableChannel
-                      channelId={item.id}
-                      sectionKey={DROP + project.id}
+                            ),
+                          ) && (
+                            <MenuItem
+                              onClick={() =>
+                                setChatSettings({
+                                  item,
+                                  visit,
+                                  rename: true,
+                                })
+                              }
+                            >
+                              <MenuIcon>
+                                <PencilSimpleIcon size={16} />
+                              </MenuIcon>
+                              Rename
+                            </MenuItem>
+                          )}
+                          {canConvertToChannel(
+                            session,
+                            channels.channels.find(
+                              (channel) => channel.id === item.id,
+                            ),
+                          ) && (
+                            <MenuItem
+                              disabled={shareAttempts.has(item.id)}
+                              onClick={() => {
+                                if (!soloShareAttempt(session, item.id))
+                                  setConverting({ id: item.id, visit });
+                              }}
+                            >
+                              <MenuIcon>
+                                <HashIcon size={16} />
+                              </MenuIcon>
+                              {conversionLabel(session, item.id)}
+                            </MenuItem>
+                          )}
+                          <MenuSeparator />
+                          <MenuSubmenu>
+                            <MenuSubmenuTrigger
+                              disabled={!preferences.writable}
+                            >
+                              <MenuIcon>
+                                <FolderSimpleIcon size={16} />
+                              </MenuIcon>
+                              Move to
+                            </MenuSubmenuTrigger>
+                            <MenuSubmenuPopup aria-label="Project">
+                              {project.id && (
+                                <MenuItem onClick={() => move(item.id)}>
+                                  Chats
+                                </MenuItem>
+                              )}
+                              {groups.map((group) => (
+                                <MenuItem
+                                  key={group.id}
+                                  onClick={() => move(item.id, group.id)}
+                                >
+                                  {group.name}
+                                </MenuItem>
+                              ))}
+                              <MenuItem onClick={() => setCreatingFor(item)}>
+                                New project…
+                              </MenuItem>
+                            </MenuSubmenuPopup>
+                          </MenuSubmenu>
+                          <MenuSubmenu>
+                            <MenuSubmenuTrigger>
+                              <MenuIcon>
+                                <CopyIcon size={16} />
+                              </MenuIcon>
+                              Copy
+                            </MenuSubmenuTrigger>
+                            <MenuSubmenuPopup aria-label="Copy chat">
+                              <MenuItem
+                                onClick={() =>
+                                  void copy(item.title, "Chat name")
+                                }
+                              >
+                                Copy chat name
+                              </MenuItem>
+                              <MenuItem
+                                onClick={() => void copy(item.id, "Chat ID")}
+                              >
+                                Copy chat ID
+                              </MenuItem>
+                              <MenuItem
+                                onClick={() =>
+                                  void copy(
+                                    `buzz://channel/${encodeURIComponent(item.id)}`,
+                                    "Chat link",
+                                  )
+                                }
+                              >
+                                Copy link to chat
+                              </MenuItem>
+                            </MenuSubmenuPopup>
+                          </MenuSubmenu>
+
+                          <MenuSeparator />
+                          {handoff &&
+                            channel &&
+                            !channel.readOnly &&
+                            !channel.cached &&
+                            !channel.archived && (
+                              <ChannelLifecycleMenu
+                                channelId={item.id}
+                                lifecycle={session.channelLifecycle}
+                                disabled={!!handoff.lifecycleDialog}
+                                separator={false}
+                                archiveLabel="Archive"
+                                noun="chat"
+                                choose={(action) =>
+                                  chooseLifecycle(channel, action)
+                                }
+                              />
+                            )}
+                          <MenuItem
+                            disabled={
+                              (!session.canvas.available &&
+                                !canEditLifetime(
+                                  session,
+                                  channels.channels.find(
+                                    (channel) => channel.id === item.id,
+                                  ),
+                                )) ||
+                              !!channels.channels.find(
+                                (channel) => channel.id === item.id,
+                              )?.readOnly
+                            }
+                            onClick={() => setChatSettings({ item, visit })}
+                          >
+                            <MenuIcon>
+                              <GearIcon size={16} />
+                            </MenuIcon>
+                            Chat settings…
+                          </MenuItem>
+                        </>
+                      }
                     >
-                      {renderChat(item)}
-                    </DraggableChannel>
-                  </ChatActionsMenu>
-                ))}
+                      <DraggableChannel
+                        channelId={item.id}
+                        sectionKey={DROP + project.id}
+                      >
+                        {renderChat(item)}
+                      </DraggableChannel>
+                    </ChatActionsMenu>
+                  );
+                })}
                 {!project.rows.length &&
                   project.id &&
                   (onNew ? (
@@ -561,8 +628,8 @@ export function SoloProjects({
       )}
       {chatSettings && (
         <WorkspaceSettings
-          key={chatSettings.item.id}
           focusName={chatSettings.rename}
+          key={chatSettings.item.id}
           signal={chatSettings.visit}
           finalFocus={() =>
             document.querySelector<HTMLElement>(

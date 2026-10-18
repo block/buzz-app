@@ -11,6 +11,7 @@ import {
   type ComponentProps,
 } from "react";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
+import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { ownSolo } from "../solo/labels";
 import type { RelayData } from "../relay/service";
@@ -678,6 +679,7 @@ export function ChannelInventory({
         <ChannelLifecycleMenu
           key="lifecycle"
           separator={false}
+          noun={lifecycleNoun(channel)}
           channelId={channel.id}
           lifecycle={lifecycle}
           disabled={!!lifecycleDialog}

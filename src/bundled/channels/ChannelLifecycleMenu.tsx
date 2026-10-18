@@ -13,6 +13,7 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import type { ChannelLifecycleCapability } from "../../features/relay/channel-lifecycle";
+import type { LifecycleNoun } from "./ChannelLifecycleDialog";
 import type {
   ChannelLifecycleAction,
   ChannelLifecycleSettings,
@@ -25,9 +26,9 @@ export function ChannelLifecycleMenu({
   choose,
   disabled,
   separator,
+  noun = "channel",
+  archiveLabel,
   open = true,
-  archiveLabel = "Archive channel",
-  archiveOnly = false,
   render = (items) => items,
 }: {
   channelId: string;
@@ -35,9 +36,9 @@ export function ChannelLifecycleMenu({
   choose(action: ChannelLifecycleAction): void;
   disabled: boolean;
   separator: boolean;
-  open?: boolean;
+  noun?: LifecycleNoun;
   archiveLabel?: string;
-  archiveOnly?: boolean;
+  open?: boolean;
   render?(items: ReactNode): ReactNode;
 }) {
   const [state, setState] = useState<ChannelLifecycleSettings>();
@@ -100,12 +101,10 @@ export function ChannelLifecycleMenu({
     )
   )
     return render(null);
-  if (archiveOnly && !state.canArchive && !state.canUnarchive)
-    return render(null);
   return render(
     <>
       {separator && <MenuSeparator />}
-      {state.canHide && !archiveOnly ? (
+      {state.canHide ? (
         <MenuItem disabled={disabled} onClick={() => choose("hide")}>
           <MenuIcon>
             <EyeSlashIcon size={14} />
@@ -114,12 +113,12 @@ export function ChannelLifecycleMenu({
         </MenuItem>
       ) : (
         <>
-          {state.canLeave && !archiveOnly && (
+          {state.canLeave && (
             <MenuItem disabled={disabled} onClick={() => choose("leave")}>
               <MenuIcon>
                 <SignOutIcon size={14} />
               </MenuIcon>
-              Leave channel
+              Leave {noun}
             </MenuItem>
           )}
           {(state.canArchive || state.canUnarchive) && (
@@ -132,10 +131,12 @@ export function ChannelLifecycleMenu({
               <MenuIcon>
                 <ArchiveIcon size={14} />
               </MenuIcon>
-              {state.canUnarchive ? "Unarchive channel" : archiveLabel}
+              {state.canUnarchive
+                ? `Unarchive ${noun}`
+                : (archiveLabel ?? `Archive ${noun}`)}
             </MenuItem>
           )}
-          {state.deleteUnavailable && !archiveOnly && (
+          {state.deleteUnavailable && (
             <>
               <MenuItem disabled>
                 <MenuIcon>
@@ -155,7 +156,7 @@ export function ChannelLifecycleMenu({
               </MenuItem>
             </>
           )}
-          {state.canDelete && !archiveOnly && (
+          {state.canDelete && (
             <MenuItem
               tone="danger"
               disabled={disabled}
@@ -164,7 +165,7 @@ export function ChannelLifecycleMenu({
               <MenuIcon>
                 <TrashIcon size={14} />
               </MenuIcon>
-              Delete channel
+              Delete {noun}
             </MenuItem>
           )}
         </>

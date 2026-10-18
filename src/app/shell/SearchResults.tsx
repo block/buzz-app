@@ -677,7 +677,9 @@ export function SearchResults({
       label,
       ...(matches ? { matches } : {}),
       detail: channel.archived
-        ? "Archived channel"
+        ? channel.channelType === "solo"
+          ? "Archived chat"
+          : "Archived channel"
         : channel.readOnly && !channel.cached
           ? "Public channel · not joined"
           : channel.channelType === "dm"

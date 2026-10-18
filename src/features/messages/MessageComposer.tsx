@@ -1374,6 +1374,14 @@ function Composer({
               channelId,
               text: content,
               recipients,
+              beforeRelease: async () => {
+                const channel =
+                  await session.channelWrites.refreshMembership(channelId);
+                if (recipients.some((key) => !channel.members?.includes(key)))
+                  throw new Error(
+                    "A queued recipient is no longer a member of this chat.",
+                  );
+              },
               publish: () => publishNow(uploaded),
               onSend: (id) => {
                 if (live.current) onSend?.(id);
@@ -1591,7 +1599,7 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
-      {ownSoloConversation && !submission && !threadRootId && (
+      {!submission && !threadRootId && (
         <QueuedFollowUps
           session={session}
           channelId={channelId}

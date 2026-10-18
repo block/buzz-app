@@ -8,6 +8,7 @@ type Entry = {
   text: string;
   recipients: readonly string[];
   publish(): string;
+  beforeRelease?(): Promise<void>;
   onSend?(id: string): void;
   error?: string;
 };
@@ -109,11 +110,13 @@ function createQueue(session: RelaySession) {
     watch();
     return id;
   }
-  function release(entry: Entry) {
+  async function release(entry: Entry) {
     if (publishing) return;
     publishing = true;
     let id: string | undefined;
     try {
+      if (entry.beforeRelease) await entry.beforeRelease();
+      if (!entries.includes(entry)) return;
       id = sent(entry);
       entries = entries.filter((item) => item !== entry);
     } catch (error) {
@@ -128,6 +131,7 @@ function createQueue(session: RelaySession) {
     } finally {
       publishing = false;
       emit();
+      queueMicrotask(pump);
     }
     // Presentation failures cannot put an already accepted message back in queue.
     if (id) entry.onSend?.(id);

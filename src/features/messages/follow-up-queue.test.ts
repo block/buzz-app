@@ -137,3 +137,24 @@ it("isolates channels and sessions, and removal never publishes", () => {
   h.work("previous", "done");
   expect(entry.publish).not.toHaveBeenCalled();
 });
+
+it("does not publish a removed entry while release validation is pending", async () => {
+  const h = fixture();
+  h.work("previous", "working");
+  let resume!: () => void;
+  const entry = {
+    ...h.entry("next"),
+    beforeRelease: () =>
+      new Promise<void>((resolve) => {
+        resume = resolve;
+      }),
+  };
+  h.queue.submit(entry);
+  const id = h.queue.snapshot()[0]?.id ?? "missing";
+  h.queue.sendNow(id);
+  h.queue.remove(id);
+  resume();
+  await Promise.resolve();
+  expect(entry.publish).not.toHaveBeenCalled();
+  expect(h.queue.snapshot()).toEqual([]);
+});

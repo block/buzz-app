@@ -84,7 +84,7 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
       const trashBox = await queue
         .getByRole("button", { name: "Remove queued message" })
         .boundingBox();
-      expect(trashBox.x).toBeGreaterThan(box.x + box.width);
+      expect(trashBox.x + trashBox.width).toBeLessThan(box.x);
       expect(trashBox.height).toBe(box.height);
       await page.screenshot({
         path: testInfo.outputPath(`queue-${colorScheme}-${width}.png`),

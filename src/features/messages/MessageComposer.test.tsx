@@ -7574,7 +7574,7 @@ it.each(["thread", "solo"])(
   },
 );
 
-it.each(["available", "archived", "readOnly"] as const)(
+it.each(["available", "archived", "readOnly", "removed", "converted"] as const)(
   "revalidates a queued Solo follow-up when the chat is %s at completion",
   async (mode) => {
     localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
@@ -7582,6 +7582,7 @@ it.each(["available", "archived", "readOnly"] as const)(
     h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
     const listeners = new Set<() => void>();
     let state = "working";
+    let members = [first.pubkey];
     let activity = snapshot();
     const channel = {
       id: "channel",
@@ -7603,7 +7604,7 @@ it.each(["available", "archived", "readOnly"] as const)(
         channelWrites: {
           refreshMembership: async () => ({
             id: "channel",
-            members: [first.pubkey],
+            members,
           }),
           addAgents: vi.fn(),
         },
@@ -7645,27 +7646,44 @@ it.each(["available", "archived", "readOnly"] as const)(
     expect(h.messages.send).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Send" })).toBeVisible();
     h.fill("Keep typing");
-    if (mode !== "available") channel[mode] = true;
+    if (mode === "removed") members = [];
+    else if (mode === "converted") {
+      channel.channelType = "group";
+      h.retarget({ ownSoloConversation: false });
+    } else if (mode !== "available") channel[mode] = true;
     act(() => {
       state = "done";
       activity = snapshot();
       for (const listener of listeners) listener();
     });
     if (mode !== "available") {
-      await screen.findByText("This chat is no longer available for sending.");
+      await screen.findByText(
+        mode === "removed"
+          ? "A queued recipient is no longer a member of this chat."
+          : mode === "converted"
+            ? "This Solo chat or its recipients are no longer available."
+            : "This chat is no longer available for sending.",
+      );
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(
         screen.getByRole("region", { name: "Queued follow-ups" }),
       ).toContainElement(screen.getByText("@Honey Follow up"));
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Remove queued message" }),
+      );
+      expect(
+        screen.queryByRole("region", { name: "Queued follow-ups" }),
+      ).toBeNull();
       expect(h.messages.send).not.toHaveBeenCalled();
       return;
     }
-    expect(h.messages.send).toHaveBeenCalledWith(
-      "channel",
-      "@Honey Follow up",
-      [first.pubkey],
-      [],
+    await waitFor(() =>
+      expect(h.messages.send).toHaveBeenCalledWith(
+        "channel",
+        "@Honey Follow up",
+        [first.pubkey],
+        [],
+      ),
     );
     expect(h.input()).toHaveValue("Keep typing");
     expect(

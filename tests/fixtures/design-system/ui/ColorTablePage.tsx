@@ -1,3 +1,7 @@
+import {
+  BRAND_FAMILIES,
+  BRAND_SHADES,
+} from "../../../../src/shared/design-system/tokens/brand";
 import { Link } from "@tanstack/react-router";
 import { Fragment, useState } from "react";
 
@@ -65,6 +69,17 @@ function collectRows(): TableRow[] {
         variable: step.variable,
         layer: "ramp",
         group: hue.usedBy ? `${hue.id} — ${hue.usedBy}` : hue.id,
+      });
+    }
+  }
+
+  for (const family of BRAND_FAMILIES) {
+    for (const shade of BRAND_SHADES) {
+      rows.push({
+        token: `brand-${family.id}-${shade}`,
+        variable: `--brand-${family.id}-${shade}`,
+        layer: "ramp",
+        group: `Plugin artwork — ${family.id}`,
       });
     }
   }

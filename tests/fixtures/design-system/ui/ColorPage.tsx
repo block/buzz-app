@@ -9,6 +9,8 @@ import {
   type Role,
 } from "../../../../src/shared/design-system/tokens/registry";
 
+import { BrandColors } from "./BrandColors";
+
 import { Note, PageHeader, Section, Swatch } from "./primitives";
 
 /**
@@ -83,6 +85,8 @@ export function ColorPage() {
         title="Color"
         intro="Choose colors by their purpose: surface, text, border, or action. Shared roles connect those purposes to the palette in light and dark mode. The examples below come from the token registry."
       />
+
+      <BrandColors />
 
       <Section
         title="Layer 0 — the palette"

@@ -1613,3 +1613,153 @@
   --spacing-chip-inset: var(--space-chip-inset);
   --spacing-chip-gap: var(--space-chip-gap);
 }
+
+/* Plugin artwork families: fixed light-to-dark scales, independent of mode.
+   500 preserves the exact source endpoint; other stops reduce chroma to sRGB.
+   Decorative palette only; product controls continue to use semantic roles. */
+:root {
+  /* cyan */
+  --brand-cyan-50: oklch(98% 0.0055 220);
+  --brand-cyan-100: oklch(95% 0.0136 220);
+  --brand-cyan-200: oklch(89% 0.03 220);
+  --brand-cyan-300: oklch(81% 0.0518 220);
+  --brand-cyan-400: oklch(71% 0.079 220);
+  --brand-cyan-500: oklch(60% 0.109 220);
+  --brand-cyan-600: oklch(51% 0.0927 220);
+  --brand-cyan-700: oklch(43% 0.0781 220);
+  --brand-cyan-800: oklch(35% 0.0636 220);
+  --brand-cyan-900: oklch(27% 0.0491 220);
+  --brand-cyan-950: oklch(19% 0.0345 220);
+  /* blue */
+  --brand-blue-50: oklch(98% 0.007 255);
+  --brand-blue-100: oklch(95% 0.0175 255);
+  --brand-blue-200: oklch(89% 0.0385 255);
+  --brand-blue-300: oklch(81% 0.0665 255);
+  --brand-blue-400: oklch(71% 0.1015 255);
+  --brand-blue-500: oklch(60% 0.14 255);
+  --brand-blue-600: oklch(51% 0.119 255);
+  --brand-blue-700: oklch(43% 0.1003 255);
+  --brand-blue-800: oklch(35% 0.0817 255);
+  --brand-blue-900: oklch(27% 0.063 255);
+  --brand-blue-950: oklch(19% 0.0443 255);
+  /* violet */
+  --brand-violet-50: oklch(98% 0.007 295);
+  --brand-violet-100: oklch(95% 0.0175 295);
+  --brand-violet-200: oklch(89% 0.0385 295);
+  --brand-violet-300: oklch(81% 0.0665 295);
+  --brand-violet-400: oklch(71% 0.1015 295);
+  --brand-violet-500: oklch(60% 0.14 295);
+  --brand-violet-600: oklch(51% 0.119 295);
+  --brand-violet-700: oklch(43% 0.1003 295);
+  --brand-violet-800: oklch(35% 0.0817 295);
+  --brand-violet-900: oklch(27% 0.063 295);
+  --brand-violet-950: oklch(19% 0.0443 295);
+  /* indigo */
+  --brand-indigo-50: oklch(98% 0.007 260);
+  --brand-indigo-100: oklch(95% 0.0175 260);
+  --brand-indigo-200: oklch(89% 0.0385 260);
+  --brand-indigo-300: oklch(81% 0.0665 260);
+  --brand-indigo-400: oklch(71% 0.1015 260);
+  --brand-indigo-500: oklch(60% 0.14 260);
+  --brand-indigo-600: oklch(51% 0.119 260);
+  --brand-indigo-700: oklch(43% 0.1003 260);
+  --brand-indigo-800: oklch(35% 0.0817 260);
+  --brand-indigo-900: oklch(27% 0.063 260);
+  --brand-indigo-950: oklch(19% 0.0443 260);
+  /* fuchsia */
+  --brand-fuchsia-50: oklch(98% 0.007 335);
+  --brand-fuchsia-100: oklch(95% 0.0175 335);
+  --brand-fuchsia-200: oklch(89% 0.0385 335);
+  --brand-fuchsia-300: oklch(81% 0.0665 335);
+  --brand-fuchsia-400: oklch(71% 0.1015 335);
+  --brand-fuchsia-500: oklch(60% 0.14 335);
+  --brand-fuchsia-600: oklch(51% 0.119 335);
+  --brand-fuchsia-700: oklch(43% 0.1003 335);
+  --brand-fuchsia-800: oklch(35% 0.0817 335);
+  --brand-fuchsia-900: oklch(27% 0.063 335);
+  --brand-fuchsia-950: oklch(19% 0.0443 335);
+  /* purple */
+  --brand-purple-50: oklch(98% 0.007 300);
+  --brand-purple-100: oklch(95% 0.0175 300);
+  --brand-purple-200: oklch(89% 0.0385 300);
+  --brand-purple-300: oklch(81% 0.0665 300);
+  --brand-purple-400: oklch(71% 0.1015 300);
+  --brand-purple-500: oklch(60% 0.14 300);
+  --brand-purple-600: oklch(51% 0.119 300);
+  --brand-purple-700: oklch(43% 0.1003 300);
+  --brand-purple-800: oklch(35% 0.0817 300);
+  --brand-purple-900: oklch(27% 0.063 300);
+  --brand-purple-950: oklch(19% 0.0443 300);
+  /* coral */
+  --brand-coral-50: oklch(98% 0.007 375);
+  --brand-coral-100: oklch(95% 0.0175 375);
+  --brand-coral-200: oklch(89% 0.0385 375);
+  --brand-coral-300: oklch(81% 0.0665 375);
+  --brand-coral-400: oklch(71% 0.1015 375);
+  --brand-coral-500: oklch(60% 0.14 375);
+  --brand-coral-600: oklch(51% 0.119 375);
+  --brand-coral-700: oklch(43% 0.1003 375);
+  --brand-coral-800: oklch(35% 0.0817 375);
+  --brand-coral-900: oklch(27% 0.063 375);
+  --brand-coral-950: oklch(19% 0.0443 375);
+  /* pink */
+  --brand-pink-50: oklch(98% 0.007 340);
+  --brand-pink-100: oklch(95% 0.0175 340);
+  --brand-pink-200: oklch(89% 0.0385 340);
+  --brand-pink-300: oklch(81% 0.0665 340);
+  --brand-pink-400: oklch(71% 0.1015 340);
+  --brand-pink-500: oklch(60% 0.14 340);
+  --brand-pink-600: oklch(51% 0.119 340);
+  --brand-pink-700: oklch(43% 0.1003 340);
+  --brand-pink-800: oklch(35% 0.0817 340);
+  --brand-pink-900: oklch(27% 0.063 340);
+  --brand-pink-950: oklch(19% 0.0443 340);
+  /* scarlet */
+  --brand-scarlet-50: oklch(98% 0.007 380);
+  --brand-scarlet-100: oklch(95% 0.0175 380);
+  --brand-scarlet-200: oklch(89% 0.0385 380);
+  --brand-scarlet-300: oklch(81% 0.0665 380);
+  --brand-scarlet-400: oklch(71% 0.1015 380);
+  --brand-scarlet-500: oklch(60% 0.14 380);
+  --brand-scarlet-600: oklch(51% 0.119 380);
+  --brand-scarlet-700: oklch(43% 0.1003 380);
+  --brand-scarlet-800: oklch(35% 0.0817 380);
+  --brand-scarlet-900: oklch(27% 0.063 380);
+  --brand-scarlet-950: oklch(19% 0.0443 380);
+  /* orange */
+  --brand-orange-50: oklch(98% 0.007 415);
+  --brand-orange-100: oklch(95% 0.0175 415);
+  --brand-orange-200: oklch(89% 0.0385 415);
+  --brand-orange-300: oklch(81% 0.0665 415);
+  --brand-orange-400: oklch(71% 0.1015 415);
+  --brand-orange-500: oklch(60% 0.14 415);
+  --brand-orange-600: oklch(51% 0.119 415);
+  --brand-orange-700: oklch(43% 0.1003 415);
+  --brand-orange-800: oklch(35% 0.0817 415);
+  --brand-orange-900: oklch(27% 0.063 415);
+  --brand-orange-950: oklch(19% 0.0443 415);
+  /* gold */
+  --brand-gold-50: oklch(98% 0.007 420);
+  --brand-gold-100: oklch(95% 0.0175 420);
+  --brand-gold-200: oklch(89% 0.0385 420);
+  --brand-gold-300: oklch(81% 0.0665 420);
+  --brand-gold-400: oklch(71% 0.1015 420);
+  --brand-gold-500: oklch(60% 0.14 420);
+  --brand-gold-600: oklch(51% 0.119 420);
+  --brand-gold-700: oklch(43% 0.1003 420);
+  --brand-gold-800: oklch(35% 0.0817 420);
+  --brand-gold-900: oklch(27% 0.063 420);
+  --brand-gold-950: oklch(19% 0.0443 420);
+  /* lime */
+  --brand-lime-50: oklch(98% 0.0062 455);
+  --brand-lime-100: oklch(95% 0.0154 455);
+  --brand-lime-200: oklch(89% 0.0338 455);
+  --brand-lime-300: oklch(81% 0.0584 455);
+  --brand-lime-400: oklch(71% 0.0892 455);
+  --brand-lime-500: oklch(60% 0.123 455);
+  --brand-lime-600: oklch(51% 0.1046 455);
+  --brand-lime-700: oklch(43% 0.0882 455);
+  --brand-lime-800: oklch(35% 0.0718 455);
+  --brand-lime-900: oklch(27% 0.0554 455);
+  --brand-lime-950: oklch(19% 0.039 455);
+}

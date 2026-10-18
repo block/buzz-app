@@ -424,3 +424,16 @@ icons, subtitles, disabled states, and required-status text.
 
 Standard Button sizes use the 14px `text-label-sm` role while retaining their
 existing minimum heights. The extra-small capsule keeps its caption role.
+
+## Plugin color-family exploration
+
+The Color viewer includes twelve fixed OKLCH families with 50–950 stops.
+`--brand-<family>-500` preserves each exact gradient endpoint from plugin branding
+(`src/app/Settings.module.css` on `tho/plugin-icons`, revision `834b8ea4b`).
+The six original gradient pairs are recorded in `tokens/brand.ts`; the values
+live in `styles/tokens.css`. Lightness descends from 98% to 19%; chroma tapers
+and is capped to sRGB outside the exact source stops. These are exploratory
+artwork colors, independent of theme, not new semantic roles or appearance choices.
+Select a swatch to inspect its actual CSS value and copy its variable. Product
+controls continue to consume semantic roles; the plugin branch is not a dependency
+of this viewer and no plugin artwork is imported.

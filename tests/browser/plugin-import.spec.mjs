@@ -98,6 +98,11 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
             });
           if (args?.repository === "bad")
             throw new Error("Repository unavailable");
+          if (window.importCategory)
+            for (const candidate of preview.candidates)
+              candidate.manifest.discovery = {
+                category: window.importCategory,
+              };
           return preview;
         }
         if (command === "plugin_import_discard") return;
@@ -110,7 +115,11 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
           const existing = plugins.find(
             (p) => p.manifest.id === candidate.manifest.id,
           );
-          if (!existing)
+          if (existing) {
+            existing.manifest = structuredClone(candidate.manifest);
+            existing.previous = existing.revision;
+            existing.revision = candidate.revision;
+          } else
             plugins.push({
               ...candidate,
               source: "external",
@@ -535,6 +544,9 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Reload")).toHaveCount(0);
   await button(page, "Close plugin details").click();
+  await page.evaluate(() => {
+    window.importCategory = "productivity";
+  });
   await button(page, "Update Example two").click();
   await button(page, "Browse plugin folder").click();
   await expect(page.getByRole("radio")).toHaveCount(0);
@@ -548,6 +560,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await button(page, "Update plugin").click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(enabled).toHaveAccessibleName("Disable Example two");
+  await expect(button(page, "Update Example two")).toBeFocused();
   await button(page, "View Example two details").click();
   await button(page, "Delete").click();
   const deletion = page.getByRole("alertdialog", {
@@ -595,6 +608,14 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(button(page, "Find plugins")).toBeEnabled();
   await expect(button(page, "Find plugins")).toBeFocused();
   await expect(page.getByLabel("Git or GitHub repository")).toHaveValue("bad");
+  await page.keyboard.press("Escape");
+  await button(page, "View Example two details").click();
+  await button(page, "Delete").click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete plugin", exact: true })
+    .click();
+  await expect(button(page, "View Example two details")).toHaveCount(0);
 });
 
 test("leaving Settings discards a late preview without installing", async ({

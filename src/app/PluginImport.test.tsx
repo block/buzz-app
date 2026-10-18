@@ -215,8 +215,14 @@ it("shows exact declared access and changes before an enabled update", async () 
     },
     installImport: vi.fn(async () => true),
   } as unknown as PluginManager;
-  render(<PluginImport plugins={manager} catalog={catalog} busy={false} />);
-  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  render(
+    <PluginImport
+      updateId="example.plugin"
+      plugins={manager}
+      catalog={catalog}
+      busy={false}
+    />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "Browse plugin folder" }));
   await screen.findByRole("region", { name: "Computer access" });
   expect(screen.getByText(/^Run example-cli/)).toBeVisible();
@@ -244,9 +250,10 @@ it("shows exact declared access and changes before an enabled update", async () 
     screen.getByText(/Computer access changes with this update/),
   ).toBeVisible();
   expect(screen.queryByText(/Command check:/)).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Install plugin" }),
-  ).toHaveAttribute("data-variant", "prominent");
+  expect(screen.getByRole("button", { name: "Update plugin" })).toHaveAttribute(
+    "data-variant",
+    "prominent",
+  );
   fireEvent.click(screen.getByRole("button", { name: /^Run example-cli/ }));
   fireEvent.click(
     screen.getByRole("button", {
@@ -544,8 +551,14 @@ it.each([
       },
       installImport: vi.fn(),
     } as unknown as PluginManager;
-    render(<PluginImport plugins={manager} catalog={catalog} busy={false} />);
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    render(
+      <PluginImport
+        updateId="example.plugin"
+        plugins={manager}
+        catalog={catalog}
+        busy={false}
+      />,
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Browse plugin folder" }),
     );
@@ -932,7 +945,6 @@ it("limits row updates to the selected plugin without modifying the source previ
       busy={false}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Update Target" }));
   await user.click(
     screen.getByRole("button", { name: "Browse plugin folder" }),
   );
@@ -947,4 +959,116 @@ it("limits row updates to the selected plugin without modifying the source previ
   );
   expect(manager.change).not.toHaveBeenCalled();
   expect(preview.candidates).toHaveLength(2);
+});
+
+it("redirects duplicate Add candidates to their row without update copy", async () => {
+  const manifest = {
+    id: "example.duplicate",
+    name: "Duplicate",
+    apiVersion: 1 as const,
+  };
+  const installed = {
+    manifest,
+    source: "external" as const,
+    enabled: true,
+    revision: "one",
+    previous: null,
+    reloadable: true,
+    error: null,
+  };
+  const manager = {
+    imports: {
+      folder: vi.fn(async () => ({
+        token: "duplicate",
+        source: "/example",
+        commit: null,
+        warnings: [],
+        candidates: [{ path: ".", revision: "two", manifest }],
+      })),
+      discard: vi.fn(async () => {}),
+    },
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [installed] }}
+      busy={false}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.click(screen.getByRole("button", { name: "Browse plugin folder" }));
+  expect(
+    await screen.findByText(/This plugin is already installed/),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Install plugin" })).toBeDisabled();
+  expect(screen.queryByText(/This replaces/)).toBeNull();
+  expect(
+    screen.queryByText(/Computer access changes with this update/),
+  ).toBeNull();
+  expect(screen.queryByRole("region", { name: "Computer access" })).toBeNull();
+});
+
+it("keeps install review stable while the saved catalog arrives before enabling", async () => {
+  const manifest = {
+    id: "example.pending",
+    name: "Pending",
+    apiVersion: 1 as const,
+  };
+  let finish!: (success: boolean) => void;
+  const change = vi.fn(
+    () =>
+      new Promise<boolean>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const manager = {
+    imports: {
+      folder: vi.fn(async () => ({
+        token: "pending",
+        source: "/example",
+        commit: null,
+        warnings: [],
+        candidates: [{ path: ".", revision: "one", manifest }],
+      })),
+      discard: vi.fn(async () => {}),
+    },
+    installImport: vi.fn(async () => true),
+    change,
+  } as unknown as PluginManager;
+  const catalog: Catalog = { profile: "test", location: "test", plugins: [] };
+  const view = render(
+    <PluginImport plugins={manager} catalog={catalog} busy={false} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.click(screen.getByRole("button", { name: "Browse plugin folder" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install plugin" }),
+  );
+  await waitFor(() => expect(change).toHaveBeenCalled());
+  view.rerender(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        ...catalog,
+        plugins: [
+          {
+            manifest,
+            source: "external",
+            enabled: false,
+            revision: "one",
+            previous: null,
+            reloadable: true,
+            error: null,
+          },
+        ],
+      }}
+      busy={true}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Installing plugin…");
+  expect(screen.getByRole("switch", { name: "Enable plugin" })).toBeVisible();
+  expect(screen.queryByText(/This plugin is already installed/)).toBeNull();
+  expect(screen.queryByText(/Reading plugin folders/)).toBeNull();
+  finish(true);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });

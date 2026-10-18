@@ -350,7 +350,7 @@ function PluginDetails({
       {confirmDelete && (
         <AlertDialog
           title={`Delete ${plugin.manifest.name}?`}
-          description="Removes this plugin from Buzz. You can install it again later."
+          description="Removes this plugin and its rollback history from Buzz. You can install it again later."
           pending={busy || deleting}
           finalFocus={deleteTrigger}
           onClose={() => setConfirmDelete(false)}
@@ -500,6 +500,7 @@ export function Settings({
     [catalog?.plugins],
   );
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const [updatingPluginId, setUpdatingPluginId] = useState<string>();
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
   const pluginTrigger = useRef<HTMLButtonElement>(null);
@@ -708,6 +709,26 @@ export function Settings({
                     still work.
                   </p>
                 )}
+                {catalog && updatingPluginId && (
+                  <PluginImport
+                    updateId={updatingPluginId}
+                    plugins={plugins}
+                    catalog={catalog}
+                    busy={busy}
+                    authorizeGit={authorizePluginGit}
+                    onClosed={() => setUpdatingPluginId(undefined)}
+                    returnFocus={() =>
+                      Array.from(
+                        pluginSection.current?.querySelectorAll<HTMLButtonElement>(
+                          "[data-plugin-update-id]",
+                        ) ?? [],
+                      ).find(
+                        (button) =>
+                          button.dataset.pluginUpdateId === updatingPluginId,
+                      ) ?? pluginSection.current
+                    }
+                  />
+                )}
                 <div>
                   <div>
                     {externalPluginsPaused && (
@@ -858,13 +879,17 @@ export function Settings({
                                     {plugin.source === "external" &&
                                       plugins.imports &&
                                       catalog && (
-                                        <PluginImport
-                                          updateId={id}
-                                          plugins={plugins}
-                                          catalog={catalog}
-                                          busy={busy}
-                                          authorizeGit={authorizePluginGit}
-                                        />
+                                        <Button
+                                          size="sm"
+                                          aria-label={`Update ${plugin.manifest.name}`}
+                                          data-plugin-update-id={id}
+                                          disabled={busy}
+                                          onClick={() =>
+                                            setUpdatingPluginId(id)
+                                          }
+                                        >
+                                          Update
+                                        </Button>
                                       )}
                                     {isRequiredPlugin(plugin) ? (
                                       <Button

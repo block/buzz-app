@@ -137,19 +137,23 @@ export function PluginImport({
   authorizeGit,
   actionTarget,
   updateId,
+  onClosed,
+  returnFocus,
 }: {
   plugins: PluginManager;
   catalog: Catalog;
   busy: boolean;
   actionTarget?: HTMLElement | null;
   updateId?: string;
+  onClosed?: () => void;
+  returnFocus?: () => HTMLElement | null;
   /** Signs in to the selected community's Buzz git; null for other repositories. */
   authorizeGit?: (
     repository: string,
   ) => Promise<{ repository: string; token: string } | null>;
 }) {
   const imports = plugins.imports;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!updateId);
   const [dragging, setDragging] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const [repository, setRepository] = useState("");
@@ -291,6 +295,7 @@ export function PluginImport({
       setError(null);
       setDragging(false);
       setOpen(false);
+      onClosed?.();
     } catch (reason) {
       showError(reason);
     } finally {
@@ -323,7 +328,10 @@ export function PluginImport({
     removed = false,
   ) {
     const changed =
-      !!existing && !removed && !previousGrants.includes(grant.signature);
+      !!updateId &&
+      !!existing &&
+      !removed &&
+      !previousGrants.includes(grant.signature);
     const Icon = grant.icon;
     return {
       value: grant.signature,
@@ -373,7 +381,8 @@ export function PluginImport({
   );
   return (
     <>
-      {actionTarget ? createPortal(addButton, actionTarget) : addButton}
+      {!updateId &&
+        (actionTarget ? createPortal(addButton, actionTarget) : addButton)}
       <Dialog
         open={open}
         onOpenChange={(next) => {
@@ -403,7 +412,11 @@ export function PluginImport({
         }
         size={error ? "default" : "wide"}
         leadingActions={
-          reviewing && candidate && !existing && !error ? (
+          reviewing &&
+          candidate &&
+          !updateId &&
+          (!existing || loading) &&
+          !error ? (
             <Switch
               label="Enable plugin"
               checked={enableOnInstall}
@@ -477,6 +490,7 @@ export function PluginImport({
                       if (!current.active) return;
                       setPreview(null);
                       setOpen(false);
+                      onClosed?.();
                     } finally {
                       pending.current = false;
                       if (current.active) setLoading(false);
@@ -491,7 +505,7 @@ export function PluginImport({
         }
         dismissOnOutsideClick
         preventClose={blocked}
-        finalFocus={trigger}
+        finalFocus={returnFocus ?? trigger}
       >
         {error && (
           <p role="alert" className="error break-words">
@@ -611,9 +625,14 @@ export function PluginImport({
               </form>
             </div>
           </div>
-          {loading && (
+          {loading && !preview && (
             <p role="status">
               Reading plugin folders… Git imports may take up to a minute.
+            </p>
+          )}
+          {loading && preview && (
+            <p role="status">
+              {updateId ? "Updating plugin…" : "Installing plugin…"}
             </p>
           )}
           {preview && (
@@ -688,108 +707,111 @@ export function PluginImport({
                       </ul>
                     </section>
                   )}
-                {reviewing && candidate && (
-                  <section
-                    aria-label="Computer access"
-                    className="text-body-sm"
-                  >
-                    <Accordion
-                      animate
-                      key={`computer-${selected}`}
-                      items={[
-                        {
-                          value: "computer-access",
-                          title: (
-                            <span className="flex items-start gap-3 text-left text-body-sm">
-                              <MonitorIcon
-                                size={20}
-                                className="shrink-0 text-muted"
-                                aria-hidden="true"
-                              />
-                              <span>
-                                <span className="block font-medium">
-                                  Computer access
-                                </span>
-                                <span className="block text-muted">
-                                  Can access files and run programs on your
-                                  computer.
+                {reviewing &&
+                  candidate &&
+                  (!existing || updateId || loading) && (
+                    <section
+                      aria-label="Computer access"
+                      className="text-body-sm"
+                    >
+                      <Accordion
+                        animate
+                        key={`computer-${selected}`}
+                        items={[
+                          {
+                            value: "computer-access",
+                            title: (
+                              <span className="flex items-start gap-3 text-left text-body-sm">
+                                <MonitorIcon
+                                  size={20}
+                                  className="shrink-0 text-muted"
+                                  aria-hidden="true"
+                                />
+                                <span>
+                                  <span className="block font-medium">
+                                    Computer access
+                                  </span>
+                                  <span className="block text-muted">
+                                    Can access files and run programs on your
+                                    computer.
+                                  </span>
                                 </span>
                               </span>
-                            </span>
-                          ),
-                          content: (
-                            <section
-                              aria-label="Plugin safety"
-                              className="max-w-prose pl-8 text-body"
-                            >
-                              <h4 className="mb-2 mt-0 text-label">
-                                Access beyond this list
-                              </h4>
-                              <p className="m-0">
-                                Plugins aren’t sandboxed. They can access your
-                                computer beyond these declarations, even when no
-                                additional capabilities are listed.
-                              </p>
-                              <p className="mb-0 mt-3 text-muted">
-                                These declarations describe what the plugin asks
-                                Buzz to do. They don’t limit what its code can
-                                do.
-                              </p>
-                            </section>
-                          ),
-                        },
-                      ]}
-                    />
-                    {existing &&
-                      (declaredGrants.some(
-                        (grant) => !previousGrants.includes(grant),
-                      ) ||
-                        previousGrants.some(
-                          (grant) => !declaredGrants.includes(grant),
-                        )) && (
-                        <p className="my-2">
-                          Computer access changes with this update. Expand a
-                          scope to review its exact declaration.
+                            ),
+                            content: (
+                              <section
+                                aria-label="Plugin safety"
+                                className="max-w-prose pl-8 text-body"
+                              >
+                                <h4 className="mb-2 mt-0 text-label">
+                                  Access beyond this list
+                                </h4>
+                                <p className="m-0">
+                                  Plugins aren’t sandboxed. They can access your
+                                  computer beyond these declarations, even when
+                                  no additional capabilities are listed.
+                                </p>
+                                <p className="mb-0 mt-3 text-muted">
+                                  These declarations describe what the plugin
+                                  asks Buzz to do. They don’t limit what its
+                                  code can do.
+                                </p>
+                              </section>
+                            ),
+                          },
+                        ]}
+                      />
+                      {updateId &&
+                        existing &&
+                        (declaredGrants.some(
+                          (grant) => !previousGrants.includes(grant),
+                        ) ||
+                          previousGrants.some(
+                            (grant) => !declaredGrants.includes(grant),
+                          )) && (
+                          <p className="my-2">
+                            Computer access changes with this update. Expand a
+                            scope to review its exact declaration.
+                          </p>
+                        )}
+                      {declaredDetails.length ? (
+                        <section aria-label="Declared scopes">
+                          <Accordion
+                            animate
+                            key={selected}
+                            items={declaredDetails.map((grant) =>
+                              scopeItem(grant),
+                            )}
+                          />
+                        </section>
+                      ) : (
+                        <p className="m-0">
+                          No additional capabilities declared.
                         </p>
                       )}
-                    {declaredDetails.length ? (
-                      <section aria-label="Declared scopes">
-                        <Accordion
-                          animate
-                          key={selected}
-                          items={declaredDetails.map((grant) =>
-                            scopeItem(grant),
-                          )}
-                        />
-                      </section>
-                    ) : (
-                      <p className="m-0">
-                        No additional capabilities declared.
-                      </p>
-                    )}
-                    {removedDetails.length > 0 && (
-                      <section
-                        aria-label="Removed declarations"
-                        className="mt-4"
-                      >
-                        <p className="m-0 font-medium">Removed:</p>
-                        <Accordion
-                          animate
-                          items={removedDetails.map((grant) =>
-                            scopeItem(grant, true),
-                          )}
-                        />
-                      </section>
-                    )}
-                  </section>
-                )}
-                {reviewing && existing && !updateId && (
+                      {updateId && removedDetails.length > 0 && (
+                        <section
+                          aria-label="Removed declarations"
+                          className="mt-4"
+                        >
+                          <p className="m-0 font-medium">Removed:</p>
+                          <Accordion
+                            animate
+                            items={removedDetails.map((grant) =>
+                              scopeItem(grant, true),
+                            )}
+                          />
+                        </section>
+                      )}
+                    </section>
+                  )}
+                {reviewing && existing && !updateId && !loading && (
                   <p className="m-0 text-body-sm">
                     This plugin is already installed. Use Update from its row on
                     the Plugins page.
                   </p>
                 )}
-                {reviewing && candidate && existing && (
+                {reviewing && candidate && existing && updateId && (
                   <p className="m-0 text-body-sm">
                     {`This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} ${rollbackNotice}`}
                   </p>

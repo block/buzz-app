@@ -1674,6 +1674,8 @@ function TeamEditor({
   // even once that change finished while the form stayed open.
   const [creation] = useState(() => submission?.teamId ?? crypto.randomUUID());
   const [operation] = useState(submission?.id);
+  // A reopened Create whose change finished now edits its team.
+  const edits = !!team || (!!operation && !submission);
   const own = changes.filter(
     (change) => change.teamId === (team?.id ?? creation),
   );
@@ -1706,7 +1708,7 @@ function TeamEditor({
   return (
     <form
       className={styles.sideBody}
-      aria-label={team ? `Edit ${team.name}` : "New team"}
+      aria-label={edits ? `Edit ${team?.name ?? name}` : "New team"}
       onSubmit={(event) => {
         event.preventDefault();
         void save();
@@ -1718,7 +1720,7 @@ function TeamEditor({
       <SideHeader
         title={
           <h3 className="m-0 text-heading">
-            {team ? "Edit team" : "New team"}
+            {edits ? "Edit team" : "New team"}
           </h3>
         }
         onClose={onDone}
@@ -1786,7 +1788,7 @@ function TeamEditor({
           loading={pending}
           disabled={!name.trim()}
         >
-          {team ? "Save" : "Create team"}
+          {edits ? "Save" : "Create team"}
         </Button>
         {team && (
           <Button

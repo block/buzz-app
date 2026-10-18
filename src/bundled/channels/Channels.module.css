@@ -1019,8 +1019,13 @@ html[data-keyboard-navigation]
 }
 
 /* Hovered and selected rows take the row's paired ink, so navigation text
-   follows the fill instead of staying gray on an accent row. */
-.sidebar [data-variant="row"]:is(:hover, [data-selected]),
-.sidebar :is(:hover, [data-selected]) > * > [data-variant="row"] {
+   follows the fill instead of staying gray on an accent row. Selection has
+   its own ink: in dark mode it carries the accent on a neutral fill. */
+.sidebar [data-variant="row"]:hover,
+.sidebar :hover > * > [data-variant="row"] {
   color: var(--text-row);
+}
+.sidebar [data-variant="row"][data-selected],
+.sidebar [data-selected] > * > [data-variant="row"] {
+  color: var(--text-row-selected);
 }

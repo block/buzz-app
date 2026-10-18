@@ -1285,9 +1285,9 @@ roles, so nothing stays gray on a background that turned accent.
 
 | Group | Roles |
 | --- | --- |
-| Moments | Own messages and the links on them |
+| Moments | Own messages, the links and mentions on them |
 | Strong | Prominent buttons (including send), checked controls, switches, badges, tooltips; `text-on-prominent` is their ink, `affordance-prominent-mark` their standalone dots, lines and slider track/thumb |
-| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row`, `text-row-subtle`, `text-row-metadata`); unread labels retain Semibold `text-navigation-unread` on hover and selection (near-black in light mode below Buzzin’, paired accent ink at Buzzin’; white in dark mode). Black ink is allowed on accent fills. |
+| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row`, `text-row-selected`, `text-row-subtle`, `text-row-metadata`). In dark mode the fills stay neutral, because dark chartreuse has no vivid form; the selected label carries the accent at its glowing step; unread labels retain Semibold `text-navigation-unread` on hover and selection (near-black in light mode below Buzzin’, paired accent ink at Buzzin’; white in dark mode). Black ink is allowed on accent fills. |
 | Controls | Resting quiet fills, their hover and pressed states, floating controls, control outlines |
 | Shell | `bg-app`, its dots, and the chrome on it (`affordance-chrome`, its hover, `text-chrome-subtle`, `bg-chrome-selected`) |
 | Lines | Separators, thread lines, scrollbars |
@@ -1298,9 +1298,9 @@ roles, so nothing stays gray on a background that turned accent.
 | Accent level | Groups on the accent |
 | --- | --- |
 | Snoozin’ | None; accent tints, lines and accent text only |
-| Hummin’ | Strong, rows |
+| Hummin’ | Links, strong, rows |
 | Swarmin’ | Adds your own messages and the shell |
-| Buzzin’ | Adds controls, lines, secondary text, surfaces, primary text and links |
+| Buzzin’ | Adds controls, lines, secondary text, surfaces and primary text |
 
 Status colors, focus, categorical purple, shadows and media-specific roles stay
 fixed. Media pixels, the black viewing canvas and the white-on-dark media-glass
@@ -1459,12 +1459,25 @@ separate WCAG 3:1 non-text ratio; decorative separators and hover fills do not.
 
 ### Link contrast
 
-Inline links and mentions follow their ground. On neutral reading surfaces
-below Buzzin’ they use Blue 11 with Blue 3 hover in both modes.
-On colored surfaces they take the accent's paired ink: Buzzin’ surfaces use the
-accent link step and its hover, and own messages use `text-message-link-own`,
-which pairs with that level's bubble fill. Components consume `text-link` or
-`text-message-link-own`; never pick a link color per component.
+Inline links use `text-link`. At Snoozin’ that is Blue 11 with Blue 3 hover in
+both modes. From Hummin’ each accent family supplies a link partner that stays
+readable as text on its grounds: chartreuse keeps Blue 11 in light mode, because
+darkened chartreuse turns olive, and uses bright chartreuse in dark mode, where
+it can glow. Own messages use `text-message-link-own`, which pairs with that
+level's bubble fill. Components consume `text-link` or `text-message-link-own`;
+never pick a link color per component.
+
+Mentions are people, not destinations, so they are chips rather than links.
+Spend the accent on mentions of you, not on mentions in general: ordinary
+mentions repeat in almost every message, so they stay a neutral chip
+(`text-mention` on `affordance-mention`) at every level, matching the composer.
+A mention of you asks for your attention and joins the strong group:
+`text-mention-self` on `affordance-mention-self`, the prominent fill and its ink
+in light mode, and a neutral chip with the prominent mark as ink in dark mode,
+where fills stay neutral. Inside your own bubble the `-own` pair wins; on the
+brand-filled Buzzin’ bubble it inverts the bubble's fill and ink. System notices
+name people as quiet text, never as chips.
+
 Blue 11 is tuned for the supported surface stack: #0b5fa8 in light mode and
 #83c4ff in dark. These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including

@@ -179,6 +179,7 @@ const PAIRS = [
   ]),
   ...["--affordance-row-hover", "--affordance-selected"].flatMap((fill) => [
     ["--text-row", fill],
+    ["--text-row-selected", fill],
     ["--text-navigation-unread", fill],
     ["--text-row-subtle", fill],
     ["--text-row-metadata", fill],
@@ -191,6 +192,12 @@ const PAIRS = [
   ["--text-danger", "--affordance-floating-hover"],
   ["--text-inverse", "--surface-inverse"],
   ["--text-link", "--affordance-link-hover"],
+  // Mentions: ink on the highlight, and the own-bubble pairing, at rest and hover.
+  ...["", "-hover"].flatMap((state) => [
+    ["--text-mention", `--affordance-mention${state}`],
+    ["--text-mention-own", `--affordance-mention-own${state}`],
+    ["--text-mention-self", `--affordance-mention-self${state}`],
+  ]),
   ...["subtle", "subtle-hover", "subtle-pressed"].map((state) => [
     "--text-standard",
     `--affordance-${state}`,

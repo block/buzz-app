@@ -537,6 +537,18 @@
   --surface-message-own: var(--bubble-neutral);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
+  /* Mentions are people, not links. Ordinary mentions stay neutral; a mention
+     of you joins the strong group, because it asks for your attention. Own
+     bubbles may override the -own trio to stay distinct from their fill. */
+  --affordance-mention: var(--neutral-4);
+  --affordance-mention-hover: var(--neutral-5);
+  --text-mention: var(--text-standard);
+  --affordance-mention-self: var(--affordance-prominent);
+  --affordance-mention-self-hover: var(--affordance-prominent-hover);
+  --text-mention-self: var(--text-on-prominent);
+  --affordance-mention-own: var(--affordance-mention);
+  --affordance-mention-own-hover: var(--affordance-mention-hover);
+  --text-mention-own: var(--text-mention);
   --text-navigation: var(--neutral-navigation-text);
   --text-navigation-unread: var(--neutral-navigation-unread);
   --text-standard: var(--neutral-standard-text);
@@ -591,6 +603,7 @@
   --text-row-metadata: var(--text-metadata);
   /* Primary navigation text on a hovered or selected row. */
   --text-row: var(--text-navigation);
+  --text-row-selected: var(--text-row);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
   --affordance-chrome: var(--affordance-subtle);
@@ -628,6 +641,18 @@
   --surface-message-own: var(--bubble-neutral);
   --text-message-own: var(--text-standard);
   --text-message-link-own: var(--text-link);
+  /* Dark fills stay neutral; a mention of you carries the accent as ink,
+     as selected rows and links do. Neutral 7 drops warm accent inks below
+     AA, so hover settles one step back. */
+  --affordance-mention: var(--neutral-6);
+  --affordance-mention-hover: var(--neutral-5);
+  --text-mention: var(--text-standard);
+  --affordance-mention-self: var(--neutral-6);
+  --affordance-mention-self-hover: var(--neutral-5);
+  --text-mention-self: var(--affordance-prominent-mark);
+  --affordance-mention-own: var(--affordance-mention);
+  --affordance-mention-own-hover: var(--affordance-mention-hover);
+  --text-mention-own: var(--text-mention);
   --shadow-panel: 0 0 0 1px rgba(255, 255, 255, 0.08);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
@@ -687,6 +712,7 @@
   --text-row-metadata: var(--text-metadata);
   /* Primary navigation text on a hovered or selected row. */
   --text-row: var(--text-navigation);
+  --text-row-selected: var(--text-row);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
   --affordance-chrome: var(--affordance-subtle);
@@ -935,8 +961,10 @@
   --accent-contrast-light: #000000;
   --accent-ink-light: #303005;
   --accent-pressed-light: #c3c315;
-  --accent-link-light: #575602;
-  --accent-link-hover-light: #f5f4da;
+  /* Darkened chartreuse turns olive, so light-mode links stay Blue 11 with
+     Blue 3 hover. Dark mode keeps bright chartreuse links. */
+  --accent-link-light: #0b5fa8;
+  --accent-link-hover-light: #e6f4fe;
   --accent-1-dark: #10100a;
   --accent-2-dark: #17170c;
   --accent-3-dark: #23230b;
@@ -1241,17 +1269,21 @@
 }
 
 /* Accent levels switch whole color groups onto the accent ramp. Snoozin’ is the
-   neutral role layer. Hummin’ adds strong controls and rows. Swarmin’ adds your
+   neutral role layer. Hummin’ adds links, strong controls and rows. Swarmin’ adds your
    own messages and the shell (background, dots and chrome on it). Buzzin’ also
-   colors quiet controls, lines, surfaces, text and links. Shared groups are
+   colors quiet controls, lines, surfaces and text. Shared groups are
    declared once; level-only blocks contain intentional differences. */
-/* Hummin’, Swarmin’ and Buzzin’: strong controls and rows. Light. */
+/* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Light. */
 :root[data-color-level="touch"],
 [data-color-level="touch"] .light,
 :root[data-color-level="more"],
 [data-color-level="more"] .light,
 :root[data-color-level="full"],
 [data-color-level="full"] .light {
+  /* Each family names its link partner: a color that stays readable as
+     text on light grounds. Chartreuse can only glow on dark grounds. */
+  --text-link: var(--accent-link);
+  --affordance-link-hover: var(--accent-link-hover);
   --affordance-prominent: var(--accent-9);
   --affordance-prominent-hover: var(--accent-10);
   --affordance-prominent-pressed: var(--accent-pressed);
@@ -1311,10 +1343,11 @@
 /* Full-only changes. Light. */
 :root[data-color-level="full"],
 [data-color-level="full"] .light {
-  /* Links follow their ground: blue on neutral reading surfaces, paired
-     accent ink once Buzzin’ colors the surfaces. */
-  --text-link: var(--accent-link);
-  --affordance-link-hover: var(--accent-link-hover);
+  /* A highlight would vanish into the brand-filled bubble: invert the
+     bubble's own pair so the mention reads as a chip on it. */
+  --affordance-mention-own: var(--text-message-own);
+  --affordance-mention-own-hover: var(--text-message-own);
+  --text-mention-own: var(--surface-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);
@@ -1338,28 +1371,37 @@
   --text-unavailable: var(--accent-8);
 }
 
-/* Hummin’, Swarmin’ and Buzzin’: strong controls and rows. Dark. */
+/* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Dark. */
 :root[data-color-level="touch"][data-color-mode="dark"],
 [data-color-level="touch"] .dark,
 :root[data-color-level="more"][data-color-mode="dark"],
 [data-color-level="more"] .dark,
 :root[data-color-level="full"][data-color-mode="dark"],
 [data-color-level="full"] .dark {
+  /* Each family names its link partner: a color that stays readable as
+     text on light grounds. Chartreuse can only glow on dark grounds. */
+  --text-link: var(--accent-link);
+  --affordance-link-hover: var(--accent-link-hover);
   --affordance-prominent: var(--accent-9);
   --affordance-prominent-hover: var(--accent-10);
   --affordance-prominent-pressed: var(--accent-pressed);
   --text-on-prominent: var(--accent-contrast);
   --affordance-prominent-mark: var(--accent-11);
-  --affordance-row-hover: var(--accent-3);
-  --affordance-navigation-quiet: var(--accent-3);
-  --affordance-panel-hover: var(--accent-3);
-  --affordance-selected: var(--accent-4);
-  --affordance-floating-hover: var(--accent-4);
-  --affordance-popover-selected: var(--accent-4);
-  --affordance-floating-selected: var(--accent-5);
-  --text-row-subtle: var(--accent-11);
-  --text-row-metadata: var(--accent-11);
-  --text-row: var(--accent-12);
+  /* Dark chartreuse has no vivid form, so dark rows keep neutral fills and
+     let the selected label carry the accent at its glowing step. The level
+     blocks above also match a dark root, so restate the neutral row group
+     by step: Buzzin’ tints quiet controls, but its rows stay neutral too. */
+  --affordance-row-hover: var(--neutral-4);
+  --affordance-panel-hover: var(--neutral-4);
+  --affordance-navigation-quiet: var(--neutral-navigation-quiet);
+  --affordance-selected: var(--neutral-5);
+  --affordance-floating-hover: var(--neutral-5);
+  --affordance-popover-selected: var(--neutral-6);
+  --affordance-floating-selected: var(--neutral-6);
+  --text-row-subtle: var(--text-subtle);
+  --text-row-metadata: var(--text-metadata);
+  --text-row: var(--text-navigation);
+  --text-row-selected: var(--accent-11);
 }
 
 /* Buzzin’: quiet controls, shell, lines and supporting text. Dark. */
@@ -1404,10 +1446,11 @@
 /* Full-only changes. Dark. */
 :root[data-color-level="full"][data-color-mode="dark"],
 [data-color-level="full"] .dark {
-  /* Links follow their ground: blue on neutral reading surfaces, paired
-     accent ink once Buzzin’ colors the surfaces. */
-  --text-link: var(--accent-link);
-  --affordance-link-hover: var(--accent-link-hover);
+  /* A highlight would vanish into the brand-filled bubble: invert the
+     bubble's own pair so the mention reads as a chip on it. */
+  --affordance-mention-own: var(--text-message-own);
+  --affordance-mention-own-hover: var(--text-message-own);
+  --text-mention-own: var(--surface-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);
@@ -1434,6 +1477,9 @@
   --text-color-link: var(--text-link);
   --text-color-message-own: var(--text-message-own);
   --text-color-message-link-own: var(--text-message-link-own);
+  --text-color-mention: var(--text-mention);
+  --text-color-mention-own: var(--text-mention-own);
+  --text-color-mention-self: var(--text-mention-self);
   --text-color-navigation: var(--text-navigation);
   --text-color-navigation-unread: var(--text-navigation-unread);
   --color-affordance-link-hover: var(--affordance-link-hover);
@@ -1476,6 +1522,7 @@
   --text-color-row-subtle: var(--text-row-subtle);
   --text-color-row-metadata: var(--text-row-metadata);
   --text-color-row: var(--text-row);
+  --text-color-row-selected: var(--text-row-selected);
   --color-affordance-chrome: var(--affordance-chrome);
   --color-affordance-chrome-hover: var(--affordance-chrome-hover);
   --text-color-chrome-subtle: var(--text-chrome-subtle);
@@ -1502,6 +1549,12 @@
   --border-color-success-subtle: var(--border-success-subtle);
   --color-affordance-accent: var(--affordance-accent);
   --color-affordance-accent-hover: var(--affordance-accent-hover);
+  --color-affordance-mention: var(--affordance-mention);
+  --color-affordance-mention-hover: var(--affordance-mention-hover);
+  --color-affordance-mention-own: var(--affordance-mention-own);
+  --color-affordance-mention-own-hover: var(--affordance-mention-own-hover);
+  --color-affordance-mention-self: var(--affordance-mention-self);
+  --color-affordance-mention-self-hover: var(--affordance-mention-self-hover);
   --color-affordance-accent-prominent: var(--affordance-accent-prominent);
   --color-affordance-accent-prominent-hover: var(
     --affordance-accent-prominent-hover

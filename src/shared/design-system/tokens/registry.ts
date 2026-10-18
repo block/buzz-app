@@ -352,6 +352,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "proposed",
       },
       {
+        token: "text-row-selected",
+        variable: "--text-row-selected",
+        pointsAt: "text-row; accent step 11 in dark mode from Hummin’",
+        use: "Navigation label on the selected row. Dark rows keep neutral fills, so the selected label carries the accent.",
+        status: "proposed",
+      },
+      {
         token: "text-row-subtle",
         variable: "--text-row-subtle",
         pointsAt: "text-subtle; accent step 11 once rows take the accent",
@@ -440,8 +447,9 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-link",
         variable: "--text-link",
-        pointsAt: "blue-11 light / blue-11 dark; accent link at Buzzin’",
-        use: "Inline links and mentions in prose. Blue on neutral reading surfaces; accent ink once Buzzin’ colors them.",
+        pointsAt:
+          "blue-11 at Snoozin’; the family link partner from Hummin’ (chartreuse: blue-11 light, bright chartreuse dark)",
+        use: "Inline links in prose. Mentions use text-mention on a highlight instead.",
         status: "core",
       },
       {
@@ -457,7 +465,29 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-message-link-own",
         pointsAt:
           "text-link on neutral bubbles; accent link at Swarmin’; accent ink at Buzzin’",
-        use: "Links and mentions on the selected outgoing message surface.",
+        use: "Links on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-mention",
+        variable: "--text-mention",
+        pointsAt: "text-standard",
+        use: "Ordinary mention labels, paired with bg-affordance-mention. Mentions are people, not links.",
+        status: "core",
+      },
+      {
+        token: "text-mention-own",
+        variable: "--text-mention-own",
+        pointsAt:
+          "text-mention; the own bubble's fill at Buzzin’ (inverted chip)",
+        use: "Mention labels inside your own bubble, paired with bg-affordance-mention-own.",
+        status: "core",
+      },
+      {
+        token: "text-mention-self",
+        variable: "--text-mention-self",
+        pointsAt: "text-on-prominent light / affordance-prominent-mark dark",
+        use: "A mention of you, paired with bg-affordance-mention-self. It asks for your attention, so it joins the strong group.",
         status: "core",
       },
       {
@@ -914,6 +944,48 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--affordance-accent",
         pointsAt: "accent step 3",
         use: "A quiet identity or selection fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention",
+        variable: "--affordance-mention",
+        pointsAt: "neutral-4 light / neutral-6 dark",
+        use: "Ordinary mention chip fill, paired with text-mention. Frequent, so it stays neutral at every level.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-hover",
+        variable: "--affordance-mention-hover",
+        pointsAt: "neutral-5 light / neutral-5 dark",
+        use: "Mention chip under the pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-own",
+        variable: "--affordance-mention-own",
+        pointsAt: "affordance-mention; the own bubble's ink at Buzzin’",
+        use: "Mention chip fill inside your own bubble, paired with text-mention-own.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-own-hover",
+        variable: "--affordance-mention-own-hover",
+        pointsAt: "affordance-mention-hover; the own bubble's ink at Buzzin’",
+        use: "Own-bubble mention chip under the pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-self",
+        variable: "--affordance-mention-self",
+        pointsAt: "affordance-prominent light / neutral-6 dark",
+        use: "Chip fill for a mention of you, paired with text-mention-self.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-self-hover",
+        variable: "--affordance-mention-self-hover",
+        pointsAt: "affordance-prominent-hover light / neutral-5 dark",
+        use: "A mention of you under the pointer.",
         status: "core",
       },
       {

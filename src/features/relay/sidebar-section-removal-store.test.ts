@@ -592,3 +592,52 @@ it("confirms the filter reset before section removal and leaves failures retryab
     store.dispose();
   }
 });
+
+it("clears only the removed section's failed filter save after removal succeeds", async () => {
+  const filter = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("section save failed"))
+    .mockRejectedValueOnce(new Error("channel save failed"))
+    .mockResolvedValue({ filters: {}, activeWindowSeconds: {} });
+  const remove = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("removal failed"))
+    .mockResolvedValue(removed);
+  const store = createSidebarPreferencesStore(
+    async () => data,
+    true,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => ({}),
+    undefined,
+    remove,
+    false,
+    undefined,
+    undefined,
+    filter,
+  );
+  try {
+    await store.queries.ensure();
+    await expect(
+      store.queries.setFilter("section:work", "active", ["work"]),
+    ).rejects.toThrow("section save failed");
+    await expect(
+      store.queries.setFilter("channels", "unreads", ["work"]),
+    ).rejects.toThrow("channel save failed");
+    await expect(store.queries.removeSection("work")).rejects.toThrow(
+      "removal failed",
+    );
+    expect(
+      store.queries.snapshot().filterErrors?.map(({ group }) => group),
+    ).toEqual(["section:work", "channels"]);
+    await store.queries.removeSection("work");
+    expect(store.queries.snapshot().data?.sections).toEqual([]);
+    expect(
+      store.queries.snapshot().filterErrors?.map(({ group }) => group),
+    ).toEqual(["channels"]);
+  } finally {
+    store.dispose();
+  }
+});

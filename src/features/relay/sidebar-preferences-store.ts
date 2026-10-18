@@ -512,6 +512,7 @@ export function createSidebarPreferencesStore(
           sections: next.sections,
           assignments: next.assignments,
         };
+        failedFilters.delete(group);
         project();
         return retained(confirmed);
       })

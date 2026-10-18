@@ -159,6 +159,11 @@ test("record, preview, send and play the chat card with speed and seeking", {
     name: "Voice note",
     exact: true,
   });
+  // A finished upload swaps in the sent copy, which remounts the player.
+  await expect(draftCard.locator("audio")).toHaveAttribute(
+    "src",
+    /^\/api\/relay\/media\?/,
+  );
   const draftPlay = draftCard.getByRole("button", {
     name: "Play voice note",
     exact: true,

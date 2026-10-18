@@ -1036,7 +1036,10 @@ function MessageRowContent({
             />
           ) : (
             reactions.length > 0 && (
-              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
+              <div
+                className={`${styles.reactions} ${styles.reactionFallback}`}
+                data-message-reactions
+              >
                 {reactions.flatMap((reaction) =>
                   [
                     ...new Set(reaction.events.map((event) => event.authorId)),

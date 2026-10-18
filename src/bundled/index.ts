@@ -204,11 +204,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...moderationManifest, apiVersion: 1 },
     module: moderation,
-    enabledByDefault: true,
+    enabledByDefault: false,
   },
   {
     manifest: { ...relayStaffManifest, apiVersion: 1 },
     module: relayStaff,
-    enabledByDefault: true,
+    enabledByDefault: false,
   },
 ];

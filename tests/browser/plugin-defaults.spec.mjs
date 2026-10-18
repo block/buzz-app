@@ -74,11 +74,17 @@ test("Membership action removes and restores the working Invite destination", as
       page.getByRole("menu", { name: "Actions for Primary" }),
     ).toBeVisible();
   };
+  await plugins(page);
+  const admin = pluginAction(page, "Membership");
+  await expect(admin).toHaveAccessibleName(/^Enable /);
+  await expect(pluginAction(page, "Moderation")).toHaveAccessibleName(
+    /^Enable /,
+  );
+  await admin.click();
+  await expect(admin).toHaveAccessibleName(/^Disable /);
   await menu();
   await expect(invite).toBeVisible();
   await page.keyboard.press("Escape");
-  await plugins(page);
-  const admin = pluginAction(page, "Membership");
   await admin.click();
   await expect(admin).toHaveAccessibleName(/^Enable /);
   await menu();

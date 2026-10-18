@@ -328,7 +328,13 @@ function PluginDetails({
           </Button>
         ) : (
           <Button
-            variant={plugin.enabled ? "subtle" : "prominent"}
+            variant={
+              plugin.enabled
+                ? "subtle"
+                : busy || accessReason
+                  ? "outline"
+                  : "prominent"
+            }
             size="sm"
             disabled={
               busy ||
@@ -843,7 +849,13 @@ export function Settings({
                         </Button>
                       ) : (
                         <Button
-                          variant={plugin.enabled ? "subtle" : "prominent"}
+                          variant={
+                            plugin.enabled
+                              ? "subtle"
+                              : busy || accessReason
+                                ? "outline"
+                                : "prominent"
+                          }
                           size="sm"
                           aria-label={`${plugin.enabled ? "Disable" : "Enable"} ${plugin.manifest.name}`}
                           disabled={

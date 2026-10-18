@@ -1708,6 +1708,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       name: "Enable Restricted plugin",
     });
     expect(action).toHaveAttribute("aria-disabled", "true");
+    expect(action).toHaveAttribute("data-variant", "outline");
     expect(screen.queryByText("Checking access…")).not.toBeInTheDocument();
     await user.hover(action);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
@@ -1729,6 +1730,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       name: /^Enable$/,
     });
     expect(enable).toHaveAttribute("aria-disabled", "true");
+    expect(enable).toHaveAttribute("data-variant", "outline");
     await user.hover(enable);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "Checking access…",

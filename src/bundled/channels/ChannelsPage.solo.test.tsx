@@ -25,7 +25,7 @@ import {
 } from "../../features/channel-navigation/routes";
 import { writeView } from "../../shared/view-state";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
-import { SoloProjects } from "./SoloProjects";
+import { SoloWorkspaces } from "./SoloWorkspaces";
 import type { RelaySession } from "../../features/relay/session";
 
 composerDOMFixture();
@@ -232,7 +232,7 @@ function fixture({
   const page = (sidebar = false) => (
     <ChannelNavigationProvider relay={relay}>
       {sidebar && (
-        <SoloProjects
+        <SoloWorkspaces
           session={session as unknown as RelaySession}
           navigator={navigator}
           scope={scope}
@@ -401,7 +401,7 @@ it("starts a Solo draft route in its project, with that project's saved draft", 
   ).toHaveTextContent("Plan the week");
   await waitFor(() =>
     expect(
-      within(region).getByRole("button", { name: "Project: Work" }),
+      within(region).getByRole("button", { name: "Workspace: Work" }),
     ).toBeEnabled(),
   );
 });
@@ -419,7 +419,7 @@ it("tags a Solo draft route's agent in the new chat", async () => {
     within(region).getByRole("textbox", { name: "Message your agents" }),
   ).not.toHaveTextContent("@Helper");
   expect(
-    within(region).getByRole("button", { name: "Add project" }),
+    within(region).getByRole("button", { name: "Add workspace" }),
   ).toBeVisible();
 });
 
@@ -430,7 +430,7 @@ it("gives the owner's Solo chat its tag requirement and project", async () => {
     name: "Message your agents",
   });
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Add project" })).toBeEnabled(),
+    expect(screen.getByRole("button", { name: "Add workspace" })).toBeEnabled(),
   );
   const user = userEvent.setup();
   await user.click(input);
@@ -449,7 +449,7 @@ it("uses the ordinary composer for a guest in a shared Solo chat", async () => {
   const input = await screen.findByRole("textbox", {
     name: "Message your agents",
   });
-  expect(screen.queryByRole("button", { name: "Add project" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add workspace" })).toBeNull();
   const user = userEvent.setup();
   await user.click(input);
   await user.keyboard("Hello team{Enter}");
@@ -521,6 +521,57 @@ it.each([
     else expect(f.open).not.toHaveBeenCalled();
   },
 );
+
+it("offers the same chat actions from the header and the sidebar row", async () => {
+  const f = fixture();
+  f.mountWithSidebar();
+  const user = userEvent.setup();
+  const items = async (trigger: string) => {
+    await user.click(await screen.findByRole("button", { name: trigger }));
+    const menu = await screen.findByRole("menu", { name: trigger });
+    await within(menu).findByRole("menuitem", { name: "Delete chat" });
+    const names = within(menu)
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    return names;
+  };
+  const header = await items("Chat actions");
+  expect(header).toEqual([
+    "Share…",
+    "Convert to channel",
+    "Move to",
+    "Copy",
+    "Chat settings…",
+    "Archive chat",
+    "Delete chat",
+  ]);
+  expect(await items("Actions for Planning")).toEqual(header);
+});
+
+it("runs the header's own chat actions and returns focus to Chat actions", async () => {
+  const f = fixture();
+  const assign = vi.fn(async () => {});
+  Object.assign(f.session.soloPreferences, { writable: true, assign });
+  f.mount();
+  const user = userEvent.setup();
+  const trigger = await screen.findByRole("button", { name: "Chat actions" });
+  await user.click(trigger);
+  (await screen.findByRole("menuitem", { name: "Move to" })).focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Work" }));
+  expect(assign).toHaveBeenCalledExactlyOnceWith(id, "work");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await user.click(trigger);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Chat settings…" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Chat settings" });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
 
 it("returns focus to Chat actions when its confirmation is cancelled", async () => {
   const f = fixture();

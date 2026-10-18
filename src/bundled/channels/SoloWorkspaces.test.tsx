@@ -17,7 +17,7 @@ import {
   type RelaySession,
 } from "../../features/relay/session";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import { SoloProjects } from "./SoloProjects";
+import { SoloWorkspaces } from "./SoloWorkspaces";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
@@ -77,13 +77,19 @@ function fixture(projectName = "Work") {
       groupsOnly: true,
     });
   const onNew = vi.fn();
-  const channels = { status: "ready", channels: [] };
+  const channels = {
+    status: "ready",
+    channels: [
+      { id: "chat", name: "Planning", channelType: "solo" },
+      { id: "other", name: "Existing chat", channelType: "solo" },
+    ],
+  };
   const view = (
     preferences: ReturnType<typeof store>["queries"],
     scope = "viewer:community",
     unread: unknown = owner.session.unread,
   ) => (
-    <SoloProjects
+    <SoloWorkspaces
       onNew={onNew}
       session={
         {
@@ -102,7 +108,14 @@ function fixture(projectName = "Work") {
       renderChat={(item) => <button type="button">{item.title}</button>}
     />
   );
-  return { store, view, write, remove, onNew, saved: () => saved };
+  return {
+    store,
+    view,
+    write,
+    remove,
+    onNew,
+    saved: () => saved,
+  };
 }
 
 it("creates and moves through the relay service, then restores in a fresh store", async () => {
@@ -124,10 +137,10 @@ it("creates and moves through the relay service, then restores in a fresh store"
   (await screen.findByRole("menuitem", { name: "Move to" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(
-    await screen.findByRole("menuitem", { name: "New project…" }),
+    await screen.findByRole("menuitem", { name: "New workspace…" }),
   );
   await user.type(
-    screen.getByRole("textbox", { name: "Project name" }),
+    screen.getByRole("textbox", { name: "Workspace name" }),
     "Projects",
   );
   await user.click(screen.getByRole("button", { name: "Create and move" }));
@@ -140,7 +153,9 @@ it("creates and moves through the relay service, then restores in a fresh store"
       expect.objectContaining({ aborted: false }),
     ),
   );
-  await waitFor(() => expect(screen.queryByText("Saving project…")).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByText("Saving workspace…")).toBeNull(),
+  );
   expect(h.saved().assignments.chat).toBe(h.saved().sections[1]?.id);
   mounted.unmount();
   first.dispose();
@@ -196,7 +211,7 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   h.remove.mockRejectedValueOnce(new Error("Deletion unavailable"));
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Delete project" }),
+    await screen.findByRole("menuitem", { name: "Delete workspace" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Deletion unavailable",
@@ -204,7 +219,7 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   expect(screen.getByRole("button", { name: "Work" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Delete project" }),
+    await screen.findByRole("menuitem", { name: "Delete workspace" }),
   );
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Work" })).toBeNull(),
@@ -277,7 +292,7 @@ it("only offers Chats as a destination from a project", async () => {
     );
     (await screen.findByRole("menuitem", { name: "Move to" })).focus();
     await user.keyboard("{ArrowRight}");
-    await screen.findByRole("menuitem", { name: "New project…" });
+    await screen.findByRole("menuitem", { name: "New workspace…" });
   };
   await openProjectMenu();
   expect(screen.queryByRole("menuitem", { name: "Chats" })).toBeNull();

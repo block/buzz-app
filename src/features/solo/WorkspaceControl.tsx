@@ -14,7 +14,7 @@ import {
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 
-export function ProjectControl({
+export function WorkspaceControl({
   session,
   value,
   onChange,
@@ -67,11 +67,11 @@ export function ProjectControl({
             snapshot.status === "idle" ||
             snapshot.status === "loading"
           }
-          aria-label={project ? `Project: ${project.name}` : "Add project"}
+          aria-label={project ? `Workspace: ${project.name}` : "Add workspace"}
           render={(props) => (
             <Button {...props} variant="ghost" size="xs">
               <Cube3dSphereIcon size={16} aria-hidden="true" />
-              <span>{project?.name ?? "Add project"}</span>
+              <span>{project?.name ?? "Add workspace"}</span>
               <CaretDownIcon
                 size={12}
                 className="buzz-dropdown-chevron"
@@ -80,10 +80,10 @@ export function ProjectControl({
             </Button>
           )}
         />
-        <MenuPopup side="top" align="end" aria-label="Choose project">
+        <MenuPopup side="top" align="end" aria-label="Choose workspace">
           <MenuRadioGroup value={projectId} onValueChange={choose}>
             <MenuRadioItem value="" closeOnClick>
-              No project
+              No workspace
             </MenuRadioItem>
             {(snapshot.data?.sections ?? []).map((item) => (
               <MenuRadioItem key={item.id} value={item.id} closeOnClick>
@@ -93,7 +93,7 @@ export function ProjectControl({
           </MenuRadioGroup>
           {snapshot.status === "error" && (
             <MenuItem onClick={() => void session.soloPreferences.refresh()}>
-              Retry projects
+              Retry workspaces
             </MenuItem>
           )}
         </MenuPopup>

@@ -292,7 +292,7 @@ it("does not offer deleted-project recovery when project refresh fails", async (
       { projectId: "work", canvas: "", agents: [] },
       () => true,
     ),
-  ).rejects.toThrow("Projects couldn’t load");
+  ).rejects.toThrow("Workspaces couldn’t load");
   expect(f.calls).toEqual([]);
 });
 

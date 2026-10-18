@@ -545,8 +545,8 @@ export function createSidebarPreferencesStore({
       },
       createSection(section: Readonly<{ id: string; name: string }>) {
         if (!writable() || snapshot.cached || !createSection)
-          return Promise.reject(new Error("Projects are unavailable"));
-        return writeGroups("Projects are unavailable", (signal) =>
+          return Promise.reject(new Error("Workspaces are unavailable"));
+        return writeGroups("Workspaces are unavailable", (signal) =>
           createSection(section, signal),
         );
       },

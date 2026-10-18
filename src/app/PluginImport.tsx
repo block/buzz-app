@@ -683,17 +683,23 @@ export function PluginImport({
                           content: (
                             <section
                               aria-label="Plugin safety"
-                              className="text-body-sm"
+                              className="max-w-prose pl-8 text-body"
                             >
+                              <h4 className="mb-2 mt-0 text-label">
+                                Access beyond this list
+                              </h4>
                               <p className="m-0">
                                 Plugins aren’t sandboxed. They can access your
                                 computer beyond these declarations, even when no
                                 additional capabilities are listed.
                               </p>
-                              <p className="mb-0 mt-2">
-                                The declarations describe what the plugin asks
-                                Buzz to do; they don’t restrict everything its
-                                code can do. Only install code you trust.
+                              <p className="mb-0 mt-3 text-muted">
+                                These declarations describe what the plugin asks
+                                Buzz to do. They don’t limit what its code can
+                                do.
+                              </p>
+                              <p className="mb-0 mt-3 text-label-sm">
+                                Only install code you trust.
                               </p>
                             </section>
                           ),

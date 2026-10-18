@@ -135,6 +135,10 @@ function AttachmentItem({
   const element = useMediaElementSource(video ? source : undefined);
   const videoSource = element.src;
   const failed = !!source && (failedSource === source || element.unavailable);
+  // A finished upload swaps in the sent copy. Keep the current thumbnail until
+  // that copy has loaded so the swap never shows a blank frame.
+  const [shown, setShown] = useState(source);
+  const incoming = image && source !== shown ? source : undefined;
   const bytes = item.uploaded?.size ?? item.file.size;
   const size =
     bytes < 1024 * 1024
@@ -218,12 +222,28 @@ function AttachmentItem({
           }}
         >
           {image ? (
-            <img
-              key={source}
-              src={source}
-              alt=""
-              onError={() => setFailedSource(source)}
-            />
+            <>
+              {shown && (
+                <img
+                  key={shown}
+                  src={shown}
+                  alt=""
+                  onError={() => setFailedSource(shown)}
+                />
+              )}
+              {incoming && (
+                <img
+                  key={incoming}
+                  src={incoming}
+                  alt=""
+                  onLoad={() => setShown(incoming)}
+                  onError={() => {
+                    setShown(incoming);
+                    setFailedSource(incoming);
+                  }}
+                />
+              )}
+            </>
           ) : (
             // Not `muted`: this still preview never plays. WebKitGTK stops a
             // muted video's pipeline whenever it leaves the viewport and

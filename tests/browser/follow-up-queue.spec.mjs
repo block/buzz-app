@@ -9,8 +9,8 @@ test.use({
   localAgentActivity: true,
   channelIds: [chat],
   channelNames: { [chat]: "Alpha" },
-  sessionChannels: [chat],
-  meChannels: [chat],
+  soloChannels: [chat],
+  ownSoloChannels: [chat],
   sessionMembers: { [chat]: [agent] },
   historyCounts: { [chat]: 1 },
 });
@@ -22,7 +22,7 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
   app,
 }, testInfo) => {
   await page.goto(app.origin);
-  await openPage(page, "Me");
+  await openPage(page, "Messages");
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await selectSettingsSection(page, "Messages", "Messages settings");
@@ -30,10 +30,10 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
   await expect(preference).toContainText("Send immediately");
   await preference.click();
   await page.getByRole("option", { name: "Queue", exact: true }).click();
-  await openPage(page, "Me");
+  await openPage(page, "Messages");
   await page
     .getByRole("navigation", { name: "Solo conversations" })
-    .locator(`[data-me-channel-id="${chat}"]`)
+    .locator(`[data-solo-channel-id="${chat}"]`)
     .click();
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))

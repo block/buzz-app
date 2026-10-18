@@ -1708,7 +1708,13 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       name: "Enable Restricted plugin",
     });
     expect(action).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByText("Checking access…")).not.toBeInTheDocument();
+    await user.hover(action);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Checking access…",
+    );
     expect(action).toHaveAccessibleDescription("Checking access…");
+    await user.unhover(action);
     await user.click(action);
     action.focus();
     await user.keyboard("{Enter}");
@@ -1719,10 +1725,16 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     const pane = screen.getByRole("complementary", {
       name: "Restricted plugin details",
     });
-    const enable = within(pane).getByRole("button", {
+    let enable = within(pane).getByRole("button", {
       name: /^Enable$/,
     });
     expect(enable).toHaveAttribute("aria-disabled", "true");
+    await user.hover(enable);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Checking access…",
+    );
+    expect(enable).toHaveAccessibleDescription("Checking access…");
+    await user.unhover(enable);
     for (const next of [
       "denied",
       "no-community",
@@ -1747,6 +1759,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       state = "allowed";
       for (const listener of listeners) listener();
     });
+    enable = within(pane).getByRole("button", { name: /^Enable$/ });
     expect(enable).not.toHaveAttribute("aria-disabled", "true");
     await user.click(enable);
     expect(f.manager.change).toHaveBeenCalledWith("enable", id);

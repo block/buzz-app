@@ -734,7 +734,3 @@
   color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
-
-.pluginAccess p {
-  margin: 0 0 var(--space-2);
-}

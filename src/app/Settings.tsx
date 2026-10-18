@@ -336,7 +336,13 @@ function PluginDetails({
                 restrictedPlugin(plugin) &&
                 access !== "allowed")
             }
-            aria-describedby={accessReason ? "plugin-detail-access" : undefined}
+            title={
+              !plugin.enabled && accessReason
+                ? access === "error"
+                  ? "Could not check access. Try again."
+                  : accessReason
+                : undefined
+            }
             focusableWhenDisabled
             ref={toggle}
             onClick={onToggle}
@@ -345,24 +351,17 @@ function PluginDetails({
           </Button>
         )}
       </div>
-      {accessReason && (
+      {accessReason && access === "error" && (
         <div className={styles.pluginAccess}>
-          <p id="plugin-detail-access" className="text-body-sm">
-            {access === "error"
-              ? "Could not check access. Try again."
-              : accessReason}
-          </p>
-          {access === "error" && (
-            <Button
-              size="sm"
-              onClick={() => {
-                onCheckAccess();
-                toggle.current?.focus();
-              }}
-            >
-              Check access again
-            </Button>
-          )}
+          <Button
+            size="sm"
+            onClick={() => {
+              onCheckAccess();
+              toggle.current?.focus();
+            }}
+          >
+            Check access again
+          </Button>
         </div>
       )}
       {readme && (
@@ -853,8 +852,10 @@ export function Settings({
                               restrictedPlugin(plugin) &&
                               access !== "allowed")
                           }
-                          aria-describedby={
-                            accessReason ? `plugin-access-${id}` : undefined
+                          title={
+                            !plugin.enabled && accessReason
+                              ? accessReason
+                              : undefined
                           }
                           focusableWhenDisabled
                           onClick={() => togglePlugin(plugin)}
@@ -864,14 +865,6 @@ export function Settings({
                       )}
                     </div>
                   </article>
-                  {accessReason && (
-                    <p
-                      id={`plugin-access-${id}`}
-                      className={`${styles.pluginAccess} text-body-sm`}
-                    >
-                      {accessReason}
-                    </p>
-                  )}
                   {failure && (
                     <p
                       className={`${styles.pluginRowError} error text-body-sm`}

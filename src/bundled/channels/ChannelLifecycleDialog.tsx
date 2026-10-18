@@ -60,7 +60,8 @@ function copyFor(action: ChannelLifecycleAction, noun: LifecycleNoun) {
   };
 }
 
-// Enter confirms reversible actions; irreversible ones default to Cancel.
+// Enter confirms reversible actions; irreversible ones focus Cancel, which
+// stays neutral so it never competes with a red confirm.
 const reversible = new Set<ChannelLifecycleAction>([
   "archive",
   "unarchive",
@@ -161,12 +162,7 @@ export function ChannelLifecycleDialog({
         description={copy.detail}
         actions={
           <>
-            <Button
-              ref={cancel}
-              type="button"
-              variant={confirms ? "subtle" : "prominent"}
-              onClick={close}
-            >
+            <Button ref={cancel} type="button" onClick={close}>
               Cancel
             </Button>
             <Button

@@ -13,7 +13,7 @@ const variables = BRAND_FAMILIES.flatMap((family) =>
 );
 
 export function BrandColors() {
-  const [selected, setSelected] = useState("--brand-cyan-500");
+  const [selected, setSelected] = useState("--brand-cyan-9");
   const [copyStatus, setCopyStatus] = useState("");
   const resolved = useResolvedTokens(variables);
   const value = resolved.get(selected)?.value ?? "";
@@ -31,8 +31,8 @@ export function BrandColors() {
 
   return (
     <Section
-      title="Plugin color families"
-      description="Explore the twelve colors behind the six plugin gradients. Each 500 stop is an exact source color; 50–950 explores lighter and darker shades. These fixed scales keep the same values in both themes. Use semantic roles for product UI."
+      title="Artwork color studies"
+      description="Additional colors drawn from plugin artwork, alongside the existing palette above. Twelve steps follow Buzz’s palette vocabulary; step 9 preserves the original gradient color. These studies keep the same values in both themes and do not replace existing colorways or semantic roles."
     >
       <div className="brand-gradient-grid">
         {BRAND_GRADIENTS.map((gradient) => (
@@ -43,7 +43,7 @@ export function BrandColors() {
             <div
               className="h-16 rounded-md"
               style={{
-                background: `linear-gradient(to bottom, var(--brand-${gradient.from}-500), var(--brand-${gradient.to}-500))`,
+                background: `linear-gradient(to bottom, var(--brand-${gradient.from}-9), var(--brand-${gradient.to}-9))`,
               }}
             />
             <span className="text-body-sm text-primary">{gradient.name}</span>

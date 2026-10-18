@@ -23,22 +23,22 @@ it("selects a shade and copies its CSS reference, with a manual fallback", async
     value: { writeText },
   });
   render(createElement(BrandColors));
-  fireEvent.click(screen.getByRole("button", { name: "violet 700" }));
-  expect(screen.getByRole("button", { name: "cyan 500" })).toHaveAttribute(
+  fireEvent.click(screen.getByRole("button", { name: "violet 11" }));
+  expect(screen.getByRole("button", { name: "cyan 9" })).toHaveAttribute(
     "aria-pressed",
     "false",
   );
-  expect(screen.getByRole("button", { name: "violet 700" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "violet 11" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   fireEvent.click(screen.getByRole("button", { name: "Copy CSS" }));
   expect(await screen.findByText("Copied CSS variable.")).toBeInTheDocument();
-  expect(writeText).toHaveBeenCalledWith("var(--brand-violet-700)");
-  fireEvent.click(screen.getByRole("button", { name: "lime 950" }));
+  expect(writeText).toHaveBeenCalledWith("var(--brand-violet-11)");
+  fireEvent.click(screen.getByRole("button", { name: "lime 12" }));
   expect(screen.getByRole("status")).toBeEmptyDOMElement();
   writeText.mockRejectedValueOnce(new Error("denied"));
   fireEvent.click(screen.getByRole("button", { name: "Copy CSS" }));
   expect(await screen.findByText(/Could not copy/)).toBeInTheDocument();
-  expect(screen.getByText("var(--brand-lime-950)")).toBeInTheDocument();
+  expect(screen.getByText("var(--brand-lime-12)")).toBeInTheDocument();
 });

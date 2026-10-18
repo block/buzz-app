@@ -21,7 +21,7 @@ it("preserves the gradient endpoints inside complete descending shade ranges", (
       expect(Number(lightness)).toBeLessThan(previousLightness);
       previousLightness = Number(lightness);
       expect(Number(hue)).toBe(family.hue);
-      if (shade === 500) {
+      if (shade === 9) {
         expect(Number(lightness)).toBe(60);
         expect(Number(chroma)).toBe(family.chroma);
       }

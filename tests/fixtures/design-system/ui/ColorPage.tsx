@@ -86,8 +86,6 @@ export function ColorPage() {
         intro="Choose colors by their purpose: surface, text, border, or action. Shared roles connect those purposes to the palette in light and dark mode. The examples below come from the token registry."
       />
 
-      <BrandColors />
-
       <Section
         title="Layer 0 — the palette"
         description="Each hue has twelve steps with separate light and dark values. Define raw color values here, then use semantic roles in components. Choose the appropriate step in a shared mapping instead of changing opacity locally."
@@ -130,6 +128,8 @@ export function ColorPage() {
           ))}
         </div>
       </Section>
+
+      <BrandColors />
 
       <Section
         title="Legacy glass-study backgrounds"

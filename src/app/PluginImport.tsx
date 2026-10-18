@@ -67,7 +67,7 @@ function hostDeclarations(manifest: PluginManifest) {
       signature: `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])} · input: ${command.maxInputBytes === undefined ? "none" : `up to ${command.maxInputBytes} bytes`} · output: up to ${command.maxOutputBytes ?? 4096} bytes`,
       title: `Command ${command.id}:`,
       label: `Run ${command.program}`,
-      hint: "Buzz can run this program on your computer with the plugin’s configured arguments.",
+      hint: "Run a program on your computer.",
       icon: TerminalWindowIcon,
       details: (
         <>
@@ -369,13 +369,20 @@ export function PluginImport({
             ? undefined
             : preview
               ? reviewing
-                ? "Review what this plugin asks Buzz to do."
+                ? undefined
                 : preview.candidates.length
                   ? "Select a plugin to review before installing."
                   : "Try another folder or repository."
               : "Choose a built plugin to load."
         }
         size={error ? "default" : "wide"}
+        leadingActions={
+          reviewing && candidate && !existing && !error ? (
+            <span className="text-body-sm text-muted">
+              Installed turned off
+            </span>
+          ) : undefined
+        }
         actions={
           error ? (
             <Button
@@ -428,7 +435,7 @@ export function PluginImport({
                     if (!current.active) return;
                     if (success)
                       setNotice(
-                        `${candidate.manifest.name} installed. Use Back to choose another folder, or close this dialog.`,
+                        `${candidate.manifest.name} installed.${existing ? "" : " Turn it on in the plugin list when you’re ready."} Use Back to choose another folder, or close this dialog.`,
                       );
                     else
                       showError(
@@ -649,20 +656,6 @@ export function PluginImport({
                     aria-label="Computer access"
                     className="text-body-sm"
                   >
-                    <section
-                      aria-label="Plugin safety"
-                      className="mb-4 border-l-2 border-warning pl-3"
-                    >
-                      <p className="m-0 flex items-center gap-2 font-medium text-warning">
-                        <WarningCircleIcon size={20} aria-hidden="true" />
-                        Plugins aren’t sandboxed
-                      </p>
-                      <p className="mb-0 mt-1">
-                        This list does not limit everything the plugin can
-                        access. Only install code you trust.
-                      </p>
-                    </section>
-                    <p className="m-0 font-medium">Computer access</p>
                     {existing &&
                       (declaredGrants.some(
                         (grant) => !previousGrants.includes(grant),
@@ -677,7 +670,6 @@ export function PluginImport({
                       )}
                     {declaredDetails.length ? (
                       <section aria-label="Declared scopes">
-                        <p className="m-0">This plugin asks Buzz to:</p>
                         <Accordion
                           animate
                           key={selected}
@@ -703,13 +695,24 @@ export function PluginImport({
                         />
                       </section>
                     )}
+                    <section
+                      aria-label="Plugin safety"
+                      className="mt-4 border-l-2 border-warning pl-3"
+                    >
+                      <p className="m-0 flex items-center gap-2 font-medium text-warning">
+                        <WarningCircleIcon size={20} aria-hidden="true" />
+                        Plugins aren’t sandboxed
+                      </p>
+                      <p className="mb-0 mt-1">
+                        They may access more than the declarations above. Only
+                        install code you trust.
+                      </p>
+                    </section>
                   </section>
                 )}
-                {reviewing && candidate && (
+                {reviewing && candidate && existing && (
                   <p className="m-0 text-body-sm">
-                    {existing
-                      ? `This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} ${rollbackNotice}`
-                      : "This plugin starts off. Turn it on in the list when you’re ready."}
+                    {`This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} ${rollbackNotice}`}
                   </p>
                 )}
               </div>

@@ -476,9 +476,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(page.getByRole("dialog")).toHaveAccessibleName(
     "Review plugin access",
   );
-  await expect(page.getByRole("dialog")).toHaveAccessibleDescription(
-    "Review what this plugin asks Buzz to do.",
-  );
+  await expect(page.getByRole("dialog")).toHaveAccessibleDescription("");
   await expect(
     page.getByRole("region", { name: "Skipped folders" }),
   ).toHaveCount(0);
@@ -500,11 +498,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(
     page.getByRole("heading", { name: "Example two", level: 3 }),
   ).toHaveCount(0);
-  await expect(
-    page.getByText(
-      "This plugin starts off. Turn it on in the list when you’re ready.",
-    ),
-  ).toBeVisible();
+  await expect(page.getByText("Installed turned off")).toBeVisible();
   await button(page, "Install plugin").click();
   await expect(page.getByRole("status")).toHaveText(/Example two installed/);
   await expect(

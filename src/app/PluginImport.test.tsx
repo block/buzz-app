@@ -228,11 +228,13 @@ it("shows exact declared access and changes before an enabled update", async () 
   const scopes = within(
     screen.getByRole("region", { name: "Declared scopes" }),
   );
-  expect(scopes.getByText(/plugin’s configured arguments/)).toBeVisible();
+  expect(scopes.getByText("Run a program on your computer.")).toBeVisible();
   expect(scopes.getByText(/account’s full access/)).toBeVisible();
   expect(scopes.getByText(/HTTPS requests to this address/)).toBeVisible();
   expect(scopes.getByText(/Buzz’s local MCP server/)).toBeVisible();
-  expect(screen.getByText(/This list does not limit everything/)).toBeVisible();
+  expect(
+    screen.getByText(/They may access more than the declarations above/),
+  ).toBeVisible();
   expect(
     screen.getByText(/Computer access changes with this update/),
   ).toBeVisible();
@@ -252,7 +254,7 @@ it("shows exact declared access and changes before an enabled update", async () 
   );
   fireEvent.click(screen.getByRole("button", { name: /^Removed: Connect to/ }));
   const command = screen.getByRole("region", { name: "Command check details" });
-  expect(command).toBeVisible();
+  await waitFor(() => expect(command).toBeVisible());
   expect(command).toHaveTextContent(
     /new or changed.*example-cli.*status.*--json/,
   );

@@ -31,6 +31,7 @@ const PROVIDERS = [
   {
     providerId: "ollama",
     providerName: "Ollama",
+    defaultModel: "qwen3",
     configured: true,
     visibleInSetup: true,
     configKeys: [{ name: "OLLAMA_HOST", required: true, secret: false }],
@@ -396,4 +397,45 @@ it("retains the stored provider model when a defaults save omits the model", asy
     provider: "ollama",
     model: "llama4",
   });
+});
+
+it("saves the catalog model when switching to a provider without a stored model", async () => {
+  const { setup: goose, fake } = setup({
+    providers: PROVIDERS.map((provider) => ({ ...provider, configured: true })),
+  });
+  await goose.saveDefaults({ provider: "anthropic", model: "" });
+  expect((await goose.providers()).defaults).toEqual({
+    provider: "anthropic",
+    model: "claude-sonnet-5-5",
+  });
+  expect(
+    fake.geese
+      .flatMap((process) => process.received)
+      .find((request) => request.method === "_goose/unstable/defaults/save")
+      ?.params,
+  ).toEqual({ providerId: "anthropic", modelId: "claude-sonnet-5-5" });
+  expect(goose.snapshot().readiness).toBe("ready");
+});
+
+it("does not report ready when a configured provider has no model", async () => {
+  const { setup: goose } = setup({ defaults: { providerId: "ollama" } });
+  await goose.check();
+  expect(goose.snapshot().readiness).toBe("attention");
+});
+
+it("rejects a provider without a default model before changing defaults", async () => {
+  const { setup: goose, fake } = setup();
+  await expect(
+    goose.saveDefaults({ provider: "databricks", model: "" }),
+  ).rejects.toThrow("Choose a default model");
+  expect(
+    fake.geese
+      .flatMap((process) => process.received)
+      .some((request) => request.method === "_goose/unstable/defaults/save"),
+  ).toBe(false);
+  expect((await goose.providers()).defaults).toEqual({
+    provider: "ollama",
+    model: "qwen3",
+  });
+  expect(goose.snapshot().blocking).toBe(false);
 });

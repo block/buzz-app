@@ -130,7 +130,9 @@ export class GooseSetup {
           this.checkedDefaults = key;
           const ready = providers.some(
             (provider) =>
-              provider.id === defaults.provider && provider.configured,
+              provider.id === defaults.provider &&
+              provider.configured &&
+              Boolean(defaults.model?.trim()),
           );
           this.update(
             ready
@@ -159,10 +161,22 @@ export class GooseSetup {
     this.update({ ...this.state, blocking: true });
     try {
       if (Object.keys(fields).length) await this.save(choice.provider, fields);
+      const providerId = choice.provider.trim();
+      const { defaults, providers } = await this.providers();
+      const modelId =
+        choice.model.trim() ||
+        (providerId === defaults.provider ? defaults.model?.trim() : "") ||
+        providers
+          .find((provider) => provider.id === providerId)
+          ?.defaultModel.trim();
+      if (!modelId)
+        throw new Error(
+          "Choose a default model with goose configure, then try again.",
+        );
       await this.with((goose) =>
         goose.request("_goose/unstable/defaults/save", {
-          providerId: choice.provider.trim(),
-          ...(choice.model.trim() ? { modelId: choice.model.trim() } : {}),
+          providerId,
+          modelId,
         }),
       );
       this.defaultsChanged();

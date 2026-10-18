@@ -13,7 +13,7 @@ import { MentionCompletion } from "../mentions/MentionCompletion";
 import { mentionQuery } from "../mentions/mention-query";
 import { ChannelCompletion } from "../channels/ChannelCompletion";
 import { channelQuery } from "../channels/channel-query";
-import { ResourcePicker } from "../projects/ResourcePicker";
+import { ResourcePicker } from "../repos/ResourcePicker";
 
 /** Native companions reuse bundled tools only while their main-app contribution is enabled. */
 const tools = (gifRequests?: GifRequests): Record<string, ComposerTool> => ({
@@ -52,7 +52,7 @@ const tools = (gifRequests?: GifRequests): Record<string, ComposerTool> => ({
       />
     ),
   },
-  "buzz.projects/resources": {
+  "buzz.repos/resources": {
     id: "resources",
     title: "Issues and pull requests",
     component: ResourcePicker,

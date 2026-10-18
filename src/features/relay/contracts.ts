@@ -32,8 +32,9 @@ export type ChannelSummary = Readonly<{
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
-  /** `system` (NIP-CL): access control for app data; never in list(). */
-  channelType?: "stream" | "forum" | "dm" | "session" | "system";
+  /** `system` (NIP-CL): access control for app data; never in list().
+   * `session`: a private stream with the Solo label (`SOLO_LABEL`). */
+  channelType?: "stream" | "forum" | "dm" | "solo" | "system";
   /** Relay-authored channel visibility; private channels use restricted presentation. */
   private?: true;
   /** Presentation-only parent from signed channel metadata; never grants access. */

@@ -21,7 +21,7 @@ function referable(channel: ChannelSummary) {
     !channel.archived &&
     !channel.hidden &&
     channel.channelType !== "dm" &&
-    channel.channelType !== "session"
+    channel.channelType !== "solo"
   );
 }
 

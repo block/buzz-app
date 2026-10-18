@@ -81,6 +81,7 @@ export function EmojiPicker({
   const onInsert = useRef(insert);
   onInsert.current = insert;
   const accepted = useRef(false);
+  const escapeFocus = useRef<HTMLElement | false>(false);
   const community = reaction ? undefined : communityFromScope(scope);
   const gifs = community
     ? gifAvailability?.community === community
@@ -319,7 +320,10 @@ export function EmojiPicker({
           const target = externalTrigger
             ? externalTrigger.finalFocus()
             : trigger.current;
-          if (target) target.focus();
+          // An external toolbar stays hidden until the popup closes. Use the
+          // shared return-focus path; ordinary composer focus stays immediate.
+          if (externalTrigger) escapeFocus.current = target ?? false;
+          else if (target) target.focus();
           // Keyboard dismissal is immediate; release the external trigger before
           // another Enter can arrive, rather than waiting for exit completion.
           externalTrigger?.close();
@@ -353,7 +357,7 @@ export function EmojiPicker({
         }}
         finalFocus={
           externalTrigger
-            ? externalTrigger.finalFocus
+            ? () => escapeFocus.current || externalTrigger.finalFocus()
             : !accepted.current || !!reaction
         }
       >
@@ -371,6 +375,7 @@ export function EmojiPicker({
         setOpen(next);
         if (next) {
           accepted.current = false;
+          escapeFocus.current = false;
           void session.emoji.ensure();
           if (gifs !== true && gifAvailability?.community === community)
             setGifAvailability(undefined);

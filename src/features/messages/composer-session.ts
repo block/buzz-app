@@ -9,7 +9,10 @@ export type ComposerSession = Pick<
   "viewer" | "media" | "scope"
 > & {
   names?: import("../identity-names/service").IdentityNameView | undefined;
-  projects: Pick<RelaySession["projects"], "home" | "load" | "peekHome">;
+  repositories: Pick<
+    RelaySession["repositories"],
+    "home" | "load" | "peekHome"
+  >;
   channels: Pick<
     RelaySession["channels"],
     | "list"
@@ -40,8 +43,8 @@ export type ComposerSession = Pick<
   presence?: Pick<NonNullable<RelaySession["presence"]>, "status"> | undefined;
   directMessages: Pick<RelaySession["directMessages"], "people">;
   memberAdditions: Pick<RelaySession["memberAdditions"], "add">;
-  workSessions: Pick<
-    RelaySession["workSessions"],
+  channelWrites: Pick<
+    RelaySession["channelWrites"],
     "refreshMembership" | "addAgents"
   >;
   outbox:

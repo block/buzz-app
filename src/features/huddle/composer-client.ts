@@ -198,7 +198,7 @@ export function createHuddleComposerClient(token: string) {
           return request("add", key);
         },
       },
-      workSessions: { refreshMembership: unavailable, addAgents: unavailable },
+      channelWrites: { refreshMembership: unavailable, addAgents: unavailable },
       outbox: {
         snapshot: () => emptyOutbox,
         subscribe,
@@ -245,10 +245,10 @@ export function createHuddleComposerClient(token: string) {
         reply: unavailable,
         edit: unavailable,
       },
-      projects: {
+      repositories: {
         peekHome: () => undefined,
-        home: (_room, signal) => request("projectsHome", undefined, signal),
-        load: (route, signal) => request("projectsLoad", route, signal),
+        home: (_room, signal) => request("repositoriesHome", undefined, signal),
+        load: (route, signal) => request("repositoriesLoad", route, signal),
       },
     };
     return result;

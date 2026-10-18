@@ -361,10 +361,10 @@ export function createHuddleComposerOwner(
         )
           throw new Error("Cannot add this person.");
         return session.memberAdditions.add(room, request.args);
-      case "projectsHome":
-        return session.projects.home(room, signal);
-      case "projectsLoad":
-        return session.projects.load(request.args, signal);
+      case "repositoriesHome":
+        return session.repositories.home(room, signal);
+      case "repositoriesLoad":
+        return session.repositories.load(request.args, signal);
     }
   }
   function reset() {

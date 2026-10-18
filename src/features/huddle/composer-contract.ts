@@ -58,13 +58,13 @@ export type ComposerOperations = {
     args: string;
     result: Awaited<ReturnType<RelaySession["memberAdditions"]["add"]>>;
   };
-  projectsHome: {
+  repositoriesHome: {
     args: undefined;
-    result: Awaited<ReturnType<RelaySession["projects"]["home"]>>;
+    result: Awaited<ReturnType<RelaySession["repositories"]["home"]>>;
   };
-  projectsLoad: {
-    args: Parameters<RelaySession["projects"]["load"]>[0];
-    result: Awaited<ReturnType<RelaySession["projects"]["load"]>>;
+  repositoriesLoad: {
+    args: Parameters<RelaySession["repositories"]["load"]>[0];
+    result: Awaited<ReturnType<RelaySession["repositories"]["load"]>>;
   };
 };
 export type ComposerOperation = keyof ComposerOperations;

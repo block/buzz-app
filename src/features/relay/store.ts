@@ -144,7 +144,7 @@ export function createChannelStore(
   ) => {
     const started = performance.now();
     const rows = foldMessages(channelId, author, events, {
-      includeReplies: discovery?.isSession(channelId) ?? false,
+      includeReplies: discovery?.isSolo(channelId) ?? false,
       signingAuthority: transport?.archiveAuthority,
     });
     clientMetrics.cpu("fold", performance.now() - started, events.length);
@@ -426,7 +426,7 @@ export function createChannelStore(
         channelId,
         transport?.relayAuthor ?? "",
         profiling,
-        () => discovery?.isSession(channelId) ?? false,
+        () => discovery?.isSolo(channelId) ?? false,
         clock,
         transport?.archiveAuthority,
       ),
@@ -500,7 +500,7 @@ export function createChannelStore(
     if (
       !persistence ||
       // Compatibility queries have no signed bounds to restore from disk.
-      isSession(channelId) ||
+      isSolo(channelId) ||
       !discovery?.authorized(channelId) ||
       disposed ||
       heads.peek(channelId) !== head
@@ -559,14 +559,14 @@ export function createChannelStore(
       saveDiscovery();
     }, [channelId]);
   }
-  const isSession = (channelId: string) => !!discovery?.isSession(channelId);
+  const isSolo = (channelId: string) => !!discovery?.isSolo(channelId);
   async function readPage(
     channelId: string,
     cursor: WindowCursor | null,
     settings: ReadOptions,
   ) {
     if (!transport) throw new Error("Relay is unavailable");
-    if (isSession(channelId)) {
+    if (isSolo(channelId)) {
       const page = await readSessionWindow(
         transport,
         channelId,
@@ -771,7 +771,7 @@ export function createChannelStore(
       if (disposed || generation !== epoch) return;
       if (
         !allowed?.has(record.channelId) ||
-        isSession(record.channelId) ||
+        isSolo(record.channelId) ||
         heads.peek(record.channelId) ||
         !Number.isFinite(record.savedAt) ||
         record.savedAt > now() ||
@@ -1487,9 +1487,9 @@ export function createChannelStore(
   }
   /** Resolve only returned/demanded nonmember channels, through the verified reader.
    *
-   * Search, work-sessions.ts `refresh`, and session.ts membership hints rely on
+   * Search, channel-writes.ts `refresh`, and session.ts membership hints rely on
    * these properties. The create-channel path guards them with real-store tests
-   * in work-sessions.test.ts rather than through this store's own suite:
+   * in channel-writes.test.ts rather than through this store's own suite:
    * - The id filter keeps every channel the store does not yet authorize, so a
    *   just-created channel is confirmed by one exact `#d` read instead of the
    *   full viewer-roster rediscovery. Skipping such ids would send every create
@@ -1906,8 +1906,8 @@ export function createChannelStore(
    * This is a separate entry point because `resolve` deliberately skips ids the
    * store already authorizes: its exact read carries cached-denial semantics for
    * restored channels, which a member addition must not inherit. The agent-add
-   * path in work-sessions.ts `refresh` guards this method with real-store tests
-   * in work-sessions.test.ts; the merge itself is covered in store.test.ts.
+   * path in channel-writes.ts `refresh` guards this method with real-store tests
+   * in channel-writes.test.ts; the merge itself is covered in store.test.ts.
    * - Only an id the store authorizes is read. Admitting a channel the list lacks
    *   is `resolve`'s job, and a denied id never regains access here: the method
    *   returns without a read, so cached denials stay as they were.

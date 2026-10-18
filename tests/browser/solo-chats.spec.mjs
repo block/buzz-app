@@ -973,5 +973,10 @@ test.describe("Solo composer caret", () => {
     await pick(honey);
     const alpha = `@${honey.name} alpha draft`;
     await expect.poll(caret).toEqual([alpha, alpha.length, alpha.length]);
+    // Undo removes the tag and returns to the prose caret, not the front.
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect.poll(caret).toEqual(["alpha draft", 11, 11]);
+    await page.keyboard.insertText("!");
+    await expect(composer).toHaveText("alpha draft!");
   });
 });

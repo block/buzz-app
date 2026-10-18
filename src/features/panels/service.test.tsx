@@ -38,6 +38,8 @@ it("independently unloads panels without removing the page or shared data", asyn
     subscribe: () => () => {},
     snapshot: () => undefined,
   });
+  // GitHub reads through gh where the host can run it; here it cannot.
+  root.provide("host", {});
   provideNavigation(root);
   const relay = provideRelay(root);
   const desired = (ids: string[]) => ids.map(plugin);

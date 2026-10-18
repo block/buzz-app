@@ -1,5 +1,5 @@
 import { Button } from "../../shared/design-system/ui/Button";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowSquareOutIcon,
   GitPullRequestIcon,
@@ -12,28 +12,27 @@ import {
 } from "../../shared/design-system/icons/index";
 import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
-import {
-  gitHubAnchorUrl,
-  parseGitHubReference,
-  type GitHubAnchor,
-  type GitHubReference,
-} from "./references";
-import { loadGitHubDetails, type GitHubDetails } from "./data";
-import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { GitHubChecks } from "./GitHubChecks";
+import { parseGitHubReference, type GitHubReference } from "./references";
+import { gitHubCli, type GitHubCli } from "./gh";
+import { loadGitHubObject, type GitHubObject } from "./object";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
+import { PublicChecklist, PullChecklist } from "./PullChecklist";
 import styles from "./GitHub.module.css";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
-import { GitHubConversation } from "./GitHubConversation";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 
-export const inject = ["panels"];
+/** How often an open pull request panel reads GitHub again. */
+export const REFRESH_MS = 30_000;
+
+export const inject = ["panels", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
+  const gh = gitHubCli(ctx.host);
   ctx.panels.register({
     id: "object",
     title: "GitHub",
     matches: (target) => !!parseGitHubReference(target),
-    component: GitHubPanel,
+    component: (props: PanelProps) => <GitHubPanel {...props} gh={gh} />,
   });
 };
 const labels = {
@@ -56,21 +55,20 @@ const stateIcons = {
   merged: GitMergeIcon,
 };
 
-export function GitHubPanel({ target }: PanelProps) {
+export function GitHubPanel({
+  target,
+  gh,
+}: PanelProps & {
+  /** The person's `gh`, where the app can run it. */
+  gh?: GitHubCli | undefined;
+}) {
   const [attempt, retry] = useState(0);
-  const parsed = useMemo(() => parseGitHubReference(target), [target]);
-  const identity = parsed?.url;
-  // An anchor-only target change keeps the object's reference, request and
-  // loaded content; only the revealed comment moves.
-  const reference = useMemo(
-    () => (identity ? parseGitHubReference(identity) : undefined),
-    [identity],
-  );
+  const reference = useMemo(() => parseGitHubReference(target), [target]);
   return reference ? (
     <ObjectPanel
       key={`${reference.url}:${attempt}`}
       reference={reference}
-      anchor={parsed?.anchor}
+      gh={gh}
       retry={() => retry(attempt + 1)}
     />
   ) : (
@@ -80,31 +78,53 @@ export function GitHubPanel({ target }: PanelProps) {
 
 function ObjectPanel({
   reference,
-  anchor,
+  gh,
   retry,
 }: {
   reference: GitHubReference;
-  anchor: GitHubAnchor | undefined;
+  gh: GitHubCli | undefined;
   retry(): void;
 }) {
-  const [result, setResult] = useState<GitHubDetails | string>();
-  const link = anchor ? gitHubAnchorUrl(reference.url, anchor) : reference.url;
-  useEffect(() => {
+  const [loaded, setLoaded] = useState<GitHubObject | string>();
+  const link = reference.url;
+  const live = useRef<AbortController>(undefined);
+  /** Reads it again. A failed refresh keeps what is shown; only the first
+   * read shows an error. */
+  const load = useCallback(async () => {
+    live.current?.abort();
     const controller = new AbortController();
-    setResult(undefined);
-    void loadGitHubDetails(
-      reference,
-      AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-    )
-      .then((details) => {
-        if (!controller.signal.aborted) setResult(details);
-      })
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted)
-          setResult(error instanceof Error ? error.message : String(error));
-      });
-    return () => controller.abort();
-  }, [reference]);
+    live.current = controller;
+    try {
+      const next = await loadGitHubObject(
+        reference,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
+        gh,
+      );
+      if (!controller.signal.aborted) setLoaded(next);
+    } catch (error) {
+      if (!controller.signal.aborted)
+        setLoaded((current) =>
+          typeof current === "object"
+            ? current
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        );
+    }
+  }, [reference, gh]);
+  useEffect(() => {
+    void load();
+    return () => live.current?.abort();
+  }, [load]);
+  const watching = typeof loaded === "object" && !!loaded.checklist;
+  useEffect(() => {
+    if (!watching) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [watching, load]);
+  const result = typeof loaded === "object" ? loaded.details : loaded;
   const Icon = icons[reference.kind];
   const state = typeof result === "object" ? result.state.toLowerCase() : "";
   const StateIcon =
@@ -316,11 +336,43 @@ function ObjectPanel({
             </dl>
           )}
           {reference.kind === "pull" ? (
-            <PullContent
-              details={result}
-              reference={reference}
-              anchor={anchor}
-            />
+            <>
+              {typeof loaded === "object" && loaded.checklist && gh ? (
+                <PullChecklist
+                  url={reference.url}
+                  details={result}
+                  checklist={loaded.checklist}
+                  gh={gh}
+                  refresh={load}
+                />
+              ) : (
+                <PublicChecklist
+                  url={reference.url}
+                  repository={reference.repository}
+                  sha={result.headSha}
+                />
+              )}
+              {result.body && (
+                <div className={styles.description}>
+                  <Accordion
+                    variant="activity"
+                    items={[
+                      {
+                        value: "description",
+                        title: "Description",
+                        content: (
+                          <GitHubBody
+                            body={result.body}
+                            bodyHtml={result.bodyHtml}
+                            url={reference.url}
+                          />
+                        ),
+                      },
+                    ]}
+                  />
+                </div>
+              )}
+            </>
           ) : (
             result.body && (
               <GitHubBody
@@ -332,81 +384,13 @@ function ObjectPanel({
           )}
         </>
       )}
-      <p className={styles.note}>
-        Public GitHub data · Open on GitHub for private repositories and
-        actions.
-      </p>
+      {typeof loaded === "object" && (
+        <p className={styles.note}>
+          {loaded.signedIn
+            ? "Read with your gh sign-in."
+            : "Public GitHub data · Sign in to the gh CLI to see private repositories and merge from here."}
+        </p>
+      )}
     </div>
-  );
-}
-
-function PullContent({
-  details,
-  reference,
-  anchor,
-}: {
-  details: GitHubDetails;
-  reference: GitHubReference;
-  anchor: GitHubAnchor | undefined;
-}) {
-  const id = useId();
-  const [tab, setTab] = useState<"discussion" | "checks">("discussion");
-  const [checksOpened, setChecksOpened] = useState(false);
-  // A newly linked comment lives in Discussion, whichever tab was showing.
-  useEffect(() => {
-    if (anchor) setTab("discussion");
-  }, [anchor]);
-  return (
-    <>
-      <div className={styles.pullTabs}>
-        <Tabs
-          variant="panel"
-          label="Pull request content"
-          value={tab}
-          items={[
-            {
-              value: "discussion",
-              label: "Discussion",
-              panelId: `${id}-discussion`,
-            },
-            { value: "checks", label: "Checks", panelId: `${id}-checks` },
-          ]}
-          onValueChange={(next) => {
-            setTab(next);
-            if (next === "checks") setChecksOpened(true);
-          }}
-        />
-      </div>
-      {/* Retain loaded content and disclosures across tab switches, but mount checks only on demand. */}
-      <div
-        role="tabpanel"
-        id={`${id}-discussion`}
-        aria-labelledby={`${id}-discussion-tab`}
-        hidden={tab !== "discussion"}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: tab panels are keyboard destinations linked by the shared tabs.
-        tabIndex={0}
-      >
-        <GitHubConversation
-          details={details}
-          url={reference.url}
-          anchor={anchor}
-        />
-      </div>
-      <div
-        role="tabpanel"
-        id={`${id}-checks`}
-        aria-labelledby={`${id}-checks-tab`}
-        hidden={tab !== "checks"}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: tab panels are keyboard destinations linked by the shared tabs.
-        tabIndex={0}
-      >
-        {checksOpened && (
-          <GitHubChecks
-            repository={reference.repository}
-            sha={details.headSha}
-          />
-        )}
-      </div>
-    </>
   );
 }

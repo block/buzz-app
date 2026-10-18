@@ -15,6 +15,9 @@ import { canEditLifetime } from "../../features/solo/Lifetime";
 import { ChannelReadMenuItem } from "./ChannelReadMenuItem";
 import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
+import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useDroppable } from "@dnd-kit/core";
@@ -150,6 +153,7 @@ export function SoloProjects({
   }>();
   const [deleting, setDeleting] = useState<string>();
   const [projectError, setProjectError] = useState("");
+  const [readError, setReadError] = useState<{ id: string; message: string }>();
   const [animate, setAnimate] = useState(false);
   const [rowFocus, setRowFocus] = useState<string>();
   useLayoutEffect(() => {
@@ -192,6 +196,34 @@ export function SoloProjects({
       setRowFocus(id);
     });
   };
+  // Matches the open chat's own actions menu: leaving the open chat returns to
+  // a new Solo draft, unless the user has already moved on.
+  const chooseLifecycle = (
+    channel: ChannelSummary,
+    action: ChannelLifecycleAction,
+  ) => {
+    const trigger =
+      document.querySelector<HTMLElement>(
+        `[data-solo-menu-id="${CSS.escape(channel.id)}"] button`,
+      ) ?? undefined;
+    const current = navigationController?.snapshot();
+    const leavesOpenChat =
+      action !== "unarchive" &&
+      current?.entry.target.kind === "conversation" &&
+      current.entry.target.channelId === channel.id;
+    // Let the menu restore focus before opening confirmation.
+    requestAnimationFrame(() =>
+      handoff?.openLifecycle(channel, action, trigger, undefined, {
+        close() {
+          if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+        },
+        completed() {
+          if (leavesOpenChat && !current.attempt.signal.aborted)
+            void navigationController?.open(soloDraftTarget(scope));
+        },
+      }),
+    );
+  };
   const toggle = (id: string, open: boolean) => {
     const next = open
       ? collapsed.filter((key) => key !== id)
@@ -221,6 +253,11 @@ export function SoloProjects({
       {projectError && (
         <p role="alert" className={styles.listMessage}>
           {projectError}
+        </p>
+      )}
+      {readError && (
+        <p role="alert" className={styles.listMessage}>
+          {readError.message}
         </p>
       )}
       <ChannelSidebarDnd
@@ -348,13 +385,20 @@ export function SoloProjects({
                               closeOnClick
                               run={(action) =>
                                 action().then(
-                                  () => setProjectError(""),
-                                  (error: unknown) =>
-                                    setProjectError(
-                                      error instanceof Error
-                                        ? error.message
-                                        : "Read state couldn’t be saved. Try again.",
+                                  () =>
+                                    setReadError((current) =>
+                                      current?.id === item.id
+                                        ? undefined
+                                        : current,
                                     ),
+                                  (error: unknown) =>
+                                    setReadError({
+                                      id: item.id,
+                                      message:
+                                        error instanceof Error
+                                          ? error.message
+                                          : "Read state couldn’t be saved. Try again.",
+                                    }),
                                 )
                               }
                             />
@@ -472,20 +516,9 @@ export function SoloProjects({
                                 disabled={!!handoff.lifecycleDialog}
                                 separator
                                 noun="chat"
-                                choose={(action) => {
-                                  const trigger =
-                                    document.querySelector<HTMLElement>(
-                                      `[data-solo-menu-id="${CSS.escape(item.id)}"] button`,
-                                    ) ?? undefined;
-                                  // Let the menu restore focus before opening confirmation.
-                                  requestAnimationFrame(() =>
-                                    handoff.openLifecycle(
-                                      channel,
-                                      action,
-                                      trigger,
-                                    ),
-                                  );
-                                }}
+                                choose={(action) =>
+                                  chooseLifecycle(channel, action)
+                                }
                               />
                             )}
                         </>

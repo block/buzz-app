@@ -654,7 +654,9 @@ it("names Solo chats as chats in the menu, dialog and result", async () => {
   );
   expect(
     screen.getByRole("dialog", { name: "Archive chat: Planning" }),
-  ).toHaveTextContent("Archive this chat and remove it from the sidebar.");
+  ).toHaveTextContent(
+    "Archive this chat for everyone in it and remove it from the sidebar.",
+  );
   await user.click(screen.getByRole("button", { name: "Archive chat" }));
   expect(await screen.findByText("Chat archived: Planning")).toBeDefined();
 });

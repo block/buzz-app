@@ -27,7 +27,7 @@ const details = {
   },
   chat: {
     archive:
-      "Archive this chat and remove it from the sidebar. Messages are kept. Find it in search to unarchive it later.",
+      "Archive this chat for everyone in it and remove it from the sidebar. Messages are kept. Find it in search to unarchive it later.",
     unarchive:
       "Unarchive this chat and return it to the sidebar. Messages can be sent again.",
     delete: "This deletes the chat for everyone in it. You can’t undo this.",

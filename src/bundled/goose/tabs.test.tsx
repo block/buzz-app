@@ -652,6 +652,7 @@ it("edits Goose device defaults without creating an agent override", async () =>
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   expect((await setup.providers()).defaults).toEqual({
     provider: "anthropic",
+    model: "claude-sonnet-5-5",
   });
 });
 

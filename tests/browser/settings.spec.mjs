@@ -86,7 +86,7 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
   });
   const title = row.getByText("GitHub", { exact: true });
   const description = row.getByText(
-    "View GitHub repositories, pull requests, issues, and commits.",
+    "View GitHub repositories, pull requests, issues, and commits, and merge pull requests.",
     { exact: true },
   );
   await expect(toggle).toHaveAttribute("aria-checked", "true");

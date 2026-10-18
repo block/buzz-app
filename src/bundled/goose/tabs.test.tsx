@@ -932,83 +932,122 @@ for (const host of ["defaults", "create"] as const) {
   });
 }
 
-it("preserves the defaults control and focus after inline and dialog Goose saves", async () => {
-  const supported = ["goose-claude", "goose-kimi-k2"];
-  const fake = fakeSpawn({
-    providers: PROVIDERS,
-    defaults: { providerId: "databricks", modelId: "goose-claude" },
-    supported,
-  });
-  const setup = new GooseSetup(fake.spawn);
-  const { DefaultControl, ProviderDialogBody } = createTabs({
-    setup,
-    ...unused,
-  });
-  const types = [
-    {
-      defaults: () => ({ config: DEFAULT_CONFIG }),
-      key: "buzz.goose/goose",
-      pluginId: "buzz.goose",
-      revision: "test",
-      id: "goose",
-      title: "Goose",
-      provider: {
-        subscribe: setup.subscribe,
-        snapshot: setup.snapshot,
-        check: setup.check,
-        DefaultControl,
-        DialogBody: ProviderDialogBody,
+it.each([false, true])(
+  "preserves return focus through pending discovery (move focus: %s)",
+  async (moveFocus) => {
+    const supported = ["goose-claude", "goose-kimi-k2"];
+    const fake = fakeSpawn({
+      providers: PROVIDERS,
+      defaults: { providerId: "databricks", modelId: "goose-claude" },
+      supported,
+    });
+    const setup = new GooseSetup(fake.spawn);
+    const { DefaultControl, ProviderDialogBody } = createTabs({
+      setup,
+      ...unused,
+    });
+    const types = [
+      {
+        defaults: () => ({ config: DEFAULT_CONFIG }),
+        key: "buzz.goose/goose",
+        pluginId: "buzz.goose",
+        revision: "test",
+        id: "goose",
+        title: "Goose",
+        provider: {
+          subscribe: setup.subscribe,
+          snapshot: setup.snapshot,
+          check: setup.check,
+          DefaultControl,
+          DialogBody: ProviderDialogBody,
+        },
       },
-    },
-  ] as RegisteredAgentType[];
-  const agents = {
-    types: () => types,
-    subscribe: () => () => {},
-  } as unknown as Agents;
-  render(<AgentDefaults agents={agents} />);
-  const trigger = await screen.findByRole("button", {
-    name: /^Goose default model:/,
-  });
-  await waitFor(() => expect(trigger).toBeEnabled());
-  const user = userEvent.setup();
-  await user.click(trigger);
-  (await screen.findByRole("menuitem", { name: "Kimi" })).focus();
-  await user.keyboard("{ArrowRight}");
-  await user.click(
-    await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
-  );
-  await waitFor(() => expect(trigger).toHaveTextContent("kimi-k2"));
-  expect(trigger).toBeInTheDocument();
-  await waitFor(() => expect(trigger).toHaveFocus());
-  fireEvent.click(trigger);
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Edit configuration" }),
-  );
-  const dialog = await screen.findByRole("dialog", { name: "Goose" });
-  await user.type(
-    await within(dialog).findByRole("textbox", { name: "Host" }),
-    "https://new-workspace.example",
-  );
-  supported.splice(0, supported.length, "goose-gpt-6");
-  const save = within(dialog).getByRole("button", { name: "Save defaults" });
-  await waitFor(() => expect(save).toBeEnabled());
-  const transitions: string[] = [];
-  const unsubscribe = setup.subscribe(() =>
-    transitions.push(setup.snapshot().readiness),
-  );
-  await userEvent.setup().click(save);
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  unsubscribe();
-  expect(transitions).toContain("checking");
-  expect(transitions).toContain("ready");
-  expect(trigger).toBeInTheDocument();
-  await waitFor(() =>
+    ] as RegisteredAgentType[];
+    const agents = {
+      types: () => types,
+      subscribe: () => () => {},
+    } as unknown as Agents;
+    render(
+      <>
+        <AgentDefaults agents={agents} />
+        <button type="button">Another setting</button>
+      </>,
+    );
+    const trigger = await screen.findByRole("button", {
+      name: /^Goose default model:/,
+    });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    const user = userEvent.setup();
+    await user.click(trigger);
+    (await screen.findByRole("menuitem", { name: "Kimi" })).focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
+    );
+    await waitFor(() => expect(trigger).toHaveTextContent("kimi-k2"));
+    expect(trigger).toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    fireEvent.click(trigger);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Edit configuration" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Goose" });
+    await user.type(
+      await within(dialog).findByRole("textbox", { name: "Host" }),
+      "https://new-workspace.example",
+    );
+    supported.splice(0, supported.length, "goose-gpt-6");
+    const discover = setup.models.bind(setup);
+    let releaseDiscovery!: () => void;
+    const discoveryGate = new Promise<void>((resolve) => {
+      releaseDiscovery = resolve;
+    });
+    const discovery = vi
+      .spyOn(setup, "models")
+      .mockImplementation(async (provider) => {
+        await discoveryGate;
+        return discover(provider);
+      });
+    const save = within(dialog).getByRole("button", { name: "Save defaults" });
+    await waitFor(() => expect(save).toBeEnabled());
+    const transitions: string[] = [];
+    const unsubscribe = setup.subscribe(() =>
+      transitions.push(setup.snapshot().readiness),
+    );
+    try {
+      await userEvent.setup().click(save);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(transitions).toContain("checking");
+      expect(transitions).toContain("ready");
+      expect(trigger).toBeInTheDocument();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: /^Goose default model:/ }),
+        ).toHaveFocus(),
+      );
+      expect(discovery).toHaveBeenCalled();
+      expect(trigger).not.toHaveAttribute("disabled");
+      expect(trigger).toHaveAttribute("aria-disabled", "true");
+      await user.keyboard("{Enter}");
+      expect(screen.queryByRole("menu")).toBeNull();
+      if (moveFocus)
+        await user.click(
+          screen.getByRole("button", { name: "Another setting" }),
+        );
+    } finally {
+      unsubscribe();
+      await act(async () => releaseDiscovery());
+    }
+    await waitFor(() =>
+      expect(trigger).not.toHaveAttribute("aria-disabled", "true"),
+    );
     expect(
-      screen.getByRole("button", { name: /^Goose default model:/ }),
-    ).toHaveFocus(),
-  );
-  await waitFor(() => expect(trigger).toBeEnabled());
-  await user.click(trigger);
-  expect(await screen.findByRole("menuitem", { name: "GPT" })).toBeVisible();
-  expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
-});
+      moveFocus
+        ? screen.getByRole("button", { name: "Another setting" })
+        : trigger,
+    ).toHaveFocus();
+    await user.click(trigger);
+    expect(await screen.findByRole("menuitem", { name: "GPT" })).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
+  },
+);

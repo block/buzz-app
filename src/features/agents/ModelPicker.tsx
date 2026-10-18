@@ -239,7 +239,8 @@ export function ModelPicker({
               loading ? { ...selected, label: "Loading models…" } : selected
             }
             defaultChoice={includeDefault ? fallback : undefined}
-            disabled={disabled || loading}
+            disabled={disabled}
+            loading={loading}
             description={description}
             onChange={onChange}
             onCustom={allowCustomModel ? openCustomDialog : undefined}

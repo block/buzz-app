@@ -49,6 +49,7 @@ export function ModelFamilyMenu({
   selected,
   defaultChoice,
   disabled,
+  loading = false,
   description,
   onChange,
   onCustom,
@@ -67,6 +68,7 @@ export function ModelFamilyMenu({
   selected: ModelChoice;
   defaultChoice?: ModelChoice | undefined;
   disabled: boolean;
+  loading?: boolean;
   description?: string | undefined;
   onChange(id: string): void;
   onCustom?: (() => void) | undefined;
@@ -80,10 +82,13 @@ export function ModelFamilyMenu({
   const menu = (
     <MenuRoot>
       <MenuTrigger
-        disabled={disabled}
+        disabled={disabled || loading}
+        focusableWhenDisabled={loading && !disabled}
         render={(props) => (
           <Button
             {...props}
+            disabled={disabled}
+            loading={loading}
             variant={appearance === "subtle" ? "subtle" : "outline"}
             shape="control"
             size="sm"

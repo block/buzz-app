@@ -37,8 +37,14 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
-import { DotsThreeIcon, GearIcon } from "../../shared/design-system/icons";
+import {
+  DotsThreeIcon,
+  GearIcon,
+  PencilSimpleIcon,
+  HashIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useRecoveryShown } from "../../features/relay/RecoveryNotice";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
@@ -401,6 +407,7 @@ function SessionWork({
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const actionsTrigger = useRef<HTMLButtonElement>(null);
   const [settingsOpen, setSettingsOpen] = useState<{
+    rename?: boolean;
     visit: AbortSignal | undefined;
   }>();
   const placement = useMePlacement(session);
@@ -545,6 +552,21 @@ function SessionWork({
                   }
                 />
                 <MenuPopup aria-label="Session actions" align="end">
+                  {canEditSessionLifetime(session, channel) && (
+                    <MenuItem
+                      onClick={() =>
+                        setSettingsOpen({
+                          visit: navigation?.signal,
+                          rename: true,
+                        })
+                      }
+                    >
+                      <MenuIcon>
+                        <PencilSimpleIcon size={14} />
+                      </MenuIcon>
+                      Rename
+                    </MenuItem>
+                  )}
                   {canConvertSession(session, channel) && (
                     <MenuItem
                       disabled={shareAttempts.has(channel.id)}
@@ -553,10 +575,14 @@ function SessionWork({
                           setConvertOpen(true);
                       }}
                     >
+                      <MenuIcon>
+                        <HashIcon size={14} />
+                      </MenuIcon>
                       {conversionLabel(session, channel.id)}
                     </MenuItem>
                   )}
                   <ChannelLifecycleMenu
+                    archiveLabel="Archive"
                     channelId={channel.id}
                     lifecycle={session.channelLifecycle}
                     disabled={false}
@@ -600,7 +626,10 @@ function SessionWork({
           {settingsOpen && (
             <WorkspaceSettings
               signal={settingsOpen.visit}
-              finalFocus={settingsTrigger}
+              finalFocus={
+                settingsOpen.rename ? actionsTrigger : settingsTrigger
+              }
+              focusName={settingsOpen.rename}
               key={channel.id}
               session={session}
               scope={scope}

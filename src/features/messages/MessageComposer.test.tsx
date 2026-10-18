@@ -7657,3 +7657,78 @@ it.each([
     setRememberAgentsPreference(true);
   },
 );
+
+it("queues Solo follow-ups above the composer and sends the captured content after completion", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const h = mount();
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  const listeners = new Set<() => void>();
+  let state = "working";
+  let activity = snapshot();
+  h.retarget({
+    personalConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      mePlacement: { has: () => true },
+      workSessions: {
+        refreshMembership: async () => ({
+          id: "channel",
+          members: [first.pubkey],
+        }),
+        addAgents: vi.fn(),
+      },
+      agentActivity: {
+        activate: () => () => {},
+        snapshot: () => activity,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    } as unknown as RelaySession,
+  });
+  function snapshot() {
+    return {
+      status: "unavailable",
+      records: [],
+      turns: [],
+      typing: [],
+      local: [
+        {
+          agent: first.pubkey,
+          channelId: "channel",
+          messageId: "previous",
+          state,
+          scope: "scope",
+          threadRootId: "",
+          startedAt: 1,
+        },
+      ],
+    };
+  }
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("Follow up");
+  });
+  h.submit();
+  await screen.findByRole("region", { name: "Queued follow-ups" });
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Send" })).toBeVisible();
+  h.fill("Keep typing");
+  act(() => {
+    state = "done";
+    activity = snapshot();
+    for (const listener of listeners) listener();
+  });
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    "@Honey Follow up",
+    [first.pubkey],
+    [],
+  );
+  expect(h.input()).toHaveValue("Keep typing");
+  expect(
+    screen.queryByRole("region", { name: "Queued follow-ups" }),
+  ).toBeNull();
+});

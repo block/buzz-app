@@ -58,6 +58,11 @@
     width: var(--space-4);
     height: var(--space-4);
   }
+  .buzz-button[data-size="caption"] {
+    @apply text-caption;
+    min-height: var(--size-control-sm);
+    padding: var(--space-2) var(--space-3);
+  }
   /* Inline caption choices, such as the composer's model label. */
   .buzz-button[data-size="inline"] {
     @apply text-caption;
@@ -129,6 +134,9 @@
   }
   .buzz-button[data-icon-variant] .buzz-button-attention rect {
     ry: var(--radius-icon-button);
+  }
+  .buzz-button[data-icon-shape="inset"] {
+    border-radius: var(--control-inset-radius, var(--radius-icon-button));
   }
   .buzz-button[data-icon-shape="round"] .buzz-button-attention rect {
     ry: 50%;
@@ -368,6 +376,36 @@
   .buzz-button[data-icon-variant="tint"] {
     background: var(--affordance-accent);
     color: var(--text-accent);
+  }
+  .buzz-button[data-muted]:not([data-disabled]) {
+    color: var(--text-quiet-control);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-muted]:hover:not([data-disabled]) {
+      background: var(--affordance-subtle-pressed);
+      color: var(--text-standard);
+    }
+  }
+  .buzz-button[data-muted]:is(:active, :focus-visible):not([data-disabled]) {
+    color: var(--text-standard);
+  }
+  .buzz-button[data-icon-variant="destructive-quiet"] {
+    background: transparent;
+    color: var(--text-quiet-control);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .buzz-button[data-icon-variant="destructive-quiet"]:hover:not(
+        [data-disabled]
+      ) {
+      background: var(--affordance-danger-hover);
+      color: var(--text-danger);
+    }
+  }
+  .buzz-button[data-icon-variant="destructive-quiet"]:active:not(
+    [data-disabled]
+  ) {
+    background: var(--affordance-danger-pressed);
+    color: var(--text-danger);
   }
   .buzz-button[data-icon-variant="chrome"] {
     background: transparent;

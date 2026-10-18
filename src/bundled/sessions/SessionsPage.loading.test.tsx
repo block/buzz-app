@@ -468,7 +468,7 @@ it("preserves the Session actions menu trigger relationship and keyboard focus",
   );
   await waitFor(() =>
     expect(
-      within(menu).getByRole("menuitem", { name: "Convert to channel" }),
+      within(menu).getByRole("menuitem", { name: "Rename" }),
     ).toHaveFocus(),
   );
   await user.keyboard("{Escape}");
@@ -586,7 +586,11 @@ it.each([
     f.mount();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Session actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: label }));
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: action === "archive" ? "Archive" : label,
+      }),
+    );
     const dialog = screen.getByRole("dialog", {
       name: action === "delete" ? "Delete Planning?" : `${label}: Planning`,
     });
@@ -732,9 +736,7 @@ it("stays put when a confirmation lands after its visit ends but before rerender
   f.mount();
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Session actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Archive channel" }),
-  );
+  await user.click(await screen.findByRole("menuitem", { name: "Archive" }));
   await user.click(
     within(screen.getByRole("dialog")).getByRole("button", {
       name: "Archive channel",
@@ -752,9 +754,7 @@ it("returns focus to Session actions when the confirmation is cancelled", async 
   const user = userEvent.setup();
   const trigger = screen.getByRole("button", { name: "Session actions" });
   await user.click(trigger);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Archive channel" }),
-  );
+  await user.click(await screen.findByRole("menuitem", { name: "Archive" }));
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(trigger).toHaveFocus();
@@ -778,7 +778,11 @@ it.each(["archive", "delete"] as const)(
     const user = userEvent.setup();
     const label = action === "archive" ? "Archive channel" : "Delete channel";
     await user.click(screen.getByRole("button", { name: "Session actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: label }));
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: action === "archive" ? "Archive" : label,
+      }),
+    );
     await user.click(
       within(screen.getByRole("dialog")).getByRole("button", { name: label }),
     );
@@ -893,4 +897,15 @@ it("cancels a submitted Me operation when the relay session is replaced", async 
     await act(async () => finish());
   }
   expect(f.open).not.toHaveBeenCalled();
+});
+
+it("opens the existing session name editor from Rename", async () => {
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Session actions" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+  expect(
+    await screen.findByRole("dialog", { name: "Session settings" }),
+  ).toBeVisible();
 });

@@ -26,6 +26,8 @@ export function ChannelLifecycleMenu({
   disabled,
   separator,
   open = true,
+  archiveLabel = "Archive channel",
+  archiveOnly = false,
   render = (items) => items,
 }: {
   channelId: string;
@@ -34,6 +36,8 @@ export function ChannelLifecycleMenu({
   disabled: boolean;
   separator: boolean;
   open?: boolean;
+  archiveLabel?: string;
+  archiveOnly?: boolean;
   render?(items: ReactNode): ReactNode;
 }) {
   const [state, setState] = useState<ChannelLifecycleSettings>();
@@ -96,10 +100,12 @@ export function ChannelLifecycleMenu({
     )
   )
     return render(null);
+  if (archiveOnly && !state.canArchive && !state.canUnarchive)
+    return render(null);
   return render(
     <>
       {separator && <MenuSeparator />}
-      {state.canHide ? (
+      {state.canHide && !archiveOnly ? (
         <MenuItem disabled={disabled} onClick={() => choose("hide")}>
           <MenuIcon>
             <EyeSlashIcon size={14} />
@@ -108,7 +114,7 @@ export function ChannelLifecycleMenu({
         </MenuItem>
       ) : (
         <>
-          {state.canLeave && (
+          {state.canLeave && !archiveOnly && (
             <MenuItem disabled={disabled} onClick={() => choose("leave")}>
               <MenuIcon>
                 <SignOutIcon size={14} />
@@ -126,10 +132,10 @@ export function ChannelLifecycleMenu({
               <MenuIcon>
                 <ArchiveIcon size={14} />
               </MenuIcon>
-              {state.canUnarchive ? "Unarchive channel" : "Archive channel"}
+              {state.canUnarchive ? "Unarchive channel" : archiveLabel}
             </MenuItem>
           )}
-          {state.deleteUnavailable && (
+          {state.deleteUnavailable && !archiveOnly && (
             <>
               <MenuItem disabled>
                 <MenuIcon>
@@ -149,7 +155,7 @@ export function ChannelLifecycleMenu({
               </MenuItem>
             </>
           )}
-          {state.canDelete && (
+          {state.canDelete && !archiveOnly && (
             <MenuItem
               tone="danger"
               disabled={disabled}

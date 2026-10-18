@@ -1,3 +1,5 @@
+import { ChannelLifecycleMenu } from "../channels/ChannelLifecycleMenu";
+import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import {
   conversionLabel,
   useSessionConversions,
@@ -57,6 +59,8 @@ import {
   Cube3dSphereIcon,
   CopyIcon,
   GearIcon,
+  HashIcon,
+  PencilSimpleIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { SessionListItem } from "./SessionsWorkspace";
@@ -89,6 +93,7 @@ export function SessionSections({
   renderSession: (item: SessionListItem) => ReactNode;
   onNew?: (sectionId?: string) => void;
 }) {
+  const handoff = useChannelNavigation();
   useSessionConversions(session);
   useSyncExternalStore(
     session.mePlacement.subscribe,
@@ -153,6 +158,7 @@ export function SessionSections({
   currentVisit.current = visit;
   const [sessionSettings, setSessionSettings] = useState<{
     item: SessionListItem;
+    rename?: boolean;
     visit: AbortSignal | undefined;
   }>();
   const [deleting, setDeleting] = useState<string>();
@@ -397,6 +403,9 @@ export function SessionSections({
                                   setConverting({ id: item.id, visit });
                               }}
                             >
+                              <MenuIcon>
+                                <HashIcon size={16} />
+                              </MenuIcon>
                               {conversionLabel(session, item.id)}
                             </MenuItem>
                           )}
@@ -469,6 +478,52 @@ export function SessionSections({
                           </MenuSubmenuPopup>
                         </MenuSubmenu>
 
+                        {personal &&
+                          canEditSessionLifetime(
+                            session,
+                            channels.channels.find(
+                              (channel) => channel.id === item.id,
+                            ),
+                          ) && (
+                            <MenuItem
+                              onClick={() =>
+                                setSessionSettings({
+                                  item,
+                                  visit,
+                                  rename: true,
+                                })
+                              }
+                            >
+                              <MenuIcon>
+                                <PencilSimpleIcon size={16} />
+                              </MenuIcon>
+                              Rename
+                            </MenuItem>
+                          )}
+                        {personal && handoff && (
+                          <ChannelLifecycleMenu
+                            channelId={item.id}
+                            lifecycle={session.channelLifecycle}
+                            archiveLabel="Archive"
+                            archiveOnly
+                            separator={false}
+                            disabled={false}
+                            choose={(action) => {
+                              const channel = channels.channels.find(
+                                (candidate) => candidate.id === item.id,
+                              );
+                              if (channel)
+                                handoff.openLifecycle(
+                                  channel,
+                                  action,
+                                  document.querySelector<HTMLElement>(
+                                    `[data-session-menu-id="${item.id}"] button`,
+                                  ) ?? undefined,
+                                  visit,
+                                );
+                            }}
+                          />
+                        )}
                         <MenuItem
                           disabled={
                             (!session.canvas.available &&
@@ -563,6 +618,7 @@ export function SessionSections({
       {sessionSettings && (
         <WorkspaceSettings
           key={sessionSettings.item.id}
+          focusName={sessionSettings.rename}
           signal={sessionSettings.visit}
           finalFocus={() =>
             document.querySelector<HTMLElement>(

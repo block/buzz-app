@@ -109,6 +109,9 @@ import type {
 } from "./composer-dom";
 import { TargetOpenerProvider } from "../conversation/opener";
 import { avatarMedia } from "../../shared/avatar-source";
+import { followUpBehaviorPreference } from "./follow-up-preference";
+import { followUpQueue } from "./follow-up-queue";
+import { QueuedFollowUps } from "./QueuedFollowUps";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
   status: "idle",
@@ -1256,6 +1259,10 @@ function Composer({
     const capturedAttachments = attachments.store.snapshot();
     const capturedPicks = picks;
     const capturedRunPicks = { ...picks, ...resolvedPicks.current };
+    const queueFollowUp =
+      personalConversation &&
+      !threadRootId &&
+      followUpBehaviorPreference() === "queue";
     try {
       if (submission?.receiptOnly) {
         submission.submit(captured);
@@ -1355,8 +1362,22 @@ function Composer({
         stagedSessions.has(id),
       );
       // Destination and content are fixed here; a background send never retargets.
-      const publish = (uploaded: readonly UploadedAttachment[]) => {
+      const publishNow = (uploaded: readonly UploadedAttachment[]) => {
         requireCompletedSessionStart();
+        if (
+          personalConversation &&
+          (!session.mePlacement.has(channelId) ||
+            recipients.some(
+              (key) =>
+                archivedMention(session, key) ||
+                !session.agentChoices
+                  .snapshot()
+                  .selectable.some((agent) => agent.pubkey === key),
+            ))
+        )
+          throw new Error(
+            "This Solo chat or its recipients are no longer available.",
+          );
         return threadRootId
           ? session.messages.reply(
               channelId,
@@ -1389,6 +1410,18 @@ function Composer({
               )
             : session.messages.send(channelId, content, recipients, uploaded);
       };
+      const publish = (uploaded: readonly UploadedAttachment[]) =>
+        queueFollowUp
+          ? followUpQueue(session).submit({
+              channelId,
+              text: content,
+              recipients,
+              publish: () => publishNow(uploaded),
+              onSend: (id) => {
+                if (live.current) onSend?.(id);
+              },
+            })
+          : publishNow(uploaded);
       let id: string | undefined;
       if (capturedAttachments.length) {
         const followup = JSON.stringify(next);
@@ -1399,7 +1432,7 @@ function Composer({
           capturedAttachments,
           (uploaded) => {
             const sent = publish(uploaded);
-            if (live.current) onSend?.(sent);
+            if (sent && live.current) onSend?.(sent);
           },
           (files, preparationError) => {
             // Only the original saved draft or the untouched follow-up can be
@@ -1600,6 +1633,13 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
+      {personalConversation && !submission && !threadRootId && (
+        <QueuedFollowUps
+          session={session}
+          channelId={channelId}
+          disabled={disabled || !active}
+        />
+      )}
       <form
         ref={form}
         className={styles.composer}

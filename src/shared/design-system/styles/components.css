@@ -624,6 +624,10 @@
     box-shadow: var(--shadow-panel);
   }
 
+  .panel[data-shape="capsule"] {
+    border-radius: var(--radius-pill);
+  }
+
   /* A joined surface keeps one outer edge; nested panels retain opaque
      fills for responsive overlays while their layout owns the separators. */
   .panel[data-joined] .panel {
@@ -778,6 +782,40 @@
     bottom: 0;
     border-radius: var(--radius-pill);
     background: var(--bg-chrome-selected);
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* Segmented filters on opaque surfaces, as used by sidebar scope. */
+  .buzz-tabs[data-variant="segmented"] {
+    display: flex;
+    padding: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--surface-inset);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-list {
+    width: 100%;
+    gap: var(--space-1);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: var(--space-8);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    color: var(--text-subtle);
+  }
+  .buzz-tabs[data-variant="segmented"]
+    .buzz-tabs-tab:hover:not([data-selected]) {
+    background: var(--affordance-subtle-hover);
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab[data-selected] {
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-indicator {
+    inset-block: 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface-panel);
     box-shadow: var(--shadow-xs);
   }
 

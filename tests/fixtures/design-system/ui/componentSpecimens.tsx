@@ -692,6 +692,9 @@ function FullPageSurfaceSpecimen() {
 function PanelSpecimen() {
   return (
     <div className="component-specimen-stack">
+      <Panel as="div" shape="capsule" aria-label="Capsule surface">
+        <div className="p-2">Shell control group</div>
+      </Panel>
       <SpecimenGroup
         label="Panel — the surface by itself"
         code={`<div className="w-full h-64 p-workspace-inset rounded-panel bg-app">
@@ -787,6 +790,13 @@ function TabsSpecimen() {
   }));
   return (
     <div className="component-specimen-stack">
+      <Tabs
+        label="Segmented filters"
+        variant="segmented"
+        value={panelDestination}
+        onValueChange={setPanelDestination}
+        items={DESTINATIONS}
+      />
       <Button
         disabled={!closable.includes("Thread")}
         onClick={() => {

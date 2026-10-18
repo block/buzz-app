@@ -16,8 +16,17 @@ import { ownSolo } from "../solo/labels";
 import { resetNewChatProject } from "../solo/SoloDraft";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import type { ContributionReader } from "../conversation/contracts";
+import type { ChatIcon } from "../conversation/service";
 import channelStyles from "../../bundled/channels/Channels.module.css";
 import styles from "../../bundled/channels/SoloProjects.module.css";
+
+const noSubscription = () => () => {};
+const chatIcon = (
+  <span className={styles.conversationIcon} aria-hidden="true">
+    <ChatCircleIcon size={16} />
+  </span>
+);
 
 /** Solo projects and conversations: the owner's private filing of ordinary channels. */
 export function SoloInventory({
@@ -25,11 +34,14 @@ export function SoloInventory({
   scope,
   navigator,
   target,
+  chatIcons,
 }: {
   session: RelaySession;
   scope: string;
   navigator: Navigation;
   target: OpenTarget;
+  /** Plugin icons that can stand in for a chat's own. */
+  chatIcons?: ContributionReader<ChatIcon> | undefined;
 }) {
   const list = useChannelList(session.channels);
   const recoveryShown = useRecoveryShown(session.recovery);
@@ -40,6 +52,10 @@ export function SoloInventory({
     session.agentActivity.subscribeWorking,
     session.agentActivity.workingSnapshot,
     session.agentActivity.workingSnapshot,
+  );
+  const ChatIcon = useSyncExternalStore(
+    chatIcons?.subscribe ?? noSubscription,
+    () => chatIcons?.snapshot()[0]?.component,
   );
   const workingChannels = new Set<string>(JSON.parse(workingIds));
   const open = (channelId: string) =>
@@ -116,6 +132,7 @@ export function SoloInventory({
             title={item.title}
             selected={selected === item.id}
             working={workingChannels.has(item.id)}
+            Icon={ChatIcon}
             onSelect={() => void open(item.id)}
             onOpenThread={(thread) =>
               openMessage(thread.channelId, thread.rootId)
@@ -147,6 +164,7 @@ function SoloConversationRow({
   title,
   selected,
   working,
+  Icon,
   onSelect,
   onOpenThread,
   onOpenWorkingAgent,
@@ -157,6 +175,7 @@ function SoloConversationRow({
   title: string;
   selected: boolean;
   working: boolean;
+  Icon?: ChatIcon["component"] | undefined;
   onSelect: () => void;
 } & Pick<
   ComponentProps<typeof ChannelActivityPopover>,
@@ -185,9 +204,11 @@ function SoloConversationRow({
           aria-current={selected ? "page" : undefined}
           onClick={onSelect}
           icon={
-            <span className={styles.conversationIcon} aria-hidden="true">
-              <ChatCircleIcon size={16} />
-            </span>
+            Icon ? (
+              <Icon session={session} channelId={id} fallback={chatIcon} />
+            ) : (
+              chatIcon
+            )
           }
           label={
             <span className={styles.chatRow}>

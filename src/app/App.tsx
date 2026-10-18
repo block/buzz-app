@@ -210,6 +210,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                   relay={services.relay}
                   navigator={services.navigation}
                   agents={services.agents}
+                  chatIcons={services.conversation.chatIcons}
                   target={route.target}
                 >
                   {pageNavigation}

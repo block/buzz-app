@@ -1,11 +1,15 @@
 import { Button } from "../../shared/design-system/ui/Button";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ArrowSquareOutIcon,
   GitPullRequestIcon,
-  CircleDashedIcon,
-  XCircleIcon,
-  GitMergeIcon,
   GitHubIssueIcon,
   GitCommitIcon,
   FolderSimpleIcon,
@@ -21,18 +25,107 @@ import styles from "./GitHub.module.css";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
+import type { RelaySession } from "../../features/relay/session";
+import { ownSolo } from "../../features/solo/labels";
+import { createSoloPulls, writeLink, type SoloPulls } from "./solo-pull";
+import { SoloPullIcon, SoloPullLink, stateIcons } from "./SoloPull";
 
 /** How often an open pull request panel reads GitHub again. */
 export const REFRESH_MS = 30_000;
 
-export const inject = ["panels", "host"];
+export const inject = ["panels", "host", "conversation", "relay", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const gh = gitHubCli(ctx.host);
+  const pulls = new WeakMap<RelaySession, SoloPulls>();
+  const pullsFor = (session: RelaySession) => {
+    let found = pulls.get(session);
+    if (!found) {
+      found = createSoloPulls(session, gh);
+      pulls.set(session, found);
+    }
+    return found;
+  };
   ctx.panels.register({
     id: "object",
     title: "GitHub",
     matches: (target) => !!parseGitHubReference(target),
-    component: (props: PanelProps) => <GitHubPanel {...props} gh={gh} />,
+    component: (props: PanelProps) => {
+      const channelId = props.context?.channelId;
+      return (
+        <GitHubPanel
+          {...props}
+          gh={gh}
+          {...(channelId && {
+            chatLink: (url: string) => (
+              <SoloPullLink
+                relay={ctx.relay}
+                pullsFor={pullsFor}
+                channelId={channelId}
+                url={url}
+              />
+            ),
+          })}
+        />
+      );
+    },
+  });
+  ctx.conversation.registerChatIcon(({ session, channelId, fallback }) => (
+    <SoloPullIcon
+      pulls={pullsFor(session)}
+      channelId={channelId}
+      fallback={fallback}
+    />
+  ));
+  ctx.agents.addTool({
+    name: "link_pr",
+    description:
+      "Links a GitHub pull request to this Solo chat, so the owner's sidebar shows its state (draft, checks, merged) in place of the chat's icon. A chat has one; linking another replaces it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "The pull request's https://github.com/… URL",
+        },
+        unlink: {
+          type: "boolean",
+          description: "Unlink the chat's pull request instead",
+        },
+      },
+      additionalProperties: false,
+    },
+    async call(client, context, args) {
+      const url =
+        args.unlink === true
+          ? null
+          : typeof args.url === "string"
+            ? parseGitHubReference(args.url)
+            : undefined;
+      if (url !== null && url?.kind !== "pull")
+        throw new Error("url must be a GitHub pull request URL");
+      const relay = ctx.agents.relay(client.pubkey)?.snapshot();
+      const channel = context.channel;
+      const session = relay?.status === "ready" ? relay.session : undefined;
+      if (!session || !channel)
+        throw new Error("link_pr needs this conversation's community");
+      if (
+        !ownSolo(
+          session.channels.list().channels.find((item) => item.id === channel),
+          session.viewer,
+        )
+      )
+        throw new Error("Only a Solo chat can be linked to a pull request");
+      const link = url === null ? null : url.url;
+      await writeLink(session, channel, link);
+      pullsFor(session).linked(channel, link);
+      // The sidebar reads the selected community through its own session.
+      const shown = ctx.relay.snapshot();
+      if (shown.status === "ready" && shown.scope === relay?.scope)
+        pullsFor(shown.session).linked(channel, link);
+      return link
+        ? `Linked ${link}. The sidebar shows its state for this chat.`
+        : "Unlinked this chat's pull request.";
+    },
   });
 };
 const labels = {
@@ -48,19 +141,15 @@ const icons = {
   commit: GitCommitIcon,
 };
 
-const stateIcons = {
-  open: GitPullRequestIcon,
-  draft: CircleDashedIcon,
-  closed: XCircleIcon,
-  merged: GitMergeIcon,
-};
-
 export function GitHubPanel({
   target,
   gh,
+  chatLink,
 }: PanelProps & {
   /** The person's `gh`, where the app can run it. */
   gh?: GitHubCli | undefined;
+  /** Links a pull request to the chat the panel was opened from. */
+  chatLink?: ((url: string) => ReactNode) | undefined;
 }) {
   const [attempt, retry] = useState(0);
   const reference = useMemo(() => parseGitHubReference(target), [target]);
@@ -69,6 +158,7 @@ export function GitHubPanel({
       key={`${reference.url}:${attempt}`}
       reference={reference}
       gh={gh}
+      chatLink={chatLink}
       retry={() => retry(attempt + 1)}
     />
   ) : (
@@ -79,10 +169,12 @@ export function GitHubPanel({
 function ObjectPanel({
   reference,
   gh,
+  chatLink,
   retry,
 }: {
   reference: GitHubReference;
   gh: GitHubCli | undefined;
+  chatLink: ((url: string) => ReactNode) | undefined;
   retry(): void;
 }) {
   const [loaded, setLoaded] = useState<GitHubObject | string>();
@@ -352,6 +444,7 @@ function ObjectPanel({
                   sha={result.headSha}
                 />
               )}
+              {chatLink?.(reference.url)}
               {result.body && (
                 <div className={styles.description}>
                   <Accordion

@@ -14,6 +14,8 @@ import { PrimarySidebar } from "./PrimarySidebar";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { conversationTarget } from "../../features/channel-navigation/routes";
+import type { ContributionReader } from "../../features/conversation/contracts";
+import type { ChatIcon } from "../../features/conversation/service";
 
 export const owners: ReturnType<typeof createRelaySession>[] = [];
 export const id = "11111111-1111-4111-8111-111111111111";
@@ -23,7 +25,12 @@ export const outsider = "b".repeat(64);
 export const viewer = "c".repeat(64);
 export const root = "d".repeat(64);
 export const scope = `https://relay.test:${viewer}`;
-export function fixture(combined = false, canCreate = false, agents?: Agents) {
+export function fixture(
+  combined = false,
+  canCreate = false,
+  agents?: Agents,
+  chatIcons?: ContributionReader<ChatIcon>,
+) {
   const owner = createRelaySession(null);
   owners.push(owner);
   const base = owner.session;
@@ -167,6 +174,7 @@ export function fixture(combined = false, canCreate = false, agents?: Agents) {
                 relay={relay}
                 navigator={navigator}
                 target={target}
+                chatIcons={chatIcons}
               >
                 <button type="button">Inbox</button>
               </PrimarySidebar>
@@ -178,6 +186,7 @@ export function fixture(combined = false, canCreate = false, agents?: Agents) {
             scope={scope}
             navigator={navigator}
             target={target}
+            chatIcons={chatIcons}
           />
         )}
       </ToastProvider>

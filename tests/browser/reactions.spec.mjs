@@ -1,4 +1,7 @@
-import { hoverMessage } from "./message-actions.mjs";
+import {
+  hoverMessage,
+  expectMessageActionsHidden,
+} from "./message-actions.mjs";
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
@@ -341,7 +344,14 @@ test("one active reaction picker preserves target and focus when switching or un
   await first.focus();
   await first.press("Enter");
   await expect(search).toBeVisible();
-  await expect(second).toBeHidden();
+  // The other toolbar may close entirely rather than remain an invisible
+  // popup anchor. Both states must neither paint nor intercept the pointer.
+  await expectMessageActionsHidden(
+    secondRow.getByRole("group", {
+      name: "Message actions",
+      includeHidden: true,
+    }),
+  );
   await search.press("Escape");
   await expect(search).toHaveCount(0);
   await expect(first).toBeFocused();

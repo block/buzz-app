@@ -369,7 +369,7 @@ export function PluginImport({
             ? undefined
             : preview
               ? reviewing
-                ? undefined
+                ? "Only install code you trust."
                 : preview.candidates.length
                   ? "Select a plugin to review before installing."
                   : "Try another folder or repository."
@@ -697,9 +697,6 @@ export function PluginImport({
                                 These declarations describe what the plugin asks
                                 Buzz to do. They don’t limit what its code can
                                 do.
-                              </p>
-                              <p className="mb-0 mt-3 text-label-sm">
-                                Only install code you trust.
                               </p>
                             </section>
                           ),

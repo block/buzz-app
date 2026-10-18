@@ -476,7 +476,9 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(page.getByRole("dialog")).toHaveAccessibleName(
     "Review plugin access",
   );
-  await expect(page.getByRole("dialog")).toHaveAccessibleDescription("");
+  await expect(page.getByRole("dialog")).toHaveAccessibleDescription(
+    "Only install code you trust.",
+  );
   await expect(
     page.getByRole("region", { name: "Skipped folders" }),
   ).toHaveCount(0);

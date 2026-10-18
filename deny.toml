@@ -6,13 +6,14 @@ ignore = [
     # zip 4.6.1 < 9: extraction keeps setuid/setgid bits (0367), creates symlinks
     # that escape the destination (0368) and applies permissions through symlinks
     # (0369). Only path: buzz-foundation → tauri-plugin-updater 2.13.3 → zip.
-    # Only the updater's Windows ZIP install path calls ZipArchive::extract;
-    # buzz-app ships a raw NSIS .exe update and installs only signature-verified
-    # bytes. Recheck before publishing Windows ZIP updates. Remove when
+    # The updater sniffs the downloaded bytes and calls ZipArchive::extract on
+    # Windows when they are a ZIP, regardless of URL or createUpdaterArtifacts.
+    # The current release pipeline publishes raw, signed NSIS installer bytes.
+    # Recheck before publishing Windows ZIP updates. Remove when
     # tauri-plugin-updater moves to zip >= 9.
-    { id = "RUSTSEC-2026-0367", reason = "zip 4.6.1 via tauri-plugin-updater; only its Windows ZIP install path extracts, and buzz-app ships an NSIS .exe" },
-    { id = "RUSTSEC-2026-0368", reason = "zip 4.6.1 via tauri-plugin-updater; only its Windows ZIP install path extracts, and buzz-app ships an NSIS .exe" },
-    { id = "RUSTSEC-2026-0369", reason = "zip 4.6.1 via tauri-plugin-updater; only its Windows ZIP install path extracts, and buzz-app ships an NSIS .exe" },
+    { id = "RUSTSEC-2026-0367", reason = "zip 4.6.1 via tauri-plugin-updater; it extracts ZIP-sniffed bytes on Windows, but the current release pipeline publishes raw NSIS bytes; recheck before Windows ZIP updates, remove at zip >= 9" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 4.6.1 via tauri-plugin-updater; it extracts ZIP-sniffed bytes on Windows, but the current release pipeline publishes raw NSIS bytes; recheck before Windows ZIP updates, remove at zip >= 9" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 4.6.1 via tauri-plugin-updater; it extracts ZIP-sniffed bytes on Windows, but the current release pipeline publishes raw NSIS bytes; recheck before Windows ZIP updates, remove at zip >= 9" },
     # zbus 5 D-Bus crates — unmaintained, not vulnerable. Linux only:
     # buzz-foundation, tauri-plugin-opener and tauri-plugin-single-instance →
     # zbus 5. Remove when those move off zbus 5.

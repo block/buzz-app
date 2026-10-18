@@ -761,9 +761,25 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   const access = dialog.getByRole("region", { name: "Computer access" });
   await expect(access.getByText("Run python3")).toBeVisible();
   const summaryList = access.getByRole("region", { name: "Declared scopes" });
+  const computer = access.getByRole("button", { name: /^Computer access/ });
+  await expect(access.getByRole("button").first()).toHaveText(
+    /Computer access/,
+  );
+  await expect(computer).toHaveAttribute("aria-expanded", "false");
+  await computer.click();
+  await expect(
+    access.getByRole("region", { name: "Plugin safety" }),
+  ).toBeVisible();
   await expect(
     access.getByRole("region", { name: "Plugin safety" }),
   ).toContainText("Plugins aren’t sandboxed");
+  await dialog.screenshot({
+    path: info.outputPath("computer-access-expanded.png"),
+  });
+  await computer.click();
+  await expect(
+    access.getByRole("region", { name: "Plugin safety" }),
+  ).toHaveCount(0);
   await expect(access.getByText(/Inspect exact commands/)).toHaveCount(0);
   await expect(summaryList.getByRole("button")).toHaveCount(2);
   await expect(summaryList).toContainText("Connect to https://api.example.com");

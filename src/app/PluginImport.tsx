@@ -656,6 +656,49 @@ export function PluginImport({
                     aria-label="Computer access"
                     className="text-body-sm"
                   >
+                    <Accordion
+                      animate
+                      key={`computer-${selected}`}
+                      items={[
+                        {
+                          value: "computer-access",
+                          title: (
+                            <span className="flex items-start gap-3 text-left text-body-sm">
+                              <MonitorIcon
+                                size={20}
+                                className="shrink-0 text-muted"
+                                aria-hidden="true"
+                              />
+                              <span>
+                                <span className="block font-medium">
+                                  Computer access
+                                </span>
+                                <span className="block text-muted">
+                                  Runs without a sandbox.
+                                </span>
+                              </span>
+                            </span>
+                          ),
+                          content: (
+                            <section
+                              aria-label="Plugin safety"
+                              className="text-body-sm"
+                            >
+                              <p className="m-0">
+                                Plugins aren’t sandboxed. They can access your
+                                computer beyond these declarations, even when no
+                                additional capabilities are listed.
+                              </p>
+                              <p className="mb-0 mt-2">
+                                The declarations describe what the plugin asks
+                                Buzz to do; they don’t restrict everything its
+                                code can do. Only install code you trust.
+                              </p>
+                            </section>
+                          ),
+                        },
+                      ]}
+                    />
                     {existing &&
                       (declaredGrants.some(
                         (grant) => !previousGrants.includes(grant),
@@ -697,24 +740,6 @@ export function PluginImport({
                         />
                       </section>
                     )}
-                    <section
-                      aria-label="Plugin safety"
-                      className="mt-4 flex items-start gap-3 p-2"
-                    >
-                      <MonitorIcon
-                        size={20}
-                        className="shrink-0 text-muted"
-                        aria-hidden="true"
-                      />
-                      <div>
-                        <p className="m-0">Computer access</p>
-                        <p className="mb-0 mt-1 text-muted">
-                          Plugins aren’t sandboxed and can access your computer
-                          beyond these declarations. Only install code you
-                          trust.
-                        </p>
-                      </div>
-                    </section>
                   </section>
                 )}
                 {reviewing && candidate && existing && (

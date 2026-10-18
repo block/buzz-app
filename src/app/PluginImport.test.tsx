@@ -222,6 +222,13 @@ it("shows exact declared access and changes before an enabled update", async () 
   expect(screen.getByText(/^Run example-cli/)).toBeVisible();
   expect(screen.getByText(/^Start example-worker/)).toBeVisible();
   expect(screen.getByText(/^Provide tools to local agents/)).toBeVisible();
+  const computer = screen.getByRole("button", { name: /^Computer access/ });
+  expect(computer).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("region", { name: "Plugin safety" })).toBeNull();
+  fireEvent.click(computer);
+  await waitFor(() =>
+    expect(screen.getByRole("region", { name: "Plugin safety" })).toBeVisible(),
+  );
   expect(
     screen.getByRole("region", { name: "Plugin safety" }),
   ).toHaveTextContent("Plugins aren’t sandboxed");

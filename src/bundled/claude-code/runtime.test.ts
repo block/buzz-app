@@ -19,6 +19,7 @@ import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { localSessions } from "./sessions";
 import { wake } from "../../features/agent-harness/wakes";
+import { workspaceCanvas } from "../../features/solo/workspace";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -54,6 +55,8 @@ function setup(
     solo?: Set<string>;
     named?: Delivery["named"];
     title?: string;
+    /** The channel's Canvas, as it reads now. */
+    canvas?: { content: string };
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -107,6 +110,10 @@ function setup(
       ensure: vi.fn(async (): Promise<void> => {}),
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
+    },
+    canvas: {
+      available: !!options.canvas,
+      read: vi.fn(async () => options.canvas && { ...options.canvas }),
     },
   };
   const relay = {
@@ -1564,4 +1571,87 @@ it("a failed first Solo chat turn releases naming so a successful retry can offe
   await flush();
   expect(named).toHaveBeenCalledExactlyOnceWith("A useful title");
   f.runtime.dispose();
+});
+
+it("hands a Solo chat's Canvas to each turn and lets its session stay in the workspace's folders", async () => {
+  const mention = (id: string) =>
+    message(id, "@Claude go", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    });
+  const canvas = {
+    content: workspaceCanvas({
+      folders: ["~/Development/app"],
+      worktree: { location: "~/Development/app-trees", baseBranch: "main" },
+      canvas: "Use the design system.",
+    }),
+  };
+  const { deliver, claudes, runtime, session } = setup([], {
+    me: new Set([channel]),
+    canvas,
+  });
+  await deliver({ type: "mention", event: mention("1") });
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(first?.options.cwd).toBe("~/.buzz");
+  expect(first?.options.args).toEqual(
+    expect.arrayContaining([
+      "--add-dir",
+      "~/Development/app",
+      "--add-dir",
+      "~/Development/app-trees",
+    ]),
+  );
+  expect(first?.prompts[0]).toContain("<workspace-canvas>");
+  expect(first?.prompts[0]).toContain(
+    "not your own workspace: `~/Development/app`, `~/Development/app-trees`",
+  );
+  expect(first?.prompts[0]).toContain("Use the design system.");
+
+  // A Canvas that cannot be read keeps the session and its folders.
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  session.canvas.read.mockRejectedValueOnce(new Error("offline"));
+  await deliver({ type: "mention", event: mention("3") });
+  await flush(10);
+  expect(first?.killed).toBe(false);
+  expect(first?.prompts).toHaveLength(2);
+  expect(first?.prompts[1]).not.toContain("<workspace-canvas>");
+
+  // New folders restart the idle session, resumed where it was.
+  canvas.content = workspaceCanvas({
+    folders: ["~/Development/other"],
+    canvas: "",
+  });
+  await deliver({ type: "mention", event: mention("2") });
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(second?.options.args).toContain("~/Development/other");
+  expect(second?.options.args).not.toContain("~/Development/app");
+  expect(second?.prompts[0]).toContain("`~/Development/other`");
+  runtime.dispose();
+});
+
+it("hands no Canvas to a shared channel's turns", async () => {
+  const event = message("1", "@Claude go", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, runtime, session } = setup([], {
+    canvas: {
+      content: workspaceCanvas({ folders: ["~/repo"], canvas: "Steer me" }),
+    },
+  });
+  await deliver({ type: "mention", event });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(session.canvas.read).not.toHaveBeenCalled();
+  expect(claude?.options.args).not.toContain("--add-dir");
+  expect(claude?.prompts[0]).not.toContain("workspace-canvas");
+  runtime.dispose();
 });

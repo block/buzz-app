@@ -267,6 +267,10 @@ function fixture(
           ],
         }),
       },
+      canvas: {
+        available: false,
+        read: vi.fn(async (): Promise<{ content: string } | null> => null),
+      },
     },
   };
   const relay = { snapshot: () => snapshot } as unknown as RelayData;
@@ -3246,4 +3250,26 @@ it("method calls: a thread and a turn make no relay-session call beyond the turn
   ).toEqual([]);
   expect(context()).toBe(true);
   expect(f.core).toHaveBeenCalled();
+});
+
+it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
+  const f = fixture();
+  f.snapshot.session.canvas.available = true;
+  f.snapshot.session.canvas.read.mockResolvedValue({ content: "Use tokens." });
+  await f.runtime.run(f.delivery("@Codex shared", root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).not.toContain("workspace-canvas");
+  expect(f.snapshot.session.canvas.read).not.toHaveBeenCalled();
+  await f.complete(0, "DONE");
+
+  const solo = fixture();
+  inMe(solo);
+  solo.snapshot.session.canvas.available = true;
+  solo.snapshot.session.canvas.read.mockResolvedValue({
+    content: "Use tokens.",
+  });
+  await solo.runtime.run(solo.delivery("@Codex solo", root));
+  await vi.waitFor(() => expect(solo.starts()).toHaveLength(1));
+  expect(inputText(solo.starts()[0])).toContain("<workspace-canvas>");
+  expect(inputText(solo.starts()[0])).toContain("Use tokens.");
 });

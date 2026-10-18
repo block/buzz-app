@@ -40,6 +40,7 @@ import {
   systemPrompt,
   turnPrompt,
 } from "../claude-code/prompt";
+import { readProject } from "../../features/agent-harness/project";
 import type { ServeMcp, Spawn, ToolServer } from "./goose";
 import {
   AgentSessions,
@@ -425,6 +426,15 @@ export class GooseRuntime {
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
+    // Read alongside the conversation: only a Solo chat's Canvas is handed over.
+    const canvas = session?.canvas;
+    const reading = topLevel
+      ? readProject(
+          canvas?.available
+            ? async () => (await canvas.read(channelId))?.content
+            : undefined,
+        )
+      : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
     if (session && (thread || dm || topLevel))
       try {
@@ -467,6 +477,7 @@ export class GooseRuntime {
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
+    const project = (await reading)?.section;
     return {
       key,
       event,
@@ -484,6 +495,7 @@ export class GooseRuntime {
         session?.names.resolve(pubkey, undefined, members) ??
         session?.profiles.snapshot().get(pubkey)?.name ??
         undefined,
+      ...(project ? { project } : {}),
     };
   }
 

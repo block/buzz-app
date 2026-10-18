@@ -33,6 +33,7 @@ import {
   MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
+import { readProject } from "../../features/agent-harness/project";
 import {
   CONTEXT_LIMIT,
   type Scope,
@@ -107,6 +108,8 @@ type Entry = {
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
+  /** The project folders each Solo chat's latest turn named, for its process. */
+  directories: Map<string, readonly string[]>;
   /** Each conversation's latest posting policy: when its turns were handed
    * over, and when all of them settled. */
   policies: Map<
@@ -578,6 +581,11 @@ export class ClaudeRuntime {
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
+    // Read alongside the conversation: only a Solo chat's Canvas is handed over.
+    const canvas = reads?.canvas?.bind(reads);
+    const reading = topLevel
+      ? readProject(canvas && (() => canvas(channelId)))
+      : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
     if (reads && (thread || dm || topLevel))
       try {
@@ -620,6 +628,11 @@ export class ClaudeRuntime {
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
+    const project = await reading;
+    // An unread Canvas keeps the folders the chat had, not restarting it.
+    if (project?.directories.length)
+      entry.directories.set(key, project.directories);
+    else if (project) entry.directories.delete(key);
     return {
       key,
       event,
@@ -634,6 +647,7 @@ export class ClaudeRuntime {
       context: unseen,
       total: earlier.length + 1,
       name: (pubkey: string) => reads?.name(pubkey, members),
+      ...(project?.section ? { project: project.section } : {}),
     };
   }
 
@@ -646,6 +660,7 @@ export class ClaudeRuntime {
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
       policies: new Map(),
+      directories: new Map(),
     };
     // Each process reads files where it was started, and keeps the tool list
     // it was given, until it is replaced.
@@ -674,8 +689,9 @@ export class ClaudeRuntime {
       spare: this.spare,
       store: localSessions(this.storage, pubkey),
       onChange: () => this.notify(),
-      fingerprint: () =>
+      fingerprint: (key) =>
         JSON.stringify([
+          key ? (entry.directories.get(key) ?? []) : [],
           entry.config.model,
           entry.config.effort,
           entry.config.workspace,
@@ -685,11 +701,13 @@ export class ClaudeRuntime {
           entry.name,
           addedKey(this.added()),
         ]),
-      launch: async () => {
+      launch: async (key) => {
         const { workspace, instructions, scope } = entry.config;
         const memory = await this.core(pubkey);
+        const directories = key ? entry.directories.get(key) : undefined;
         return {
           ...where(entry.config),
+          ...(directories ? { directories } : {}),
           tools: tools(workspace),
           systemPrompt: systemPrompt({
             scope,

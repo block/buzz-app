@@ -63,7 +63,7 @@ test("agent cards expose selection and creation preserves focus and selected bor
         )
         .toBeLessThan(1.5);
       const instructions = dialog.getByRole("textbox", {
-        name: "Instructions",
+        name: "Instructions Optional",
         exact: true,
       });
       await expect(instructions).toHaveCSS(

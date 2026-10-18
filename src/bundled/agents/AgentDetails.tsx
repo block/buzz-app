@@ -211,6 +211,7 @@ export function AgentDetails({
                     appearance="heading"
                     ref={nameInput}
                     aria-label="Agent name"
+                    placeholder="Name your agent"
                     aria-invalid={namePrompt.attempts > 0 || undefined}
                     aria-describedby={nameMessage ? nameMessageId : undefined}
                     value={name}

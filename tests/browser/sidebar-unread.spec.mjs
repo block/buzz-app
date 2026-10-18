@@ -647,7 +647,7 @@ test.describe("DM preview wiring", () => {
         return edge === "above" ? ids.reverse() : ids;
       }, edge);
       await expect(pill).toHaveAccessibleName(
-        `${expected.length} unread conversations ${edge}`,
+        `${expected.length} unread conversation${expected.length === 1 ? "" : "s"} ${edge}`,
       );
       const previews = pill.locator("[data-unread-dm]");
       await expect

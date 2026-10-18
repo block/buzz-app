@@ -1285,9 +1285,9 @@ roles, so nothing stays gray on a background that turned accent.
 
 | Group | Roles |
 | --- | --- |
-| Moments | Own messages, links |
+| Moments | Own messages and the links on them |
 | Strong | Prominent buttons (including send), checked controls, switches, badges, tooltips; `text-on-prominent` is their ink, `affordance-prominent-mark` their standalone dots, lines and slider track/thumb |
-| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row-subtle`, `text-row-metadata`) |
+| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row`, `text-row-subtle`, `text-row-metadata`); unread labels retain Semibold `text-navigation-unread` on hover and selection (near-black in light mode below Buzzin’, paired accent ink at Buzzin’; white in dark mode). Black ink is allowed on accent fills. |
 | Controls | Resting quiet fills, their hover and pressed states, floating controls, control outlines |
 | Shell | `bg-app`, its dots, and the chrome on it (`affordance-chrome`, its hover, `text-chrome-subtle`, `bg-chrome-selected`) |
 | Lines | Separators, thread lines, scrollbars |
@@ -1298,9 +1298,9 @@ roles, so nothing stays gray on a background that turned accent.
 | Accent level | Groups on the accent |
 | --- | --- |
 | Snoozin’ | None; accent tints, lines and accent text only |
-| Hummin’ | Links, strong, rows |
+| Hummin’ | Strong, rows |
 | Swarmin’ | Adds your own messages and the shell |
-| Buzzin’ | Adds controls, lines, secondary text, surfaces and primary text |
+| Buzzin’ | Adds controls, lines, secondary text, surfaces, primary text and links |
 
 Status colors, focus, categorical purple, shadows and media-specific roles stay
 fixed. Media pixels, the black viewing canvas and the white-on-dark media-glass
@@ -1459,7 +1459,12 @@ separate WCAG 3:1 non-text ratio; decorative separators and hover fills do not.
 
 ### Link contrast
 
-Inline links and mentions use Blue 11 with Blue 3 hover in both modes.
+Inline links and mentions follow their ground. On neutral reading surfaces
+below Buzzin’ they use Blue 11 with Blue 3 hover in both modes.
+On colored surfaces they take the accent's paired ink: Buzzin’ surfaces use the
+accent link step and its hover, and own messages use `text-message-link-own`,
+which pairs with that level's bubble fill. Components consume `text-link` or
+`text-message-link-own`; never pick a link color per component.
 Blue 11 is tuned for the supported surface stack: #0b5fa8 in light mode and
 #83c4ff in dark. These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including

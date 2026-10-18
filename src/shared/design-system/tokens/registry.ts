@@ -440,8 +440,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-link",
         variable: "--text-link",
-        pointsAt: "blue-11 light / blue-11 dark",
-        use: "Inline links and mentions in prose.",
+        pointsAt: "blue-11 light / blue-11 dark; accent link at Buzzin’",
+        use: "Inline links and mentions in prose. Blue on neutral reading surfaces; accent ink once Buzzin’ colors them.",
         status: "core",
       },
       {
@@ -456,7 +456,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-message-link-own",
         variable: "--text-message-link-own",
         pointsAt:
-          "text-link at Neutral; accent link, 12, or contrast ink as the amount rises",
+          "text-link on neutral bubbles; accent link at Swarmin’; accent ink at Buzzin’",
         use: "Links and mentions on the selected outgoing message surface.",
         status: "core",
       },

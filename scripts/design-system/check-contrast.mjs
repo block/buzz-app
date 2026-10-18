@@ -179,6 +179,7 @@ const PAIRS = [
   ]),
   ...["--affordance-row-hover", "--affordance-selected"].flatMap((fill) => [
     ["--text-row", fill],
+    ["--text-navigation-unread", fill],
     ["--text-row-subtle", fill],
     ["--text-row-metadata", fill],
   ]),
@@ -511,9 +512,11 @@ function oklch(hex) {
   };
 }
 const isAccent = (hex) => oklch(hex).chroma >= 0.02;
+// Black ink is allowed on accent fills, including the near-black unread ink
+// (#262626, lightness 0.27); mid grays from #525252 (0.44) up are not.
 const isGray = (hex) => {
   const { lightness, chroma } = oklch(hex);
-  return chroma < 0.02 && lightness > 0.25 && lightness < 0.9;
+  return chroma < 0.02 && lightness > 0.3 && lightness < 0.9;
 };
 const on = (foregrounds, grounds) =>
   grounds.flatMap((ground) => foregrounds.map((fg) => [fg, ground]));
@@ -522,6 +525,7 @@ const GROUNDED = [
     [
       "--text-standard",
       "--text-row",
+      "--text-navigation-unread",
       "--text-row-subtle",
       "--text-row-metadata",
     ],

@@ -220,10 +220,21 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
     /observed unread messages/,
   );
   await expect(ordinary.locator("[data-channel-priority]")).toHaveCount(0);
-  await expect(ordinary.getByText("Alpha", { exact: true })).toHaveCSS(
-    "font-weight",
-    "600",
-  );
+  const ordinaryLabel = ordinary.getByText("Alpha", { exact: true });
+  await expect(ordinaryLabel).toHaveCSS("font-weight", "600");
+  // The browser cascade must retain unread ink on a selected/hovered row,
+  // instead of replacing it with the regular row's accent ink.
+  const unreadInk = await ordinaryLabel.evaluate((label) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--text-navigation-unread)";
+    label.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await expect(ordinaryLabel).toHaveCSS("color", unreadInk);
+  await ordinary.hover();
+  await expect(ordinaryLabel).toHaveCSS("color", unreadInk);
   await expect(directed).toBeVisible();
   await expect(directed).toHaveCSS("width", "6px");
   await expect(

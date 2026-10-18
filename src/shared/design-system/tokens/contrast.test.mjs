@@ -175,6 +175,29 @@ describe("semantic contrast contract", () => {
     );
   });
 
+  it.each([
+    ["#000000", false],
+    ["#262626", false],
+    ["#404040", true],
+  ])(
+    "distinguishes black unread ink %s from gray on accent rows",
+    (ink, gray) => {
+      const from = "--neutral-navigation-unread: #262626;";
+      expect(tokens).toContain(from);
+      const result = check(
+        tokens.replace(from, `--neutral-navigation-unread: ${ink};`),
+      );
+      if (gray) {
+        expect(result.status, result.output).toBe(1);
+        expect(result.output).toContain(
+          `chartreuse/touch/light: --text-navigation-unread ${ink} is gray on --affordance-selected`,
+        );
+      } else {
+        expect(result.status, result.output).toBe(0);
+      }
+    },
+  );
+
   it("rejects a shell color that hides navigation text", () => {
     const result = check(
       tokens.replace(

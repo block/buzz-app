@@ -117,7 +117,3 @@
   width: max-content;
   max-width: var(--available-width);
 }
-/* Unread labels on a hovered or selected row follow the row's ink too. */
-.row:is(:hover, [data-selected])[data-ordinary] .label {
-  color: var(--text-row);
-}

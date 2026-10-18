@@ -1241,19 +1241,17 @@
 }
 
 /* Accent levels switch whole color groups onto the accent ramp. Snoozin’ is the
-   neutral role layer. Hummin’ adds links, strong controls and rows. Swarmin’
-   adds your own messages and the shell (background, dots and chrome on it). Buzzin’ also colors quiet controls, the shell and its
-   dots, lines, surfaces and text. Shared groups are declared
-   once; level-only blocks contain intentional differences. */
-/* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Light. */
+   neutral role layer. Hummin’ adds strong controls and rows. Swarmin’ adds your
+   own messages and the shell (background, dots and chrome on it). Buzzin’ also
+   colors quiet controls, lines, surfaces, text and links. Shared groups are
+   declared once; level-only blocks contain intentional differences. */
+/* Hummin’, Swarmin’ and Buzzin’: strong controls and rows. Light. */
 :root[data-color-level="touch"],
 [data-color-level="touch"] .light,
 :root[data-color-level="more"],
 [data-color-level="more"] .light,
 :root[data-color-level="full"],
 [data-color-level="full"] .light {
-  --text-link: var(--accent-link);
-  --affordance-link-hover: var(--accent-link-hover);
   --affordance-prominent: var(--accent-9);
   --affordance-prominent-hover: var(--accent-10);
   --affordance-prominent-pressed: var(--accent-pressed);
@@ -1313,6 +1311,10 @@
 /* Full-only changes. Light. */
 :root[data-color-level="full"],
 [data-color-level="full"] .light {
+  /* Links follow their ground: blue on neutral reading surfaces, paired
+     accent ink once Buzzin’ colors the surfaces. */
+  --text-link: var(--accent-link);
+  --affordance-link-hover: var(--accent-link-hover);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);
@@ -1336,15 +1338,13 @@
   --text-unavailable: var(--accent-8);
 }
 
-/* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Dark. */
+/* Hummin’, Swarmin’ and Buzzin’: strong controls and rows. Dark. */
 :root[data-color-level="touch"][data-color-mode="dark"],
 [data-color-level="touch"] .dark,
 :root[data-color-level="more"][data-color-mode="dark"],
 [data-color-level="more"] .dark,
 :root[data-color-level="full"][data-color-mode="dark"],
 [data-color-level="full"] .dark {
-  --text-link: var(--accent-link);
-  --affordance-link-hover: var(--accent-link-hover);
   --affordance-prominent: var(--accent-9);
   --affordance-prominent-hover: var(--accent-10);
   --affordance-prominent-pressed: var(--accent-pressed);
@@ -1404,6 +1404,10 @@
 /* Full-only changes. Dark. */
 :root[data-color-level="full"][data-color-mode="dark"],
 [data-color-level="full"] .dark {
+  /* Links follow their ground: blue on neutral reading surfaces, paired
+     accent ink once Buzzin’ colors the surfaces. */
+  --text-link: var(--accent-link);
+  --affordance-link-hover: var(--accent-link-hover);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);

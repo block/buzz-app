@@ -245,3 +245,24 @@ it("the default brand fill takes its darkest olive as ink, and A touch keeps own
     ).toBe("#d7d72e");
   }
 });
+
+it.each(ACCENTS)(
+  "%s links stay blue on neutral reading surfaces and take accent ink at Buzzin’",
+  (color) => {
+    for (const mode of ["light", "dark"] as const) {
+      const neutral = resolvedPalette(mode, color, "neutral");
+      for (const level of COLOR_LEVELS) {
+        const palette = resolvedPalette(mode, color, level);
+        const where = `${color}/${level}/${mode}`;
+        expect(palette["--text-link"], where).toBe(
+          level === "full" ? palette["--accent-link"] : neutral["--blue-11"],
+        );
+        expect(palette["--affordance-link-hover"], where).toBe(
+          level === "full"
+            ? palette["--accent-link-hover"]
+            : neutral["--blue-3"],
+        );
+      }
+    }
+  },
+);

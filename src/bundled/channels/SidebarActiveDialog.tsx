@@ -66,7 +66,6 @@ export function SidebarActiveDialog({
           <Button
             variant="prominent"
             loading={pending}
-            disabled={pending}
             onClick={() => void submit()}
           >
             Apply

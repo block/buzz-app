@@ -172,9 +172,13 @@ test("section filters save activity windows and recover hidden channels", async 
       body: JSON.stringify({ error: "Filter could not be saved. Try again." }),
     });
   });
+  const apply = page.getByRole("button", { name: "Apply", exact: true });
   try {
-    await page.getByRole("button", { name: "Apply", exact: true }).click();
+    await apply.focus();
+    await apply.press("Enter");
     await pending;
+    await expect(apply).toBeFocused();
+    await expect(apply).toHaveAttribute("aria-disabled", "true");
     await expect(
       page.getByRole("button", { name: "Cancel", exact: true }),
     ).toBeDisabled();
@@ -185,6 +189,8 @@ test("section filters save activity windows and recover hidden channels", async 
   await expect(page.getByRole("alert")).toContainText(
     "Relay request failed (502)",
   );
+  await expect(apply).toBeFocused();
+  await expect(apply).toBeEnabled();
   await shot("09-save-error");
   await page.unroute(pattern);
   await page.getByRole("button", { name: "Apply", exact: true }).click();

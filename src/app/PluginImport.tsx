@@ -674,7 +674,8 @@ export function PluginImport({
                                   Computer access
                                 </span>
                                 <span className="block text-muted">
-                                  Runs without a sandbox.
+                                  Can access files and run programs on your
+                                  computer.
                                 </span>
                               </span>
                             </span>

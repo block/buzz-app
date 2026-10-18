@@ -44,7 +44,11 @@ import {
 } from "../../shared/design-system/icons/index";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { ComposerAttachments } from "./ComposerAttachments";
-import { attachmentDraft, useAttachmentDraft } from "./attachment-draft";
+import {
+  attachmentDraft,
+  useAttachmentDraft,
+  type AttachmentDraft,
+} from "./attachment-draft";
 import {
   sendInBackground,
   useBackgroundSendPending,
@@ -235,7 +239,9 @@ export type MessageComposerProps = {
     recoveredDraft?: MentionDraft | undefined;
     locked: boolean;
     disabled: boolean;
-    submit: (draft: MentionDraft) => void;
+    /** Files upload before the conversation exists; submit sends them. */
+    attachments?: boolean;
+    submit: (draft: MentionDraft, attachments: AttachmentDraft) => void;
   };
 };
 
@@ -578,10 +584,13 @@ function Composer({
     session,
     `${scope}:${draftKey}`,
     channelId,
+    !!submission?.attachments,
   );
   const picker = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
-  const canAttach = !submission && !!session.attachments;
+  const canAttach = submission
+    ? !!submission.attachments && !!session.attachments?.uploadForNewChat
+    : !!session.attachments;
   const voice = useVoiceCapture(
     attachments.store,
     !active || editingDisabled || !!editing.target || !canAttach,
@@ -1176,7 +1185,12 @@ function Composer({
       setError("Tag an agent to send");
       return;
     }
-    if (!draft.trim() && !sessionCards?.length && !attachments.items.length)
+    // A new conversation is named from its message, so files alone cannot start it.
+    if (
+      !draft.trim() &&
+      !sessionCards?.length &&
+      (!!submission || !attachments.items.length)
+    )
       return;
     const recovering = !submission && recoveryFor(session).get(recoveryKey);
     if (recovering) {
@@ -1215,7 +1229,7 @@ function Composer({
           "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
       if (submission) {
-        submission.submit(captured);
+        submission.submit(captured, attachments.store);
         return;
       }
       let references: readonly string[] = [];
@@ -1832,7 +1846,9 @@ function Composer({
                 {extensions ? (
                   <ComposerTools
                     registry={extensions.tools}
-                    capture={voice.begin}
+                    {...(canAttach && !editing.target
+                      ? { capture: voice.begin }
+                      : {})}
                     renderLeading={renderLeadingTools}
                     session={session}
                     scope={scope}
@@ -1893,7 +1909,7 @@ function Composer({
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
                   !sessionCards?.length &&
-                  !attachments.items.length &&
+                  (!!submission || !attachments.items.length) &&
                   !(
                     editing.target &&
                     requestDeletion &&

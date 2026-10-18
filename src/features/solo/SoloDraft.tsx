@@ -24,6 +24,11 @@ import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { ownSolo } from "./labels";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
+import {
+  attachmentDraft,
+  transferAttachmentDraft,
+  type AttachmentDraft,
+} from "../messages/attachment-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
 import styles from "./Solo.module.css";
 
@@ -140,7 +145,7 @@ export function SoloDraft({
       mounted.current = false;
     };
   }, []);
-  async function start(draft: MentionDraft) {
+  async function start(draft: MentionDraft, files: AttachmentDraft) {
     const text = composerMarkdown(draft);
     if (submitting.current || !text.trim() || !available) return;
     submitting.current = true;
@@ -194,6 +199,10 @@ export function SoloDraft({
         throw new Error(
           "Solo chats can only use your available agents. Check mentions and project defaults.",
         );
+      // Finish uploads before anything is created, so a failed file blocks
+      // the start instead of leaving an empty chat behind.
+      const uploaded = await files.prepareForSend(new AbortController().signal);
+      if (!mounted.current) return;
       creation.current ??= session.channelWrites.create(
         channelId,
         name,
@@ -210,6 +219,13 @@ export function SoloDraft({
           "Your message couldn’t be saved on this device. Retry to finish opening the chat.",
         );
       opened = true;
+      // Its composer keeps the uploaded files too, until they are sent.
+      const chatFiles = attachmentDraft(
+        session,
+        `${scope}:draft:${channelId}`,
+        channelId,
+      );
+      if (uploaded.length) transferAttachmentDraft(files, chatFiles);
       writeView(scope, `${draftKey}:settings`, null);
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-project`, null);
@@ -229,7 +245,13 @@ export function SoloDraft({
         throw new Error(
           "This conversation is no longer in Solo. Open it in Team.",
         );
-      session.messages.send(channelId, text, recipients);
+      session.messages.send(
+        channelId,
+        text,
+        recipients,
+        ...(uploaded.length ? [uploaded] : []),
+      );
+      chatFiles.clear();
       writeView(
         scope,
         `draft:${channelId}`,
@@ -295,8 +317,9 @@ export function SoloDraft({
           draftKey: `${draftKey}:new-draft`,
           locked: busy,
           disabled: busy || !available,
-          submit: (draft) => {
-            void start(draft);
+          attachments: true,
+          submit: (draft, files) => {
+            void start(draft, files);
           },
         }}
       />

@@ -14,7 +14,7 @@ import {
   GlobeIcon,
   PlugIcon,
   TerminalWindowIcon,
-  WarningCircleIcon,
+  MonitorIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview } from "../plugins/types";
@@ -697,20 +697,19 @@ export function PluginImport({
                     )}
                     <section
                       aria-label="Plugin safety"
-                      className="mt-4 flex items-start gap-3"
+                      className="mt-4 flex items-start gap-3 p-2"
                     >
-                      <WarningCircleIcon
+                      <MonitorIcon
                         size={20}
-                        className="shrink-0 text-warning"
+                        className="shrink-0 text-muted"
                         aria-hidden="true"
                       />
                       <div>
-                        <p className="m-0 font-medium text-warning">
-                          Plugins aren’t sandboxed
-                        </p>
+                        <p className="m-0">Computer access</p>
                         <p className="mb-0 mt-1 text-muted">
-                          They may access more than the declarations above. Only
-                          install code you trust.
+                          Plugins aren’t sandboxed and can access your computer
+                          beyond these declarations. Only install code you
+                          trust.
                         </p>
                       </div>
                     </section>

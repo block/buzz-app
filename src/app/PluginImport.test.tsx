@@ -232,9 +232,7 @@ it("shows exact declared access and changes before an enabled update", async () 
   expect(scopes.getByText(/account’s full access/)).toBeVisible();
   expect(scopes.getByText(/HTTPS requests to this address/)).toBeVisible();
   expect(scopes.getByText(/Buzz’s local MCP server/)).toBeVisible();
-  expect(
-    screen.getByText(/They may access more than the declarations above/),
-  ).toBeVisible();
+  expect(screen.getByText(/beyond these declarations/)).toBeVisible();
   expect(
     screen.getByText(/Computer access changes with this update/),
   ).toBeVisible();

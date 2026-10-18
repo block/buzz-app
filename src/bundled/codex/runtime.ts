@@ -508,7 +508,8 @@ export class CodexRuntime {
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
     const project = topLevel
-      ? (await readProject(canvas && (() => canvas(channelId))))?.section
+      ? (await readProject(canvas && (() => canvas(channelId, agent.owner))))
+          ?.section
       : undefined;
     // A stop during the reads deleted this agent's entry; recreating it would
     // reopen the agent.

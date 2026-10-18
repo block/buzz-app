@@ -56,7 +56,7 @@ function setup(
     named?: Delivery["named"];
     title?: string;
     /** The channel's Canvas, as it reads now. */
-    canvas?: { content: string };
+    canvas?: { content: string; pubkey?: string };
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -113,7 +113,16 @@ function setup(
     },
     canvas: {
       available: !!options.canvas,
-      read: vi.fn(async () => options.canvas && { ...options.canvas }),
+      read: vi.fn(
+        async () =>
+          options.canvas && {
+            pubkey: alice,
+            kind: 40100,
+            created_at: 100,
+            tags: [["h", channel]],
+            ...options.canvas,
+          },
+      ),
     },
   };
   const relay = {
@@ -1581,7 +1590,7 @@ it("hands a Solo chat's Canvas to each turn and lets its session stay in the wor
         ["p", self],
       ],
     });
-  const canvas = {
+  const canvasValue = {
     content: workspaceCanvas({
       folders: ["~/Development/app"],
       worktree: { location: "~/Development/app-trees", baseBranch: "main" },
@@ -1589,8 +1598,8 @@ it("hands a Solo chat's Canvas to each turn and lets its session stay in the wor
     }),
   };
   const { deliver, claudes, runtime, session } = setup([], {
-    me: new Set([channel]),
-    canvas,
+    solo: new Set([channel]),
+    canvas: canvasValue,
   });
   await deliver({ type: "mention", event: mention("1") });
   await flush(10);
@@ -1620,6 +1629,7 @@ it("hands a Solo chat's Canvas to each turn and lets its session stay in the wor
   expect(first?.prompts[1]).not.toContain("<workspace-canvas>");
 
   // New folders restart the idle session, resumed where it was.
+  const canvas: { content: string; pubkey?: string } = canvasValue;
   canvas.content = workspaceCanvas({
     folders: ["~/Development/other"],
     canvas: "",
@@ -1632,6 +1642,25 @@ it("hands a Solo chat's Canvas to each turn and lets its session stay in the wor
   expect(second?.options.args).toContain("~/Development/other");
   expect(second?.options.args).not.toContain("~/Development/app");
   expect(second?.prompts[0]).toContain("`~/Development/other`");
+
+  // Someone else's edit, as in a shared Solo chat, is not handed over: the
+  // session is told to drop the earlier Canvas and loses its folders.
+  canvas.pubkey = "b".repeat(64);
+  canvas.content = workspaceCanvas({ folders: ["~/elsewhere"], canvas: "x" });
+  await deliver({ type: "mention", event: mention("4") });
+  await flush(10);
+  const third = claudes().filter((process) => process.prompts.length)[2];
+  expect(second?.killed).toBe(true);
+  expect(third?.options.args).not.toContain("--add-dir");
+  expect(third?.prompts[0]).not.toContain("~/elsewhere");
+  expect(third?.prompts[0]).toContain("Disregard any earlier workspace Canvas");
+
+  // So is a Canvas its owner cleared.
+  delete canvas.pubkey;
+  canvas.content = "";
+  await deliver({ type: "mention", event: mention("5") });
+  await flush(10);
+  expect(third?.prompts[1]).toContain("Disregard any earlier workspace Canvas");
   runtime.dispose();
 });
 

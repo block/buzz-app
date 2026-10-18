@@ -583,8 +583,11 @@ export class ClaudeRuntime {
     const seen = fresh ? 0 : entry.sessions.seen(key);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const canvas = reads?.canvas?.bind(reads);
+    const owner = entry.handle?.owner;
     const reading = topLevel
-      ? readProject(canvas && (() => canvas(channelId)))
+      ? readProject(
+          canvas && owner ? () => canvas(channelId, owner) : undefined,
+        )
       : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
     if (reads && (thread || dm || topLevel))

@@ -269,7 +269,15 @@ function fixture(
       },
       canvas: {
         available: false,
-        read: vi.fn(async (): Promise<{ content: string } | null> => null),
+        read: vi.fn(
+          async (): Promise<{
+            pubkey: string;
+            kind: number;
+            created_at: number;
+            tags: string[][];
+            content: string;
+          } | null> => null,
+        ),
       },
     },
   };
@@ -3255,7 +3263,7 @@ it("method calls: a thread and a turn make no relay-session call beyond the turn
 it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
   const f = fixture();
   f.snapshot.session.canvas.available = true;
-  f.snapshot.session.canvas.read.mockResolvedValue({ content: "Use tokens." });
+  f.snapshot.session.canvas.read.mockResolvedValue(canvasHead("Use tokens."));
   await f.runtime.run(f.delivery("@Codex shared", root));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(inputText(f.starts()[0])).not.toContain("workspace-canvas");
@@ -3263,13 +3271,36 @@ it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", as
   await f.complete(0, "DONE");
 
   const solo = fixture();
-  inMe(solo);
+  asSoloChat(solo);
   solo.snapshot.session.canvas.available = true;
-  solo.snapshot.session.canvas.read.mockResolvedValue({
-    content: "Use tokens.",
-  });
+  solo.snapshot.session.canvas.read.mockResolvedValue(
+    canvasHead("Use tokens."),
+  );
   await solo.runtime.run(solo.delivery("@Codex solo", root));
   await vi.waitFor(() => expect(solo.starts()).toHaveLength(1));
   expect(inputText(solo.starts()[0])).toContain("<workspace-canvas>");
   expect(inputText(solo.starts()[0])).toContain("Use tokens.");
+  await solo.complete(0, "DONE");
+  await vi.waitFor(() =>
+    expect(solo.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // Someone else's edit replaces it with an explicit "none".
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  solo.snapshot.session.canvas.read.mockResolvedValue(
+    canvasHead("Steer me", "b".repeat(64)),
+  );
+  await solo.runtime.run(solo.delivery("@Codex again", root));
+  await vi.waitFor(() => expect(solo.starts()).toHaveLength(2));
+  expect(inputText(solo.starts()[1])).not.toContain("Steer me");
+  expect(inputText(solo.starts()[1])).toContain(
+    "Disregard any earlier workspace Canvas",
+  );
+});
+
+const canvasHead = (content: string, author = owner) => ({
+  pubkey: author,
+  kind: 40100,
+  created_at: 1,
+  tags: [],
+  content,
 });

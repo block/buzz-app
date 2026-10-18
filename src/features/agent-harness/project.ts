@@ -1,7 +1,10 @@
 // A Solo chat's Canvas, handed to its agent with every turn: the workspace's
-// instructions and the folders it works in. Only the owner and their agents
-// can write a Solo chat's Canvas, so it is handed over as the chat's standing
-// instructions; agents never read it on their own initiative.
+// instructions and the folders it works in. A shared Solo chat's members can
+// write its Canvas too, so only a head the owner or one of their attested
+// agents wrote is handed over as the chat's standing instructions; agents
+// never read it on their own initiative.
+import { attestedOwner } from "../agents/owner-attestation";
+import type { EventData } from "../relay/events";
 import { workspaceDirectories } from "../solo/workspace";
 
 export type Project = Readonly<{
@@ -11,8 +14,11 @@ export type Project = Readonly<{
   directories: readonly string[];
 }>;
 
+/** A Solo chat with no owner's Canvas: says so, so an agent stops following
+ * one it was handed before. */
 export const NO_PROJECT: Project = Object.freeze({
-  section: "",
+  section:
+    "<workspace-canvas>\nThis Solo chat has no workspace Canvas from its owner now. Disregard any earlier workspace Canvas, its instructions and its folders.\n</workspace-canvas>",
   directories: [],
 });
 
@@ -31,12 +37,38 @@ export function project(canvas: string | undefined): Project {
 /** How long a turn waits for its chat's Canvas. */
 export const CANVAS_TIMEOUT_MS = 4_000;
 
+type CanvasHead = Pick<
+  EventData,
+  "pubkey" | "kind" | "created_at" | "tags" | "content"
+>;
+
+/** The channel's Canvas text when `owner`, or an agent they attest, wrote its
+ * current head; undefined when it has none or someone else wrote it. */
+export async function ownerCanvas(
+  canvas:
+    | Readonly<{
+        available: boolean;
+        read(channelId: string): Promise<CanvasHead | null | undefined>;
+      }>
+    | undefined,
+  owner: string,
+  channelId: string,
+): Promise<string | undefined> {
+  if (!canvas?.available) return undefined;
+  const head = await canvas.read(channelId);
+  if (!head) return undefined;
+  if (head.pubkey === owner || (await attestedOwner(head)) === owner)
+    return head.content;
+  console.warn("Ignoring a Canvas its owner's side did not write", channelId);
+  return undefined;
+}
+
 /** The chat's project from `read`, or undefined when it could not be read in
- * time: the caller keeps what it knew. */
+ * time or there is no reader: the caller keeps what it knew. */
 export async function readProject(
   read: (() => Promise<string | undefined>) | undefined,
 ): Promise<Project | undefined> {
-  if (!read) return NO_PROJECT;
+  if (!read) return undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return project(

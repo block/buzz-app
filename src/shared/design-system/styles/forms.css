@@ -50,6 +50,33 @@
     @apply text-body-sm;
     color: var(--text-danger);
   }
+  @media (prefers-reduced-motion: no-preference) {
+    /* An arriving error opens its own space, so the container grows and the
+       content below slides down while its text fades in. */
+    .buzz-field-error {
+      overflow-y: clip;
+      animation:
+        buzz-field-error-open 360ms var(--easing-enter),
+        buzz-field-error-reveal 360ms var(--easing-enter);
+    }
+  }
+  @keyframes buzz-field-error-open {
+    from {
+      max-height: 0;
+      margin-top: calc(-1 * var(--space-2));
+    }
+    to {
+      /* One line, so the growth spans the whole fade; longer errors finish
+         opening as it ends. */
+      max-height: 1lh;
+      margin-top: 0;
+    }
+  }
+  @keyframes buzz-field-error-reveal {
+    from {
+      opacity: 0;
+    }
+  }
   .buzz-input,
   .buzz-textarea {
     @apply text-body;
@@ -110,6 +137,14 @@
   .buzz-input:is([data-invalid], [aria-invalid="true"]),
   .buzz-textarea:is([data-invalid], [aria-invalid="true"]) {
     --border: var(--border-danger);
+  }
+  /* Borderless titles have no perimeter to stroke; their message carries
+     validation. Keyboard focus still draws its cue. */
+  .buzz-input:is([data-appearance="title"], [data-appearance="heading"]):is(
+    [data-invalid],
+    [aria-invalid="true"]
+  ) {
+    --border: transparent;
   }
   .buzz-input:disabled,
   .buzz-textarea:disabled {

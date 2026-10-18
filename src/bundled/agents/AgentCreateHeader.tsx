@@ -34,6 +34,7 @@ export function AgentCreateHeader({
   avatarActionTarget,
   onAvatarActiveChange,
   nameRef,
+  nameError,
   initialAvatarPicker = false,
 }: {
   name: string;
@@ -50,6 +51,8 @@ export function AgentCreateHeader({
   avatarActionTarget?: HTMLElement | null;
   onAvatarActiveChange?: (active: boolean, view: string) => void;
   nameRef?: Ref<HTMLInputElement>;
+  /** Why the name can't be used yet. Each attempt shakes the name. */
+  nameError?: { message: string; attempt: number } | undefined;
   initialAvatarPicker?: boolean;
 }) {
   // The header shares AvatarEditor's full-size frame, so it requests the
@@ -73,6 +76,18 @@ export function AgentCreateHeader({
   }));
   const [keyboard, setKeyboard] = useState(false);
   const reducedMotion = useReducedMotion();
+  const nameControl = useRef<HTMLDivElement>(null);
+  const nameAttempt = nameError?.attempt;
+  // A damped side-to-side shake, like a rejected iOS passcode.
+  useEffect(() => {
+    if (!nameAttempt || reducedMotion) return;
+    nameControl.current?.animate(
+      [0, -10, 8, -6, 4, -2, 0].map((x) => ({
+        transform: `translateX(${x}px)`,
+      })),
+      { duration: 400, easing: "ease-out" },
+    );
+  }, [nameAttempt, reducedMotion]);
   const root = useRef<HTMLFieldSetElement>(null);
   const previousView = useRef(view);
   const options = useRef<HTMLFieldSetElement>(null);
@@ -303,15 +318,21 @@ export function AgentCreateHeader({
           inert={view !== "selected" || (editing && !name.trim())}
           aria-hidden={view !== "selected" || (editing && !name.trim())}
         >
-          <Field label="Name" labelVisibility="hidden">
-            <Input
-              ref={nameRef}
-              appearance="title"
-              disabled={disabled}
-              placeholder="Agent name"
-              value={name}
-              onChange={(event) => onChange({ name: event.target.value })}
-            />
+          <Field
+            label="Name"
+            labelVisibility="hidden"
+            error={nameError?.message}
+          >
+            <div ref={nameControl}>
+              <Input
+                ref={nameRef}
+                appearance="title"
+                disabled={disabled}
+                placeholder="Name your agent"
+                value={name}
+                onChange={(event) => onChange({ name: event.target.value })}
+              />
+            </div>
           </Field>
         </motion.div>
         <div className={styles.details} hidden={view !== "selected"}>

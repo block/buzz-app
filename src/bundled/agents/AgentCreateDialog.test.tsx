@@ -175,22 +175,55 @@ it("shows the sole harness as a disabled choice", () => {
   expect(screen.getByRole("combobox", { name: "Harness" })).toBeDisabled();
 });
 
-it("disables Create agent with an empty name and says why", async () => {
+it("flags an empty name on Create and clears it once named", async () => {
+  const scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  const animate = vi.fn();
+  Element.prototype.animate = animate;
   const { agents, dialog, user } = setup([echo]);
-  const hint = () => within(dialog).queryByText("Name your agent to continue");
-  expect(createButton()).toBeDisabled();
-  expect(hint()).toBeVisible();
-  await user.type(within(dialog).getByLabelText("Name"), "   ");
-  expect(createButton()).toBeDisabled();
-  expect(hint()).toBeVisible();
-  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  const name = () => within(dialog).getByLabelText("Name");
+  const alert = () => within(dialog).queryByRole("alert");
   expect(createButton()).toBeEnabled();
-  expect(hint()).not.toBeInTheDocument();
-  await user.clear(within(dialog).getByLabelText("Name"));
-  expect(createButton()).toBeDisabled();
-  expect(hint()).toBeVisible();
-  await user.type(within(dialog).getByLabelText("Reply"), "x{Enter}");
+  expect(alert()).not.toBeInTheDocument();
+  await user.type(name(), "   ");
+  await user.click(createButton());
   expect(agents.create).not.toHaveBeenCalled();
+  expect(alert()).toHaveTextContent("Add a name to create your agent");
+  expect(name()).toHaveAccessibleDescription("Add a name to create your agent");
+  expect(name()).toHaveAttribute("placeholder", "Name your agent");
+  expect(name()).toHaveAttribute("aria-invalid", "true");
+  expect(name()).toHaveFocus();
+  // Already in view, so nothing scrolls.
+  expect(scrollIntoView).not.toHaveBeenCalled();
+  expect(animate).toHaveBeenCalledOnce();
+  expect(name()).toHaveValue("   ");
+  await user.type(name(), "Nova");
+  expect(alert()).not.toBeInTheDocument();
+  expect(name()).not.toHaveAttribute("aria-invalid");
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledOnce();
+});
+
+it("scrolls an out-of-view name to center before flagging it", async () => {
+  Element.prototype.animate = vi.fn();
+  const { dialog, user } = setup([echo]);
+  const name = within(dialog).getByLabelText("Name");
+  let top = 2000;
+  name.getBoundingClientRect = () => ({ top, bottom: top + 40 }) as DOMRect;
+  const scrollIntoView = vi.fn(() => {
+    top = 300;
+  });
+  name.scrollIntoView = scrollIntoView;
+  await user.click(createButton());
+  expect(scrollIntoView).toHaveBeenCalledWith(
+    expect.objectContaining({ block: "center" }),
+  );
+  // The prompt waits for the scroll to arrive so the shake plays in view.
+  expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Add a name to create your agent",
+  );
+  expect(Element.prototype.animate).toHaveBeenCalledOnce();
 });
 
 it("switches type from the corner menu, resetting the config to the new type's defaults", async () => {

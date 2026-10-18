@@ -985,3 +985,69 @@ test.describe("Solo composer caret", () => {
     await expect(composer).toHaveText("alpha draft!");
   });
 });
+
+// Real :focus-visible matching on a focused, briefly non-editable editor needs a
+// browser. Solo admission disables the editor while its membership refreshes.
+test.describe("Solo send focus", () => {
+  test.use({ soloAgentNames: ["Owned Honey"] });
+  test("sending keeps the keyboard focus ring off the briefly disabled editor", async ({
+    page,
+    app,
+  }) => {
+    let hold = false;
+    let held = false;
+    let release;
+    const released = new Promise((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/relay/**/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (!hold || !filters.some((filter) => filter.kinds?.includes(39002)))
+        return route.continue();
+      held = true;
+      await released;
+      await route.continue().catch(() => {});
+    });
+    await page.goto(app.origin);
+    await page
+      .getByRole("navigation", { name: "Solo conversations" })
+      .getByRole("button", { name: "Alpha", exact: true })
+      .click();
+    const [agent] = app.soloAgents;
+    await page
+      .getByRole("button", { name: "Mention a member", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Mention a member or agent" })
+      .getByRole("button", {
+        name: `${agent.name} ${agent.pubkey}`,
+        exact: true,
+      })
+      .click();
+    const composer = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    // End is caret navigation, so the app's keyboard focus treatment is live.
+    await composer.press("End");
+    await page.keyboard.insertText("No ring while sending");
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-keyboard-navigation",
+      "",
+    );
+    hold = true;
+    await composer.press("Enter");
+    await expect.poll(() => held).toBe(true);
+    await expect(composer).toHaveAttribute("aria-disabled", "true");
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveCSS("outline-style", "none");
+    hold = false;
+    release();
+    const publications = () =>
+      app.report.publications.filter(({ event }) => event.kind === 9);
+    await expect.poll(() => publications().length).toBe(1);
+    await expect(composer).not.toHaveAttribute("aria-disabled");
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveCSS("outline-style", "none");
+  });
+});

@@ -116,9 +116,14 @@ export function AgentCreateDialog({
       });
       const started = performance.now();
       let last = Number.NaN;
+      let gliding = false;
       const settle = () => {
         const top = field.getBoundingClientRect().top;
-        const slowing = Math.abs(top - last) < 4;
+        const step = Math.abs(top - last);
+        // Slow frames count only after the glide has sped up, not while it
+        // eases in.
+        const slowing = step === 0 || (gliding && step < 4);
+        if (step >= 4) gliding = true;
         last = top;
         if ((slowing && inView(field)) || performance.now() - started > 1000)
           reveal();
@@ -187,7 +192,7 @@ export function AgentCreateDialog({
               type="submit"
               form={form}
               loading={pending}
-              disabled={avatarBusy || !type}
+              disabled={avatarBusy || !type || pending}
             >
               Create agent
             </Button>

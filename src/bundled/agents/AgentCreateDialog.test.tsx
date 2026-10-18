@@ -3,7 +3,9 @@ import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import {
+  act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -23,6 +25,13 @@ import type {
 import { AgentCreateDialog } from "./AgentCreateDialog";
 
 afterEach(cleanup);
+// jsdom lacks both; tests that need them install stubs, removed here along
+// with stubbed frames and media queries.
+afterEach(() => {
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+  Reflect.deleteProperty(Element.prototype, "animate");
+  vi.unstubAllGlobals();
+});
 
 type Echo = { reply: string };
 type Notes = { notes: string; instructions: string };
@@ -197,6 +206,10 @@ it("flags an empty name on Create and clears it once named", async () => {
   expect(scrollIntoView).not.toHaveBeenCalled();
   expect(animate).toHaveBeenCalledOnce();
   expect(name()).toHaveValue("   ");
+  // Each further empty submit shakes again.
+  await user.click(createButton());
+  expect(animate).toHaveBeenCalledTimes(2);
+  expect(agents.create).not.toHaveBeenCalled();
   await user.type(name(), "Nova");
   expect(alert()).not.toBeInTheDocument();
   expect(name()).not.toHaveAttribute("aria-invalid");
@@ -204,26 +217,94 @@ it("flags an empty name on Create and clears it once named", async () => {
   expect(agents.create).toHaveBeenCalledOnce();
 });
 
-it("scrolls an out-of-view name to center before flagging it", async () => {
-  Element.prototype.animate = vi.fn();
-  const { dialog, user } = setup([echo]);
+/** Hands each animation frame to the test, so it can step a scroll. */
+const stepFrames = () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (frame: FrameRequestCallback) =>
+    frames.push(frame),
+  );
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  // One tick runs every frame requested before it, like the browser.
+  return () =>
+    act(() => {
+      for (const frame of frames.splice(0)) frame(performance.now());
+    });
+};
+
+/** An out-of-view name whose position the test moves frame by frame. */
+const scrolledName = (dialog: HTMLElement) => {
   const name = within(dialog).getByLabelText("Name");
-  let top = 2000;
-  name.getBoundingClientRect = () => ({ top, bottom: top + 40 }) as DOMRect;
-  const scrollIntoView = vi.fn(() => {
-    top = 300;
-  });
+  // Just below the fold.
+  const position = { top: window.innerHeight - 38 };
+  name.getBoundingClientRect = () =>
+    ({ top: position.top, bottom: position.top + 40 }) as DOMRect;
+  const scrollIntoView = vi.fn();
   name.scrollIntoView = scrollIntoView;
+  return { name, position, scrollIntoView };
+};
+
+it("scrolls an out-of-view name to center, then flags it as the glide slows", async () => {
+  Element.prototype.animate = vi.fn();
+  const step = stepFrames();
+  const { dialog, user } = setup([echo]);
+  const { position, scrollIntoView } = scrolledName(dialog);
+  const alert = () => within(dialog).queryByRole("alert");
+  await user.click(createButton());
+  expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({
+    block: "center",
+    behavior: "smooth",
+  });
+  // Pressing again mid-scroll doesn't start a second scroll.
+  await user.click(createButton());
+  expect(scrollIntoView).toHaveBeenCalledOnce();
+  step();
+  // Easing in: barely moving, and just in view, but not yet past the glide.
+  position.top = window.innerHeight - 41;
+  step();
+  expect(alert()).not.toBeInTheDocument();
+  position.top = 600;
+  step();
+  expect(alert()).not.toBeInTheDocument();
+  position.top = 300;
+  step();
+  expect(alert()).not.toBeInTheDocument();
+  // In view and slowing: the prompt plays while the glide lands.
+  position.top = 298;
+  step();
+  expect(alert()).toHaveTextContent("Add a name to create your agent");
+  expect(Element.prototype.animate).toHaveBeenCalledOnce();
+});
+
+it("does not flag a name typed while it scrolls into view", async () => {
+  Element.prototype.animate = vi.fn();
+  const step = stepFrames();
+  const { dialog, user } = setup([echo]);
+  const { name, position } = scrolledName(dialog);
+  await user.click(createButton());
+  step();
+  fireEvent.change(name, { target: { value: "Nova" } });
+  position.top = 300;
+  step();
+  position.top = 300;
+  step();
+  expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+  expect(Element.prototype.animate).not.toHaveBeenCalled();
+});
+
+it("jumps instead of gliding under reduced motion", async () => {
+  Element.prototype.animate = vi.fn();
+  stepFrames();
+  const { dialog, user } = setup([echo]);
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(prefers-reduced-motion: reduce)",
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  const { scrollIntoView } = scrolledName(dialog);
   await user.click(createButton());
   expect(scrollIntoView).toHaveBeenCalledWith(
-    expect.objectContaining({ block: "center" }),
+    expect.objectContaining({ behavior: "auto" }),
   );
-  // The prompt waits for the scroll to arrive so the shake plays in view.
-  expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-    "Add a name to create your agent",
-  );
-  expect(Element.prototype.animate).toHaveBeenCalledOnce();
 });
 
 it("switches type from the corner menu, resetting the config to the new type's defaults", async () => {

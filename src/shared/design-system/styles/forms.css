@@ -50,30 +50,29 @@
     @apply text-body-sm;
     color: var(--text-danger);
   }
+  /* A Field's error opens in place of the field gap: its row grows from
+     nothing as the gap returns, so the container grows and content below
+     slides while the text fades in, the arrive-grow recipe's settle timing. */
+  .buzz-field-error-track {
+    display: grid;
+    grid-template-rows: 1fr;
+  }
+  .buzz-field-error-track > .buzz-field-error {
+    min-height: 0;
+  }
   @media (prefers-reduced-motion: no-preference) {
-    /* An arriving error opens its own space, so the container grows and the
-       content below slides down while its text fades in. */
-    .buzz-field-error {
-      overflow-y: clip;
-      animation:
-        buzz-field-error-open 360ms var(--easing-enter),
-        buzz-field-error-reveal 360ms var(--easing-enter);
+    .buzz-field-error-track {
+      animation: buzz-field-error-open var(--duration-settle)
+        var(--easing-settle);
+    }
+    .buzz-field-error-track > .buzz-field-error {
+      animation: buzz-arrive-reveal var(--duration-settle) var(--easing-settle);
     }
   }
   @keyframes buzz-field-error-open {
     from {
-      max-height: 0;
+      grid-template-rows: 0fr;
       margin-top: calc(-1 * var(--space-2));
-    }
-    to {
-      /* One line, so the growth spans the whole fade; longer errors finish
-         opening as it ends. */
-      max-height: 1lh;
-      margin-top: 0;
-    }
-  }
-  @keyframes buzz-field-error-reveal {
-    from {
       opacity: 0;
     }
   }

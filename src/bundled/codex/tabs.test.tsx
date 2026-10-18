@@ -591,7 +591,7 @@ it("falls back for an unavailable provider default and restores it when the cata
     effort: "high",
   });
 });
-it("shows a provider model recheck inside the disabled picker", async () => {
+it("shows a provider model recheck inside a focusable inactive picker", async () => {
   const f = fixture();
   await f.provider.check();
   render(<f.tabs.DefaultControl onConfigure={vi.fn()} />);
@@ -613,13 +613,21 @@ it("shows a provider model recheck inside the disabled picker", async () => {
   const checked = f.provider.check();
   try {
     await waitFor(() => expect(picker).toHaveTextContent("Loading models…"));
-    expect(picker).toBeDisabled();
+    expect(picker).not.toHaveAttribute("disabled");
+    expect(picker).toHaveAttribute("aria-disabled", "true");
+    picker.focus();
+    expect(picker).toHaveFocus();
+    const user = userEvent.setup();
+    await user.keyboard("{Enter}");
+    await user.click(picker);
+    expect(screen.queryByRole("menu")).toBeNull();
     expect(picker).not.toHaveTextContent("Default");
   } finally {
     listed.resolve();
   }
   await act(() => checked);
   await waitFor(() => expect(picker).toBeEnabled());
+  expect(picker).not.toHaveAttribute("aria-disabled", "true");
   expect(picker).toHaveTextContent("Model A");
 });
 it("keeps model-default provider thinking dynamic across save and reopen", async () => {

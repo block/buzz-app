@@ -1193,6 +1193,12 @@ function ReadySidebar({
                             ],
                           change: (mode, seconds) =>
                             setSectionFilter(section.key, mode, seconds),
+                          dismissError: () =>
+                            preferences.dismissFilterError(
+                              section.key.startsWith("group:")
+                                ? `section:${section.key.slice(6)}`
+                                : section.key,
+                            ),
                         }
                       : undefined
                   }

@@ -192,6 +192,19 @@ test("section filters save activity windows and recover hidden channels", async 
   await expect(apply).toBeFocused();
   await expect(apply).toBeEnabled();
   await shot("09-save-error");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Active in the last", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Retry filter", exact: true }),
+  ).toHaveCount(0);
+  await active();
+  await page.getByRole("radio", { name: "30 days", exact: true }).click();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Relay request failed (502)",
+  );
   await page.unroute(pattern);
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(

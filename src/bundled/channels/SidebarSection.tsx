@@ -97,6 +97,7 @@ export function SidebarSection({
         disabled?: boolean;
         activeWindowSeconds?: number | undefined;
         change: (mode: SidebarFilter, seconds?: number) => unknown;
+        dismissError?: () => void;
       }
     | undefined;
   channels?:
@@ -413,7 +414,10 @@ export function SidebarSection({
             <SidebarActiveDialog
               seconds={filter.activeWindowSeconds}
               apply={(seconds) => filter.change("active", seconds)}
-              close={() => setActiveOpen(false)}
+              close={() => {
+                filter.dismissError?.();
+                setActiveOpen(false);
+              }}
               finalFocus={actionsTrigger}
             />
           )}

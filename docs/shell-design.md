@@ -73,7 +73,8 @@ semantic tokens, UI authoring rules and the local component reference.
   Settings opens in the shared expanded Dialog with an integrated sidebar; the
   workspace remains mounted underneath. Its portal fills the shell's workspace
   frame (navigation, main content and companion panels), excluding the app
-  header, with equal inline gutters matching the main page’s gutter. The frame
+  header, with equal inline gutters matching the main page’s gutter. At widths
+  up to 650px the frame also covers the wrapped header below its titlebar row. The frame
   sits outside the content query container so fixed modal backdrops still block
   the entire webview. Native traffic lights remain in their reserved titlebar
   area. The shared compact dialog header centers its title and Close action

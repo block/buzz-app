@@ -830,8 +830,25 @@ export function ChannelInventory({
   });
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
   const lifecycleCallbacks = handoff?.lifecycleCallbacks;
+  // The rows beside the confirmed channel, nearest first, captured while it is
+  // still listed: completion can arrive after the roster has dropped it.
+  const lifecycleNeighbors = useRef<{ id: string; ids: string[] }>(undefined);
   useLayoutEffect(() => {
     if (!lifecycleCallbacks) return;
+    const dialogId = lifecycleDialog?.channel.id;
+    const placement = sections.find(
+      (section) =>
+        !sidebar.collapsed.includes(section.key) &&
+        section.rows.some((row) => row.id === dialogId),
+    );
+    if (dialogId && placement) {
+      const ids = placement.rows.map((row) => row.id);
+      const index = ids.indexOf(dialogId);
+      lifecycleNeighbors.current = {
+        id: dialogId,
+        ids: [...ids.slice(index + 1), ...ids.slice(0, index).reverse()],
+      };
+    }
     lifecycleCallbacks.current = lifecycleDialog
       ? {
           close: () => {
@@ -853,16 +870,22 @@ export function ChannelInventory({
                 : lifecycleDialog.focusFallback;
               return;
             }
+            // Its neighbor takes its place, so the sidebar stays where it is.
+            const listed = sections.flatMap((section) => section.rows);
+            const next =
+              (lifecycleNeighbors.current?.id === id
+                ? lifecycleNeighbors.current.ids
+                : []
+              ).find((neighbor) => listed.some((row) => row.id === neighbor)) ??
+              listed.find((channel) => channel.id !== id)?.id;
+            if (next) lifecycleFocus.current = next;
             // Confirmed access loss can already have removed current from the roster.
             if (
               (target.kind === "conversation"
                 ? target.channelId
                 : undefined) === id
             ) {
-              const next = sections
-                .flatMap((section) => section.rows)
-                .find((channel) => channel.id !== id);
-              if (next) select(next.id);
+              if (next) select(next);
               else {
                 writeView(scope, "selected-channel", undefined);
                 void navigator.open({

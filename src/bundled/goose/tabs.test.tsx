@@ -933,10 +933,11 @@ for (const host of ["defaults", "create"] as const) {
 }
 
 it("preserves the defaults control and focus after inline and dialog Goose saves", async () => {
+  const supported = ["goose-claude", "goose-kimi-k2"];
   const fake = fakeSpawn({
     providers: PROVIDERS,
     defaults: { providerId: "databricks", modelId: "goose-claude" },
-    supported: ["goose-claude", "goose-kimi-k2"],
+    supported,
   });
   const setup = new GooseSetup(fake.spawn);
   const { DefaultControl, ProviderDialogBody } = createTabs({
@@ -984,6 +985,11 @@ it("preserves the defaults control and focus after inline and dialog Goose saves
     await screen.findByRole("menuitem", { name: "Edit configuration" }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Goose" });
+  await user.type(
+    await within(dialog).findByRole("textbox", { name: "Host" }),
+    "https://new-workspace.example",
+  );
+  supported.splice(0, supported.length, "goose-gpt-6");
   const save = within(dialog).getByRole("button", { name: "Save defaults" });
   await waitFor(() => expect(save).toBeEnabled());
   const transitions: string[] = [];
@@ -1001,4 +1007,8 @@ it("preserves the defaults control and focus after inline and dialog Goose saves
       screen.getByRole("button", { name: /^Goose default model:/ }),
     ).toHaveFocus(),
   );
+  await waitFor(() => expect(trigger).toBeEnabled());
+  await user.click(trigger);
+  expect(await screen.findByRole("menuitem", { name: "GPT" })).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
 });

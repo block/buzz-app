@@ -151,7 +151,7 @@ export function createTabs({
     const id = current?.provider ?? "";
     const [models, reloadModels] = useRead(
       () => (id ? setup.models(id) : Promise.resolve([] as ModelChoice[])),
-      id,
+      `${id}:${state.readiness}:${!!state.blocking}`,
       id,
     );
     const [saving, setSaving] = useState(false);

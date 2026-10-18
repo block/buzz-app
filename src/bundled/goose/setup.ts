@@ -117,6 +117,7 @@ export class GooseSetup {
     if (this.checking) return this.checking;
     this.listing = undefined;
     this.live.clear();
+    this.thinking.clear();
     this.update({ readiness: "checking" });
     this.checking = this.providers()
       .then(

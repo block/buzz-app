@@ -141,7 +141,12 @@ export function createTabs({
   history: GooseHistory;
 }>) {
   function DefaultControl({ onConfigure }: { onConfigure(): void }) {
-    const [listing, reload] = useRead(() => setup.providers(), "providers");
+    const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
+    const [listing, reload] = useRead(
+      () => setup.providers(),
+      `${state.readiness}:${!!state.blocking}`,
+      "providers",
+    );
     const current = listing.value?.defaults;
     const id = current?.provider ?? "";
     const [models, reloadModels] = useRead(
@@ -176,7 +181,7 @@ export function createTabs({
                 : undefined
             }
             defaultLabel="Provider default"
-            disabled={saving || !id}
+            disabled={saving || !!state.blocking || !id}
             loading={models.status === "loading"}
             onConfigure={onConfigure}
             onChange={(model) => {

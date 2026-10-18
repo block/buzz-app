@@ -79,6 +79,11 @@ function ProviderDefaults({
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const checking = state.readiness === "checking";
+  // A recheck must not unmount the focused inline defaults control.
+  const [settledReadiness, setSettledReadiness] = useState(state.readiness);
+  if (!checking && settledReadiness !== state.readiness) {
+    setSettledReadiness(state.readiness);
+  }
   const label =
     state.readiness === "attention"
       ? (state.attentionLabel ?? `Set up ${type.title}`)
@@ -102,7 +107,8 @@ function ProviderDefaults({
         title={type.title}
         icon={Icon && <Icon size={20} />}
         trailing={
-          state.readiness === "ready" && DefaultControl ? (
+          (checking ? settledReadiness : state.readiness) === "ready" &&
+          DefaultControl ? (
             <div
               ref={(node) => {
                 if (node) trigger.current = node.querySelector("button");

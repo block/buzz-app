@@ -264,6 +264,19 @@ describe("GooseSetup", () => {
     expect(read?.killed).toBe(true);
   });
 
+  it("refreshes inherited thinking choices after saving defaults and rechecking", async () => {
+    const thinking = { "": { current: "low", levels: ["low"] } };
+    const { setup: goose } = setup({ thinking });
+    const inherited = { provider: "", model: "" };
+    expect((await goose.efforts(inherited)).levels).toEqual(["low"]);
+    thinking[""] = { current: "high", levels: ["high"] };
+    await goose.saveDefaults({ provider: "ollama", model: "qwen3" });
+    expect((await goose.efforts(inherited)).levels).toEqual(["high"]);
+    thinking[""] = { current: "off", levels: ["off"] };
+    await goose.check();
+    expect((await goose.efforts(inherited)).levels).toEqual(["off"]);
+  });
+
   it("reads no thinking levels from a goose that lists none", async () => {
     const { setup: goose } = setup();
     expect(await goose.efforts({ provider: "", model: "" })).toEqual({

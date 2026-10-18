@@ -932,11 +932,11 @@ for (const host of ["defaults", "create"] as const) {
   });
 }
 
-it("returns focus to the remounted defaults model after a successful Goose save", async () => {
+it("preserves the defaults control and focus after inline and dialog Goose saves", async () => {
   const fake = fakeSpawn({
     providers: PROVIDERS,
     defaults: { providerId: "databricks", modelId: "goose-claude" },
-    supported: ["goose-claude"],
+    supported: ["goose-claude", "goose-kimi-k2"],
   });
   const setup = new GooseSetup(fake.spawn);
   const { DefaultControl, ProviderDialogBody } = createTabs({
@@ -969,6 +969,16 @@ it("returns focus to the remounted defaults model after a successful Goose save"
     name: /^Goose default model:/,
   });
   await waitFor(() => expect(trigger).toBeEnabled());
+  const user = userEvent.setup();
+  await user.click(trigger);
+  (await screen.findByRole("menuitem", { name: "Kimi" })).focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
+  );
+  await waitFor(() => expect(trigger).toHaveTextContent("kimi-k2"));
+  expect(trigger).toBeInTheDocument();
+  await waitFor(() => expect(trigger).toHaveFocus());
   fireEvent.click(trigger);
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Edit configuration" }),
@@ -985,7 +995,7 @@ it("returns focus to the remounted defaults model after a successful Goose save"
   unsubscribe();
   expect(transitions).toContain("checking");
   expect(transitions).toContain("ready");
-  expect(trigger).not.toBeInTheDocument();
+  expect(trigger).toBeInTheDocument();
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: /^Goose default model:/ }),

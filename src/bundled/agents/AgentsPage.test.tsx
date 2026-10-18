@@ -680,9 +680,21 @@ it("keeps name edits inline and lets a failed save retry", async () => {
     name: "Updated",
   });
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
-  expect(
-    screen.getByRole("textbox", { name: "Agent name" }),
-  ).toBeInTheDocument();
+  // An empty name replaces the failed save's error with the name prompt.
+  Element.prototype.animate = vi.fn();
+  try {
+    await user.clear(field);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Add a name to save your agent",
+    );
+  } finally {
+    Reflect.deleteProperty(Element.prototype, "animate");
+  }
+  await user.type(field, "Updated");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(field).not.toHaveAttribute("aria-invalid");
+  expect(agents.save).toHaveBeenCalledOnce();
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(
@@ -906,9 +918,14 @@ it("cancels inline name edits and flags an empty name on Save", async () => {
   } finally {
     Reflect.deleteProperty(Element.prototype, "animate");
   }
-  await user.type(field, "Discarded");
+  // Cancelling while flagged starts the next edit clean.
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await edit();
+  const reopened = screen.getByRole("textbox", { name: "Agent name" });
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  expect(field).not.toHaveAttribute("aria-invalid");
+  expect(reopened).not.toHaveAttribute("aria-invalid");
+  await user.clear(reopened);
+  await user.type(reopened, "Discarded");
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(agents.save).not.toHaveBeenCalled();
   await edit();

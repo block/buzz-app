@@ -135,6 +135,7 @@ export function AgentDetails({
   const saveName = async () => {
     if (namePending) return;
     if (!name.trim()) {
+      setNameError("");
       namePrompt.prompt();
       return;
     }

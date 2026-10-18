@@ -2,6 +2,7 @@ import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Field } from "../shared/design-system/ui/Field";
 import { Input } from "../shared/design-system/ui/Input";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
+import { Switch } from "../shared/design-system/ui/Switch";
 import { Button } from "../shared/design-system/ui/Button";
 import { Accordion } from "../shared/design-system/ui/Accordion";
 import { Dialog } from "../shared/design-system/ui/Dialog";
@@ -135,11 +136,13 @@ export function PluginImport({
   busy,
   authorizeGit,
   actionTarget,
+  updateId,
 }: {
   plugins: PluginManager;
   catalog: Catalog;
   busy: boolean;
   actionTarget?: HTMLElement | null;
+  updateId?: string;
   /** Signs in to the selected community's Buzz git; null for other repositories. */
   authorizeGit?: (
     repository: string,
@@ -199,7 +202,7 @@ export function PluginImport({
     }
     setError(String(reason));
   }
-  const [notice, setNotice] = useState<string | null>(null);
+  const [enableOnInstall, setEnableOnInstall] = useState(true);
   const lifetime = useRef({ active: true, token: "" });
   const pending = useRef(false);
   useEffect(() => {
@@ -221,15 +224,33 @@ export function PluginImport({
     const current = lifetime.current;
     setLoading(true);
     setError(null);
-    setNotice(null);
     setPreview(null);
+    setEnableOnInstall(true);
     try {
-      const next = await operation();
+      const result = await operation();
+      const next =
+        result && updateId
+          ? {
+              ...result,
+              candidates: result.candidates.filter(
+                (item) => item.manifest.id === updateId,
+              ),
+            }
+          : result;
       if (!current.active) {
         if (next) await imports?.discard(next.token);
         return;
       }
       current.token = next?.token ?? "";
+      if (next && updateId) {
+        if (!next.candidates.length) {
+          await imports?.discard(next.token);
+          current.token = "";
+          throw new Error(
+            "This source does not contain the selected plugin. Choose its built folder or repository.",
+          );
+        }
+      }
       setPreview(next);
       setReviewing(next?.candidates.length === 1);
       setSelected(
@@ -250,7 +271,6 @@ export function PluginImport({
       await imports?.discard(preview.token);
       lifetime.current.token = "";
       setPreview(null);
-      setNotice(null);
     } catch (reason) {
       showError(reason);
     } finally {
@@ -269,7 +289,6 @@ export function PluginImport({
       setPreview(null);
       errorTrigger.current = null;
       setError(null);
-      setNotice(null);
       setDragging(false);
       setOpen(false);
     } catch (reason) {
@@ -341,10 +360,15 @@ export function PluginImport({
     <Button
       ref={trigger}
       size="sm"
+      aria-label={
+        updateId
+          ? `Update ${catalog.plugins.find((item) => item.manifest.id === updateId)?.manifest.name ?? "plugin"}`
+          : undefined
+      }
       disabled={blocked}
       onClick={() => setOpen(true)}
     >
-      Add
+      {updateId ? "Update" : "Add"}
     </Button>
   );
   return (
@@ -357,7 +381,9 @@ export function PluginImport({
         }}
         title={
           error || !preview
-            ? "Add a plugin"
+            ? updateId
+              ? "Update plugin"
+              : "Add a plugin"
             : reviewing
               ? "Review plugin access"
               : preview.candidates.length
@@ -378,9 +404,12 @@ export function PluginImport({
         size={error ? "default" : "wide"}
         leadingActions={
           reviewing && candidate && !existing && !error ? (
-            <span className="text-body-sm text-muted">
-              Installed turned off
-            </span>
+            <Switch
+              label="Enable plugin"
+              checked={enableOnInstall}
+              disabled={blocked}
+              onCheckedChange={setEnableOnInstall}
+            />
           ) : undefined
         }
         actions={
@@ -402,7 +431,6 @@ export function PluginImport({
                 onClick={() => {
                   if (reviewing && preview.candidates.length > 1) {
                     setReviewing(false);
-                    setNotice(null);
                   } else void dismiss();
                 }}
               >
@@ -423,28 +451,39 @@ export function PluginImport({
                   ref={installButton}
                   variant="prominent"
                   type="button"
-                  disabled={blocked}
+                  disabled={blocked || (!!existing && !updateId)}
                   onClick={async () => {
+                    if (blocked || pending.current) return;
                     const current = lifetime.current;
+                    pending.current = true;
+                    setLoading(true);
                     setError(null);
-                    setNotice(null);
-                    const success = await plugins.installImport(
-                      preview.token,
-                      candidate.path,
-                    );
-                    if (!current.active) return;
-                    if (success)
-                      setNotice(
-                        `${candidate.manifest.name} installed.${existing ? "" : " Turn it on in the plugin list when you’re ready."} Use Back to choose another folder, or close this dialog.`,
+                    try {
+                      const success = await plugins.installImport(
+                        preview.token,
+                        candidate.path,
                       );
-                    else
-                      showError(
-                        plugins.snapshot().error ??
-                          "Plugin installation wasn’t confirmed. Check the preview and try again.",
-                      );
+                      if (!current.active) return;
+                      if (!success) {
+                        showError(
+                          plugins.snapshot().error ??
+                            "Plugin installation wasn’t confirmed. Check the preview and try again.",
+                        );
+                        return;
+                      }
+                      current.token = "";
+                      if (!existing && enableOnInstall)
+                        await plugins.change("enable", candidate.manifest.id);
+                      if (!current.active) return;
+                      setPreview(null);
+                      setOpen(false);
+                    } finally {
+                      pending.current = false;
+                      if (current.active) setLoading(false);
+                    }
                   }}
                 >
-                  {existing ? "Update plugin" : "Install plugin"}
+                  {updateId ? "Update plugin" : "Install plugin"}
                 </Button>
               )}
             </>
@@ -577,7 +616,6 @@ export function PluginImport({
               Reading plugin folders… Git imports may take up to a minute.
             </p>
           )}
-          {notice && <p role="status">{notice}</p>}
           {preview && (
             <section ref={previewRegion} aria-label="Plugin import preview">
               <div className="flex flex-col gap-4">
@@ -611,7 +649,6 @@ export function PluginImport({
                       disabled={busy}
                       onValueChange={(value) => {
                         setSelected(value);
-                        setNotice(null);
                       }}
                     >
                       {preview.candidates.map((item) => (
@@ -745,6 +782,12 @@ export function PluginImport({
                       </section>
                     )}
                   </section>
+                )}
+                {reviewing && existing && !updateId && (
+                  <p className="m-0 text-body-sm">
+                    This plugin is already installed. Use Update from its row on
+                    the Plugins page.
+                  </p>
                 )}
                 {reviewing && candidate && existing && (
                   <p className="m-0 text-body-sm">

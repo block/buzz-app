@@ -129,8 +129,14 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
           return ready();
         }
         if (command === "plugin_change") {
-          plugins.find((p) => p.manifest.id === args.id).enabled =
-            args.action === "enable";
+          if (args.action === "remove")
+            plugins.splice(
+              plugins.findIndex((p) => p.manifest.id === args.id),
+              1,
+            );
+          else
+            plugins.find((p) => p.manifest.id === args.id).enabled =
+              args.action === "enable";
           return ready();
         }
         if (command === "plugin_module")
@@ -500,9 +506,12 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(
     page.getByRole("heading", { name: "Example two", level: 3 }),
   ).toHaveCount(0);
-  await expect(page.getByText("Installed turned off")).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: "Enable plugin" }),
+  ).toBeChecked();
+  await page.getByRole("switch", { name: "Enable plugin" }).uncheck();
   await button(page, "Install plugin").click();
-  await expect(page.getByRole("status")).toHaveText(/Example two installed/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "Example two", level: 3 }),
   ).toHaveCount(0);
@@ -513,7 +522,6 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
           .args,
     ),
   ).toEqual({ token: "preview-one", path: "dist" });
-  await button(page, "Close").click();
   const enabled = pluginAction(page, "Example two");
   await expect(enabled).toHaveAccessibleName("Enable Example two");
   await button(page, "View Example two details").click();
@@ -528,17 +536,38 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Reload")).toHaveCount(0);
   await button(page, "Close plugin details").click();
-  await button(page, "Add").click();
+  await button(page, "Update Example two").click();
   await button(page, "Browse plugin folder").click();
-  await page.getByRole("radio", { name: /Example two/ }).check();
-  await button(page, "Continue").click();
+  await expect(page.getByRole("radio")).toHaveCount(0);
   await expect(
     page.getByText(/It stays on and may run immediately/),
   ).toBeVisible();
-  await expect(button(page, "Update plugin")).toBeVisible();
-  await button(page, "Back").click();
-  await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
-  await button(page, "Back").click();
+  await expect(button(page, "Update plugin")).toBeEnabled();
+  await page
+    .getByRole("dialog")
+    .screenshot({ path: info.outputPath("plugin-update-review.png") });
+  await button(page, "Update plugin").click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(enabled).toHaveAccessibleName("Disable Example two");
+  await button(page, "View Example two details").click();
+  await button(page, "Delete").click();
+  const deletion = page.getByRole("alertdialog", {
+    name: "Delete Example two?",
+  });
+  await expect(deletion).toBeVisible();
+  await expect(
+    deletion.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeFocused();
+  await deletion.screenshot({
+    path: info.outputPath("plugin-delete-confirmation.png"),
+  });
+  await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(button(page, "Delete")).toBeFocused();
+  await button(page, "Close plugin details").click();
+  await page
+    .getByRole("region", { name: "Plugins", exact: true })
+    .screenshot({ path: info.outputPath("plugin-row-update.png") });
+  await button(page, "Add").click();
   await page.getByLabel("Git or GitHub repository").fill("example/plugins");
   await page.getByLabel("Branch or tag (optional)").fill("feature/plugins");
   await button(page, "Find plugins").click();
@@ -641,25 +670,16 @@ test("checked-in local examples activate and work independently", async ({
   );
   await nativeImports(page, samples);
   await openPlugins(page, app.origin);
-  await button(page, "Add").click();
-  await button(page, "Browse plugin folder").click();
   for (const sample of samples) {
+    await button(page, "Add").click();
+    await button(page, "Browse plugin folder").click();
     await page
       .getByRole("radio", { name: new RegExp(sample.manifest.name) })
       .check();
     await button(page, "Continue").click();
     await button(page, "Install plugin").click();
-    await expect(page.getByRole("status")).toHaveText(
-      new RegExp(`${sample.manifest.name} installed`),
-    );
-    await button(page, "Back").click();
-  }
-  await button(page, "Close").click();
-  for (const sample of samples) {
-    const toggle = pluginAction(page, sample.manifest.name);
-    await expect(toggle).toHaveAccessibleName(`Enable ${sample.manifest.name}`);
-    await toggle.click();
-    await expect(toggle).toHaveAccessibleName(
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(pluginAction(page, sample.manifest.name)).toHaveAccessibleName(
       `Disable ${sample.manifest.name}`,
     );
   }
@@ -924,9 +944,9 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   await dialog
     .getByRole("button", { name: "Install plugin", exact: true })
     .press("Enter");
-  await expect(dialog.getByRole("alert")).toHaveCount(0);
-  await expect(dialog.getByRole("status")).toContainText(
-    "Retry plugin installed",
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(pluginAction(page, "Retry plugin")).toHaveAccessibleName(
+    "Disable Retry plugin",
   );
   expect(
     await page.evaluate(() =>

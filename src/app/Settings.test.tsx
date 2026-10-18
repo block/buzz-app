@@ -674,6 +674,29 @@ it("announces catalog and current activation failures directly in the list", () 
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
+it("keeps a rejected plugin deletion open for retry", async () => {
+  const fixture = reviewPluginFixture();
+  vi.mocked(fixture.manager.change).mockResolvedValueOnce(false);
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete plugin" }));
+  const confirmation = screen.getByRole("alertdialog");
+  expect(await within(confirmation).findByRole("alert")).toHaveTextContent(
+    "Plugin deletion wasn’t confirmed",
+  );
+  expect(
+    within(confirmation).getByRole("button", { name: "Delete plugin" }),
+  ).toBeEnabled();
+  expect(
+    screen.getByRole("complementary", {
+      name: "Zebra external details",
+      hidden: true,
+    }),
+  ).toBeInTheDocument();
+});
+
 it("returns focus to the Plugins section when the selected plugin is deleted", async () => {
   const fixture = reviewPluginFixture();
   fireEvent.click(
@@ -685,6 +708,17 @@ it("returns focus to the Plugins section when the selected plugin is deleted", a
   const remove = within(details).getByRole("button", { name: "Delete" });
   remove.focus();
   fireEvent.click(remove);
+  expect(fixture.manager.change).not.toHaveBeenCalledWith(
+    "remove",
+    "example.external",
+  );
+  const confirmation = screen.getByRole("alertdialog", {
+    name: "Delete Zebra external?",
+  });
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  fireEvent.click(remove);
+  fireEvent.click(screen.getByRole("button", { name: "Delete plugin" }));
   expect(fixture.manager.change).toHaveBeenCalledWith(
     "remove",
     "example.external",

@@ -244,10 +244,9 @@ it("shows exact declared access and changes before an enabled update", async () 
     screen.getByText(/Computer access changes with this update/),
   ).toBeVisible();
   expect(screen.queryByText(/Command check:/)).toBeNull();
-  expect(screen.getByRole("button", { name: "Update plugin" })).toHaveAttribute(
-    "data-variant",
-    "prominent",
-  );
+  expect(
+    screen.getByRole("button", { name: "Install plugin" }),
+  ).toHaveAttribute("data-variant", "prominent");
   fireEvent.click(screen.getByRole("button", { name: /^Run example-cli/ }));
   fireEvent.click(
     screen.getByRole("button", {
@@ -398,6 +397,7 @@ it("separates choosing from access review and restores the chosen folder on Back
   const manager = {
     imports: { folder: vi.fn(async () => preview), discard },
     installImport,
+    change: vi.fn(async () => true),
   } as unknown as PluginManager;
   render(
     <PluginImport
@@ -653,7 +653,7 @@ it("replaces Add with an error view and returns to the retained preview for retr
   const installImport = vi
     .fn()
     .mockResolvedValueOnce(false)
-    .mockResolvedValueOnce(true)
+    .mockResolvedValueOnce(false)
     .mockImplementationOnce(
       () =>
         new Promise<boolean>((resolve) => {
@@ -667,6 +667,7 @@ it("replaces Add with an error view and returns to the retained preview for retr
     },
     snapshot: () => ({ error }),
     installImport,
+    change: vi.fn(async () => true),
   } as unknown as PluginManager;
   render(
     <PluginImport
@@ -705,19 +706,21 @@ it("replaces Add with an error view and returns to the retained preview for retr
   expect(
     within(dialog).getByRole("region", { name: "Plugin import preview" }),
   ).toBeVisible();
-  error = null;
-  fireEvent.click(retry);
-  expect(await within(dialog).findByRole("status")).toHaveTextContent(
-    "Retry plugin installed",
-  );
-  expect(within(dialog).queryByRole("alert")).toBeNull();
-  fireEvent.click(retry);
-  expect(within(dialog).queryByRole("status")).toBeNull();
   error = "Persistence failed";
-  finish(false);
+  fireEvent.click(retry);
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Persistence failed",
   );
+  fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Install plugin" }),
+  );
+  expect(
+    within(dialog).getByRole("button", { name: "Install plugin" }),
+  ).toBeDisabled();
+  finish(true);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(manager.change).toHaveBeenCalledWith("enable", "example.retry");
   expect(installImport.mock.calls).toEqual(
     Array(3).fill(["retry-preview", "."]),
   );
@@ -830,4 +833,118 @@ it("Back restores source fields and focus after acquisition fails", async () => 
     "stable",
   );
   expect(find).toHaveFocus();
+});
+
+it.each([true, false])(
+  "closes after installing with enable preference %s",
+  async (enabled) => {
+    const manager = {
+      imports: {
+        folder: vi.fn(async () => ({
+          token: "new",
+          source: "/plugin",
+          commit: null,
+          warnings: [],
+          candidates: [
+            {
+              path: ".",
+              revision: "one",
+              manifest: {
+                id: "example.new",
+                name: "New plugin",
+                apiVersion: 1,
+              },
+            },
+          ],
+        })),
+        discard: vi.fn(async () => {}),
+      },
+      installImport: vi.fn(async () => true),
+      change: vi.fn(async () => false),
+    } as unknown as PluginManager;
+    const user = userEvent.setup();
+    render(
+      <PluginImport
+        plugins={manager}
+        catalog={{ profile: "test", location: "test", plugins: [] }}
+        busy={false}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(
+      screen.getByRole("button", { name: "Browse plugin folder" }),
+    );
+    const toggle = await screen.findByRole("switch", { name: "Enable plugin" });
+    expect(toggle).toBeChecked();
+    if (!enabled) await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: "Install plugin" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(manager.installImport).toHaveBeenCalledExactlyOnceWith("new", ".");
+    if (enabled)
+      expect(manager.change).toHaveBeenCalledExactlyOnceWith(
+        "enable",
+        "example.new",
+      );
+    else expect(manager.change).not.toHaveBeenCalled();
+    expect(manager.imports?.discard).not.toHaveBeenCalled();
+  },
+);
+
+it("limits row updates to the selected plugin without modifying the source preview", async () => {
+  const preview = {
+    token: "update",
+    source: "/plugins",
+    commit: null,
+    warnings: [],
+    candidates: [
+      {
+        path: "other",
+        revision: "one",
+        manifest: { id: "example.other", name: "Other", apiVersion: 1 },
+      },
+      {
+        path: "target",
+        revision: "two",
+        manifest: { id: "example.target", name: "Target", apiVersion: 1 },
+      },
+    ],
+  };
+  const installed = {
+    manifest: { id: "example.target", name: "Target", apiVersion: 1 as const },
+    source: "external" as const,
+    enabled: true,
+    revision: "one",
+    previous: null,
+    reloadable: true,
+    error: null,
+  };
+  const manager = {
+    imports: { folder: vi.fn(async () => preview), discard: vi.fn() },
+    installImport: vi.fn(async () => true),
+    change: vi.fn(),
+  } as unknown as PluginManager;
+  const user = userEvent.setup();
+  render(
+    <PluginImport
+      updateId="example.target"
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [installed] }}
+      busy={false}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Update Target" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse plugin folder" }),
+  );
+  const update = await screen.findByRole("button", { name: "Update plugin" });
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(screen.queryByRole("switch", { name: "Enable plugin" })).toBeNull();
+  await user.click(update);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(
+    "update",
+    "target",
+  );
+  expect(manager.change).not.toHaveBeenCalled();
+  expect(preview.candidates).toHaveLength(2);
 });

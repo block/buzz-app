@@ -4,6 +4,7 @@ import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
+import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { ChoiceRow } from "../shared/design-system/ui/ChoiceRow";
@@ -148,6 +149,10 @@ function PluginDetails({
   onClose(): void;
 }) {
   const close = useRef<HTMLButtonElement>(null);
+  const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   useLayoutEffect(() => {
     close.current?.focus();
   }, []);
@@ -330,14 +335,65 @@ function PluginDetails({
         {plugin.source === "external" && (
           <Button
             type="button"
+            ref={deleteTrigger}
             variant="destructive"
             disabled={busy}
-            onClick={() => plugins.change("remove", plugin.manifest.id)}
+            onClick={() => {
+              setDeleteError(null);
+              setConfirmDelete(true);
+            }}
           >
             Delete
           </Button>
         )}
       </div>
+      {confirmDelete && (
+        <AlertDialog
+          title={`Delete ${plugin.manifest.name}?`}
+          description="Removes this plugin from Buzz. You can install it again later."
+          pending={busy || deleting}
+          finalFocus={deleteTrigger}
+          onClose={() => setConfirmDelete(false)}
+          actions={
+            <>
+              <Button
+                disabled={busy || deleting}
+                onClick={() => setConfirmDelete(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={busy || deleting}
+                onClick={async () => {
+                  if (busy || deleting) return;
+                  setDeleting(true);
+                  setDeleteError(null);
+                  try {
+                    if (await plugins.change("remove", plugin.manifest.id))
+                      setConfirmDelete(false);
+                    else
+                      setDeleteError(
+                        plugins.snapshot().error ??
+                          "Plugin deletion wasn’t confirmed. Try again.",
+                      );
+                  } finally {
+                    setDeleting(false);
+                  }
+                }}
+              >
+                Delete plugin
+              </Button>
+            </>
+          }
+        >
+          {deleteError && (
+            <p role="alert" className="error text-body-sm">
+              {deleteError}
+            </p>
+          )}
+        </AlertDialog>
+      )}
     </aside>
   );
 }
@@ -477,6 +533,12 @@ export function Settings({
         ? selectedRunning.error
         : null))
     : null;
+  const authorizePluginGit = async (repository: string) => {
+    const connection = communities.relay.snapshot();
+    return connection.status === "ready"
+      ? ((await connection.session.authorizeGit?.(repository)) ?? null)
+      : null;
+  };
   return (
     <div
       className={`${styles.root} ${navigationPane ? styles.navigationPane : ""}`}
@@ -636,14 +698,7 @@ export function Settings({
                     plugins={plugins}
                     catalog={catalog}
                     busy={busy}
-                    authorizeGit={async (repository) => {
-                      const connection = communities.relay.snapshot();
-                      return connection.status === "ready"
-                        ? ((await connection.session.authorizeGit?.(
-                            repository,
-                          )) ?? null)
-                        : null;
-                    }}
+                    authorizeGit={authorizePluginGit}
                   />
                 ) : configuration.status === "recovery" ? (
                   <RecoveryScreen plugins={plugins} />
@@ -716,6 +771,11 @@ export function Settings({
                                     type="button"
                                     className={styles.pluginRow}
                                     data-enabled={plugin.enabled}
+                                    data-updatable={
+                                      (plugin.source === "external" &&
+                                        !!plugins.imports) ||
+                                      undefined
+                                    }
                                     aria-label={`View ${plugin.manifest.name} details`}
                                     aria-describedby={
                                       [
@@ -795,6 +855,17 @@ export function Settings({
                                     )}
                                   </button>
                                   <div className={styles.pluginRowAction}>
+                                    {plugin.source === "external" &&
+                                      plugins.imports &&
+                                      catalog && (
+                                        <PluginImport
+                                          updateId={id}
+                                          plugins={plugins}
+                                          catalog={catalog}
+                                          busy={busy}
+                                          authorizeGit={authorizePluginGit}
+                                        />
+                                      )}
                                     {isRequiredPlugin(plugin) ? (
                                       <Button
                                         variant="outline"

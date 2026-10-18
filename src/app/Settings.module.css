@@ -173,6 +173,8 @@
 }
 
 .pluginRowAction {
+  display: flex;
+  gap: var(--space-2);
   position: relative;
   z-index: 1;
   grid-area: 1 / 1;
@@ -228,6 +230,15 @@
   @apply text-label-sm;
   cursor: pointer;
   user-select: none;
+}
+
+.pluginRow[data-updatable] {
+  padding-right: calc(
+    var(--space-16) +
+    var(--space-16) +
+    var(--space-8) +
+    var(--settings-group-inset)
+  );
 }
 
 .pluginRow[data-enabled="false"] {
@@ -309,7 +320,8 @@
 }
 
 @container (max-width: 32rem) {
-  .pluginRow {
+  .pluginRow,
+  .pluginRow[data-updatable] {
     align-items: stretch;
     flex-direction: column;
     gap: var(--space-2);

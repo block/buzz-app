@@ -1155,11 +1155,15 @@ it("keeps keyboard focus through Claude defaults discovery retries", async () =>
       expect(retry).not.toHaveAttribute("aria-disabled", "true"),
     );
     retry.focus();
+    const previousCalls = calls.mock.calls.length;
     try {
       await user.keyboard("{Enter}");
+      await waitFor(() => {
+        expect(calls.mock.calls.length).toBeGreaterThan(previousCalls);
+        expect(retry).toHaveAttribute("aria-disabled", "true");
+      });
       expect(retry).toHaveFocus();
       expect(retry).not.toHaveAttribute("disabled");
-      expect(retry).toHaveAttribute("aria-disabled", "true");
     } finally {
       await act(async () => release());
     }

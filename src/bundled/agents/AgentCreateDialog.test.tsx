@@ -24,6 +24,12 @@ import type {
 } from "../../features/agents/service";
 import { AgentCreateDialog } from "./AgentCreateDialog";
 
+const motion = vi.hoisted(() => ({ reduced: false }));
+vi.mock("motion/react", async (actual) => ({
+  ...(await actual<typeof import("motion/react")>()),
+  useReducedMotion: () => motion.reduced,
+}));
+
 afterEach(cleanup);
 // jsdom lacks both; tests that need them install stubs, removed here along
 // with stubbed frames and media queries.
@@ -31,6 +37,7 @@ afterEach(() => {
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   Reflect.deleteProperty(Element.prototype, "animate");
   vi.unstubAllGlobals();
+  motion.reduced = false;
 });
 
 type Echo = { reply: string };
@@ -291,20 +298,28 @@ it("does not flag a name typed while it scrolls into view", async () => {
   expect(Element.prototype.animate).not.toHaveBeenCalled();
 });
 
-it("jumps instead of gliding under reduced motion", async () => {
+it("jumps instead of gliding, and skips the shake, under reduced motion", async () => {
   Element.prototype.animate = vi.fn();
-  stepFrames();
-  const { dialog, user } = setup([echo]);
+  const step = stepFrames();
   vi.stubGlobal("matchMedia", (query: string) => ({
     matches: query === "(prefers-reduced-motion: reduce)",
     addEventListener() {},
     removeEventListener() {},
   }));
-  const { scrollIntoView } = scrolledName(dialog);
+  motion.reduced = true;
+  const { dialog, user } = setup([echo]);
+  const { position, scrollIntoView } = scrolledName(dialog);
   await user.click(createButton());
   expect(scrollIntoView).toHaveBeenCalledWith(
     expect.objectContaining({ behavior: "auto" }),
   );
+  position.top = 300;
+  step();
+  step();
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Add a name to create your agent",
+  );
+  expect(Element.prototype.animate).not.toHaveBeenCalled();
 });
 
 it("switches type from the corner menu, resetting the config to the new type's defaults", async () => {

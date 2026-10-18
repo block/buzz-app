@@ -20,6 +20,7 @@ import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { CloudUploadIcon } from "../../shared/design-system/icons";
 import { PackedAgentAvatar } from "./PackedAgentAvatar";
 import styles from "./AgentCreate.module.css";
+import { useShake } from "./useNamePrompt";
 
 export function AgentCreateHeader({
   name,
@@ -77,17 +78,7 @@ export function AgentCreateHeader({
   const [keyboard, setKeyboard] = useState(false);
   const reducedMotion = useReducedMotion();
   const nameControl = useRef<HTMLDivElement>(null);
-  const nameAttempt = nameError?.attempt;
-  // A damped side-to-side shake, like a rejected iOS passcode.
-  useEffect(() => {
-    if (!nameAttempt || reducedMotion) return;
-    nameControl.current?.animate(
-      [0, -10, 8, -6, 4, -2, 0].map((x) => ({
-        transform: `translateX(${x}px)`,
-      })),
-      { duration: 400, easing: "ease-out" },
-    );
-  }, [nameAttempt, reducedMotion]);
+  useShake(nameControl, nameError?.attempt);
   const root = useRef<HTMLFieldSetElement>(null);
   const previousView = useRef(view);
   const options = useRef<HTMLFieldSetElement>(null);

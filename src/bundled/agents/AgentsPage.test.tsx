@@ -869,7 +869,7 @@ it("stays on the grid when the new agent belongs to a community no longer shown"
   expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
 });
 
-it("cancels inline name edits and rejects an empty name", async () => {
+it("cancels inline name edits and flags an empty name on Save", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
@@ -886,12 +886,29 @@ it("cancels inline name edits and rejects an empty name", async () => {
   expect(
     screen.queryByRole("button", { name: "Message" }),
   ).not.toBeInTheDocument();
-  await user.clear(screen.getByRole("textbox", { name: "Agent name" }));
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  await user.type(
-    screen.getByRole("textbox", { name: "Agent name" }),
-    "Discarded",
-  );
+  const field = screen.getByRole("textbox", { name: "Agent name" });
+  await user.clear(field);
+  // jsdom lacks the Web Animations API the shake uses.
+  const animate = vi.fn();
+  Element.prototype.animate = animate;
+  try {
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Add a name to save your agent",
+    );
+    expect(field).toHaveFocus();
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription("Add a name to save your agent");
+    expect(animate).toHaveBeenCalledOnce();
+    await user.keyboard("{Enter}");
+    expect(animate).toHaveBeenCalledTimes(2);
+    expect(agents.save).not.toHaveBeenCalled();
+  } finally {
+    Reflect.deleteProperty(Element.prototype, "animate");
+  }
+  await user.type(field, "Discarded");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(field).not.toHaveAttribute("aria-invalid");
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(agents.save).not.toHaveBeenCalled();
   await edit();

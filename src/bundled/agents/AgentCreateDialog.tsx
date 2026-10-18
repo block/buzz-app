@@ -1,5 +1,5 @@
 // Agent identity above the type-owned model and instructions fields.
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { randomAgentAvatar } from "../../features/agents/avatar-packs";
 import type {
   Agent,
@@ -14,6 +14,7 @@ import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Select } from "../../shared/design-system/ui/Select";
 import { AgentCreateHeader } from "./AgentCreateHeader";
 import styles from "./AgentCreate.module.css";
+import { useNamePrompt } from "./useNamePrompt";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -23,19 +24,6 @@ export function TypeIcon({ type }: { type: RegisteredAgentType | undefined }) {
   const Icon = type?.icon ?? RobotIcon;
   return <Icon size={16} aria-hidden="true" />;
 }
-
-/** Whether an element is fully visible inside its nearest scrolling ancestor. */
-const inView = (element: HTMLElement) => {
-  let scroller = element.parentElement;
-  while (scroller && !/auto|scroll/.test(getComputedStyle(scroller).overflowY))
-    scroller = scroller.parentElement;
-  const box = element.getBoundingClientRect();
-  const frame = scroller?.getBoundingClientRect() ?? {
-    top: 0,
-    bottom: window.innerHeight,
-  };
-  return box.top >= frame.top && box.bottom <= frame.bottom;
-};
 
 const startingConfig = (type: RegisteredAgentType | undefined) => {
   try {
@@ -67,16 +55,12 @@ export function AgentCreateDialog({
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  // Each empty submit replays the name prompt; 0 means none is shown.
-  const [nameAttempts, setNameAttempts] = useState(0);
   const [avatarActive, setAvatarActive] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarAction, setAvatarAction] = useState<HTMLDivElement | null>(null);
   const avatarNavigation = useRef<{ back(): void }>(null);
   const nameField = useRef<HTMLInputElement>(null);
-  // The frame waiting for a scroll to land before showing the name prompt.
-  const nameReveal = useRef(0);
-  useEffect(() => () => cancelAnimationFrame(nameReveal.current), []);
+  const namePrompt = useNamePrompt(nameField);
   const form = useId();
   const Create = type?.Create;
   const Model = type?.CreateModel;
@@ -94,42 +78,7 @@ export function AgentCreateDialog({
   const create = async () => {
     if (!type || pending) return;
     if (!name.trim()) {
-      const field = nameField.current;
-      if (!field || nameReveal.current) return;
-      field.focus({ preventScroll: true });
-      const reveal = () => {
-        nameReveal.current = 0;
-        if (!field.value.trim()) setNameAttempts((attempts) => attempts + 1);
-      };
-      if (inView(field)) {
-        reveal();
-        return;
-      }
-      // Center the name when there's room; scrolling stops at the top. The
-      // prompt starts as the scroll eases into place, so the shake plays in
-      // view without waiting out the scroll's slow tail.
-      field.scrollIntoView({
-        block: "center",
-        behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "auto"
-          : "smooth",
-      });
-      const started = performance.now();
-      let last = Number.NaN;
-      let gliding = false;
-      const settle = () => {
-        const top = field.getBoundingClientRect().top;
-        const step = Math.abs(top - last);
-        // Slow frames count only after the glide has sped up, not while it
-        // eases in.
-        const slowing = step === 0 || (gliding && step < 4);
-        if (step >= 4) gliding = true;
-        last = top;
-        if ((slowing && inView(field)) || performance.now() - started > 1000)
-          reveal();
-        else nameReveal.current = requestAnimationFrame(settle);
-      };
-      nameReveal.current = requestAnimationFrame(settle);
+      namePrompt.prompt();
       return;
     }
     setPending(true);
@@ -219,7 +168,7 @@ export function AgentCreateDialog({
           onChange={(patch) => {
             if (patch.name !== undefined) {
               setName(patch.name);
-              if (patch.name.trim()) setNameAttempts(0);
+              namePrompt.named(patch.name);
             }
             if (patch.picture !== undefined) setPicture(patch.picture);
             setDirty(true);
@@ -227,10 +176,10 @@ export function AgentCreateDialog({
           }}
           nameRef={nameField}
           nameError={
-            nameAttempts
+            namePrompt.attempts
               ? {
                   message: "Add a name to create your agent",
-                  attempt: nameAttempts,
+                  attempt: namePrompt.attempts,
                 }
               : undefined
           }

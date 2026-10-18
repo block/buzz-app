@@ -38,7 +38,7 @@ test("section filters save activity windows and recover hidden channels", async 
     ]);
   }
   await page.goto(app.origin);
-  await openPage(page, "Multiplayer");
+  await openPage(page, "Messages");
   const section = page.locator('[data-sidebar-section="channels"]');
   await expect(section.locator('[data-channel-id="gamma"]')).toBeVisible();
   const shot = async (name) => {
@@ -300,6 +300,17 @@ test("failed activity reads explain the filter and recover on Retry", async ({
   page,
   app,
 }, testInfo) => {
+  app.histories.set("primary/beta", [
+    app.sign({
+      kind: 9,
+      tags: [["h", "beta"]],
+      content: "Old update",
+      created_at: Math.floor(Date.now() / 1000) - 60 * 86400,
+    }),
+  ]);
+  const unknown = page.locator(
+    '[data-sidebar-section="channels"] [data-channel-id="beta"]',
+  );
   app.histories.set("primary/gamma", [
     app.sign({
       kind: 9,
@@ -332,7 +343,7 @@ test("failed activity reads explain the filter and recover on Retry", async ({
     });
   });
   await page.goto(app.origin);
-  await openPage(page, "Multiplayer");
+  await openPage(page, "Messages");
   await page
     .getByRole("button", { name: "More actions for Channels", exact: true })
     .click();
@@ -344,6 +355,7 @@ test("failed activity reads explain the filter and recover on Retry", async ({
     await expect(
       page.getByRole("dialog", { name: "Active in the last", exact: true }),
     ).toHaveCount(0);
+    await expect(unknown).toBeVisible();
   } finally {
     release();
   }
@@ -352,6 +364,7 @@ test("failed activity reads explain the filter and recover on Retry", async ({
       exact: true,
     }),
   ).toBeVisible();
+  await expect(unknown).toBeVisible();
   if (
     process.env.BUZZ_FILTER_CAPTURE_DIR &&
     testInfo.project.name === "chromium"
@@ -384,4 +397,5 @@ test("failed activity reads explain the filter and recover on Retry", async ({
       exact: true,
     }),
   ).toHaveCount(0);
+  await expect(unknown).toHaveCount(0);
 });

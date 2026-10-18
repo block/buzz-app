@@ -489,7 +489,7 @@ export function useConversationTabs({
     channelId: string,
     messageId: string,
     rootId: string,
-    intent?: "reply",
+    intent?: "reply" | "reveal",
   ) => {
     if (!currentVisit()) return;
     // Flat sessions keep their side-only host; channels support both panes.
@@ -525,8 +525,7 @@ export function useConversationTabs({
       queries.channels
         .list()
         .channels.some(
-          (item) =>
-            item.id === parsed.channelId && item.channelType === "session",
+          (item) => item.id === parsed.channelId && item.channelType === "solo",
         )
     )
       return openLink(url);
@@ -550,7 +549,7 @@ export function useConversationTabs({
       !target.readOnly &&
       !target.archived &&
       !target.cached &&
-      (target.channelType !== "session" ||
+      (target.channelType !== "solo" ||
         !!target.members?.includes(queries.viewer ?? ""))
     );
   }

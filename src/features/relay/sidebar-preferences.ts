@@ -109,7 +109,7 @@ export type SidebarSectionOrderMutator = (
   sectionIds: readonly string[],
   signal: AbortSignal,
 ) => Promise<SidebarGroups>;
-/** Adds an empty section; only Me groups support this today. */
+/** Adds an empty section; only Solo groups support this today. */
 export type SidebarSectionCreationMutator = (
   section: Readonly<{ id: string; name: string }>,
   signal: AbortSignal,

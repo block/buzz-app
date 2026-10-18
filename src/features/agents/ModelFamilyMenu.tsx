@@ -83,12 +83,12 @@ export function ModelFamilyMenu({
     <MenuRoot>
       <MenuTrigger
         disabled={disabled || loading}
-        focusableWhenDisabled={loading && !disabled}
         render={(props) => (
           <Button
             {...props}
             disabled={disabled}
             loading={loading}
+            focusableWhenDisabled={loading && !disabled}
             variant={appearance === "subtle" ? "subtle" : "outline"}
             shape="control"
             size="sm"

@@ -1,3 +1,4 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, end, settle, wheel } from "./timeline.mjs";
@@ -1182,7 +1183,7 @@ test("opening another message in the same thread keeps the reply editor mounted"
   const replyRow = thread(page).locator(
     `[data-message-id="${app.exact.replies.at(-2).id}"]`,
   );
-  await replyRow.hover();
+  await hoverMessage(replyRow);
   await replyRow.getByRole("button", { name: "Reply", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Cancel reply target", exact: true }),

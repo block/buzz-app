@@ -1862,11 +1862,12 @@ html[data-keyboard-input] .quickReactionGlyph {
   .messageActions[data-placement="beside"] {
     translate: 0 -50%;
   }
-  /* Bridge the small gap to revealed actions, not the full message row. */
-  .messageActions[popover]:popover-open::before {
+  /* Only beside actions have a gap; above actions already meet the bubble. */
+  .messageActions[popover][data-placement="beside"]:popover-open::before {
     content: "";
     position: absolute;
-    inset: calc(-1 * var(--space-2));
+    inset-block: 0;
+    inset-inline: calc(-1 * var(--space-2));
     z-index: -1;
   }
 }

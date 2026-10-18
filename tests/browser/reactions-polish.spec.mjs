@@ -325,10 +325,10 @@ test.describe("reaction control rendering", () => {
     await row.evaluate((el) => {
       el.style.translate = "0 0.25px";
     });
-    // Keep the overlapping message hover highlight unchanged while comparing
-    // the whole button before, during, and after neighboring emoji motion.
+    // Row whitespace and reactions both leave the message actions hidden, so
+    // the whole-button comparison keeps the same background throughout motion.
     await message.hover({ position: { x: 1, y: 1 } });
-    await expect(message).toHaveAttribute("data-actions-revealed", "");
+    await expect(message).not.toHaveAttribute("data-actions-revealed");
     const bounds = await plus.boundingBox();
     const original = await plus.screenshot();
     await emoji.locator("[data-reaction-glyph]").evaluate((el) => {

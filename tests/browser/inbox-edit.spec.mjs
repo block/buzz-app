@@ -1,3 +1,4 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
 
@@ -43,7 +44,7 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
   await reply.fill("Unsent Inbox reply");
   const originalNode = await reply.elementHandle();
   const edit = async () => {
-    await row.hover();
+    await hoverMessage(row);
     await row.getByRole("button", { name: "More message actions" }).click();
     await page
       .getByRole("menuitem", { name: "Edit message", exact: true })
@@ -93,7 +94,7 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
   const peer = detail
     .locator("[data-message-id]")
     .filter({ hasText: "Unread reply 0" });
-  await peer.hover();
+  await hoverMessage(peer);
   await peer.getByRole("button", { name: "More message actions" }).click();
   await expect(
     page.getByRole("menuitem", { name: /^Mark (read|unread)$/ }),
@@ -148,7 +149,7 @@ for (const submitted of [false, true])
       .find((event) => event.content === "Thread root 0");
     const own = app.reply(root.id, true);
     const row = detail.locator(`[data-message-id="${own.id}"]`);
-    await row.hover();
+    await hoverMessage(row);
     await row.getByRole("button", { name: "More message actions" }).click();
     await page
       .getByRole("menuitem", {

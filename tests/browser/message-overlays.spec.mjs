@@ -1,3 +1,4 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./source-fixture.mjs";
 import { settle } from "./timeline.mjs";
 
@@ -8,6 +9,10 @@ test("reaction previews paint above floating message actions", async ({
   await page.goto("/tests/fixtures/emoji.html?reactions&wrap&narrow");
   const row = page.locator("[data-message-id]").first();
   const reaction = row.locator('button[data-reaction="👍"]');
+  // Reaction hover no longer reveals message actions. Keep them keyboard-owned
+  // so this test still compares the two real floating surfaces' paint order.
+  await page.keyboard.press("Tab");
+  await reaction.focus();
   await reaction.hover();
   const preview = page.locator('.buzz-preview-card[role="tooltip"][data-open]');
   await expect(preview).toBeVisible();
@@ -293,7 +298,7 @@ test("focused actions follow sibling growth and shrinkage without scrolling", as
     name: "Message actions",
     includeHidden: true,
   });
-  await row.hover();
+  await hoverMessage(row);
   await expect
     .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
     .toBe(true);
@@ -604,7 +609,7 @@ test("comment actions revealed while the drawer slides realign when it settles",
     .getByRole("button", { name: "Show comments", exact: true })
     .click();
   await page.evaluate(() => window.drawerHeld);
-  await row.getByText("Alex", { exact: true }).hover();
+  await hoverMessage(row);
   await shown();
   const anchoring = () =>
     actions.evaluate((bar) => {

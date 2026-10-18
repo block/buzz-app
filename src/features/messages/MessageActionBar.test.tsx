@@ -190,6 +190,7 @@ it("reveals actions only over message content or the toolbar, not the row's empt
     fireEvent.pointerOver(target, { relatedTarget: row });
     expect(row.hasAttribute("data-actions-revealed")).toBe(true);
     fireEvent.pointerOut(target, { relatedTarget: bar });
+    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
     fireEvent.pointerOver(bar, { relatedTarget: target });
     expect(row.hasAttribute("data-actions-revealed")).toBe(true);
     fireEvent.pointerOut(bar, { relatedTarget: row });

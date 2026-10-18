@@ -615,3 +615,46 @@ it.each([
     }
   },
 );
+
+it("names Solo chats as chats in the menu, dialog and result", async () => {
+  const user = userEvent.setup();
+  const lifecycle = capability();
+  const choose = vi.fn();
+  render(
+    <ContextMenuRoot open>
+      <MenuPopup>
+        <ChannelLifecycleMenu
+          channelId="id"
+          lifecycle={lifecycle}
+          choose={choose}
+          disabled={false}
+          separator={false}
+          noun="chat"
+        />
+      </MenuPopup>
+    </ContextMenuRoot>,
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Archive chat" }),
+  ).toBeDefined();
+  expect(screen.getByRole("menuitem", { name: "Delete chat" })).toBeDefined();
+  cleanup();
+  render(
+    <ToastProvider>
+      <ChannelLifecycleDialog
+        channelId="id"
+        channelName="Planning"
+        noun="chat"
+        action="archive"
+        lifecycle={lifecycle}
+        completed={() => {}}
+        close={() => {}}
+      />
+    </ToastProvider>,
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Archive chat: Planning" }),
+  ).toHaveTextContent("Archive this chat and remove it from the sidebar.");
+  await user.click(screen.getByRole("button", { name: "Archive chat" }));
+  expect(await screen.findByText("Chat archived: Planning")).toBeDefined();
+});

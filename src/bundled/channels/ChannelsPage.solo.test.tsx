@@ -263,12 +263,12 @@ it("confirms Archive from the shortcut, then opens a new Solo draft", async () =
     expect.any(AbortSignal),
   );
   const dialog = screen.getByRole("dialog", {
-    name: "Archive channel: Planning",
+    name: "Archive chat: Planning",
   });
   expect(f.run).not.toHaveBeenCalled();
   const user = userEvent.setup();
   await user.click(
-    within(dialog).getByRole("button", { name: "Archive channel" }),
+    within(dialog).getByRole("button", { name: "Archive chat" }),
   );
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(f.run).toHaveBeenCalledExactlyOnceWith(
@@ -348,7 +348,7 @@ it("keeps a shortcut Archive across chat activity during the permission read", a
   });
   // The confirmation names the latest summary, not the one at keypress.
   expect(
-    screen.getByRole("dialog", { name: "Archive channel: Roadmap" }),
+    screen.getByRole("dialog", { name: "Archive chat: Roadmap" }),
   ).toBeInTheDocument();
 });
 
@@ -449,8 +449,8 @@ it("uses the ordinary composer for a guest in a shared Solo chat", async () => {
 });
 
 it.each([
-  ["archive", "Archive channel", "Archive channel: Planning"],
-  ["delete", "Delete channel", "Delete Planning?"],
+  ["archive", "Archive chat", "Archive chat: Planning"],
+  ["delete", "Delete chat", "Delete Planning?"],
 ] as const)(
   "runs %s from Chat actions, then opens a new Solo draft",
   async (action, label, title) => {
@@ -480,7 +480,7 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   const trigger = await screen.findByRole("button", { name: "Chat actions" });
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Archive channel" }),
+    await screen.findByRole("menuitem", { name: "Archive chat" }),
   );
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();

@@ -471,6 +471,7 @@ export function SoloProjects({
                                 lifecycle={session.channelLifecycle}
                                 disabled={!!handoff.lifecycleDialog}
                                 separator
+                                noun="chat"
                                 choose={(action) => {
                                   const trigger =
                                     document.querySelector<HTMLElement>(

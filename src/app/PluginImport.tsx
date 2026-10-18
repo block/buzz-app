@@ -679,7 +679,9 @@ export function PluginImport({
                         />
                       </section>
                     ) : (
-                      <p className="m-0">No computer access declared.</p>
+                      <p className="m-0">
+                        No additional capabilities declared.
+                      </p>
                     )}
                     {removedDetails.length > 0 && (
                       <section

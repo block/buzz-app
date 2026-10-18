@@ -163,22 +163,35 @@ export class GooseSetup {
       if (Object.keys(fields).length) await this.save(choice.provider, fields);
       const providerId = choice.provider.trim();
       const { defaults, providers } = await this.providers();
-      const modelId =
-        choice.model.trim() ||
-        (providerId === defaults.provider ? defaults.model?.trim() : "") ||
-        providers
-          .find((provider) => provider.id === providerId)
-          ?.defaultModel.trim();
-      if (!modelId)
-        throw new Error(
-          "Choose a default model with goose configure, then try again.",
-        );
-      await this.with((goose) =>
-        goose.request("_goose/unstable/defaults/save", {
+      await this.with(async (goose) => {
+        let modelId =
+          choice.model.trim() ||
+          (providerId === defaults.provider ? defaults.model?.trim() : "");
+        if (!modelId) {
+          // Goose stores per-provider choices separately from catalog metadata.
+          const { value } = (await goose.request(
+            "_goose/unstable/config/read",
+            {
+              key: "providers",
+              isSecret: false,
+            },
+          )) as { value?: Record<string, { model?: unknown }> | null };
+          const stored = value?.[providerId]?.model;
+          modelId =
+            (typeof stored === "string" ? stored.trim() : "") ||
+            providers
+              .find((provider) => provider.id === providerId)
+              ?.defaultModel.trim();
+        }
+        if (!modelId)
+          throw new Error(
+            "Choose a default model with goose configure, then try again.",
+          );
+        await goose.request("_goose/unstable/defaults/save", {
           providerId,
           modelId,
-        }),
-      );
+        });
+      });
       this.defaultsChanged();
       this.checkedDefaults = undefined;
       await this.check();

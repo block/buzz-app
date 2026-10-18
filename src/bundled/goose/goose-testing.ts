@@ -360,6 +360,15 @@ export function fakeSpawn(
                 Boolean(options.saved?.get(String(entry.providerId))?.size),
             })),
           });
+        case "_goose/unstable/config/read":
+          return reply(id, {
+            value:
+              params.key === "providers"
+                ? Object.fromEntries(
+                    [...providerModels].map(([id, model]) => [id, { model }]),
+                  )
+                : null,
+          });
         case "_goose/unstable/defaults/read":
           return reply(id, defaults ?? {});
         case "_goose/unstable/defaults/save": {

@@ -439,3 +439,28 @@ it("rejects a provider without a default model before changing defaults", async 
   });
   expect(goose.snapshot().blocking).toBe(false);
 });
+
+it("preserves a provider's custom model when switching away and back after restart", async () => {
+  const { setup: goose, fake } = setup({
+    providers: PROVIDERS.map((provider) => ({ ...provider, configured: true })),
+    defaults: { providerId: "ollama", modelId: "custom-model" },
+  });
+  await goose.saveDefaults({ provider: "anthropic", model: "" });
+  const restarted = new GooseSetup(fake.spawn);
+  await restarted.saveDefaults({ provider: "ollama", model: "" });
+  expect((await restarted.providers()).defaults).toEqual({
+    provider: "ollama",
+    model: "custom-model",
+  });
+  expect(restarted.snapshot().readiness).toBe("ready");
+  expect(
+    fake.geese
+      .flatMap((process) => process.received)
+      .filter((request) => request.method === "_goose/unstable/config/read")
+      .every(
+        (request) =>
+          request.params?.key === "providers" &&
+          request.params?.isSecret === false,
+      ),
+  ).toBe(true);
+});

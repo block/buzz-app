@@ -278,17 +278,17 @@ test("section filters save activity windows and recover hidden channels", async 
   // Real CSS must mute the duration and selected check with the disabled label.
   for (const theme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: theme });
-    const color = await disabledActive.evaluate(
-      (element) => getComputedStyle(element).color,
-    );
-    await expect(disabledActive.locator(".buzz-menu-trailing")).toHaveCSS(
-      "color",
-      color,
-    );
-    await expect(disabledActive.locator(".buzz-menu-item-indicator")).toHaveCSS(
-      "color",
-      color,
-    );
+    await expect
+      .poll(() =>
+        disabledActive.evaluate((element) => {
+          const color = getComputedStyle(element).color;
+          return [".buzz-menu-trailing", ".buzz-menu-item-indicator"].every(
+            (selector) =>
+              getComputedStyle(element.querySelector(selector)).color === color,
+          );
+        }),
+      )
+      .toBe(true);
   }
   await page.emulateMedia({ colorScheme: "light" });
   await shot("14-read-only-hidden-channels");

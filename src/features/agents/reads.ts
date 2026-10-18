@@ -7,7 +7,7 @@
 import type { Memory } from "../../buzz-mcp/client";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
-import { meChat } from "./me-chat";
+import { soloChat } from "./solo-chat";
 
 /** The agent's memory entries, and whether some may be missing. */
 export type MemoryListing = Readonly<{
@@ -46,12 +46,15 @@ export type AgentReads = Readonly<{
   channelName(id: string): string | undefined;
   /** The key the community signs workflow messages with, if known. */
   workflowAuthority(): string | undefined;
+  /** The connected relay signing its channel metadata. */
+  relayAuthor?(): string | undefined;
+  audienceAuthorityCommunity?(): string | undefined;
   /** The agent's memory, or only entry `slug` when given; `partial` when the
    * entries may be incomplete. `signal` stops the read. */
   memoryListing(signal: AbortSignal, slug?: string): Promise<MemoryListing>;
-  /** Whether a mention in this channel continues `owner`'s Me chat. Only the
+  /** Whether a mention in this channel continues `owner`'s Solo chat. Only the
    * owner's own connection can tell; other readers answer false. */
-  meChat(
+  soloChat(
     owner: string,
     channelId: string,
     signal: AbortSignal,
@@ -96,8 +99,10 @@ export function ownerReads(
     channelName: (id: string) =>
       session.channels.list().channels.find((item) => item.id === id)?.name,
     workflowAuthority: () => session.workflowAuthority,
-    meChat: (owner: string, channelId: string, signal: AbortSignal) =>
-      meChat(() => relay, owner, channelId, signal),
+    relayAuthor: () => session.relayAuthor,
+    audienceAuthorityCommunity: () => session.audienceAuthorityCommunity,
+    soloChat: (owner: string, channelId: string, signal: AbortSignal) =>
+      soloChat(() => relay, owner, channelId, signal),
     memoryListing: (signal: AbortSignal, slug?: string) =>
       session.agentMemories.read(pubkey, signal, slug),
   });

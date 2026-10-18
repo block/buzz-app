@@ -272,6 +272,8 @@ import TablerTableIcon from "@tabler/icons-react/dist/esm/icons/IconTable.mjs";
 export const TableIcon = defineIcon("tabler", TablerTableIcon);
 import TablerTimerIcon from "@tabler/icons-react/dist/esm/icons/IconStopwatch.mjs";
 export const TimerIcon = defineIcon("tabler", TablerTimerIcon);
+import TablerClockIcon from "@tabler/icons-react/dist/esm/icons/IconClockHour4.mjs";
+export const ClockIcon = defineIcon("tabler", TablerClockIcon);
 import TablerBulbIcon from "@tabler/icons-react/dist/esm/icons/IconBulb.mjs";
 export const BulbIcon = defineIcon("tabler", TablerBulbIcon);
 import TablerTerminalWindowIcon from "@tabler/icons-react/dist/esm/icons/IconTerminal2.mjs";
@@ -461,6 +463,15 @@ export const ImageIcon = defineIcon("tabler", TablerImageIcon);
 
 import TablerOpenAILogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandOpenai.mjs";
 export const OpenAILogoIcon = defineIcon("tabler", TablerOpenAILogoIcon);
+import TablerGoogleLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandGoogle.mjs";
+export const GoogleLogoIcon = defineIcon("tabler", TablerGoogleLogoIcon);
+import TablerDatabricksLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandDatabricks.mjs";
+export const DatabricksLogoIcon = defineIcon(
+  "tabler",
+  TablerDatabricksLogoIcon,
+);
+import TablerAwsLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandAws.mjs";
+export const AwsLogoIcon = defineIcon("tabler", TablerAwsLogoIcon);
 import TablerMicrophoneIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophone.mjs";
 export const MicrophoneIcon = defineIcon("tabler", TablerMicrophoneIcon);
 
@@ -480,3 +491,18 @@ export const BrainIcon = defineIcon("tabler", TablerBrainIcon);
 
 import TablerThinkingHighIcon from "@tabler/icons-react/dist/esm/icons/IconThinkingHigh.mjs";
 export const ThinkingHighIcon = defineIcon("tabler", TablerThinkingHighIcon);
+
+import TablerFileTypePdfIcon from "@tabler/icons-react/dist/esm/icons/IconFileTypePdf.mjs";
+export const FileTypePdfIcon = defineIcon("tabler", TablerFileTypePdfIcon);
+
+import TablerFileCodeIcon from "@tabler/icons-react/dist/esm/icons/IconFileCode.mjs";
+export const FileCodeIcon = defineIcon("tabler", TablerFileCodeIcon);
+
+import TablerFileZipIcon from "@tabler/icons-react/dist/esm/icons/IconFileZip.mjs";
+export const FileZipIcon = defineIcon("tabler", TablerFileZipIcon);
+
+import TablerFileSpreadsheetIcon from "@tabler/icons-react/dist/esm/icons/IconFileSpreadsheet.mjs";
+export const FileSpreadsheetIcon = defineIcon(
+  "tabler",
+  TablerFileSpreadsheetIcon,
+);

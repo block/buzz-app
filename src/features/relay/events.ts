@@ -22,6 +22,10 @@ export type ReadFilter = Readonly<{
   authors?: readonly string[];
   /** Read from the writer when resolving uncertain publication or admission. */
   consistency?: "strong";
+  /** NIP-AR artifact reads: current heads only, or a `d`'s revision history. */
+  artifact?: "current" | "history";
+  /** NIP-AR artifact page offset (≤ 10,000). */
+  offset?: number;
   until?: number;
   since?: number;
   "#h"?: readonly string[];

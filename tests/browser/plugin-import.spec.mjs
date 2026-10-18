@@ -19,7 +19,7 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
     window.isTauri = true;
     window.importCalls = [];
     window.importDelay = false;
-    const plugins = ["channels", "github", "bestie", "projects"].map(
+    const plugins = ["channels", "github", "bestie", "repos", "workflows"].map(
       (name) => ({
         manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
         source: "bundled",
@@ -192,13 +192,12 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
               continue;
             }
             if (label.classList.contains("sr-only")) continue;
-            // Counts include clipped screen-reader context inside the visible
-            // heading. Measure every visible text node, excluding that context.
-            const nodes = document.createTreeWalker(
+            // Measure visible text only; sr-only spans are clipped by design.
+            const walker = document.createTreeWalker(
               label,
               NodeFilter.SHOW_TEXT,
             );
-            for (let node = nodes.nextNode(); node; node = nodes.nextNode()) {
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
               if (node.parentElement.closest(".sr-only")) continue;
               const text = document.createRange();
               text.selectNodeContents(node);
@@ -245,7 +244,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
                   `${button.textContent}: content overflows button`,
                 );
             }
-            const palette = button.closest("[data-message-colors]");
+            const palette = button.closest("[data-accent-colors]");
             const visibleBounds = palette?.getBoundingClientRect() ?? box;
             if (
               visibleBounds.left < bounds.left ||
@@ -292,7 +291,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       ).toHaveCount(scale === 100 ? 0 : 1);
       await page.evaluate(() => document.fonts.ready);
       await checkButtons(appearance, scale);
-      const colors = appearance.locator("[data-message-colors] button");
+      const colors = appearance.locator("[data-accent-colors] button");
       await colors.first().focus();
       await page.keyboard.press("Shift+Tab");
       await page.keyboard.press("Tab");
@@ -304,7 +303,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
             colors.nth(index).evaluate((button) => {
               const box = button.getBoundingClientRect();
               const palette = button
-                .closest("[data-message-colors]")
+                .closest("[data-accent-colors]")
                 .getBoundingClientRect();
               const style = getComputedStyle(button);
               const ring =
@@ -621,13 +620,13 @@ test("leaving Settings discards a late preview without installing", async ({
       JSON.stringify({
         version: 1,
         kind: "page",
-        pluginId: "buzz.projects",
-        pageId: "projects",
+        pluginId: "buzz.workflows",
+        pageId: "workflows",
       }),
     )}`;
   });
   await expect(
-    page.getByRole("heading", { name: "Projects", exact: true }),
+    page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
   await expect(dialog).toHaveCount(0);
   await page.evaluate(() => window.resolveImport());

@@ -1,5 +1,5 @@
-import { channelVisibility } from "./channel-details-protocol";
-import { sessionMetadata } from "../sessions/metadata";
+import { channelTtl, channelVisibility } from "./channel-details-protocol";
+import { soloLabels } from "../solo/labels";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
@@ -10,6 +10,15 @@ export function metadataName(event: RelayEvent): string | undefined {
   const body = objectBody(event.content);
   if (typeof body?.name === "string" && body.name) return body.name;
   return tag(event, "name") || undefined;
+}
+
+/** A Solo chat: a private stream carrying the Solo label. Never access. */
+export function soloChannelMetadata(event: RelayEvent): boolean {
+  return (
+    tag(event, "t") === "stream" &&
+    event.tags.some(([name]) => name === "private") &&
+    soloLabels(channelIdentity(event).labels)
+  );
 }
 
 /** Explicit signed public metadata: readable and joinable by any viewer. */
@@ -115,6 +124,8 @@ export class DiscoveryState {
     let changed = !this.complete;
     this.complete = true;
     // Keep the last signed version: an old replay cannot undo authoritative loss.
+    // A NIP-CL pass reads system channels through their own opt-in filter
+    // into the same complete set, so one absence rule covers them too.
     for (const [id, roster] of this.rosters)
       if (
         hasTag(roster, "p", this.viewer) &&
@@ -189,29 +200,33 @@ export class DiscoveryState {
     const event = this.metadata.get(id);
     return !!event && event.tags.some(([name]) => name === "private");
   }
-  isSession(id: string): boolean {
+  isSolo(id: string): boolean {
     const event = this.metadata.get(id);
-    return (
-      !!event &&
-      tag(event, "t") === "stream" &&
-      event.tags.some(([name]) => name === "private") &&
-      sessionMetadata(tag(event, "about")) !== undefined
-    );
+    return !!event && soloChannelMetadata(event);
   }
   get(id: string): ChannelSummary | undefined {
     if (!this.canAccess(id) || (!this.authorized(id) && !this.open(id))) return;
     const event = this.metadata.get(id);
-    const type = this.isSession(id) ? "session" : event && tag(event, "t");
+    // The relay tags a system roster too, so a roster that arrives before its
+    // metadata (the full pass reads names later) never lists as a channel.
+    const roster = this.rosters.get(id);
+    const type = this.isSolo(id)
+      ? "solo"
+      : event
+        ? tag(event, "t")
+        : roster && hasTag(roster, "t", "system")
+          ? "system"
+          : undefined;
     const channelType =
       type === "stream" ||
       type === "forum" ||
       type === "dm" ||
-      (type === "session" && this.isSession(id))
+      type === "system" ||
+      (type === "solo" && this.isSolo(id))
         ? type
         : undefined;
-    const roster = this.rosters.get(id);
-    const parentId = event && sessionMetadata(tag(event, "about"))?.parentId;
     const identity = event && channelIdentity(event);
+    const ttlSeconds = event && channelTtl(event);
     return {
       id,
       ...(!this.authorized(id) || this.cached.has(id)
@@ -222,9 +237,7 @@ export class DiscoveryState {
       ...(event
         ? {
             visibility: channelVisibility(event),
-            ...(channelType !== "session"
-              ? { description: tag(event, "about") ?? "" }
-              : {}),
+            description: tag(event, "about") ?? "",
           }
         : {}),
       members: Object.freeze(
@@ -241,17 +254,11 @@ export class DiscoveryState {
       ...(this.hidden(id) ? { hidden: true } : {}),
       ...(this.isPrivate(id) ? { private: true } : {}),
       ...(channelType ? { channelType } : {}),
-      ...(channelType === "session" && event
-        ? {
-            updatedAt: event.created_at,
-            ...(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
-              parentId ?? "",
-            )
-              ? { parentChannelId: parentId }
-              : {}),
-          }
+      ...(channelType === "solo" && event
+        ? { updatedAt: event.created_at }
         : {}),
       ...(event && hasTag(event, "archived", "true") ? { archived: true } : {}),
+      ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
       ...(identity?.labels.length ? { labels: identity.labels } : {}),
       ...(identity?.creator ? { creator: identity.creator } : {}),
       ...(identity?.createdAt !== undefined
@@ -291,13 +298,21 @@ export class DiscoveryState {
       return metadata ? [roster, metadata] : [roster];
     });
   }
-  channels(): ChannelSummary[] {
+  /** Every roster channel get() serves, system channels included. Membership,
+   * not listing, decides what the device may keep. */
+  readable(): ChannelSummary[] {
     return [...this.rosters.keys()]
       .filter((id) => this.authorized(id))
       .flatMap((id) => {
         const channel = this.get(id);
         return channel ? [channel] : [];
-      })
+      });
+  }
+  /** The channel list. System channels (NIP-CL) hold app data, not
+   * conversation: they stay readable through get() but never list here. */
+  channels(): ChannelSummary[] {
+    return this.readable()
+      .filter((channel) => channel.channelType !== "system")
       .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   }
 }

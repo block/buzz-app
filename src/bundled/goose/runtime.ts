@@ -28,7 +28,7 @@ import {
   type StandaloneTurn,
   type TurnResult,
 } from "../../features/agents/service";
-import { meChat } from "../../features/agents/me-chat";
+import { soloChat } from "../../features/agents/solo-chat";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
@@ -41,7 +41,12 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import type { ServeMcp, Spawn, ToolServer } from "./goose";
-import { AgentSessions, ServerPool, SharedProcess } from "./sessions";
+import {
+  AgentSessions,
+  localSessions,
+  ServerPool,
+  SharedProcess,
+} from "./sessions";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the provider's default, or the
@@ -49,6 +54,8 @@ export type Config = Readonly<{
   model: string;
   /** A goose provider; empty uses the goose config's. */
   provider: string;
+  /** A thinking level goose offers for the model; empty uses goose's. */
+  effort: string;
   instructions: string;
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
@@ -58,6 +65,7 @@ export type Config = Readonly<{
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
   provider: "",
+  effort: "",
   instructions: "",
   workspace: "~/.buzz",
   scope: "thread",
@@ -127,6 +135,7 @@ export class GooseRuntime {
     private readonly relay: (pubkey: string) => RelayData | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
+    private readonly storage: Storage = globalThis.localStorage,
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
@@ -177,6 +186,13 @@ export class GooseRuntime {
       this.views.set(pubkey, view);
     }
     return view;
+  }
+  /** The agent's saved conversations, most recently used first. Removing an
+   * agent keeps them. */
+  conversations(pubkey: string) {
+    return localSessions(this.storage, pubkey)
+      .list()
+      .map(([key, { at }]) => ({ key, at }));
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -241,7 +257,7 @@ export class GooseRuntime {
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     // Frozen for the turn: its key, prompt, tools and posts all follow it.
-    const topLevel = await meChat(
+    const topLevel = await soloChat(
       () => this.relay(agent.pubkey),
       agent.owner,
       channel,
@@ -359,7 +375,7 @@ export class GooseRuntime {
     );
   }
 
-  /** Replies as the agent in the event's thread, or at a Me chat's top
+  /** Replies as the agent in the event's thread, or at a Solo chat's top
    * level. */
   private post(
     agent: AgentHandle,
@@ -401,7 +417,7 @@ export class GooseRuntime {
     const dm = summary?.channelType === "dm";
     const thread = threadReference(event);
     const rootId = thread?.rootId ?? event.id;
-    // A Me chat is one conversation, as a DM is.
+    // A Solo chat is one conversation, as a DM is.
     const key =
       topLevel || dm || entry.config.scope === "channel"
         ? channelId
@@ -486,6 +502,11 @@ export class GooseRuntime {
       const handle = entry.handle;
       const client = handle && {
         ...appClient(handle, {
+          relayAuthor: this.relay(pubkey)?.snapshot().session.relayAuthor,
+          audienceAuthorityCommunity:
+            this.relay(pubkey)?.snapshot().session.audienceAuthorityCommunity,
+          signingAuthority:
+            this.relay(pubkey)?.snapshot().session.workflowAuthority,
           spawn: this.spawn,
           cwd: entry.config.workspace,
           memories: (slug) => this.memories(pubkey, slug),
@@ -503,11 +524,13 @@ export class GooseRuntime {
       tools,
       process: this.goose,
       pool: this.pool,
+      store: localSessions(this.storage, pubkey),
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.
       choice: () => ({
         provider: entry.config.provider.trim(),
         model: entry.config.model.trim(),
+        effort: entry.config.effort,
       }),
       fingerprint: () =>
         JSON.stringify([

@@ -1,4 +1,5 @@
 import { pluginAction } from "./plugin-settings.mjs";
+import { openCommunityPicker } from "./navigation.mjs";
 import { openPage, selectSettingsSection } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -69,6 +70,7 @@ test("Community admin action removes and restores the working Invite destination
     exact: true,
   });
   const menu = async () => {
+    await openCommunityPicker(page);
     await button(page, "Switch to Primary").click({ button: "right" });
     await expect(
       page.getByRole("menu", { name: "Actions for Primary" }),

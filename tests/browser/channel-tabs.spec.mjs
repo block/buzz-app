@@ -7,7 +7,7 @@ test.use({
   productionBroker: true,
   companionFixture: true,
   readState: true,
-  sessionChannels: ["beta"],
+  soloChannels: ["beta"],
   historyCounts: { alpha: 2, beta: 1 },
 });
 
@@ -26,7 +26,7 @@ test("middle-click closes a content tab without selecting it", async ({
   );
   await main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Beta" })
+    .getByRole("link", { name: "Open Session: beta" })
     .click();
   const workspace = page.locator("[data-panel-workspace]");
   const beta = workspace.getByRole("tab", { name: "Beta", exact: true });
@@ -38,6 +38,13 @@ test("middle-click closes a content tab without selecting it", async ({
   });
   await expect(settings).toHaveAttribute("aria-selected", "true");
   await beta.click({ button: "right" });
+  await expect(
+    page.getByRole("menuitem", { name: "Close all tabs", exact: true }),
+  ).toBeVisible();
+  // The popup can paint before its animation-frame focus handoff completes.
+  await expect(page.getByRole("menu")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
   await expect(beta).toBeVisible();
   const draft = main.getByRole("textbox", {
     name: "Message #Alpha",
@@ -77,7 +84,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   );
   const chip = main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Beta" });
+    .getByRole("link", { name: "Open Session: beta" });
   await expect(chip).toBeVisible();
   await main
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
@@ -89,7 +96,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     exact: true,
   });
   const composer = beta.getByRole("textbox", {
-    name: "Message this session",
+    name: "Message your agents",
     exact: true,
   });
   await expect(composer).toBeVisible();
@@ -246,12 +253,12 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
 });
 
 // Overflow and native keyboard reveal need actual tab-strip geometry. Six
-// linked sessions supply real content tabs rather than removed blank tabs.
+// linked Solo chats supply real content tabs rather than removed blank tabs.
 test.describe("crowded content tabs", () => {
   const ids = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"];
   test.use({
     channelIds: ids,
-    sessionChannels: ids.slice(1),
+    soloChannels: ids.slice(1),
     historyCounts: Object.fromEntries(ids.map((id) => [id, 1])),
   });
   test("tab overflow stays horizontal and keyboard navigation reveals its destination", async ({
@@ -272,7 +279,9 @@ test.describe("crowded content tabs", () => {
         .join(" "),
     );
     const row = main.locator(`[data-message-id="${link.id}"]`);
-    await row.getByRole("link", { name: "beta", exact: true }).click();
+    await row
+      .getByRole("link", { name: "Open Session: beta", exact: true })
+      .click();
     const workspace = page.locator("[data-panel-workspace]");
     const list = workspace.getByRole("tablist", { name: "Panel tabs" });
     const tabs = list.getByRole("tab");
@@ -298,7 +307,9 @@ test.describe("crowded content tabs", () => {
       );
     };
     for (const id of ids.slice(2))
-      await row.getByRole("link", { name: id, exact: true }).click();
+      await row
+        .getByRole("link", { name: `Open Session: ${id}`, exact: true })
+        .click();
     await expect(tabs).toHaveCount(6);
     await settlePanelMotion(page);
     const activeClose = workspace.getByRole("button", {

@@ -50,14 +50,29 @@ function setup(
     starting?: Promise<void>;
     workflowAuthority?: string;
     signal?: AbortSignal;
-    /** Channels filed in the owner's Me; the owner is the viewer. */
-    me?: Set<string>;
-    channelType?: "stream" | "session";
+    /** Channels that are the owner's own Solo chats; the owner is the viewer. */
+    solo?: Set<string>;
+    named?: Delivery["named"];
+    title?: string;
   }> = {},
 ) {
   const fake = fakeSpawn();
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
     await options.starting;
+    if (options.title && (id === "workspace" || id === "read")) {
+      spawnOptions?.onStdout?.(
+        id === "workspace"
+          ? "/Users/me/.buzz\n"
+          : Buffer.from(
+              JSON.stringify({ type: "ai-title", aiTitle: options.title }) +
+                "\n",
+            ).toString("base64"),
+      );
+      return {
+        exited: Promise.resolve(0),
+        kill: async () => {},
+      } as unknown as Awaited<ReturnType<typeof fake.spawn>>;
+    }
     const process = fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
@@ -79,8 +94,7 @@ function setup(
           {
             id: channel,
             name: "general",
-            channelType:
-              options.channelType ?? (options.me ? "session" : "stream"),
+            channelType: options.solo?.has(channel) ? "solo" : "stream",
             members: [],
           },
         ],
@@ -93,12 +107,6 @@ function setup(
       ensure: vi.fn(async (): Promise<void> => {}),
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
-    },
-    mePlacement: {
-      state: { status: "ready" } as { status: string; error?: string },
-      snapshot: () => session.mePlacement.state,
-      refresh: vi.fn(async () => {}),
-      has: (id: string) => !!options.me?.has(id),
     },
   };
   const relay = {
@@ -185,6 +193,7 @@ function setup(
       config: DEFAULT_CONFIG,
       signal,
       workingUntil,
+      ...(options.named ? { named: options.named } : {}),
       // The host's answer, as it is when asked.
       current: () =>
         trigger.type === "mention" ||
@@ -211,7 +220,6 @@ function setup(
     runtime,
     added,
     deliver,
-    placement: session.mePlacement,
     published,
     claudes,
     fake,
@@ -286,6 +294,21 @@ it("hands a mention to its thread's session", async () => {
   expect(claude?.options.args).toContain("--mcp-config");
   expect(claude?.options.cwd).toBe("~/.buzz");
   expect(published).toEqual([]);
+});
+
+it("tells a subscriber when a new conversation's first turn starts working", async () => {
+  const { runtime, deliver, claudes } = setup([], { hold: true });
+  // As a view does: each notification reads the snapshot again.
+  runtime.subscribe(() => void runtime.sessions(self));
+  expect(runtime.sessions(self)).toEqual([]);
+  await deliver({ type: "mention", event: message("1", "@Claude hi") });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(claude?.prompts).toHaveLength(1);
+  expect(runtime.sessions(self)).toMatchObject([{ busy: true }]);
+  claude?.finish();
+  await flush(10);
+  expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
 });
 
 const EFFORTS = [
@@ -1284,39 +1307,7 @@ async function send(claude: FakeClaude | undefined, id: string, args: object) {
   )?.response?.mcp_response?.result;
 }
 
-it("fails a session mention it cannot place until the placement can be read", async () => {
-  const mention = (id: string) =>
-    message(id, `@Claude ${id}`, {
-      created_at: 100 + Number(id),
-      tags: [
-        ["h", channel],
-        ["p", self],
-      ],
-    });
-  const { deliver, placement, published, claudes, workingUntil } = setup([], {
-    channelType: "session",
-  });
-  placement.state = { status: "error", error: "Recipe read failed" };
-  await expect(
-    deliver({ type: "mention", event: mention("1") }),
-  ).rejects.toThrow(
-    "Couldn't read your Solo chats to tell where to answer (Recipe read failed). Try again.",
-  );
-  await flush(10);
-  expect(placement.refresh).toHaveBeenCalledOnce();
-  expect(claudes().flatMap((process) => process.prompts)).toEqual([]);
-  expect(workingUntil).not.toHaveBeenCalled();
-  expect(published).toEqual([]);
-  placement.state = { status: "ready" };
-  await deliver({ type: "mention", event: mention("2") });
-  await flush(10);
-  const prompts = claudes().flatMap((process) => process.prompts);
-  expect(prompts).toHaveLength(1);
-  expect(prompts[0]).not.toContain(TOP_LEVEL_PROMPT);
-  expect(workingUntil).toHaveBeenCalledOnce();
-});
-
-it("continues an owner's Me chat as one channel session posted at the top level", async () => {
+it("continues an owner's Solo chat as one channel session posted at the top level", async () => {
   const earlier = message("1", "Earlier in the chat");
   const first = message("2", "@Claude first", {
     created_at: 110,
@@ -1336,7 +1327,7 @@ it("continues an owner's Me chat as one channel session posted at the top level"
   });
   const { deliver, published, claudes, agent, read } = setup([earlier, first], {
     hold: true,
-    me: new Set([channel]),
+    solo: new Set([channel]),
   });
   agent.query.mockImplementation(async () => [first]);
   await deliver({ type: "mention", event: first });
@@ -1383,7 +1374,7 @@ it("continues an owner's Me chat as one channel session posted at the top level"
   ]);
 });
 
-it("finishes a Me turn under its policy when the chat is shared mid-turn, and keeps the next turn's conversation while it waits", async () => {
+it("finishes a Solo turn under its policy when the chat is converted mid-turn, and keeps the next turn's conversation while it waits", async () => {
   const mention = (id: string) =>
     message(id, `@Claude ${id}`, {
       created_at: 100 + Number(id),
@@ -1392,8 +1383,11 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn, and ke
         ["p", self],
       ],
     });
-  const me = new Set([channel]);
-  const { runtime, published, claudes, agent } = setup([], { hold: true, me });
+  const solo = new Set([channel]);
+  const { runtime, published, claudes, agent } = setup([], {
+    hold: true,
+    solo,
+  });
   agent.query.mockImplementation(async () => [mention("2")]);
   const config = { ...DEFAULT_CONFIG, scope: "channel" };
   runtime.sync([{ pubkey: self, config } as Agent]);
@@ -1410,10 +1404,10 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn, and ke
   await run(mention("1"));
   await flush(10);
   const claude = claudes().find((process) => process.prompts.length);
-  me.delete(channel);
+  solo.delete(channel);
   await run(mention("2"));
   await flush(10);
-  // It waits for the Me turn rather than steering into it.
+  // It waits for the Solo turn rather than steering into it.
   expect(claude?.prompts).toHaveLength(1);
   // Admitted to the channel's conversation, it is told so even if the agent
   // is moved to thread scope meanwhile.
@@ -1436,34 +1430,6 @@ it("finishes a Me turn under its policy when the chat is shared mid-turn, and ke
     ],
   ]);
   runtime.dispose();
-});
-
-it("a converted stream uses threaded replies despite an agent owner's retained Me entry", async () => {
-  const event = message("7", "@Claude converted", {
-    tags: [
-      ["h", channel],
-      ["p", self],
-    ],
-  });
-  const { deliver, published, claudes, runtime } = setup([], {
-    hold: true,
-    me: new Set([channel]),
-    channelType: "stream",
-  });
-  try {
-    await deliver({ type: "mention", event });
-    await flush(10);
-    const process = claudes().find((item) => item.prompts.length);
-    expect(process?.prompts[0]).not.toContain(TOP_LEVEL_PROMPT);
-    expect(process?.prompts[0]).toContain(event.id);
-    await send(process, "converted-reply", {
-      text: "Threaded",
-      reply: event.id,
-    });
-    expect(published[0]?.tags).toContainEqual(["e", event.id, "", "reply"]);
-  } finally {
-    runtime.dispose();
-  }
 });
 
 it("gives a tool the partial listing a slow native read answers", async () => {
@@ -1527,4 +1493,75 @@ it("gives a tool the partial listing a slow native read answers", async () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
   }
+});
+
+it("method calls: a session launch makes no config call on the relay session; only the conversation name lookup (launch-boundary.test.ts runs the real service path)", async () => {
+  const f = setup();
+  // Every relay-facing call the runtime can make, by name.
+  const requests = {
+    "session.read": f.read,
+    "agentMemories.read": f.memoryRead,
+    "profiles.ensure": f.session.profiles.ensure,
+    publish: f.agent.publish,
+    query: f.agent.query,
+    upload: f.agent.upload,
+    media: f.agent.media,
+    remember: f.agent.remember,
+  } as Record<string, { mock: { calls: unknown[][] } }>;
+  const made = () =>
+    Object.fromEntries(
+      Object.entries(requests)
+        .filter(([, fn]) => fn.mock.calls.length > 0)
+        .map(([name, fn]) => [name, fn.mock.calls]),
+    );
+  f.core.mockResolvedValue("I am Claude.");
+  await f.deliver({
+    type: "mention",
+    event: message("1", "@Claude 1", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  });
+  await flush(10);
+  expect(f.claudes()).toHaveLength(1);
+  expect(systemPromptOf(f.claudes()[0])).toContain("I am Claude.");
+  // The start makes no config requests. The only call is the conversation's
+  // name lookup for the sender and mentioned agent, which requests only
+  // profiles missing from the cache (none when both are cached).
+  expect(made()).toEqual({
+    "profiles.ensure": [[[alice, self], "foreground"]],
+  });
+});
+
+it("a failed first Solo chat turn releases naming so a successful retry can offer Claude's title", async () => {
+  const named = vi.fn();
+  const f = setup([], {
+    hold: true,
+    solo: new Set([channel]),
+    named,
+    title: "A useful title",
+  });
+  await f.deliver({ type: "mention", event: message("1", "Name this chat") });
+  await flush();
+  const first = f.claudes().find((process) => process.prompts.length);
+  if (!first) throw new Error("No Claude turn started");
+  first.finish({ error: "Try again" });
+  await flush();
+  expect(named).not.toHaveBeenCalled();
+  await f.deliver({
+    type: "mention",
+    event: message("2", "Try again", { created_at: 101 }),
+  });
+  await flush();
+  const retry = f
+    .claudes()
+    .filter((process) => process.prompts.length)
+    .at(-1);
+  if (!retry) throw new Error("No Claude retry started");
+  retry.finish();
+  await flush();
+  expect(named).toHaveBeenCalledExactlyOnceWith("A useful title");
+  f.runtime.dispose();
 });

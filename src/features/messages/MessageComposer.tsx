@@ -373,8 +373,8 @@ function Composer({
     };
   }, []);
   const mentionRoster = useContext(DraftMentionRoster);
-  const agentChoices =
-    inviteAgents || !!soloConversation || ownSoloConversation;
+  const solo = !!soloConversation || ownSoloConversation;
+  const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
   const sendPending = useBackgroundSendPending(session, recoveryKey);
   const [accepted, setAccepted] = useState(() => {
@@ -931,7 +931,37 @@ function Composer({
       !recipient.name.trim()
     )
       return false;
-    return insert(`@${recipient.name} `, recipient);
+    if (!solo || editing.target)
+      return insert(`@${recipient.name} `, recipient);
+    return keepProseCaret((at) => insert(`@${recipient.name} `, recipient, at));
+  }
+  /** Solo chats address agents up front: a picked tag joins the leading tags,
+   * wherever the caret is, and the caret stays in the prose it was in. */
+  function keepProseCaret(add: (at: CompletionQuery) => boolean) {
+    const before = valueRef.current;
+    let start = 0;
+    for (const tag of [...before.recipients].sort(
+      (a, b) => a.start - b.start,
+    )) {
+      if (tag.start !== start || !/[ \t]/.test(before.text[tag.end] ?? ""))
+        break;
+      start = tag.end;
+      while (/[ \t]/.test(before.text[start] ?? "")) start++;
+    }
+    const from = input.current?.selectionStart ?? before.text.length;
+    const to = input.current?.selectionEnd ?? from;
+    if (!add({ start, end: start, query: "" })) {
+      // A rejected insert may already have selected its target.
+      if (valueRef.current === before)
+        input.current?.setSelectionRange(from, to);
+      return false;
+    }
+    const after = valueRef.current.text.length;
+    const shift = after - before.text.length;
+    if (from >= start)
+      input.current?.setSelectionRange(from + shift, to + shift);
+    else input.current?.setSelectionRange(after, after);
+    return true;
   }
   function insertMentions(
     recipients: readonly MentionRecipient[],
@@ -982,7 +1012,8 @@ function Composer({
       return false;
     }
     const text = unique.map((person) => `@${person.name} `).join("");
-    if (!input.current.insertText(text, unique, range)) {
+    const added = (at = range) => !!input.current?.insertText(text, unique, at);
+    if (!(solo && !range ? keepProseCaret(added) : added())) {
       setError(
         "The team would exceed the message length or 32-recipient limit. Nothing was added.",
       );

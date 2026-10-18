@@ -916,3 +916,62 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
 
   await expect(renamedRow).toBeFocused();
 });
+
+// Native caret placement after focus handoffs and popup picks needs a browser.
+test.describe("Solo composer caret", () => {
+  test.use({ soloAgentNames: ["Owned Honey", "Owned Brain"] });
+  test("a returning draft resumes at its end and picked agents join the leading tags", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await newChat(page);
+    const composer = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    const caret = () =>
+      composer.evaluate((el) => [el.value, el.selectionStart, el.selectionEnd]);
+    const [honey, brain] = app.soloAgents;
+    const pick = async (agent) => {
+      await page
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .click();
+      await page
+        .getByRole("dialog", { name: "Mention a member or agent" })
+        .getByRole("button", {
+          name: `${agent.name} ${agent.pubkey}`,
+          exact: true,
+        })
+        .click();
+    };
+    await expect(composer).toHaveText(`@${honey.name} `);
+    await page.keyboard.insertText("first");
+    const sidebar = page.getByRole("navigation", {
+      name: "Solo conversations",
+    });
+    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await expect(composer).toHaveText("");
+    await composer.click();
+    await page.keyboard.insertText("alpha draft");
+    // Returning focuses the restored draft at its end, not before its tag.
+    await newChat(page);
+    await expect.poll(caret).toEqual([`@${honey.name} first`, 18, 18]);
+
+    // The picker files the agent after the leading tag; typing continues
+    // where the caret was.
+    await pick(brain);
+    const tagged = `@${honey.name} @${brain.name} first`;
+    await expect.poll(caret).toEqual([tagged, tagged.length, tagged.length]);
+    await page.keyboard.insertText(" again");
+    await expect(composer).toHaveText(`${tagged} again`);
+
+    // Untagged prose gets its tag in front, even from a blurred composer.
+    await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+    await expect(composer).toHaveText("alpha draft");
+    await composer.blur();
+    await pick(honey);
+    const alpha = `@${honey.name} alpha draft`;
+    await expect.poll(caret).toEqual([alpha, alpha.length, alpha.length]);
+  });
+});

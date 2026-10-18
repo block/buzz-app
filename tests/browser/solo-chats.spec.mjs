@@ -1036,13 +1036,16 @@ test.describe("Solo send focus", () => {
       "",
     );
     hold = true;
-    await composer.press("Enter");
-    await expect.poll(() => held).toBe(true);
-    await expect(composer).toHaveAttribute("aria-disabled", "true");
-    await expect(composer).toBeFocused();
-    await expect(composer).toHaveCSS("outline-style", "none");
-    hold = false;
-    release();
+    try {
+      await composer.press("Enter");
+      await expect.poll(() => held).toBe(true);
+      await expect(composer).toHaveAttribute("aria-disabled", "true");
+      await expect(composer).toBeFocused();
+      await expect(composer).toHaveCSS("outline-style", "none");
+    } finally {
+      hold = false;
+      release();
+    }
     const publications = () =>
       app.report.publications.filter(({ event }) => event.kind === 9);
     await expect.poll(() => publications().length).toBe(1);

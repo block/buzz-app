@@ -618,6 +618,32 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(button(page, "View Example two details")).toHaveCount(0);
 });
 
+test("resizing over the catalog keeps focus in visible plugin details", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(page);
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await openPlugins(page, app.origin);
+  await button(page, "View github details").click();
+  const pane = page.getByRole("complementary", { name: "github details" });
+  const close = pane.getByRole("button", { name: "Close plugin details" });
+  await expect(close).toBeFocused();
+  await pluginAction(page, "github").focus();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(pane).toHaveCount(0);
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await button(page, "View github details").click();
+  await button(page, "Add").click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(close).toBeFocused();
+});
+
 test("leaving Settings discards a late preview without installing", async ({
   page,
   app,

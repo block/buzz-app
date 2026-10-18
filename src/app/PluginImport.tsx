@@ -505,7 +505,7 @@ export function PluginImport({
         }
         dismissOnOutsideClick
         preventClose={blocked}
-        finalFocus={returnFocus ?? trigger}
+        finalFocus={() => returnFocus?.() ?? trigger.current}
       >
         {error && (
           <p role="alert" className="error break-words">

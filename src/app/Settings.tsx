@@ -10,6 +10,7 @@ import { IconButton } from "../shared/design-system/ui/IconButton";
 import { ChoiceRow } from "../shared/design-system/ui/ChoiceRow";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import {
+  type RefObject,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -135,27 +136,33 @@ function PluginProvenance({
   );
 }
 
+/** Narrow containers cover the catalog with details (Settings.module.css). */
+function covered(element: Element | null) {
+  return !!element && getComputedStyle(element).visibility === "hidden";
+}
+
 function PluginDetails({
   plugin,
   failure,
   busy,
   plugins,
+  close,
   onClose,
 }: {
   plugin: PluginInfo;
   failure: string | null;
   busy: boolean;
   plugins: PluginManager;
+  close: RefObject<HTMLButtonElement | null>;
   onClose(): void;
 }) {
-  const close = useRef<HTMLButtonElement>(null);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   useLayoutEffect(() => {
     close.current?.focus();
-  }, []);
+  }, [close]);
   // READMEs ship with Buzz; never attach one to an external plugin.
   const readme =
     plugin.source === "bundled" && bundledReadmes.get(plugin.manifest.id);
@@ -506,9 +513,31 @@ export function Settings({
   const pluginTrigger = useRef<HTMLButtonElement>(null);
   const restorePluginFocus = useRef(false);
   const pluginSection = useRef<HTMLElement>(null);
+  const layout = useRef<HTMLDivElement>(null);
+  const detailsClose = useRef<HTMLButtonElement>(null);
   const selectedPlugin = catalog?.plugins.find(
     (plugin) => plugin.manifest.id === selectedPluginId,
   );
+  const showingDetails = selected === "plugins" && !!selectedPlugin;
+  const visibleReturn = (target: HTMLElement | null) =>
+    covered(pluginSection.current) ? (detailsClose.current ?? target) : target;
+  useEffect(() => {
+    const element = layout.current;
+    if (!showingDetails || !element) return;
+    // Resizing can hide the focused catalog control; keep focus in details.
+    const observer = new ResizeObserver(() => {
+      const active = document.activeElement;
+      const details = detailsClose.current?.closest("aside");
+      if (
+        covered(pluginSection.current) &&
+        (active === document.body ||
+          (!!active && element.contains(active) && !details?.contains(active)))
+      )
+        detailsClose.current?.focus();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [showingDetails]);
   useEffect(() => {
     if (selectedPluginId && catalog && !selectedPlugin) {
       pluginSection.current?.focus();
@@ -549,10 +578,9 @@ export function Settings({
         aria-labelledby={navigationPane ? undefined : "settings-title"}
       >
         <div
+          ref={layout}
           className={styles.layout}
-          data-plugin-detail={
-            selected === "plugins" && selectedPlugin ? "" : undefined
-          }
+          data-plugin-detail={showingDetails ? "" : undefined}
         >
           <aside className={styles.sidebar}>
             <div className={styles.sidebarHeader}>
@@ -700,6 +728,7 @@ export function Settings({
                     catalog={catalog}
                     busy={busy}
                     authorizeGit={authorizePluginGit}
+                    returnFocus={() => visibleReturn(null)}
                   />
                 ) : configuration.status === "recovery" ? (
                   <RecoveryScreen plugins={plugins} />
@@ -718,14 +747,16 @@ export function Settings({
                     authorizeGit={authorizePluginGit}
                     onClosed={() => setUpdatingPluginId(undefined)}
                     returnFocus={() =>
-                      Array.from(
-                        pluginSection.current?.querySelectorAll<HTMLButtonElement>(
-                          "[data-plugin-update-id]",
-                        ) ?? [],
-                      ).find(
-                        (button) =>
-                          button.dataset.pluginUpdateId === updatingPluginId,
-                      ) ?? pluginSection.current
+                      visibleReturn(
+                        Array.from(
+                          pluginSection.current?.querySelectorAll<HTMLButtonElement>(
+                            "[data-plugin-update-id]",
+                          ) ?? [],
+                        ).find(
+                          (button) =>
+                            button.dataset.pluginUpdateId === updatingPluginId,
+                        ) ?? pluginSection.current,
+                      )
                     }
                   />
                 )}
@@ -944,13 +975,14 @@ export function Settings({
               </section>
             </div>
           </div>
-          {selected === "plugins" && selectedPlugin && (
+          {showingDetails && selectedPlugin && (
             <PluginDetails
               key={selectedPlugin.manifest.id}
               plugin={selectedPlugin}
               failure={selectedFailure}
               busy={busy}
               plugins={plugins}
+              close={detailsClose}
               onClose={closePluginDetails}
             />
           )}

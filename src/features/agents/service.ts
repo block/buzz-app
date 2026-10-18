@@ -2693,6 +2693,7 @@ export class AgentsService extends Service implements Agents {
     }
     if (id && !this.teamList.some((team) => team.id === id))
       throw new Error("No such team");
+    if (id) this.refuseMoving(id);
     const team: Team = Object.freeze({
       id: id ?? crypto.randomUUID(),
       name: name.trim(),
@@ -2733,6 +2734,7 @@ export class AgentsService extends Service implements Agents {
   async removeTeam(id: string) {
     const synced = this.syncedTeam(id, []);
     if (synced) return synced.archiveTeam(id);
+    this.refuseMoving(id);
     await this.writeTeams(this.teamList.filter((team) => team.id !== id));
   }
 
@@ -2855,6 +2857,19 @@ export class AgentsService extends Service implements Agents {
     });
     this.notify();
     return this.teamList;
+  }
+  /** Refuses to change local team `id` while its move onto the relay is
+   * unfinished: resuming the move would undo the edit or bring the team
+   * back. */
+  private refuseMoving(id: string) {
+    if (
+      [...this.communityConfigs.values()].some((config) =>
+        config.teamOps().some((op) => op.local === id),
+      )
+    )
+      throw new Error(
+        "This team is moving to the relay; finish its move under Unfinished changes first",
+      );
   }
   /** The community config that holds team `id`, or for a new team the one
    * every member is in. Undefined: the team is local. */

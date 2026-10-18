@@ -158,8 +158,8 @@ export function AgentsPage({
   const [creating, setCreating] = useState(false);
   // Which import the dialog shows follows the menu it was opened from.
   const [flow, setFlow] = useState<"import" | "import-team">();
-  // A team being edited by its id, or "new" for one being made.
-  const [editingTeam, setEditingTeam] = useState<string>();
+  // The team editor open, if any.
+  const [editingTeam, setEditingTeam] = useState<TeamEditing>();
   const newAgentButton = useRef<HTMLButtonElement>(null);
   const newAgentLabel = useRef<HTMLSpanElement>(null);
   const [importing, setImporting] = useState(false);
@@ -214,11 +214,14 @@ export function AgentsPage({
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
   // Only a team still saved, one being made, or an unfinished change keeps
-  // its editor open.
+  // its editor open; a change that finishes meanwhile keeps it as its team.
   const editing =
-    editingTeam === "new" ||
-    snapshot.teams.some((team) => team.id === editingTeam) ||
-    snapshot.teamChanges?.some((change) => change.id === editingTeam)
+    editingTeam &&
+    (editingTeam.id === "new" ||
+      snapshot.teams.some(
+        (team) => team.id === editingTeam.id || team.id === editingTeam.team,
+      ) ||
+      snapshot.teamChanges?.some((change) => change.id === editingTeam.id))
       ? editingTeam
       : undefined;
   // Leaving Teams drops the editor, whose unsaved draft goes with it.
@@ -321,7 +324,7 @@ export function AgentsPage({
       >
         <MenuItem
           disabled={snapshot.status !== "ready"}
-          onClick={() => setEditingTeam("new")}
+          onClick={() => setEditingTeam({ id: "new" })}
         >
           <PlusIcon size={16} aria-hidden="true" /> Create a new team
         </MenuItem>
@@ -1412,6 +1415,10 @@ function ImportAgents({
   );
 }
 
+/** The team editor open: a team's id, "new", or an unfinished change's id
+ * with the team it makes, which it stays open on once that change finishes. */
+type TeamEditing = Readonly<{ id: string; team?: string }>;
+
 /** The owner's teams: each a name, instructions and members, given to every
  * member's prompt with a roster. Agents record nothing about their teams. */
 function Teams({
@@ -1431,18 +1438,16 @@ function Teams({
   archived: readonly Team[];
   /** Team changes not finished on the relay. */
   changes: readonly TeamChangeView[];
-  /** A team's id while it is edited, "new" for one being made, or an
-   * unfinished change's id whose team has no card. */
-  editing: string | undefined;
-  onEdit(id: string | undefined): void;
+  editing: TeamEditing | undefined;
+  onEdit(editing: TeamEditing | undefined): void;
   newTeam: ReactNode;
 }) {
-  const team = teams.find((item) => item.id === editing);
-  const submission = changes.find((change) => change.id === editing);
-  if (editing === "new" || team || submission)
+  const team = teams.find((item) => item.id === editing?.id);
+  const submission = changes.find((change) => change.id === editing?.id);
+  if (editing)
     return (
       <TeamEditor
-        key={editing}
+        key={editing.id}
         agents={agents}
         saved={saved}
         {...(team ? { team } : {})}
@@ -1454,8 +1459,8 @@ function Teams({
   const open = (change: TeamChangeView) =>
     onEdit(
       teams.some((item) => item.id === change.teamId)
-        ? change.teamId
-        : change.id,
+        ? { id: change.teamId }
+        : { id: change.id, team: change.teamId },
     );
   const byKey = new Map(saved.map((agent) => [agent.pubkey, agent]));
   return (
@@ -1480,7 +1485,7 @@ function Teams({
                       ? [{ ...member, community: member.relay || undefined }]
                       : [];
                   })}
-                  onClick={() => onEdit(item.id)}
+                  onClick={() => onEdit({ id: item.id })}
                 />
               </li>
             ))}
@@ -1665,8 +1670,10 @@ function TeamEditor({
   );
   // The head this form opened; a later remote edit makes Save a conflict.
   const [base] = useState(team?.base);
-  // This form's id: Save again revises the same change (a new team's id).
+  // This form's id: Save again revises the same change (a new team's id),
+  // even once that change finished while the form stayed open.
   const [creation] = useState(() => submission?.teamId ?? crypto.randomUUID());
+  const [operation] = useState(submission?.id);
   const own = changes.filter(
     (change) => change.teamId === (team?.id ?? creation),
   );
@@ -1689,7 +1696,7 @@ function TeamEditor({
       agents.saveTeam({
         ...(team ? { id: team.id } : {}),
         creation,
-        ...(submission ? { operation: submission.id } : {}),
+        ...(operation ? { operation } : {}),
         ...(base ? { base } : {}),
         name: name.trim(),
         instructions,

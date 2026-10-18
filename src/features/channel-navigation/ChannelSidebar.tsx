@@ -537,6 +537,7 @@ function ReadySidebar({
         ],
       ),
     ),
+    list.activityStatus === "ready",
   );
   const focusChannelPlacement = (channelId: string) => {
     const data = queries.sidebarPreferences.snapshot().data;

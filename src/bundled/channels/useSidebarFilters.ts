@@ -20,6 +20,7 @@ export function useSidebarFilters(
   current: string | undefined,
   unread: UnreadCapability,
   windows: Readonly<Record<string, number>> = {},
+  activityReady = true,
 ) {
   const ids = JSON.stringify(
     sections.flatMap((section) =>
@@ -69,6 +70,8 @@ export function useSidebarFilters(
   const [clock, tick] = useState(0);
   const now = Date.now();
   let nextExpiry = Infinity;
+  // Unknown activity is not inactivity. Keep those rows during loading or a
+  // failed read; a successful read can establish that a channel has no activity.
   const visible = sections.map((section) => {
     const mode = filters[section.key] ?? "all";
     const activeWindow =
@@ -83,8 +86,9 @@ export function useSidebarFilters(
         mode === "all" ||
         (mode === "unreads" && unreadSet.has(channel.id)) ||
         (mode === "active" &&
-          channel.lastActivityAt !== undefined &&
-          channel.lastActivityAt * 1000 + activeWindow > now)
+          (channel.lastActivityAt === undefined
+            ? !activityReady
+            : channel.lastActivityAt * 1000 + activeWindow > now))
       );
     });
     const visibleIds = new Set(rows.map(({ id }) => id));

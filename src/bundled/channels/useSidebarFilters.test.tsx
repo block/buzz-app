@@ -249,3 +249,37 @@ it("uses each section's saved window and replaces its expiry deadline when edite
   expect(vi.getTimerCount()).toBe(0);
   owner.dispose();
 });
+
+it("preserves unknown activity until a successful read, including first-read failure and retry", () => {
+  const owner = createRelaySession(null);
+  const sections = sidebarSections([
+    { id: "old", name: "Old", lastActivityAt: 1 },
+    { id: "unknown", name: "Unknown" },
+  ]);
+  const { result, rerender, unmount } = renderHook(
+    ({ status }) =>
+      useSidebarFilters(
+        sections,
+        { channels: "active" },
+        undefined,
+        owner.session.unread,
+        {},
+        status === "ready",
+      ),
+    { initialProps: { status: "idle" } },
+  );
+  const ids = () => result.current[0]?.rows.map(({ id }) => id);
+  expect(ids()).toEqual(["unknown"]);
+  for (const status of ["loading", "error", "loading"]) {
+    rerender({ status });
+    expect(ids()).toEqual(["unknown"]);
+  }
+  rerender({ status: "ready" });
+  expect(ids()).toEqual([]);
+  expect(result.current[0]?.hiddenRows.map(({ id }) => id)).toEqual([
+    "old",
+    "unknown",
+  ]);
+  unmount();
+  owner.dispose();
+});

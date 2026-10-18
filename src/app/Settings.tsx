@@ -213,6 +213,13 @@ function restrictedPlugin(plugin: PluginInfo) {
   );
 }
 
+function pluginActionLabel(plugin: PluginInfo, access: AdminAccessState) {
+  if (plugin.enabled) return "Disable";
+  if (restrictedPlugin(plugin) && access !== "allowed")
+    return access === "checking" ? "Checking access…" : "Unavailable";
+  return "Enable";
+}
+
 function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
   switch (state) {
     case "allowed":
@@ -353,7 +360,7 @@ function PluginDetails({
             ref={toggle}
             onClick={onToggle}
           >
-            {plugin.enabled ? "Disable" : "Enable"}
+            {pluginActionLabel(plugin, access)}
           </Button>
         )}
       </div>
@@ -857,7 +864,7 @@ export function Settings({
                                 : "prominent"
                           }
                           size="sm"
-                          aria-label={`${plugin.enabled ? "Disable" : "Enable"} ${plugin.manifest.name}`}
+                          aria-label={`${pluginActionLabel(plugin, access)} ${plugin.manifest.name}`}
                           disabled={
                             busy ||
                             (!plugin.enabled &&
@@ -872,7 +879,7 @@ export function Settings({
                           focusableWhenDisabled
                           onClick={() => togglePlugin(plugin)}
                         >
-                          {plugin.enabled ? "Disable" : "Enable"}
+                          {pluginActionLabel(plugin, access)}
                         </Button>
                       )}
                     </div>

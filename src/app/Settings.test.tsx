@@ -1705,11 +1705,11 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     });
     const user = userEvent.setup();
     const action = screen.getByRole("button", {
-      name: "Enable Restricted plugin",
+      name: "Checking access… Restricted plugin",
     });
     expect(action).toHaveAttribute("aria-disabled", "true");
     expect(action).toHaveAttribute("data-variant", "outline");
-    expect(screen.queryByText("Checking access…")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     await user.hover(action);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "Checking access…",
@@ -1727,7 +1727,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       name: "Restricted plugin details",
     });
     let enable = within(pane).getByRole("button", {
-      name: /^Enable$/,
+      name: "Checking access…",
     });
     expect(enable).toHaveAttribute("aria-disabled", "true");
     expect(enable).toHaveAttribute("data-variant", "outline");
@@ -1747,6 +1747,8 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
         state = next;
         for (const listener of listeners) listener();
       });
+      expect(enable).toHaveAccessibleName("Unavailable");
+      expect(action).toHaveAccessibleName("Unavailable Restricted plugin");
       expect(enable).toHaveAttribute("aria-disabled", "true");
       expect(action).toHaveAttribute("aria-disabled", "true");
       await user.click(enable);

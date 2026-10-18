@@ -569,10 +569,10 @@ export function createChannelWrites(
       });
     },
     /** Starts a Solo chat whose create names its `members`. It lists at once
-     * as pending; `ready` settles once the relay's roster shows every member,
-     * adding any that an older relay left out of the create. The chat's own
-     * events publish after `ready` (see `starting`). A refused create (see
-     * `failed`) drops the pending chat. */
+     * as pending; `ready` settles once the relay OKs the create, which adds the
+     * members (block/buzz#8421), and a background read then confirms the chat.
+     * The chat's own events publish after `ready` (see `starting`). A refused
+     * create (see `failed`) drops the pending chat. */
     start(
       id: string,
       title: string,
@@ -588,30 +588,30 @@ export function createChannelWrites(
         labels: named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
         ttlSeconds,
       });
+      // The relay adds the members in the create, so the chat takes events
+      // once the create is OK.
       const ready = (async () => {
         // A lost acknowledgment resends the same create, which the relay
         // confirms; only a refusal, or a third miss, ends the start.
         for (let tries = 1; ; tries++) {
           try {
-            await delivered(create);
-            await refresh(id);
-            break;
+            return await delivered(create);
           } catch (error) {
             if (api.failed(create) || tries === 3 || signal.aborted)
               throw error;
           }
         }
-        const listed = channels.list().channels.find((item) => item.id === id);
-        if (members.some((key) => !listed?.members?.includes(key)))
-          await addAgents(id, members);
       })();
       starts.set(id, ready);
-      // A chat that may exist stays listed until discovery decides.
-      void ready
-        .catch(() => {
+      void ready.then(
+        // Confirming the chat only ends its pending listing.
+        () => refresh(id).catch(() => {}),
+        // A chat that may exist stays listed until discovery decides.
+        () => {
           if (api.failed(create)) channels.abandon?.(id);
-        })
-        .finally(() => starts.delete(id));
+        },
+      );
+      void ready.catch(() => {}).finally(() => starts.delete(id));
       return { create, ready };
     },
     /** Settles when a chat this device is starting can take events. */

@@ -1830,7 +1830,7 @@ describe("starting a Solo chat", () => {
     channels: [{ id, name: "Work", channelType: "solo" as const, members }],
   });
 
-  it("names its agents in the create, lists it at once, and settles once the roster shows them", async () => {
+  it("names its agents in the create, lists it at once, and settles with the create", async () => {
     const test = setup();
     test.resolve.mockImplementation(async () => {
       test.setList(listed([viewer, agent]));
@@ -1865,35 +1865,31 @@ describe("starting a Solo chat", () => {
     expect(test.channels.abandon).not.toHaveBeenCalled();
   });
 
-  it("adds the agents itself when an older relay leaves them out of the create", async () => {
-    const relay = keypair();
-    const test = setup(
-      true,
-      undefined,
-      { selectable: () => [agent], archived: () => false },
-      relay.pubkey,
+  it("takes events once the create is OK, without waiting for the chat to confirm", async () => {
+    const test = setup();
+    let confirm = () => {};
+    test.resolve.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          confirm = () => {
+            test.setList(listed([viewer, agent]));
+            resolve();
+          };
+        }),
     );
-    test.reader.read.mockResolvedValue([roster(relay, id, [viewer])]);
-    test.resolve.mockImplementation(async () => {
-      test.setList(listed([viewer]));
-    });
-    test.refreshRoster.mockImplementation(async () => {
-      test.setList(listed([viewer, agent]));
-      return true;
-    });
-    await test.service.start(id, "Work", [agent]).ready;
-    expect(test.outbox.send).toHaveBeenLastCalledWith(
-      {
-        kind: 9000,
-        content: "",
-        tags: [
-          ["h", id],
-          ["p", agent],
-        ],
-      },
-      undefined,
-      undefined,
-    );
+    const { ready } = test.service.start(id, "Work", [agent]);
+    try {
+      await ready;
+      await flush();
+      expect(test.service.starting(id)).toBeUndefined();
+      // The confirming read is still open: it no longer holds the chat.
+      await vi.waitFor(() => expect(test.resolve).toHaveBeenCalledOnce());
+      expect(test.outbox.send).toHaveBeenCalledOnce();
+    } finally {
+      confirm();
+    }
+    await flush();
+    expect(test.channels.abandon).not.toHaveBeenCalled();
   });
 
   it("drops the pending chat when the create cannot be confirmed", async () => {

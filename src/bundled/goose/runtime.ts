@@ -234,6 +234,7 @@ export class GooseRuntime {
     step,
     acknowledged,
     superseded,
+    interruptible,
   }: Delivery) {
     const settings = config(raw);
     // Watches and timers come as standalone turns (`runOnce`).
@@ -320,6 +321,7 @@ export class GooseRuntime {
       ...(superseded ? { superseded } : {}),
     });
     workingUntil(done);
+    interruptible?.(() => entry.sessions.interrupt(key));
     this.notify();
     void done
       .then((result) => {

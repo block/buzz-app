@@ -324,6 +324,8 @@ function setup(
     }),
     remove: vi.fn(async (_pubkey: string): Promise<void> => {}),
     unarchive: vi.fn(async (): Promise<string | undefined> => undefined),
+    interruptible: () => false,
+    interrupt: vi.fn(async () => false),
     classifier: () => "unavailable",
     setClassifierKey: vi.fn(async () => {}),
     clearClassifierKey: vi.fn(async () => {}),

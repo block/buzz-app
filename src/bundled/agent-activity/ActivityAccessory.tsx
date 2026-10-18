@@ -15,7 +15,11 @@ import { profileActivityViewTarget } from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { WarningCircleIcon, XIcon } from "../../shared/design-system/icons";
+import {
+  StopIcon,
+  WarningCircleIcon,
+  XIcon,
+} from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
@@ -27,6 +31,7 @@ import {
 import { currentActivity } from "./current-activity";
 import { messageActivity } from "./message-activity";
 import type { ActivityTurn } from "../../features/agents/activity";
+import type { Agents } from "../../features/agents/service";
 import {
   requestWork,
   type RequestWork,
@@ -40,8 +45,14 @@ import styles from "./ActivityAccessory.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
 const noSubscribe = () => () => {};
+/** How long a hosted stop shows as stopping before Stop can be tried again:
+ * its provider may never report the turn's end. */
+const HOSTED_STOP_MS = 30_000;
+/** What Stop needs of Agents: a hosted agent's provider stops its turns. */
+export type ActivityAgents = Pick<Agents, "interruptible" | "interrupt">;
+type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
 /** Activity belongs to the exact triggering message, not the composer. */
-export function ActivityAccessory(props: ComposerAccessoryProps) {
+export function ActivityAccessory(props: ActivityProps) {
   const { session, channelId, message, canOpen } = props;
   const messageId = message?.id;
   // Every row mounts this; only rows with work subscribe to each activity
@@ -107,6 +118,7 @@ export function ActivityAccessory(props: ComposerAccessoryProps) {
       state: entry.state,
       reason: entry.reason,
       ...(entry.step ? { step: entry.step } : {}),
+      ...(entry.stoppable ? { stoppable: true } : {}),
       lifecycle: entry.lifecycle,
       records: entry.selected.records,
       turns: entry.turns,
@@ -202,6 +214,7 @@ type Entry = {
   state: RequestWork["state"];
   reason: string | undefined;
   step?: WorkStep;
+  stoppable?: boolean;
   lifecycle: boolean;
   records: ReturnType<typeof activityRecords>;
   turns: readonly ActivityTurn[];
@@ -210,9 +223,77 @@ type Entry = {
 function ActivityBubble({
   entries,
   interactive,
+  agents,
   ...props
-}: ComposerAccessoryProps & { entries: Entry[]; interactive: boolean }) {
+}: ActivityProps & { entries: Entry[]; interactive: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  // Agents asked to stop, with why that failed when it did.
+  const [stops, setStops] = useState<ReadonlyMap<string, string | undefined>>(
+    new Map(),
+  );
+  // The latest stop asked of each agent, so a late timeout knows its own.
+  const attempts = useRef(new Map<string, symbol>());
+  const message = props.message;
+  const stoppable = (entry: Entry) =>
+    !!message &&
+    (entry.lifecycle
+      ? !!entry.stoppable &&
+        (entry.state === "working" || entry.state === "waiting")
+      : entry.working && !!agents?.interruptible(entry.agent));
+  const stop = (entry: Entry) => {
+    if (!message) return;
+    const mark = (error?: string) =>
+      setStops((prior) => new Map(prior).set(entry.agent, error));
+    const attempt = Symbol(entry.agent);
+    attempts.current.set(entry.agent, attempt);
+    mark();
+    // A local request settles as stopped; a hosted turn ends when its
+    // provider reports it, so it shows as stopping until then.
+    const asked = entry.lifecycle
+      ? props.session.agentActivity.interrupt(
+          entry.agent,
+          props.channelId,
+          message.id,
+        )
+      : agents?.interrupt(entry.agent, {
+          channelId: props.channelId,
+          threadRootId: message.threadRootId ?? message.id,
+        });
+    void Promise.resolve(asked).then(
+      (running) => {
+        if (entry.lifecycle || running === false)
+          setStops((prior) => {
+            const next = new Map(prior);
+            next.delete(entry.agent);
+            return next;
+          });
+        else
+          setTimeout(() => {
+            if (attempts.current.get(entry.agent) !== attempt) return;
+            setStops((prior) =>
+              prior.has(entry.agent) && prior.get(entry.agent) === undefined
+                ? new Map(prior).set(entry.agent, "Not stopped yet. Try again.")
+                : prior,
+            );
+          }, HOSTED_STOP_MS);
+      },
+      (error: unknown) =>
+        mark(error instanceof Error ? error.message : String(error)),
+    );
+  };
+  // A stop is forgotten once its agent's work here has ended.
+  const live = entries
+    .filter((entry) => entry.working || entry.state === "waiting")
+    .map((entry) => entry.agent)
+    .join(":");
+  useEffect(() => {
+    const agents = new Set(live.split(":"));
+    setStops((prior) =>
+      [...prior.keys()].every((agent) => agents.has(agent))
+        ? prior
+        : new Map([...prior].filter(([agent]) => agents.has(agent))),
+    );
+  }, [live]);
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -374,6 +455,8 @@ function ActivityBubble({
               const preview = entry.working
                 ? currentActivity(entry.records, entry.turns)
                 : undefined;
+              const asked = stops.has(entry.agent);
+              const stopError = stops.get(entry.agent);
               return (
                 <div key={entry.agent} className={styles.row}>
                   <NavigationItem
@@ -394,24 +477,28 @@ function ActivityBubble({
                       <span
                         className={`text-body-sm ${styles.preview}`}
                         data-error={
-                          entry.lifecycle && entry.state === "error"
+                          (entry.lifecycle && entry.state === "error") ||
+                          stopError
                             ? ""
                             : undefined
                         }
                       >
                         <ShimmerText
                           active={
-                            entry.lifecycle
+                            !stopError &&
+                            (entry.lifecycle
                               ? entry.state === "working"
-                              : entry.working
+                              : entry.working)
                           }
                         >
-                          {entry.lifecycle
-                            ? label(entry)
-                            : !entry.working
-                              ? "Activity interrupted or out of date"
-                              : (preview?.title ??
-                                "Waiting for activity details")}
+                          {stopError ??
+                            (asked ? "Stopping…" : undefined) ??
+                            (entry.lifecycle
+                              ? label(entry)
+                              : !entry.working
+                                ? "Activity interrupted or out of date"
+                                : (preview?.title ??
+                                  "Waiting for activity details"))}
                         </ShimmerText>
                         {preview?.detail && (
                           <span className={styles.detail}>
@@ -436,6 +523,17 @@ function ActivityBubble({
                             props.channelId,
                             props.message.id,
                           );
+                      }}
+                    />
+                  ) : stoppable(entry) ? (
+                    <IconButton
+                      size="xs"
+                      aria-label={`Stop ${entry.name}`}
+                      icon={<StopIcon />}
+                      disabled={asked && !stopError}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        stop(entry);
                       }}
                     />
                   ) : undefined}

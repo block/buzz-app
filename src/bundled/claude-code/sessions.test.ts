@@ -290,6 +290,50 @@ it("steers a conversation that is still working instead of queueing", async () =
   await expect(second).resolves.toEqual({ ok: true });
 });
 
+const interruptsOf = (process: { received: Record<string, unknown>[] }) =>
+  process.received.filter(
+    (message) =>
+      message.type === "control_request" &&
+      (message.request as { subtype?: string }).subtype === "interrupt",
+  );
+
+it("interrupts the process working on a conversation, and only that one", async () => {
+  const { pool, claudes } = sessions({ hold: true });
+  const first = pool.deliver("c/one", "first", 1);
+  const other = pool.deliver("c/two", "other", 2);
+  await flush();
+  const [one, two] = claudes().filter((process) => process.prompts.length);
+  if (!one || !two) throw new Error("no processes");
+  await pool.interrupt("c/one");
+  expect(interruptsOf(one)).toHaveLength(1);
+  expect(interruptsOf(two)).toHaveLength(0);
+  one.finish();
+  two.finish();
+  await Promise.all([first, other]);
+});
+
+it("interrupts a conversation whose process is still starting once it has the message", async () => {
+  const { pool, claudes } = sessions({ hold: true });
+  const delivered = pool.deliver("c/root", "first", 1);
+  // Asked before the process exists.
+  const stopped = pool.interrupt("c/root");
+  await stopped;
+  const process = claudes().find((claude) => claude.prompts.length);
+  expect(process?.prompts).toEqual(["first"]);
+  expect(process && interruptsOf(process)).toHaveLength(1);
+  process?.finish();
+  await delivered;
+});
+
+it("does nothing when asked to interrupt a conversation with no running turn", async () => {
+  const { pool, claudes } = sessions();
+  await expect(pool.interrupt("c/none")).resolves.toBeUndefined();
+  await pool.deliver("c/root", "first", 1);
+  await pool.interrupt("c/root");
+  for (const process of claudes())
+    expect(interruptsOf(process)).toHaveLength(0);
+});
+
 it("opens one process for messages that arrive together in a new conversation", async () => {
   const { pool, claudes } = sessions();
   await Promise.all([

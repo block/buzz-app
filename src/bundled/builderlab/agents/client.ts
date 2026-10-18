@@ -324,6 +324,37 @@ export function createAgentClient(
           : "Agent deletion was not confirmed. Retry Delete.",
       );
     },
+    /** Stops the agent's turn in one conversation. False when nothing there
+     * was running. */
+    async cancelTurn(
+      agent: Pick<RemoteAgent, "id">,
+      place: Readonly<{
+        community: string;
+        channelId: string;
+        threadRootId: string;
+      }>,
+      signal: AbortSignal,
+    ): Promise<boolean> {
+      const result = await request(
+        "cancel-agent-turn",
+        {
+          agent_id: agent.id,
+          // Beekeeper keys conversations by the community's host.
+          community: new URL(place.community).host,
+          channel_id: place.channelId,
+          thread_root_event_id: place.threadRootId,
+        },
+        signal,
+      );
+      const status = resultStatus(result.status);
+      if ([1, "CANCELLING"].includes(status)) return true;
+      if ([2, "RUNNING", 3, "FOUND"].includes(status)) return false;
+      throw new Error(
+        typeof result.message === "string" && result.message
+          ? result.message
+          : "Builderlab did not stop the agent. Try again.",
+      );
+    },
     async register(
       name: string,
       signal: AbortSignal,

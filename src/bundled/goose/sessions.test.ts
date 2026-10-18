@@ -184,6 +184,42 @@ describe("AgentSessions", () => {
     expect(fake.geese[0]?.opened).toHaveLength(1);
   });
 
+  it("interrupts the turn running in a conversation, and no other", async () => {
+    const { fake, sessions } = setup({}, true);
+    const one = sessions.deliver("a", "one", 1);
+    const other = sessions.deliver("b", "other", 2);
+    await flush(20);
+    const [first, second] = fake.geese[0]?.turns ?? [];
+    expect(first?.text).toContain("one");
+    await sessions.interrupt("a");
+    await flush();
+    expect(fake.geese[0]?.cancelled).toEqual([first?.sessionId]);
+    await expect(one).resolves.toMatchObject({ ok: true });
+    second?.finish();
+    await expect(other).resolves.toMatchObject({ ok: true });
+  });
+
+  it("interrupts a conversation once the session opening for it has its message", async () => {
+    const { fake, sessions } = setup({}, true);
+    const delivered = sessions.deliver("a", "one", 1);
+    // Asked while the session still opens.
+    await sessions.interrupt("a");
+    await flush();
+    expect(fake.geese[0]?.turns).toHaveLength(1);
+    expect(fake.geese[0]?.cancelled).toEqual([
+      fake.geese[0]?.turns[0]?.sessionId,
+    ]);
+    await expect(delivered).resolves.toMatchObject({ ok: true });
+  });
+
+  it("does nothing when asked to interrupt a conversation with no session", async () => {
+    const { fake, sessions } = setup();
+    await expect(sessions.interrupt("none")).resolves.toBeUndefined();
+    await sessions.deliver("a", "one", 1);
+    await sessions.interrupt("a");
+    expect(fake.geese[0]?.cancelled).toEqual([]);
+  });
+
   it("closes idle sessions when their settings change", async () => {
     const { fake, sessions, change } = setup();
     await sessions.deliver("a", "one", 1);

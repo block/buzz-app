@@ -108,3 +108,42 @@ it("never uses typing as message association or resurrects an ended request", ()
     ),
   ).toEqual(["agent"]);
 });
+
+it("passes stoppable through from the chosen local row and hides it once stopped", () => {
+  const local = {
+    scope: "scope",
+    agent: "agent",
+    channelId: "channel",
+    messageId: request,
+    threadRootId: request,
+    startedAt: 1000,
+  } as const;
+  const source = (...rows: NonNullable<Snapshot["local"]>): Snapshot => ({
+    ...fixture(),
+    records: [],
+    turns: [],
+    local: rows,
+  });
+  const stoppable = { ...local, state: "working", stoppable: true } as const;
+  expect(
+    messageActivity(source(stoppable), "channel", request)[0],
+  ).toMatchObject({ state: "working", stoppable: true });
+  expect(
+    messageActivity(
+      source({ ...local, state: "working" }),
+      "channel",
+      request,
+    )[0]?.stoppable,
+  ).toBeUndefined();
+  expect(
+    messageActivity(source({ ...local, state: "stopped" }), "channel", request),
+  ).toEqual([]);
+  // A stopped earlier attempt neither shows nor hides a live one on the same message.
+  expect(
+    messageActivity(
+      source({ ...local, state: "stopped" }, stoppable),
+      "channel",
+      request,
+    ).map(({ state, stoppable }) => [state, stoppable]),
+  ).toEqual([["working", true]]);
+});

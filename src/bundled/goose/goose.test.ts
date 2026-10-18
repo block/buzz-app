@@ -27,6 +27,46 @@ const start = async (tools: ToolServer = ok, silent?: readonly string[]) => {
   return { goose, open, process, fake };
 };
 
+/** A goose whose answers to `method` wait until `release`, as a slow one's
+ * do; `reject` makes the answer a JSON-RPC error. */
+const slow = async (method: string, reject = false) => {
+  const fake = fakeSpawn();
+  let release!: () => void;
+  /** How many requests for `method` are waiting. */
+  let waiting = 0;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const spawn: typeof fake.spawn = async (id, options = {}) => {
+    const process = await fake.spawn(id, options);
+    return {
+      ...process,
+      write: async (data) => {
+        if (id !== "goose" || !data.includes(`"method":"${method}"`))
+          return process.write(data);
+        waiting++;
+        await gate;
+        if (!reject) return process.write(data);
+        const { id: requestId } = JSON.parse(data);
+        options.onStdout?.(
+          `${JSON.stringify({
+            jsonrpc: "2.0",
+            id: requestId,
+            error: { code: -32602, message: "No active run" },
+          })}\n`,
+        );
+      },
+    };
+  };
+  const goose = await GooseProcess.start(spawn, {
+    cwd: "/work",
+    serve: fake.serve,
+  });
+  const [process] = fake.geese;
+  if (!process) throw new Error("goose did not start");
+  return { goose, process, release, waiting: () => waiting };
+};
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -515,6 +555,129 @@ describe("GooseProcess", () => {
     process.exit(1, "crashed\n");
     await expect(first).resolves.toEqual({ ok: false });
     await expect(second).resolves.toEqual({ ok: false, error: "crashed" });
+  });
+
+  it("cancels the running turn when interrupted, and does nothing when idle", async () => {
+    const { open, process } = await start();
+    const session = await open();
+    const cancels = () =>
+      process.received.filter((message) => message.method === "session/cancel");
+    session.interrupt();
+    await flush();
+    expect(cancels()).toEqual([]);
+    process.hold = true;
+    const settled = session.send("hello");
+    await flush();
+    session.interrupt();
+    await flush();
+    expect(cancels()).toMatchObject([{ params: { sessionId: session.id } }]);
+    expect(cancels()[0]?.id).toBeUndefined();
+    expect(process.cancelled).toEqual([session.id]);
+    await expect(settled).resolves.toEqual({ ok: true });
+    expect(session.busy).toBe(false);
+    session.interrupt();
+    await flush();
+    expect(cancels()).toHaveLength(1);
+  });
+
+  it("drops the turns queued behind an interrupted one", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const first = session.send("one");
+    await flush();
+    // Another model cannot be steered in, so it waits as the next turn.
+    const second = session.send("two", {}, "other-model");
+    await flush();
+    session.interrupt();
+    await expect(first).resolves.toEqual({ ok: true });
+    await expect(second).resolves.toEqual({ ok: true });
+    await flush();
+    expect(process.turns.map((turn) => turn.text)).toEqual(["one"]);
+    expect(
+      process.received.filter((message) => message.method === "session/prompt"),
+    ).toHaveLength(1);
+    expect(session.busy).toBe(false);
+  });
+
+  it("ends a stopped turn without the text goose wrote, and the next turn with its own", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const stopped = session.send("one");
+    await flush();
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Working on it" },
+    });
+    await flush();
+    session.interrupt();
+    const result = await stopped;
+    expect(result).toEqual({ ok: true });
+    expect(result).not.toHaveProperty("text");
+    // Stopping is forgotten with the work it ended.
+    const next = session.send("two");
+    await flush();
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Network error: no provider" },
+    });
+    await flush();
+    process.turns[1]?.finish();
+    await expect(next).resolves.toEqual({
+      ok: true,
+      text: "Network error: no provider",
+    });
+  });
+
+  it("never sends a turn whose provider switch was still going when the owner stopped it", async () => {
+    const { goose, process, release, waiting } = await slow(
+      "session/set_config_option",
+    );
+    process.hold = true;
+    const session = await goose.open({
+      cwd: "/work",
+      systemPrompt: "",
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+    });
+    const settled = session.send("one");
+    await flush();
+    expect(waiting()).toBe(1);
+    session.interrupt();
+    await flush();
+    release();
+    await expect(settled).resolves.toEqual({ ok: true });
+    expect(process.turns).toEqual([]);
+    expect(
+      process.received.filter((message) => message.method === "session/prompt"),
+    ).toEqual([]);
+    expect(session.busy).toBe(false);
+  });
+
+  it("does not run a message again whose steer failed after the owner stopped the turn", async () => {
+    const { goose, process, release, waiting } = await slow(
+      "_goose/unstable/session/steer",
+      true,
+    );
+    process.hold = true;
+    const session = await goose.open({ cwd: "/work", systemPrompt: "" });
+    const first = session.send("one");
+    await flush();
+    const second = session.send("two");
+    await flush();
+    // It was steered into the running turn, not queued behind it.
+    expect(waiting()).toBe(1);
+    session.interrupt();
+    await flush();
+    release();
+    await expect(first).resolves.toEqual({ ok: true });
+    await expect(second).resolves.toEqual({ ok: true });
+    await flush();
+    expect(process.turns.map((turn) => turn.text)).toEqual(["one"]);
+    expect(
+      process.received.filter((message) => message.method === "session/prompt"),
+    ).toHaveLength(1);
+    expect(session.busy).toBe(false);
   });
 
   it("cancels a session's turn when it closes", async () => {

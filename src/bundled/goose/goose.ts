@@ -462,6 +462,8 @@ export class GooseSession {
   private acted = false;
   private written = "";
   private closed = false;
+  /** The owner stopped this work, so what goose wrote is not posted. */
+  private stopped = false;
 
   constructor(
     private readonly goose: GooseProcess,
@@ -521,6 +523,16 @@ export class GooseSession {
   finished() {
     if (this.pending === 1 && !this.queue.length && !this.steering)
       this.settle({ ok: true });
+  }
+
+  /** Stops the work: the running turn, as ACP's `session/cancel` does, and
+   * the messages waiting for a turn after it, which goose cannot stop apart.
+   * A turn not yet sent is never sent. The work then ends as goose ends it. */
+  interrupt() {
+    if (!this.busy || this.closed) return;
+    this.queue.length = 0;
+    this.stopped = true;
+    this.goose.notify("session/cancel", { sessionId: this.id });
   }
 
   /** A Buzz tool that answers, such as `send`, succeeded. */
@@ -590,7 +602,8 @@ export class GooseSession {
           // The turn ended, or another took its place: run it as the next.
         }
       }
-      this.queue.push({ text, ...(model ? { model } : {}) });
+      // A stopped turn takes no more messages.
+      if (!this.stopped) this.queue.push({ text, ...(model ? { model } : {}) });
       this.acknowledge(activity, waiter);
     } finally {
       this.steering--;
@@ -607,6 +620,7 @@ export class GooseSession {
         const { text, model } = this.queue.shift() ?? { text: "" };
         try {
           await this.select(model);
+          if (this.stopped) break;
           const { stopReason } = (await this.goose.request("session/prompt", {
             sessionId: this.id,
             prompt: [{ type: "text", text }],
@@ -695,7 +709,7 @@ export class GooseSession {
   private done() {
     // Work that wrote text and never answered in Buzz answered only goose: a
     // model that forgot `send`, or goose saying it cannot reach its provider.
-    const text = this.acted ? "" : this.written.trim();
+    const text = this.acted || this.stopped ? "" : this.written.trim();
     const error = this.lastError;
     this.settle({
       ...(error ? { ok: false, error } : { ok: true }),
@@ -708,6 +722,7 @@ export class GooseSession {
     this.lastError = undefined;
     this.acted = false;
     this.written = "";
+    this.stopped = false;
     const owner = this.owner ?? this.waiters.at(-1);
     this.owner = undefined;
     for (const resolve of this.waiters.splice(0))

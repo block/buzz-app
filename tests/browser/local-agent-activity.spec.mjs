@@ -143,6 +143,71 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   await expect(page.locator("body")).not.toBeFocused();
 });
 
+test("Stop in a message's activity ends its local work quietly", async ({
+  page,
+  app,
+}, testInfo) => {
+  await open(page, app);
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content.startsWith("Thread root"));
+  const rootRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${root.id}"]`,
+  );
+  await rootRow.hover();
+  await rootRow.getByRole("button", { name: /^View thread:/ }).click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const event = app.sign({
+    kind: 9,
+    content: "Request to stop",
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["h", "alpha"],
+      ["e", root.id, "", "root"],
+      ["e", root.id, "", "reply"],
+      ["p", localAgentKey],
+    ],
+  });
+  app.relay.publish("primary", event);
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
+    .toBe(1);
+  await page.evaluate((id) => window.localAgentFixture.handover(id), event.id);
+  const activity = thread
+    .locator(`[data-message-id="${event.id}"]`)
+    .getByRole("button", { name: /^View agent activity:/ });
+  await expect(activity).toHaveAccessibleName(/Local tester/);
+  await activity.hover();
+  const popup = page.getByRole("dialog", {
+    name: "Agent activity",
+    exact: true,
+  });
+  const stop = popup.getByRole("button", {
+    name: "Stop Local tester",
+    exact: true,
+  });
+  await expect(stop).toBeVisible();
+  await expect(popup).not.toHaveAttribute("data-starting-style", "");
+  await popup.screenshot({
+    path: testInfo.outputPath("local-activity-stop.png"),
+  });
+  await stop.click();
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
+    .toEqual([event.id]);
+  // Stopped work is neither finished nor failed: its activity just goes.
+  await expect(activity).toHaveCount(0);
+  await expect(
+    page.locator('[data-channel-id="alpha"] [data-channel-working]'),
+  ).toHaveCount(0);
+});
+
 // Real host composition: one summary combines replies and exact-message work.
 test("one thread summary retains reply navigation and work on another reply", async ({
   page,

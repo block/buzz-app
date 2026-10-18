@@ -382,6 +382,10 @@ export type Delivery<Config = unknown> = Readonly<{
   /** A newer acknowledged request owns this turn's activity; hide this message's
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
+  /** Offers the owner Stop on this request's activity: `stop` stops the turn
+   * the request is in, and resolves once the harness has asked it to. The
+   * turn still settles what it handed to `workingUntil`. */
+  interruptible?(stop: () => Promise<void>): void;
   /** The harness's own title for this mention's conversation. The host may
    * name a Solo chat with it once; the type need not know whether it did. */
   named?(title: string): void;
@@ -533,6 +537,18 @@ export type RemoteAgentType = Readonly<{
       signal: AbortSignal;
     }>,
   ): Promise<void>;
+  /** Stops the turn it is running in one conversation, named by its channel
+   * and thread root (a top-level message's own id). False when nothing there
+   * was running. Without it, its turns offer no Stop. */
+  interrupt?(
+    input: Readonly<{
+      pubkey: string;
+      community: string;
+      channelId: string;
+      threadRootId: string;
+      signal: AbortSignal;
+    }>,
+  ): Promise<boolean>;
   /** Stops it and deletes its key. An agent already gone counts as removed. */
   remove(
     input: Readonly<{ pubkey: string; community: string; signal: AbortSignal }>,
@@ -691,6 +707,14 @@ export type Agents = {
    * leaves its channels and is removed from its provider before this resolves.
    * One on another device is deleted there. */
   remove(pubkey: string): Promise<void>;
+  /** Whether the owner can stop a hosted agent's turns through its provider. */
+  interruptible(pubkey: string): boolean;
+  /** Has a hosted agent's provider stop its turn in one conversation. False
+   * when nothing there was running. */
+  interrupt(
+    pubkey: string,
+    place: Readonly<{ channelId: string; threadRootId: string }>,
+  ): Promise<boolean>;
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(pubkey: string): Promise<string | undefined>;
@@ -1792,6 +1816,32 @@ export class AgentsService extends Service implements Agents {
       prior: this.rowOf(origin, pubkey)?.prior,
     });
   }
+  /** Whether the owner can stop a hosted agent's turn: its provider can. */
+  interruptible(pubkey: string) {
+    const agent = this.state.agents.find(
+      (entry) =>
+        entry.pubkey === pubkey &&
+        entry.place === "hosted" &&
+        !entry.unfinished,
+    );
+    return !!this.types().find((entry) => entry.key === agent?.type)?.remote
+      ?.interrupt;
+  }
+  /** Stops the hosted agent's turn in `place`; false when none was running. */
+  async interrupt(
+    pubkey: string,
+    place: Readonly<{ channelId: string; threadRootId: string }>,
+  ) {
+    const { agent, remote, binding } = this.hosted(pubkey);
+    if (!remote.interrupt) throw new Error("This agent can't be stopped here");
+    return remote.interrupt({
+      pubkey,
+      community: agent.relay,
+      ...place,
+      signal: binding.controller.signal,
+    });
+  }
+
   /** A hosted agent shown now, its provider, and its community's live session. */
   private hosted(pubkey: string, unfinished = false) {
     const agent = this.state.agents.find(

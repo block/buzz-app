@@ -341,9 +341,9 @@ try {
     threadId: saved.threadId,
     includeTurns: true,
   });
-  assert.equal(
+  assert.match(
     result.thread.name,
-    "Buzz #codex-test · thread cccccccc · Codex",
+    /^Buzz #codex-test · thread cccccccc · Codex · buzz:[0-9a-f]{16}$/,
   );
   const rollout = (await readFile(result.thread.path, "utf8"))
     .split("\n")
@@ -552,6 +552,40 @@ try {
   assert(otherPublished[0].content.includes(otherWorkspace.split("/").at(-1)));
   console.log(
     "PASS two agents share one server with their own workspace, instructions and replies",
+  );
+  const stops = [];
+  const stopping = delivery(
+    "Run exactly: touch stop-started; while [ ! -f stop-release ]; do sleep 0.1; done; touch must-not-finish . This wait is an explicit fixture. Then reply DONE.",
+  );
+  stopping.interruptible = (stop) => stops.push(stop);
+  const beforeStop = published.length;
+  await runtime.run(stopping);
+  assert.equal(stops.length, 1);
+  await condition(() => exists("stop-started"), "stop shell started");
+  await stops[0]();
+  await condition(
+    () => runtime.sessions(pubkey)[0]?.status === "Stopped",
+    "stopped turn",
+  );
+  await writeFile(join(workspace, "stop-release"), "go");
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  // The shell it waited on is gone, and nothing was posted for it.
+  assert.equal(await exists("must-not-finish"), false);
+  assert.equal(published.length, beforeStop);
+  await runtime.run(
+    delivery(
+      "Reply exactly AFTER_STOP_OK. No coding tools. Send the reply with buzz.send.",
+    ),
+  );
+  await condition(
+    () =>
+      published.length === beforeStop + 1 &&
+      runtime.sessions(pubkey)[0]?.status === "Idle",
+    "reply after stop",
+  );
+  assert.match(published.at(-1).content, /AFTER_STOP_OK/);
+  console.log(
+    "PASS stop interrupts the running turn and its shell quietly, and the thread continues",
   );
 } finally {
   await inspect?.close();

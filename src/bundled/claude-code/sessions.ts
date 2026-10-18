@@ -247,6 +247,13 @@ export class AgentSessions {
     return delivered;
   }
 
+  /** Stops the turn running in conversation `key`, if any, once a process
+   * starting for it has taken its message. */
+  async interrupt(key: string) {
+    await this.opening.get(key);
+    await this.live.get(key)?.process.interrupt();
+  }
+
   /** Runs one turn in a new session, then stops its process. The session is
    * not saved, so it never displaces a conversation's saved session and is
    * never resumed. `label` names it in the snapshot. It gives up, and stops

@@ -91,6 +91,8 @@ type Active = {
   steering: Promise<void>;
   reply: Request;
   finished: boolean;
+  /** The owner stopped it, so its interruption is not reported. */
+  stopped?: boolean;
   /** What the turn runs on, once resolved; a differing pick queues a turn. */
   model?: string;
   effort?: string;
@@ -147,6 +149,10 @@ export type SavedConversation = {
   threadId: string;
   at?: number;
 };
+/** How long a stopped turn's shells are looked for, and how often. Codex hands
+ * one over about 50ms after the turn ends. */
+const STOP_LINGER_MS = 1_000;
+const LINGER_POLL_MS = 100;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -562,6 +568,7 @@ export class CodexRuntime {
     const key = JSON.stringify([channelId, root ?? "channel"]);
     const text = textOf(request.event, agent.name);
     const entry = this.entry(agent.pubkey, request.scope);
+    delivery.interruptible?.(() => this.interrupt(entry, key, request));
     let lane = entry.lanes.get(key);
     if (!lane) {
       lane = { tail: entry.after, queued: 0 };
@@ -759,6 +766,30 @@ export class CodexRuntime {
     }
   }
 
+  /** Stops the turn in conversation `key` that took `request` in, once it
+   * started. A request still waiting for its turn is not stopped. */
+  private async interrupt(entry: Entry, key: string, request: Request) {
+    const active = entry.lanes.get(key)?.active;
+    if (!active?.requests.includes(request)) {
+      if (!active || active.finished) return;
+      throw new Error("Codex has not started on this message yet");
+    }
+    if (active.finished) return;
+    active.stopped = true;
+    try {
+      await active.ready;
+      if (active.finished || !active.threadId || !active.turnId) return;
+      await active.rpc.request("turn/interrupt", {
+        threadId: active.threadId,
+        turnId: active.turnId,
+      });
+    } catch (error) {
+      // A turn that did not stop still reports how it ends.
+      if (!active.finished) active.stopped = false;
+      throw error;
+    }
+  }
+
   /** A positive harness response transfers presentation, not execution or
    * success. Watches have no bubble; mentions in other threads keep theirs,
    * and a top-level chat is one scope. */
@@ -935,14 +966,17 @@ export class CodexRuntime {
       throw new Error("Buzz is not connected to this community");
     return listing;
   }
-  private async terminals(rpc: AppServer, threadId: string) {
+  /** Stops the thread's shells. `linger` keeps looking that long: a command
+   * a stopped turn was waiting on becomes a background terminal only just
+   * after the turn ends. */
+  private async terminals(rpc: AppServer, threadId: string, linger = 0) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
     try {
       await rpc.request("thread/backgroundTerminals/clean", { threadId });
+      const until = Date.now() + linger;
       // clean acknowledges submission. Direct termination is the completion
       // barrier for any shells still reported by the server.
-      let cursor: string | null = null;
-      do {
+      for (let cursor: string | null = null; ; ) {
         const page: {
           data: { processId: string }[];
           nextCursor: string | null;
@@ -960,7 +994,10 @@ export class CodexRuntime {
           ),
         );
         cursor = page.nextCursor;
-      } while (cursor);
+        if (cursor) continue;
+        if (Date.now() >= until) break;
+        await new Promise((resolve) => setTimeout(resolve, LINGER_POLL_MS));
+      }
       const remaining = await rpc.request<{ data: unknown[] }>(
         "thread/backgroundTerminals/list",
         { threadId, limit: 1 },
@@ -1173,7 +1210,11 @@ export class CodexRuntime {
       const status = await followed.completed;
       await active.steering;
       signal.throwIfAborted();
-      if (status === "interrupted") {
+      if (status === "interrupted" && active.stopped) {
+        for (const taken of active.requests) taken.answered();
+        await this.terminals(rpc, active.threadId, STOP_LINGER_MS);
+        this.status(agent.pubkey, key, "Stopped");
+      } else if (status === "interrupted") {
         for (const taken of active.requests)
           taken.failActivity("Codex’s turn was interrupted");
         await this.terminals(rpc, active.threadId);

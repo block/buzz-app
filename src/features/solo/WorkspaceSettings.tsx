@@ -291,7 +291,7 @@ export function WorkspaceSettings({
       }}
       preventClose={busy || lifetime.busy}
       dismissOnOutsideClick
-      title={target.kind === "project" ? "Project settings" : "Chat settings"}
+      title={target.kind === "project" ? "Workspace settings" : "Chat settings"}
       actions={
         <>
           <Button disabled={busy || lifetime.busy} onClick={close}>

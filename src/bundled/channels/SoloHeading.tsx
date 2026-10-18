@@ -1,4 +1,10 @@
-import { useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { canEditLifetime } from "../../features/solo/Lifetime";
 import { SoloTitle } from "../../features/solo/SoloPresentation";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
@@ -6,6 +12,7 @@ import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecy
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { Navigation } from "../../features/navigation/controller";
+import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuPopup,
@@ -57,6 +64,19 @@ export function SoloHeading({
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [copy, copyNotice] = useChatCopy();
   const [readError, setReadError] = useState<string>();
+  // The sidebar may be hidden, so a move started here reports its own failure.
+  const preferences = session.soloPreferences;
+  const placement = useSyncExternalStore(
+    preferences.subscribe,
+    preferences.snapshot,
+    preferences.snapshot,
+  );
+  const [moving, setMoving] = useState(false);
+  const failedMove = moving
+    ? placement.moves?.find(
+        (move) => move.channelId === channel.id && move.error,
+      )
+    : undefined;
   return (
     <>
       <SoloTitle
@@ -83,11 +103,12 @@ export function SoloHeading({
                     channel={channel}
                     onShare={() => setSharing({ visit: signal })}
                     onConvert={() => onConvert(actionsTrigger.current)}
-                    onMove={(projectId) =>
-                      void session.soloPreferences
+                    onMove={(projectId) => {
+                      setMoving(true);
+                      void preferences
                         .assign(channel.id, projectId)
-                        .catch(() => {})
-                    }
+                        .catch(() => {});
+                    }}
                     onNewWorkspace={() => setCreatingWorkspace(true)}
                     onCopy={copy}
                     onSettings={() =>
@@ -152,8 +173,8 @@ export function SoloHeading({
           finalFocus={actionsTrigger}
           close={() => setCreatingWorkspace(false)}
           create={(name) => {
-            const preferences = session.soloPreferences;
             if (!preferences.writable) return false;
+            setMoving(true);
             void preferences
               .createAndAssign(channel.id, { id: crypto.randomUUID(), name })
               .catch(() => {});
@@ -163,6 +184,27 @@ export function SoloHeading({
         />
       )}
       {copyNotice}
+      {failedMove?.error && (
+        <ToastNotice
+          key={`${failedMove.id}:${failedMove.error}`}
+          title="Chat wasn’t moved"
+          description={failedMove.error}
+          onDismiss={() => {
+            preferences.dismissMoveError(channel.id);
+            setMoving(false);
+          }}
+        >
+          <Button
+            size="sm"
+            disabled={!preferences.writable}
+            onClick={() =>
+              void preferences.retryMove(channel.id).catch(() => {})
+            }
+          >
+            Retry move
+          </Button>
+        </ToastNotice>
+      )}
       {readError && (
         <ToastNotice
           title="Read state couldn’t be saved"

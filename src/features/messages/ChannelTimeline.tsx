@@ -215,10 +215,18 @@ function Timeline({
             window.rows,
             viewer,
             agentPubkeys,
-            !window.hasMore,
+            // Live trimming can drop the chat's start without restoring hasMore.
+            !window.hasMore && !window.historyLimited,
           )
         : window.rows,
-    [window.rows, window.hasMore, chatPresentation, viewer, agentPubkeys],
+    [
+      window.rows,
+      window.hasMore,
+      window.historyLimited,
+      chatPresentation,
+      viewer,
+      agentPubkeys,
+    ],
   );
   const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(

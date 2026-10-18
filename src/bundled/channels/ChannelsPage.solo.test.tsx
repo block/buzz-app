@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -14,6 +15,7 @@ import { createRelaySession } from "../../features/relay/session";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
@@ -253,6 +255,7 @@ function fixture({
   return {
     mount: () => render(page()),
     mountWithSidebar: () => render(page(true)),
+    mountWithToasts: () => render(<ToastProvider>{page()}</ToastProvider>),
     abort,
     archive,
     open,
@@ -571,6 +574,62 @@ it("runs the header's own chat actions and returns focus to Chat actions", async
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(trigger).toHaveFocus());
+});
+
+it("reports a failed header move beside the header and retries it", async () => {
+  const f = fixture();
+  const base = f.session.soloPreferences.snapshot();
+  let current: ReturnType<typeof f.session.soloPreferences.snapshot> = base;
+  const listeners = new Set<() => void>();
+  const publish = (next: typeof current) => {
+    current = next;
+    for (const listener of listeners) listener();
+  };
+  const failed = {
+    ...base,
+    moves: [
+      {
+        id: 1,
+        channelId: id,
+        destination: { section: "work" },
+        pending: false,
+        error: "Relay unavailable",
+      },
+    ],
+  } as unknown as typeof current;
+  const retryMove = vi.fn(async () => {});
+  Object.assign(f.session.soloPreferences, {
+    writable: true,
+    snapshot: () => current,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    assign: vi.fn(async () => {
+      publish(failed);
+      throw new Error("Relay unavailable");
+    }),
+    retryMove,
+    dismissMoveError: () => publish(base),
+  });
+  f.mountWithToasts();
+  const user = userEvent.setup();
+  // No failure is shown for a move this header did not start.
+  act(() => publish(failed));
+  expect(screen.queryByText("Chat wasn’t moved")).toBeNull();
+  act(() => publish(base));
+  await user.click(await screen.findByRole("button", { name: "Chat actions" }));
+  (await screen.findByRole("menuitem", { name: "Move to" })).focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Work" }));
+  expect(await screen.findByText("Chat wasn’t moved")).toBeVisible();
+  // Toasts own swipe gestures, so press their buttons without a pointer.
+  fireEvent.click(screen.getByRole("button", { name: "Retry move" }));
+  expect(retryMove).toHaveBeenCalledExactlyOnceWith(id);
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
+  await waitFor(() =>
+    expect(screen.queryByText("Chat wasn’t moved")).toBeNull(),
+  );
 });
 
 it("returns focus to Chat actions when its confirmation is cancelled", async () => {

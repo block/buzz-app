@@ -72,7 +72,7 @@ export function workspaceCanvas(input: Workspace): string {
         "- Make all changes in that new worktree.",
       ]
     : [
-        "## Workspace folders",
+        "## Project folders",
         "",
         ...value.folders.map((folder) => `- \`${folder}\``),
       ];

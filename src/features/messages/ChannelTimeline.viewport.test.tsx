@@ -596,13 +596,17 @@ it("hides the owner's starting agents only in a complete personal chat", () => {
     freshness: "verified",
     error: undefined,
   };
-  const timeline = (chatPresentation: boolean, hasMore = false) => (
+  const timeline = (
+    chatPresentation: boolean,
+    hasMore = false,
+    historyLimited = false,
+  ) => (
     <ChannelTimeline
       channelId="alpha"
       scope="starting-agents"
       viewer={viewer.pubkey}
       queries={queries}
-      window={{ ...window, hasMore }}
+      window={{ ...window, hasMore, historyLimited }}
       chatPresentation={chatPresentation}
       onOpenLink={() => false}
     />
@@ -614,6 +618,9 @@ it("hides the owner's starting agents only in a complete personal chat", () => {
     expect(notice()).toBeNull();
     // Partial history cannot prove the addition started the chat.
     view.rerender(timeline(true, true));
+    expect(notice()).not.toBeNull();
+    // Nor can a live window whose older rows were trimmed after reaching it.
+    view.rerender(timeline(true, false, true));
     expect(notice()).not.toBeNull();
     // Team channels keep every notice.
     view.rerender(timeline(false));

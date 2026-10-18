@@ -35,6 +35,13 @@ function Row(props: ComponentProps<typeof MessageActionBar>) {
   const rowRef = useRef<HTMLDivElement>(null);
   return (
     <div ref={rowRef} data-testid="message">
+      <span>Message author</span>
+      <div data-message-action-anchor>
+        <span>Message bubble</span>
+      </div>
+      <div data-message-attachments>
+        <span>Message attachment</span>
+      </div>
       <MessageActionBar {...props} rowRef={rowRef} />
     </div>
   );
@@ -154,6 +161,42 @@ it("defers desktop controls until row interaction and retains them after leaving
   expect(
     screen.getByRole("button", { name: "More message actions", hidden: true }),
   ).toBe(trigger);
+});
+
+it("reveals actions only over message content or the toolbar, not the row's empty space", () => {
+  pointerMedia();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  render(
+    <StrictMode>
+      <Row copyText={() => "Hello"} />
+    </StrictMode>,
+  );
+  const row = screen.getByTestId("message");
+  // First entry prepares the lazy controls without revealing them over whitespace.
+  fireEvent.pointerEnter(row);
+  const bar = screen.getByRole("group", { hidden: true });
+  fireEvent.pointerLeave(row);
+  fireEvent.pointerEnter(row);
+  fireEvent.pointerOver(row);
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  for (const content of ["Message bubble", "Message attachment"]) {
+    const target = screen.getByText(content);
+    fireEvent.pointerOver(target, { relatedTarget: row });
+    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+    fireEvent.pointerOut(target, { relatedTarget: bar });
+    fireEvent.pointerOver(bar, { relatedTarget: target });
+    expect(row.hasAttribute("data-actions-revealed")).toBe(true);
+    fireEvent.pointerOut(bar, { relatedTarget: row });
+    expect(row.hasAttribute("data-actions-revealed")).toBe(false);
+  }
+  fireEvent.pointerOver(screen.getByText("Message author"));
+  expect(row.hasAttribute("data-actions-revealed")).toBe(false);
 });
 
 it("prepares untouched rows synchronously for Tab navigation and leaves new pointer rows deferred", () => {

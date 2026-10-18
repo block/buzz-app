@@ -101,8 +101,17 @@ export function useFloatingActionBar(
     const row = rowRef?.current;
     const bar = barRef.current;
     if (!floating || !row || !bar) return;
-    // Top-layer descendants don't contribute to :hover or :focus-within.
-    let hovered = row.matches(":hover") || bar.matches(":hover");
+    const contentSelector =
+      "[data-message-action-anchor], [data-message-attachments] > *";
+    const hoverTarget = (target: EventTarget | null) =>
+      target instanceof Element &&
+      (bar.contains(target) ||
+        (!!target.closest(contentSelector) && row.contains(target)));
+    // The row includes empty space, bylines and accessories. Only painted
+    // message content and the top-layer toolbar reveal pointer actions.
+    let hovered =
+      !!row.querySelector(`:is(${contentSelector}):hover`) ||
+      bar.matches(":hover");
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.
     const keyboardFocus = () =>
@@ -126,12 +135,12 @@ export function useFloatingActionBar(
       row.toggleAttribute("data-actions-revealed", next);
       setRevealed(next);
     };
-    const enter = () => {
-      hovered = true;
+    const over = (event: PointerEvent) => {
+      hovered = hoverTarget(event.target);
       update();
     };
-    const leave = () => {
-      hovered = false;
+    const out = (event: PointerEvent) => {
+      hovered = hoverTarget(event.relatedTarget);
       update();
     };
     const focusIn = () => update();
@@ -142,8 +151,9 @@ export function useFloatingActionBar(
           keyboardFocus(),
       );
     };
-    row.addEventListener("pointerenter", enter);
-    row.addEventListener("pointerleave", leave);
+    // Delegation also covers content replaced by an edit or attachment load.
+    row.addEventListener("pointerover", over);
+    row.addEventListener("pointerout", out);
     row.addEventListener("focusin", focusIn);
     row.addEventListener("focusout", focusOut);
     const observer = new MutationObserver(() => {
@@ -158,8 +168,8 @@ export function useFloatingActionBar(
     });
     update();
     return () => {
-      row.removeEventListener("pointerenter", enter);
-      row.removeEventListener("pointerleave", leave);
+      row.removeEventListener("pointerover", over);
+      row.removeEventListener("pointerout", out);
       row.removeEventListener("focusin", focusIn);
       row.removeEventListener("focusout", focusOut);
       observer.disconnect();

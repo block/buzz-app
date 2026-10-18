@@ -1862,13 +1862,12 @@ html[data-keyboard-input] .quickReactionGlyph {
   .messageActions[data-placement="beside"] {
     translate: 0 -50%;
   }
-  /* Retain pointer travel to the lifted toolbar without adding row spacing. */
-  .message:hover::before {
+  /* Bridge the small gap to revealed actions, not the full message row. */
+  .messageActions[popover]:popover-open::before {
     content: "";
     position: absolute;
-    bottom: 100%;
-    inset-inline: 0;
-    height: var(--space-2);
+    inset: calc(-1 * var(--space-2));
+    z-index: -1;
   }
 }
 

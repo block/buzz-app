@@ -232,8 +232,11 @@ export function createChannelStore(
       listeners.delete(callback);
     };
   }
+  // A chat this device is starting is a Solo chat, not a temporary room, so
+  // it lists and opens before its metadata arrives.
   function metadataPending(id: string) {
     return discovery &&
+      !discovery.isPending(id) &&
       !discovery.metadataVersion(id) &&
       !checkedMetadata.has(id)
       ? true
@@ -269,6 +272,7 @@ export function createChannelStore(
         old.ttlSeconds === channel.ttlSeconds &&
         old.readOnly === channel.readOnly &&
         old.cached === channel.cached &&
+        old.pending === channel.pending &&
         old.members?.length === channel.members?.length &&
         (old.members ?? []).every(
           (id, index) => id === channel.members?.[index],
@@ -443,7 +447,10 @@ export function createChannelStore(
   }
   const authorized = (id: string) => discovery?.canAccess(id) ?? false;
   const canReadRemote = (id: string) =>
-    !options.cachedOnly && authorized(id) && !discovery?.get(id)?.cached;
+    !options.cachedOnly &&
+    authorized(id) &&
+    !discovery?.get(id)?.cached &&
+    !discovery?.isPending(id);
   const live = (state: WindowState, generation: number) =>
     !disposed &&
     authorized(state.channelId) &&
@@ -1045,6 +1052,9 @@ export function createChannelStore(
     const accessRevision = discovery.accessRevision;
     const overflowRevision = discovery.overflowRevision;
     if (cached) discovery.restrictToKnown();
+    const starting = [...windows.keys()].filter((id) =>
+      discovery.isPending(id),
+    );
     let discoveryChanged = false;
     for (const event of events) {
       discoveryChanged = discovery.accept(event, cached) || discoveryChanged;
@@ -1117,6 +1127,13 @@ export function createChannelStore(
     if (prepared && !hydration) {
       const reveal = revealHydration;
       hydration = hydrate().finally(() => reveal?.());
+    }
+    // A started chat the relay just confirmed now reads its history and live tail.
+    for (const id of starting) {
+      const state = windows.get(id);
+      if (!state || discovery.isPending(id) || !authorized(id)) continue;
+      setWindow(state, { status: "idle" });
+      if (current === id) queries.ensure(id);
     }
     if (!cached) {
       saveDiscovery();
@@ -2267,6 +2284,32 @@ export function createChannelStore(
       const channel = discovery?.get(id);
       return channel && { ...channel, metadataPending: metadataPending(id) };
     },
+    start(channel: Parameters<NonNullable<ChannelQueries["start"]>>[0]) {
+      if (disposed || !transport || !discovery) return;
+      const createdAt = Math.floor(now() / 1000);
+      discovery.start({
+        id: channel.id,
+        name: channel.name,
+        channelType: "solo",
+        members: Object.freeze(
+          [...new Set([transport.viewer, ...channel.members])].sort(),
+        ),
+        labels: channel.labels,
+        creator: transport.viewer,
+        createdAt,
+        updatedAt: createdAt,
+        ...(channel.ttlSeconds !== undefined
+          ? { ttlSeconds: channel.ttlSeconds }
+          : {}),
+      });
+      setList({ ...list, channels: discovery.channels() }, true);
+    },
+    abandon(channelId: string) {
+      if (!discovery?.abandon(channelId)) return;
+      const state = windows.get(channelId);
+      if (state && !authorized(channelId)) evict(state);
+      setList({ ...list, channels: discovery.channels() }, true);
+    },
     resolve,
     searchPublic,
     findLabeled,
@@ -2326,6 +2369,12 @@ export function createChannelStore(
         state.atHead = true;
         state.restored = retained.restored === true;
         setWindow(state, patchFromHead(retained));
+      }
+      if (discovery?.isPending(channelId)) {
+        // A chat still starting has no history yet; its own sends show locally.
+        if (state.snapshot.status === "idle")
+          setWindow(state, { status: "ready", hasMore: false });
+        return;
       }
       clientMetrics.channelEnsured(
         channelId,

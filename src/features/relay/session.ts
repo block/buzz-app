@@ -315,6 +315,38 @@ export function createRelaySession(
             onReceipt: (event, message) => workflows.receipt(event, message),
             preparePublish: async (event, signal) => {
               workflows.validate(event);
+              // A chat this device is starting takes its events once the relay
+              // confirms it; its local agents hear its owner's messages now.
+              // The start's own create and member adds never wait on it.
+              const destination =
+                event.kind !== 9007 && event.kind !== 9000
+                  ? event.tags.find(([name]) => name === "h")?.[1]
+                  : undefined;
+              const starting =
+                destination && channelWrites.starting(destination);
+              if (destination && starting) {
+                if (event.kind === 9) hearStarting(event, destination);
+                // Waiting counts against the event's delivery deadline; one
+                // that timed out meanwhile goes again once the chat exists.
+                void starting.then(
+                  () => {
+                    const outbox = writes?.outbox;
+                    if (
+                      outbox
+                        ?.snapshot()
+                        .some(
+                          (item) =>
+                            item.event.id === event.id &&
+                            item.delivery === "failed",
+                        )
+                    )
+                      outbox.retry(event.id);
+                  },
+                  () => {},
+                );
+                await starting;
+                signal.throwIfAborted();
+              }
               if (event.kind === 40100) {
                 const id = event.tags.find((t) => t[0] === "h")?.[1];
                 if (!id) throw new Error("Canvas has no channel");
@@ -1076,6 +1108,20 @@ export function createRelaySession(
       traffic?.retry();
     },
   });
+  /** Hands the owner's signed message in a chat still starting to live
+   * listeners (local agents) before the relay can echo it. Listeners drop the
+   * later echo of the same event. */
+  function hearStarting(event: RelayEvent, channelId: string) {
+    if (closed) return;
+    const batch = Object.freeze({ events: Object.freeze([event]), channelId });
+    for (const listener of [...liveEventListeners, ...replayListeners]) {
+      try {
+        listener(batch);
+      } catch (error) {
+        console.error("Live listener failed", error);
+      }
+    }
+  }
   function validateMentions(channelId: string, pubkeys: readonly string[]) {
     if (!pubkeys.length) return;
     const channel = channels.queries

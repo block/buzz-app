@@ -980,6 +980,8 @@ function setup(
     status: "ready",
     channels: [],
   },
+  agents?: Parameters<typeof createChannelWrites>[6],
+  relayAuthor?: string,
 ) {
   let items: readonly OutgoingEvent[] = [{ event, delivery: "accepted" }];
   let channelList = initialList;
@@ -1036,6 +1038,8 @@ function setup(
     resolve,
     refreshRoster,
     refreshList,
+    start: vi.fn(),
+    abandon: vi.fn(),
   } as unknown as ChannelQueries;
   const reader = { read: vi.fn(async () => [event]) };
   const controller = new AbortController();
@@ -1047,8 +1051,8 @@ function setup(
       controller.signal,
       receipts,
       undefined,
-      undefined,
-      undefined,
+      agents,
+      relayAuthor,
       reader,
       channelCreation,
     ),
@@ -1815,4 +1819,95 @@ it("creates a NIP-CL system channel with its labels", () => {
     undefined,
     undefined,
   );
+});
+
+describe("starting a Solo chat", () => {
+  const id = "44444444-4444-4444-8444-444444444444";
+  const viewer = "f".repeat(64);
+  const agent = "a".repeat(64);
+  const listed = (members: string[]) => ({
+    status: "ready" as const,
+    channels: [{ id, name: "Work", channelType: "solo" as const, members }],
+  });
+
+  it("names its agents in the create, lists it at once, and settles once the roster shows them", async () => {
+    const test = setup();
+    test.resolve.mockImplementation(async () => {
+      test.setList(listed([viewer, agent]));
+    });
+    const { create, ready } = test.service.start(id, "Work", [agent]);
+    expect(create).toBe(event.id);
+    expect(test.outbox.send).toHaveBeenCalledExactlyOnceWith({
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", "Work"],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ["t", SOLO_LABEL],
+        ["p", agent],
+      ],
+    });
+    expect(test.channels.start).toHaveBeenCalledExactlyOnceWith({
+      id,
+      name: "Work",
+      members: [agent],
+      labels: [SOLO_LABEL],
+      ttlSeconds: undefined,
+    });
+    expect(test.service.starting(id)).toBe(ready);
+    await ready;
+    // The relay added the agent with the create: no separate add.
+    expect(test.outbox.send).toHaveBeenCalledOnce();
+    await flush();
+    expect(test.service.starting(id)).toBeUndefined();
+    expect(test.channels.abandon).not.toHaveBeenCalled();
+  });
+
+  it("adds the agents itself when an older relay leaves them out of the create", async () => {
+    const relay = keypair();
+    const test = setup(
+      true,
+      undefined,
+      { selectable: () => [agent], archived: () => false },
+      relay.pubkey,
+    );
+    test.reader.read.mockResolvedValue([roster(relay, id, [viewer])]);
+    test.resolve.mockImplementation(async () => {
+      test.setList(listed([viewer]));
+    });
+    test.refreshRoster.mockImplementation(async () => {
+      test.setList(listed([viewer, agent]));
+      return true;
+    });
+    await test.service.start(id, "Work", [agent]).ready;
+    expect(test.outbox.send).toHaveBeenLastCalledWith(
+      {
+        kind: 9000,
+        content: "",
+        tags: [
+          ["h", id],
+          ["p", agent],
+        ],
+      },
+      undefined,
+      undefined,
+    );
+  });
+
+  it("drops the pending chat when the create cannot be confirmed", async () => {
+    const test = setup();
+    test.setItems([{ event, delivery: "failed" }]);
+    test.reader.read.mockResolvedValue([]);
+    vi.mocked(test.outbox.retry).mockImplementation(() => {
+      test.setItems([{ event, delivery: "failed", error: "rejected" }]);
+      for (const fn of test.listeners) fn();
+    });
+    const { ready } = test.service.start(id, "Work", [agent]);
+    await expect(ready).rejects.toThrow("rejected");
+    await flush();
+    expect(test.channels.abandon).toHaveBeenCalledExactlyOnceWith(id);
+    expect(test.service.starting(id)).toBeUndefined();
+  });
 });

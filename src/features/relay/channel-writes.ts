@@ -236,6 +236,7 @@ export function createChannelWrites(
       );
       const matches = (channel: ChannelSummary) =>
         channel.id === id &&
+        !channel.pending &&
         (!soloOnly || channel.channelType === "solo") &&
         (!expected.member || channel.members?.includes(expected.member)) &&
         (!expected.members ||
@@ -265,7 +266,8 @@ export function createChannelWrites(
       // member addition re-reads that one roster through `refreshRoster`; a
       // channel the list lacks (just created) is admitted by `resolve`'s exact
       // metadata-and-roster read.
-      const listed = found((channel) => channel.id === id);
+      // A chat still pending is listed but unconfirmed: `resolve` admits it.
+      const listed = found((channel) => channel.id === id && !channel.pending);
       await Promise.race([
         gate,
         (async () => {
@@ -473,7 +475,9 @@ export function createChannelWrites(
     if (original?.channelType === "solo")
       await refresh(id, { members: unique });
   }
-  return Object.freeze({
+  /** Solo chats this device is starting, until they can take events. */
+  const starts = new Map<string, Promise<void>>();
+  const api = Object.freeze({
     available,
     addAgents,
     refreshMembership,
@@ -528,7 +532,13 @@ export function createChannelWrites(
         active,
       );
     },
-    create(id: string, title: string, ttlSeconds?: number, named = false) {
+    create(
+      id: string,
+      title: string,
+      ttlSeconds?: number,
+      named = false,
+      members: readonly string[] = [],
+    ) {
       writer();
       identifier(id);
       // Solo is a channel label, so a relay without NIP-CL cannot hold one.
@@ -554,8 +564,59 @@ export function createChannelWrites(
           ...channelLabelTags(
             named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
           ),
+          ...[...new Set(members)].map((key) => ["p", key]),
         ],
       });
+    },
+    /** Starts a Solo chat whose create names its `members`. It lists at once
+     * as pending; `ready` settles once the relay's roster shows every member,
+     * adding any that an older relay left out of the create. The chat's own
+     * events publish after `ready` (see `starting`). A refused create (see
+     * `failed`) drops the pending chat. */
+    start(
+      id: string,
+      title: string,
+      members: readonly string[],
+      ttlSeconds?: number,
+      named = false,
+    ) {
+      const create = api.create(id, title, ttlSeconds, named, members);
+      channels.start?.({
+        id,
+        name: title,
+        members,
+        labels: named ? [SOLO_LABEL, SOLO_NAMED_LABEL] : [SOLO_LABEL],
+        ttlSeconds,
+      });
+      const ready = (async () => {
+        // A lost acknowledgment resends the same create, which the relay
+        // confirms; only a refusal, or a third miss, ends the start.
+        for (let tries = 1; ; tries++) {
+          try {
+            await delivered(create);
+            await refresh(id);
+            break;
+          } catch (error) {
+            if (api.failed(create) || tries === 3 || signal.aborted)
+              throw error;
+          }
+        }
+        const listed = channels.list().channels.find((item) => item.id === id);
+        if (members.some((key) => !listed?.members?.includes(key)))
+          await addAgents(id, members);
+      })();
+      starts.set(id, ready);
+      // A chat that may exist stays listed until discovery decides.
+      void ready
+        .catch(() => {
+          if (api.failed(create)) channels.abandon?.(id);
+        })
+        .finally(() => starts.delete(id));
+      return { create, ready };
+    },
+    /** Settles when a chat this device is starting can take events. */
+    starting(id: string): Promise<void> | undefined {
+      return starts.get(id);
     },
     failed(id: string) {
       return (
@@ -580,4 +641,5 @@ export function createChannelWrites(
     delivered,
     refresh,
   });
+  return api;
 }

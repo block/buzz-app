@@ -592,6 +592,11 @@ function ChannelWorkspace({
       },
     });
   };
+  // A Solo start that fails returns to its draft only from its own chat.
+  const showing = useRef(requestedChannel);
+  useLayoutEffect(() => {
+    showing.current = requestedChannel;
+  });
   const chooseLatest = useRef(chooseLifecycle);
   useLayoutEffect(() => {
     chooseLatest.current = chooseLifecycle;
@@ -1543,6 +1548,10 @@ function ChannelWorkspace({
               scope={scope}
               extensions={extensions}
               onStarted={select}
+              onFailed={(channelId) => {
+                if (showing.current === channelId && navigator)
+                  void navigator.open(soloDraftTarget(scope, draft));
+              }}
             />
           ) : (
             <>

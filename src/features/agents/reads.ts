@@ -21,6 +21,8 @@ export type ChannelFacts = Readonly<{
   name?: string;
   dm: boolean;
   members: readonly string[];
+  /** The owner's device is still creating it, so it has nothing to read yet. */
+  starting?: true;
 }>;
 
 export type AgentReads = Readonly<{
@@ -88,6 +90,7 @@ export function ownerReads(
             ...(summary.name ? { name: summary.name } : {}),
             dm: summary.channelType === "dm",
             members: summary.members ?? [],
+            ...(summary.pending ? { starting: true as const } : {}),
           }
         : undefined;
     },

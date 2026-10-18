@@ -300,16 +300,16 @@ test("failed activity reads explain the filter and recover on Retry", async ({
   page,
   app,
 }, testInfo) => {
-  app.histories.set("primary/beta", [
+  app.histories.set("primary/delta", [
     app.sign({
       kind: 9,
-      tags: [["h", "beta"]],
+      tags: [["h", "delta"]],
       content: "Old update",
       created_at: Math.floor(Date.now() / 1000) - 60 * 86400,
     }),
   ]);
   const unknown = page.locator(
-    '[data-sidebar-section="channels"] [data-channel-id="beta"]',
+    '[data-sidebar-section="channels"] [data-channel-id="delta"]',
   );
   app.histories.set("primary/gamma", [
     app.sign({

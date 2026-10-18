@@ -293,3 +293,15 @@ it("retries the connection when roster access cannot be read offline", () => {
   expect(f.relay.retry).toHaveBeenCalledTimes(1);
   f.access.dispose();
 });
+
+it("treats an unpublished member list as unavailable rather than a retryable failure", async () => {
+  const f = setup();
+  const release = f.access.ensure();
+  f.rosterGate.resolve([]);
+  await vi.waitFor(() =>
+    expect(f.access.status("buzz.moderation")).toBe("unavailable"),
+  );
+  expect(f.access.membership.snapshot().error).toBeFalsy();
+  release();
+  f.access.dispose();
+});

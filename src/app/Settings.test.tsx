@@ -615,12 +615,14 @@ it("opens each plugin's existing metadata and controls in a detail aside", () =>
     screen.getByRole("complementary", { name: "External helper details" }),
   ).getByRole("button", { name: "Enable" });
   expect(pending).toHaveAttribute("aria-disabled", "true");
+  expect(pending).toHaveAttribute("data-variant", "prominent");
   vi.mocked(plugins.change).mockClear();
   fireEvent.click(pending);
   const pendingRow = screen.getByRole("button", {
     name: "Enable External helper",
   });
   expect(pendingRow).toHaveAttribute("aria-disabled", "true");
+  expect(pendingRow).toHaveAttribute("data-variant", "prominent");
   fireEvent.click(pendingRow);
   expect(plugins.change).not.toHaveBeenCalled();
 });
@@ -1705,10 +1707,11 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     });
     const user = userEvent.setup();
     const action = screen.getByRole("button", {
-      name: "Checking access… Restricted plugin",
+      name: "Enable Restricted plugin",
     });
     expect(action).toHaveAttribute("aria-disabled", "true");
     expect(action).toHaveAttribute("data-variant", "outline");
+    expect(action).toHaveAttribute("aria-busy", "true");
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     await user.hover(action);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
@@ -1727,7 +1730,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       name: "Restricted plugin details",
     });
     let enable = within(pane).getByRole("button", {
-      name: "Checking access…",
+      name: "Enable",
     });
     expect(enable).toHaveAttribute("aria-disabled", "true");
     expect(enable).toHaveAttribute("data-variant", "outline");
@@ -1769,7 +1772,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     expect(f.manager.change).toHaveBeenCalledWith("enable", id);
     act(() => {
       restricted.enabled = true;
-      state = "denied";
+      state = "error";
       f.publish();
       for (const listener of listeners) listener();
     });
@@ -1777,6 +1780,9 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       name: /^Disable$/,
     });
     expect(disable).not.toHaveAttribute("aria-disabled", "true");
+    expect(
+      within(pane).queryByRole("button", { name: "Check access again" }),
+    ).not.toBeInTheDocument();
     await user.click(disable);
     expect(f.manager.change).toHaveBeenLastCalledWith("disable", id);
     cleanup();

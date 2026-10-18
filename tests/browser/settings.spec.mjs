@@ -1,4 +1,5 @@
-import { settleShellToggle } from "./navigation.mjs";
+import { setPluginEnabled } from "./plugin-settings.mjs";
+import { settleShellToggle, selectSettingsSection } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -229,9 +230,11 @@ test.describe("community administration permissions", () => {
     const sections = page.getByRole("navigation", {
       name: "Settings sections",
     });
-    await expect(sections).toContainText("Administration");
     // The account menu finishes its focus handoff before testing section focus.
     await expect(page.getByRole("main")).toBeFocused();
+    await selectSettingsSection(page, "Plugins");
+    await setPluginEnabled(page, "Membership", true);
+    await expect(sections).toContainText("Administration");
     const membership = sections.getByRole("button", {
       name: "Membership",
       exact: true,

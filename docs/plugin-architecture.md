@@ -258,7 +258,9 @@ placement; the shell presents Channels as Messages and orders Me before Messages
 Messages remains the startup destination. Selecting Me changes neither community
 scope nor the legacy Home-to-Messages mapping.
 
-Saved enabled/disabled flags win over defaults (except required Channels). There
+Saved enabled/disabled flags win over defaults (except required Channels). Profiles
+without a saved flag use the current default, so changing a default also changes
+those existing profiles. There
 is no migration or forced reset: a browser profile that previously saved its full
 plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
 overrides. Default-on does not promise platform support: Terminal contributes UI

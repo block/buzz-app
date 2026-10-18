@@ -86,7 +86,7 @@ export function createAdminAccess(
       } catch {
         return "unavailable";
       }
-      if (!state.members) return "error";
+      if (!state.members) return "unavailable";
       return canManageMembership(state) ? "allowed" : "denied";
     },
     retry(id: string) {

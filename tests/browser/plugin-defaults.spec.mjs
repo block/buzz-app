@@ -77,9 +77,10 @@ test("Membership action removes and restores the working Invite destination", as
   await plugins(page);
   const admin = pluginAction(page, "Membership");
   await expect(admin).toHaveAccessibleName(/^Enable /);
-  await expect(pluginAction(page, "Moderation")).toHaveAccessibleName(
-    /^Enable /,
-  );
+  const moderation = pluginAction(page, "Moderation");
+  await expect(moderation).toHaveAccessibleName("Unavailable Moderation");
+  await expect(moderation).toHaveAttribute("aria-disabled", "true");
+  await expect(moderation).toHaveAttribute("data-variant", "outline");
   await admin.click();
   await expect(admin).toHaveAccessibleName(/^Disable /);
   await menu();

@@ -216,7 +216,7 @@ function restrictedPlugin(plugin: PluginInfo) {
 function pluginActionLabel(plugin: PluginInfo, access: AdminAccessState) {
   if (plugin.enabled) return "Disable";
   if (restrictedPlugin(plugin) && access !== "allowed")
-    return access === "checking" ? "Checking access…" : "Unavailable";
+    return access === "checking" ? "Enable" : "Unavailable";
   return "Enable";
 }
 
@@ -336,11 +336,7 @@ function PluginDetails({
         ) : (
           <Button
             variant={
-              plugin.enabled
-                ? "subtle"
-                : busy || accessReason
-                  ? "outline"
-                  : "prominent"
+              plugin.enabled ? "subtle" : accessReason ? "outline" : "prominent"
             }
             size="sm"
             disabled={
@@ -356,6 +352,11 @@ function PluginDetails({
                   : accessReason
                 : undefined
             }
+            loading={
+              !plugin.enabled &&
+              restrictedPlugin(plugin) &&
+              access === "checking"
+            }
             focusableWhenDisabled
             ref={toggle}
             onClick={onToggle}
@@ -364,7 +365,7 @@ function PluginDetails({
           </Button>
         )}
       </div>
-      {accessReason && access === "error" && (
+      {!plugin.enabled && accessReason && access === "error" && (
         <div className={styles.pluginAccess}>
           <Button
             size="sm"
@@ -859,7 +860,7 @@ export function Settings({
                           variant={
                             plugin.enabled
                               ? "subtle"
-                              : busy || accessReason
+                              : accessReason
                                 ? "outline"
                                 : "prominent"
                           }
@@ -875,6 +876,11 @@ export function Settings({
                             !plugin.enabled && accessReason
                               ? accessReason
                               : undefined
+                          }
+                          loading={
+                            !plugin.enabled &&
+                            restrictedPlugin(plugin) &&
+                            access === "checking"
                           }
                           focusableWhenDisabled
                           onClick={() => togglePlugin(plugin)}

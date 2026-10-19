@@ -7246,6 +7246,10 @@ describe("Delete as a recoverable archive", () => {
     await f.ctx.fiber.dispose();
   });
 
+  /** The head a team editor opened, as the editor sends it: absent when none. */
+  const baseOf = (team: { base?: string } | undefined) =>
+    team?.base === undefined ? {} : { base: team.base };
+
   /** The real per-agent config wiring over an in-memory config relay that
    * outlives each service, so restarts and reconnects meet the same heads. */
   function configRelay(
@@ -7833,6 +7837,45 @@ describe("Delete as a recoverable archive", () => {
     }
   });
 
+  it("refuses a Save from a synced team's form opened while it was unreadable", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      const id = "6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
+      await relay.remoteTeam(id, [alder]);
+      const config = relay.opens.mock.results[0]?.value;
+      if (!config) throw new Error("Missing config");
+      await config.refreshTeams();
+      relay.failTeamReads.value = true;
+      await config.refreshTeams();
+      const opened = f.service.snapshot().teams.find((t) => t.id === id);
+      expect(opened).toMatchObject({ instructions: "", note: UNREADABLE_TEAM });
+      // Discovery recovers before Save.
+      relay.failTeamReads.value = false;
+      await config.refreshTeams();
+      await expect(
+        f.service.saveTeam({
+          id,
+          creation: crypto.randomUUID(),
+          name: "Renamed",
+          instructions: opened?.instructions ?? "",
+          members: [alder],
+          ...baseOf(opened),
+        }),
+      ).rejects.toThrow("can't be read");
+      const head = [...relay.heads.values()].find((h) =>
+        h.tags.some(([name, value]) => name === "team" && value === id),
+      );
+      expect(JSON.parse(head?.content ?? "{}").instructions).toBe("TEAM RULE");
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it("the discovered card refuses dropping a joined member of its unfinished Create", async () => {
     const relay = configRelay();
     communityFake.value = relay.opens;
@@ -8015,6 +8058,10 @@ describe("Delete as a recoverable archive", () => {
         f.service.saveTeam({
           ...team,
           id: team.creation,
+          // The card's editor keeps the head it opened.
+          ...baseOf(
+            f.service.snapshot().teams.find((t) => t.id === team.creation),
+          ),
           creation: crypto.randomUUID(),
           members: [alder],
         }),
@@ -8105,6 +8152,10 @@ describe("Delete as a recoverable archive", () => {
       await relay.opens.mock.results.at(-1)?.value.resumeTeams();
       const card = {
         id: team.creation,
+        // The card's editor keeps the head it opened.
+        ...baseOf(
+          again.service.snapshot().teams.find((t) => t.id === team.creation),
+        ),
         creation: crypto.randomUUID(),
         name: "Partial",
         instructions: "RULE",
@@ -8181,6 +8232,10 @@ describe("Delete as a recoverable archive", () => {
       await expect(
         f.service.saveTeam({
           id: team.creation,
+          // The card's editor keeps the head it opened.
+          ...baseOf(
+            f.service.snapshot().teams.find((t) => t.id === team.creation),
+          ),
           creation: crypto.randomUUID(),
           name: "Partial",
           instructions: "RULE",

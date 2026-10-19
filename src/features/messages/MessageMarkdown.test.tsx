@@ -16,6 +16,7 @@ import referenceStyles from "../../shared/InlineReference.module.css";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import type {
+  CodeBlockRenderer,
   ConversationExtensions,
   InlineRenderer,
 } from "../conversation/contracts";
@@ -1043,6 +1044,106 @@ describe("code block copy", () => {
 
   it("omits the copy action in noninteractive previews", () => {
     expect(render(fenced, { interactive: false })).not.toContain("<button");
+  });
+});
+
+describe("code block renderers", () => {
+  const fenced =
+    "Before\n\n```Mermaid\nflowchart LR\n  A --> B\n```\n\n```ts\nconst x = 1\n```";
+  const diagram = (
+    component: CodeBlockRenderer["component"],
+  ): Contribution<CodeBlockRenderer> => ({
+    id: "diagram",
+    key: "test/diagram",
+    pluginId: "test",
+    revision: "1",
+    title: "Diagram",
+    matches: (language) => language === "Mermaid",
+    component,
+  });
+  const drawn = diagram(({ code, language }) => (
+    <figure data-language={language}>{code}</figure>
+  ));
+  function store(initial: readonly Contribution<CodeBlockRenderer>[]) {
+    let entries = initial;
+    const listeners = new Set<() => void>();
+    return {
+      snapshot: () => entries,
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      swap(next: readonly Contribution<CodeBlockRenderer>[]) {
+        entries = next;
+        act(() => {
+          for (const listener of listeners) listener();
+        });
+      },
+    };
+  }
+
+  it("presents matching blocks with the host copy action and leaves other languages", async () => {
+    const user = userEvent.setup();
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue();
+    const codeBlocks = store([drawn]);
+    const view = renderDom(
+      <MessageMarkdown
+        {...props(fenced, { extensions: { ...extensions, codeBlocks } })}
+      />,
+      { wrapper: ToastProvider },
+    );
+    const figure = view.container.querySelector("figure");
+    expect(figure).toHaveAttribute("data-language", "Mermaid");
+    expect(figure?.textContent).toBe("flowchart LR\n  A --> B");
+    expect(view.container.querySelectorAll("pre")).toHaveLength(1);
+    expect(view.container.querySelector("pre")?.textContent).toContain(
+      "const x = 1",
+    );
+    const copy = screen.getAllByRole("button", { name: "Copy code block" });
+    // The presented block precedes the plain one.
+    await user.click(copy[0] as HTMLElement);
+    expect(write).toHaveBeenCalledWith("flowchart LR\n  A --> B");
+
+    // Removing the plugin restores the plain block.
+    codeBlocks.swap([]);
+    expect(view.container.querySelector("figure")).toBeNull();
+    expect(view.container.querySelectorAll("pre")).toHaveLength(2);
+  });
+
+  it("restores the plain block when the renderer fails, and retries on re-enable", () => {
+    const codeBlocks = store([
+      diagram(() => {
+        throw new Error("broken renderer");
+      }),
+    ]);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const view = renderDom(
+        <MessageMarkdown
+          {...props(fenced, { extensions: { ...extensions, codeBlocks } })}
+        />,
+        { wrapper: ToastProvider },
+      );
+      expect(view.container.querySelectorAll("pre")).toHaveLength(2);
+      expect(
+        screen.getAllByRole("button", { name: "Copy code block" }),
+      ).toHaveLength(2);
+      codeBlocks.swap([drawn]);
+      expect(view.container.querySelector("figure")).not.toBeNull();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("keeps plain code in noninteractive previews", () => {
+    const html = render(fenced, {
+      interactive: false,
+      extensions: { ...extensions, codeBlocks: store([drawn]) },
+    });
+    expect(html).not.toContain("<figure");
+    expect(html).toContain('<code class="language-Mermaid">');
   });
 });
 

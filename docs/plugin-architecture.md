@@ -987,6 +987,21 @@ contract or relay protocol changes are required. Known channel references and
 unambiguous signed person/agent mentions share the inline hover styling. Names in
 ordinary prose never create notification intent or establish an identity.
 
+`registerCodeBlock({ id, title, matches, component, action? })` contributes optional
+presentation for a fenced code block. `matches(language)` receives the fence's
+info-string language as written; `component` and `action` receive `{ code, language }`. The
+host retains the code frame and its copy action, which copies the source; it
+places the optional `action` control, such as an expand button, before copy.
+Matching uses the same resolution as links without an `order`; throwing matchers
+are skipped. A render failure or plugin removal restores the plain block, and
+noninteractive previews always show the plain block. The bundled **Mermaid
+diagrams** plugin (`buzz.mermaid`) draws `mermaid` blocks with
+[Pele](https://pele.run), loaded on first use. Diagrams are untrusted content: Pele escapes
+their text and the plugin disables diagram links, images and Pele's own zoom
+controls. Its action opens the diagram in an expanded dialog, which zooms by
+pinch, Ctrl/⌘-scroll, drag, double-click and keyboard and offers Copy code.
+Invalid source shows Pele's error with the source.
+
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components, plus `.Tabs` while a plugin provides it. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer

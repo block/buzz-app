@@ -67,6 +67,7 @@
     "micromark-extension-gfm-table": "2.1.1",
     "motion": "12.40.0",
     "nostr-tools": "2.25.2",
+    "pele": "1.6.0",
     "prosemirror-commands": "1.7.1",
     "prosemirror-history": "1.5.0",
     "prosemirror-model": "1.25.8",

@@ -52,6 +52,7 @@ const nonIconDependencies = new Set([
   "micromark-extension-gfm-table",
   "motion",
   "nostr-tools",
+  "pele",
   "postcss",
   "prosemirror-commands",
   "prosemirror-history",

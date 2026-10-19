@@ -8,6 +8,8 @@ import * as builderlab from "./builderlab";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
+import mermaidManifest from "./mermaid/manifest.json";
+import * as mermaid from "./mermaid";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -94,6 +96,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...diffsManifest, apiVersion: 1 },
     module: diffs,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...mermaidManifest, apiVersion: 1 },
+    module: mermaid,
     enabledByDefault: true,
   },
   {

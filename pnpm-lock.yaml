@@ -100,6 +100,9 @@ importers:
       nostr-tools:
         specifier: 2.25.2
         version: 2.25.2(typescript@7.0.2)
+      pele:
+        specifier: 1.6.0
+        version: 1.6.0
       prosemirror-commands:
         specifier: 1.7.1
         version: 1.7.1
@@ -1652,6 +1655,10 @@ packages:
 
   parse5@8.0.1:
     resolution: {integrity: sha512-z1e/HMG90obSGeidlli3hj7cbocou0/wa5HacvI3ASx34PecNjNQeaHNo5WIZpWofN9kgkqV1q5YvXe3F0FoPw==}
+
+  pele@1.6.0:
+    resolution: {integrity: sha512-VfAiVItsOGlGhvnBfphdT28VCG7mXMZxQNOwAGsCtxI2ztbUsT39MraEOYjsapLxVETkdUZscm0DdotYDQMLdw==}
+    engines: {node: '>=20'}
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
@@ -3420,6 +3427,8 @@ snapshots:
   parse5@8.0.1:
     dependencies:
       entities: 8.1.0
+
+  pele@1.6.0: {}
 
   picocolors@1.1.1: {}
 

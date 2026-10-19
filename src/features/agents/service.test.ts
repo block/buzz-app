@@ -7663,6 +7663,65 @@ describe("Delete as a recoverable archive", () => {
     expect(relay.channels.size).toBe(1);
   });
 
+  it("with config sync on, an explicit Import carries saved templates from the earlier import's local copy, across a restart", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const storage = memoryStorage();
+    // Birch belongs to another owner, so the copy never moves on its own.
+    const copy = savedShift([alder, birch]);
+    writeTeams(storage, [copy]);
+    const template = channelTemplates.save({
+      name: "Shift",
+      teams: [copy.id],
+      agents: [],
+      canvas: "",
+    });
+    const identities = [
+      here(alder),
+      { ...here(birch), owner: keypair().pubkey },
+    ];
+    const expected = await importedTeamId({
+      owner: viewer,
+      community: COMMUNITY_UUID,
+      source: "old-buzz-team",
+      sourceId: "old-night-shift",
+    });
+    const first = await setup({ storage, identities });
+    try {
+      listsTeam(first.native, nightShift([alder]));
+      await vi.waitFor(() =>
+        expect(first.service.find(alder)?.configBase).toBeDefined(),
+      );
+      expect((await importTeam(first.service)).team?.id).toBe(expected);
+      expect(readTeams(storage)).toEqual([]);
+    } finally {
+      await first.ctx.fiber.dispose();
+    }
+    const f = await setup({ storage, identities });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.snapshot().teams.map((t) => t.id)).toEqual([expected]),
+      );
+      const saved = channelTemplates
+        .snapshot()
+        .find((t) => t.id === template.id);
+      expect(saved?.teams).toEqual([expected]);
+      // The create dialog's expansion, from the teams Agents shows.
+      expect(
+        saved &&
+          templateAgents(saved, f.service.snapshot().teams, new Set([alder])),
+      ).toEqual([alder]);
+      // The agent-facing expansion.
+      mentionAlder(f, "shift");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
+      expect(f.run.mock.calls.at(-1)?.[0].agent.templates()).toContainEqual(
+        expect.objectContaining({ name: "Shift", agents: [alder] }),
+      );
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it("with config sync on, moves an earlier import's local copy onto the old Buzz team's id", async () => {
     const relay = configRelay();
     communityFake.value = null;

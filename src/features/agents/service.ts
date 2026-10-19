@@ -2186,8 +2186,7 @@ export class AgentsService extends Service implements Agents {
           teamError: { name: old.name },
         };
       // An earlier import's local copy is this team now.
-      if (saved)
-        this.writeTeams(this.teamList.filter((local) => local !== saved));
+      if (saved) await this.retireLocalTeam(saved.id, entry.teamId);
       return { ...result, team };
     }
     // A saved team is rewritten so the members judged out leave it; a new
@@ -2755,6 +2754,13 @@ export class AgentsService extends Service implements Agents {
     else if (action === "dismiss") await config.dismissTeamOp(id);
     else config.discardTeamOp(id);
     this.showTeams();
+  }
+
+  /** Local team `id` is relay team `teamId` now: saved templates follow
+   * the team before its old id goes. */
+  private async retireLocalTeam(id: string, teamId: string) {
+    channelTemplates.replaceTeam(id, teamId);
+    await this.writeTeams(this.teamList.filter((team) => team.id !== id));
   }
 
   /** Saves the teams; memory changes once storage has taken them, and the
@@ -3800,11 +3806,7 @@ export class AgentsService extends Service implements Agents {
         info: (signal) => nativeRelayInfo(origin, signal),
         strip: (pubkey, side, accepted) =>
           this.stripLocal(pubkey, side, accepted),
-        retire: async (id, teamId) => {
-          // Saved templates follow the team before its old id goes.
-          channelTemplates.replaceTeam(id, teamId);
-          await this.writeTeams(this.teamList.filter((team) => team.id !== id));
-        },
+        retire: (id, teamId) => this.retireLocalTeam(id, teamId),
         changed: () => {
           this.showTeams();
           this.update();

@@ -759,6 +759,7 @@ function ChannelWorkspace({
     leadingIds: settings ? ["settings"] : [],
     threadId: routedThread?.messageId,
     mainPane: true,
+    navigation: navigator,
     routed: routedThread,
     onCloseThread: (tab, active, last) => {
       // Closing the addressed thread returns the route to its channel, so a

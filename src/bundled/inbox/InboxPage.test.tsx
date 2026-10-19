@@ -3249,9 +3249,9 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
     ).toBe(true),
   );
   await act(async () => {});
-  expect(
-    screen.getByRole("textbox", { name: "Message #Design" }),
-  ).toHaveValue("Draft in progress");
+  expect(screen.getByRole("textbox", { name: "Message #Design" })).toHaveValue(
+    "Draft in progress",
+  );
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),
   ).not.toBeInTheDocument();

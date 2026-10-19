@@ -1137,6 +1137,36 @@ describe("code block renderers", () => {
     }
   });
 
+  it("retries the renderer when an edit changes a block it failed on", () => {
+    const codeBlocks = store([
+      diagram(({ code }) => {
+        if (code.includes("(")) throw new Error("unsupported source");
+        return <figure>{code}</figure>;
+      }),
+    ]);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const block = (source: string) => (
+        <MessageMarkdown
+          {...props(`\`\`\`Mermaid\n${source}\n\`\`\``, {
+            extensions: { ...extensions, codeBlocks },
+          })}
+        />
+      );
+      const view = renderDom(block("A --> ("), { wrapper: ToastProvider });
+      expect(view.container.querySelector("figure")).toBeNull();
+      expect(view.container.querySelector("pre")?.textContent).toContain(
+        "A --> (",
+      );
+      view.rerender(block("A --> B"));
+      expect(view.container.querySelector("figure")?.textContent).toBe(
+        "A --> B",
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it("keeps plain code in noninteractive previews", () => {
     const html = render(fenced, {
       interactive: false,

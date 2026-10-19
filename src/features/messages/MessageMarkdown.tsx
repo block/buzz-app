@@ -795,7 +795,10 @@ function CodeBlock({
   if (!renderer) return fallback;
   const { component: Renderer, action: Action } = renderer;
   return (
-    <ContributionBoundary key={contributionKey(renderer)} fallback={fallback}>
+    <ContributionBoundary
+      key={`${contributionKey(renderer)}:${language}:${code}`}
+      fallback={fallback}
+    >
       <div className={styles.codeBlock}>
         <Renderer code={code} language={language} />
         <CodeActions code={code}>

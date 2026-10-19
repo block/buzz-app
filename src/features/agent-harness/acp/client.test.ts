@@ -46,6 +46,8 @@ function fakeHarness(
     hold?: boolean;
     /** Kill asks it to stop, and it never exits. */
     holdExit?: boolean;
+    /** Rejects this many prompts first, as a harness signed out does. */
+    rejectPrompts?: number;
   }> = {},
 ) {
   const started: {
@@ -61,6 +63,7 @@ function fakeHarness(
     finish(): void;
   }[] = [];
   let servers = 0;
+  let rejectPrompts = options.rejectPrompts ?? 0;
   const serve = async (): Promise<HostMcpServer> => {
     const index = ++servers;
     let stopped!: () => void;
@@ -127,7 +130,10 @@ function fakeHarness(
           else if (method === "session/new")
             reply(id, { sessionId: `session-${++sessions}` });
           else if (method === "session/close") reply(id, {});
-          else if (method === "session/prompt") {
+          else if (method === "session/prompt" && rejectPrompts > 0) {
+            rejectPrompts--;
+            send({ id, error: { code: -32000, message: "Sign in first" } });
+          } else if (method === "session/prompt") {
             const sessionId = String(params.sessionId);
             const text = (params.prompt as { text: string }[])[0]?.text ?? "";
             const runId = `run-${turns.length + 1}`;
@@ -269,6 +275,36 @@ describe("starting a harness", () => {
     expect(harness.started[0]?.kills).toBe(1);
   });
 
+  it("rejects at once when cancelled while the host is still starting it, and stops the late harness", async () => {
+    const harness = fakeHarness();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const spawn: typeof harness.spawn = async (...args) => {
+      await gate;
+      return harness.spawn(...args);
+    };
+    const controller = new AbortController();
+    const starting = AcpProcess.start(spawn, HOOKS, {
+      cwd: "/work",
+      serve: harness.serve,
+      signal: controller.signal,
+    });
+    const outcome = starting.then(
+      () => "started",
+      (error: Error) => error.message,
+    );
+    await flush();
+    controller.abort(new Error("Check was cancelled"));
+    await flush();
+    expect(await Promise.race([outcome, Promise.resolve("pending")])).toBe(
+      "Check was cancelled",
+    );
+    expect(harness.started).toEqual([]);
+    release();
+    await flush();
+    expect(harness.started[0]?.killed).toBe(true);
+  });
+
   it("starts nothing when already cancelled", async () => {
     const harness = fakeHarness();
     const controller = new AbortController();
@@ -371,6 +407,20 @@ describe("a session without hooks", () => {
     expect(harness.turns.map((turn) => turn.text)).toEqual([
       "Be Buzz.\n\nfirst",
       "second",
+    ]);
+  });
+
+  it("keeps the instructions for the next prompt when the first is rejected", async () => {
+    const harness = fakeHarness({ rejectPrompts: 1 });
+    const acp = await start(harness);
+    const session = await acp.open({ cwd: "/work", systemPrompt: "Be Buzz." });
+    await expect(session.send("first")).resolves.toMatchObject({
+      ok: false,
+      error: "Sign in first",
+    });
+    await expect(session.send("second")).resolves.toMatchObject({ ok: true });
+    expect(harness.turns.map((turn) => turn.text)).toEqual([
+      "Be Buzz.\n\nsecond",
     ]);
   });
 

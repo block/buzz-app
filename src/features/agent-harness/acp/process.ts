@@ -113,7 +113,7 @@ export class AcpProcess {
     let acp: AcpProcess | undefined;
     const early: string[] = [];
     const earlyErrors: string[] = [];
-    const process = await spawn(hooks.program, {
+    const spawning = spawn(hooks.program, {
       cwd: launch.cwd,
       ...(launch.args ? { args: launch.args } : {}),
       env: { ...hooks.env, ...launch.env, ...PROTECTED_ENV },
@@ -123,6 +123,18 @@ export class AcpProcess {
       throw /os error 2|no such file|not found/i.test(errorMessage(error))
         ? new Error(hooks.missing)
         : error;
+    });
+    // A cancel while the host starts it rejects at once; the harness that
+    // starts after it is stopped.
+    const process = await new Promise<HostProcess>((resolve, reject) => {
+      const cancel = () => {
+        reject(signal?.reason);
+        void spawning.then((late) => late.kill()).catch(() => undefined);
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
+      void spawning
+        .then(resolve, reject)
+        .finally(() => signal?.removeEventListener("abort", cancel));
     });
     acp = new AcpProcess(process, hooks, launch.serve);
     for (const data of earlyErrors) acp.readError(data);

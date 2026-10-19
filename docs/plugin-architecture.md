@@ -536,6 +536,8 @@ external JSX plugins declare `inject = ["react"]` to use the shared instance. Th
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
 
+### Discovery metadata
+
 Plugin manifests may include display-only discovery metadata:
 
 ```json
@@ -545,7 +547,7 @@ Plugin manifests may include display-only discovery metadata:
   "apiVersion": 1,
   "description": "Reconcile invoices without leaving Buzz.",
   "discovery": {
-    "category": "finance",
+    "category": "productivity",
     "tags": ["Accounting", "Invoice Management"]
   }
 }
@@ -570,6 +572,100 @@ security-bearing manifest fields remain strict.
 Hosts released before these metadata fields were introduced reject `description`
 and `discovery` as unknown manifest keys. Publishers targeting those hosts must
 omit both fields; using slug tags does not make them compatible.
+
+### Writing plugin discovery metadata
+
+Choose one primary category by the plugin's purpose. The current Settings
+categories are defined in [`src/app/plugin-categories.ts`](../src/app/plugin-categories.ts):
+
+| Category ID | Settings label | Use for |
+| --- | --- | --- |
+| `communication` | Communication | Composing, reading and navigating conversations. |
+| `agents` | Agents | Agent runtimes and configuration. |
+| `agent-tools` | Agent tools | Utilities for working with agents and their activity. |
+| `developer-tools-and-integrations` | Developer tools & integrations | Developer workflows and connections to other products. |
+| `people-and-communities` | People & communities | Profiles, membership and community or relay administration. |
+| `productivity` | Productivity | Tasks, reminders and personal work. |
+
+These are host-recognized choices, not a closed manifest enum. Omitted or
+unrecognized categories appear under Other. For bundled plugins, the catalog test
+requires a non-empty description and a recognized category. External authors can
+use other valid slugs, but should use a recognized one when it fits.
+
+Write the description around **what the plugin does**. For example, Voice Notes
+uses "Record voice notes and play them in conversations." Name an entry point
+only when it is not obvious, using the labels people see in Buzz. Leave the
+walkthrough to the README. Avoid feature inventories, implementation details and
+repeating an obvious page name just to fill the byte budget.
+
+Use tags for useful topics or search terms that the category and description do
+not already explain. Both plain-text terms and slugs are valid; the schema does
+not require one naming style. Categories describe purpose; they do not list every
+UI surface a plugin touches. Keep `Essentials` and `Core` for host-curated bundled
+metadata; external plugins should not use them. This is authoring guidance, not a
+manifest validation rule. Discovery tags must not claim permissions, signing,
+provenance or runtime health; the host owns those decisions and states.
+
+### Make bundled plugins distinct
+
+Each bundled plugin must be distinguishable from the others at a glance. Choose
+a name and description that make its job and scope clear, including who it is
+for when that matters. Similar plugins should explain their different jobs in
+the catalog itself; people should not need to open both READMEs to tell them
+apart. For example, community administration concerns one community's members,
+roles and invitations, while relay administration concerns reports, feedback and
+communities across a relay for authorized relay staff.
+
+Artwork should reinforce that distinction with a recognizable subject or
+silhouette while following Buzz's shared visual style. Avoid giving neighboring
+plugins near-identical imagery or relying on color alone to distinguish them.
+Before adding or changing a bundled plugin, authors and reviewers must compare
+its name, description and artwork with the existing catalog, especially plugins
+with similar names or purposes in the same category. Check whether someone new
+to Buzz can tell what each adds and which one they need. Revise ambiguous copy
+or imagery before considering the plugin ready.
+
+### Writing the plugin README
+
+Keep the user guide short and positive: `# <plugin name>`, a couple of sentences
+about what it adds, then one `## Getting started` heading with basic steps. Put
+entry points and any required setup in those steps. Focus on using the plugin;
+skip default-enabled status and descriptions of what turning it off removes.
+For bundled plugins, `src/bundled/readmes.test.ts` enforces this heading structure.
+Contributor specifications may follow a `---` separator after the user guide.
+Settings still displays that content below the guide; the separator only limits
+the heading check in the test.
+
+For example, the bundled Voice Notes guide uses:
+
+```markdown
+# Voice Notes
+
+Record a voice note when talking is easier than typing.
+
+## Getting started
+
+1. Choose **Record voice note** (the microphone) in the composer.
+2. Choose **Finish voice note** to attach it, then send.
+3. Play voice notes in conversations, and change their speed if you like.
+```
+
+README packaging and display are separate. Settings displays only READMEs shipped
+with Buzz for bundled plugins; it does not display packaged READMEs from external
+installations. External authors can still package a README, but should not promise
+that it will appear in Settings.
+
+For that bundled renderer, use ordinary Markdown and external HTTPS links.
+Credential-free HTTP links are also accepted; relative and in-page links render
+as text. Raw HTML is skipped and images render as alt text rather than loading
+remote media or data URLs. Put an external build's README beside `manifest.json`
+and `plugin.js`; a repository-level README is not automatically included.
+The [packaging rules below](#loading-from-folders-and-repositories) cover the
+README/icon size limits, reserved filenames and signature coverage.
+See the [example authoring walkthrough](../examples/plugins/README.md#add-discovery-metadata-and-a-readme)
+for a manifest with these optional fields.
+
+### Declaring host access
 
 Plugins can separately declare host access in `manifest.json`:
 
@@ -733,8 +829,9 @@ capability boundary as folder import.
 
 These files are publisher-supplied presentation content, not an endorsement or a
 runtime asset directory. Buzz-owned framing and fallback artwork remain
-authoritative. A future README renderer must keep raw HTML/scripts disabled and
-must not load embedded data URLs or passive remote media; the package API does not
+authoritative. Any surface that renders packaged READMEs must keep raw HTML and
+scripts disabled and must not load embedded data URLs or passive remote media; the
+bundled README renderer already follows these rules. The package API does not
 turn README links, images, or the icon into plugin runtime resources.
 
 A signed installation can only update from the same publisher; remove and

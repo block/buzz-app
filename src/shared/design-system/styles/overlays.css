@@ -479,3 +479,18 @@ html[data-keyboard-navigation]
     gap: var(--space-2);
   }
 }
+
+@layer components {
+  .buzz-dialog[data-presentation="search"] {
+    --dialog-padding: var(--space-3);
+    --search-palette-radius: calc(var(--radius-panel) + var(--space-1));
+    border-radius: var(--search-palette-radius);
+    padding-top: 0;
+    corner-shape: squircle;
+    background: var(--surface-panel);
+  }
+  .buzz-dialog[data-presentation="search"] > .buzz-dialog-body {
+    /* Keep the focus perimeter inside the body scrollport. */
+    padding-top: var(--dialog-padding);
+  }
+}

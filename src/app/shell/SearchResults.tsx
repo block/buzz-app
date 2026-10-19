@@ -83,6 +83,7 @@ const PERSON_ROWS = 6;
 
 export function SearchResults({
   session,
+  inlineSettings,
   query,
   onQueryChange,
   input,
@@ -906,6 +907,7 @@ export function SearchResults({
           ? [
               {
                 label: messageOrder,
+                rank: Infinity,
                 destinations: search.hasMore
                   ? [
                       ...messages,
@@ -934,13 +936,6 @@ export function SearchResults({
                     list.status === "loading"
                       ? "Loading recent conversations…"
                       : "No recent activity yet.",
-                },
-                {
-                  label: "Actions",
-                  destinations: pages.map((page) => ({
-                    ...page,
-                    run: choose(page.key, page.run),
-                  })),
                 },
               ]
             : [
@@ -986,12 +981,13 @@ export function SearchResults({
                   },
                 ]
                   .sort((a, b) => a.best - b.best)
-                  .map(({ best: _, ...group }) => group),
+                  .map(({ best, ...group }) => ({ ...group, rank: best })),
                 ...(scopeAction.length
                   ? [{ label: "This conversation", destinations: scopeAction }]
                   : []),
                 {
                   label: messageOrder,
+                  rank: Infinity,
                   destinations: messages,
                   empty:
                     matchingChannels.length ||
@@ -1004,6 +1000,7 @@ export function SearchResults({
               ];
   return (
     <SearchChoices
+      inlineSettings={inlineSettings}
       query={query}
       onQueryChange={onQueryChange}
       authorChip={
@@ -1019,11 +1016,6 @@ export function SearchResults({
       onDisplayQueryChange={updateDisplayQuery}
       input={input}
       label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
-      placeholder={
-        scopedChannelId
-          ? "Search messages…"
-          : "Search pages, people, conversations and messages…"
-      }
       scopeAction={
         scopedChannelId && session.searchSort && parsed.text ? (
           <MenuRoot>

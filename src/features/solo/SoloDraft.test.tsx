@@ -392,6 +392,53 @@ it("a new Solo chat for a named agent starts tagged with it, not the default", a
   );
 });
 
+it("a named agent replaces a saved new-chat draft that holds only another agent's tag", async () => {
+  const f = setup();
+  const scope = "me-route-agent-after-default";
+  const first = render(
+    <SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />,
+  );
+  const initial = screen.getByRole("textbox");
+  await waitFor(() => expect(initial).toHaveTextContent("@Member agent"));
+  first.unmount();
+  render(
+    <SoloDraft
+      agent={"b".repeat(64)}
+      session={f.session}
+      scope={scope}
+      onStarted={vi.fn()}
+    />,
+  );
+  const input = screen.getByRole("textbox");
+  await waitFor(() => expect(input).toHaveTextContent("@Outside agent"));
+  expect(input).not.toHaveTextContent("@Member agent");
+});
+
+it("a named agent keeps a saved new-chat draft that has the person's own text", async () => {
+  const f = setup();
+  const user = userEvent.setup();
+  const scope = "me-route-agent-after-text";
+  const first = render(
+    <SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />,
+  );
+  const initial = screen.getByRole("textbox");
+  await waitFor(() => expect(initial).toHaveTextContent("@Member agent"));
+  await user.type(initial, "Keep this");
+  first.unmount();
+  render(
+    <SoloDraft
+      agent={"b".repeat(64)}
+      session={f.session}
+      scope={scope}
+      onStarted={vi.fn()}
+    />,
+  );
+  const input = screen.getByRole("textbox");
+  await waitFor(() => expect(input).toHaveTextContent("Keep this"));
+  expect(input).toHaveTextContent("@Member agent");
+  expect(input).not.toHaveTextContent("@Outside agent");
+});
+
 it("a new Solo chat needs a tagged agent to send", async () => {
   const f = setup();
   const user = userEvent.setup();

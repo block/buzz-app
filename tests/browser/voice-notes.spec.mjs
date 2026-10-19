@@ -113,7 +113,7 @@ async function record(page) {
     .getByRole("button", { name: "Record voice note", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Finish voice note", exact: true }),
+    page.getByRole("button", { name: "Stop recording", exact: true }),
   ).toBeEnabled();
   await expect
     .poll(() => page.evaluate(() => window.voiceMic.context.currentTime))
@@ -123,7 +123,7 @@ async function record(page) {
     path: test.info().outputPath("voice-recording.png"),
   });
   await page
-    .getByRole("button", { name: "Finish voice note", exact: true })
+    .getByRole("button", { name: "Stop recording", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Remove voice note", exact: true }),
@@ -243,14 +243,14 @@ test("permission cancellation, denial and plugin removal release microphones", {
     .getByRole("button", { name: "Record voice note", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Finish voice note", exact: true }),
+    page.getByRole("button", { name: "Stop recording", exact: true }),
   ).toBeEnabled();
   await page
     .getByRole("button", { name: "Disable Voice Notes", exact: true })
     .focus();
   await page.keyboard.press("Enter");
   await expect(
-    page.getByRole("button", { name: "Finish voice note", exact: true }),
+    page.getByRole("button", { name: "Stop recording", exact: true }),
   ).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.voiceMic.stopped)).toBe(2);
   await expect(

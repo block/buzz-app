@@ -235,6 +235,15 @@ export function SearchExamples() {
   return (
     <div className="component-specimen-stack">
       <FormExample
+        title="Search palette"
+        description="Composer surface, generous input spacing, and larger search text."
+        code={
+          '<SearchField variant="palette" value={query} onValueChange={setQuery} />'
+        }
+      >
+        <SearchField variant="palette" value={query} onValueChange={setQuery} />
+      </FormExample>
+      <FormExample
         title="Search and clear"
         description="The accessible label stays present even when visually hidden. Clearing returns focus to the input; its action slot stays the same width."
         code={`<SearchField

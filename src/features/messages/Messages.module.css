@@ -1862,14 +1862,6 @@ html[data-keyboard-input] .quickReactionGlyph {
     opacity: 1;
     pointer-events: auto;
   }
-  /* Retain pointer travel to the lifted toolbar without adding row spacing. */
-  .message:hover::before {
-    content: "";
-    position: absolute;
-    bottom: 100%;
-    inset-inline: 0;
-    height: var(--space-2);
-  }
 }
 
 @media (hover: hover) and (pointer: fine) and (

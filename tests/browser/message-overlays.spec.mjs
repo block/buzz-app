@@ -1,3 +1,4 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./source-fixture.mjs";
 import { settle } from "./timeline.mjs";
 
@@ -330,7 +331,7 @@ test("focused actions follow sibling growth and shrinkage without scrolling", as
     name: "Message actions",
     includeHidden: true,
   });
-  await row.hover();
+  await hoverMessage(row);
   await expect
     .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
     .toBe(true);
@@ -641,7 +642,7 @@ test("comment actions revealed while the drawer slides realign when it settles",
     .getByRole("button", { name: "Show comments", exact: true })
     .click();
   await page.evaluate(() => window.drawerHeld);
-  await row.getByText("Alex", { exact: true }).hover();
+  await hoverMessage(row);
   await shown();
   const anchoring = () =>
     actions.evaluate((bar) => {
@@ -650,23 +651,18 @@ test("comment actions revealed while the drawer slides realign when it settles",
         .querySelector("[data-message-action-anchor]")
         .getBoundingClientRect();
       const rect = bar.getBoundingClientRect();
-      const beside = bar.dataset.placement === "beside";
       return {
         right: Math.round(bubble.right),
-        anchored: beside
-          ? Math.abs(rect.left - bubble.right - 8) < 1 &&
-            Math.abs(
-              rect.top + rect.height / 2 - bubble.top - bubble.height / 2,
-            ) < 1
-          : Math.abs(bubble.top + 8 - rect.bottom) < 1 &&
-            Math.abs(
-              Math.min(
-                bubble.right + 8,
-                bar.closest("[data-message-scroller]").getBoundingClientRect()
-                  .right - 12,
-                document.documentElement.clientWidth - 12,
-              ) - rect.right,
-            ) < 1,
+        anchored:
+          Math.abs(bubble.top + 8 - rect.bottom) < 1 &&
+          Math.abs(
+            Math.min(
+              bubble.right + 8,
+              bar.closest("[data-message-scroller]").getBoundingClientRect()
+                .right - 12,
+              document.documentElement.clientWidth - 12,
+            ) - rect.right,
+          ) < 1,
       };
     });
   // Keep the drawer held while the toolbar's own entrance settles.

@@ -28,7 +28,6 @@ import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
 const strs = { type: "array", items: str } as const;
-const int = { type: "integer" } as const;
 const tool = (
   name: string,
   description: string,
@@ -80,7 +79,28 @@ export const TOOLS: readonly Tool[] = [
   tool(
     "read",
     "Read a thread (default: current), a channel's latest, or search with q.",
-    { channel: str, thread: str, q: str, limit: int, before: int },
+    {
+      channel: str,
+      thread: str,
+      q: str,
+      author: {
+        type: "string",
+        description: "With q or channel: only this hex pubkey or npub.",
+      },
+      since: {
+        type: "integer",
+        description: "With q or channel: Unix seconds, at or after.",
+      },
+      before: { type: "integer", description: "Unix seconds, at or before." },
+      before_id: {
+        type: "string",
+        description: "For paginating: with before, from a continue line.",
+      },
+      limit: {
+        type: "integer",
+        description: "Search 20 (max 100), thread 100 (500), channel 30 (200).",
+      },
+    },
   ),
   tool(
     "shared_sessions",
@@ -390,24 +410,72 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async read(tools, args) {
     const { client, context } = tools;
     const limit = typeof args.limit === "number" ? args.limit : undefined;
-    const before = typeof args.before === "number" ? args.before : undefined;
+    const before = unixTime(args, "before");
+    const since = unixTime(args, "since");
+    if (since !== undefined && before !== undefined && since > before)
+      throw new Error("since must not be after before.");
+    let author: string | undefined;
+    if (args.author !== undefined)
+      try {
+        author = pubkey(args.author as string);
+      } catch {
+        throw new Error(
+          "author must be a hex pubkey or npub; users finds one by name.",
+        );
+      }
+    const beforeId = args.before_id;
+    if (beforeId !== undefined && before === undefined)
+      throw new Error("before_id needs before, from the same continue line.");
+    if (
+      beforeId !== undefined &&
+      (typeof beforeId !== "string" || !HEX.test(beforeId))
+    )
+      throw new Error("before_id must be a 64-character event ID.");
+    const filters = {
+      ...(author ? { authors: [author] } : {}),
+      ...(since !== undefined ? { since } : {}),
+    };
+    // The relay's cursor: at or before `until`, after `before_id` at a tie.
+    const cursor = {
+      ...(before !== undefined ? { until: before } : {}),
+      ...(beforeId ? { before_id: beforeId } : {}),
+    };
     const q = text(args.q);
     let channel = text(args.channel) ?? context.channel;
-    let events: readonly BuzzEvent[];
-    if (q)
-      events = await client.query([
+    if (q) {
+      if (beforeId)
+        throw new Error(
+          "before_id pages thread and channel reads; narrow a search with before or since.",
+        );
+      const max = bound(limit, 20, 100);
+      const found = await client.query([
         {
           kinds: SEARCH,
           search: q,
-          limit: bound(limit, 20, 100),
+          limit: max,
           ...(args.channel ? { "#h": [channel] } : {}),
-          ...(before ? { until: before } : {}),
+          ...cursor,
+          ...filters,
         },
       ]);
-    else if (
-      text(args.thread) ||
-      (args.channel === undefined && context.root)
-    ) {
+      const lines = await tools.messages(found, {});
+      if (!lines.length) return "No messages.";
+      if (found.length >= max)
+        lines.push(
+          "Result limit reached; more matches may exist. Narrow with channel, author, since or before.",
+        );
+      return lines.join("\n");
+    }
+    let scope: { channel?: string; root?: string };
+    let max: number;
+    let more: Args;
+    let found: readonly BuzzEvent[];
+    let first: BuzzEvent | undefined;
+    if (text(args.thread) || (args.channel === undefined && context.root)) {
+      if (author || since !== undefined)
+        throw new Error(
+          "author and since filter a search (q) or a channel read, not a thread; add q or channel.",
+        );
       const id = text(args.thread) ?? (context.root as string);
       let root = id;
       if (id !== context.root) {
@@ -416,40 +484,64 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         channel = tag(event, "h") ?? channel;
       }
       if (!channel) throw new Error("channel is required here.");
-      events = await client.query([
+      max = bound(limit, 100, 500);
+      // The root comes on the first page only, apart from the replies' limit
+      // and cursor.
+      const events = await client.query([
         {
           kinds: THREAD,
           "#h": [channel],
           "#e": [root],
-          limit: bound(limit, 100, 500),
+          limit: max + 1,
+          ...cursor,
         },
-        { ids: [root], kinds: [...THREAD, 45001], limit: 1 },
+        ...(before === undefined
+          ? [{ ids: [root], kinds: [...THREAD, 45001], limit: 1 }]
+          : []),
       ]);
+      first = events.find((event) => event.id === root);
+      found = events.filter((event) => event.id !== root);
+      scope = { channel, root };
+      more = { thread: root, limit: max };
     } else {
       if (!channel) throw new Error("channel is required here.");
-      events = await client.query([
+      max = bound(limit, 30, 200);
+      found = await client.query([
         {
           kinds: MESSAGES,
           "#h": [channel],
-          limit: bound(limit, 30, 200),
-          ...(before ? { until: before } : {}),
+          limit: max + 1,
+          ...cursor,
+          ...filters,
         },
       ]);
+      scope = { channel };
+      more = {
+        channel,
+        ...(author ? { author } : {}),
+        ...(since !== undefined ? { since } : {}),
+        limit: max,
+      };
     }
-    // An edit tags only the message it changes, so a thread's are not in it.
-    const ids = events.filter((event) => event.kind !== 40003).map((e) => e.id);
-    const edits = ids.length
-      ? await client.query([{ kinds: [40003], "#e": ids, limit: 500 }])
-      : [];
-    const messages = edited([...events, ...edits]);
-    if (!messages.length) return "No messages.";
-    const names = await tools.names(messages.map((event) => event.pubkey));
-    return messages
-      .map(
-        (event) =>
-          `${event.id} ${names.get(event.pubkey) ?? event.pubkey} ${time(event.created_at)}: ${event.content}`,
-      )
-      .join("\n");
+    // One more than the limit tells whether older messages remain; the last
+    // shown, in the relay's newest-first order, is where the next page starts.
+    // A short page is only what the relay returned: serving-time filtering and
+    // retention can leave older history unseen.
+    const shown = found.slice(0, max);
+    const last = shown.at(-1);
+    const lines = await tools.messages(
+      first ? [first, ...shown] : shown,
+      scope,
+    );
+    if (!lines.length) return "No messages.";
+    const noun = scope.root ? "replies" : "messages";
+    return [
+      scope.root ? `thread ${scope.root} in ${channel}` : `channel ${channel}`,
+      ...lines,
+      last && found.length > max
+        ? `Older ${noun} remain; continue with ${JSON.stringify({ ...more, before: last.created_at, before_id: last.id })}`
+        : `The relay returned no older ${noun}.`,
+    ].join("\n");
   },
 
   async channels(tools, args) {
@@ -1086,6 +1178,36 @@ class Tools {
     return names;
   }
 
+  /** Messages oldest first with their latest edits, a line each: its ID,
+   * author, channel and thread, leaving out those `scope` already names. */
+  async messages(
+    events: readonly BuzzEvent[],
+    scope: Readonly<{ channel?: string; root?: string }>,
+  ) {
+    // An edit tags only the message it changes, so a thread's are not in it.
+    const ids = events.filter((event) => event.kind !== 40003).map((e) => e.id);
+    const edits = ids.length
+      ? await this.client.query([{ kinds: [40003], "#e": ids, limit: 500 }])
+      : [];
+    const messages = edited([...events, ...edits]);
+    const names = await this.names(messages.map((event) => event.pubkey));
+    return messages.map((event) => {
+      const name = names.get(event.pubkey);
+      const channel = tag(event, "h");
+      const thread = threadReference(event)?.rootId;
+      return [
+        event.id,
+        `from ${event.pubkey}`,
+        name && JSON.stringify(name),
+        channel && channel !== scope.channel && `in ${channel}`,
+        thread && thread !== scope.root && `re ${thread}`,
+        `at ${time(event.created_at)}: ${event.content}`,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    });
+  }
+
   /** Who `content` notifies: `mentions`, `nostr:npub…` links, and `@Name`
    * for a channel member, as the CLI resolves them. Each must be a member. */
   async mentions(
@@ -1326,6 +1448,22 @@ function seconds(value: unknown) {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
     throw new Error("ttl must be a whole number of seconds.");
   return value;
+}
+
+/** A `since` or `before` argument: a Unix time in seconds, inclusive. */
+function unixTime(args: Args, key: string) {
+  const value = args[key];
+  if (value === undefined) return undefined;
+  // In milliseconds, a time from this century is past the year 5000.
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < 0 ||
+    (value as number) >= 1e11
+  )
+    throw new Error(
+      `${key} must be Unix seconds: a whole number, not milliseconds.`,
+    );
+  return value as number;
 }
 
 /** The checks Buzz makes on a channel's name, description and lifetime. */

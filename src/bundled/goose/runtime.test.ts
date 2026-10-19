@@ -243,16 +243,22 @@ describe("GooseRuntime", () => {
   it("posts nothing goose wrote without `send`", async () => {
     // Text the agent writes outside `send` is narration, not a reply.
     for (const reply of ["I've replied to Will.", "Plain answer"]) {
-      const { deliver, published } = setup({ reply });
+      const { deliver, published, runtime } = setup({ reply });
       let activity: Promise<unknown> = Promise.resolve();
       await deliver(message("1", "@Gander hi"), {
         workingUntil: (done: Promise<unknown>) => {
           activity = done;
         },
       });
-      await flush(100);
-      expect(published, reply).toEqual([]);
       expect(await activity, reply).toMatchObject({ ok: true, text: reply });
+      // The turn's report step ends by notifying, after any post it makes.
+      await new Promise<void>((resolve) => {
+        const stop = runtime.subscribe(() => {
+          stop();
+          resolve();
+        });
+      });
+      expect(published, reply).toEqual([]);
     }
   });
 

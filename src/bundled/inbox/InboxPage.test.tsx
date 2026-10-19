@@ -15,6 +15,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { InboxPage, type ArchiveShortcut } from "./InboxPage";
+import { huddleDescription } from "../../features/huddle/lifecycle";
 import { archiveKey, readArchives } from "./archive";
 import { viewRevision } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -475,6 +476,44 @@ it.each(["shortcut", "row"])(
     expect(sideTabs()).toHaveLength(1);
   },
 );
+
+it("retires an opened conversation when its room is classified as a Huddle", async () => {
+  const h = fixture();
+  render(h.view);
+  const list = () =>
+    within(screen.getByRole("list", { name: "Inbox conversations" }));
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+  );
+  const [first] = list().getAllByRole("button", { name: /^Open / });
+  if (!first) throw new Error("Missing fixture row");
+  fireEvent.click(first);
+  await findReader();
+  const about = huddleDescription("00000000-0000-4000-8000-000000000001");
+  act(() =>
+    h.emit([
+      metadata(h.relayKey, "room", "Huddle", 100, [
+        ["private"],
+        ["P", h.viewer.pubkey],
+        ["about", about],
+      ]),
+      signed(h.viewer, {
+        kind: 9007,
+        created_at: 1,
+        content: "",
+        tags: [
+          ["h", "room"],
+          ["visibility", "private"],
+          ["channel_type", "stream"],
+          ["about", about],
+        ],
+      }),
+    ]),
+  );
+  await waitFor(() => expect(queryReader()).not.toBeInTheDocument());
+  expect(sideTabs()).toEqual([]);
+  expect(h.archive.current).toBeUndefined();
+});
 
 it("offers no Archive shortcut while Drafts is shown", async () => {
   const h = fixture();
@@ -1739,6 +1778,7 @@ function fixture(
     late,
     alice,
     viewer,
+    relayKey,
     profileAgent,
     emit,
     events,

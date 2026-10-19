@@ -447,20 +447,21 @@ function InboxList({
       item.messageIds.includes(selectedTarget.messageId),
   );
   const selectedId = selected?.id;
-  const selectedArchived = list.channels.some(
-    (channel) => channel.id === selectedTarget?.channelId && channel.archived,
+  // A room reclassified as a Huddle belongs to its Huddle composer, not Inbox.
+  const selectedRetired = list.channels.some(
+    (channel) =>
+      channel.id === selectedTarget?.channelId &&
+      (channel.archived || channel.huddle || channel.metadataPending),
   );
   useEffect(() => {
     if (
       selectedTarget &&
-      (selectedArchived ||
-        !showing ||
-        (!selected && inbox.status !== "loading"))
+      (selectedRetired || !showing || (!selected && inbox.status !== "loading"))
     ) {
-      // Unarchiving the channel does not reopen its conversation.
-      if (selectedArchived && opened) closeTab(opened);
+      // Restoring the channel does not reopen its conversation.
+      if (selectedRetired && opened) closeTab(opened);
       // A closed tab ends its visit, so reopening the row reads it again.
-      if (selectedArchived || !showing) {
+      if (selectedRetired || !showing) {
         intentRevision.current++;
         failedMutation.current = undefined;
         setError(undefined);
@@ -470,7 +471,7 @@ function InboxList({
   }, [
     selectedTarget,
     selected,
-    selectedArchived,
+    selectedRetired,
     showing,
     opened,
     closeTab,

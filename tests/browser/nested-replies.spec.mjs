@@ -606,20 +606,18 @@ for (const width of [1492, 1280, 1024, 700, 390])
         Promise.all(bar.getAnimations().map((animation) => animation.finished)),
       );
       if (width >= 640) {
-        // Both headers and continuations use centered beside controls when
-        // they fit, and the same token-sized corner overlap otherwise.
+        // Headers and continuations both lift the bar over the bubble's top
+        // corner by the same token-sized overlap.
         const placement = await row.evaluate((node) => {
           const bar = node.querySelector('[aria-label="Message actions"]');
           const body = node.querySelector('[class*="_messageBubble_"]');
           const rect = bar.getBoundingClientRect();
           const anchor = body.getBoundingClientRect();
-          const beside = bar.dataset.placement === "beside";
           return {
-            actual: beside ? rect.top + rect.height / 2 : rect.bottom,
-            expected: beside
-              ? anchor.top + anchor.height / 2
-              : anchor.top +
-                parseFloat(getComputedStyle(bar).scrollMarginBlockStart),
+            actual: rect.bottom,
+            expected:
+              anchor.top +
+              parseFloat(getComputedStyle(bar).scrollMarginBlockStart),
           };
         });
         expect(placement.actual).toBeCloseTo(placement.expected, 1);

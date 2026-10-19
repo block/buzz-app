@@ -53,7 +53,7 @@ it("hands confirmed deletion to the page and discards draft navigation risk", as
     }),
   );
   expect(remove).toHaveBeenCalledExactlyOnceWith(fixtureDefinition);
-  expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Message helper" })).toBeNull();
   expect(
     screen.queryByRole("alertdialog", { name: "Leave this draft?" }),
   ).toBeNull();
@@ -76,15 +76,19 @@ it("keeps the open workflow visible without a refresh banner", async () => {
       onDelete={() => {}}
     />,
   );
-  const editor = await screen.findByRole("dialog", { name: "Edit workflow" });
-  expect(within(editor).getByText("Message helper")).toBeVisible();
+  const editor = await screen.findByRole("dialog", { name: "Message helper" });
+  expect(
+    within(editor).getByRole("textbox", { name: "Workflow name" }),
+  ).toHaveValue("Message helper");
   act(() =>
     fixture.definitions.update({
       status: "loading",
       data: { items: [fixtureDefinition], partial: false },
     }),
   );
-  expect(within(editor).getByText("Message helper")).toBeVisible();
+  expect(
+    within(editor).getByRole("textbox", { name: "Workflow name" }),
+  ).toHaveValue("Message helper");
   // Only the editor reports the reread; loaded items suppress the page banner.
   expect(screen.getAllByText("Reading configurations…")).toEqual([
     within(editor).getByText("Reading configurations…"),
@@ -102,7 +106,7 @@ it("keeps the open workflow visible without a refresh banner", async () => {
   );
   expect(within(editor).getByRole("alert")).toHaveTextContent("Read failed");
   expect(refresh).toBeEnabled();
-  expect(screen.getByRole("dialog", { name: "Edit workflow" })).toBe(editor);
+  expect(screen.getByRole("dialog", { name: "Message helper" })).toBe(editor);
 });
 
 it("releases a mounted run latch after unknown delivery without replaying it", async () => {
@@ -133,6 +137,8 @@ it("releases a mounted run latch after unknown delivery without replaying it", a
   act(() => fixture.finish("unknown"));
   expect(fixture.calls.trigger).toBe(1);
   expect(screen.getByText(/The run may have started/)).toBeVisible();
+  // The editor has no notice to dismiss.
+  expect(screen.queryByText(/dismissing this notice/)).not.toBeInTheDocument();
   await user.click(runNow());
   expect(fixture.calls.trigger).toBe(2);
   act(() => fixture.finish("unknown"));
@@ -145,7 +151,7 @@ it("releases a mounted run latch after unknown delivery without replaying it", a
   expect(remove).toHaveBeenCalledExactlyOnceWith(fixtureDefinition);
 });
 
-it("runs despite a lost earlier run receipt, opens history on success and reports rejection", async () => {
+it("runs despite a lost earlier run receipt, rereads open history on success and reports rejection", async () => {
   const fixture = createWorkflowFixture();
   // A journaled run whose receipt was lost (e.g. across a restart).
   act(() => {
@@ -169,16 +175,24 @@ it("runs despite a lost earlier run receipt, opens history on success and report
     expect(button).toBeEnabled();
     await user.click(button);
   };
+  await user.click(screen.getByRole("tab", { name: "Runs" }));
+  expect(fixture.calls.runs).toBe(1);
   await run();
   expect(fixture.calls.trigger).toBe(2);
-  expect(fixture.calls.runs).toBe(0);
+  // A pending run explains the paused save without pointing at save recovery.
+  expect(screen.getAllByText("Requesting a run…")[0]).toBeVisible();
+  expect(screen.queryByText(/Recent activity/)).not.toBeInTheDocument();
   act(() => fixture.finish("succeeded"));
-  expect(fixture.calls.runs).toBe(1);
+  expect(
+    screen.getByText("Run requested. Inspect run history for its result."),
+  ).toBeVisible();
+  expect(fixture.calls.runs).toBe(2);
   await run();
   expect(fixture.calls.trigger).toBe(3);
   act(() => fixture.finish("rejected"));
-  expect(screen.getByText("Failed to trigger workflow")).toBeVisible();
-  expect(screen.getByText("Fixture conflict")).toBeVisible();
+  expect(
+    screen.getByText("Failed to trigger workflow: Fixture conflict"),
+  ).toBeVisible();
   // Delete stays available for the owner.
   await user.click(screen.getByRole("button", { name: "Workflow actions" }));
   expect(
@@ -217,4 +231,36 @@ it("runs once a newer head supersedes a save whose receipt was lost", async () =
   expect(run).toBeEnabled();
   await user.click(run);
   expect(fixture.calls.trigger).toBe(1);
+});
+
+it("drops a run status when another configuration replaces the draft", async () => {
+  const fixture = createWorkflowFixture();
+  render(
+    <WorkflowChannel
+      capability={fixture.capability}
+      channelId={fixtureChannel}
+      channelName="Fixture channel"
+      viewer={fixtureViewer}
+      initialSelection={fixtureDefinition}
+      onClose={() => {}}
+      onDelete={() => {}}
+    />,
+  );
+  const user = userEvent.setup();
+  const runStatus = "Run requested. Inspect run history for its result.";
+  await user.click(screen.getByRole("button", { name: "Run now" }));
+  act(() => fixture.finish("succeeded"));
+  expect(screen.getByText(runStatus)).toBeVisible();
+  await user.type(
+    screen.getByRole("textbox", { name: "Workflow name" }),
+    " renamed",
+  );
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  // A different readback offers the current configuration in place of the draft.
+  act(() => fixture.finish("succeeded", false));
+  await user.click(
+    screen.getByRole("button", { name: "Review current configuration" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Leave draft" }));
+  expect(screen.queryByText(runStatus)).not.toBeInTheDocument();
 });

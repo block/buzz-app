@@ -44,27 +44,22 @@ test("names the create switch for configuration enablement", async () => {
       onSave={vi.fn()}
     />,
   );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Close inspector" }));
   const toggle = screen.getByRole("switch", {
     name: "Enabled in configuration",
   });
   expect(toggle).not.toBeChecked();
-  await userEvent.setup().click(toggle);
+  await user.click(toggle);
   expect(change).toHaveBeenCalledTimes(1);
   expect(parse(change.mock.calls[0]?.[0]).enabled).not.toBe(false);
 });
 
-test("keeps naming compact and applies header changes only on save", async () => {
+test("titles the dialog with the name and applies header changes only on save", async () => {
   const user = userEvent.setup();
   const save = vi.fn();
   render(<Example onSave={save} />);
-  expect(screen.getByText("Message helper")).toBeVisible();
-  expect(screen.queryByText("Workflow name")).not.toBeInTheDocument();
-  const rename = screen.getByRole("button", { name: "Edit workflow name" });
-  await user.hover(rename);
-  expect(await screen.findByRole("tooltip")).toHaveTextContent(
-    "Edit workflow name",
-  );
-  await user.unhover(rename);
+  expect(screen.getByRole("dialog", { name: "Message helper" })).toBeVisible();
   const toggle = screen.getByRole("switch", {
     name: "Enabled in configuration",
   });
@@ -73,10 +68,10 @@ test("keeps naming compact and applies header changes only on save", async () =>
   expect(toggle).toBeChecked();
   await user.click(toggle);
   expect(toggle).not.toBeChecked();
-  await user.click(rename);
   const name = screen.getByRole("textbox", { name: "Workflow name" });
   await user.clear(name);
-  await user.type(name, "Renamed draft{Enter}");
+  await user.type(name, "Renamed draft");
+  expect(screen.getByRole("dialog", { name: "Renamed draft" })).toBeVisible();
   expect(save).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Save changes" }));
   expect(save).toHaveBeenCalledTimes(1);
@@ -101,25 +96,21 @@ test.each([
       {...props}
     />,
   );
-  const rename = screen.getByRole("button", { name: "Edit workflow name" });
-  expect(rename).toBeDisabled();
-  expect(rename).toHaveAccessibleDescription(expect.stringContaining(reason));
   if ("chooseChannel" in props) {
-    // Choosing a channel precedes configuration; the enable switch waits.
+    // Choosing a channel precedes configuration; the workflow fields wait.
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   } else {
+    const name = screen.getByRole("textbox", { name: "Workflow name" });
+    expect(name).toBeDisabled();
+    expect(name).toHaveAccessibleDescription(reason);
     const toggle = screen.getByRole("switch", {
       name: "Enabled in configuration",
     });
     expect(toggle).toHaveAttribute("aria-disabled", "true");
     expect(toggle).toHaveAccessibleDescription(reason);
   }
-  if ("readOnly" in props) {
-    expect(screen.getByText(reason)).not.toBeVisible();
-    expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
-  } else {
-    expect(screen.getByText(reason)).toBeVisible();
-  }
+  expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
   expect(change).not.toHaveBeenCalled();
   rerender(
     <WorkflowEditor yaml={fixtureYaml} onChange={change} onSave={vi.fn()} />,
@@ -127,35 +118,19 @@ test.each([
   expect(
     screen.getByRole("switch", { name: "Enabled in configuration" }),
   ).not.toHaveAttribute("aria-disabled", "true");
-  expect(rename).toBeEnabled();
+  expect(screen.getByRole("textbox", { name: "Workflow name" })).toBeEnabled();
   expect(screen.queryByText(reason)).not.toBeInTheDocument();
 });
 
 test("form errors follow the editable field and clear when corrected", async () => {
   const user = userEvent.setup();
   render(<Example />);
-  await user.click(screen.getByRole("button", { name: "Edit workflow name" }));
   const name = screen.getByRole("textbox", { name: "Workflow name" });
   const save = screen.getByRole("button", { name: "Save changes" });
   await user.clear(name);
-  await user.keyboard("{Enter}");
-  expect(screen.getByText("Give this workflow a name.")).toBeVisible();
-  expect(
-    screen.getByRole("button", { name: "Edit workflow name" }),
-  ).toHaveAccessibleDescription(
-    "Give this workflow a name. Edit workflow name",
-  );
-  expect(screen.queryByRole("textbox", { name: "Workflow name" })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Edit workflow name" }));
-  expect(
-    screen.getByRole("textbox", { name: "Workflow name" }),
-  ).toHaveAccessibleDescription("Give this workflow a name.");
+  expect(name).toHaveAccessibleDescription("Give this workflow a name.");
   expect(save).toBeDisabled();
-  await user.type(
-    screen.getByRole("textbox", { name: "Workflow name" }),
-    "Repaired",
-  );
-  await user.keyboard("{Enter}");
+  await user.type(name, "Repaired");
   expect(name).not.toHaveAttribute("aria-invalid", "true");
   await user.click(
     screen.getByRole("button", { name: "Edit step 1: Send Message" }),
@@ -180,18 +155,51 @@ test("form errors follow the editable field and clear when corrected", async () 
   expect(save).toBeEnabled();
 });
 
+test("errors stay visible beside hidden fields and Runs clears view-switch errors", async () => {
+  const user = userEvent.setup();
+  function WithRuns() {
+    const [yaml, setYaml] = useState(fixtureYaml);
+    return (
+      <WorkflowEditor
+        yaml={yaml}
+        onChange={setYaml}
+        onSave={vi.fn()}
+        runs={<p>Run history</p>}
+      />
+    );
+  }
+  render(<WithRuns />);
+  await user.clear(screen.getByRole("textbox", { name: "Workflow name" }));
+  await user.click(
+    screen.getByRole("button", { name: "Edit step 1: Send Message" }),
+  );
+  expect(screen.getByText("Give this workflow a name.")).toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "Runs" }));
+  expect(screen.getByText("Run history")).toBeVisible();
+  expect(screen.getByText("Give this workflow a name.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  await user.click(screen.getByRole("tab", { name: "YAML" }));
+  const yaml = screen.getByRole("textbox", { name: "Workflow YAML" });
+  await user.clear(yaml);
+  await user.click(yaml);
+  await user.paste("name: [");
+  await user.click(screen.getByRole("tab", { name: "Form" }));
+  expect(screen.getByText(/^Cannot switch editor view/)).toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "Runs" }));
+  expect(screen.getByText("Run history")).toBeVisible();
+  expect(
+    screen.queryByText(/^Cannot switch editor view/),
+  ).not.toBeInTheDocument();
+});
+
 test("YAML errors replace help, retain the draft and restore help after recovery", async () => {
   const user = userEvent.setup();
   render(<Example initial="name: [" />);
   // Unreadable YAML has no enabled state to show or change.
   expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-  expect(screen.getByText("Unreadable configuration")).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Edit workflow name" }),
-  ).toBeDisabled();
-  expect(
-    screen.getByRole("button", { name: "Edit workflow name" }),
-  ).toHaveAccessibleDescription(expect.stringContaining("Correct the YAML"));
+    screen.getByRole("dialog", { name: "Untitled workflow" }),
+  ).toBeVisible();
   const yaml = screen.getByRole("textbox", { name: "Workflow YAML" });
   expect(yaml).toHaveAttribute("aria-invalid", "true");
   expect(yaml).toHaveAccessibleDescription(
@@ -204,12 +212,7 @@ test("YAML errors replace help, retain the draft and restore help after recovery
   await user.paste(fixtureYaml);
   expect(yaml).not.toHaveAttribute("aria-invalid", "true");
   expect(yaml).toHaveAccessibleDescription(/Original text is kept/);
-  expect(
-    screen.getByRole("switch", { name: "Enabled in configuration" }),
-  ).not.toBeChecked();
-  expect(
-    screen.queryByText("Unreadable configuration"),
-  ).not.toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Message helper" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
 });
 
@@ -261,21 +264,6 @@ test("timeout correction keeps Step options open and the input focused", async (
   expect(save).toBeEnabled();
   await user.click(options);
   expect(options).toHaveAttribute("aria-expanded", "false");
-});
-
-test("name Escape reverts without rewriting the document", async () => {
-  const user = userEvent.setup();
-  const change = vi.fn();
-  render(
-    <WorkflowEditor yaml={fixtureYaml} onChange={change} onSave={vi.fn()} />,
-  );
-  await user.click(screen.getByRole("button", { name: "Edit workflow name" }));
-  const name = screen.getByRole("textbox", { name: "Workflow name" });
-  await user.clear(name);
-  await user.type(name, "Do not commit this");
-  await user.keyboard("{Escape}");
-  expect(change).not.toHaveBeenCalled();
-  expect(screen.getByRole("dialog", { name: "Edit workflow" })).toBeVisible();
 });
 
 test.each([

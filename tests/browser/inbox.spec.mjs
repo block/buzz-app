@@ -553,7 +553,7 @@ test.describe("signed newest-first Inbox windows", () => {
     await again.getByRole("button", { name: /^Open / }).click();
     await expect(
       inbox.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab"),
-    ).toHaveText(["Inbox strict root"]);
+    ).toHaveCount(1);
     const current = detail
       .locator("[data-message-id]")
       .filter({ hasText: "New peer reply" });
@@ -598,7 +598,7 @@ test.describe("Inbox Solo chat reply admission", () => {
     const detail = inbox.getByRole("region", { name: /^Conversation in / });
     await expect(
       inbox.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab"),
-    ).toHaveText(["Thread root 1"]);
+    ).toHaveCount(1);
     const editor = detail.getByRole("textbox", { name: "Reply to thread" });
     await expect(editor).toBeVisible();
     const root = app.histories

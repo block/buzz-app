@@ -352,10 +352,18 @@
     background: var(--interaction-selected);
   }
 
-  /* Bare actions stay unfilled; something else supplies their state. Artwork
-     size stays with the caller, like every other IconButton. */
+  /* Bare controls stay unfilled. Glyph-state toggles keep their larger
+     artwork; row actions retain the standard icon sizing. */
   .buzz-button[data-icon-variant="bare"] {
     background: transparent;
+  }
+  .buzz-button[data-icon-variant="bare"][aria-pressed]:where(
+      [data-icon-size="sm"]
+    )
+    .buzz-button-label
+    > svg {
+    width: var(--space-5);
+    height: var(--space-5);
   }
 
   /* Buzz's existing composer and workspace treatments remain explicit. */

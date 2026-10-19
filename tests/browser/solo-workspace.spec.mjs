@@ -304,6 +304,9 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
     `[data-solo-menu-id="${id}"] [data-solo-row-action]`,
   );
   await expect(action).toHaveCSS("opacity", "1");
+  // Bare row actions keep standard artwork, unlike glyph-state toggles.
+  await expect(action.locator("svg")).toHaveCSS("width", "16px");
+  await expect(action.locator("svg")).toHaveCSS("height", "16px");
   // The selected row's fill is the action's state; the action adds none.
   await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   // Hovering a selected row's action keeps the selection's ink on the row.

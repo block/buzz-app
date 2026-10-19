@@ -707,15 +707,17 @@ and pressed fills, disabled boundaries, and keyboard focus remain shared.
 IconButton's `bare` variant has no resting, hover, pressed or selected
 background. Use it where something else already supplies the state:
 
-- Toggles whose glyph shows the state. The caller supplies outline/filled
-  artwork, aria-pressed and the accessible name.
+- Toggles whose glyph shows the state. Small toggles use 20px artwork inside
+  the same 32px hit area, so the glyph's state is easy to distinguish. The caller
+  supplies outline/filled artwork, aria-pressed and the accessible name.
 - Actions revealed by a row, such as a sidebar row's overflow menu. Row hover
   reveals the action and the row's own hover or selected fill is its state, so a
   second fill inside the row would compete with it (and, on a brand-filled
   selection, lose its paired ink).
 
-Bare changes only the fill: size, artwork and focus behave like any other
-IconButton.
+Bare keeps the standard control size and focus behavior. Only glyph-state
+toggles enlarge the artwork; ordinary actions use the same artwork sizing as
+other IconButtons.
 
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.

@@ -1,6 +1,6 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
-import { openPage, pageChoices } from "./navigation.mjs";
+import { openPage, pageChoices, pageChoice } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 
@@ -817,13 +817,12 @@ test("checked-in local examples activate and work independently", async ({
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await selectSettingsSection(page, "Manage plugins");
   await pluginAction(page, "Counter playground").click();
-  const navigation = await pageChoices(page);
-  await expect(
-    navigation.getByRole("option", { name: "Counter playground", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    navigation.getByRole("option", { name: "Notes playground", exact: true }),
-  ).toBeVisible();
+  const navigation = await pageChoices(page, "Counter playground");
+  await expect(pageChoice(navigation, "Counter playground")).toHaveCount(0);
+  await page
+    .getByRole("combobox", { name: "Search Buzz", exact: true })
+    .fill("Notes playground");
+  await expect(pageChoice(navigation, "Notes playground")).toBeVisible();
 });
 
 // Browser-only: real modal focus and manager error propagation across the IPC boundary.

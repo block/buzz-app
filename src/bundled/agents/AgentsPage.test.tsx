@@ -263,6 +263,7 @@ function setup(
     },
     find: (pubkey: string) => snapshot.agents.find((a) => a.pubkey === pubkey),
     relay: () => undefined,
+    handle: () => undefined,
     register: vi.fn(),
     addTool: vi.fn(),
     tools: () => [],

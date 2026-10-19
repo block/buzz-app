@@ -689,6 +689,12 @@ remain compatibility aliases: primary/solid → prominent, quiet → subtle,
 compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
 Buzz's tint and chrome icon variants remain for composer and backdrop actions.
 
+Proposed: when a trigger changes between icon-only and labelled content, keep one
+`Button` mounted and switch `shape="icon"` / `shape="capsule"`. The icon shape
+reuses IconButton's square geometry and rounded corners; provide an accessible
+name. The workspace picker uses this to preserve menu focus restoration across
+selection changes. Standalone icon actions continue to use `IconButton`.
+
 Disabled controls retain their filled, outline, or unfilled treatment and cannot
 activate. Loading retains the label's geometry, accessible name, focus and variant
 colors while blocking activation; never swap in a differently sized loading label.
@@ -1719,3 +1725,23 @@ system picker, not a dropdown; its single-line value ellipsizes.
 `SettingsGroup layout="cards"` gives each child a separate bordered surface and
 a shared small gap, rather than drawing dividers across one group. Feature owners
 may bound a card list's height and scrolling without repainting its cards.
+
+### Global search presentation
+
+The global search palette uses `Dialog presentation="search"`: an accessible,
+visually hidden title, no header or close button, equal 12px top and side insets,
+and the composer panel surface. Keep outside-click dismissal and Escape enabled.
+Its `SearchField variant="palette"` uses a transparent fill and border with no shadow. Keyboard focus
+uses a single perimeter border. It retains
+24px vertical and 12px horizontal padding, and the complete 20px `body-lg` role. Both surfaces use smooth (`squircle`)
+corners where supported; the input radius is the 24px modal radius minus the 12px
+outer inset, giving 12px. The body retains top padding inside its scrollport for the focus stroke.
+Other dialogs and search fields retain their existing presentation.
+
+The palette omits the magnifying glass and uses the subdued “Search...” placeholder.
+
+Search result rows use `NavigationItem variant="search"`, with 12px vertical
+and horizontal padding and 21px icons. Their 12px radius follows the modal radius minus
+the 12px gutter, and their hover surfaces align with the input.
+
+Inline search settings use the search variant of PreferenceRow with a gear icon and the same title/subtitle hierarchy as destination rows. Results height transitions for 180ms, disabled with reduced motion. The clear control reserves space to keep input dimensions stable.

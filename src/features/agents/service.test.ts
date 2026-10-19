@@ -1464,6 +1464,90 @@ it("claims an agent as it comes into view, and releases it as it leaves, without
   await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
 });
 
+it("hands a plugin its own agents outside any run, while this copy runs them", async () => {
+  const { service, plugin, ctx, native, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  expect(handle?.pubkey).toBe(bot);
+  await handle?.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
+  expect(await published(native, 9)).toMatchObject([{ content: "hi" }]);
+  // Not to another plugin, nor to code that is no plugin's.
+  const other = ctx.extend({
+    pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+  });
+  expect(other.agents.handle(bot)).toBeUndefined();
+  expect(ctx.agents.handle(bot)).toBeUndefined();
+  // Nor while its community is offline, or another copy of the app holds it,
+  // and a handle kept from before stops working.
+  connect(false);
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeUndefined());
+  await expect(
+    handle?.publish({ kind: 9, content: "late", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  await expect(
+    handle?.attention.write("x", null, { expected: "x" }),
+  ).rejects.toThrow("ask for its handle again");
+  expect(() => handle?.attention.enabled()).toThrow("ask for its handle again");
+  native.claim.mockClear();
+  native.claim.mockResolvedValue(false);
+  connect(true);
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  await settle();
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+  // Nor once it is deleted.
+  native.claim.mockResolvedValue(true);
+  connect(false);
+  connect(true);
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  await service.remove(bot);
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+});
+
+it("hands out an agent's handle only to its new type's plugin once a change of type ends", async () => {
+  const { service, plugin, ctx, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const relay = ctx.extend({
+    pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+  });
+  relay.agents.register({
+    id: "relay",
+    title: "Relay",
+    defaults: () => ({ config: {} }),
+    run: vi.fn(),
+  });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const kept = plugin.agents.handle(bot);
+  let continueType = () => {};
+  const typeGate = new Promise<void>((resolve) => (continueType = resolve));
+  const persistType = native.setType.getMockImplementation();
+  native.setType.mockImplementationOnce(async (...args) => {
+    await typeGate;
+    return persistType?.(...args);
+  });
+  const changing = service.retype(bot, "other/relay");
+  await vi.waitFor(() => expect(native.setType).toHaveBeenCalledOnce());
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+  expect(relay.agents.handle(bot)).toBeUndefined();
+  await expect(
+    kept?.publish({ kind: 9, content: "mid", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  continueType();
+  await changing;
+  await vi.waitFor(() => expect(relay.agents.handle(bot)).toBeDefined());
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+  await expect(
+    kept?.publish({ kind: 9, content: "after", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  // Changing back hands out a new handle, but never revives the kept one.
+  await service.retype(bot, "example/echo");
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  await expect(
+    kept?.publish({ kind: 9, content: "revived", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  expect(await published(native, 9)).toEqual([]);
+});
+
 it("keeps running an agent while another community is selected, and gives it only its community's events", async () => {
   const { service, run, emit, second, select } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

@@ -240,6 +240,25 @@ export function PageTabs({
       ) ?? fallbackFocus.current
     )?.focus({ preventScroll: true });
   });
+  // An update that removes the control in use, such as a reader whose room
+  // became a Huddle, returns focus to the tab that showed it.
+  const focused = useRef<{ node: Element; tab: string | null | undefined }>(
+    undefined,
+  );
+  useLayoutEffect(() => {
+    const last = focused.current;
+    if (
+      !last ||
+      last.node.isConnected ||
+      document.activeElement !== document.body
+    )
+      return;
+    focused.current = undefined;
+    (
+      (last.tab && document.getElementById(last.tab)) ||
+      fallbackFocus.current
+    )?.focus({ preventScroll: true });
+  });
   const split = usePanelSplit();
   const hasTabs = secondary.items.length > 0;
   const showingPanel = tabState.paneOpen && hasTabs;
@@ -264,7 +283,18 @@ export function PageTabs({
   );
   return (
     <LinkThreadTabContext value={secondary.openLinkedThread}>
-      <div className={styles.root}>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: Focus within records the control in use, restored if an update removes it. */}
+      <div
+        className={styles.root}
+        onFocus={({ target }) => {
+          focused.current = {
+            node: target,
+            tab: target
+              .closest('[role="tabpanel"]')
+              ?.getAttribute("aria-labelledby"),
+          };
+        }}
+      >
         <div ref={split.ref} style={split.style} className={styles.board}>
           <div
             ref={fallbackFocus}

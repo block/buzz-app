@@ -494,7 +494,7 @@ it.each([false, true])(
     await findReader();
     // Showing Archived ends the selection but keeps its tab.
     if (cleared) await chooseFilter("Archived", "Show");
-    else (await screen.findByRole("textbox")).focus();
+    (await screen.findByRole("textbox")).focus();
     const about = huddleDescription("00000000-0000-4000-8000-000000000001");
     act(() =>
       h.emit([
@@ -518,11 +518,14 @@ it.each([false, true])(
     );
     await waitFor(() => expect(queryReader()).not.toBeInTheDocument());
     expect(h.archive.current).toBeUndefined();
-    if (cleared)
+    if (cleared) {
       expect(
         screen.getByText("This conversation is no longer available."),
       ).toBeInTheDocument();
-    else {
+      // The retained tab keeps focus its reader held.
+      expect(document.activeElement).toHaveAttribute("role", "tab");
+      expect(document.activeElement).toHaveAttribute("aria-selected", "true");
+    } else {
       expect(sideTabs()).toEqual([]);
       expect(
         screen.getByRole("button", { name: "Inbox filters" }),

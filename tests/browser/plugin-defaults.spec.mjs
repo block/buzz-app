@@ -78,12 +78,17 @@ test("Membership action removes and restores the working Invite destination", as
   };
   await plugins(page);
   const admin = pluginAction(page, "Membership");
-  await expect(admin).toHaveAccessibleName(/^Enable /);
+  await expect(admin).toHaveAccessibleName(/^Disable /);
   const moderation = pluginAction(page, "Moderation");
+  await expect(moderation).toHaveAccessibleName("Disable Moderation");
+  await expect(moderation).toHaveAccessibleDescription(
+    "Access is unavailable in this build or on this relay.",
+  );
+  await expect(moderation).not.toHaveAttribute("aria-disabled", "true");
+  await moderation.click();
   await expect(moderation).toHaveAccessibleName("Unavailable Moderation");
-  await expect(moderation).toHaveAttribute("aria-disabled", "true");
-  await expect(moderation).toHaveAttribute("data-variant", "outline");
-  await admin.click();
+  await page.reload();
+  await expect(moderation).toHaveAccessibleName("Unavailable Moderation");
   await expect(admin).toHaveAccessibleName(/^Disable /);
   await menu();
   await expect(invite).toBeVisible();

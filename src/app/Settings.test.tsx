@@ -1857,7 +1857,34 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     expect(disable).not.toHaveAttribute("aria-disabled", "true");
     expect(
       within(pane).queryByRole("button", { name: "Check access again" }),
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
+    expect(disable).toHaveAccessibleDescription(/Could not check access/);
+    expect(
+      within(pane).getByText("Unavailable", { exact: true }),
+    ).toBeVisible();
+    for (const next of [
+      "checking",
+      "denied",
+      "no-community",
+      "unavailable",
+      "error",
+    ] as const) {
+      act(() => {
+        state = next;
+        for (const listener of listeners) listener();
+      });
+      expect(disable).toHaveAccessibleName("Disable");
+      expect(disable).not.toHaveAttribute("aria-disabled", "true");
+      expect(
+        within(pane).getByText(
+          next === "checking" ? "Checking…" : "Unavailable",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "Disable Restricted plugin" }),
+      ).not.toHaveAttribute("aria-disabled", "true");
+    }
     await user.click(disable);
     expect(f.manager.change).toHaveBeenLastCalledWith("disable", id);
     cleanup();

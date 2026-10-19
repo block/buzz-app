@@ -341,6 +341,11 @@ function PluginDetails({
         </span>
       )}
       <div className={styles.pluginStatus}>
+        {plugin.enabled && accessReason && (
+          <span className="text-caption text-muted">
+            {access === "checking" ? "Checking…" : "Unavailable"}
+          </span>
+        )}
         {/* Channels is required and has no enable/disable control. */}
         {plugin.manifest.id === "buzz.channels" ? (
           <Button variant="outline" size="sm" disabled>
@@ -359,7 +364,7 @@ function PluginDetails({
                 access !== "allowed")
             }
             title={
-              !plugin.enabled && accessReason
+              accessReason
                 ? access === "error"
                   ? "Could not check access. Try again."
                   : accessReason
@@ -370,11 +375,7 @@ function PluginDetails({
               restrictedPlugin(plugin) &&
               access === "checking"
             }
-            aria-describedby={
-              !plugin.enabled && accessReason
-                ? "plugin-detail-access"
-                : undefined
-            }
+            aria-describedby={accessReason ? "plugin-detail-access" : undefined}
             focusableWhenDisabled
             ref={toggle}
             onClick={onToggle}
@@ -383,14 +384,14 @@ function PluginDetails({
           </Button>
         )}
       </div>
-      {!plugin.enabled && accessReason && (
+      {accessReason && (
         <p id="plugin-detail-access" className="sr-only">
           {access === "error"
             ? "Could not check access. Try again."
             : accessReason}
         </p>
       )}
-      {!plugin.enabled && accessReason && access === "error" && (
+      {accessReason && access === "error" && (
         <div className={styles.pluginAccess}>
           <Button
             size="sm"
@@ -887,6 +888,9 @@ export function Settings({
                       }
                       type="button"
                       data-plugin-id={id}
+                      data-access-state={
+                        plugin.enabled && accessReason ? "" : undefined
+                      }
                       data-updatable={
                         (plugin.source === "external" && !!plugins.imports) ||
                         undefined
@@ -957,6 +961,11 @@ export function Settings({
                       )}
                     </Target>
                     <div className={styles.pluginRowAction}>
+                      {plugin.enabled && accessReason && (
+                        <span className="text-caption text-muted self-center">
+                          {access === "checking" ? "Checking…" : "Unavailable"}
+                        </span>
+                      )}
                       {plugin.source === "external" &&
                         plugins.imports &&
                         catalog && (
@@ -991,20 +1000,14 @@ export function Settings({
                               restrictedPlugin(plugin) &&
                               access !== "allowed")
                           }
-                          title={
-                            !plugin.enabled && accessReason
-                              ? accessReason
-                              : undefined
-                          }
+                          title={accessReason ? accessReason : undefined}
                           loading={
                             !plugin.enabled &&
                             restrictedPlugin(plugin) &&
                             access === "checking"
                           }
                           aria-describedby={
-                            !plugin.enabled && accessReason
-                              ? `plugin-access-${id}`
-                              : undefined
+                            accessReason ? `plugin-access-${id}` : undefined
                           }
                           focusableWhenDisabled
                           onClick={() => togglePlugin(plugin)}
@@ -1014,7 +1017,7 @@ export function Settings({
                       )}
                     </div>
                   </article>
-                  {!plugin.enabled && accessReason && (
+                  {accessReason && (
                     <p id={`plugin-access-${id}`} className="sr-only">
                       {accessReason}
                     </p>

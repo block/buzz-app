@@ -1117,10 +1117,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
         .any(|plugin| plugin.manifest.id == "buzz.inbox"));
     for plugin in &catalog.plugins {
         let id = plugin.manifest.id.as_str();
-        let default = !matches!(
-            id,
-            "buzz.bestie" | "buzz.todos" | "buzz.moderation" | "buzz.relay-staff"
-        );
+        let default = !matches!(id, "buzz.bestie" | "buzz.todos");
         assert_eq!(plugin.enabled, default, "{id}");
         if id == "buzz.channels" {
             assert!(manager.change("disable", id).is_err());

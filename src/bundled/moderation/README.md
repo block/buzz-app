@@ -2,7 +2,9 @@
 
 Invite people to your community and manage their roles and access.
 
-After you enable the plugin in **Settings → Plugins → Manage plugins**, Membership appears under **Community admin** in Settings when you select a
+The plugin is on by default; **Settings → Plugins → Manage plugins** can turn it off.
+
+Membership appears under **Community admin** in Settings when you select a
 community where you are an owner or admin.
 
 ## Getting started

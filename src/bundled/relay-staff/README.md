@@ -2,7 +2,9 @@
 
 Review reports and feedback, investigate issues, and take action.
 
-After you enable the plugin in **Settings → Plugins → Manage plugins**, Moderation appears in Settings when your account has staff access on the
+The plugin is on by default; **Settings → Plugins → Manage plugins** can turn it off.
+
+Moderation appears in Settings when your account has staff access on the
 connected relay. Only operators can manage staff.
 
 ## Getting started

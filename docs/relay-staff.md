@@ -1,6 +1,6 @@
 # Moderation
 
-`buzz.relay-staff` is an optional bundled Settings plugin, off by default.
+`buzz.relay-staff` is an optional bundled Settings plugin, on by default.
 Settings → Manage plugins can enable or disable it. Through `ctx.settingsCards.register` it contributes
 four entries to a "Moderation" Settings group: `reports`, `feedback`,
 `communities` and `staff`. They act on the selected community's relay, which

@@ -472,16 +472,30 @@ export class AgentRunners {
     return !!runner?.type?.run && !!runner.asked && runner.mayHold;
   }
   /** The agent's handle outside any run, while this copy runs it with a
-   * type of `pluginId`, not changing it, and its community is live. */
+   * type of `pluginId`, not changing it, and its community is live. Each
+   * call through the handle checks that again, with the same runner and
+   * type, so a kept handle stops working once it no longer holds. */
   handle(pubkey: string, pluginId: string) {
-    const runner = this.runners.get(pubkey);
-    const agent = this.host.ready(pubkey);
-    return runner?.type?.pluginId === pluginId &&
-      !runner.transitioning &&
-      agent &&
-      this.runs(pubkey)
-      ? this.handleFor(runner, agent, runner.controller.signal)
-      : undefined;
+    const held = () => {
+      const runner = this.runners.get(pubkey);
+      const agent = this.host.ready(pubkey);
+      return runner?.type?.pluginId === pluginId &&
+        !runner.transitioning &&
+        agent &&
+        this.runs(pubkey)
+        ? { runner, agent }
+        : undefined;
+    };
+    const now = held();
+    if (!now) return;
+    const { runner, agent } = now;
+    const { signal } = runner.controller;
+    return guarded(this.handleFor(runner, agent, signal), () => {
+      if (signal.aborted || held()?.runner !== runner)
+        throw new Error(
+          `${agent.name} no longer runs here as this plugin's agent; ask for its handle again`,
+        );
+    });
   }
   /** Whether another copy of the app runs an agent this one could. */
   yielded(pubkey: string) {
@@ -2058,6 +2072,25 @@ export class AgentRunners {
     bounded(runner.wrote, signed.id);
     return signed;
   }
+}
+
+/** `target`, with `live()` checked before each of its calls, however deep. */
+function guarded<T extends object>(target: T, live: () => void): T {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(target).map(([key, value]) => [
+        key,
+        typeof value === "function"
+          ? (...args: unknown[]) => {
+              live();
+              return value(...args);
+            }
+          : value && typeof value === "object"
+            ? guarded(value, live)
+            : value,
+      ]),
+    ),
+  ) as T;
 }
 
 /** Runs a standalone turn with a signal that also aborts

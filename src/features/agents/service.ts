@@ -223,7 +223,9 @@ export type AgentSessions = Readonly<{
   list(pubkey: string): readonly AgentSession[];
   subscribe(listener: () => void): () => void;
 }>;
-/** The agent as `run` holds it. It works for as long as the agent exists. */
+/** The agent as `run` holds it. A run's handle works for as long as the
+ * agent exists; one from `Agents.handle` throws on each call once `handle`
+ * would no longer return it. */
 export type AgentHandle = Readonly<{
   pubkey: string;
   name: string;
@@ -642,7 +644,8 @@ export type Agents = {
    * plugin's types while this copy of the app runs it, its type is not
    * changing and its community is live, else undefined. A type whose agents
    * act on something other than a message, such as a call, publishes with
-   * it; like any type whose agents run here, it has `run`. */
+   * it; like any type whose agents run here, it has `run`. A kept handle
+   * throws once this no longer holds, so ask again when acting. */
   handle(pubkey: string): AgentHandle | undefined;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */

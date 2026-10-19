@@ -134,7 +134,8 @@ uploads as the agent. For agents that act on something other than a message,
 such as a call, `ctx.agents.handle(pubkey)` returns the same handle outside any
 run. It does so only for agents of the calling plugin's own types, while this
 copy of the app runs them, their type is not changing and their community is
-live; otherwise it returns `undefined`, so ask for it when acting rather than
+live; otherwise it returns `undefined`. A handle kept from earlier throws on
+each call once that no longer holds, so ask for it when acting rather than
 keeping it. Like any type whose agents run here, the type needs `run`.
 
 ```ts

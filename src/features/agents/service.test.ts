@@ -1478,9 +1478,14 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
   });
   expect(other.agents.handle(bot)).toBeUndefined();
   expect(ctx.agents.handle(bot)).toBeUndefined();
-  // Nor while its community is offline, or another copy of the app holds it.
+  // Nor while its community is offline, or another copy of the app holds it,
+  // and a handle kept from before stops working.
   connect(false);
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeUndefined());
+  expect(() => handle?.publish({ kind: 9, content: "late", tags: [] })).toThrow(
+    "ask for its handle again",
+  );
+  expect(() => handle?.attention.enabled()).toThrow("ask for its handle again");
   native.claim.mockClear();
   native.claim.mockResolvedValue(false);
   connect(true);

@@ -746,7 +746,9 @@ description; Select shows it as a byline in the popup while the closed trigger
 retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
-menu presentation. Use its loading state while discovering options, and keep
+menu presentation. For a closed dropdown with search inside, use Combobox.Trigger
+and Combobox.Popup with search; opening focuses the popup search input.
+Use its loading state while discovering options, and keep
 retry/cancel actions with the feature. Do not style a native select as an Input
 or attach a separate round button to mimic a combobox.
 
@@ -1031,7 +1033,11 @@ to a content-sized confirmation without collapsing its scrollport. Expanded and
 side-sheet compositions are unchanged.
 
 
-Use Accordion for collapsible sections. Form sections pass `keepMounted` so
+Use Accordion for collapsible sections. Plugin access declarations opt into `animate`:
+Base UI owns height-transition presence with the shared settle tokens, while
+`motion/react` fades the panel between states. Keyboard activation and reduced
+motion switch immediately. Other accordions retain their existing behavior.
+Form sections pass `keepMounted` so
 collapsing them preserves local input state; leave the default for static content.
 Use `variant="form"` when the surrounding form owns spacing. It removes outer
 margins while keeping the shared row and panel padding. Adjacent disclosure rows

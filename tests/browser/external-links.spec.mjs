@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { expectTabler } from "./tabler.mjs";
 import { openPage, settlePanelMotion } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -78,7 +79,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Manage plugins").click();
-  await page.getByRole("switch", { name: "Enable GitHub" }).click();
+  await pluginAction(page, "GitHub").click();
   await openMessages(page);
   await expect(panel).toHaveCount(0);
   expect(await popup(page, link(page, github))).toBe(github);
@@ -89,7 +90,7 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Manage plugins").click();
-  await page.getByRole("switch", { name: "Enable GitHub" }).click();
+  await pluginAction(page, "GitHub").click();
   await openMessages(page);
   await link(page, github).focus();
   await page.keyboard.press("Enter");

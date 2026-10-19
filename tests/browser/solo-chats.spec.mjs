@@ -110,12 +110,12 @@ test.describe("Berd-style Solo project organization", () => {
     const row = sidebar.locator(`[data-solo-channel-id="${id}"]`);
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-    await page.getByRole("menuitem", { name: "New project…" }).click();
+    await page.getByRole("menuitem", { name: "New workspace…" }).click();
     const dialog = page.getByRole("dialog");
-    await dialog.getByRole("textbox", { name: "Project name" }).fill("Work");
+    await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
     await dialog.getByRole("button", { name: "Create and move" }).click();
     await expect(dialog).not.toBeVisible();
-    await expect(sidebar.getByText("Saving project…")).not.toBeVisible();
+    await expect(sidebar.getByText("Saving workspace…")).not.toBeVisible();
     await expect(sidebar.getByRole("alert")).toHaveCount(0);
     const project = sidebar.getByRole("button", { name: "Work", exact: true });
     await expect(project).toBeVisible();
@@ -146,7 +146,7 @@ test.describe("Berd-style Solo project organization", () => {
 
     await sidebar.getByText("Alpha", { exact: true }).click();
     await expect(
-      page.getByRole("button", { name: "Project: Work", exact: true }),
+      page.getByRole("button", { name: "Workspace: Work", exact: true }),
     ).toBeVisible();
     app.soloAgentMessage(id, "Agent follow-up fixture");
     const [agent] = app.soloAgents;
@@ -247,9 +247,9 @@ test("dragging a chat between a project and Chats saves and reloads like Move to
   await page.clock.install();
   await chat("Alpha").click({ button: "right" });
   await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
-  await page.getByRole("menuitem", { name: "New project…" }).click();
+  await page.getByRole("menuitem", { name: "New workspace…" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox", { name: "Project name" }).fill("Work");
+  await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
   await dialog.getByRole("button", { name: "Create and move" }).click();
   await expect(inProject("Alpha")).toBeVisible();
   const work = (await published(1))[id];

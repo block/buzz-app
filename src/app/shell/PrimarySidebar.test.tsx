@@ -55,7 +55,7 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   await user.click(screen.getByRole("button", { name: "New" }));
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-  ).toEqual(["New chat", "New project", "New DM", "New channel"]);
+  ).toEqual(["New chat", "New workspace", "New DM", "New channel"]);
   await user.click(screen.getByRole("menuitem", { name: "New chat" }));
   expect(f.open).toHaveBeenCalledWith(soloDraftTarget(scope));
   await user.click(solo);
@@ -72,7 +72,7 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
 });
 
 it.each([
-  ["New project", "New project", "Cancel"],
+  ["New workspace", "New workspace", "Cancel"],
   ["New channel", "Create a channel", "Close channel creation"],
 ])(
   "opens %s from any filter and returns focus to New on cancel",
@@ -99,7 +99,7 @@ it("keeps unavailable creation actions disabled", async () => {
   fixture(true);
   await user.click(screen.getByRole("button", { name: "New" }));
   expect(
-    await screen.findByRole("menuitem", { name: "New project" }),
+    await screen.findByRole("menuitem", { name: "New workspace" }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(screen.getByRole("menuitem", { name: "New channel" })).toHaveAttribute(
     "aria-disabled",
@@ -119,9 +119,9 @@ it("does not navigate to a replaced session after project creation completes", a
     .mockReturnValue(pending);
   await user.click(screen.getByRole("button", { name: "New" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "New project" }),
+    await screen.findByRole("menuitem", { name: "New workspace" }),
   );
-  const dialog = await screen.findByRole("dialog", { name: "New project" });
+  const dialog = await screen.findByRole("dialog", { name: "New workspace" });
   await user.type(
     within(dialog).getByRole("textbox", { name: "Name" }),
     "Planning",
@@ -173,7 +173,7 @@ it("retains scope across Settings remounts and reveals navigation outside the fi
 });
 
 it.each([
-  ["New project", "New project"],
+  ["New workspace", "New workspace"],
   ["New channel", "Create a channel"],
 ])(
   "retains typed %s input through cached reconnect and session replacement",

@@ -101,7 +101,7 @@ it("observes each reply's tokens and goose's price", () => {
   );
 });
 
-it("reads the agent's sessions in its workspace through goose", async () => {
+it("reads the agent's sessions in its workspace through goose, every page", async () => {
   const saved = (
     sessionId: string,
     conversation: Record<string, unknown>[],
@@ -117,11 +117,14 @@ it("reads the agent's sessions in its workspace through goose", async () => {
   const history = new GooseHistory(
     fakeSpawn({
       home: "/home/test",
+      page: 2,
       history: [
-        saved("mine", [user(ask()), work]),
         // Another agent's session that mentions this one.
         saved("theirs", [user(ask(other)), user(`Ask ${agent}`), work]),
         saved("old", [user(ask()), work], "2026-01-01T00:00:00Z"),
+        // A session of the user's own.
+        saved("own", [user("Tidy my notes"), work]),
+        saved("mine", [user(ask()), work]),
       ],
     }).spawn,
   );

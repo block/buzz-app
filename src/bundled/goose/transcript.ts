@@ -285,20 +285,49 @@ type Listed = {
   updatedAt?: string | null;
 };
 
-/** The agent's goose sessions in its workspace, newest first; `query` keeps
- * those whose messages mention it. */
-async function list(goose: GooseProcess, cwd: string, query?: string) {
-  const { sessions } = (await goose.request("session/list", {
+/** A page of the goose sessions in the workspace, newest first; `query`
+ * keeps those whose messages mention it. */
+async function page(
+  goose: GooseProcess,
+  cwd: string,
+  query?: string,
+  cursor?: string,
+) {
+  const { sessions, nextCursor } = (await goose.request("session/list", {
     cwd,
+    ...(cursor ? { cursor } : {}),
     _meta: { types: ["acp"], ...(query ? { query } : {}) },
-  })) as { sessions: Listed[] };
-  return sessions.map(
-    (session): GooseSessionRow => ({
-      sessionId: session.sessionId,
-      title: session.title ?? "",
-      at: Date.parse(session.updatedAt ?? "") || 0,
-    }),
-  );
+  })) as { sessions: Listed[]; nextCursor?: string | null };
+  return {
+    rows: sessions.map(
+      (session): GooseSessionRow => ({
+        sessionId: session.sessionId,
+        title: session.title ?? "",
+        at: Date.parse(session.updatedAt ?? "") || 0,
+      }),
+    ),
+    next: (sessions.length && nextCursor) || undefined,
+  };
+}
+
+/** The first page of the agent's goose sessions in the workspace, newest
+ * first; `query` keeps those whose messages mention it. */
+async function list(goose: GooseProcess, cwd: string, query?: string) {
+  return (await page(goose, cwd, query)).rows;
+}
+
+/** Every goose session in the workspace. Without a query a page is an index
+ * lookup; with one, the SQLite goose bundles (3.51) parses each session's
+ * messages again for every message in it, which takes seconds. */
+async function all(goose: GooseProcess, cwd: string) {
+  const rows: GooseSessionRow[] = [];
+  let cursor: string | undefined;
+  do {
+    const read = await page(goose, cwd, undefined, cursor);
+    rows.push(...read.rows);
+    cursor = read.next;
+  } while (cursor);
+  return rows;
 }
 
 async function messages(goose: GooseProcess, sessionId: string) {
@@ -362,7 +391,7 @@ export class GooseHistory {
     return this.with(signal, async (goose, spawn) => {
       const cwd = await absolute(spawn, workspace);
       const found: { sessionId: string; messages: Message[] }[] = [];
-      for (const row of await list(goose, cwd, agent)) {
+      for (const row of await all(goose, cwd)) {
         if (row.at < since) continue;
         signal.throwIfAborted();
         const read = await listed(goose, row.sessionId);

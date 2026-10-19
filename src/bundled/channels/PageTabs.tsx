@@ -136,15 +136,15 @@ export function PageTabs({
       if (!mounted.current || !secondary.canOpenConversation(channelId))
         return false;
       const known = new Set(tabState.tabs.map((tab) => tab.id));
-      // An open thread keeps its tab in whichever pane it was moved to.
-      const existing =
-        threadId && threadTab(tabState.tabs, channelId, threadId)?.id;
+      // An open thread keeps its tab in whichever pane it was moved to, and
+      // under its verified root.
+      const existing = threadId ? tabOf({ channelId, threadId }) : undefined;
       if (threadId)
         // Each open at a message asks the thread reader to show it again.
         secondary.openConversationThread(
           channelId,
           messageId ?? threadId,
-          threadId,
+          (existing?.kind === "thread" && existing.rootId) || threadId,
           messageId ? "reveal" : undefined,
         );
       else {
@@ -172,7 +172,7 @@ export function PageTabs({
       // already-open tab stays.
       const page = previews.get(session) ?? new Map<string, string>();
       previews.set(session, page);
-      const opened = existing || tabState.getSelected();
+      const opened = existing?.id || tabState.getSelected();
       const preview = page.get(id);
       if (known.has(opened)) {
         if (keep && opened === preview) page.delete(id);

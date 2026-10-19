@@ -22,18 +22,26 @@ vi.mock("./ConversationTab", () => ({
     tab,
     channel,
     visit,
+    onResolvedRoot,
   }: {
     tab: Tab;
     channel: { name: string };
     visit: boolean;
+    onResolvedRoot?: (rootId: string) => void;
   }) => (
     <p
+      data-tab={tab.id}
       data-message={tab.messageId}
       data-reveal={tab.revealRequest}
       data-mark-read={tab.kind === "conversation" ? tab.markRead : undefined}
     >
       {tab.kind} in {channel.name}
       {!visit && " unvisited"}
+      {onResolvedRoot && (
+        <button type="button" onClick={() => onResolvedRoot("older")}>
+          Resolve root
+        </button>
+      )}
     </p>
   ),
 }));
@@ -220,6 +228,20 @@ it("opens a thread at one of its messages", () => {
   page.open({ channelId: "alpha", threadId: "root" });
   expect(thread()).toHaveAttribute("data-message", "root");
   expect(thread()).toHaveAttribute("data-reveal", "2");
+});
+
+it("reopens a thread opened at a reply in its tab once its root resolves", () => {
+  const page = fixture();
+  page.open({ channelId: "alpha", threadId: "reply" });
+  const thread = () => screen.getByText("thread in alpha");
+  const id = thread().getAttribute("data-tab");
+  fireEvent.click(screen.getByRole("button", { name: "Resolve root" }));
+  expect(
+    page.open({ channelId: "alpha", threadId: "reply", messageId: "reply" }),
+  ).toBe(true);
+  expect(thread()).toHaveAttribute("data-tab", id);
+  expect(thread()).toHaveAttribute("data-reveal", "1");
+  expect(page.isOpen({ channelId: "alpha", threadId: "older" })).toBe(true);
 });
 
 it("opens a page's tabs without visiting their conversations when it asks", () => {

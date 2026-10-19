@@ -64,7 +64,6 @@ features/relay/         shared channel data, queries, profiles and durable deliv
 features/messages/      reusable timeline, message, thread and composer UI
 features/channel-navigation/ persistent sidebar, scoped draft handoff, Channels routes
 bundled/channels/       conversation navigation, page layout and panel placement
-bundled/channel-usage/  optional archive-backed Usage panel and Channels menu launcher
 bundled/repos/          repository pages, issue/PR details and Git views
 features/repos/        entity route/data contracts and bounded Git read bridge
 bundled/agents/        Agents page and agent types (harness plugins register theirs)
@@ -99,7 +98,7 @@ source imports are not a versioned external SDK. See
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
-`ctx.panels.register({ id, title, matches, order?, launcher?, component })`. IDs are local to the
+`ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
 navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`
@@ -248,21 +247,32 @@ contracts with their own layout and local navigation.
 
 **Channels is the only required bundled plugin.** Bestie
 and Todos are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
-Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities, and Community admin are
-on by default, but optional. Both browser and native catalogs declare that policy.
+Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
+Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
+Membership, and Moderation are on by default, but optional. Both browser and
+native catalogs declare that policy.
 
 Solo is part of Channels, not a plugin: Solo chats are channels opened in
 Messages, and Solo drafts are a Messages route. Channels requests topbar
 placement and the shell presents it as Messages, the startup destination.
 Saved `buzz.me` and `buzz.sessions` flags are ignored like any uninstalled owner.
 
-Saved enabled/disabled flags win over defaults (except required Channels). There
-is no migration or forced reset: a browser profile that previously saved its full
+Saved enabled/disabled flags win over defaults (except required Channels). Profiles
+without a saved flag use the current default, so changing a default also changes
+those existing profiles. There is no migration or forced reset: a browser profile that previously saved its full
 plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
 overrides. Default-on does not promise platform support: Terminal contributes UI
 only on macOS/Linux desktop; Hosted communities needs either the desktop app or
-the live development broker. Disabling Community admin removes its Invite to community shortcut.
+the live development broker. Disabling Membership removes its Invite to community shortcut.
+
+Membership and Moderation share app-owned access controllers composed in
+`app/services.ts` (`bundled/admin-access.ts`). Their navigation entries and the
+Plugins catalog use the same verified roster or native staff probe, including
+while either plugin is disabled. The catalog leaves details readable, gates only
+Enable on current access, and always permits Disable. Access status remains
+visible while enabled; navigation and administrative actions require verified
+authority. Restoring default-on needs no migration; explicit Off remains saved.
+These UI checks do not grant permissions; relay and native enforcement still apply.
 
 Repositories is enabled by default and owns versioned, validated repository, PR
 and issue page routes. Its page is absent from primary navigation. It resolves
@@ -286,9 +296,7 @@ Disabling or replacing a plugin retires its open tab; a channel change or loss o
 eligibility closes it and unmounts its archive reader. Re-enabling never reopens a
 stale tab. Eligibility and `channelContext` are presentation, **not authority**:
 the panel must independently verify access before reading any sensitive data and
-fence asynchronous reads on revocation. Channel Usage owns this panel and its
-archive projection; the session continues to own archive capture, access and
-retention. Plugin enablement controls visibility without changing capture settings.
+fence asynchronous reads on revocation.
 
 ### Settings cards
 
@@ -1030,7 +1038,9 @@ conversation tab, each with the same reader and composer as Channels tabs, so
 the page stays in view; any thread can then move to the main pane. A plain open
 replaces the tab the previous one added, and `keep: true` adds a tab beside it;
 an already-open conversation's tab is selected wherever it is. `close(target)` closes that conversation's tab and returns false when none is open; `isOpen(target)` says whether it has one, and a thread opened at a reply keeps its tab once its root resolves. `id` keys the page's tabs, which last for its community session as
-Channels tabs do; they keep no Back/Forward visits.
+Channels tabs do; they keep no Back/Forward visits. Showing a tab enters its
+channel visit, as in Channels; `visits: false` leaves reading to the page, as
+Inbox does.
 The tab workspace belongs to Channels, which supplies it with
 `conversation.registerTabs(component)`; the conversation service only holds that
 slot. `ui.Tabs` is undefined while no enabled plugin provides it, so a page reads

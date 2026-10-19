@@ -3369,3 +3369,149 @@ it.each([true, false])(
     }
   },
 );
+
+it("excludes proven Huddles but keeps ordinary hits after mutable metadata changes", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  let live: LiveCallbacks | undefined;
+  const marker = (id: string, time: number) =>
+    metadata(relay, id, id, time, [
+      ["t", "stream"],
+      ["private"],
+      ["P", viewer.pubkey],
+      [
+        "about",
+        "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
+      ],
+    ]);
+  const discovery = [
+    marker("hidden", 1700000000),
+    signed(viewer, {
+      kind: 9007,
+      created_at: 1700000000,
+      content: "",
+      tags: [
+        ["h", "hidden"],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        [
+          "about",
+          "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
+        ],
+      ],
+    }),
+    metadata(relay, "later", "later"),
+    roster(relay, "hidden", [viewer.pubkey]),
+    roster(relay, "later", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      return filters.some((filter) => filter.search)
+        ? [
+            message(viewer, "hidden", "hidden match", 1700000001),
+            message(viewer, "later", "later match", 1700000001),
+          ]
+        : discovery.filter((event) =>
+            filters.some((filter) => filter.kinds?.includes(event.kind)),
+          );
+    },
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="match"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(screen.queryByRole("option", { name: /hidden match/ })).toBeNull();
+    expect(screen.getByRole("option", { name: /later match/ })).toBeVisible();
+    act(() => live?.receive([marker("later", 1700000002)]));
+    expect(screen.getByRole("option", { name: /later match/ })).toBeVisible();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("withholds unknown metadata, then reveals unproven legacy rooms as ordinary destinations", async () => {
+  vi.useFakeTimers();
+  const relay = keypair(),
+    viewer = keypair();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search))
+        return [
+          message(viewer, "room", "match private", 1700000001),
+          message(viewer, "ordinary", "match ordinary", 1700000001),
+        ];
+      if (filters.some((filter) => filter.kinds?.includes(39000))) {
+        await gate;
+        return [
+          metadata(relay, "room", "Room", 1700000000, [
+            ["private"],
+            [
+              "about",
+              "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
+            ],
+          ]),
+          metadata(relay, "ordinary", "Ordinary"),
+        ];
+      }
+      if (filters.some((filter) => filter.kinds?.includes(39002)))
+        return [
+          roster(relay, "room", [viewer.pubkey]),
+          roster(relay, "ordinary", [viewer.pubkey]),
+        ];
+      return [];
+    },
+  });
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="match"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+    });
+    expect(owner.session.channels.get?.("room")?.metadataPending).toBe(true);
+    expect(
+      screen.queryByRole("option", { name: /match private|match ordinary/ }),
+    ).toBeNull();
+    await act(async () => {
+      release();
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(screen.getByRole("option", { name: /match private/ })).toBeVisible();
+    expect(
+      screen.getByRole("option", { name: /match ordinary/ }),
+    ).toBeVisible();
+  } finally {
+    release();
+    cleanup();
+    owner.dispose();
+  }
+});

@@ -1,5 +1,6 @@
+import { setPluginEnabled } from "./plugin-settings.mjs";
+import { settleShellToggle, selectSettingsSection } from "./navigation.mjs";
 import { openCommunityPicker } from "./navigation.mjs";
-import { settleShellToggle } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -81,34 +82,34 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
     exact: true,
   });
   const row = content.getByRole("article").filter({
-    has: page.getByRole("switch", { name: "Enable GitHub", exact: true }),
+    has: page.getByRole("button", { name: "View GitHub details", exact: true }),
   });
-  const toggle = row.getByRole("switch", {
-    name: "Enable GitHub",
-    exact: true,
+  const toggle = row.getByRole("button", {
+    name: /^(Enable|Disable) GitHub$/,
   });
   const title = row.getByText("GitHub", { exact: true });
   const description = row.getByText(
     "View GitHub repositories, pull requests, issues, and commits.",
     { exact: true },
   );
-  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await expect(toggle).toHaveAccessibleName("Disable GitHub");
   await page.evaluate(() => document.fonts.ready);
   await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "2");
+  await title.scrollIntoViewIfNeeded();
+  await expect(title).toBeInViewport({ ratio: 1 });
   await description.scrollIntoViewIfNeeded();
   await expect(description).toBeInViewport({ ratio: 1 });
   await toggle.scrollIntoViewIfNeeded();
-  await expect(title).toBeInViewport({ ratio: 1 });
   await expect(toggle).toBeInViewport({ ratio: 1 });
   await page.screenshot({
     path: testInfo.outputPath("settings-short-200-percent.png"),
   });
   await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await expect(toggle).toHaveAccessibleName("Enable GitHub");
   await expect(toggle).toBeFocused();
-  await expect(toggle).toHaveAttribute("aria-disabled", "false");
+  await expect(toggle).toBeEnabled();
   await toggle.press("Space");
-  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await expect(toggle).toHaveAccessibleName("Disable GitHub");
   await expect(toggle).toBeInViewport({ ratio: 1 });
   // The replacement Settings pane remains reachable by disclosure at narrow
   // widths and is persistent at desktop widths.
@@ -237,9 +238,11 @@ test.describe("community administration permissions", () => {
     const sections = page.getByRole("navigation", {
       name: "Settings sections",
     });
-    await expect(sections).toContainText("Community admin");
     // The account menu finishes its focus handoff before testing section focus.
     await expect(page.getByRole("main")).toBeFocused();
+    await selectSettingsSection(page, "Manage plugins");
+    await setPluginEnabled(page, "Membership", true);
+    await expect(sections).toContainText("Community admin");
     const membership = sections.getByRole("button", {
       name: "Membership",
       exact: true,
@@ -538,7 +541,7 @@ confirmedPresence(
       await expect(profileContent).toHaveCount(0);
       await expect(pluginContent).toBeVisible();
       await expect(
-        page.getByRole("switch", { name: "Enable Workflows" }),
+        page.getByRole("button", { name: "Disable Workflows", exact: true }),
       ).toBeVisible();
       const settingsRegion = page.getByRole("region", {
         name: "Settings",
@@ -1054,4 +1057,59 @@ test("discarding community setup leaves the published profile unchanged", async 
     }),
   ).toHaveValue("");
   expect(writes).toEqual([]);
+});
+
+// Browser-only: container-query hiding must remove covered controls from native Tab navigation.
+test("narrow plugin details moves focus, skips covered rows, and restores the trigger on Escape", async ({
+  page,
+  app,
+}, info) => {
+  await page.setViewportSize({ width: 480, height: 650 });
+  await page.goto(app.origin);
+  await button(page, "Your profile").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await button(page, "Show navigation").click();
+  const sidebar = page.getByRole("complementary", {
+    name: "Settings sidebar",
+    includeHidden: true,
+  });
+  await sidebar
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
+    const trigger = button(page, "View GitHub details");
+    await trigger.focus();
+    await page.keyboard.press("Enter");
+    const pane = page.getByRole("complementary", { name: "GitHub details" });
+    await expect(
+      pane.getByRole("button", { name: "Close plugin details" }),
+    ).toBeFocused();
+    await expect(trigger).toBeHidden();
+    // The covered catalog is hidden from AT; its live feedback must stay exposed.
+    await expect(page.getByRole("alert")).toHaveCSS("visibility", "visible");
+    await page.keyboard.press("Tab");
+    await expect(
+      pane.getByRole("button", { name: "Disable", exact: true }),
+    ).toBeFocused();
+    await pane.evaluate((element) =>
+      Promise.allSettled(
+        element
+          .getAnimations({ subtree: true })
+          .filter(
+            (animation) =>
+              animation.effect?.getComputedTiming().endTime !== Infinity,
+          )
+          .map((animation) => animation.finished),
+      ),
+    );
+    await pane.screenshot({
+      path: info.outputPath(`plugin-details-${mode}.png`),
+    });
+    await page.keyboard.press("Escape");
+    await expect(pane).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect(trigger).toBeVisible();
+  }
 });

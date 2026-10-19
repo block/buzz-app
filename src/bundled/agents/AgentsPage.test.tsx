@@ -472,17 +472,37 @@ it("checks providers in Agent setup and opens their host-owned dialogs", async (
   } as unknown as RegisteredAgentType;
   try {
     const { echoProvider, agents } = setup([agent("Ada", 1)], {
-      more: [relay, broken, checking],
+      more: [
+        relay,
+        broken,
+        checking,
+        {
+          ...relay,
+          key: "test/crashed",
+          id: "crashed",
+          title: "Crashed",
+          provider: {
+            ...checkingProvider.contribution,
+            snapshot: () => {
+              throw new Error("Snapshot crashed");
+            },
+          },
+        },
+      ],
     });
     expect(
       screen.queryByRole("button", { name: "More agent actions" }),
     ).toBeNull();
     const defaults = render(<AgentSettings agents={agents} active={false} />);
     expect(echoProvider.check).not.toHaveBeenCalled();
-    expect(screen.queryByRole("heading", { name: "Providers" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Harness defaults" }),
+    ).toBeNull();
     defaults.rerender(<AgentSettings agents={agents} />);
     expect(screen.getByRole("heading", { name: "Agent setup" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Providers" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Harness defaults" }),
+    ).toBeVisible();
     expect(
       screen.getByRole("switch", { name: "Remember mentioned agents" }),
     ).toBeVisible();
@@ -490,15 +510,19 @@ it("checks providers in Agent setup and opens their host-owned dialogs", async (
     const echo = within(menu).getByRole("button", {
       name: "Echo, ready",
     });
-    const relayRow = within(menu).getByRole("button", {
-      name: "Relay, unavailable",
-    });
-    expect(relayRow).toBeDisabled();
+    expect(
+      within(menu).queryByRole("button", {
+        name: "Relay, unavailable",
+      }),
+    ).toBeNull();
     expect(
       within(menu).getByRole("button", {
         name: "Repair Broken, attention",
       }),
     ).toBeEnabled();
+    expect(
+      within(menu).getByRole("button", { name: "Crashed, unavailable" }),
+    ).toBeDisabled();
     const checkingRow = within(menu).getByRole("button", {
       name: "Checking, checking",
     });

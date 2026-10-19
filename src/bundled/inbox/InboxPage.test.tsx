@@ -14,7 +14,9 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
+import { PageTabs } from "../channels/PageTabs";
 import { InboxPage, type ArchiveShortcut } from "./InboxPage";
+import { huddleDescription } from "../../features/huddle/lifecycle";
 import { archiveKey, readArchives } from "./archive";
 import { viewRevision } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -435,6 +437,114 @@ it("offers the Archive shortcut only for an opened conversation while no action 
   ).toHaveAttribute("aria-busy", "true");
   expect(h.archive.current).toBeUndefined();
   await waitFor(() => expect(h.archive.current).toBeDefined());
+});
+
+it.each(["shortcut", "row"])(
+  "a conversation tab restored after leaving Inbox still archives and advances from its %s",
+  async (from) => {
+    const h = fixture();
+    const view = render(h.view);
+    const list = () =>
+      within(screen.getByRole("list", { name: "Inbox conversations" }));
+    await waitFor(() =>
+      expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+    );
+    const [first] = list().getAllByRole("button", { name: /^Open / });
+    if (!first) throw new Error("Missing fixture row");
+    fireEvent.click(first);
+    await waitFor(() => expect(h.archive.current).toBeDefined());
+    const [tab] = sideTabs();
+    // Leaving Inbox and returning restores the tab with its row's selection.
+    view.unmount();
+    render(h.view);
+    await waitFor(() => expect(sideTabs()).toEqual([tab]));
+    const selected = await waitFor(() => {
+      const row = list()
+        .getAllByRole("listitem")
+        .find((item) => item.hasAttribute("data-selected"));
+      if (!row) throw new Error("No selected row");
+      return row;
+    });
+    if (from === "shortcut") await archiveOpened(h);
+    else
+      fireEvent.click(
+        within(selected).getByRole("button", { name: /^Archive / }),
+      );
+    await waitFor(() =>
+      expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(1),
+    );
+    expect(list().getByRole("listitem")).toHaveAttribute("data-selected");
+    expect(sideTabs()).toHaveLength(1);
+  },
+);
+
+it.each([false, true])(
+  "retires an opened conversation when its room becomes a Huddle (selection cleared first: %s)",
+  async (cleared) => {
+    const h = fixture({ withWriter: true });
+    render(h.view);
+    const list = () =>
+      within(screen.getByRole("list", { name: "Inbox conversations" }));
+    await waitFor(() =>
+      expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+    );
+    const [first] = list().getAllByRole("button", { name: /^Open / });
+    if (!first) throw new Error("Missing fixture row");
+    fireEvent.click(first);
+    await findReader();
+    // Showing Archived ends the selection but keeps its tab.
+    if (cleared) await chooseFilter("Archived", "Show");
+    else (await screen.findByRole("textbox")).focus();
+    const about = huddleDescription("00000000-0000-4000-8000-000000000001");
+    act(() =>
+      h.emit([
+        metadata(h.relayKey, "room", "Huddle", 100, [
+          ["private"],
+          ["P", h.viewer.pubkey],
+          ["about", about],
+        ]),
+        signed(h.viewer, {
+          kind: 9007,
+          created_at: 1,
+          content: "",
+          tags: [
+            ["h", "room"],
+            ["visibility", "private"],
+            ["channel_type", "stream"],
+            ["about", about],
+          ],
+        }),
+      ]),
+    );
+    await waitFor(() => expect(queryReader()).not.toBeInTheDocument());
+    expect(h.archive.current).toBeUndefined();
+    if (cleared)
+      expect(
+        screen.getByText("This conversation is no longer available."),
+      ).toBeInTheDocument();
+    else {
+      expect(sideTabs()).toEqual([]);
+      expect(
+        screen.getByRole("button", { name: "Inbox filters" }),
+      ).toHaveFocus();
+    }
+  },
+);
+
+it("offers no Archive shortcut while Drafts is shown", async () => {
+  const h = fixture();
+  render(h.view);
+  const list = () =>
+    within(screen.getByRole("list", { name: "Inbox conversations" }));
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+  );
+  const [first] = list().getAllByRole("button", { name: /^Open / });
+  if (!first) throw new Error("Missing fixture row");
+  fireEvent.click(first);
+  await waitFor(() => expect(h.archive.current).toBeDefined());
+  await chooseFilter("Drafts");
+  await waitFor(() => expect(h.archive.current).toBeUndefined());
 });
 
 it("archives from the row without opening it, remembers filters, and clears an empty unread archive", async () => {
@@ -1568,6 +1678,15 @@ function fixture(
   };
   const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
   const archive: ArchiveShortcut = {};
+  const host = {
+    relay,
+    navigation: { open },
+    panels: {
+      subscribe: () => () => {},
+      snapshot: () => emptyPanels,
+      resolve: () => undefined,
+    },
+  } as unknown as ConversationHostServices;
   return {
     owner,
     session: observedSession,
@@ -1686,6 +1805,7 @@ function fixture(
     late,
     alice,
     viewer,
+    relayKey,
     profileAgent,
     emit,
     events,
@@ -1725,17 +1845,8 @@ function fixture(
     view: (
       <StrictMode>
         <InboxPage
-          host={
-            {
-              relay,
-              navigation: { open },
-              panels: {
-                subscribe: () => () => {},
-                snapshot: () => emptyPanels,
-                resolve: () => undefined,
-              },
-            } as unknown as ConversationHostServices
-          }
+          host={host}
+          tabs={(props) => <PageTabs {...props} host={host} />}
           relay={relay}
           navigator={{ open } as unknown as Navigation}
           archive={archive}

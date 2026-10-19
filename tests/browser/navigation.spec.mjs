@@ -1,3 +1,4 @@
+import { setPluginEnabled } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -42,11 +43,7 @@ test("a retired contributed Settings destination fails promptly on Back", async 
   await sections
     .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
-  const pairingEnabled = page.getByRole("switch", {
-    name: "Enable Pair mobile",
-    exact: true,
-  });
-  if (!(await pairingEnabled.isChecked())) await pairingEnabled.click();
+  await setPluginEnabled(page, "Pair mobile", true);
   const pairing = sections.getByRole("button", {
     name: "Pair mobile",
     exact: true,
@@ -57,7 +54,7 @@ test("a retired contributed Settings destination fails promptly on Back", async 
   await sections
     .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
-  await pairingEnabled.click();
+  await setPluginEnabled(page, "Pair mobile", false);
   await expect(pairing).toHaveCount(0);
   await button(page, "Go back").click();
   await expect(

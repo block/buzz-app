@@ -132,6 +132,18 @@ function setup(id: string, deliveryTimeoutMs?: number) {
     loseAck() {
       loseAck = true;
     },
+    /** Live subscriptions asked for the chat's events. */
+    liveReads(channelId: string) {
+      return sockets
+        .flatMap((socket) => socket.requests())
+        .filter((request) =>
+          request
+            .slice(2)
+            .some((filter) =>
+              (filter as ReadFilter)["#h"]?.includes(channelId),
+            ),
+        ).length;
+    },
     async established() {
       await vi.advanceTimersByTimeAsync(0);
       const socket = sockets[0];
@@ -182,6 +194,9 @@ it("a new chat's first message reaches its local agent at once and the relay rig
     h.agent.pubkey,
   ]);
   expect(heard.map((event) => event.id)).toEqual([message]);
+  // Nor does its live tail, which the relay refuses until the chat exists.
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(h.liveReads(id)).toBe(0);
 
   let settled = false;
   void ready.then(() => {
@@ -198,6 +213,8 @@ it("a new chat's first message reaches its local agent at once and the relay rig
   // Once the relay has it, the open chat reads its history.
   await vi.advanceTimersByTimeAsync(0);
   expect(historyReads()).toBeGreaterThan(0);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(h.liveReads(id)).toBeGreaterThan(0);
   expect(listed()?.members).toContain(h.agent.pubkey);
 });
 

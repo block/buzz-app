@@ -2525,19 +2525,21 @@ export function createRelaySession(
   }
   const updateInterests = () => {
     if (closed) return;
+    // A chat still starting has no membership on the relay yet, which would
+    // refuse its live tail; it subscribes once the relay confirms it.
     const joined = channels.queries
       .list()
-      .channels.filter((channel) => !channel.cached)
+      .channels.filter((channel) => !channel.cached && !channel.pending)
       .map((channel) => channel.id);
     const ids = [
       ...new Set([
         ...joined,
-        ...channels
-          .demandedChannels()
-          .filter(
-            (id) =>
-              channels.canAccess(id) && !channels.queries.get?.(id)?.cached,
-          ),
+        ...channels.demandedChannels().filter((id) => {
+          const channel = channels.queries.get?.(id);
+          return (
+            channels.canAccess(id) && !channel?.cached && !channel?.pending
+          );
+        }),
       ]),
     ];
     const wanted = new Set(ids);

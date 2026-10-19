@@ -123,11 +123,8 @@ it("labels landing controls as configuration and retains the runtime caveat in d
   expect(
     await screen.findByRole("region", { name: "Workflow editor" }),
   ).toBeVisible();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Workflow settings & activity" }),
-  );
   expect(
-    within(screen.getByRole("dialog", { name: "Edit workflow" })).getByText(
+    within(screen.getByRole("dialog", { name: "Message helper" })).getByText(
       /Turning off does not confirm runs have stopped/,
     ),
   ).toBeVisible();
@@ -160,9 +157,8 @@ it("explains another author's disabled controls from the landing through the rea
     pane.getByText("Only the author can change this workflow."),
   ).toBeVisible();
   await user.click(pane.getByRole("button", { name: "View workflow" }));
-  const dialog = screen.getByRole("dialog", { name: "View workflow" });
+  const dialog = screen.getByRole("dialog", { name: "Message helper" });
   const controls = within(dialog);
-  expect(controls.getByText("Message helper")).toBeVisible();
   const enable = controls.getByRole("switch", {
     name: "Enabled in configuration",
   });
@@ -172,12 +168,12 @@ it("explains another author's disabled controls from the landing through the rea
   );
   await user.click(enable);
   expect(
-    controls.getByRole("button", { name: "Edit workflow name" }),
+    controls.getByRole("textbox", { name: "Workflow name" }),
+  ).toHaveAccessibleDescription("Only the author can change this workflow.");
+  expect(
+    controls.getByRole("textbox", { name: "Workflow name" }),
   ).toBeDisabled();
   expect(controls.queryByText("Read-only")).not.toBeInTheDocument();
-  expect(
-    controls.getByText("Only the author can change this workflow."),
-  ).not.toBeVisible();
   expect(
     controls.queryByRole("button", { name: "Save changes" }),
   ).not.toBeInTheDocument();
@@ -254,7 +250,7 @@ it("keeps the editor mounted through exact readback beneath the one-time secret"
     await screen.findByRole("button", { name: "Open Message helper" }),
   );
   fireEvent.click(detailPane().getByRole("button", { name: "Edit workflow" }));
-  const editor = screen.getByRole("dialog", { name: "Edit workflow" });
+  const editor = screen.getByRole("dialog", { name: "Message helper" });
   fireEvent.click(screen.getByRole("tab", { name: "YAML" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Workflow YAML" }), {
     target: { value: fixtureYaml.replace("message_posted", "webhook") },
@@ -271,7 +267,7 @@ it("keeps the editor mounted through exact readback beneath the one-time secret"
     screen.getByRole("button", { name: "Reveal webhook secret" }),
   );
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-  expect(screen.getByRole("dialog", { name: "Edit workflow" })).toBe(editor);
+  expect(screen.getByRole("dialog", { name: "Message helper" })).toBe(editor);
   expect(screen.getByRole("textbox", { name: "Workflow YAML" })).toHaveValue(
     fixtureYaml.replace("message_posted", "webhook"),
   );
@@ -342,7 +338,7 @@ it.each(["discard", "remove"])(
     }
     await waitFor(() =>
       expect(
-        screen.queryByRole("dialog", { name: "Edit workflow" }),
+        screen.queryByRole("region", { name: "Workflow editor" }),
       ).toBeNull(),
     );
     expect(warnsOnUnload()).toBe(false);
@@ -381,7 +377,7 @@ it("discards form-only state on same-revision review and re-arms the next draft'
   await user.click(detailPane().getByRole("button", { name: "Edit workflow" }));
   // Repeat so replacement keys must be fresh, not merely differ from the first key.
   for (const value of ["first-partial", "second-partial"]) {
-    const editor = screen.getByRole("dialog", { name: "Edit workflow" });
+    const editor = screen.getByRole("dialog", { name: "Message helper" });
     expect(warnsOnUnload()).toBe(false);
     await user.click(
       screen.getByRole("button", { name: "Edit trigger: Message posted" }),
@@ -397,13 +393,10 @@ it("discards form-only state on same-revision review and re-arms the next draft'
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Close inspector" }));
     await user.click(
-      screen.getByRole("button", { name: "Workflow settings & activity" }),
-    );
-    await user.click(
       screen.getByRole("button", { name: "Review current configuration" }),
     );
     await user.click(screen.getByRole("button", { name: "Keep editing" }));
-    expect(screen.getByRole("dialog", { name: "Edit workflow" })).toBe(editor);
+    expect(screen.getByRole("dialog", { name: "Message helper" })).toBe(editor);
     expect(warnsOnUnload()).toBe(true);
     await user.click(
       screen.getByRole("button", { name: "Edit trigger: Message posted" }),
@@ -430,7 +423,9 @@ it("discards form-only state on same-revision review and re-arms the next draft'
   }
   await user.click(screen.getByRole("button", { name: "Close editor" }));
   await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull(),
+    expect(
+      screen.queryByRole("region", { name: "Workflow editor" }),
+    ).toBeNull(),
   );
   expect(warnsOnUnload()).toBe(false);
   expect(fixture.calls.save).toBe(1);
@@ -479,12 +474,12 @@ it("confirms on the grid without mounting detail, cancels safely, and removes on
   await user.click(
     await screen.findByRole("menuitem", { name: "Delete workflow" }),
   );
-  expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Workflow editor" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(fixture.calls.delete).toBe(0);
   await confirmDeletion();
   expect(fixture.calls.delete).toBe(1);
-  expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Workflow editor" })).toBeNull();
   expect(screen.getByText("Deleting…")).toBeVisible();
   await act(async () => {
     fixture.definitions.update({
@@ -528,7 +523,7 @@ it("recovers on the grid when detail deletion is refused by an unresolved save",
   });
   await confirmDeletion("detail");
   expect(fixture.calls.delete).toBe(0);
-  expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Workflow editor" })).toBeNull();
   expect(await screen.findByText("Couldn't start deletion")).toBeVisible();
   expect(
     screen.getByText(
@@ -550,7 +545,9 @@ it.each(["grid", "detail"] as const)(
         throw new Error("Connection unavailable. Try again.");
       });
     await confirmDeletion(from);
-    expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Workflow editor" }),
+    ).toBeNull();
     expect(await screen.findByText("Couldn't start deletion")).toBeVisible();
     expect(
       screen.getByText("Connection unavailable. Try again."),
@@ -568,7 +565,7 @@ it("returns to the grid before completion, then shows rejection and restores act
   const fixture = mount();
   await confirmDeletion("detail");
   expect(fixture.capability.operations.snapshot()[0]?.outcome).toBe("pending");
-  expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Workflow editor" })).toBeNull();
   expect(
     screen.queryByRole("alertdialog", { name: "Leave this draft?" }),
   ).toBeNull();
@@ -628,7 +625,9 @@ it.each(["unknown", "succeeded"] as const)(
       screen.getByRole("button", { name: "Check saved configuration" }),
     );
     expect(fixture.calls.delete).toBe(1);
-    expect(screen.queryByRole("dialog", { name: "Edit workflow" })).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Workflow editor" }),
+    ).toBeNull();
     act(() =>
       fixture.definitions.update({
         status: "loading",

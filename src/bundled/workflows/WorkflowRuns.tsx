@@ -15,9 +15,11 @@ import { useWorkflowView } from "./useWorkflowView";
 export function WorkflowRuns({
   capability,
   workflow,
+  heading = true,
 }: {
   capability: WorkflowCapability;
   workflow: WorkflowDefinition;
+  heading?: boolean;
 }) {
   const [cursor, setCursor] = useState<WorkflowRunCursor | undefined>();
   if (!capability.availability.history)
@@ -33,6 +35,7 @@ export function WorkflowRuns({
       workflow={workflow}
       cursor={cursor}
       onPage={setCursor}
+      heading={heading}
     />
   );
 }
@@ -41,11 +44,13 @@ function RunPage({
   workflow,
   cursor,
   onPage,
+  heading,
 }: {
   capability: WorkflowCapability;
   workflow: WorkflowReference;
   cursor: WorkflowRunCursor | undefined;
   onPage: (cursor: WorkflowRunCursor | undefined) => void;
+  heading: boolean;
 }) {
   const { snapshot, refresh } = useWorkflowView(
     useCallback(
@@ -57,7 +62,7 @@ function RunPage({
   return (
     <section aria-label="Workflow runs" className="workflow-runs">
       <div className="workflow-toolbar">
-        <h3 className="text-heading">Runs</h3>
+        {heading && <h3 className="text-heading">Runs</h3>}
         <Button
           disabled={snapshot.status === "loading"}
           onClick={() => void refresh()}

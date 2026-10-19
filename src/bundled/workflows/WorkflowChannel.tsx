@@ -10,22 +10,16 @@ import type {
   WorkflowDefinition,
 } from "../../features/workflows/types";
 import {
-  EyeSlashIcon,
   HashIcon,
-  ListBulletsIcon,
   PlayIcon,
   TrashIcon,
 } from "../../shared/design-system/icons";
-import {
-  MenuIcon,
-  MenuItem,
-  MenuSeparator,
-} from "../../shared/design-system/ui/Menu";
+import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowEditor } from "./WorkflowEditor";
-import { WorkflowOperations } from "./WorkflowOperations";
+import { messages, WorkflowOperations } from "./WorkflowOperations";
 import { WorkflowRuns } from "./WorkflowRuns";
 import { saveAwaitsReadback } from "./WorkflowLanding";
 import { exactSaveReadback } from "./editor-model";
@@ -97,10 +91,13 @@ export function WorkflowChannel({
   >(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [readRuns, setReadRuns] = useState(false);
   const [createdRun, setCreatedRun] = useState<string>();
+  const [runRequest, setRunRequest] = useState<string>();
   const operation = draft?.operationId
     ? operations.find((item) => item.eventId === draft.operationId)
+    : undefined;
+  const runOperation = runRequest
+    ? operations.find((item) => item.eventId === runRequest)
     : undefined;
   const ownOperations = operations.filter(
     (item) => item.workflow.channelId === channelId,
@@ -113,7 +110,7 @@ export function WorkflowChannel({
   const atRisk = dirty || !!draft?.operationId;
   // A run request never changes configuration, so its lost receipt cannot
   // leave a configuration write unresolved; nor can a save a newer head replaced.
-  const unresolvedWrite = ownOperations.some((item) => {
+  const unresolved = ownOperations.filter((item) => {
     const original = draft?.original;
     if (!original)
       return (
@@ -134,6 +131,7 @@ export function WorkflowChannel({
       saveAwaitsReadback(item, original)
     );
   });
+  const unresolvedWrite = unresolved.length > 0;
   useEffect(() => {
     onDraftRiskChange?.(atRisk);
     return () => onDraftRiskChange?.(false);
@@ -153,8 +151,8 @@ export function WorkflowChannel({
     // Explicit replacement discards local form state even for the same revision.
     setDraft(draftFor(next, ++editorGeneration.current));
     submission.current = null;
+    setRunRequest(undefined);
     setError(null);
-    setReadRuns(false);
     setPendingSelection(null);
     setConfirmDelete(false);
   };
@@ -192,7 +190,6 @@ export function WorkflowChannel({
       setDraft(null);
       setPendingSelection(null);
       setConfirmDelete(false);
-      setReadRuns(false);
       setError(null);
     }
   }, [snapshot?.status]);
@@ -267,7 +264,9 @@ export function WorkflowChannel({
       return;
     try {
       submission.current = "submitting";
-      submission.current = capability.trigger(draft.original);
+      const eventId = capability.trigger(draft.original);
+      submission.current = eventId;
+      setRunRequest(eventId);
       setError(null);
     } catch (cause) {
       submission.current = null;
@@ -288,18 +287,16 @@ export function WorkflowChannel({
     )
       return;
     submission.current = null;
-    // Like base Buzz, a created run is shown, not just acknowledged.
-    if (active.runId) {
-      setCreatedRun(active.runId);
-      setReadRuns(true);
-    }
+    // A created run rereads the history behind the Runs tab.
+    if (active.runId) setCreatedRun(active.runId);
   }, [operations]);
   let blocked: string | undefined;
   if (!capability.availability.save)
     blocked = "Saving is unavailable from this host.";
   else if (unresolvedWrite && !draft?.operationId)
-    blocked =
-      "Check saved configuration or review Recent activity before continuing.";
+    blocked = unresolved.every((item) => item.action === "trigger")
+      ? messages.trigger.pending
+      : "Check saved configuration or review Recent activity before continuing.";
   else if (draft?.operationId)
     blocked =
       operation?.outcome === "succeeded"
@@ -373,40 +370,33 @@ export function WorkflowChannel({
               )
             }
             actions={
-              <>
+              !readonly && (
                 <MenuItem
-                  disabled={!capability.availability.history}
-                  onClick={() => setReadRuns((value) => !value)}
+                  tone="danger"
+                  disabled={
+                    !!draft.operationId ||
+                    unresolvedWrite ||
+                    !capability.availability.delete
+                  }
+                  onClick={() => setConfirmDelete(true)}
                 >
                   <MenuIcon>
-                    {readRuns ? (
-                      <EyeSlashIcon size={14} />
-                    ) : (
-                      <ListBulletsIcon size={14} />
-                    )}
+                    <TrashIcon size={14} />
                   </MenuIcon>
-                  {readRuns ? "Hide runs" : "Read runs"}
+                  Delete workflow
                 </MenuItem>
-                {!readonly && (
-                  <>
-                    <MenuSeparator />
-                    <MenuItem
-                      tone="danger"
-                      disabled={
-                        !!draft.operationId ||
-                        unresolvedWrite ||
-                        !capability.availability.delete
-                      }
-                      onClick={() => setConfirmDelete(true)}
-                    >
-                      <MenuIcon>
-                        <TrashIcon size={14} />
-                      </MenuIcon>
-                      Delete workflow
-                    </MenuItem>
-                  </>
-                )}
-              </>
+              )
+            }
+            runs={
+              draft.original &&
+              capability.availability.history && (
+                <WorkflowRuns
+                  key={`${draft.original.owner}:${draft.original.id}:${createdRun ?? ""}`}
+                  capability={capability}
+                  workflow={draft.original}
+                  heading={false}
+                />
+              )
             }
             status={
               <>
@@ -439,6 +429,22 @@ export function WorkflowChannel({
                     {error}
                   </p>
                 )}
+                {runOperation && runOperation.outcome !== "pending" && (
+                  <p
+                    role="status"
+                    className={
+                      runOperation.outcome === "rejected"
+                        ? "text-body-sm text-danger"
+                        : "text-body-sm text-secondary"
+                    }
+                  >
+                    {runOperation.outcome === "unknown"
+                      ? "The run may have started, but its response was lost."
+                      : messages.trigger[runOperation.outcome]}
+                    {runOperation.outcome === "rejected" &&
+                      `: ${runOperation.error || "The relay did not create a workflow run."}`}
+                  </p>
+                )}
                 {operation?.outcome === "rejected" && (
                   <Button
                     onClick={() => {
@@ -450,16 +456,9 @@ export function WorkflowChannel({
                     Continue editing retained draft
                   </Button>
                 )}
-                {draft.original && readRuns && (
-                  <WorkflowRuns
-                    key={`${draft.original.owner}:${draft.original.id}:${createdRun ?? ""}`}
-                    capability={capability}
-                    workflow={draft.original}
-                  />
-                )}
                 <WorkflowOperations
                   operations={ownOperations.filter(
-                    (item) => item.action !== "delete",
+                    (item) => item.action === "save",
                   )}
                   snapshot={snapshot}
                   onCheckSaved={refresh}
@@ -469,27 +468,17 @@ export function WorkflowChannel({
               </>
             }
             details={
-              <>
-                <p className="text-body-sm text-subtle">
-                  Configuration changes apply on save. Turning off does not
-                  confirm runs have stopped or cancel active runs.
-                </p>
-                <p className="text-body-sm text-subtle">
-                  Unsaved changes stay in this editor. Leaving or reloading
-                  discards them without cancelling submitted operations.
-                </p>
-                {draft.original && (
-                  <details>
-                    <summary>Configuration details</summary>
-                    <p className="text-mono-sm workflow-key">
-                      Owner: {draft.original.owner}
-                    </p>
-                    <p className="text-mono-sm workflow-key">
-                      Revision: {draft.original.revision}
-                    </p>
-                  </details>
-                )}
-              </>
+              draft.original && (
+                <details>
+                  <summary>Configuration details</summary>
+                  <p className="text-mono-sm workflow-key">
+                    Owner: {draft.original.owner}
+                  </p>
+                  <p className="text-mono-sm workflow-key">
+                    Revision: {draft.original.revision}
+                  </p>
+                </details>
+              )
             }
           >
             {pendingSelection && (

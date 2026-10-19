@@ -222,12 +222,6 @@
   gap: var(--space-4);
   padding-top: var(--space-4);
 }
-.workflow-name {
-  display: grid;
-  gap: var(--space-1);
-  min-width: 0;
-  flex: 1 1 15rem;
-}
 .workflow-steps {
   list-style: none;
   margin: 0;
@@ -398,9 +392,6 @@ html[data-keyboard-navigation]
   height: 100%;
   min-height: 0;
 }
-.workflow-editor > .workflow-toolbar {
-  margin: 0;
-}
 .workflow-editor-body {
   flex: 1;
   min-height: 0;
@@ -511,23 +502,9 @@ html[data-keyboard-navigation]
   }
 }
 
-.workflow-name-display {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.workflow-name-display > span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 .workflow-channel-picker {
   width: min(25rem, 100%);
   margin: var(--space-6) auto;
-}
-.workflow-flow-item > .navigation-item {
-  border-radius: var(--radius-pill);
 }
 
 @container (min-width: 42rem) {
@@ -601,37 +578,31 @@ html[data-keyboard-navigation]
   display: none;
 }
 
-/* Editor: identity and mode on one line; the flow and inspector sit together. */
-.workflow-editor > .workflow-toolbar {
-  align-items: flex-start;
-  justify-content: space-between;
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border-standard);
-}
-.workflow-toolbar-end {
-  flex: 0 0 auto;
-}
-.workflow-name-scope .workflow-channel-label {
-  gap: var(--space-1);
-  font: inherit;
-}
-.workflow-name-scope .workflow-channel-label svg {
-  width: 0.875rem;
-  height: 0.875rem;
-}
+/* Two panes: the sequence on the left, the always-present inspector on the right. */
 .workflow-builder,
 .workflow-builder[data-inspector] {
-  grid-template-columns: minmax(0, 26rem);
-  justify-content: center;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
   padding-block: var(--space-4);
 }
 .workflow-builder[data-inspector] {
-  grid-template-columns: minmax(0, 24rem) minmax(18rem, 24rem);
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem);
   align-items: start;
 }
 .workflow-canvas {
   padding: 0;
+  text-align: start;
+}
+.workflow-flow {
+  margin: 0;
+  max-width: 28rem;
+}
+/* Connectors sit under the node icons of left-aligned rows. */
+.workflow-builder .workflow-connector {
+  width: calc(2.25rem + 2 * var(--space-4));
+}
+.workflow-editor-tabs {
+  flex-shrink: 0;
 }
 .workflow-editor-body {
   min-height: 22rem;

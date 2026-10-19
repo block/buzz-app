@@ -1276,6 +1276,16 @@ function ChannelWorkspace({
       panelTrigger,
     ],
   );
+  // An agent's request to show something here opens as a link would.
+  useEffect(
+    () =>
+      panels.handleOpenRequests(({ target, channelId, rootId }) =>
+        channelId === linkContext.current.channelId
+          ? openLink(target, rootId ? { rootId } : {})
+          : false,
+      ),
+    [panels, openLink],
+  );
   const hasChannelPanel =
     !composingMessage &&
     !draft &&

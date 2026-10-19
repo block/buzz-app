@@ -222,6 +222,152 @@ it("gives a panel the thread its link was opened from, retargeting a reopened ta
   expect(context()).not.toHaveProperty("rootId");
 });
 
+it.each([
+  [false, ["https://b.example/"]],
+  [true, ["https://a.example/", "https://b.example/"]],
+])(
+  "link tabs of a keepOpen=%s panel give way to the next link or thread",
+  (keepOpen, kept) => {
+    const channels = [{ id: "alpha", name: "Alpha" }];
+    const session = {
+      viewer: "viewer",
+      channels: { list: () => ({ channels }) },
+    } as unknown as RelaySession;
+    const panel = { key: "app", title: "App", keepOpen } as RegisteredPanel;
+    const available = [panel];
+    const panels = {
+      snapshot: () => available,
+      subscribe: () => () => {},
+      resolve: () => panel,
+    } as unknown as Panels;
+    const snapshot = { status: "ready", session };
+    const relay = { snapshot: () => snapshot } as unknown as RelayData;
+    const h = renderHook(() =>
+      useConversationTabs({
+        state: useChannelTabState(session, "alpha"),
+        relay,
+        session,
+        panels,
+        current: channels[0],
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit: true,
+        isLive: () => true,
+        openLink: () => false,
+      }),
+    );
+    // As a channel's link or an agent's open request does.
+    for (const url of ["https://a.example/", "https://b.example/"])
+      act(() =>
+        h.result.current.open({ channelId: "alpha", panel, target: url }),
+      );
+    const targets = () =>
+      h.result.current.items.map(
+        (item) => (item.content as { props: { target: string } }).props.target,
+      );
+    expect(targets()).toEqual(kept);
+    // Opening a thread retires transient details first.
+    act(() => h.result.current.open(undefined));
+    expect(targets()).toEqual(keepOpen ? kept : []);
+  },
+);
+
+it("an app tab moves to the main pane and back, staying open there", () => {
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const app = { key: "app", title: "App", keepOpen: true } as RegisteredPanel;
+  const link = { key: "link", title: "Link" } as RegisteredPanel;
+  const available = [app, link];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+    resolve: (target: string) => (target.startsWith("app:") ? app : link),
+  } as unknown as Panels;
+  const snapshot = { status: "ready", session };
+  const relay = { snapshot: () => snapshot } as unknown as RelayData;
+  const h = renderHook(() => {
+    const state = useChannelTabState(session, "alpha");
+    const workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      mainPane: true,
+      isLive: () => true,
+      openLink: () => false,
+    });
+    return { state, workspace };
+  });
+  const ids = (items: readonly { id: string }[]) =>
+    items.map((item) => item.id);
+  act(() =>
+    h.result.current.workspace.open({
+      channelId: "alpha",
+      panel: app,
+      target: "app:one",
+    }),
+  );
+  act(() =>
+    h.result.current.workspace.open(
+      { channelId: "alpha", panel: link, target: "link:a" },
+      true,
+    ),
+  );
+  const tab = (id: string) =>
+    [
+      ...h.result.current.workspace.items,
+      ...h.result.current.workspace.mainItems,
+    ].find((item) => item.id === id);
+  // Only app-like tabs move, and only toward the other pane.
+  expect(tab("link:link:a")).not.toHaveProperty("move");
+  act(() => tab("app:app:one")?.move?.(1));
+  expect(ids(h.result.current.workspace.mainItems)).toEqual([]);
+  act(() => h.result.current.workspace.selectPanelTab("app:app:one"));
+  act(() => tab("app:app:one")?.move?.(-1));
+  expect(ids(h.result.current.workspace.mainItems)).toEqual(["app:app:one"]);
+  expect(ids(h.result.current.workspace.items)).toEqual(["link:link:a"]);
+  expect(h.result.current.workspace.selectedMain).toBe("app:app:one");
+  // The side pane's next tab is selected and active in its place.
+  expect(h.result.current.state.selected).toBe("link:link:a");
+  expect(h.result.current.workspace.opened?.target).toBe("link:a");
+  // Opening a thread retires transient tabs, not one moved to main.
+  act(() => h.result.current.workspace.open(undefined));
+  expect(ids(h.result.current.workspace.mainItems)).toEqual(["app:app:one"]);
+  expect(ids(h.result.current.workspace.items)).toEqual([]);
+  // Opening it again selects it where it is.
+  act(() => h.result.current.state.selectMain(undefined));
+  act(() =>
+    h.result.current.workspace.open({
+      channelId: "alpha",
+      panel: app,
+      target: "app:one",
+    }),
+  );
+  expect(h.result.current.workspace.selectedMain).toBe("app:app:one");
+  expect(ids(h.result.current.workspace.items)).toEqual([]);
+  act(() => tab("app:app:one")?.move?.(1));
+  expect(ids(h.result.current.workspace.mainItems)).toEqual([]);
+  expect(h.result.current.workspace.selectedTab).toBe("app:app:one");
+  expect(h.result.current.workspace.selectedMain).toBe("conversation");
+  // Closing it in main returns the main pane to the conversation.
+  act(() => tab("app:app:one")?.move?.(-1));
+  act(() => tab("app:app:one")?.close?.());
+  expect(ids(h.result.current.workspace.mainItems)).toEqual([]);
+  expect(h.result.current.workspace.selectedMain).toBe("conversation");
+  expect(h.result.current.state.mainEntries).toBeUndefined();
+});
+
 it("a keyboard move focuses the placed tab at once and never takes focus back later", async () => {
   const session = {
     viewer: "viewer",

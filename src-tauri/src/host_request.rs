@@ -12,6 +12,13 @@ const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 8192;
 const MAX_RESPONSE_HEADER_BYTES: usize = 16 * 1024;
 const DEADLINE: Duration = Duration::from_secs(30);
+/// An uploaded file, such as an app artifact.
+const MAX_UPLOAD_BYTES: u64 = 100 * 1024 * 1024;
+/// A deploy can wait for its rollout before it answers.
+const UPLOAD_DEADLINE: Duration = Duration::from_secs(180);
+/// What an uploaded file's name must end with: archives only, never a key or
+/// a config file a request could carry off.
+const UPLOAD_EXTENSION: &str = ".tar.gz";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -26,6 +33,30 @@ pub(crate) struct HostRequest {
 
 fn default_method() -> String {
     "GET".into()
+}
+
+/// A multipart POST of one local file, with text fields beside it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct HostUpload {
+    url: String,
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
+    #[serde(default)]
+    fields: BTreeMap<String, String>,
+    file: UploadFile,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UploadFile {
+    /// The form field it is sent as.
+    field: String,
+    /// An absolute path to a regular `.tar.gz` file under the home directory.
+    path: String,
+    /// The file name the form gives it.
+    name: String,
+    content_type: String,
 }
 
 #[derive(Serialize)]
@@ -55,6 +86,123 @@ pub(crate) async fn plugin_host_request(
     tokio::time::timeout(DEADLINE, operation)
         .await
         .map_err(|_| "Host request timed out")?
+}
+
+/// Uploads one file to an origin the plugin declares, as `plugin_host_request`
+/// sends JSON. The plugin names the file, so it may only be an archive in the
+/// user's home directory, and never one reached through a link.
+#[tauri::command]
+pub(crate) async fn plugin_host_upload(
+    manager: tauri::State<'_, PluginManager>,
+    id: String,
+    revision: String,
+    upload: HostUpload,
+) -> Result<HostResponse, String> {
+    let (url, _, headers) = validate_request(&HostRequest {
+        url: upload.url.clone(),
+        method: "POST".into(),
+        headers: upload.headers.clone(),
+        body: None,
+    })?;
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let path = upload_path(&upload.file.path, home.as_deref())?;
+    let operation = async {
+        let grants = with_manager(manager, move |manager| manager.host_grants(&id, &revision))
+            .await
+            .map_err(|_| "Host request is unavailable")?;
+        if !allows_origin(&grants, &url) {
+            return Err("Host request origin is not declared".into());
+        }
+        let bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|_| "Could not read the upload file")?;
+        if bytes.len() as u64 > MAX_UPLOAD_BYTES {
+            return Err("The upload file is too large".into());
+        }
+        let (content_type, body) = multipart(&upload.fields, &upload.file, &bytes)?;
+        let mut headers = headers;
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            HeaderValue::from_str(&content_type).map_err(|_| "Invalid upload")?,
+        );
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(UPLOAD_DEADLINE)
+            .build()
+            .map_err(|_| "Host request client is unavailable")?;
+        read_response(client.post(url).headers(headers).body(body)).await
+    };
+    tokio::time::timeout(UPLOAD_DEADLINE, operation)
+        .await
+        .map_err(|_| "Host upload timed out")?
+}
+
+/// `path` when it is an absolute `.tar.gz` regular file, not a link, in
+/// `home`, and small enough to upload.
+fn upload_path(path: &str, home: Option<&std::path::Path>) -> Result<std::path::PathBuf, String> {
+    let invalid = || format!("An upload is a {UPLOAD_EXTENSION} file in your home directory");
+    let path = std::path::Path::new(path);
+    let home = home
+        .and_then(|home| home.canonicalize().ok())
+        .ok_or_else(invalid)?;
+    if !path.is_absolute() || !path.to_string_lossy().ends_with(UPLOAD_EXTENSION) {
+        return Err(invalid());
+    }
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| "The upload file does not exist")?;
+    let resolved = path.canonicalize().map_err(|_| invalid())?;
+    if !metadata.is_file() || !resolved.starts_with(&home) || resolved != path {
+        return Err(invalid());
+    }
+    if metadata.len() > MAX_UPLOAD_BYTES {
+        return Err("The upload file is too large".into());
+    }
+    Ok(resolved)
+}
+
+/// A `multipart/form-data` body: the text fields, then the file.
+fn multipart(
+    fields: &BTreeMap<String, String>,
+    file: &UploadFile,
+    bytes: &[u8],
+) -> Result<(String, Vec<u8>), String> {
+    // Names and types go into headers inside the body, so they stay plain.
+    let plain = |text: &str| {
+        !text.is_empty()
+            && text.len() <= 256
+            && text
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic() && byte != b'"' && byte != b'\\')
+    };
+    if fields.len() > 16
+        || !plain(&file.field)
+        || !plain(&file.name)
+        || !plain(&file.content_type)
+        || fields
+            .iter()
+            .any(|(name, value)| !plain(name) || value.len() > MAX_HEADER_BYTES)
+    {
+        return Err("Invalid upload form".into());
+    }
+    let boundary = format!("buzz-{}", uuid::Uuid::new_v4().simple());
+    let mut body = Vec::with_capacity(bytes.len() + 1024);
+    for (name, value) in fields {
+        body.extend(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    body.extend(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: {}\r\n\r\n",
+            file.field, file.name, file.content_type
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(bytes);
+    body.extend(format!("\r\n--{boundary}--\r\n").as_bytes());
+    Ok((format!("multipart/form-data; boundary={boundary}"), body))
 }
 
 fn allows_origin(grants: &HostGrants, url: &reqwest::Url) -> bool {
@@ -141,6 +289,11 @@ async fn send_request(
     if let Some(body) = body {
         request = request.body(body);
     }
+    read_response(request).await
+}
+
+/// Sends `request` and reads its bounded response, without its cookies.
+async fn read_response(request: reqwest::RequestBuilder) -> Result<HostResponse, String> {
     let mut response = request.send().await.map_err(|_| "Host request failed")?;
     let status = response.status().as_u16();
     let mut headers = BTreeMap::new();
@@ -307,6 +460,58 @@ mod tests {
         ] {
             let (url, _, _) = validate_request(&request(url)).unwrap();
             assert_eq!(allows_origin(&grants, &url), allowed, "{url}");
+        }
+    }
+
+    #[test]
+    fn uploads_only_an_archive_file_in_home() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path().canonicalize().unwrap();
+        let archive = home.join("app/artifact.tar.gz");
+        std::fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        std::fs::write(&archive, b"gz").unwrap();
+        std::fs::write(home.join("app/secret.txt"), b"key").unwrap();
+        let at = |path: &std::path::Path| upload_path(path.to_str().unwrap(), Some(&home));
+        assert_eq!(at(&archive).unwrap(), archive);
+        assert!(at(&home.join("app/secret.txt")).is_err());
+        assert!(at(&home.join("app/missing.tar.gz")).is_err());
+        assert!(at(&home.join("app")).is_err());
+        assert!(upload_path("app/artifact.tar.gz", Some(&home)).is_err());
+        assert!(at(&home.join("app/../app/artifact.tar.gz")).is_err());
+        let outside = tempfile::tempdir().unwrap();
+        let elsewhere = outside.path().join("artifact.tar.gz");
+        std::fs::write(&elsewhere, b"gz").unwrap();
+        assert!(at(&elsewhere).is_err());
+        #[cfg(unix)]
+        {
+            let link = home.join("app/link.tar.gz");
+            std::os::unix::fs::symlink(home.join("app/secret.txt"), &link).unwrap();
+            assert!(at(&link).is_err());
+        }
+    }
+
+    #[test]
+    fn builds_a_multipart_form_of_fields_then_the_file() {
+        let file = UploadFile {
+            field: "artifact".into(),
+            path: String::new(),
+            name: "artifact.tar.gz".into(),
+            content_type: "application/gzip".into(),
+        };
+        let fields = BTreeMap::from([("version_id".to_string(), "v1".to_string())]);
+        let (content_type, body) = multipart(&fields, &file, b"GZ").unwrap();
+        let boundary = content_type
+            .strip_prefix("multipart/form-data; boundary=")
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"version_id\"\r\n\r\nv1\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"artifact\"; filename=\"artifact.tar.gz\"\r\nContent-Type: application/gzip\r\n\r\nGZ\r\n--{boundary}--\r\n"
+            )
+        );
+        for bad in ["a\"b", "a b", "", "a\r\nb"] {
+            let fields = BTreeMap::from([(bad.to_string(), "v".to_string())]);
+            assert!(multipart(&fields, &file, b"").is_err(), "{bad:?}");
         }
     }
 

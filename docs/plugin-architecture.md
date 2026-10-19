@@ -564,6 +564,10 @@ selects its **exact active contribution**, not target matching. `available()` an
 panel; ordinary link/host panels do not supply it. It is presentation metadata, not
 signing authority. Plugins decide when to capture it into their own work.
 
+A tab a link opens is a transient detail: the next link or thread replaces it. A panel
+that sets `keepOpen: true` keeps each target it opens from links as its own tab until
+the viewer closes it, as a launcher's tab is kept.
+
 Channels keeps layout and channel/thread selection. The Terminal plugin binds its
 mounted launcher into the existing shortcut dispatcher, and owns sessions separately
 from drawer mounts. No global selected-channel store, extra shortcut listener or

@@ -135,6 +135,8 @@ async function page(
     subscribe: () => () => {},
     resolve: () => undefined,
     register() {},
+    requestOpen: () => false,
+    handleOpenRequests: () => () => {},
   };
   render(<ChannelsPage relay={relay} panels={panels} navigator={navigator} />);
   const user = userEvent.setup();

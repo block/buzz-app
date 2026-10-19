@@ -1,11 +1,7 @@
 import { stageSessionCards } from "./composer-session-cards";
 import { sessionReferenceIds } from "../sessions/shared-session-marker";
 import { ComposerSessionCards } from "./ComposerSessionCards";
-import { legacyAssistantDraft } from "../sessions/legacy-assistant";
-import { rememberAgentsPreference } from "./mention-preferences";
-import { pendingSessionDraft } from "../sessions/pending-start";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
-import { messageButtonStyle } from "../../shared/theme/bubble-color";
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -38,7 +34,7 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
-import { sessionRecipients } from "../sessions/recipients";
+import { soloRecipients } from "../solo/recipients";
 import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
@@ -48,7 +44,11 @@ import {
 } from "../../shared/design-system/icons/index";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { ComposerAttachments } from "./ComposerAttachments";
-import { attachmentDraft, useAttachmentDraft } from "./attachment-draft";
+import {
+  attachmentDraft,
+  useAttachmentDraft,
+  type AttachmentDraft,
+} from "./attachment-draft";
 import {
   sendInBackground,
   useBackgroundSendPending,
@@ -202,8 +202,8 @@ export type MessageComposerProps = {
   channelName: string;
   label?: string | undefined;
   placeholder?: string | undefined;
-  sessionConversation?: boolean | undefined;
-  personalConversation?: boolean | undefined;
+  soloConversation?: boolean | undefined;
+  ownSoloConversation?: boolean | undefined;
   /** Seeds an empty new-chat draft; follow-ups use remembered mentions. */
   defaultMention?: MentionRecipient | undefined;
   /** Sending needs at least one tagged recipient. */
@@ -237,11 +237,11 @@ export type MessageComposerProps = {
     initialDraft?: MentionDraft | string | undefined;
     /** A durable operation overrides disposable view state during recovery. */
     recoveredDraft?: MentionDraft | undefined;
-    /** Confirm/retry an already submitted operation without fresh admission. */
-    receiptOnly?: boolean;
     locked: boolean;
     disabled: boolean;
-    submit: (draft: MentionDraft) => void;
+    /** Files upload before the conversation exists; submit sends them. */
+    attachments?: boolean;
+    submit: (draft: MentionDraft, attachments: AttachmentDraft) => void;
   };
 };
 
@@ -256,7 +256,7 @@ export function MessageComposer(props: MessageComposerProps) {
   return (
     <TypingPresentation active key={key}>
       <TargetOpenerProvider canOpen={props.canOpenLink} open={props.onOpenLink}>
-        {props.personalConversation ? (
+        {props.ownSoloConversation ? (
           <PersonalComposer {...props} />
         ) : (
           <Composer {...props} />
@@ -316,8 +316,8 @@ function Composer({
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
   submission,
-  sessionConversation,
-  personalConversation = false,
+  soloConversation,
+  ownSoloConversation = false,
   defaultMention,
   requireMention = false,
   chatPresentation = false,
@@ -327,13 +327,13 @@ function Composer({
 }: MessageComposerProps) {
   const active = useConversationPresentation();
   const list = useSyncExternalStore(
-    session.channels?.get || sessionConversation
+    session.channels?.get || soloConversation
       ? session.channels.subscribeList
       : noChannelSubscription,
-    session.channels?.get || sessionConversation
+    session.channels?.get || soloConversation
       ? session.channels.list
       : noChannelSnapshot,
-    session.channels?.get || sessionConversation
+    session.channels?.get || soloConversation
       ? session.channels.list
       : noChannelSnapshot,
   );
@@ -372,12 +372,9 @@ function Composer({
       live.current = false;
     };
   }, []);
-  const parentChannelId = list.channels.find(
-    (item) => item.id === channelId,
-  )?.parentChannelId;
   const mentionRoster = useContext(DraftMentionRoster);
-  const agentChoices =
-    inviteAgents || !!sessionConversation || personalConversation;
+  const solo = !!soloConversation || ownSoloConversation;
+  const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
   const sendPending = useBackgroundSendPending(session, recoveryKey);
   const [accepted, setAccepted] = useState(() => {
@@ -566,7 +563,7 @@ function Composer({
     (threadRootId
       ? []
       : (session.channels.window?.(channelId).rows ?? [])
-    ).filter((row) => sessionConversation || !row.threadRootId);
+    ).filter((row) => soloConversation || !row.threadRootId);
   const editDisabled =
     disabled ||
     !!list.channels.find((channel) => channel.id === channelId)?.archived ||
@@ -587,10 +584,13 @@ function Composer({
     session,
     `${scope}:${draftKey}`,
     channelId,
+    !!submission?.attachments,
   );
   const picker = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
-  const canAttach = !submission && !!session.attachments;
+  const canAttach = submission
+    ? !!submission.attachments && !!session.attachments?.uploadForNewChat
+    : !!session.attachments;
   const voice = useVoiceCapture(
     attachments.store,
     !active || editingDisabled || !!editing.target || !canAttach,
@@ -931,7 +931,36 @@ function Composer({
       !recipient.name.trim()
     )
       return false;
-    return insert(`@${recipient.name} `, recipient);
+    if (!solo || editing.target)
+      return insert(`@${recipient.name} `, recipient);
+    return keepProseCaret((at) =>
+      insert(`@${recipient.name} `, recipient, at, undefined, false),
+    );
+  }
+  /** Solo chats address agents up front: a picked tag joins the leading tags,
+   * wherever the caret is. The insertion maps the caret, so the caret and its
+   * Undo both stay in the prose it was in. */
+  function keepProseCaret(add: (at: CompletionQuery) => boolean) {
+    const before = valueRef.current;
+    let start = 0;
+    for (const tag of [...before.recipients].sort(
+      (a, b) => a.start - b.start,
+    )) {
+      if (tag.start !== start || !/[ \t]/.test(before.text[tag.end] ?? ""))
+        break;
+      start = tag.end;
+      while (/[ \t]/.test(before.text[start] ?? "")) start++;
+    }
+    const caret = input.current?.selectionStart ?? before.text.length;
+    if (!add({ start, end: start, query: "" })) return false;
+    // A caret among the leading tags has no prose to stay in.
+    if (caret < start)
+      input.current?.setSelectionRange(
+        valueRef.current.text.length,
+        valueRef.current.text.length,
+      );
+    input.current?.focus();
+    return true;
   }
   function insertMentions(
     recipients: readonly MentionRecipient[],
@@ -982,7 +1011,14 @@ function Composer({
       return false;
     }
     const text = unique.map((person) => `@${person.name} `).join("");
-    if (!input.current.insertText(text, unique, range)) {
+    if (
+      !(solo && !range
+        ? keepProseCaret(
+            (at) =>
+              !!input.current?.insertText(text, unique, at, undefined, false),
+          )
+        : input.current.insertText(text, unique, range))
+    ) {
       setError(
         "The team would exceed the message length or 32-recipient limit. Nothing was added.",
       );
@@ -1047,57 +1083,13 @@ function Composer({
     live.current &&
     permitted.current &&
     !sendAttempt.current?.signal.aborted &&
-    session.channels.list().channels.find((item) => item.id === channelId)
-      ?.parentChannelId === parentChannelId &&
-    (!personalConversation || session.mePlacement.has(channelId));
+    (!ownSoloConversation ||
+      session.channels.list().channels.find((item) => item.id === channelId)
+        ?.channelType === "solo");
   // Only a fresh chat is seeded with the default. Once it has content, respect
   // edits and removals; accepted sends use the shared remembered-mention draft.
   const autoTagged = useRef<string | undefined>(undefined);
   const automaticTag = useRef<string | undefined>(undefined);
-  // One-time upgrade of the retired per-chat picker. The editor owns the live
-  // draft, so delayed evidence cannot overwrite typing or restore a removed tag.
-  useEffect(() => {
-    if (
-      !personalConversation ||
-      submission ||
-      threadRootId ||
-      !active ||
-      editingDisabled ||
-      editing.target ||
-      sendPending
-    )
-      return;
-    const legacyKey = `me:assistant:${channelId}`;
-    const legacy = readView<unknown>(scope, legacyKey, "");
-    if (typeof legacy !== "string" || !/^[0-9a-f]{64}$/.test(legacy)) return;
-    if (
-      dirty.current ||
-      valueRef.current.text.trim() ||
-      valueRef.current.recipients.length ||
-      valueRef.current.sessionCards?.length ||
-      attachments.items.length ||
-      !rememberAgentsPreference()
-    ) {
-      writeView(scope, legacyKey, "");
-      return;
-    }
-    const choices = session.agentChoices.snapshot();
-    if (
-      choices.archives.status === "idle" ||
-      choices.archives.status === "loading"
-    )
-      return;
-    const next = legacyAssistantDraft(session, legacy);
-    if (!next.recipients.length && !choices.complete) return;
-    if (next.recipients.length) {
-      if (persist(next) !== "saved") return;
-      valueRef.current = next;
-      updateDraft(next);
-      input.current?.reset(next);
-      automaticTag.current = JSON.stringify(next);
-    }
-    writeView(scope, legacyKey, "");
-  });
   useEffect(() => {
     if (
       !defaultMention ||
@@ -1140,13 +1132,13 @@ function Composer({
   const untagged =
     requireMention && !editing.target && !value.recipients.length;
   async function prepareRecipients(explicit: readonly string[]) {
-    const channel = await session.workSessions.refreshMembership(channelId);
+    const channel = await session.channelWrites.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
-    const recipients = personalConversation
+    const recipients = ownSoloConversation
       ? [...explicit]
       : [
-          ...sessionRecipients(
+          ...soloRecipients(
             channel,
             session.profiles.snapshot(),
             session.agentChoices.snapshot(),
@@ -1161,7 +1153,7 @@ function Composer({
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
       if (
-        personalConversation &&
+        ownSoloConversation &&
         missing.some(
           (key) =>
             !session.agentChoices
@@ -1172,7 +1164,7 @@ function Composer({
         throw new Error(
           "Only your available agents can be mentioned in Solo chats.",
         );
-      await session.workSessions.addAgents(
+      await session.channelWrites.addAgents(
         channelId,
         missing,
         currentAdmission,
@@ -1181,12 +1173,6 @@ function Composer({
         throw new Error("The session changed. Review its channel and retry.");
     }
     return recipients;
-  }
-  function requireCompletedSessionStart() {
-    if (pendingSessionDraft(scope, channelId))
-      throw new Error(
-        "Finish setting up this conversation in Solo before sending messages.",
-      );
   }
   async function send() {
     if (!permitted.current || voice.isCapturing()) return;
@@ -1235,7 +1221,12 @@ function Composer({
       setError("Tag an agent to send");
       return;
     }
-    if (!draft.trim() && !sessionCards?.length && !attachments.items.length)
+    // A new conversation is named from its message, so files alone cannot start it.
+    if (
+      !draft.trim() &&
+      !sessionCards?.length &&
+      (!!submission || !attachments.items.length)
+    )
       return;
     const recovering = !submission && recoveryFor(session).get(recoveryKey);
     if (recovering) {
@@ -1257,16 +1248,12 @@ function Composer({
     const capturedPicks = picks;
     const capturedRunPicks = { ...picks, ...resolvedPicks.current };
     try {
-      if (submission?.receiptOnly) {
-        submission.submit(captured);
-        return;
-      }
       if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
         throw new Error(
           "A selected recipient is archived. Remove it before sending.",
         );
       if (
-        personalConversation &&
+        ownSoloConversation &&
         captured.recipients.some(
           (person) =>
             !session.agentChoices
@@ -1278,13 +1265,12 @@ function Composer({
           "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
       if (submission) {
-        submission.submit(captured);
+        submission.submit(captured, attachments.store);
         return;
       }
-      requireCompletedSessionStart();
       let references: readonly string[] = [];
       let recipients = captured.recipients.map((item) => item.pubkey);
-      if (sessionConversation || personalConversation) {
+      if (soloConversation || ownSoloConversation) {
         admission.current = true;
         setAdmitting(true);
         recipients = await prepareRecipients(recipients);
@@ -1356,7 +1342,6 @@ function Composer({
       );
       // Destination and content are fixed here; a background send never retargets.
       const publish = (uploaded: readonly UploadedAttachment[]) => {
-        requireCompletedSessionStart();
         return threadRootId
           ? session.messages.reply(
               channelId,
@@ -1897,7 +1882,9 @@ function Composer({
                 {extensions ? (
                   <ComposerTools
                     registry={extensions.tools}
-                    capture={voice.begin}
+                    {...(canAttach && !editing.target
+                      ? { capture: voice.begin }
+                      : {})}
                     renderLeading={renderLeadingTools}
                     session={session}
                     scope={scope}
@@ -1938,7 +1925,6 @@ function Composer({
               }
               size="toolbar"
               type="submit"
-              style={messageButtonStyle}
               aria-label={editing.target ? "Save changes" : "Send message"}
               title={
                 editing.target
@@ -1959,7 +1945,7 @@ function Composer({
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
                   !sessionCards?.length &&
-                  !attachments.items.length &&
+                  (!!submission || !attachments.items.length) &&
                   !(
                     editing.target &&
                     requestDeletion &&

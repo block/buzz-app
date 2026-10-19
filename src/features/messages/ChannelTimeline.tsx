@@ -133,7 +133,7 @@ export type ChannelTimelineProps = {
   continuityKey?: string | undefined;
   window: ChannelWindow;
   launchPending?: boolean | undefined;
-  /** Sessions page history on scroll; retain an explicit button for errors. */
+  /** Solo chats page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
   /** Personal chats keep their compact initial history spacing. */
   chatPresentation?: boolean | undefined;
@@ -148,6 +148,8 @@ export type ChannelTimelineProps = {
     | undefined;
   /** Draft context starts at the returned tail, never reads/writes canonical scroll. */
   transient?: boolean | undefined;
+  /** False: viewing rows marks nothing read; the owner decides what was read. */
+  marksRead?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   onOpenThread?(
     messageId: string,
@@ -189,6 +191,7 @@ function Timeline({
   revealMessageId,
   inlineTarget,
   transient = false,
+  marksRead = true,
   navigation,
   onOpenThread,
   onOpenMediaReview,
@@ -502,6 +505,7 @@ function Timeline({
     scroller,
     settled,
     latestMessageId: window.rows.filter((row) => !row.membership).at(-1)?.id,
+    enabled: marksRead,
   });
   const prepend =
     !!edges.current.first &&

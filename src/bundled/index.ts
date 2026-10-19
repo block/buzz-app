@@ -31,21 +31,17 @@ import * as codex from "./codex";
 import gooseManifest from "./goose/manifest.json";
 import * as goose from "./goose";
 import channelsManifest from "./channels/manifest.json";
-import usageManifest from "./channel-usage/manifest.json";
-import * as usage from "./channel-usage";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
 import * as github from "./github";
 import bestieManifest from "./bestie/manifest.json";
 import * as bestie from "./bestie";
-import meManifest from "./me/manifest.json";
-import * as me from "./me";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
-import projectsManifest from "./projects/manifest.json";
-import * as projects from "./projects";
+import reposManifest from "./repos/manifest.json";
+import * as repos from "./repos";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
@@ -53,8 +49,6 @@ import linksManifest from "./links/manifest.json";
 import * as links from "./links";
 import hostedManifest from "./hosted-communities/manifest.json";
 import * as hosted from "./hosted-communities";
-import sessionsManifest from "./sessions/manifest.json";
-import * as sessions from "./sessions";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
@@ -64,11 +58,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...voiceNotesManifest, apiVersion: 1 },
     module: voiceNotes,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...meManifest, apiVersion: 1 },
-    module: me,
     enabledByDefault: true,
   },
   {
@@ -137,11 +126,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...usageManifest, apiVersion: 1 },
-    module: usage,
-    enabledByDefault: true,
-  },
-  {
     manifest: { ...githubManifest, apiVersion: 1 },
     module: github,
     enabledByDefault: true,
@@ -162,8 +146,8 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...projectsManifest, apiVersion: 1 },
-    module: projects,
+    manifest: { ...reposManifest, apiVersion: 1 },
+    module: repos,
     enabledByDefault: true,
   },
   {
@@ -189,11 +173,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...workflowsManifest, apiVersion: 1 },
     module: workflows,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...sessionsManifest, apiVersion: 1 },
-    module: sessions,
     enabledByDefault: true,
   },
   {

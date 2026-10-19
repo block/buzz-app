@@ -433,7 +433,7 @@ it("opens the side panel with the type's tabs and the app's Attention and Memory
   );
 });
 
-it("checks providers in AI defaults and opens their host-owned dialogs", async () => {
+it("checks providers in Agent setup and opens their host-owned dialogs", async () => {
   const user = userEvent.setup();
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   const relay = {
@@ -493,24 +493,15 @@ it("checks providers in AI defaults and opens their host-owned dialogs", async (
     expect(
       screen.queryByRole("button", { name: "More agent actions" }),
     ).toBeNull();
-    const defaults = render(
-      <AgentSettings
-        agents={agents}
-        active={false}
-        archive={<div>Archived agents</div>}
-      />,
-    );
+    const defaults = render(<AgentSettings agents={agents} active={false} />);
     expect(echoProvider.check).not.toHaveBeenCalled();
-    expect(screen.queryByText("AI defaults")).toBeNull();
-    defaults.rerender(
-      <AgentSettings agents={agents} archive={<div>Archived agents</div>} />,
-    );
+    expect(screen.queryByRole("heading", { name: "Providers" })).toBeNull();
+    defaults.rerender(<AgentSettings agents={agents} />);
+    expect(screen.getByRole("heading", { name: "Agent setup" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Providers" })).toBeVisible();
     expect(
-      screen
-        .getByText("AI defaults")
-        .compareDocumentPosition(screen.getByText("Archived agents")) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+      screen.getByRole("switch", { name: "Remember mentioned agents" }),
+    ).toBeVisible();
     const menu = defaults.container;
     const echo = within(menu).getByRole("button", {
       name: "Echo, ready",
@@ -700,9 +691,21 @@ it("keeps name edits inline and lets a failed save retry", async () => {
     name: "Updated",
   });
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not save");
-  expect(
-    screen.getByRole("textbox", { name: "Agent name" }),
-  ).toBeInTheDocument();
+  // An empty name replaces the failed save's error with the name prompt.
+  Element.prototype.animate = vi.fn();
+  try {
+    await user.clear(field);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Add a name to save your agent",
+    );
+  } finally {
+    Reflect.deleteProperty(Element.prototype, "animate");
+  }
+  await user.type(field, "Updated");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(field).not.toHaveAttribute("aria-invalid");
+  expect(agents.save).toHaveBeenCalledOnce();
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(
@@ -889,7 +892,7 @@ it("stays on the grid when the new agent belongs to a community no longer shown"
   expect(screen.queryByRole("tab", { name: "Attention" })).toBeNull();
 });
 
-it("cancels inline name edits and rejects an empty name", async () => {
+it("cancels inline name edits and flags an empty name on Save", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
@@ -906,12 +909,34 @@ it("cancels inline name edits and rejects an empty name", async () => {
   expect(
     screen.queryByRole("button", { name: "Message" }),
   ).not.toBeInTheDocument();
-  await user.clear(screen.getByRole("textbox", { name: "Agent name" }));
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  await user.type(
-    screen.getByRole("textbox", { name: "Agent name" }),
-    "Discarded",
-  );
+  const field = screen.getByRole("textbox", { name: "Agent name" });
+  await user.clear(field);
+  // jsdom lacks the Web Animations API the shake uses.
+  const animate = vi.fn();
+  Element.prototype.animate = animate;
+  try {
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Add a name to save your agent",
+    );
+    expect(field).toHaveFocus();
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription("Add a name to save your agent");
+    expect(animate).toHaveBeenCalledOnce();
+    await user.keyboard("{Enter}");
+    expect(animate).toHaveBeenCalledTimes(2);
+    expect(agents.save).not.toHaveBeenCalled();
+  } finally {
+    Reflect.deleteProperty(Element.prototype, "animate");
+  }
+  // Cancelling while flagged starts the next edit clean.
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await edit();
+  const reopened = screen.getByRole("textbox", { name: "Agent name" });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(reopened).not.toHaveAttribute("aria-invalid");
+  await user.clear(reopened);
+  await user.type(reopened, "Discarded");
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(agents.save).not.toHaveBeenCalled();
   await edit();

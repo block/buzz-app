@@ -30,12 +30,11 @@ export type ChannelSummary = Readonly<{
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
-  /** `system` (NIP-CL): access control for app data; never in list(). */
-  channelType?: "stream" | "forum" | "dm" | "session" | "system";
+  /** `system` (NIP-CL): access control for app data; never in list().
+   * `session`: a private stream with the Solo label (`SOLO_LABEL`). */
+  channelType?: "stream" | "forum" | "dm" | "solo" | "system";
   /** Relay-authored channel visibility; private channels use restricted presentation. */
   private?: true;
-  /** Presentation-only parent from signed channel metadata; never grants access. */
-  parentChannelId?: string | undefined;
   /** Metadata update time used for stable work-history ordering. */
   updatedAt?: number;
   archived?: true;
@@ -173,6 +172,8 @@ export type ChannelWindow = Readonly<{
   /** Cached rows are immediately readable, but not claimed fresh until revalidated. */
   freshness?: "cached" | "verified";
   historyLimited?: boolean;
+  /** A head read is in flight for these rows; older pages wait for it. */
+  refreshing?: boolean | undefined;
 }>;
 /** Post-write discovery opts into writer reads; browsing keeps the default. */
 export type ChannelReadOptions = ReadOptions & Pick<ReadFilter, "consistency">;

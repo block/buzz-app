@@ -824,7 +824,7 @@ function MessageRowContent({
               {sessionCards.length > 0 && (
                 <div
                   className={styles.messageAttachments}
-                  data-session-cards
+                  data-solo-cards
                   data-message-action-anchor
                 >
                   {sessionCards.map((card) => (
@@ -938,6 +938,7 @@ function MessageRowContent({
                         return (
                           <AttachmentImage
                             key={url}
+                            session={session}
                             attachment={{ ...attachment, url }}
                             source={source}
                             cached={cached}
@@ -1036,7 +1037,10 @@ function MessageRowContent({
             />
           ) : (
             reactions.length > 0 && (
-              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
+              <div
+                className={`${styles.reactions} ${styles.reactionFallback}`}
+                data-message-reactions
+              >
                 {reactions.flatMap((reaction) =>
                   [
                     ...new Set(reaction.events.map((event) => event.authorId)),

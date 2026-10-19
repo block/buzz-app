@@ -8,6 +8,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
 import { PagesService } from "../../src/features/pages/service";
 import { PanelsService } from "../../src/features/panels/service";
+import { ShortcutsService } from "../../src/features/shortcuts/service";
 import { SettingsCardsService } from "../../src/features/settings/service";
 import { provideNavigation } from "../../src/features/navigation/service";
 import { ConversationService } from "../../src/features/conversation/service";
@@ -28,6 +29,7 @@ import {
 import { matchesEvent } from "../../src/features/relay/projection";
 import type { RelayEvent } from "../../src/features/relay/events";
 
+const showSettings = new URLSearchParams(location.search).has("settings");
 const viewer = keypair(),
   relay = keypair(),
   first = keypair(),
@@ -348,6 +350,7 @@ if (channels) {
   new PagesService(context);
   new PanelsService(context);
   new SettingsCardsService(context);
+  new ShortcutsService(context);
   provideNavigation(context);
   // Channels requires Agents for its page/settings, neither mounted here.
   context.provide("agents", {});
@@ -470,9 +473,7 @@ function Fixture() {
           {...(thread ? { threadRootId: "a".repeat(64) } : {})}
         />
       </div>
-      {new URLSearchParams(location.search).has("settings") && (
-        <AgentSettings />
-      )}
+      {showSettings && <AgentSettings />}
     </main>
   );
 }

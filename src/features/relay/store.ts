@@ -144,7 +144,7 @@ export function createChannelStore(
   ) => {
     const started = performance.now();
     const rows = foldMessages(channelId, author, events, {
-      includeReplies: discovery?.isSession(channelId) ?? false,
+      includeReplies: discovery?.isSolo(channelId) ?? false,
       signingAuthority: transport?.archiveAuthority,
     });
     clientMetrics.cpu("fold", performance.now() - started, events.length);
@@ -249,7 +249,6 @@ export function createChannelStore(
         old.hidden === channel.hidden &&
         old.private === channel.private &&
         old.channelType === channel.channelType &&
-        old.parentChannelId === channel.parentChannelId &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
         old.ttlSeconds === channel.ttlSeconds &&
@@ -412,7 +411,7 @@ export function createChannelStore(
         channelId,
         transport?.relayAuthor ?? "",
         profiling,
-        () => discovery?.isSession(channelId) ?? false,
+        () => discovery?.isSolo(channelId) ?? false,
         clock,
         transport?.archiveAuthority,
       ),
@@ -486,7 +485,7 @@ export function createChannelStore(
     if (
       !persistence ||
       // Compatibility queries have no signed bounds to restore from disk.
-      isSession(channelId) ||
+      isSolo(channelId) ||
       !discovery?.authorized(channelId) ||
       disposed ||
       heads.peek(channelId) !== head
@@ -545,14 +544,14 @@ export function createChannelStore(
       saveDiscovery();
     }, [channelId]);
   }
-  const isSession = (channelId: string) => !!discovery?.isSession(channelId);
+  const isSolo = (channelId: string) => !!discovery?.isSolo(channelId);
   async function readPage(
     channelId: string,
     cursor: WindowCursor | null,
     settings: ReadOptions,
   ) {
     if (!transport) throw new Error("Relay is unavailable");
-    if (isSession(channelId)) {
+    if (isSolo(channelId)) {
       const page = await readSessionWindow(
         transport,
         channelId,
@@ -648,6 +647,9 @@ export function createChannelStore(
     const generation = state.generation;
     const controller = new AbortController();
     state.controller = controller;
+    // Shown rows wait on this head read; a seek must not treat it as the end.
+    if (!cursor && state.snapshot.status === "ready")
+      setWindow(state, { refreshing: true });
     try {
       if (prepared && !cursor) {
         const head = await requestHead(state.channelId, "foreground");
@@ -716,6 +718,14 @@ export function createChannelStore(
       );
     } finally {
       if (state.controller === controller) state.controller = undefined;
+      // Aborted reads end here too; a newer head read keeps the flag.
+      if (
+        !state.controller &&
+        state.snapshot.refreshing &&
+        !disposed &&
+        windows.get(state.channelId) === state
+      )
+        setWindow(state, { refreshing: undefined });
     }
   }
   async function hydrate() {
@@ -746,7 +756,7 @@ export function createChannelStore(
       if (disposed || generation !== epoch) return;
       if (
         !allowed?.has(record.channelId) ||
-        isSession(record.channelId) ||
+        isSolo(record.channelId) ||
         heads.peek(record.channelId) ||
         !Number.isFinite(record.savedAt) ||
         record.savedAt > now() ||
@@ -1387,9 +1397,9 @@ export function createChannelStore(
   }
   /** Resolve only returned/demanded nonmember channels, through the verified reader.
    *
-   * Search, work-sessions.ts `refresh`, and session.ts membership hints rely on
-   * these properties. The create-channel path guards them with real-store tests
-   * in work-sessions.test.ts rather than through this store's own suite:
+   * Search, channel-writes.ts `refresh`, findLabeled, and session.ts membership
+   * hints rely on these properties. The create-channel path guards them with real-store tests
+   * in channel-writes.test.ts rather than through this store's own suite:
    * - The id filter keeps every channel the store does not yet authorize, so a
    *   just-created channel is confirmed by one exact `#d` read instead of the
    *   full viewer-roster rediscovery. Skipping such ids would send every create
@@ -1412,11 +1422,18 @@ export function createChannelStore(
   async function resolve(
     channelIds: readonly string[],
     settings?: ChannelReadOptions,
+    unnamed = false,
   ) {
     if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
+    // `unnamed` also reads an authorized channel whose metadata has not
+    // arrived yet (the full pass applies rosters before it reads names):
+    // a label lookup needs its creator and labels now, not after the pass.
     const ids = [...new Set(channelIds)].filter(
-      (id) => !discovery.authorized(id) || discovery.get(id)?.cached,
+      (id) =>
+        !discovery.authorized(id) ||
+        discovery.get(id)?.cached ||
+        (unnamed && !discovery.named(id)),
     );
     if (!ids.length) return;
     if (ids.length > 128) throw new Error("Too many search result channels");
@@ -1736,7 +1753,7 @@ export function createChannelStore(
         }),
       ),
     ];
-    if (ids.length) await resolve(ids, settings);
+    if (ids.length) await resolve(ids, settings, true);
     if (disposed || generation !== epoch)
       throw new DOMException("Stale channel lookup", "AbortError");
     return ids
@@ -1787,8 +1804,8 @@ export function createChannelStore(
    * This is a separate entry point because `resolve` deliberately skips ids the
    * store already authorizes: its exact read carries cached-denial semantics for
    * restored channels, which a member addition must not inherit. The agent-add
-   * path in work-sessions.ts `refresh` guards this method with real-store tests
-   * in work-sessions.test.ts; the merge itself is covered in store.test.ts.
+   * path in channel-writes.ts `refresh` guards this method with real-store tests
+   * in channel-writes.test.ts; the merge itself is covered in store.test.ts.
    * - Only an id the store authorizes is read. Admitting a channel the list lacks
    *   is `resolve`'s job, and a denied id never regains access here: the method
    *   returns without a read, so cached denials stay as they were.
@@ -2628,12 +2645,22 @@ export function createChannelStore(
     clearCache,
     dispose,
     /** A disconnected stream invalidates a head's freshness lease, not its content.
-     * Inactive cached heads will revalidate when demanded, without an all-roster read. */
+     * Inactive cached heads will revalidate when demanded, without an all-roster read.
+     * The session drops its queued catch-ups with the stream, so an empty window
+     * that only a queued catch-up marked loading becomes idle: the next ensure()
+     * reads it again. Running reads settle their own windows when cancelled. */
     staleHeads() {
       for (const [id, head] of heads.entries())
         heads.set(id, { ...head, cached: true });
       for (const state of windows.values())
-        setWindow(state, { freshness: "cached" });
+        setWindow(state, {
+          freshness: "cached",
+          ...(state.snapshot.status === "loading" &&
+          !state.snapshot.rows.length &&
+          !state.controller
+            ? { status: "idle" }
+            : {}),
+        });
     },
     /** Revalidate only a retained reader after establishing the stream. An unopened
      * channel needs no eager HTTP head; its normal ensure() owns that finite handoff. */
@@ -2703,11 +2730,19 @@ export function createChannelStore(
         ...[...windows.keys()].reverse(),
       ]),
     ],
-    staleHead(channelId: string) {
+    /** A catch-up head read is queued: the rows wait to be revalidated, an
+     * empty window is loading, and an earlier failure is no longer the answer.
+     * catchUp settles it again. */
+    catchUpQueued(channelId: string) {
       const head = heads.peek(channelId);
       if (head) heads.set(channelId, { ...head, cached: true });
       const state = windows.get(channelId);
-      if (state) setWindow(state, { freshness: "cached" });
+      if (state)
+        setWindow(state, {
+          freshness: "cached",
+          error: undefined,
+          ...(state.snapshot.rows.length ? {} : { status: "loading" }),
+        });
     },
     diagnostics: () => ({
       heads: heads.stats(),

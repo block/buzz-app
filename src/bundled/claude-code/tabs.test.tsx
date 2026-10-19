@@ -744,8 +744,8 @@ it("starts a new agent with finite model choices and preserves its other setting
     }),
   );
   expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "" });
-  expect(screen.getByLabelText("Instructions")).toHaveValue("Triage.");
-  fireEvent.change(screen.getByLabelText("Instructions"), {
+  expect(screen.getByLabelText("Instructions Optional")).toHaveValue("Triage.");
+  fireEvent.change(screen.getByLabelText("Instructions Optional"), {
     target: { value: "Plan." },
   });
   expect(onChange).toHaveBeenLastCalledWith({
@@ -758,7 +758,7 @@ it("disables a new agent's controls while it is being created", () => {
   const Create = installed().type.Create;
   if (!Create) throw new Error("no create choices");
   render(<Create config={DEFAULT_CONFIG} onChange={vi.fn()} disabled />);
-  expect(screen.getByLabelText("Instructions")).toBeDisabled();
+  expect(screen.getByLabelText("Instructions Optional")).toBeDisabled();
 });
 
 it("edits a custom model and instructions in settings", async () => {

@@ -32,7 +32,7 @@ export function AgentDefaults({ agents }: { agents: Agents }) {
   }, [types]);
   return (
     <div className="mt-section-gap">
-      <InlineHeader title="AI defaults" />
+      <InlineHeader title="Providers" />
       <SettingsGroup>
         {types.map((type) => {
           if (!type.provider) return null;

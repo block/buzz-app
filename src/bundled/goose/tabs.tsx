@@ -946,6 +946,7 @@ export function createTabs({
     const current = readConfig(config);
     return (
       <AgentInstructions
+        creation
         value={current.instructions}
         disabled={disabled}
         onChange={(instructions) => onChange({ ...current, instructions })}

@@ -9,7 +9,7 @@ async function openPlugins(page, origin) {
   await page.goto(origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
 async function nativeImports(page, samples = []) {
@@ -17,17 +17,15 @@ async function nativeImports(page, samples = []) {
     window.isTauri = true;
     window.importCalls = [];
     window.importDelay = false;
-    const plugins = ["channels", "github", "bestie", "projects"].map(
-      (name) => ({
-        manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
-        source: "bundled",
-        enabled: true,
-        revision: "bundled",
-        previous: null,
-        reloadable: false,
-        error: null,
-      }),
-    );
+    const plugins = ["channels", "github", "bestie", "repos"].map((name) => ({
+      manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
+      source: "bundled",
+      enabled: true,
+      revision: "bundled",
+      previous: null,
+      reloadable: false,
+      error: null,
+    }));
     const ready = () => ({
       status: "ready",
       externalPluginsPaused: false,
@@ -178,13 +176,21 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
               continue;
             }
             if (label.classList.contains("sr-only")) continue;
-            const text = document.createRange();
-            text.selectNodeContents(label);
-            for (const line of text.getClientRects()) {
-              if (line.left < bounds.left || line.right > bounds.right)
-                failures.push(
-                  `${label.textContent}: setting label overflows section`,
-                );
+            // Measure visible text only; sr-only spans are clipped by design.
+            const walker = document.createTreeWalker(
+              label,
+              NodeFilter.SHOW_TEXT,
+            );
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+              if (node.parentElement.closest(".sr-only")) continue;
+              const text = document.createRange();
+              text.selectNodeContents(node);
+              for (const line of text.getClientRects()) {
+                if (line.left < bounds.left || line.right > bounds.right)
+                  failures.push(
+                    `${label.textContent}: setting label overflows section`,
+                  );
+              }
             }
           }
           for (const button of root.querySelectorAll("button.buzz-button")) {
@@ -209,9 +215,35 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
             const minimum = button.dataset.size === "sm" ? 32 : 40;
             if (scale === 100 && box.height !== minimum)
               failures.push(`${button.textContent}: default height changed`);
+            // Compact Select deliberately ellipsizes its value; a text Range
+            // includes hidden glyphs. Check the painted boxes and full-value
+            // hint instead, without exempting lost clipping or escaping icons.
+            const selectValue = button
+              .closest('.buzz-select[data-variant="compact"]')
+              ?.querySelector(".buzz-select-value");
+            if (selectValue) {
+              const style = getComputedStyle(selectValue);
+              if (
+                style.overflow !== "hidden" ||
+                style.textOverflow !== "ellipsis" ||
+                style.whiteSpace !== "nowrap" ||
+                selectValue.getAttribute("title") !==
+                  selectValue.textContent.trim()
+              )
+                failures.push(
+                  `${button.textContent}: compact choice lost clipping or full-value hint`,
+                );
+            }
             const text = document.createRange();
-            text.selectNodeContents(button);
-            for (const line of text.getClientRects()) {
+            if (!selectValue) text.selectNodeContents(button);
+            const content = selectValue
+              ? [
+                  ...button.querySelectorAll(
+                    ".buzz-select-value, .buzz-dropdown-chevron",
+                  ),
+                ].map((node) => node.getBoundingClientRect())
+              : [...text.getClientRects()];
+            for (const line of content) {
               if (
                 line.top < box.top ||
                 line.bottom > box.bottom ||
@@ -222,7 +254,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
                   `${button.textContent}: content overflows button`,
                 );
             }
-            const palette = button.closest("[data-message-colors]");
+            const palette = button.closest("[data-accent-colors]");
             const visibleBounds = palette?.getBoundingClientRect() ?? box;
             if (
               visibleBounds.left < bounds.left ||
@@ -267,7 +299,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       ).toHaveCount(scale === 100 ? 0 : 1);
       await page.evaluate(() => document.fonts.ready);
       await checkButtons(appearance, scale);
-      const colors = appearance.locator("[data-message-colors] button");
+      const colors = appearance.locator("[data-accent-colors] button");
       await colors.first().focus();
       await page.keyboard.press("Shift+Tab");
       await page.keyboard.press("Tab");
@@ -279,7 +311,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
             colors.nth(index).evaluate((button) => {
               const box = button.getBoundingClientRect();
               const palette = button
-                .closest("[data-message-colors]")
+                .closest("[data-accent-colors]")
                 .getBoundingClientRect();
               const style = getComputedStyle(button);
               const ring =
@@ -333,9 +365,9 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
             ),
         )
         .not.toContain(false);
-      await selectSettingsSection(page, "Plugins");
+      await selectSettingsSection(page, "Manage plugins");
       const plugins = page.getByRole("region", {
-        name: "Plugins",
+        name: "Manage plugins",
         exact: true,
       });
       await expect(button(page, "Load from folder")).toBeVisible();
@@ -386,7 +418,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(button(page, "Install plugin")).toHaveCount(0);
   await page.getByRole("radio", { name: /Example two/ }).check();
   await selectSettingsSection(page, "Profile");
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
   await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
   await expect(
     page.getByText(
@@ -448,7 +480,7 @@ test("leaving Settings discards a late preview without installing", async ({
   });
   await button(page, "Load from folder").click();
   await expect(page.getByText(/Reading plugin folders/)).toBeVisible();
-  await openPage(page, "Projects");
+  await openPage(page, "Repository");
   await page.evaluate(() => window.resolveImport());
   await expect
     .poll(() =>
@@ -511,7 +543,7 @@ test("checked-in local examples activate and work independently", async ({
   );
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
   await page.getByRole("switch", { name: "Enable Counter playground" }).click();
   const navigation = await pageChoices(page);
   await expect(

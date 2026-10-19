@@ -58,6 +58,10 @@
     width: var(--space-4);
     height: var(--space-4);
   }
+  /* A leading icon sits as close to the leading edge as to the top and bottom. */
+  .buzz-button[data-size="xs"]:has(> .buzz-button-label > svg:first-child) {
+    padding-inline-start: var(--space-1);
+  }
   /* Inline caption choices, such as the composer's model label. */
   .buzz-button[data-size="inline"] {
     @apply text-caption;

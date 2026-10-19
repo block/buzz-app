@@ -722,6 +722,9 @@ other IconButtons.
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
 
+An `xs` Button whose label starts with an icon reduces its leading padding to its
+4px vertical padding, so the icon sits evenly in the capsule's leading corner.
+
 Utility icon actions share the rounded rectangle in resting, hover, pressed, and
 selected states. Avatar controls default to round; use `shape="round"` for deliberate
 circular controls such as media playback, the avatar edit badge, and Add reaction.

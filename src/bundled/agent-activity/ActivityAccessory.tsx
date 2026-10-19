@@ -15,7 +15,11 @@ import { profileActivityViewTarget } from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { WarningCircleIcon, XIcon } from "../../shared/design-system/icons";
+import {
+  StopIcon,
+  WarningCircleIcon,
+  XIcon,
+} from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
@@ -544,7 +548,7 @@ function ActivityBubble({
                   ) : stoppable(entry) ? (
                     <Button
                       size="xs"
-                      variant="ghost"
+                      variant="subtle"
                       aria-label={`Stop ${entry.name}`}
                       loading={stopping}
                       onClick={(event) => {
@@ -552,7 +556,7 @@ function ActivityBubble({
                         stop(entry);
                       }}
                     >
-                      <XIcon size={16} aria-hidden="true" />
+                      <StopIcon size={16} aria-hidden="true" />
                       <span>Stop</span>
                     </Button>
                   ) : undefined}

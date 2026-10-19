@@ -204,6 +204,12 @@ test("Stop in a message's activity ends its local work quietly", async ({
   });
   await expect(stop).toBeVisible();
   await expect(stop).toHaveText("Stop");
+  // Its leading icon sits as close to the edge as to the top.
+  const padding = await stop.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return [style.paddingInlineStart, style.paddingTop];
+  });
+  expect(padding[0]).toBe(padding[1]);
   await expect(popup).not.toHaveAttribute("data-starting-style", "");
   const preview = popup.getByText(/^Reading /);
   await expect(preview).toBeVisible();

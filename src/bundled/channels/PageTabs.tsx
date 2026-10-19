@@ -113,8 +113,13 @@ export function PageTabs({
   >(() => false);
   const closing = useRef<(target: PageTabTarget) => boolean>(() => false);
   // A page's own close leaves focus to the page, so the workspaces adopt the
-  // selection it leaves without focusing it.
+  // selection it leaves without focusing it; an open in the same update, as
+  // when Archive advances, focuses its tab as usual.
   const [closes, setCloses] = useState(0);
+  const committedCloses = useRef(closes);
+  useLayoutEffect(() => {
+    committedCloses.current = closes;
+  });
   // A thread opened at a reply keeps its tab once its root resolves.
   const tabOf = ({ channelId, threadId }: PageTabTarget) =>
     (threadId && threadTab(tabState.tabs, channelId, threadId)) ||
@@ -131,7 +136,7 @@ export function PageTabs({
       const tab = tabOf(target);
       if (!mounted.current || !tab) return false;
       tabState.setTabs((tabs) => tabs.filter((item) => item.id !== tab.id));
-      setCloses((count) => count + 1);
+      setCloses(committedCloses.current + 1);
       return true;
     };
     opening.current = (
@@ -140,6 +145,7 @@ export function PageTabs({
     ) => {
       if (!mounted.current || !secondary.canOpenConversation(channelId))
         return false;
+      setCloses(committedCloses.current);
       const known = new Set(tabState.tabs.map((tab) => tab.id));
       // An open thread keeps its tab in whichever pane it was moved to, and
       // under its verified root.

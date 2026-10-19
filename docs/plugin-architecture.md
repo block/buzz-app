@@ -1037,7 +1037,7 @@ thread opens as a side-pane thread tab and a whole conversation as a side-pane
 conversation tab, each with the same reader and composer as Channels tabs, so
 the page stays in view; any thread can then move to the main pane. A plain open
 replaces the tab the previous one added, and `keep: true` adds a tab beside it;
-an already-open conversation's tab is selected wherever it is. `close(target)` closes that conversation's tab, leaving focus to the page, and returns false when none is open; `isOpen(target)` says whether it has one, and a thread opened at a reply keeps its tab once its root resolves. `id` keys the page's tabs, which last for its community session as
+an already-open conversation's tab is selected wherever it is. `close(target)` closes that conversation's tab, leaving focus to the page unless it opens a tab in the same update, and returns false when none is open; `isOpen(target)` says whether it has one, and a thread opened at a reply keeps its tab once its root resolves. `id` keys the page's tabs, which last for its community session as
 Channels tabs do; they keep no Back/Forward visits. Showing a tab enters its
 channel visit, as in Channels; `visits: false` leaves reading to the page, as
 Inbox does.

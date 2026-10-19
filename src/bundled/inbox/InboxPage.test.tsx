@@ -718,6 +718,37 @@ it.each([
   },
 );
 
+it.each(["shortcut", "menu"])(
+  "Archive via %s from the composer focuses the successor's tab",
+  async (action) => {
+    const h = fixture({ withWriter: true });
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    const thread = rows().find((row) =>
+      row.textContent?.includes("A thread update"),
+    );
+    if (!thread) throw new Error("Missing fixture thread row");
+    const open = within(thread).getByRole("button", { name: /^Open / });
+    fireEvent.click(open);
+    (await screen.findByRole("textbox")).focus();
+    if (action === "shortcut") await archiveOpened(h);
+    else {
+      fireEvent.contextMenu(open);
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: "Archive conversation" }),
+      );
+    }
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveAttribute("data-selected");
+    expect(sideTabs()).toHaveLength(1);
+    await waitFor(() =>
+      expect(document.activeElement).toHaveAttribute("role", "tab"),
+    );
+    expect(document.activeElement).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement?.textContent).toBe(sideTabs()[0]);
+  },
+);
+
 it("the Archive shortcut advances from an ordinary-reply visit after switching to Mentions", async () => {
   const h = fixture();
   const root = h.root;

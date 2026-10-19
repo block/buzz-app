@@ -428,6 +428,43 @@ test.describe("pages inside one second", () => {
     await grow(page);
   });
 
+  test("a cancelled drag ends the hold", async ({ page, app }) => {
+    const pending = await reading(page, app, 1400);
+    const box = await history(page).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    try {
+      const height = await history(page).evaluate((e) => e.scrollHeight);
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      await settle(page);
+      await history(page).evaluate(
+        (e) =>
+          new Promise((resolve) => {
+            e.addEventListener("scrollend", resolve, { once: true });
+            e.scrollTop -= 600;
+          }),
+      );
+      // The browser takes the pointer, for a native drag or touch pan.
+      await page.evaluate(() =>
+        document.body.dispatchEvent(
+          new PointerEvent("pointercancel", {
+            bubbles: true,
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true,
+          }),
+        ),
+      );
+      await settle(page);
+      await grow(page);
+    } finally {
+      await page.mouse.up();
+    }
+  });
+
   test("a live message in the loaded first second is new", async ({
     page,
     app,

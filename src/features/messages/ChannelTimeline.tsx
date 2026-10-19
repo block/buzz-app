@@ -617,6 +617,7 @@ function Timeline({
       element.removeEventListener("scroll", read);
       element.removeEventListener("scrollend", end);
       element.ownerDocument.removeEventListener("pointerup", done);
+      element.ownerDocument.removeEventListener("pointercancel", done);
     };
     const done = () => {
       if (measured) release();
@@ -631,6 +632,7 @@ function Timeline({
     element.addEventListener("scrollend", end);
     // A drag can end outside the scroller.
     element.ownerDocument.addEventListener("pointerup", done);
+    element.ownerDocument.addEventListener("pointercancel", done);
     return release;
   }, [rows, prepend]);
   useLayoutEffect(() => {

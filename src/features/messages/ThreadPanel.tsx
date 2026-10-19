@@ -9,6 +9,8 @@ import { replyTree } from "./reply-tree";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../shared/avatar-source";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -1537,6 +1539,15 @@ function ThreadMessages({
             ) : (
               selectedParent && (
                 <div className={styles.replyContext}>
+                  <Avatar
+                    src={avatarMedia(
+                      profiles.get(selectedParent.authorId)?.picture,
+                      session.media,
+                    )}
+                    alt=""
+                    fallback={senderName(selectedParent)}
+                    size="default"
+                  />
                   <div>
                     <span>Replying to {senderName(selectedParent)}</span>
                     <p>{selectedParent.content}</p>

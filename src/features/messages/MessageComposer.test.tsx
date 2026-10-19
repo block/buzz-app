@@ -475,6 +475,31 @@ function mount(
   };
 }
 
+it("retires reply controls immediately and preserves the draft when replying again", () => {
+  const h = mount({
+    replyContext: <button type="button">Cancel reply to Honey</button>,
+  });
+  fireEvent.change(h.input(), { target: { value: "Draft in progress" } });
+  const previous = screen.getByRole("button", {
+    name: "Cancel reply to Honey",
+  });
+
+  h.retarget({ replyContext: undefined });
+  expect(previous.closest("[inert]")).not.toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Cancel reply to Honey" }),
+  ).toBeNull();
+  expect(h.input()).toHaveValue("Draft in progress");
+
+  h.retarget({
+    replyContext: <button type="button">Cancel reply to Wes</button>,
+  });
+  const current = screen.getByRole("button", { name: "Cancel reply to Wes" });
+  expect(current.closest("[inert]")).toBeNull();
+  expect(screen.queryByText("Cancel reply to Honey")).toBeNull();
+  expect(h.input()).toHaveValue("Draft in progress");
+});
+
 it("shows a local draft in the cached composer without completion, typing or transport reads", async () => {
   const viewer = keypair(),
     relay = keypair();

@@ -1219,3 +1219,52 @@
   );
   --text-message-action: var(--bubble-ink);
 }
+
+/* Plugin gradients follow the six existing accent identities.
+   Bare endpoints target relative luminance 0.18 (white 4.57:1, black 4.60:1).
+   Hue comes from each family's existing light step 9; a +/-8 degree sweep
+   keeps adjacent cobalt/iris distinct. Artwork lighting changes final pixels. */
+:root {
+  --art-cobalt-start: oklch(56.55547% 0.1 258.6948);
+  --art-cobalt-end: oklch(56.91558% 0.1 274.6948);
+  --art-cobalt-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-cobalt-start),
+    var(--art-cobalt-end)
+  );
+  --art-iris-start: oklch(56.95356% 0.1 276.502);
+  --art-iris-end: oklch(57.25707% 0.1 292.502);
+  --art-iris-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-iris-start),
+    var(--art-iris-end)
+  );
+  --art-magenta-start: oklch(57.75818% 0.1 347.6028);
+  --art-magenta-end: oklch(57.74444% 0.1 363.6028);
+  --art-magenta-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-magenta-start),
+    var(--art-magenta-end)
+  );
+  --art-flame-start: oklch(57.60201% 0.1 26.6181);
+  --art-flame-end: oklch(57.41753% 0.1 42.6181);
+  --art-flame-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-flame-start),
+    var(--art-flame-end)
+  );
+  --art-jade-start: oklch(55.24652% 0.1 161.9836);
+  --art-jade-end: oklch(55.20503% 0.1 177.9836);
+  --art-jade-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-jade-start),
+    var(--art-jade-end)
+  );
+  --art-chartreuse-start: oklch(56.26357% 0.1 101.5919);
+  --art-chartreuse-end: oklch(55.91096% 0.1 117.5919);
+  --art-chartreuse-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-chartreuse-start),
+    var(--art-chartreuse-end)
+  );
+}

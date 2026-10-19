@@ -320,13 +320,9 @@
   }
 }
 
-/* 40° category steps in OKLCH; equal lightness, chroma capped to sRGB. */
+/* Category identities share the six design-system accent families. */
 .pluginIcon[data-branded][data-category="communication"] {
-  --plugin-icon-gradient: linear-gradient(
-    to bottom,
-    oklch(60% 0.109 220),
-    oklch(60% 0.14 255)
-  );
+  --plugin-icon-gradient: var(--art-cobalt-gradient);
 }
 
 .pluginIcon[data-branded][data-category="communication"] img {
@@ -334,11 +330,7 @@
 }
 
 .pluginIcon[data-branded][data-category="agents"] {
-  --plugin-icon-gradient: linear-gradient(
-    to bottom,
-    oklch(60% 0.14 295),
-    oklch(60% 0.14 260)
-  );
+  --plugin-icon-gradient: var(--art-iris-gradient);
 }
 
 .pluginIcon[data-branded][data-category="agents"] img {
@@ -346,11 +338,7 @@
 }
 
 .pluginIcon[data-branded][data-category="agent-tools"] {
-  --plugin-icon-gradient: linear-gradient(
-    to bottom,
-    oklch(60% 0.14 335),
-    oklch(60% 0.14 300)
-  );
+  --plugin-icon-gradient: var(--art-magenta-gradient);
 }
 
 .pluginIcon[data-branded][data-category="agent-tools"] img {
@@ -358,11 +346,7 @@
 }
 
 .pluginIcon[data-branded][data-category="developer-tools-and-integrations"] {
-  --plugin-icon-gradient: linear-gradient(
-    to bottom,
-    oklch(60% 0.14 375),
-    oklch(60% 0.14 340)
-  );
+  --plugin-icon-gradient: var(--art-flame-gradient);
 }
 
 .pluginIcon[data-branded][data-category="developer-tools-and-integrations"]
@@ -371,11 +355,7 @@
 }
 
 .pluginIcon[data-branded][data-category="people-and-communities"] {
-  --plugin-icon-gradient: linear-gradient(
-    to bottom,
-    oklch(60% 0.14 380),
-    oklch(60% 0.14 415)
-  );
+  --plugin-icon-gradient: var(--art-jade-gradient);
 }
 
 .pluginIcon[data-branded][data-category="people-and-communities"] img {
@@ -383,11 +363,7 @@
 }
 
 .pluginIcon[data-branded][data-category="productivity"] {
-  --plugin-icon-gradient: linear-gradient(
-    to bottom,
-    oklch(60% 0.14 420),
-    oklch(60% 0.123 455)
-  );
+  --plugin-icon-gradient: var(--art-chartreuse-gradient);
 }
 
 .pluginIcon[data-branded][data-category="productivity"] img {

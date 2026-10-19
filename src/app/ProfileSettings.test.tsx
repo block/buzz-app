@@ -220,6 +220,45 @@ it("stops reporting a discardable draft once its save is dispatched", async () =
   expect(onUnsavedChange).toHaveBeenLastCalledWith(false);
 });
 
+it("keeps a draft discardable while Save reads the latest profile", async () => {
+  const read = deferred();
+  let reads = 0;
+  vi.spyOn(communityApi, "inspectProfile").mockImplementation(async () => {
+    // The second read is Save's fresh inspection before publication.
+    if (++reads === 2) await read.promise;
+    return {
+      exists: true,
+      existing: { name: "Saved" },
+      profile: { name: "Saved", picture: "" },
+    };
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(() => new Promise(() => {}));
+  const onUnsavedChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={communities()}
+      community={{ id: "primary", name: "Primary" }}
+      onUnsavedChange={onUnsavedChange}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const name = await screen.findByLabelText("Display name");
+  await waitFor(() => expect(name).toHaveValue("Saved"));
+  await user.clear(name);
+  await user.type(name, "Edited");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(reads).toBe(2));
+  // Closing now would unmount before publication and silently lose the edit.
+  expect(publish).not.toHaveBeenCalled();
+  expect(onUnsavedChange).toHaveBeenLastCalledWith(true);
+  read.resolve();
+  await waitFor(() => expect(publish).toHaveBeenCalledOnce());
+  await waitFor(() => expect(onUnsavedChange).toHaveBeenLastCalledWith(false));
+});
+
 it("keeps a community draft when publication fails and retries a failed read", async () => {
   const service = communities();
   const inspect = vi

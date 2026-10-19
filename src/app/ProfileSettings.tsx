@@ -122,6 +122,8 @@ export function ProfileSettings({
   const latestPersisted = useRef<PersonalProfile>(client.profile);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Publication has been sent, so the save finishes even if Settings closes.
+  const [dispatched, setDispatched] = useState(false);
   const [uploading, setUploading] = useState(false);
   const mounted = useRef(false);
   useEffect(() => {
@@ -203,8 +205,9 @@ export function ProfileSettings({
     ? (draft ?? persisted)
     : { name: "", picture: "", about: "" };
   const hasChanges = draft !== null && !profilesEqual(draft, persisted);
-  // A dispatched save continues after Settings closes, so it is not discardable.
-  const discardable = hasChanges && !saving;
+  // A dispatched save continues after Settings closes, so it is not
+  // discardable. Before then (the fresh read), closing would drop the edit.
+  const discardable = hasChanges && !dispatched;
   useEffect(() => {
     if (!discardable) return;
     onUnsavedChange?.(true);
@@ -337,6 +340,7 @@ export function ProfileSettings({
                           // Preserve fields outside this editor even if another client edited them.
                           const latest = await inspect(community.id);
                           if (!mounted.current) return;
+                          setDispatched(true);
                           await communityApi.publishProfile(
                             community.id,
                             next,
@@ -371,7 +375,10 @@ export function ProfileSettings({
                               : String(reason),
                           );
                       } finally {
-                        if (mounted.current) setSaving(false);
+                        if (mounted.current) {
+                          setSaving(false);
+                          setDispatched(false);
+                        }
                       }
                     })();
                   }}

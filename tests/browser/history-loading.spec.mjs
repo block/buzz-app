@@ -300,6 +300,30 @@ test.describe("pages inside one second", () => {
     }
   });
 
+  for (const distance of [600, 1200])
+    test(`a row in view grows downward ${distance}px above the page's reader`, async ({
+      page,
+      app,
+    }) => {
+      const pending = await reading(page, app, 1400);
+      const height = await history(page).evaluate((e) => e.scrollHeight);
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      await settle(page);
+      await wheel(page, -distance);
+      const before = await anchor(page);
+      // An image or embed finishing below the reader's paragraph.
+      await history(page).evaluate((e, id) => {
+        const extra = document.createElement("div");
+        extra.style.height = "300px";
+        e.querySelector(`[data-message-id="${id}"] p`).after(extra);
+      }, before.id);
+      await settle(page);
+      await expectAnchor(page, before);
+    });
+
   test("a live message in the loaded first second is new", async ({
     page,
     app,

@@ -558,7 +558,8 @@ function Timeline({
   // Without shift, rows landing above the reader push them down. Scroll by
   // that height before paint, so input that follows starts from the reader's
   // row. Rows that moved keep another row's size until they measure; hold the
-  // reader's latest row through those measurements.
+  // reader's latest row through those measurements, until reader input that
+  // follows them ends.
   useLayoutEffect(() => {
     const element = scroller.current;
     const list = element?.querySelector("ol");
@@ -588,22 +589,32 @@ function Timeline({
       if (row !== undefined) y = row - element.getBoundingClientRect().top;
     };
     let height = list.style.height;
+    const since = intent.current;
+    let measured = false;
     const hold = new MutationObserver(() => {
       const row = top();
       if (list.style.height === height) return;
       height = list.style.height;
+      measured = true;
       if (row !== undefined && settled.current && !follow.current)
         correctScrollTop(
           element,
           row - element.getBoundingClientRect().top - y,
         );
     });
-    hold.observe(list, { attributes: true, attributeFilter: ["style"] });
-    element.addEventListener("scroll", read);
-    return () => {
+    const release = () => {
       hold.disconnect();
       element.removeEventListener("scroll", read);
+      element.removeEventListener("scrollend", end);
     };
+    const end = () => {
+      if (measured && (intent.current !== since || pointerHeld.current))
+        release();
+    };
+    hold.observe(list, { attributes: true, attributeFilter: ["style"] });
+    element.addEventListener("scroll", read);
+    element.addEventListener("scrollend", end);
+    return release;
   }, [rows, prepend]);
   useLayoutEffect(() => {
     const element = scroller.current;

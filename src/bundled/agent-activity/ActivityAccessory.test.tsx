@@ -46,7 +46,6 @@ function fixture(local?: ReturnType<typeof createLocalAgentActivity>) {
     () => true,
     undefined,
     undefined,
-    undefined,
     local ? { source: local.reader, scope: "test" } : undefined,
   );
   const release = activity.queries.activate();

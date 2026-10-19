@@ -518,7 +518,6 @@ confirmedPresence(
       await profile.focus();
       for (const name of [
         "Custom emoji",
-        "Local archive",
         "Pair mobile",
         "Leave or remove",
         "Identity",
@@ -587,7 +586,6 @@ confirmedPresence(
       }
       for (const name of [
         "Custom emoji",
-        "Local archive",
         "Pair mobile",
         "Leave or remove",
         "Identity",

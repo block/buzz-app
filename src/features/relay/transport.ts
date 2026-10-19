@@ -1,7 +1,5 @@
 import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import type { ReminderHost } from "./reminders";
-import { archiveClient } from "../archive/client";
-import type { ArchiveHost } from "../archive/types";
 import {
   memoryResponseText,
   type MemoryReader,
@@ -114,7 +112,6 @@ export interface ReadTransport {
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
-  readonly activityArchive?: ArchiveHost;
   /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;
@@ -556,26 +553,6 @@ export async function connectBrokerTransport(
         }
       : {}),
     agentActivity: session.agentActivity === true && session.live === true,
-    ...(session.agentActivity === true && session.live === true
-      ? {
-          activityArchive: archiveClient("broker", async (input, signal) => {
-            const response = await fetch(`${endpoint}/archive`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ viewer: session.viewer, ...input }),
-              signal: signal
-                ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
-                : AbortSignal.timeout(10000),
-            });
-            if (!response.ok)
-              throw new Error(
-                "Archive operation failed; retry without deleting stored data",
-              );
-            return response.json();
-          }).host,
-        }
-      : {}),
     ...(session.live
       ? {
           subscribe: (callbacks: LiveCallbacks) => {

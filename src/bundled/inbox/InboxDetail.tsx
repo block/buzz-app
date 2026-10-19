@@ -86,8 +86,14 @@ export function InboxDetail({
   const channel = list.channels.find(
     (candidate) => candidate.id === item.channelId,
   );
+  const excluded = !!(channel?.huddle || channel?.metadataPending);
+  useLayoutEffect(() => {
+    if (excluded) onBack();
+  }, [excluded, onBack]);
   const available =
     !!channel &&
+    !channel.huddle &&
+    !channel.metadataPending &&
     !channel.cached &&
     !channel.archived &&
     !channel.readOnly &&
@@ -99,7 +105,7 @@ export function InboxDetail({
   // keep the reader this visit opened with.
   const flat =
     item.target.kind === "channel" ||
-    (channel?.channelType === "session" && !item.thread);
+    (channel?.channelType === "solo" && !item.thread);
   const [timeline, setTimeline] = useState<boolean>();
   if (available && timeline === undefined) setTimeline(flat);
   useEffect(() => {

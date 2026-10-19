@@ -225,6 +225,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         ..HostGrants::default()
     });
     vec![
+        serde_json::from_str(include_str!("../../../src/bundled/huddles/manifest.json"))
+            .expect("huddles manifest"),
         builderlab,
         serde_json::from_str(include_str!("../../../src/bundled/pairing/manifest.json"))
             .expect("valid pairing manifest"),
@@ -258,21 +260,15 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("emoji manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/channels/manifest.json"))
             .expect("channels manifest"),
-        serde_json::from_str(include_str!(
-            "../../../src/bundled/channel-usage/manifest.json"
-        ))
-        .expect("channel usage manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/github/manifest.json"))
             .expect("github manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/me/manifest.json"))
-            .expect("Me manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
             .expect("valid Inbox manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/reminders/manifest.json"))
             .expect("reminders manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/bestie/manifest.json"))
             .expect("bestie manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/projects/manifest.json"))
+        serde_json::from_str(include_str!("../../../src/bundled/repos/manifest.json"))
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
@@ -288,8 +284,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
             .expect("feedback manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/sessions/manifest.json"))
-            .expect("sessions manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/hosted-communities/manifest.json"
         ))
@@ -314,25 +308,23 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.mermaid"
             | "buzz.identity-naming"
             | "buzz.agent-activity"
-            | "buzz.channel-usage"
             | "buzz.terminal"
             | "buzz.profiles"
             | "buzz.links"
             | "buzz.mentions"
             | "buzz.voice-notes"
+            | "buzz.huddles"
             | "buzz.emoji"
             | "buzz.github"
             | "buzz.pairing"
-            | "buzz.me"
             | "buzz.inbox"
             | "buzz.reminders"
-            | "buzz.projects"
+            | "buzz.repos"
             | "buzz.agents"
             | "buzz.claude-code"
             | "buzz.codex"
             | "buzz.goose"
             | "buzz.workflows"
-            | "buzz.sessions"
             | "block.hosted-communities"
             | "block.builderlab"
             | "buzz.moderation"
@@ -1953,6 +1945,26 @@ mod tests {
             .unwrap()
             .commands
             .is_empty());
+    }
+
+    #[test]
+    fn huddles_are_available_on_desktop_and_can_be_disabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "huddles-test", false).unwrap();
+        let huddles = || {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "buzz.huddles")
+                .expect("Desktop must expose the Huddles plugin")
+        };
+        assert!(huddles().enabled);
+        manager.change("disable", "buzz.huddles").unwrap();
+        assert!(!huddles().enabled);
+        manager.change("enable", "buzz.huddles").unwrap();
+        assert!(huddles().enabled);
     }
 
     #[test]

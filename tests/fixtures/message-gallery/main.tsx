@@ -12,7 +12,7 @@ import { LinkLabel, linkKind } from "../../../src/bundled/links/InlineLink";
 import { DiffMessage } from "../../../src/bundled/diffs/DiffMessage";
 import { MermaidDiagram } from "../../../src/bundled/mermaid/MermaidDiagram";
 import { MermaidExpand } from "../../../src/bundled/mermaid/MermaidExpand";
-import { parseBubbleColor } from "../../../src/shared/theme/bubble-color";
+import { parseAccent, parseColorLevel } from "../../../src/shared/theme/accent";
 import referenceStyles from "../../../src/shared/InlineReference.module.css";
 import { CustomEmoji } from "../../../src/bundled/emoji/CustomEmoji";
 import { emojiMatches } from "../../../src/features/relay/emoji";
@@ -151,7 +151,14 @@ function Specimen({ example }: { example: Example }) {
               extensions={extensions}
               media={media}
               day={!!example.day && index === 0}
-              onOpenLink={() => {
+              onOpenLink={(url) => {
+                if (
+                  row.attachments.some(
+                    (attachment) =>
+                      attachment.kind === "image" && attachment.url === url,
+                  )
+                )
+                  return false;
                 setAction(
                   "Sample link selected. In the app, this opens its destination.",
                 );
@@ -309,8 +316,11 @@ const theme =
     ? "dark"
     : "light";
 document.documentElement.dataset.colorMode = theme;
-document.documentElement.dataset.bubbleColor = parseBubbleColor(
-  new URLSearchParams(location.search).get("bubble"),
+document.documentElement.dataset.accent = parseAccent(
+  new URLSearchParams(location.search).get("accent"),
+);
+document.documentElement.dataset.colorLevel = parseColorLevel(
+  new URLSearchParams(location.search).get("level"),
 );
 const container = document.getElementById("root");
 if (!container) throw new Error("Missing message gallery root");

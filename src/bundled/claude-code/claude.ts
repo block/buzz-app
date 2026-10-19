@@ -24,6 +24,8 @@ export type Spawn = (
 
 export type ClaudeLaunch = Readonly<{
   cwd: string;
+  /** Folders besides `cwd` that the session may work in and stay in. */
+  directories?: readonly string[];
   /** Read-only catalog probe, without workspace customizations or tools. */
   discovery?: boolean;
   /** Appended to Claude's own system prompt. */
@@ -112,6 +114,12 @@ export class ClaudeProcess {
   private alive = true;
   /** It reports idle; an older `claude` that does not is settled per result. */
   private reportsState = false;
+  /** It runs a turn of its own, such as one a finished background task starts. */
+  private working = false;
+  /** Its live background tasks that are activity, as Claude last listed them. */
+  private tasks = 0;
+  /** Called when it was active and is no longer. */
+  onQuiet?: () => void;
   private requests = 0;
   /** Control requests awaiting Claude's answer, by request id. */
   private calls = new Map<string, (response: Message) => void>();
@@ -178,6 +186,10 @@ export class ClaudeProcess {
               "--no-session-persistence",
             ]
           : ["--permission-mode", "bypassPermissions"]),
+        ...(launch.directories ?? []).flatMap((folder) => [
+          "--add-dir",
+          folder,
+        ]),
         ...(launch.model ? ["--model", launch.model] : []),
         ...(launch.effort ? ["--effort", launch.effort] : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),
@@ -251,6 +263,10 @@ export class ClaudeProcess {
   }
   get busy() {
     return this.pending > 0;
+  }
+  /** Busy, in a turn of its own, or running background work that may call back. */
+  get active() {
+    return this.busy || this.working || this.tasks > 0;
   }
   get started() {
     return this.began;
@@ -450,7 +466,23 @@ export class ClaudeProcess {
       message.subtype === "session_state_changed"
     ) {
       this.reportsState = true;
-      if (message.state === "idle" && this.pending) this.done();
+      const active = this.active;
+      this.working = message.state !== "idle";
+      if (!this.working && this.pending) this.done();
+      if (active && !this.active) this.onQuiet?.();
+      return;
+    }
+    // The whole set each time; ambient tasks, such as watchers, are not activity.
+    if (
+      message.type === "system" &&
+      message.subtype === "background_tasks_changed" &&
+      Array.isArray(message.tasks)
+    ) {
+      const active = this.active;
+      this.tasks = message.tasks.filter(
+        (task) => !(task as Message | null)?.ambient,
+      ).length;
+      if (active && !this.active) this.onQuiet?.();
       return;
     }
     if (

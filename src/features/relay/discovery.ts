@@ -1,5 +1,6 @@
 import { channelTtl, channelVisibility } from "./channel-details-protocol";
-import { sessionMetadata } from "../sessions/metadata";
+import { huddleParent } from "../huddle/lifecycle";
+import { soloLabels } from "../solo/labels";
 import { objectBody } from "./body";
 import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
@@ -12,12 +13,12 @@ export function metadataName(event: RelayEvent): string | undefined {
   return tag(event, "name") || undefined;
 }
 
-/** The canonical session identity, independent of membership or presentation labels. */
-export function sessionChannelMetadata(event: RelayEvent): boolean {
+/** A Solo chat: a private stream carrying the Solo label. Never access. */
+export function soloChannelMetadata(event: RelayEvent): boolean {
   return (
     tag(event, "t") === "stream" &&
     event.tags.some(([name]) => name === "private") &&
-    sessionMetadata(tag(event, "about")) !== undefined
+    soloLabels(channelIdentity(event).labels)
   );
 }
 
@@ -41,6 +42,7 @@ export class DiscoveryState {
   overflowRevision = 0;
   private rosters = new Map<string, RelayEvent>();
   private metadata = new Map<string, RelayEvent>();
+  private creations = new Map<string, RelayEvent>();
   constructor(
     readonly viewer: string,
     readonly relayAuthor: string,
@@ -48,6 +50,14 @@ export class DiscoveryState {
   ) {}
   /** Returns whether visible state changed. Events from other authors are ignored, not trusted. */
   accept(event: RelayEvent, cached = false): boolean {
+    if (event.kind === 9007) {
+      const id = tag(event, "h");
+      const metadata = id && this.metadata.get(id);
+      if (!id || !metadata || !huddleCreation(event, metadata)) return false;
+      if (this.creations.get(id)?.id === event.id) return false;
+      this.creations.set(id, event);
+      return true;
+    }
     if (
       event.pubkey !== this.relayAuthor ||
       (event.kind !== 39000 && event.kind !== 39002)
@@ -200,9 +210,9 @@ export class DiscoveryState {
     const event = this.metadata.get(id);
     return !!event && event.tags.some(([name]) => name === "private");
   }
-  isSession(id: string): boolean {
+  isSolo(id: string): boolean {
     const event = this.metadata.get(id);
-    return !!event && sessionChannelMetadata(event);
+    return !!event && soloChannelMetadata(event);
   }
   get(id: string): ChannelSummary | undefined {
     if (!this.canAccess(id) || (!this.authorized(id) && !this.open(id))) return;
@@ -210,8 +220,8 @@ export class DiscoveryState {
     // The relay tags a system roster too, so a roster that arrives before its
     // metadata (the full pass reads names later) never lists as a channel.
     const roster = this.rosters.get(id);
-    const type = this.isSession(id)
-      ? "session"
+    const type = this.isSolo(id)
+      ? "solo"
       : event
         ? tag(event, "t")
         : roster && hasTag(roster, "t", "system")
@@ -222,14 +232,20 @@ export class DiscoveryState {
       type === "forum" ||
       type === "dm" ||
       type === "system" ||
-      (type === "session" && this.isSession(id))
+      (type === "solo" && this.isSolo(id))
         ? type
         : undefined;
-    const parentId = event && sessionMetadata(tag(event, "about"))?.parentId;
+    const creation = this.creations.get(id);
+    const huddle =
+      event && creation && huddleCreation(creation, event)
+        ? huddleParent(tag(creation, "about"))
+        : undefined;
     const identity = event && channelIdentity(event);
     const ttlSeconds = event && channelTtl(event);
     return {
       id,
+      ...(huddle ? { huddle: true as const } : {}),
+      ...(huddle ? { parentChannelId: huddle } : {}),
       ...(!this.authorized(id) || this.cached.has(id)
         ? { readOnly: true as const }
         : {}),
@@ -238,9 +254,7 @@ export class DiscoveryState {
       ...(event
         ? {
             visibility: channelVisibility(event),
-            ...(channelType !== "session"
-              ? { description: tag(event, "about") ?? "" }
-              : {}),
+            description: tag(event, "about") ?? "",
           }
         : {}),
       members: Object.freeze(
@@ -257,15 +271,8 @@ export class DiscoveryState {
       ...(this.hidden(id) ? { hidden: true } : {}),
       ...(this.isPrivate(id) ? { private: true } : {}),
       ...(channelType ? { channelType } : {}),
-      ...(channelType === "session" && event
-        ? {
-            updatedAt: event.created_at,
-            ...(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
-              parentId ?? "",
-            )
-              ? { parentChannelId: parentId }
-              : {}),
-          }
+      ...(channelType === "solo" && event
+        ? { updatedAt: event.created_at }
         : {}),
       ...(event && hasTag(event, "archived", "true") ? { archived: true } : {}),
       ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
@@ -298,6 +305,7 @@ export class DiscoveryState {
       // Clearing must allow a fresh identical signed roster to regrant access.
       this.rosters.delete(id);
       this.metadata.delete(id);
+      this.creations.delete(id);
     }
     this.cached.clear();
   }
@@ -305,7 +313,10 @@ export class DiscoveryState {
     return [...this.rosters.entries()].flatMap(([id, roster]) => {
       if (!this.authorized(id) || this.cached.has(id)) return [];
       const metadata = this.metadata.get(id);
-      return metadata ? [roster, metadata] : [roster];
+      const creation = this.creations.get(id);
+      return metadata
+        ? [roster, metadata, ...(creation ? [creation] : [])]
+        : [roster];
     });
   }
   /** Every roster channel get() serves, system channels included. Membership,
@@ -325,4 +336,23 @@ export class DiscoveryState {
       .filter((channel) => channel.channelType !== "system")
       .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   }
+}
+
+/** A signed creation receipt must agree with the relay's immutable identity facts. */
+export function huddleCreation(
+  creation: RelayEvent,
+  metadata: RelayEvent,
+): boolean {
+  const identity = channelIdentity(metadata);
+  const coordinates = creation.tags.filter(([name]) => name === "h");
+  return (
+    creation.kind === 9007 &&
+    coordinates.length === 1 &&
+    coordinates[0]?.length === 2 &&
+    coordinates[0]?.[1] === tag(metadata, "d") &&
+    creation.pubkey === identity.creator &&
+    tag(creation, "visibility") === "private" &&
+    tag(creation, "channel_type") === "stream" &&
+    !!huddleParent(tag(creation, "about"))
+  );
 }

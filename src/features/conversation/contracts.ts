@@ -4,6 +4,7 @@ import type { Contribution, MatchOrder } from "../../plugins/contributions";
 import type { VoiceRecording } from "../relay/voice-media";
 import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "../messages/composer-session";
 
 /**
  * Opens a target, such as a plugin panel URL, where the conversation host
@@ -19,7 +20,7 @@ export type TargetOpener = Readonly<{
 /** Editor-independent reference to plugin content. Not an access grant or recipient. */
 export type ComposerResource = Readonly<{ uri: string; label: string }>;
 export type ComposerToolProps = Readonly<{
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   channelId: string;
   threadRootId?: string | undefined;
@@ -267,10 +268,20 @@ export type ComposerCompletion = Readonly<{
   component: ComponentType<ComposerCompletionProps>;
 }>;
 
-/** A conversation a page opens in a tab beside its own. */
-export type PageTabTarget = { channelId: string; threadId?: string };
-/** `keep` opens a tab beside the others instead of in place of the last. */
-export type PageTabOptions = { keep?: boolean };
+/** A conversation a page opens in a tab beside its own. `messageId` opens at
+ * that message: in its thread when `threadId` is given, or else in the
+ * conversation, or its thread if it is a reply or too old to find. Without
+ * `messageId`, keyboard focus moves to the tab's composer once it is ready,
+ * unless the user clicks or types first. */
+export type PageTabTarget = {
+  channelId: string;
+  threadId?: string;
+  messageId?: string;
+};
+/** `keep` opens a tab beside the others instead of in place of the last.
+ * `markRead: false` keeps a conversation tab from marking what it shows read,
+ * so the page decides; threads read as in Channels. */
+export type PageTabOptions = { keep?: boolean; markRead?: boolean };
 export type PageTabsProps = {
   /** Keys the page's tabs, which last as long as its community session. */
   id: string;

@@ -70,9 +70,9 @@ import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
-import { ResourcePicker } from "../../bundled/projects/ResourcePicker";
-import { entityHref } from "../projects/routes";
-import type { Entity, ProjectHome } from "../projects/destinations";
+import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
+import { entityHref } from "../repos/routes";
+import type { Entity, RepositoryHome } from "../repos/destinations";
 
 composerDOMFixture();
 
@@ -80,6 +80,17 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
+/** The mounted channel listed as a Solo chat. */
+const soloList = {
+  status: "ready" as const,
+  channels: [
+    {
+      id: "channel",
+      channelType: "solo" as const,
+      members: [first.pubkey, second.pubkey],
+    },
+  ],
+};
 const resourceOwner = "c".repeat(64);
 const resourceRoute = {
   type: "issue",
@@ -219,6 +230,8 @@ function mount(
     channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
   };
   const rawSession = {
+    // Full-session fixture; the detached editor intentionally omits this capability.
+    unread: undefined,
     viewer,
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
@@ -306,25 +319,26 @@ function mount(
       },
     },
   ];
-  let props: MessageComposerProps = {
-    session,
-    onSend,
-    scope: "scope",
-    channelId: "channel",
-    channelName: "General",
-    extensions: {
-      tools: { snapshot: () => tools, subscribe: () => () => {} },
-      inline: { snapshot: () => inline, subscribe: () => () => {} },
-      completions: {
-        snapshot: () => completions,
-        subscribe(listener) {
-          completionListeners.add(listener);
-          return () => completionListeners.delete(listener);
+  let props: Omit<MessageComposerProps, "session"> & { session: RelaySession } =
+    {
+      session,
+      onSend,
+      scope: "scope",
+      channelId: "channel",
+      channelName: "General",
+      extensions: {
+        tools: { snapshot: () => tools, subscribe: () => () => {} },
+        inline: { snapshot: () => inline, subscribe: () => () => {} },
+        completions: {
+          snapshot: () => completions,
+          subscribe(listener) {
+            completionListeners.add(listener);
+            return () => completionListeners.delete(listener);
+          },
         },
       },
-    },
-    ...options,
-  };
+      ...options,
+    } as Omit<MessageComposerProps, "session"> & { session: RelaySession };
   const bindChoices = () => {
     const library = props.session.agentLibrary;
     props = {
@@ -407,7 +421,11 @@ function mount(
         for (const listener of completionListeners) listener();
       });
     },
-    retarget(next: Partial<MessageComposerProps>) {
+    retarget(
+      next: Partial<
+        Omit<MessageComposerProps, "session"> & { session: RelaySession }
+      >,
+    ) {
       const changedSession =
         (next.session !== undefined && next.session !== props.session) ||
         (next.scope !== undefined && next.scope !== props.scope);
@@ -521,6 +539,23 @@ it("shows a local draft in the cached composer without completion, typing or tra
     h.unmount();
     owner.dispose();
   }
+});
+
+it("an explicit focus request resumes after the draft's retained mention", () => {
+  writeView("scope", "draft:channel", {
+    text: "@Honey existing prose",
+    recipients: [{ ...first, start: 0, end: 6 }],
+  });
+  const h = mount({ autoFocus: false });
+  act(() => h.input().setSelectionRange(0, 0));
+  h.retarget({ focusRequest: 1 });
+  expect(h.input()).toHaveFocus();
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([21, 21]);
+  act(() => h.input().setSelectionRange(7, 7));
+  h.retarget({ channelName: "Renamed" });
+  expect(h.input().selectionStart).toBe(7);
+  h.retarget({ focusRequest: 2 });
+  expect(h.input().selectionStart).toBe(21);
 });
 
 it("autofocuses each selected conversation once without stealing focus on updates", () => {
@@ -3847,7 +3882,7 @@ for (const threadRootId of [undefined, "f".repeat(64)])
       channels: { list: () => list, subscribeList: () => () => {} },
       viewer: "d".repeat(64),
       archives: { state: () => "not-archived" },
-      workSessions: {
+      channelWrites: {
         refreshMembership: vi.fn(async () => {
           if (operations[0]?.delivery === "accepted")
             channel.members = [...channel.members, first.pubkey];
@@ -3957,7 +3992,7 @@ it.each([false, true])(
       channels: { list: () => list, subscribeList: () => () => {} },
       viewer: "d".repeat(64),
       archives: { state: () => "not-archived" },
-      workSessions: { refreshMembership: async () => list.channels[0] },
+      channelWrites: { refreshMembership: async () => list.channels[0] },
       outbox: {
         supports: () => true,
         send: add,
@@ -3999,27 +4034,16 @@ it.each([false, true])(
   },
 );
 
-it.each(
-  ["send", "unmount", "disabled", "denied"].flatMap((outcome) =>
-    ["mention", "text-and-mention"].flatMap((recipient) =>
-      [true, false].map((parent) => ({
-        outcome,
-        recipient,
-        parent,
-      })),
-    ),
-  ),
-)(
-  "waits for agent admission before saved session messages: $recipient / $outcome / parent=$parent",
-  async ({ outcome, recipient, parent }) => {
+it.each(["send", "unmount", "disabled", "denied"])(
+  "waits for agent admission before saved Solo chat messages: %s",
+  async (outcome) => {
     const view = mount();
     const list = {
       status: "ready",
       channels: [
         {
           id: "channel",
-          channelType: "session",
-          ...(parent ? { parentChannelId: "parent" } : {}),
+          channelType: "solo",
           members: [] as string[],
         },
       ],
@@ -4047,25 +4071,16 @@ it.each(
         refresh: async () => {},
         retain: () => () => {},
       },
-      workSessions: {
+      channelWrites: {
         addAgents,
         refreshMembership: vi.fn(async () => list.channels[0]),
       },
     } as unknown as RelaySession;
-    view.retarget({ session, sessionConversation: true });
+    view.retarget({ session, soloConversation: true });
     expect(view.commands().inviteAgents).toBe(true);
-    if (recipient === "mention") {
-      await view.user.click(
-        screen.getByRole("button", { name: "First Honey" }),
-      );
-    } else {
-      await view.user.type(view.input(), "Hello Honey ");
-      await view.user.click(
-        screen.getByRole("button", { name: "First Honey" }),
-      );
-    }
+    await view.user.click(screen.getByRole("button", { name: "First Honey" }));
     expect(addAgents).not.toHaveBeenCalled();
-    expect(session.workSessions.refreshMembership).not.toHaveBeenCalled();
+    expect(session.channelWrites.refreshMembership).not.toHaveBeenCalled();
     expect(view.messages.send).not.toHaveBeenCalled();
     view.submit();
     await waitFor(() =>
@@ -4097,12 +4112,12 @@ it.each(
     [false, true].map((removeMention) => ({ root, removeMention })),
   ),
 )(
-  "resolves a sole session agent before send/reply: root=$root, removed=$removeMention",
+  "resolves a sole Solo chat agent before send/reply: root=$root, removed=$removeMention",
   async ({ root, removeMention }) => {
     const view = mount();
     const channel = {
       id: "channel",
-      channelType: "session" as const,
+      channelType: "solo" as const,
       members: [first.pubkey],
     };
     const list = { status: "ready" as const, channels: [channel] };
@@ -4120,14 +4135,14 @@ it.each(
         subscribe: () => () => {},
         refresh: vi.fn(async () => {}),
       },
-      workSessions: {
+      channelWrites: {
         refreshMembership: vi.fn(async () => channel),
         addAgents: vi.fn(async () => {}),
       },
     } as unknown as RelaySession;
     view.retarget({
       session,
-      sessionConversation: true,
+      soloConversation: true,
       ...(root ? { threadRootId: root } : {}),
     });
     view.fill("Keep going ");
@@ -4143,7 +4158,7 @@ it.each(
         "Remove explicit mention of Honey (aaaaaaaa)",
       );
       await view.user.click(remove);
-      expect(view.input()).toHaveValue("Keep going @Honey ");
+      expect(view.input()).toHaveValue("@Honey Keep going ");
       expect(view.input().querySelector(".inline-chip")).toBeNull();
       expect(
         screen.queryByRole("region", { name: "Explicit mentions" }),
@@ -4159,29 +4174,29 @@ it.each(
       expect(view.messages.reply).toHaveBeenCalledExactlyOnceWith(
         "channel",
         root,
-        removeMention ? "Keep going @Honey " : "Keep going ",
+        removeMention ? "@Honey Keep going " : "Keep going ",
         [first.pubkey],
         [],
       );
     else
       expect(view.messages.send).toHaveBeenCalledExactlyOnceWith(
         "channel",
-        removeMention ? "Keep going @Honey " : "Keep going ",
+        removeMention ? "@Honey Keep going " : "Keep going ",
         [first.pubkey],
         [],
       );
-    expect(session.workSessions.addAgents).not.toHaveBeenCalled();
+    expect(session.channelWrites.addAgents).not.toHaveBeenCalled();
   },
 );
 
-it("requires explicit recipients when an ordinary session has multiple agents", async () => {
+it("requires explicit recipients when an ordinary Solo chat has multiple agents", async () => {
   const view = mount();
   const list = {
     status: "ready",
     channels: [
       {
         id: "channel",
-        channelType: "session",
+        channelType: "solo",
         members: [first.pubkey, second.pubkey],
       },
     ],
@@ -4189,12 +4204,12 @@ it("requires explicit recipients when an ordinary session has multiple agents", 
   const session = {
     ...view.session,
     channels: { list: () => list, subscribeList: () => () => {} },
-    workSessions: {
+    channelWrites: {
       refreshMembership: vi.fn(async () => list.channels[0]),
       addAgents: vi.fn(async () => {}),
     },
   } as unknown as RelaySession;
-  view.retarget({ session, sessionConversation: true });
+  view.retarget({ session, soloConversation: true });
   expect(screen.queryByRole("button", { name: "Choose an agent" })).toBeNull();
   await view.user.click(screen.getByRole("button", { name: "First Honey" }));
   view.submit();
@@ -4206,7 +4221,7 @@ it("requires explicit recipients when an ordinary session has multiple agents", 
       [],
     ),
   );
-  expect(session.workSessions.addAgents).not.toHaveBeenCalled();
+  expect(session.channelWrites.addAgents).not.toHaveBeenCalled();
 });
 
 it.each(["ready", "failed", "unmounted"])(
@@ -4215,7 +4230,7 @@ it.each(["ready", "failed", "unmounted"])(
     const view = mount();
     const channel = {
       id: "channel",
-      channelType: "session",
+      channelType: "solo",
       members: [first.pubkey],
     };
     const list = { status: "ready", channels: [channel] };
@@ -4235,9 +4250,9 @@ it.each(["ready", "failed", "unmounted"])(
       ...view.session,
       channels: { list: () => list, subscribeList: () => () => {} },
       agentLibrary: { snapshot: () => library, subscribe: () => () => {} },
-      workSessions: { refreshMembership, addAgents },
+      channelWrites: { refreshMembership, addAgents },
     } as unknown as RelaySession;
-    view.retarget({ session, sessionConversation: true });
+    view.retarget({ session, soloConversation: true });
     await view.user.click(screen.getByRole("button", { name: "First Honey" }));
     view.submit();
     await waitFor(() =>
@@ -4260,11 +4275,11 @@ it.each(["ready", "failed", "unmounted"])(
   },
 );
 
-it("keeps retry submission available while a new-session draft is locked", () => {
+it("keeps retry submission available while a new Solo draft is locked", () => {
   const submit = vi.fn();
   const h = mount({
     submission: {
-      draftKey: "session-retry",
+      draftKey: "solo-retry",
       initialDraft: "Keep this operation",
       locked: true,
       disabled: false,
@@ -4276,10 +4291,13 @@ it("keeps retry submission available while a new-session draft is locked", () =>
   const send = screen.getByRole("button", { name: "Send message" });
   expect(send).toBeEnabled();
   fireEvent.click(send);
-  expect(submit).toHaveBeenCalledWith({
-    text: "Keep this operation",
-    recipients: [],
-  });
+  expect(submit).toHaveBeenCalledWith(
+    {
+      text: "Keep this operation",
+      recipients: [],
+    },
+    expect.objectContaining({ prepareForSend: expect.any(Function) }),
+  );
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
@@ -4372,8 +4390,8 @@ it("tags a Berd draft with the default agent once and needs a tag to send", asyn
       disabled: false,
       submit,
     },
-    personalConversation: true,
-    sessionConversation: true,
+    ownSoloConversation: true,
+    soloConversation: true,
     requireMention: true,
     defaultMention: { pubkey: second.pubkey, name: "Selected" },
   });
@@ -4387,7 +4405,13 @@ it("tags a Berd draft with the default agent once and needs a tag to send", asyn
       [second.pubkey, { name: "Selected", isAgent: true }],
     ]),
   );
-  Object.assign(h.session, { mePlacement: { has: () => true } });
+  // A Solo chat: personal sends are admitted while its label holds.
+  Object.assign(h.session, {
+    channels: {
+      ...h.session.channels,
+      list: () => soloList,
+    },
+  });
   // The default agent arrives in the empty draft as an ordinary tag.
   await waitFor(() => expect(h.input()).toHaveValue("@Selected "));
   const send = screen.getByRole("button", { name: "Send message" });
@@ -5465,14 +5489,14 @@ it("sends someone outside a DM as a reference without asking", async () => {
   expect(add).not.toHaveBeenCalled();
 });
 
-it("does not ask about outside recipients in a session media-comment composer", async () => {
-  // Media comments mount the composer with a thread root but without session
-  // mode, so the session rule must come from the channel type.
+it("does not ask about outside recipients in a Solo chat media-comment composer", async () => {
+  // Media comments mount the composer with a thread root but without Solo
+  // mode, so the Solo rule must come from the channel type.
   const h = mount({ threadRootId: "f".repeat(64) });
   const add = vi.fn();
   const channel = {
     id: "channel",
-    channelType: "session",
+    channelType: "solo",
     members: [first.pubkey, second.pubkey],
   };
   const list = { status: "ready", channels: [channel] };
@@ -5485,7 +5509,7 @@ it("does not ask about outside recipients in a session media-comment composer", 
     h.commands().insertMention(first);
     h.commands().insertMention(second);
   });
-  // The first person leaves the session after being named.
+  // The first person leaves the chat after being named.
   channel.members = [second.pubkey];
   fireEvent.submit(screen.getByRole("form"));
   await act(async () => {});
@@ -5845,7 +5869,7 @@ it("sends a resource between mentions and keeps both after a failed send", () =>
   ]);
 });
 
-describe("project resource picker", () => {
+describe("repository resource picker", () => {
   const empty: readonly never[] = [];
   const repository = {
     type: "repo",
@@ -5855,13 +5879,6 @@ describe("project resource picker", () => {
     name: "Game repo",
     description: "",
     event: {} as never,
-  } satisfies Entity;
-  const project = {
-    ...repository,
-    type: "project",
-    dtag: "proj",
-    address: `30621:${resourceOwner}:proj`,
-    name: "Proj",
   } satisfies Entity;
   const item = {
     id: resourceRoute.id,
@@ -5877,9 +5894,9 @@ describe("project resource picker", () => {
   const row = /^Fix login, Issue in Game repo$/;
   function picker(
     home: (channelId: string, signal: AbortSignal) => Promise<unknown> = () =>
-      Promise.resolve({ status: "home", project }),
+      Promise.resolve({ status: "home", repositories: [repository] }),
     issues: readonly (typeof item)[] = [item],
-    cached?: ProjectHome,
+    cached?: RepositoryHome,
   ) {
     const h = mount({ extensions: undefined });
     let release: (() => void) | undefined;
@@ -5887,10 +5904,9 @@ describe("project resource picker", () => {
     const validations: AbortSignal[] = [];
     const load = vi.fn(
       (route: { type: string; tab?: string }, signal: AbortSignal) => {
-        if (route.type === "project")
+        if (route.type === "repo")
           return Promise.resolve({
             items: route.tab === "prs" ? [] : issues,
-            repositories: [repository],
             truncated: route.tab === "prs",
           });
         validations.push(signal);
@@ -5902,7 +5918,7 @@ describe("project resource picker", () => {
     );
     const homes = vi.fn(home);
     Object.assign(h.session as object, {
-      projects: {
+      repositories: {
         home: homes,
         load,
         peekHome: (channelId: string) =>
@@ -5912,8 +5928,8 @@ describe("project resource picker", () => {
     const tools: readonly Contribution<ComposerTool>[] = [
       {
         id: "resources",
-        key: "projects/resources",
-        pluginId: "projects",
+        key: "repos/resources",
+        pluginId: "repos",
         revision: "1",
         title: "Issues and pull requests",
         component: ResourcePicker,
@@ -5929,6 +5945,7 @@ describe("project resource picker", () => {
     return {
       h,
       homes,
+      load,
       validations,
       release: async () => {
         await act(async () => {
@@ -5950,6 +5967,26 @@ describe("project resource picker", () => {
       },
     };
   }
+
+  it("searches every channel repository and deduplicates shared items", async () => {
+    const second = {
+      ...repository,
+      dtag: "other",
+      address: `30617:${resourceOwner}:other`,
+    };
+    const p = picker(
+      () =>
+        Promise.resolve({ status: "home", repositories: [repository, second] }),
+      [{ ...item, tags: [...item.tags, ["a", second.address]] }],
+    );
+    await p.open();
+    await screen.findByRole("button", { name: row });
+    expect(screen.getAllByRole("button", { name: row })).toHaveLength(1);
+    expect(
+      p.load.mock.calls.filter(([route]) => route.type === "repo"),
+    ).toHaveLength(4);
+    expect(p.homes).toHaveBeenCalledWith("channel", expect.any(AbortSignal));
+  });
 
   it("validates the chosen row, inserts it, closes and leaves focus in the draft", async () => {
     const p = picker();
@@ -6186,7 +6223,7 @@ describe("project resource picker", () => {
     expect(screen.queryByRole("button", { name: row })).toBeNull();
   });
 
-  it("does not show a PR action while checking a new channel's project", async () => {
+  it("does not show a PR action while checking a new channel's repository", async () => {
     const pending: {
       channelId: string;
       resolve(value: unknown): void;
@@ -6206,25 +6243,30 @@ describe("project resource picker", () => {
     };
     try {
       await waitFor(() => expect(p.homes).toHaveBeenCalled());
-      expect(screen.getByText("Loading project…")).toBeInTheDocument();
+      expect(screen.getByText("Loading repositories…")).toBeInTheDocument();
       expect(trigger()).toBeNull();
-      await finish("channel", { status: "home", project });
+      await finish("channel", { status: "home", repositories: [repository] });
       expect(trigger()).toBeEnabled();
-      p.h.retarget({ channelId: "no-project", channelName: "Other" });
+      p.h.retarget({ channelId: "no-repository", channelName: "Other" });
       await waitFor(() =>
-        expect(pending.some((read) => read.channelId === "no-project")).toBe(
+        expect(pending.some((read) => read.channelId === "no-repository")).toBe(
           true,
         ),
       );
       expect(trigger()).toBeNull();
-      await finish("no-project", { status: "none" });
+      await finish("no-repository", { status: "none" });
       expect(trigger()).toBeNull();
-      p.h.retarget({ channelId: "project", channelName: "Project" });
+      p.h.retarget({ channelId: "repository", channelName: "Repository" });
       await waitFor(() =>
-        expect(pending.some((read) => read.channelId === "project")).toBe(true),
+        expect(pending.some((read) => read.channelId === "repository")).toBe(
+          true,
+        ),
       );
       expect(trigger()).toBeNull();
-      await finish("project", { status: "home", project });
+      await finish("repository", {
+        status: "home",
+        repositories: [repository],
+      });
       expect(trigger()).toBeEnabled();
     } finally {
       await act(async () => {
@@ -6233,7 +6275,7 @@ describe("project resource picker", () => {
     }
   });
 
-  it("keeps a chat without a project free of the PR button after closing formatting", async () => {
+  it("keeps a chat without a repository free of the PR button after closing formatting", async () => {
     const pending: ((value: unknown) => void)[] = [];
     const p = picker(() => new Promise((resolve) => pending.push(resolve)));
     await waitFor(() => expect(p.homes).toHaveBeenCalled());
@@ -6273,7 +6315,7 @@ describe("project resource picker", () => {
     }
   });
 
-  it("hides only for no project, and explains ambiguity or failure with a retry", async () => {
+  it("hides only for no repository, and explains failure with a retry", async () => {
     const none = picker(() => Promise.resolve({ status: "none" }));
     await waitFor(() => expect(none.homes).toHaveBeenCalled());
     await act(async () => {});
@@ -6287,28 +6329,34 @@ describe("project resource picker", () => {
         ? new Promise((resolve) => {
             resolveHome = resolve;
           })
-        : Promise.resolve({ status: "ambiguous" }),
+        : Promise.reject(new Error("offline")),
     );
     await ambiguous.open();
     expect(
-      await screen.findByText(/belongs to more than one project/),
+      await screen.findByText(/Could not load this channel’s repositories/),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: row })).toBeNull();
-    // Ambiguity is recoverable: once the conflict is resolved, retry rereads.
+    // Failure is recoverable: once the connection is restored, retry rereads.
     resolveHome = () => {};
     await ambiguous.h.user.click(
-      screen.getByRole("button", { name: "Retry project" }),
+      screen.getByRole("button", { name: "Retry repositories" }),
     );
-    expect(await screen.findByText("Loading project…")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Loading repositories…"),
+    ).toBeInTheDocument();
     await act(async () => {
-      resolveHome?.({ status: "home", project });
+      resolveHome?.({ status: "home", repositories: [repository] });
     });
     expect(await screen.findByRole("button", { name: row })).toBeVisible();
-    expect(screen.queryByText(/belongs to more than one project/)).toBeNull();
+    expect(
+      screen.queryByText(/Could not load this channel’s repositories/),
+    ).toBeNull();
     cleanup();
     const failed = picker(() => Promise.reject(new Error("offline")));
     await failed.open();
-    const retry = await screen.findByRole("button", { name: "Retry project" });
+    const retry = await screen.findByRole("button", {
+      name: "Retry repositories",
+    });
     const reads = failed.homes.mock.calls.length;
     await failed.h.user.click(retry);
     await waitFor(() =>
@@ -6317,17 +6365,17 @@ describe("project resource picker", () => {
   });
 
   it.each(["formatting", "channel"])(
-    "keeps a known project visible but unusable after %s remount, then preserves ambiguity and retry",
+    "keeps a known repository visible but unusable after %s remount, then preserves failure and retry",
     async (action) => {
-      const reads: ReturnType<typeof deferred<ProjectHome>>[] = [];
+      const reads: ReturnType<typeof deferred<RepositoryHome>>[] = [];
       const p = picker(
         () => {
-          const read = deferred<ProjectHome>();
+          const read = deferred<RepositoryHome>();
           reads.push(read);
           return read.promise;
         },
         undefined,
-        { status: "home", project },
+        { status: "home", repositories: [repository] },
       );
       const trigger = () =>
         screen.getByRole("button", { name: "Add issue or pull request" });
@@ -6336,7 +6384,8 @@ describe("project resource picker", () => {
         expect(trigger()).toBeVisible();
         expect(trigger()).toBeDisabled();
         await act(async () => {
-          for (const read of reads) read.resolve({ status: "home", project });
+          for (const read of reads)
+            read.resolve({ status: "home", repositories: [repository] });
         });
         expect(trigger()).toBeEnabled();
         if (action === "formatting") {
@@ -6379,20 +6428,20 @@ describe("project resource picker", () => {
         expect(
           screen.queryByRole("dialog", { name: "Add issue or pull request" }),
         ).toBeNull();
-        await act(async () => reads.at(-1)?.resolve({ status: "ambiguous" }));
+        await act(async () => reads.at(-1)?.reject(new Error("offline")));
         await p.open();
         expect(
-          await screen.findByText(/belongs to more than one project/),
+          await screen.findByText(/Could not load this channel’s repositories/),
         ).toBeVisible();
         expect(screen.queryByRole("button", { name: row })).toBeNull();
         await p.h.user.click(
-          screen.getByRole("button", { name: "Retry project" }),
+          screen.getByRole("button", { name: "Retry repositories" }),
         );
         expect(
           screen.queryByRole("button", { name: "Add issue or pull request" }),
         ).toBeNull();
         await act(async () =>
-          reads.at(-1)?.resolve({ status: "home", project }),
+          reads.at(-1)?.resolve({ status: "home", repositories: [repository] }),
         );
         expect(await screen.findByRole("button", { name: row })).toBeVisible();
         p.h.retarget({ channelId: "other" });
@@ -6410,13 +6459,13 @@ describe("project resource picker", () => {
     },
   );
 
-  it.each(["none", "ambiguous", "error"] as const)(
-    "a warm project is replaced by the completed %s state",
+  it.each(["none", "error"] as const)(
+    "a warm repository is replaced by the completed %s state",
     async (outcome) => {
-      const read = deferred<ProjectHome>();
+      const read = deferred<RepositoryHome>();
       const p = picker(() => read.promise, undefined, {
         status: "home",
-        project,
+        repositories: [repository],
       });
       try {
         await waitFor(() => expect(p.homes).toHaveBeenCalled());
@@ -6434,14 +6483,10 @@ describe("project resource picker", () => {
         } else {
           await p.open();
           expect(
-            screen.getByText(
-              outcome === "ambiguous"
-                ? /belongs to more than one project/
-                : /Could not load this channel's project/,
-            ),
+            screen.getByText(/Could not load this channel’s repositories/),
           ).toBeVisible();
           expect(
-            screen.getByRole("button", { name: "Retry project" }),
+            screen.getByRole("button", { name: "Retry repositories" }),
           ).toBeEnabled();
           expect(screen.queryByRole("button", { name: row })).toBeNull();
         }
@@ -6766,7 +6811,7 @@ it.each([false, true])(
       );
       expect(localStorage.getItem(key)).toBeNull();
       expect(retired).toHaveBeenCalledTimes(remembered ? 0 : 2);
-      // Failed absence-only cleanup must not leave a session recovery lock.
+      // Failed absence-only cleanup must not leave a Solo draft recovery lock.
       h.retarget({ channelId: "other" });
       h.retarget({ channelId: "channel" });
       h.fill("After remount");
@@ -6959,30 +7004,33 @@ it("does not apply ordinary draft reconciliation to submission-owned recovery", 
   const submit = vi.fn();
   const h = mount({
     submission: {
-      draftKey: "session-retry",
+      draftKey: "solo-retry",
       recoveredDraft: { text: "Durable operation", recipients: [] },
       locked: true,
       disabled: false,
       submit,
     },
   });
-  act(() => writeView("scope", "session-retry", "Disposable view state"));
+  act(() => writeView("scope", "solo-retry", "Disposable view state"));
   expect(h.input()).toHaveValue("Durable operation");
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-  expect(submit).toHaveBeenCalledExactlyOnceWith({
-    text: "Durable operation",
-    recipients: [],
-  });
+  expect(submit).toHaveBeenCalledExactlyOnceWith(
+    {
+      text: "Durable operation",
+      recipients: [],
+    },
+    expect.objectContaining({ prepareForSend: expect.any(Function) }),
+  );
   expect(
     screen.queryByRole("button", { name: "Load saved draft" }),
   ).not.toBeInTheDocument();
 });
 
-it("rechecks the saved revision after held session admission before submitting", async () => {
+it("rechecks the saved revision after held Solo chat admission before submitting", async () => {
   const h = mount();
   const channel = {
     id: "channel",
-    channelType: "session",
+    channelType: "solo",
     members: [first.pubkey],
   };
   const list = { status: "ready", channels: [channel] };
@@ -6995,7 +7043,7 @@ it("rechecks the saved revision after held session admission before submitting",
       }),
   );
   h.retarget({
-    sessionConversation: true,
+    soloConversation: true,
     session: {
       ...h.session,
       channels: { list: () => list, subscribeList: () => () => {} },
@@ -7003,7 +7051,7 @@ it("rechecks the saved revision after held session admission before submitting",
         snapshot: () => library,
         subscribe: () => () => {},
       },
-      workSessions: { refreshMembership, addAgents: vi.fn() },
+      channelWrites: { refreshMembership, addAgents: vi.fn() },
     } as unknown as RelaySession,
   });
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
@@ -7102,42 +7150,6 @@ it.each(["disabled", "retarget", "unmount"])(
   },
 );
 
-it("rechecks session setup before publishing after a background upload", async () => {
-  const channelId = "22222222-2222-4222-8222-222222222222";
-  const h = mount({ channelId });
-  const gate = deferred<ReturnType<typeof uploadDescriptor>>();
-  const upload = vi.fn(() => gate.promise);
-  h.rerender(
-    <ToastProvider>
-      <MessageComposer
-        session={{ ...h.session, attachments: { upload } }}
-        scope="scope"
-        channelId={channelId}
-        channelName="General"
-      />
-    </ToastProvider>,
-  );
-  h.fill("Keep this draft");
-  fireEvent.change(screen.getByLabelText("Choose attachments"), {
-    target: { files: [new NodeFile(["notes"], "notes.txt")] },
-  });
-  fireEvent.submit(
-    screen.getByRole("form", { name: "Send a message to General" }),
-  );
-  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
-  writeView("scope", "sessions:section:work:pending", {
-    id: channelId,
-    text: "Original start",
-    creationId: "c".repeat(64),
-    setup: { sectionId: "work", canvas: "Frozen", agents: [] },
-  });
-  await act(async () => gate.resolve(uploadDescriptor()));
-  await waitFor(() => expect(h.input()).toHaveValue("Keep this draft"));
-  expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.messages.reply).not.toHaveBeenCalled();
-  expect(within(screen.getByRole("form")).getByText("notes.txt")).toBeVisible();
-});
-
 it("keeps snapshot paste from taking the attachment slot reserved for a recording", async () => {
   const empty: readonly never[] = [];
   const tools: readonly Contribution<ComposerTool>[] = [
@@ -7222,6 +7234,37 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   expect(h.uploadCalls[0]?.file.name).toBe("draft-0.txt");
   expect(h.publish).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "retains a companion draft until owner admission settles (reject=%s)",
+  async (reject) => {
+    const h = mount();
+    const gate = deferred<string>();
+    Reflect.deleteProperty(h.session, "unread");
+    const send = vi.fn(() => gate.promise);
+    Object.assign(h.session.messages, { send });
+    h.fill("Keep until acknowledged");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(h.input()).toHaveValue("Keep until acknowledged");
+    expect(h.onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await act(async () => {
+      if (reject) gate.reject(new Error("Owner rejected this send"));
+      else gate.resolve("admitted");
+    });
+    if (reject) {
+      expect(h.input()).toHaveValue("Keep until acknowledged");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Owner rejected this send",
+      );
+      expect(h.onSend).not.toHaveBeenCalled();
+    } else {
+      expect(h.input()).toHaveValue("");
+      expect(h.onSend).toHaveBeenCalledWith("admitted");
+    }
+  },
+);
 
 it("drops the attachments mark while a row-requested edit holds pending items", async () => {
   // Arrow-up refuses to edit over pending items; the row's Edit action does not.
@@ -7535,12 +7578,15 @@ it.each(["thread", "solo"])(
     const personal = surface === "solo";
     h.retarget({
       ...(personal
-        ? { personalConversation: true, requireMention: true }
+        ? { ownSoloConversation: true, requireMention: true }
         : { threadRootId: "root" }),
       session: {
         ...h.session,
-        mePlacement: { has: () => true },
-        workSessions: {
+        channels: {
+          ...h.session.channels,
+          list: () => soloList,
+        },
+        channelWrites: {
           refreshMembership: async () => ({
             id: "channel",
             members: [first.pubkey, second.pubkey],
@@ -7583,77 +7629,46 @@ it.each(["thread", "solo"])(
   },
 );
 
-it.each([
-  "empty",
-  "draft",
-  "off",
-  "unavailable",
-  "typed-while-loading",
-  "storage-failure",
-  "archived",
-  "session-card",
-])(
-  "upgrades the exact legacy Solo assistant once without replacing authored intent (%s)",
-  async (mode) => {
-    writeView("scope", "me:assistant:channel", second.pubkey);
-    if (mode === "draft") writeView("scope", "draft:channel", "Keep my draft");
-    if (mode === "session-card")
-      writeView(
-        "scope",
-        "draft:channel",
-        "[Session: Keep](buzz://channel/session-id)",
-      );
-    if (mode === "off") setRememberAgentsPreference(false);
-    const h = mount();
-    h.setLibrary([], "loading");
-    h.retarget({ personalConversation: true, requireMention: true });
-    if (mode === "typed-while-loading") h.fill("Started typing");
-    if (mode === "archived")
-      h.retarget({
-        session: {
-          ...h.session,
-          archives: { state: () => "archived" },
-        } as unknown as RelaySession,
-      });
-    const setItem = Storage.prototype.setItem;
-    const storage = vi
-      .spyOn(Storage.prototype, "setItem")
-      .mockImplementation(function (this: Storage, key, value) {
-        if (mode === "storage-failure" && key.includes('"draft:channel"'))
-          throw new Error("Storage unavailable");
-        setItem.call(this, key, value);
-      });
-    h.setLibrary(mode === "unavailable" ? [first] : [first, second]);
-    const expected =
-      mode === "empty"
-        ? "@Honey "
-        : mode === "draft"
-          ? "Keep my draft"
-          : mode === "typed-while-loading"
-            ? "Started typing"
-            : "";
-    await waitFor(() => expect(h.input()).toHaveValue(expected));
-    if (mode === "empty") {
-      h.fill("");
-      h.retarget({ channelId: "other" });
-      h.retarget({ channelId: "channel" });
-      expect(h.input()).toHaveValue("");
-      expect(readView("scope", "me:assistant:channel", null)).toBe("");
-    }
-    if (mode === "session-card")
-      expect(readView("scope", "draft:channel", null)).toBe(
-        "[Session: Keep](buzz://channel/session-id)",
-      );
-    if (mode === "storage-failure") {
-      expect(h.input()).toHaveValue("");
-      expect(readView("scope", "me:assistant:channel", null)).toBe(
-        second.pubkey,
-      );
-      storage.mockRestore();
-      h.setLibrary([first, second]);
-      await waitFor(() => expect(h.input()).toHaveValue("@Honey "));
-    }
-    storage.mockRestore();
-    setRememberAgentsPreference(true);
-  },
-);
+it("withholds recording tools while a message edit cannot take attachments", async () => {
+  const empty: readonly never[] = [];
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "capture",
+      key: "test/capture",
+      pluginId: "test",
+      revision: "1",
+      title: "Capture",
+      component: ({ capture }) =>
+        capture ? <button type="button">Start recording</button> : null,
+    },
+  ];
+  const extensions = {
+    tools: { snapshot: () => tools, subscribe: () => () => {} },
+    inline: { snapshot: () => empty, subscribe: () => () => {} },
+    completions: { snapshot: () => empty, subscribe: () => () => {} },
+  };
+  const h = await mountUploadComposer({ editable: true, extensions });
+  h.unmount();
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  const view = render(
+    <MessageComposer
+      session={h.owner.session}
+      scope={h.scope}
+      channelId="channel"
+      channelName="General"
+      extensions={extensions}
+      editMessages={[editableMessage({ authorId: viewer })]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const input = within(view.container).getByRole("textbox");
+  expect(screen.getByRole("button", { name: "Start recording" })).toBeVisible();
+  fireEvent.keyDown(input, { key: "ArrowUp" });
+  expect(input).toHaveAccessibleName("Edit message");
+  expect(screen.queryByRole("button", { name: "Start recording" })).toBeNull();
+  fireEvent.click(
+    within(view.container).getByRole("button", { name: "Cancel edit" }),
+  );
+  expect(screen.getByRole("button", { name: "Start recording" })).toBeVisible();
+});

@@ -1,5 +1,5 @@
-import type { WorkStep } from "../agents/local-activity";
-import type { LocalWorkState } from "../agents/local-activity";
+import type { WorkStep } from "./local-activity";
+import type { LocalWorkState } from "./local-activity";
 import type { RelaySession } from "../relay/session";
 import { requestActivity, requestActivityState } from "./request-activity";
 
@@ -24,7 +24,7 @@ export function requestWork(
   channelId: string,
   messageId: string | readonly string[],
 ) {
-  const records = snapshot.records.filter((record) => !record.historical);
+  const { records } = snapshot;
   const ids = new Set(typeof messageId === "string" ? [messageId] : messageId);
   const requests = (snapshot.local ?? []).filter(
     (request) => request.channelId === channelId && ids.has(request.messageId),

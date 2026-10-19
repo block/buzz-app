@@ -95,6 +95,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
+  staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
@@ -159,6 +160,7 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
 });
 function MessageRowContent({
   row,
+  staticMentions,
   shownRow,
   renderMessage,
   getThreadRoot,
@@ -321,7 +323,8 @@ function MessageRowContent({
     row.attachments.length > 0 &&
     row.attachments.every((attachment) => !!safeMessageUrl(attachment.url));
   // Own-message surface colours apply to a bubble, never to a shown thread root.
-  const ownBubble = !shownRow && !!viewer && row.authorId === viewer;
+  const ownBubble =
+    !shownRow && !row.workflowOwnerId && !!viewer && row.authorId === viewer;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -372,6 +375,7 @@ function MessageRowContent({
   );
   const report =
     !row.membership &&
+    !row.huddle &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
       ? session?.messages.report
       : undefined;
@@ -441,6 +445,7 @@ function MessageRowContent({
       session={session}
       scope={scope}
       row={displayRow}
+      staticMentions={staticMentions}
       extensions={extensions}
       media={media}
       onOpenLink={openLink}
@@ -724,7 +729,10 @@ function MessageRowContent({
     );
   };
   const message = (
-    <div data-message-id={renderMessage ? undefined : row.id}>
+    <div
+      data-message-id={renderMessage ? undefined : row.id}
+      data-huddle-row={row.huddle ? "" : undefined}
+    >
       {day && <DayDivider createdAt={row.createdAt} />}
       <div
         ref={rowRef}
@@ -733,7 +741,9 @@ function MessageRowContent({
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
         data-viewer-message={
-          alignViewer && row.authorId === viewer ? "" : undefined
+          alignViewer && !row.workflowOwnerId && row.authorId === viewer
+            ? ""
+            : undefined
         }
         data-own={(!attachmentOnly && !cardsOnly && ownBubble) || undefined}
       >
@@ -752,7 +762,10 @@ function MessageRowContent({
               <div className={styles.messageAvatar}>{avatar}</div>
             )}
             <div className={styles.messageHeader}>
-              {!row.membership && !renderMessage && messageActions()}
+              {!row.membership &&
+                !row.huddle &&
+                !renderMessage &&
+                messageActions()}
               {/* Screen-reader text stays out of selections: the clipboard carries
                 what the reader saw, so a continuation copies without a byline. */}
               <div
@@ -824,7 +837,7 @@ function MessageRowContent({
               {sessionCards.length > 0 && (
                 <div
                   className={styles.messageAttachments}
-                  data-session-cards
+                  data-solo-cards
                   data-message-action-anchor
                 >
                   {sessionCards.map((card) => (
@@ -937,7 +950,13 @@ function MessageRowContent({
                       if (attachment.kind === "image") {
                         return (
                           <AttachmentImage
+                            onOpenLink={
+                              canOpenLink?.(attachment.url)
+                                ? openLink
+                                : undefined
+                            }
                             key={url}
+                            session={session}
                             attachment={{ ...attachment, url }}
                             source={source}
                             cached={cached}
@@ -1036,7 +1055,10 @@ function MessageRowContent({
             />
           ) : (
             reactions.length > 0 && (
-              <div className={`${styles.reactions} ${styles.reactionFallback}`}>
+              <div
+                className={`${styles.reactions} ${styles.reactionFallback}`}
+                data-message-reactions
+              >
                 {reactions.flatMap((reaction) =>
                   [
                     ...new Set(reaction.events.map((event) => event.authorId)),
@@ -1197,6 +1219,7 @@ function AgentsMessageRow(props: MessageRowProps) {
           data-audience="agents"
           data-viewer-message={
             (props.alignViewer ?? true) &&
+            !row.workflowOwnerId &&
             row.authorId === (props.viewer ?? session?.viewer)
               ? ""
               : undefined

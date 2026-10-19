@@ -22,7 +22,11 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SidebarRightIcon } from "../../shared/design-system/icons";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { useChannelLabels } from "./useChannelLabels";
-import { threadTab, useChannelTabState } from "./useChannelTabState";
+import {
+  threadTab,
+  useChannelTabState,
+  type ConversationTab,
+} from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
 import styles from "./Channels.module.css";
 
@@ -102,22 +106,44 @@ export function PageTabs({
     (target: PageTabTarget, options?: PageTabOptions) => boolean
   >(() => false);
   useLayoutEffect(() => {
-    opening.current = ({ channelId, threadId }, { keep } = {}) => {
+    opening.current = (
+      { channelId, threadId, messageId },
+      { keep, markRead } = {},
+    ) => {
       if (!mounted.current || !secondary.canOpenConversation(channelId))
         return false;
       const known = new Set(tabState.tabs.map((tab) => tab.id));
       // An open thread keeps its tab in whichever pane it was moved to.
       const existing =
         threadId && threadTab(tabState.tabs, channelId, threadId)?.id;
+      // Each open at a message asks the reader to show it again; any other
+      // open focuses the composer.
       if (threadId)
-        secondary.openConversationThread(channelId, threadId, threadId);
+        secondary.openConversationThread(
+          channelId,
+          messageId ?? threadId,
+          threadId,
+          messageId ? "reveal" : "focus",
+        );
       else {
         const tab = `conversation:${channelId}`;
-        tabState.setTabs((tabs) =>
-          tabs.some((item) => item.id === tab)
-            ? tabs
-            : [...tabs, { id: tab, kind: "conversation", channelId }],
-        );
+        tabState.setTabs((tabs) => {
+          const previous = tabs.find((item) => item.id === tab);
+          const prior =
+            previous?.kind === "conversation" ? previous : undefined;
+          const next: ConversationTab = {
+            id: tab,
+            kind: "conversation",
+            channelId,
+            ...(messageId && { messageId }),
+            revealRequest: (prior?.revealRequest ?? 0) + (messageId ? 1 : 0),
+            focusRequest: (prior?.focusRequest ?? 0) + (messageId ? 0 : 1),
+            ...(markRead === false && { markRead: false }),
+          };
+          return previous
+            ? tabs.map((item) => (item === previous ? next : item))
+            : [...tabs, next];
+        });
         tabState.select(tab);
       }
       // A plain open replaces the tab the last one added; a kept or

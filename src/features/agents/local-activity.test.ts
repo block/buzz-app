@@ -5,10 +5,10 @@ import {
   localWorkLabel,
   stepText,
 } from "./local-activity";
-import { createAgentActivity } from "../agents/activity";
+import { createAgentActivity } from "./activity";
 import { messageActivity } from "../../bundled/agent-activity/message-activity";
 import { workingAgents } from "../../bundled/channels/working-agents";
-import { threadWorkingAgents } from "../agents/thread-working";
+import { threadWorkingAgents } from "./thread-working";
 
 const scope = "https://relay.test:viewer",
   agent = "a".repeat(64),
@@ -21,7 +21,6 @@ it("projects one local source into channel, exact thread and message without nee
     false,
     () => {},
     (channel) => allowed && channel === "channel",
-    undefined,
     undefined,
     undefined,
     { source: local.reader, scope },

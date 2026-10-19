@@ -88,7 +88,7 @@
   }
   .buzz-button[data-variant="prominent"] {
     background: var(--affordance-prominent);
-    color: var(--text-inverse);
+    color: var(--text-on-prominent);
   }
   .buzz-button[data-variant="subtle"] {
     background: var(--interaction-fill);
@@ -624,6 +624,10 @@
     box-shadow: var(--shadow-panel);
   }
 
+  .panel[data-shape="capsule"] {
+    border-radius: var(--radius-pill);
+  }
+
   /* A joined surface keeps one outer edge; nested panels retain opaque
      fills for responsive overlays while their layout owns the separators. */
   .panel[data-joined] .panel {
@@ -739,7 +743,7 @@
 
   .buzz-tabs[data-variant="chrome"],
   .chrome-navigation {
-    background: var(--affordance-subtle);
+    background: var(--affordance-chrome);
   }
 
   .buzz-tabs[data-variant="chrome"] {
@@ -760,12 +764,12 @@
     height: 2rem;
     border-radius: var(--radius-pill);
     padding: 0 var(--space-4);
-    color: var(--text-subtle);
+    color: var(--text-chrome-subtle);
   }
 
   /* Selection and hover occupy the same box; a selected tab does not hover. */
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab:hover:not([data-selected]) {
-    background: var(--affordance-subtle-hover);
+    background: var(--affordance-chrome-hover);
     color: var(--text-standard);
   }
 
@@ -778,6 +782,40 @@
     bottom: 0;
     border-radius: var(--radius-pill);
     background: var(--bg-chrome-selected);
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* Segmented filters on opaque surfaces, as used by sidebar scope. */
+  .buzz-tabs[data-variant="segmented"] {
+    display: flex;
+    padding: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--surface-inset);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-list {
+    width: 100%;
+    gap: var(--space-1);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: var(--space-8);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    color: var(--text-subtle);
+  }
+  .buzz-tabs[data-variant="segmented"]
+    .buzz-tabs-tab:hover:not([data-selected]) {
+    background: var(--affordance-subtle-hover);
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab[data-selected] {
+    color: var(--text-standard);
+  }
+  .buzz-tabs[data-variant="segmented"] .buzz-tabs-indicator {
+    inset-block: 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface-panel);
     box-shadow: var(--shadow-xs);
   }
 
@@ -1063,12 +1101,12 @@
     height: 2rem;
     padding: 0 var(--space-4);
     border-radius: var(--radius-pill);
-    color: var(--text-subtle);
+    color: var(--text-chrome-subtle);
     @apply text-label;
   }
   .chrome-navigation
     .navigation-item[data-variant="pill"]:hover:not([data-selected]) {
-    background: var(--affordance-subtle-hover);
+    background: var(--affordance-chrome-hover);
     color: var(--text-standard);
   }
   .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
@@ -1427,7 +1465,10 @@
     :is(
       .buzz-choice-row-description,
       .buzz-choice-row-trailing,
-      .buzz-menu-icon
+      .buzz-menu-icon,
+      .buzz-menu-trailing,
+      .buzz-menu-item-indicator,
+      .buzz-menu-submenu-arrow
     ) {
     color: inherit;
   }
@@ -1653,6 +1694,29 @@
   .buzz-accordion-panel {
     padding: var(--space-2);
   }
+  .buzz-accordion[data-animate] .buzz-accordion-panel {
+    padding: 0;
+    height: var(--accordion-panel-height);
+    overflow: clip;
+    transition: height var(--duration-settle) var(--easing-settle);
+  }
+  .buzz-accordion[data-animate] .buzz-accordion-content {
+    padding: var(--space-2);
+  }
+  .buzz-accordion[data-animate]
+    .buzz-accordion-panel:is([data-starting-style], [data-ending-style]) {
+    height: 0;
+  }
+  :where(html[data-keyboard-navigation])
+    .buzz-accordion[data-animate]
+    .buzz-accordion-panel {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-accordion[data-animate] .buzz-accordion-panel {
+      transition: none;
+    }
+  }
   .buzz-accordion[data-variant="settings"]
     .buzz-accordion-trigger[aria-expanded="true"] {
     border-end-start-radius: 0;
@@ -1747,7 +1811,7 @@
     width: 0.875rem;
     height: 0.875rem;
     border-radius: var(--radius-pill);
-    background: var(--text-inverse);
+    background: var(--text-on-prominent);
     box-shadow: var(--shadow-xs);
     transform: translateX(0);
     transition: transform var(--duration-settle) var(--easing-settle);

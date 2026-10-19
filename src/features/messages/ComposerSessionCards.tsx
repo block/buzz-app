@@ -1,4 +1,4 @@
-import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { XIcon } from "../../shared/design-system/icons";
@@ -16,7 +16,7 @@ export function ComposerSessionCards({
   remove,
 }: {
   cards: readonly string[];
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   channelId: string;
   extensions: ConversationExtensions | undefined;
@@ -28,11 +28,11 @@ export function ComposerSessionCards({
   return (
     <section
       aria-label="Session attachments"
-      className={styles.composerSessionCards}
+      className={styles.composerSoloCards}
     >
       {cards.map((content, index) => (
-        <div className={styles.composerSessionCard} key={content}>
-          <div className={styles.composerSessionCardContent}>
+        <div className={styles.composerSoloCard} key={content}>
+          <div className={styles.composerSoloCardContent}>
             <MessageMarkdown
               row={{
                 id: "composer-session",

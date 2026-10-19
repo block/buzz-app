@@ -110,6 +110,10 @@
   flex: 1;
   background: var(--border-standard);
 }
+/* A notice under its day reads as that day's caption, not a new section. */
+[data-membership-row] > .day {
+  margin-block-end: 0;
+}
 .feed[data-chat-presentation] ol > li:first-child .day {
   margin-block-start: var(--space-2);
 }
@@ -159,12 +163,14 @@
   flex: 1;
   min-width: 0;
 }
-/* Keep both speakers inside the opposing avatar column, including narrow panes. */
+/* Reserve the opposing avatar column when space permits. At narrow widths or
+   enlarged text, keep enough of the row for readable words. The own avatar
+   remains outside this body in its existing flex column. */
 .message:has(> .messageGutter) > .messageBody {
   max-width: min(
     85%,
     46rem,
-    calc(100% - 2 * var(--message-side-space) - var(--space-4))
+    max(60%, calc(100% - 2 * var(--message-side-space) - var(--space-4)))
   );
 }
 .message[data-viewer-message] > .messageBody {
@@ -886,7 +892,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   display: grid;
   place-items: center;
   background: var(--affordance-prominent);
-  color: var(--text-inverse);
+  color: var(--text-on-prominent);
   opacity: 0;
 }
 .mentionRecipients
@@ -1617,13 +1623,13 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   vertical-align: middle;
   accent-color: var(--affordance-prominent);
 }
-.text a:not([data-session-link]) {
+.text a:not([data-solo-link]) {
   color: var(--text-link);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
-.text a:not([data-session-link]):hover {
+.text a:not([data-solo-link]):hover {
   text-decoration-thickness: 2px;
 }
 .imageAlt {
@@ -1655,8 +1661,9 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  /* Keep spacing inside the virtual row so its measured and visible tops agree. */
-  padding: calc(var(--space-2) + var(--space-5)) 0;
+  /* Keep spacing inside the virtual row so its measured and visible tops agree.
+     A quiet caption, about as tall as the day divider. */
+  padding: var(--space-2) 0;
   color: var(--text-subtle);
   @apply text-caption;
 }
@@ -1763,10 +1770,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   display: contents;
 }
 .messageActions {
-  background: transparent;
-  color: var(--text-standard);
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
   order: 1;
   flex-shrink: 0;
   align-self: flex-end;
@@ -1783,8 +1786,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
   user-select: none;
-}
-.messageActions:not([data-placement="beside"]) {
   @apply popover-surface;
   --floating-radius: var(--radius-control);
   --floating-inset: var(--space-half);
@@ -1861,9 +1862,6 @@ html[data-keyboard-input] .quickReactionGlyph {
     inset: auto;
     opacity: 1;
     pointer-events: auto;
-  }
-  .messageActions[data-placement="beside"] {
-    translate: 0 -50%;
   }
   /* Retain pointer travel to the lifted toolbar without adding row spacing. */
   .message:hover::before {
@@ -2669,7 +2667,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .messageBubble > :is(.text, .plainText) {
   margin: 0;
 }
-.messageBubble .text :is(a, [data-mention-kind]):not([data-session-link]) {
+.messageBubble .text :is(a, [data-mention-kind]):not([data-solo-link]) {
   --link-text: var(--message-link);
   --link-hover: transparent;
   --link-focus: currentColor;
@@ -2709,7 +2707,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
   max-width: 100%;
   margin-block: 0;
 }
-.messageAttachments[data-session-cards] + .messageBubble {
+.messageAttachments[data-solo-cards] + .messageBubble {
   margin-top: var(--space-half);
 }
 .messageAttachments .imageUnavailable {
@@ -3141,7 +3139,7 @@ html[data-keyboard-navigation]
   gap: var(--space-1);
   min-width: 0;
 }
-.composerSessionCards {
+.composerSoloCards {
   container-type: inline-size;
   container-name: message-row;
   display: flex;
@@ -3149,13 +3147,13 @@ html[data-keyboard-navigation]
   gap: var(--space-2);
   min-width: 0;
 }
-.composerSessionCard {
+.composerSoloCard {
   display: flex;
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
 }
-.composerSessionCardContent {
+.composerSoloCardContent {
   min-width: 0;
   max-width: calc(100% - var(--size-control));
 }

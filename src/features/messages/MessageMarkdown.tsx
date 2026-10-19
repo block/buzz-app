@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "./composer-session";
 import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { messageLinkParts } from "./message-link-parts";
@@ -413,10 +414,11 @@ export function MessageMarkdown({
   participantProfiles,
   largeEmoji = false,
   interactive = true,
+  staticMentions = false,
 }: {
   row: ChannelMessage;
   directory?: typeof emptyReferenceDirectory;
-  session?: RelaySession | undefined;
+  session?: RelaySession | ComposerSession | undefined;
   scope?: string | undefined;
   extensions?: ConversationExtensions | undefined;
   media(url: string): string | undefined;
@@ -425,6 +427,8 @@ export function MessageMarkdown({
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
+  /** Preserve signed mention presentation when this surface cannot open profiles. */
+  staticMentions?: boolean | undefined;
 }) {
   const resolveName = useChannelIdentityNames(session, row.channelId);
   const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
@@ -445,6 +449,7 @@ export function MessageMarkdown({
       resolveName={resolveName}
       largeEmoji={largeEmoji}
       interactive={interactive}
+      staticMentions={staticMentions}
     />
   );
 }
@@ -463,6 +468,7 @@ function PreparedMessageMarkdown({
   resolveName,
   largeEmoji = false,
   interactive = true,
+  staticMentions = false,
 }: Parameters<typeof MessageMarkdown>[0] & {
   prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>;
   resolveName: (pubkey: string, fallback: string) => string;
@@ -575,7 +581,7 @@ function PreparedMessageMarkdown({
     if (
       typeof text === "string" &&
       typeof target === "string" &&
-      (!interactive || clickable || agent)
+      (!interactive || clickable || agent || staticMentions)
     ) {
       const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
       const Icon = agent ? RobotIcon : AtIcon;

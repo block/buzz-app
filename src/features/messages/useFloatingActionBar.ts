@@ -7,9 +7,9 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import {
-  behindActiveModal,
-  observeModals,
-} from "../../shared/design-system/modalLayer";
+  behindActiveOverlay,
+  observeOverlays,
+} from "../../shared/design-system/overlayLayer";
 
 const floatingQuery = "(hover: hover) and (pointer: fine)";
 // One MediaQueryList for every row: `matchMedia` allocates and evaluates the
@@ -102,7 +102,9 @@ export function useFloatingActionBar(
     const bar = barRef.current;
     if (!floating || !row || !bar) return;
     // Top-layer descendants don't contribute to :hover or :focus-within.
+    const reactions = "[data-message-reactions]";
     let hovered = row.matches(":hover") || bar.matches(":hover");
+    if (row.querySelector(reactions)?.matches(":hover")) hovered = false;
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.
     const keyboardFocus = () =>
@@ -110,28 +112,26 @@ export function useFloatingActionBar(
       (document.documentElement.hasAttribute("data-keyboard-navigation") &&
         row.contains(document.activeElement));
     const update = (focused = keyboardFocus()) => {
-      // Message accessories such as agent activity use ordinary portals. A
-      // native top-layer toolbar must step aside while their popup is open.
-      const accessoryOpen = [
-        ...row.querySelectorAll(
-          '[aria-haspopup="dialog"][aria-expanded="true"]',
-        ),
-      ].some((trigger) => !bar.contains(trigger));
-      const next =
-        !accessoryOpen &&
-        (hovered ||
-          focused ||
-          open ||
-          !!bar.querySelector('[aria-haspopup][aria-expanded="true"]'));
-      row.toggleAttribute("data-actions-revealed", next);
+      const ownsPopup = !!bar.querySelector(
+        '[aria-haspopup][aria-expanded="true"]',
+      );
+      const next = hovered || focused || open || ownsPopup;
+      if (!next) row.removeAttribute("data-actions-revealed");
       setRevealed(next);
     };
     const enter = () => {
-      hovered = true;
+      hovered = !row.querySelector(reactions)?.matches(":hover");
       update();
     };
     const leave = () => {
       hovered = false;
+      update();
+    };
+    // Reactions are part of the row, but own their hover interaction. Track
+    // transitions within the row as well as entry from outside it.
+    const over = (event: PointerEvent) => {
+      hovered =
+        event.target instanceof Element && !event.target.closest(reactions);
       update();
     };
     const focusIn = () => update();
@@ -144,6 +144,7 @@ export function useFloatingActionBar(
     };
     row.addEventListener("pointerenter", enter);
     row.addEventListener("pointerleave", leave);
+    row.addEventListener("pointerover", over);
     row.addEventListener("focusin", focusIn);
     row.addEventListener("focusout", focusOut);
     const observer = new MutationObserver(() => {
@@ -160,6 +161,7 @@ export function useFloatingActionBar(
     return () => {
       row.removeEventListener("pointerenter", enter);
       row.removeEventListener("pointerleave", leave);
+      row.removeEventListener("pointerover", over);
       row.removeEventListener("focusin", focusIn);
       row.removeEventListener("focusout", focusOut);
       observer.disconnect();
@@ -176,6 +178,15 @@ export function useFloatingActionBar(
     const workspaceSelector = "[data-main-workspace], [data-panel-workspace]";
     const workspace = row.closest(workspaceSelector);
     let frame = 0;
+    const updateVisibility = () => {
+      const blocked = behindActiveOverlay(row);
+      const ownsPopup = !!bar.querySelector(
+        '[aria-haspopup][aria-expanded="true"]',
+      );
+      // The toolbar yields, but its popup must still identify the target message.
+      row.toggleAttribute("data-actions-revealed", !blocked || ownsPopup);
+      bar.style.visibility = blocked ? "hidden" : "";
+    };
     const hide = () => {
       if (bar.hasAttribute("popover")) bar.hidePopover?.();
       // Closed popovers return to their slot's containing block. Viewport offsets
@@ -184,7 +195,8 @@ export function useFloatingActionBar(
       bar.style.left = "";
       bar.style.right = "";
       bar.style.maxWidth = "";
-      delete bar.dataset.placement;
+      bar.style.visibility = "";
+      bar.style.clipPath = "";
     };
     // A narrow side pane covers, but does not unmount, the channel. Only a
     // second workspace can cover this one, so skip the hit test without it.
@@ -226,12 +238,9 @@ export function useFloatingActionBar(
         hide();
         return;
       }
-      // A top-layer toolbar can retain hover above a portalled modal's backdrop.
-      // Keep actions in the active viewer usable, but suppress background rows.
-      if (behindActiveModal(row)) {
-        hide();
-        return;
-      }
+      // Hide the painting and keyboard controls without moving the anchor of
+      // a picker launched from this bar. Base UI owns dismissal/return focus.
+      updateVisibility();
       // Style reads are cheap here: the rect reads above already left layout clean.
       const style = getComputedStyle(bar);
       const overlap = Number.parseFloat(style.scrollMarginBlockStart) || 0;
@@ -255,29 +264,12 @@ export function useFloatingActionBar(
       const width = bar.offsetWidth;
       // Layout height: an opening scale transition must not move the bar.
       const height = bar.offsetHeight;
-      const towardLeft = rtl !== row.hasAttribute("data-viewer-message");
-      const besideLeft = towardLeft
-        ? anchor.left - overlap - width
-        : anchor.right + overlap;
-      const center = anchor.top + anchor.height / 2;
-      const beside =
-        besideLeft >= start &&
-        besideLeft + width <= end &&
-        (!viewport ||
-          (center - height / 2 >= viewport.top &&
-            center + height / 2 <= viewport.bottom));
-      const placement = beside ? "beside" : "above";
-      if (bar.dataset.placement !== placement)
-        bar.dataset.placement = placement;
-      bar.style.transformOrigin = beside
-        ? towardLeft
-          ? "right center"
-          : "left center"
-        : rtl
-          ? "left bottom"
-          : "right bottom";
-      const top = beside ? center : anchor.top + overlap;
-      const paintedTop = top - height / (beside ? 2 : 1);
+      // Keep one location across short/long messages and wide/narrow panes.
+      // Scrolling may hide an offscreen anchor, but never relocates its actions
+      // to a different edge of the message.
+      bar.style.transformOrigin = rtl ? "left bottom" : "right bottom";
+      const top = anchor.top + overlap;
+      const paintedTop = top - height;
       if (
         viewport &&
         (anchor.top <= viewport.top || paintedTop >= viewport.bottom)
@@ -285,11 +277,13 @@ export function useFloatingActionBar(
         hide();
         return;
       }
-      const left = beside
-        ? besideLeft
-        : rtl
-          ? anchor.left - overlap
-          : anchor.right - width + overlap;
+      // The top layer would paint over the pane header and take its clicks.
+      // Clip at the scroller's top so the bar slides under the header like the
+      // message does; the other sides keep the shadow.
+      const hidden = viewport ? viewport.top - paintedTop : 0;
+      bar.style.clipPath =
+        hidden > 0 ? `inset(${hidden}px -100vmax -100vmax)` : "";
+      const left = rtl ? anchor.left - overlap : anchor.right - width + overlap;
       bar.style.top = `${top}px`;
       bar.style.left = `${Math.max(start, Math.min(left, end - width))}px`;
       bar.style.right = "auto";
@@ -379,9 +373,12 @@ export function useFloatingActionBar(
         attributes: true,
       });
     }
-    // Observe modals only while reveal is requested, and share the existing
-    // coalesced positioning update.
-    const unobserveModals = observeModals(schedule);
+    // Focus restoration can run before the next animation frame. Release the
+    // hidden trigger as soon as its popup closes; coalesce only geometry work.
+    const unobserveOverlays = observeOverlays(() => {
+      updateVisibility();
+      schedule();
+    });
     return () => {
       bar.removeEventListener("wheel", wheel);
       cancelAnimationFrame(frame);
@@ -391,7 +388,7 @@ export function useFloatingActionBar(
       window.removeEventListener("resize", schedule);
       observer.disconnect();
       siblings.disconnect();
-      unobserveModals();
+      unobserveOverlays();
       hide();
     };
   }, [floating, revealed, rowRef, barRef, slotRef]);

@@ -17,10 +17,19 @@ import { useMentionArchives } from "../../features/messages/use-mention-archives
 import { archiveHides } from "../../features/relay/identity-archives";
 import { foldProfiles } from "../../features/relay/profiles";
 import {
+  ArrowsDownUpIcon,
   CalendarIcon,
   ChatCircleIcon,
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRoot,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
 import { matchName, matchRank } from "../../features/search/match";
@@ -31,7 +40,7 @@ import {
   searchOrder,
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
-import { useSearchMessages } from "./useSearchMessages";
+import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import { matchPerson } from "../../features/search/person-match";
 import {
   personKey,
@@ -91,7 +100,7 @@ export function SearchResults({
   currentChannelId?: string | undefined;
   onScopeChange?: ((channelId?: string) => void) | undefined;
   openConversation: (channelId: string, messageId?: string) => void;
-  /** Open a new Solo session with one of the viewer's agents. Without it,
+  /** Open a new Solo chat with one of the viewer's agents. Without it,
    * choosing one of their agents opens a direct message, as for anyone else. */
   openAgentSession?: ((pubkey: string) => void) | undefined;
   /** View-state partition whose visits and search choices rank results. */
@@ -110,11 +119,13 @@ export function SearchResults({
     () =>
       list.channels.filter(
         (channel) =>
+          !channel.huddle &&
+          !channel.metadataPending &&
           (!channel.archived ||
             (!channel.readOnly &&
               (channel.channelType === "stream" ||
                 channel.channelType === "forum" ||
-                channel.channelType === "session"))) &&
+                channel.channelType === "solo"))) &&
           (!channel.hidden || channel.channelType === "dm") &&
           (!scopedChannelId || channel.id === scopedChannelId),
       ),
@@ -239,6 +250,7 @@ export function SearchResults({
     session.agentChoices.snapshot,
     session.agentChoices.snapshot,
   );
+  const [sort, setSort] = useState<SearchSort>("relevance");
   const search = useSearchMessages(
     session,
     query,
@@ -252,7 +264,10 @@ export function SearchResults({
         )
         .map((agent) => [agent.pubkey, agent.name]),
     ),
+    // Only scoped search offers the choice, so global search keeps relevance.
+    scopedChannelId ? sort : "relevance",
   );
+  const messageOrder = search.newestFirst ? "Most recent" : "Most relevant";
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
@@ -286,8 +301,8 @@ export function SearchResults({
     peopleActive,
   );
   useMentionArchives(session, showAuthorPicker || peopleActive);
-  // The viewer's own agents open a new session, not a direct message: the
-  // same agents the new-session composer accepts. Their earlier sessions
+  // The viewer's own agents open a new chat, not a direct message: the
+  // same agents the new-chat composer accepts. Their earlier chats
   // still show as conversations.
   const sessionSearch = !!openAgentSession && peopleActive;
   const ownAgents = useAgentChoices(session, sessionSearch, sessionSearch);
@@ -611,7 +626,7 @@ export function SearchResults({
     ),
     channelRank,
   );
-  // A DM with one of the viewer's own agents gives way to its "New session"
+  // A DM with one of the viewer's own agents gives way to its "New chat"
   // row, but only when that row shows; the DM stays in the sidebar. Removing
   // DM-listed people below only lifts the rest, so a row shown here still
   // shows in the Agents group.
@@ -677,13 +692,15 @@ export function SearchResults({
       label,
       ...(matches ? { matches } : {}),
       detail: channel.archived
-        ? "Archived channel"
+        ? channel.channelType === "solo"
+          ? "Archived chat"
+          : "Archived channel"
         : channel.readOnly && !channel.cached
           ? "Public channel · not joined"
           : channel.channelType === "dm"
             ? "Direct message"
-            : channel.channelType === "session"
-              ? "Session"
+            : channel.channelType === "solo"
+              ? "Chat"
               : "Conversation",
       icon: ChatCircleIcon,
       run: choose(key, () => openConversation(channel.id)),
@@ -769,7 +786,7 @@ export function SearchResults({
       detail: [
         person.username && `@${person.username}`,
         newSession
-          ? "New session"
+          ? "New chat"
           : dm
             ? "Direct message"
             : "Start a direct message",
@@ -888,8 +905,20 @@ export function SearchResults({
         : scopedChannelId
           ? [
               {
-                label: "Most relevant",
-                destinations: messages,
+                label: messageOrder,
+                destinations: search.hasMore
+                  ? [
+                      ...messages,
+                      {
+                        key: "more-messages",
+                        label: search.loadingMore
+                          ? "Loading more messages…"
+                          : "Show more messages",
+                        icon: ChatCircleIcon,
+                        run: search.loadMore,
+                      },
+                    ]
+                  : messages,
                 empty: messageEmpty,
               },
             ]
@@ -962,7 +991,7 @@ export function SearchResults({
                   ? [{ label: "This conversation", destinations: scopeAction }]
                   : []),
                 {
-                  label: "Most relevant",
+                  label: messageOrder,
                   destinations: messages,
                   empty:
                     matchingChannels.length ||
@@ -994,6 +1023,43 @@ export function SearchResults({
         scopedChannelId
           ? "Search messages…"
           : "Search pages, people, conversations and messages…"
+      }
+      scopeAction={
+        scopedChannelId && session.searchSort && parsed.text ? (
+          <MenuRoot>
+            <MenuTrigger
+              render={(props) => (
+                <IconButton
+                  {...props}
+                  variant="ghost"
+                  aria-label="Sort messages"
+                  title="Sort messages"
+                  icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
+                />
+              )}
+            />
+            <MenuPopup
+              align="end"
+              size="compact"
+              aria-label="Sort messages"
+              finalFocus={input}
+            >
+              <MenuRadioGroup
+                value={sort}
+                onValueChange={(value) =>
+                  setSort(value === "newest" ? "newest" : "relevance")
+                }
+              >
+                <MenuRadioItem value="relevance" closeOnClick>
+                  Most relevant
+                </MenuRadioItem>
+                <MenuRadioItem value="newest" closeOnClick>
+                  Most recent
+                </MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuPopup>
+          </MenuRoot>
+        ) : undefined
       }
       scope={
         scopedChannelId && onScopeChange
@@ -1081,6 +1147,7 @@ export function SearchResults({
             </Button>
           </div>
         )}
+        {search.moreError && <p>{search.moreError}</p>}
         {search.error && (
           <div>
             <p>{search.error}</p>

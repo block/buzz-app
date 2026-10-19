@@ -7,6 +7,7 @@ import {
   readWorkspace,
   projectTemplateId,
   workspaceCanvas,
+  workspaceDirectories,
 } from "./workspace";
 
 it("round trips folders, worktrees and Canvas through existing template records", async () => {
@@ -293,4 +294,20 @@ it("does not offer deleted-project recovery when project refresh fails", async (
     ),
   ).rejects.toThrow("Projects couldn’t load");
   expect(f.calls).toEqual([]);
+});
+
+it("finds an agent's folders even in a hand-edited workspace block", () => {
+  const canvas = workspaceCanvas({
+    folders: ["/repo", "~/two"],
+    worktree: { location: "~/trees", baseBranch: "main" },
+    canvas: "Notes",
+  });
+  expect(workspaceDirectories(canvas)).toEqual(["/repo", "~/two", "~/trees"]);
+  expect(
+    workspaceDirectories(canvas.replace("for review only", "freely")),
+  ).toEqual(["/repo", "~/two", "~/trees"]);
+  expect(workspaceDirectories("# Plain Canvas")).toEqual([]);
+  expect(workspaceDirectories("<!-- buzz-session-workspace:v1 broken")).toEqual(
+    [],
+  );
 });

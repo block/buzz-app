@@ -63,6 +63,8 @@ function setup(
     scope?: "thread" | "channel";
     /** The agent's `core` memory as the host keeps it. */
     core?: string | null;
+    /** The channel's Canvas. */
+    canvas?: string;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -100,6 +102,20 @@ function setup(
     profiles: {
       ensure: vi.fn(async () => {}),
       snapshot: () => new Map(),
+    },
+    canvas: {
+      available: options.canvas !== undefined,
+      read: vi.fn(async () =>
+        options.canvas === undefined
+          ? null
+          : {
+              pubkey: alice,
+              kind: 40100,
+              created_at: 1,
+              tags: [],
+              content: options.canvas,
+            },
+      ),
     },
   };
   const relay = {
@@ -500,3 +516,24 @@ function slowMemories(viewer: string) {
     () => true,
   ).capability;
 }
+
+it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
+  const solo = setup({ solo: new Set([channel]), canvas: "Use tokens." });
+  await solo.deliver(message("1", "@Gander hi"));
+  await flush(100);
+  expect(solo.goose()?.turns[0]?.text).toContain(
+    "<workspace-canvas>\nThis Solo chat's Canvas",
+  );
+  expect(solo.goose()?.turns[0]?.text).toContain("Use tokens.");
+  // A cleared Canvas replaces it with an explicit "none".
+  const cleared = setup({ solo: new Set([channel]), canvas: "" });
+  await cleared.deliver(message("1", "@Gander hi"));
+  await flush(100);
+  expect(cleared.goose()?.turns[0]?.text).toContain(
+    "Disregard any earlier workspace Canvas",
+  );
+  const shared = setup({ canvas: "Steer me" });
+  await shared.deliver(message("1", "@Gander hi"));
+  await flush(100);
+  expect(shared.goose()?.turns[0]?.text).not.toContain("workspace-canvas");
+});

@@ -92,6 +92,7 @@ export function SoloHeading({
                     lifecycle={session.channelLifecycle}
                     disabled={false}
                     separator={convertible && !channel.archived}
+                    noun="chat"
                     choose={(action) =>
                       onLifecycle(action, actionsTrigger.current ?? undefined)
                     }

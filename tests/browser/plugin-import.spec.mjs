@@ -9,7 +9,7 @@ async function openPlugins(page, origin) {
   await page.goto(origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
 async function nativeImports(page, samples = []) {
@@ -215,9 +215,35 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
             const minimum = button.dataset.size === "sm" ? 32 : 40;
             if (scale === 100 && box.height !== minimum)
               failures.push(`${button.textContent}: default height changed`);
+            // Compact Select deliberately ellipsizes its value; a text Range
+            // includes hidden glyphs. Check the painted boxes and full-value
+            // hint instead, without exempting lost clipping or escaping icons.
+            const selectValue = button
+              .closest('.buzz-select[data-variant="compact"]')
+              ?.querySelector(".buzz-select-value");
+            if (selectValue) {
+              const style = getComputedStyle(selectValue);
+              if (
+                style.overflow !== "hidden" ||
+                style.textOverflow !== "ellipsis" ||
+                style.whiteSpace !== "nowrap" ||
+                selectValue.getAttribute("title") !==
+                  selectValue.textContent.trim()
+              )
+                failures.push(
+                  `${button.textContent}: compact choice lost clipping or full-value hint`,
+                );
+            }
             const text = document.createRange();
-            text.selectNodeContents(button);
-            for (const line of text.getClientRects()) {
+            if (!selectValue) text.selectNodeContents(button);
+            const content = selectValue
+              ? [
+                  ...button.querySelectorAll(
+                    ".buzz-select-value, .buzz-dropdown-chevron",
+                  ),
+                ].map((node) => node.getBoundingClientRect())
+              : [...text.getClientRects()];
+            for (const line of content) {
               if (
                 line.top < box.top ||
                 line.bottom > box.bottom ||
@@ -339,9 +365,9 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
             ),
         )
         .not.toContain(false);
-      await selectSettingsSection(page, "Plugins");
+      await selectSettingsSection(page, "Manage plugins");
       const plugins = page.getByRole("region", {
-        name: "Plugins",
+        name: "Manage plugins",
         exact: true,
       });
       await expect(button(page, "Load from folder")).toBeVisible();
@@ -392,7 +418,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await expect(button(page, "Install plugin")).toHaveCount(0);
   await page.getByRole("radio", { name: /Example two/ }).check();
   await selectSettingsSection(page, "Profile");
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
   await expect(page.getByRole("radio", { name: /Example two/ })).toBeChecked();
   await expect(
     page.getByText(
@@ -517,7 +543,7 @@ test("checked-in local examples activate and work independently", async ({
   );
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
   await page.getByRole("switch", { name: "Enable Counter playground" }).click();
   const navigation = await pageChoices(page);
   await expect(

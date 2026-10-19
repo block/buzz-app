@@ -322,6 +322,24 @@ impl Identity {
         self.state = State::Ready(key); // Commit in memory only after secure persistence.
         Ok(viewer)
     }
+    fn require_missing(&mut self) -> Result<()> {
+        if self.restore()?.is_some() || self.store.read()?.is_some() {
+            return Err("An identity is already saved; nothing was overwritten".into());
+        }
+        Ok(())
+    }
+    fn install_recovered(&mut self, secret: Zeroizing<[u8; 32]>, expected: &str) -> Result<String> {
+        self.require_missing()?;
+        let key = Key(secret);
+        let viewer = key.viewer()?;
+        if viewer != expected {
+            return Err("The recovered identity could not be verified".into());
+        }
+        let nsec = Zeroizing::new(key.nsec()?);
+        self.store.add(nsec.as_bytes())?;
+        self.state = State::Ready(key);
+        Ok(viewer)
+    }
     fn close(&mut self) {
         self.state = State::Closed;
     }
@@ -644,6 +662,27 @@ impl IdentityHost {
             identity
                 .restore()?
                 .ok_or_else(|| "Set up your identity first".into())
+        })
+        .await
+    }
+
+    pub(crate) async fn require_missing(&self) -> Result<()> {
+        with_identity(self.clone(), |identity| identity.require_missing()).await
+    }
+
+    pub(crate) async fn install_recovered(
+        &self,
+        secret: Zeroizing<[u8; 32]>,
+        expected: String,
+        admission: Arc<Mutex<bool>>,
+    ) -> Result<String> {
+        with_identity(self.clone(), move |identity| {
+            // Keep cancellation serialized with the final create-only storage write.
+            let admitted = admission.lock().map_err(|_| "Restore is unavailable")?;
+            if !*admitted {
+                return Err("Restore was canceled. Try again.".into());
+            }
+            identity.install_recovered(secret, &expected)
         })
         .await
     }
@@ -1056,16 +1095,31 @@ pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Op
     with_identity(host.inner().clone(), Identity::restore).await
 }
 #[tauri::command]
-pub async fn identity_import(host: tauri::State<'_, IdentityHost>, nsec: String) -> Result<String> {
+pub async fn identity_import(
+    host: tauri::State<'_, IdentityHost>,
+    backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
+    nsec: String,
+) -> Result<String> {
     let nsec = Zeroizing::new(nsec);
-    with_identity(host.inner().clone(), move |identity| {
+    let public = with_identity(host.inner().clone(), move |identity| {
         identity.save(Some(&nsec))
     })
-    .await
+    .await?;
+    let backup = backup.inner().clone();
+    let identity = host.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    Ok(public)
 }
 #[tauri::command]
-pub async fn identity_create(host: tauri::State<'_, IdentityHost>) -> Result<String> {
-    with_identity(host.inner().clone(), |identity| identity.save(None)).await
+pub async fn identity_create(
+    host: tauri::State<'_, IdentityHost>,
+    backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
+) -> Result<String> {
+    let public = with_identity(host.inner().clone(), |identity| identity.save(None)).await?;
+    let backup = backup.inner().clone();
+    let identity = host.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    Ok(public)
 }
 #[tauri::command]
 pub async fn identity_export(host: tauri::State<'_, IdentityHost>) -> Result<String> {
@@ -1073,7 +1127,7 @@ pub async fn identity_export(host: tauri::State<'_, IdentityHost>) -> Result<Str
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 impl IdentityHost {
     /// Only recipe plaintext may cross this boundary. Never export arbitrary decrypt.

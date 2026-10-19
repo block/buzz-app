@@ -25,6 +25,8 @@ import {
 } from "../../features/channel-navigation/routes";
 import { writeView } from "../../shared/view-state";
 import { ChannelsPage, type ArchiveShortcut } from "./ChannelsPage";
+import { SoloProjects } from "./SoloProjects";
+import type { RelaySession } from "../../features/relay/session";
 
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -118,6 +120,16 @@ function fixture({
     selectable: agents,
     archives: { status: "unavailable" as const, archived: [] },
   };
+  // A stable snapshot, as useSyncExternalStore requires.
+  const projects = {
+    status: "ready" as const,
+    data: {
+      sections: [{ id: "work", name: "Work", order: 0 }],
+      assignments: {},
+      starred: [],
+      muted: [],
+    },
+  };
   const session = {
     ...owner.session,
     agentChoices: {
@@ -169,15 +181,7 @@ function fixture({
     },
     soloPreferences: {
       ...owner.session.soloPreferences,
-      snapshot: () => ({
-        status: "ready" as const,
-        data: {
-          sections: [{ id: "work", name: "Work", order: 0 }],
-          assignments: {},
-          starred: [],
-          muted: [],
-        },
-      }),
+      snapshot: () => projects,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => {
@@ -221,12 +225,21 @@ function fixture({
     retry() {},
     snapshot: () => ({
       entry: { id: navigation.entryId, target: navigation.target },
-      attempt: {},
+      attempt: { signal: abort.signal },
     }),
   } as unknown as Navigation;
   const archive: ArchiveShortcut = {};
-  const page = () => (
+  const page = (sidebar = false) => (
     <ChannelNavigationProvider relay={relay}>
+      {sidebar && (
+        <SoloProjects
+          session={session as unknown as RelaySession}
+          navigator={navigator}
+          scope={scope}
+          chats={[{ id, title: "Planning" }]}
+          renderChat={(item) => <button type="button">{item.title}</button>}
+        />
+      )}
       <ChannelsPage
         relay={relay}
         panels={{ ...contribution, register() {}, resolve: () => undefined }}
@@ -239,6 +252,7 @@ function fixture({
   );
   return {
     mount: () => render(page()),
+    mountWithSidebar: () => render(page(true)),
     abort,
     archive,
     open,
@@ -263,12 +277,12 @@ it("confirms Archive from the shortcut, then opens a new Solo draft", async () =
     expect.any(AbortSignal),
   );
   const dialog = screen.getByRole("dialog", {
-    name: "Archive channel: Planning",
+    name: "Archive chat: Planning",
   });
   expect(f.run).not.toHaveBeenCalled();
   const user = userEvent.setup();
   await user.click(
-    within(dialog).getByRole("button", { name: "Archive channel" }),
+    within(dialog).getByRole("button", { name: "Archive chat" }),
   );
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(f.run).toHaveBeenCalledExactlyOnceWith(
@@ -348,7 +362,7 @@ it("keeps a shortcut Archive across chat activity during the permission read", a
   });
   // The confirmation names the latest summary, not the one at keypress.
   expect(
-    screen.getByRole("dialog", { name: "Archive channel: Roadmap" }),
+    screen.getByRole("dialog", { name: "Archive chat: Roadmap" }),
   ).toBeInTheDocument();
 });
 
@@ -449,8 +463,8 @@ it("uses the ordinary composer for a guest in a shared Solo chat", async () => {
 });
 
 it.each([
-  ["archive", "Archive channel", "Archive channel: Planning"],
-  ["delete", "Delete channel", "Delete Planning?"],
+  ["archive", "Archive chat", "Archive chat: Planning"],
+  ["delete", "Delete chat", "Delete Planning?"],
 ] as const)(
   "runs %s from Chat actions, then opens a new Solo draft",
   async (action, label, title) => {
@@ -473,6 +487,41 @@ it.each([
   },
 );
 
+it.each([
+  ["open", true],
+  ["another", false],
+] as const)(
+  "archives the %s chat from its sidebar row; only leaving the open chat opens a new Solo draft",
+  async (_, open) => {
+    const f = fixture(
+      open ? {} : { target: (scope) => soloDraftTarget(scope) },
+    );
+    f.mountWithSidebar();
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Actions for Planning" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Archive chat" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Archive chat: Planning",
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Archive chat" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(f.run).toHaveBeenCalledExactlyOnceWith(
+      "archive",
+      id,
+      expect.any(AbortSignal),
+    );
+    if (open)
+      expect(f.open).toHaveBeenCalledExactlyOnceWith(soloDraftTarget(f.scope));
+    else expect(f.open).not.toHaveBeenCalled();
+  },
+);
+
 it("returns focus to Chat actions when its confirmation is cancelled", async () => {
   const f = fixture();
   f.mount();
@@ -480,7 +529,7 @@ it("returns focus to Chat actions when its confirmation is cancelled", async () 
   const trigger = await screen.findByRole("button", { name: "Chat actions" });
   await user.click(trigger);
   await user.click(
-    await screen.findByRole("menuitem", { name: "Archive channel" }),
+    await screen.findByRole("menuitem", { name: "Archive chat" }),
   );
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();

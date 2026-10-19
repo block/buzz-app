@@ -111,29 +111,42 @@ for (const own of [true, false]) {
             }, own),
           )
           .toEqual({ gap: 8, centered: true });
-        // Stop in the actual gap, not a teleport straight onto the toolbar.
-        const gap = await actions.evaluate((bar) => {
+        // Measure settled border boxes, then stop immediately outside the
+        // bubble as well as halfway across; a midpoint can skip a thin dead strip.
+        await actions.evaluate((bar) =>
+          Promise.all(
+            bar.getAnimations().map((animation) => animation.finished),
+          ),
+        );
+        const crossing = await actions.evaluate((bar) => {
           const bubble = bar
             .closest("[data-layout]")
             .querySelector("[data-message-action-anchor]")
             .getBoundingClientRect();
           const rect = bar.getBoundingClientRect();
-          return {
-            x:
-              rect.right <= bubble.left
+          const left = rect.right <= bubble.left;
+          const y = bubble.top + bubble.height / 2;
+          return [
+            { x: left ? bubble.left - 0.5 : bubble.right + 0.5, y },
+            {
+              x: left
                 ? (rect.right + bubble.left) / 2
                 : (bubble.right + rect.left) / 2,
-            y: bubble.top + bubble.height / 2,
-          };
+              y,
+            },
+          ];
         });
-        await page.mouse.move(gap.x, gap.y, { steps: 10 });
-        await shown(actions);
-        expect(
-          await actions.evaluate(
-            (bar, gap) => bar.contains(document.elementFromPoint(gap.x, gap.y)),
-            gap,
-          ),
-        ).toBe(true);
+        for (const point of crossing) {
+          expect(
+            await actions.evaluate(
+              (bar, point) =>
+                bar.contains(document.elementFromPoint(point.x, point.y)),
+              point,
+            ),
+          ).toBe(true);
+          await page.mouse.move(point.x, point.y, { steps: 10 });
+          await shown(actions);
+        }
         await actions
           .getByRole("button", { name: "React with 👍", exact: true })
           .hover();
@@ -186,6 +199,111 @@ for (const own of [true, false]) {
     });
     await page.setViewportSize({ width: 1440, height: 950 });
     await expect(actions).toHaveAttribute("data-placement", "beside");
+  });
+}
+
+// Browser-only: the hovered attachment, not a distant caption, must own the
+// toolbar's geometry and provide an uninterrupted native pointer path.
+for (const own of [false, true]) {
+  test(`captioned ${own ? "own" : "received"} attachments keep their actions reachable`, async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const event = app.append(
+      "primary",
+      "alpha",
+      "A caption\nwith three lines\nabove its attachment",
+      true,
+      own,
+      undefined,
+      undefined,
+      [
+        [
+          "imeta",
+          "url https://fixture.test/report.pdf",
+          "m application/pdf",
+          "filename report.pdf",
+        ],
+      ],
+    );
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${event.id}"]`,
+    );
+    const attachment = row.locator("[data-message-attachments] > *").first();
+    const caption = row.locator("[data-message-action-anchor]").first();
+    const actions = actionsFor(row);
+    await expect(attachment).toBeVisible();
+    await settle(page);
+    await attachment.hover();
+    await shown(actions);
+    await expect(actions).toHaveAttribute("data-placement", "beside");
+    await actions.evaluate((bar) =>
+      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
+    );
+    const content = await attachment.boundingBox();
+    const toolbar = await actions.boundingBox();
+    // Start at the actual attachment edge, then cross the whole gap slowly.
+    const left = toolbar.x + toolbar.width <= content.x;
+    const edge = {
+      x: left ? content.x : content.x + content.width,
+      y: content.y + content.height / 2,
+    };
+    const gap = { x: left ? edge.x - 0.5 : edge.x + 0.5, y: edge.y };
+    expect(
+      await actions.evaluate(
+        (bar, point) =>
+          bar.contains(document.elementFromPoint(point.x, point.y)),
+        gap,
+      ),
+    ).toBe(true);
+    await page.mouse.move(edge.x, edge.y);
+    await shown(actions);
+    await page.mouse.move(gap.x, gap.y);
+    await shown(actions);
+    const target = actions.getByRole("button", {
+      name: "More message actions",
+    });
+    const button = await target.boundingBox();
+    await page.mouse.move(
+      button.x + button.width / 2,
+      button.y + button.height / 2,
+      { steps: 20 },
+    );
+    await shown(actions);
+    await target.click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    await actions.evaluate((bar) =>
+      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
+    );
+    const anchored = await actions.evaluate((bar) =>
+      bar.getBoundingClientRect().toJSON(),
+    );
+    // The open menu's backdrop owns this point; use real pointer travel rather
+    // than asking Playwright to hover the intentionally covered caption.
+    const coveredCaption = await caption.boundingBox();
+    await page.mouse.move(
+      coveredCaption.x + coveredCaption.width / 2,
+      coveredCaption.y + coveredCaption.height / 2,
+    );
+    expect(
+      await actions.evaluate((bar) => bar.getBoundingClientRect().toJSON()),
+    ).toEqual(anchored);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    // Returning to the caption moves actions back to that content.
+    await page.mouse.click(0, 0);
+    await caption.hover();
+    await shown(actions);
+    const captionBounds = await caption.boundingBox();
+    await expect
+      .poll(async () => {
+        const bar = await actions.boundingBox();
+        return Math.abs(
+          bar.y + bar.height / 2 - captionBounds.y - captionBounds.height / 2,
+        );
+      })
+      .toBeLessThan(1);
   });
 }
 

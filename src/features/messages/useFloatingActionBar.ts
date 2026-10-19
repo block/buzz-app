@@ -96,6 +96,7 @@ export function useFloatingActionBar(
 ) {
   const floating = useSyncExternalStore(subscribe, snapshot, () => false);
   const [revealed, setRevealed] = useState(false);
+  const [hoverAnchor, setHoverAnchor] = useState<Element | null>(null);
 
   useEffect(() => {
     const row = rowRef?.current;
@@ -103,15 +104,29 @@ export function useFloatingActionBar(
     if (!floating || !row || !bar) return;
     const contentSelector =
       "[data-message-action-anchor], [data-message-attachments] > *";
+    const contentAt = (target: EventTarget | null) =>
+      target instanceof Element && row.contains(target)
+        ? target.closest(contentSelector)
+        : null;
     const hoverTarget = (target: EventTarget | null) =>
       target instanceof Element &&
-      (bar.contains(target) ||
-        (!!target.closest(contentSelector) && row.contains(target)));
+      (bar.contains(target) || !!contentAt(target));
+    const selectAnchor = (content: Element | null) => {
+      // Keep the initiating content stable through toolbar and popup travel.
+      if (
+        content &&
+        !open &&
+        !bar.querySelector('[aria-haspopup][aria-expanded="true"]') &&
+        !behindActiveOverlay(row)
+      )
+        setHoverAnchor(content);
+    };
     // The row includes empty space, bylines and accessories. Only painted
     // message content and the top-layer toolbar reveal pointer actions.
-    let hovered =
-      !!row.querySelector(`:is(${contentSelector}):hover`) ||
-      bar.matches(":hover");
+    const initialContent = row.querySelector(`:is(${contentSelector}):hover`);
+    let hovered = !!initialContent || bar.matches(":hover");
+    // Deferred controls can mount after the pointer has already entered media.
+    selectAnchor(initialContent);
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.
     const keyboardFocus = () =>
@@ -123,10 +138,14 @@ export function useFloatingActionBar(
         '[aria-haspopup][aria-expanded="true"]',
       );
       const next = hovered || focused || open || ownsPopup;
-      if (!next) row.removeAttribute("data-actions-revealed");
+      if (!next) {
+        row.removeAttribute("data-actions-revealed");
+        setHoverAnchor(null);
+      }
       setRevealed(next);
     };
     const over = (event: PointerEvent) => {
+      selectAnchor(contentAt(event.target));
       hovered = hoverTarget(event.target);
       update();
     };
@@ -227,6 +246,7 @@ export function useFloatingActionBar(
       if (!bar.isConnected) return;
       // Resolve the painted message again when edits replace text with media.
       const visual =
+        (hoverAnchor && row.contains(hoverAnchor) ? hoverAnchor : null) ??
         row.querySelector<HTMLElement>("[data-message-action-anchor]") ??
         row.querySelector("[data-message-attachments]")?.firstElementChild ??
         slot;
@@ -405,7 +425,7 @@ export function useFloatingActionBar(
       unobserveOverlays();
       hide();
     };
-  }, [floating, revealed, rowRef, barRef, slotRef]);
+  }, [floating, revealed, hoverAnchor, rowRef, barRef, slotRef]);
 
   return floating;
 }

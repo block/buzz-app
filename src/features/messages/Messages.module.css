@@ -1867,7 +1867,8 @@ html[data-keyboard-input] .quickReactionGlyph {
     content: "";
     position: absolute;
     inset-block: 0;
-    inset-inline: calc(-1 * var(--space-2));
+    /* Insets start at the padding edge; include the toolbar's 1px border. */
+    inset-inline: calc(-1 * var(--space-2) - 1px);
     z-index: -1;
   }
 }

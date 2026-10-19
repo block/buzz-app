@@ -5,6 +5,29 @@
   width: 100%;
 }
 
+.nameEditor {
+  min-width: 0;
+  padding-block: var(--space-1);
+  padding-inline-start: var(--session-row-inset);
+}
+
+.nameEditorRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.nameEditorRow > svg {
+  flex-shrink: 0;
+  margin-block-start: var(--space-2);
+  color: var(--text-subtle);
+}
+
+.nameEditorField {
+  min-width: 0;
+  flex: 1;
+}
+
 .chatRow > span:first-child {
   min-width: 0;
 }

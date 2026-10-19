@@ -1,6 +1,8 @@
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { SoloShare, ChatAccessIndicator } from "./SoloShare";
+import { SoloChatName } from "./SoloChatName";
+import { canEditLifetime } from "../../features/solo/Lifetime";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -68,7 +70,7 @@ export function SoloWorkspaces({
   navigator?: Navigation | undefined;
   scope: string;
   chats: readonly ChatListItem[];
-  renderChat: (item: ChatListItem) => ReactNode;
+  renderChat: (item: ChatListItem, rename: () => void) => ReactNode;
   onNew?: (projectId?: string) => void;
 }) {
   useChatConversions(session);
@@ -111,6 +113,7 @@ export function SoloWorkspaces({
     item: ChatListItem;
     visit: AbortSignal | undefined;
   }>();
+  const [renaming, setRenaming] = useState<string>();
   const [deleting, setDeleting] = useState<string>();
   const [projectError, setProjectError] = useState("");
   const [readError, setReadError] = useState<{ id: string; message: string }>();
@@ -319,6 +322,19 @@ export function SoloWorkspaces({
                   const channel = channels.channels.find(
                     (channel) => channel.id === item.id,
                   );
+                  if (renaming === item.id)
+                    return (
+                      <SoloChatName
+                        key={item.id}
+                        session={session}
+                        id={item.id}
+                        title={item.title}
+                        close={(focus) => {
+                          setRenaming(undefined);
+                          if (focus) setRowFocus(item.id);
+                        }}
+                      />
+                    );
                   return (
                     <ChatActionsMenu
                       key={item.id}
@@ -366,7 +382,11 @@ export function SoloWorkspaces({
                         channelId={item.id}
                         sectionKey={DROP + project.id}
                       >
-                        {renderChat(item)}
+                        {renderChat(item, () => {
+                          if (renaming || !canEditLifetime(session, channel))
+                            return;
+                          setRenaming(item.id);
+                        })}
                       </DraggableChannel>
                     </ChatActionsMenu>
                   );

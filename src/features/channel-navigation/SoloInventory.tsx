@@ -108,7 +108,7 @@ export function SoloInventory({
             soloDraftTarget(scope, project ? { project } : {}),
           );
         }}
-        renderChat={(item) => (
+        renderChat={(item, rename) => (
           <SoloConversationRow
             key={item.id}
             session={session}
@@ -117,6 +117,7 @@ export function SoloInventory({
             selected={selected === item.id}
             working={workingChannels.has(item.id)}
             onSelect={() => void open(item.id)}
+            onRename={rename}
             onOpenThread={(thread) =>
               openMessage(thread.channelId, thread.rootId)
             }
@@ -148,6 +149,7 @@ function SoloConversationRow({
   selected,
   working,
   onSelect,
+  onRename,
   onOpenThread,
   onOpenWorkingAgent,
   onOpenAgentActivity,
@@ -158,6 +160,7 @@ function SoloConversationRow({
   selected: boolean;
   working: boolean;
   onSelect: () => void;
+  onRename: () => void;
 } & Pick<
   ComponentProps<typeof ChannelActivityPopover>,
   "onOpenThread" | "onOpenWorkingAgent" | "onOpenAgentActivity"
@@ -183,7 +186,10 @@ function SoloConversationRow({
           selected={selected}
           data-solo-channel-id={id}
           aria-current={selected ? "page" : undefined}
-          onClick={onSelect}
+          onClick={(event) => {
+            if (event.detail < 2) onSelect();
+          }}
+          onDoubleClick={onRename}
           icon={
             <span className={styles.conversationIcon} aria-hidden="true">
               <ChatCircleIcon size={16} />

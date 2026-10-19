@@ -920,6 +920,44 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await page.keyboard.press("Escape");
 
   await expect(renamedRow).toBeFocused();
+  // Inline renaming exercises native text selection and the actual sidebar host.
+  await renamedRow.dblclick();
+  await expect(lifetime).not.toBeVisible();
+  const inlineName = sidebar.getByRole("textbox", {
+    name: "Chat name",
+    exact: true,
+  });
+  await expect(inlineName).toBeFocused();
+  await expect
+    .poll(() =>
+      inlineName.evaluate((input) => [
+        input.selectionStart,
+        input.selectionEnd,
+        input.value.length,
+      ]),
+    )
+    .toEqual([0, 42, 42]);
+  await page.keyboard.type("Inline plan");
+  await inlineName.press("Enter");
+  await expect(inlineName).toHaveCount(0);
+  const inlineRow = sidebar.getByRole("button", {
+    name: "Inline plan",
+    exact: true,
+  });
+  await expect(inlineRow).toBeVisible();
+  await expect(inlineRow).toBeFocused();
+  expect(app.report.detailsPublications).toHaveLength(2);
+  const rename = app.report.detailsPublications[1];
+  expect(verifyEvent(rename)).toBe(true);
+  expect(rename.tags).toContainEqual(["name", "Inline plan"]);
+  expect(rename.tags.some(([key]) => key === "ttl")).toBe(false);
+  await inlineRow.dblclick();
+  await expect(inlineName).toBeFocused();
+  await page.keyboard.type("Discard this");
+  await inlineName.press("Escape");
+  await expect(inlineName).toHaveCount(0);
+  await expect(inlineRow).toBeFocused();
+  expect(app.report.detailsPublications).toHaveLength(2);
 });
 
 // Native caret placement after focus handoffs and popup picks needs a browser.

@@ -84,6 +84,9 @@ function createQueue(session: RelaySession) {
     else waits.delete(channelId);
     return (
       current.length > 0 ||
+      (activity?.typing ?? []).some(
+        (entry) => entry.channelId === channelId && !entry.threadRootId,
+      ) ||
       (!!activity &&
         activity.status !== "listening" &&
         activity.status !== "unavailable")
@@ -190,6 +193,14 @@ function createQueue(session: RelaySession) {
       };
     },
     submit(entry: Omit<Entry, "id">) {
+      // Upload completion can arrive after the removal notification, even before
+      // this queue exists. Reject before allocating a slot so upload recovery runs.
+      if (
+        !session.channels
+          .list()
+          .channels.some((row) => row.id === entry.channelId)
+      )
+        throw new Error("This chat is no longer available for sending.");
       watch();
       if (
         !entry.beforeRelease &&

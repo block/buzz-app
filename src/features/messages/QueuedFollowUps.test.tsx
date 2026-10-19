@@ -10,6 +10,7 @@ import { QueuedFollowUps } from "./QueuedFollowUps";
 afterEach(cleanup);
 function fixture() {
   const session = {
+    channels: { list: () => ({ channels: [{ id: "chat" }] }) },
     agentActivity: {
       activate: () => () => {},
       subscribe: () => () => {},

@@ -6,6 +6,10 @@ import { createOutbox } from "../relay/outbox";
 import { createAgentActivity } from "../agents/activity";
 import { followUpQueue } from "./follow-up-queue";
 
+type ActivityTyping = ReturnType<
+  RelaySession["agentActivity"]["snapshot"]
+>["typing"];
+
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
@@ -19,12 +23,14 @@ function fixture(extra: Partial<RelaySession> = {}) {
   let local: readonly LocalWork[] = [];
   let turns: ReturnType<RelaySession["agentActivity"]["snapshot"]>["turns"] =
     [];
+  let typing: ActivityTyping = [];
   const deactivate = vi.fn();
   const session = {
+    channels: { list: () => ({ channels: [{ id: "chat" }, { id: "other" }] }) },
     ...extra,
     agentActivity: {
       activate: () => deactivate,
-      snapshot: () => ({ local, turns, status: "listening" }),
+      snapshot: () => ({ local, turns, typing, status: "listening" }),
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -61,6 +67,10 @@ function fixture(extra: Partial<RelaySession> = {}) {
           state,
         },
       ];
+      for (const listener of listeners) listener();
+    },
+    typing(value: ActivityTyping) {
+      typing = value;
       for (const listener of listeners) listener();
     },
     loseEvidence() {
@@ -242,7 +252,10 @@ it("validates the idle path and upgrades an automatic release to explicit Send",
 it("activates the real observer before deciding and waits for its live snapshot", () => {
   const observe = vi.fn();
   const activity = createAgentActivity(true, observe, () => true);
-  const session = { agentActivity: activity.queries } as RelaySession;
+  const session = {
+    ...fixture().session,
+    agentActivity: activity.queries,
+  } as RelaySession;
   const queue = followUpQueue(session);
   const publish = vi.fn(() => "next");
   try {
@@ -363,3 +376,39 @@ it.each(["unknown", "accepted"] as const)(
     }
   },
 );
+
+it("holds channel typing until it clears, without treating thread or other-channel typing as work", () => {
+  const h = fixture();
+  const typing = {
+    agent: "agent",
+    channelId: "chat",
+    startedAt: 1,
+    timestamp: 1,
+    threadRootId: undefined,
+    working: true,
+    expiresAt: 8001,
+  };
+  h.typing([typing]);
+  const entry = h.entry("next");
+  h.queue.submit(entry);
+  expect(entry.publish).not.toHaveBeenCalled();
+  h.typing([
+    { ...typing, threadRootId: "thread" },
+    { ...typing, channelId: "other" },
+  ]);
+  expect(entry.publish).toHaveBeenCalledOnce();
+});
+
+it("rejects a late upload submission after its destination disappeared without allocating a slot or activity lease", () => {
+  const h = fixture({
+    channels: { list: () => ({ channels: [] }) },
+  } as unknown as Partial<RelaySession>);
+  const activate = vi.spyOn(h.session.agentActivity, "activate");
+  const entry = h.entry("late upload");
+  expect(() => h.queue.submit(entry)).toThrow(
+    "This chat is no longer available for sending.",
+  );
+  expect(h.queue.snapshot()).toEqual([]);
+  expect(entry.publish).not.toHaveBeenCalled();
+  expect(activate).not.toHaveBeenCalled();
+});

@@ -7791,3 +7791,68 @@ it("withholds recording tools while a message edit cannot take attachments", asy
   );
   expect(screen.getByRole("button", { name: "Start recording" })).toBeVisible();
 });
+
+it("recovers an uploaded follow-up instead of queuing it after its chat disappeared", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const h = mount();
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  const gate = deferred<ReturnType<typeof uploadDescriptor>>();
+  const upload = vi.fn(() => gate.promise);
+  let present = true;
+  const activity = { status: "unavailable", local: [], turns: [], typing: [] };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      attachments: { upload },
+      channels: {
+        ...h.session.channels,
+        list: () => ({
+          status: "ready",
+          channels: present
+            ? [{ id: "channel", channelType: "solo", creator: "viewer" }]
+            : [],
+        }),
+      },
+      channelWrites: {
+        refreshMembership: async () => ({
+          id: "channel",
+          members: [first.pubkey],
+        }),
+        addAgents: vi.fn(),
+      },
+      agentActivity: {
+        activate: () => () => {},
+        subscribe: () => () => {},
+        snapshot: () => activity,
+      },
+    } as unknown as RelaySession,
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("Follow up with attachment");
+  });
+  fireEvent.change(screen.getByLabelText("Choose attachments"), {
+    target: {
+      files: [new NodeFile(["notes"], "notes.txt", { type: "text/plain" })],
+    },
+  });
+  h.submit();
+  await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  // Removal has already happened when background publication reaches the queue.
+  present = false;
+  await act(async () => gate.resolve(uploadDescriptor()));
+  await waitFor(() =>
+    expect(h.input()).toHaveValue("@Honey Follow up with attachment"),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("region", { name: "Queued follow-ups" }),
+  ).toBeNull();
+  expect(h.input()).toHaveValue("@Honey Follow up with attachment");
+  expect(
+    screen.getByRole("button", { name: "Remove notes.txt" }),
+  ).toBeVisible();
+});

@@ -1599,6 +1599,9 @@ it("retires queued entries and waits only after confirmed removal, including pen
   const deactivate = vi.fn();
   const gate = deferred<void>();
   const queue = followUpQueue({
+    channels: {
+      list: () => ({ channels: h.removed.mock.calls.length ? [] : [{ id }] }),
+    },
     channelLifecycle: h.owner.capability,
     agentActivity: {
       activate: () => deactivate,

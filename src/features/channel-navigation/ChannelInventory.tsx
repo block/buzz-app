@@ -453,6 +453,16 @@ export function ChannelInventory({
     ),
     list.activityStatus === "ready",
   );
+  // Menu dismissal may run before a moved row mounts at its new placement.
+  // Only an actual filter exclusion should return focus to a section summary.
+  const hiddenRowSections = useRef(new Map<string, string>());
+  useLayoutEffect(() => {
+    hiddenRowSections.current = new Map(
+      filteredSections.flatMap((section) =>
+        section.hiddenRows.map(({ id }) => [id, section.key] as const),
+      ),
+    );
+  }, [filteredSections]);
   const channelSectionKey = useCallback(
     (channelId: string) => {
       const data = queries.sidebarPreferences.snapshot().data;
@@ -799,11 +809,14 @@ export function ChannelInventory({
         `[data-channel-id="${CSS.escape(channelId)}"]`,
       );
       if (row) return row;
-      return list?.querySelector<HTMLElement>(
-        `[data-sidebar-section="${CSS.escape(channelSectionKey(channelId))}"] details > summary`,
-      );
+      const sectionKey = hiddenRowSections.current.get(channelId);
+      return sectionKey
+        ? list?.querySelector<HTMLElement>(
+            `[data-sidebar-section="${CSS.escape(sectionKey)}"] details > summary`,
+          )
+        : undefined;
     },
-    [channelSectionKey, sidebar.list],
+    [sidebar.list],
   );
   const rowMenuFinalFocus = useCallback(
     (channelId: string) =>

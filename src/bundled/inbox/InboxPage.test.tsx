@@ -2217,6 +2217,12 @@ it("filters real session evidence, opens an exact message and marks it read, and
     screen.getByRole("button", { name: "Open Alice in #Design" }),
   );
   expect(screen.getByRole("img", { name: "Unread" })).toBeInTheDocument();
+  // Re-clicking reveals the message again, which takes focus.
+  await waitFor(() =>
+    expect(
+      reader().querySelector(`[data-message-id="${h.mention.id}"]`),
+    ).toHaveFocus(),
+  );
   expect(
     screen.queryByText(/Marked unread on this device/),
   ).not.toBeInTheDocument();
@@ -2593,11 +2599,11 @@ it.each(["retry", "other", "blur"] as const)(
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
     const detail = reader();
-    // The exact reader has already revealed its message, not a future focus handoff.
+    // The exact reader has already revealed and focused its message, so no later reveal takes focus.
     await waitFor(() =>
       expect(
         detail.querySelector(`[data-message-id="${h.mention.id}"]`),
-      ).toBeInTheDocument(),
+      ).toHaveFocus(),
     );
     const retry = screen.getByRole("button", { name: "Retry inbox" });
     const other = screen.getByRole("button", { name: "Unread only" });
@@ -2646,7 +2652,7 @@ it("a second rejected Retry retains its focused control until a successful recov
   await waitFor(() =>
     expect(
       detail.querySelector(`[data-message-id="${h.mention.id}"]`),
-    ).toBeInTheDocument(),
+    ).toHaveFocus(),
   );
   const retry = screen.getByRole("button", { name: "Retry inbox" });
   const release = h.holdSave();
@@ -3156,7 +3162,7 @@ it.each([true, false])(
       screen.getByRole("button", { name: "Open Alice in #Design" }),
     );
     const editor = await screen.findByRole("textbox", {
-      name: soloChannel ? "Message #Design" : "Reply to thread",
+      name: soloChannel ? "Message your agents" : "Reply to thread",
     });
     fireEvent.change(editor, { target: { value: "Respond to this" } });
     await waitFor(() =>
@@ -3201,7 +3207,7 @@ it("Inbox Solo chat activity with multiple agents requires an explicit recipient
     screen.getByRole("button", { name: "Open Alice in #Design" }),
   );
   const editor = await screen.findByRole("textbox", {
-    name: "Message #Design",
+    name: "Message your agents",
   });
   fireEvent.change(editor, { target: { value: "Choose someone first" } });
   await waitFor(() =>
@@ -3230,7 +3236,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
     screen.getByRole("button", { name: "Open Alice in #Design" }),
   );
   const editor = await screen.findByRole("textbox", {
-    name: "Message #Design",
+    name: "Message your agents",
   });
   fireEvent.change(editor, { target: { value: "Draft in progress" } });
   act(() =>
@@ -3249,19 +3255,19 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
     ).toBe(true),
   );
   await act(async () => {});
-  expect(screen.getByRole("textbox", { name: "Message #Design" })).toHaveValue(
-    "Draft in progress",
-  );
+  expect(
+    screen.getByRole("textbox", { name: "Message your agents" }),
+  ).toHaveValue("Draft in progress");
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),
   ).not.toBeInTheDocument();
   const [row] = rows();
   if (!row) throw Error("Missing regrouped row");
-  // Reselecting the regrouped row keeps its session timeline.
+  // Reselecting the regrouped row keeps its Solo chat timeline.
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
   await act(async () => {});
   expect(
-    screen.getByRole("textbox", { name: "Message this session" }),
+    screen.getByRole("textbox", { name: "Message your agents" }),
   ).toHaveValue("Draft in progress");
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),

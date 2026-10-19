@@ -76,6 +76,22 @@ test("dragging a group header moves the whole group, keeps its state, and persis
   await page.mouse.move(x, y - 40, { steps: 4 });
   await expect(laptop).toHaveAttribute("data-section-dragging");
   await page.mouse.move(x, y, { steps: 4 });
+  // Deliver a click in the drop's event turn, before dnd-kit can remove its
+  // document guard. stopPropagation alone must not toggle the native summary.
+  await header(page, "laptop").evaluate((element) => {
+    element.ownerDocument.addEventListener(
+      "pointerup",
+      () =>
+        element.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+            detail: 1,
+          }),
+        ),
+      { once: true },
+    );
+  });
   await page.mouse.up();
   await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
   await expect(laptop.locator("details")).not.toHaveAttribute("open");

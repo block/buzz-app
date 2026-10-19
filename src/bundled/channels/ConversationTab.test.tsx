@@ -229,6 +229,48 @@ it.each(["thread", "conversation"] as const)(
   },
 );
 
+it.each(["thread", "conversation"] as const)(
+  "%s tabs that only reveal never visit their channel",
+  (kind) => {
+    const channel = { id: "beta", name: "Beta", members: ["viewer"] };
+    const snapshot = { status: "ready", channels: [channel] };
+    const enterChannel = vi.fn(async () => {});
+    const session = {
+      viewer: "viewer",
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+      unread: { enterChannel, leaveChannel: vi.fn() },
+    } as unknown as RelaySession;
+    render(
+      <ConversationTab
+        tab={{
+          id: "beta-tab",
+          kind,
+          channelId: "beta",
+          messageId: "a".repeat(64),
+          // A conversation tab seeks no message here; its reader is not mocked.
+          revealRequest: kind === "thread" ? 1 : undefined,
+        }}
+        channel={channel}
+        session={session}
+        scope="reveal-test"
+        openLink={() => false}
+        canOpenLink={() => false}
+        openThread={() => {}}
+        close={() => {}}
+        active
+        visit={false}
+      />,
+    );
+    expect(screen.getByLabelText("Conversation in Beta")).toBeVisible();
+    expect(enterChannel).not.toHaveBeenCalled();
+    if (kind === "thread")
+      expect(screen.getByText("Thread content")).toHaveAttribute(
+        "data-reveal-selected",
+        "true",
+      );
+  },
+);
+
 it.each([false, true])(
   "restored Reply intent is not replayed but fresh requests are delivered (focusOnMount=%s)",
   (focusOnMount) => {

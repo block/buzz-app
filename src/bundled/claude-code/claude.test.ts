@@ -281,6 +281,133 @@ it("reports a turn that ends in an error with Claude's own words", async () => {
   });
 });
 
+const interrupts = (fake: { received: Record<string, unknown>[] }) =>
+  fake.received.filter(
+    (message) =>
+      message.type === "control_request" &&
+      (message.request as { subtype?: string }).subtype === "interrupt",
+  );
+/** Ends the open turn as Claude does one stopped in the middle of a tool. */
+const abortTools = (fake: { emit(message: Record<string, unknown>): void }) => {
+  fake.emit({
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+    terminal_reason: "aborted_tools",
+    result: "Tool use was interrupted",
+    session_id: "s1",
+  });
+  fake.emit({
+    type: "system",
+    subtype: "session_state_changed",
+    state: "idle",
+    session_id: "s1",
+  });
+};
+
+it("interrupts a running turn with a control request, and does nothing when idle", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  await claude.interrupt();
+  expect(interrupts(fake)).toEqual([]);
+  fake.hold = true;
+  const sent = claude.send("hello");
+  await flush();
+  await claude.interrupt();
+  expect(interrupts(fake)).toEqual([
+    expect.objectContaining({ request: { subtype: "interrupt" } }),
+  ]);
+  fake.finish();
+  await expect(sent).resolves.toEqual({ ok: true });
+  await claude.interrupt();
+  expect(interrupts(fake)).toHaveLength(1);
+});
+
+it("settles a stopped turn that Claude ends as aborted tools as done, not failed", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.hold = true;
+  const sent = claude.send("hello");
+  await flush();
+  await claude.interrupt();
+  abortTools(fake);
+  await expect(sent).resolves.toEqual({ ok: true });
+  expect(claude.busy).toBe(false);
+});
+
+it("still reports aborted tools as a failure when the owner did not stop the turn", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.hold = true;
+  const sent = claude.send("hello");
+  await flush();
+  abortTools(fake);
+  await expect(sent).resolves.toEqual({
+    ok: false,
+    error: "Tool use was interrupted",
+  });
+});
+
+it("forgets a stop once its turn ends, so a later failure is reported", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.hold = true;
+  const stopped = claude.send("first");
+  await flush();
+  await claude.interrupt();
+  abortTools(fake);
+  await expect(stopped).resolves.toEqual({ ok: true });
+  const next = claude.send("second");
+  await flush();
+  fake.finish({ error: "Credit balance is too low" });
+  await expect(next).resolves.toEqual({
+    ok: false,
+    error: "Credit balance is too low",
+  });
+});
+
+it("throws when Claude refuses to stop, and reports a later real error", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.hold = true;
+  fake.interruptError = "not now";
+  const sent = claude.send("hello");
+  await flush();
+  await expect(claude.interrupt()).rejects.toThrow(
+    "Claude did not stop: not now",
+  );
+  fake.finish({ error: "Credit balance is too low" });
+  await expect(sent).resolves.toEqual({
+    ok: false,
+    error: "Credit balance is too low",
+  });
+});
+
 it("fails what is waiting when the process exits, with its last stderr line", async () => {
   const { spawn } = fakeSpawn();
   const claude = await ClaudeProcess.start(spawn, {

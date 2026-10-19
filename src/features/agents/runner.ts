@@ -471,6 +471,33 @@ export class AgentRunners {
     const runner = this.runners.get(pubkey);
     return !!runner?.type?.run && !!runner.asked && runner.mayHold;
   }
+  /** The agent's handle outside any run, while this copy runs it with a
+   * type of `pluginId`, not changing it, and its community is live. Each
+   * call through the handle checks that again, so a kept handle stops
+   * working while it no longer holds, and for good once the agent's type
+   * or its plugin is replaced. */
+  handle(pubkey: string, pluginId: string) {
+    const held = () => {
+      const runner = this.runners.get(pubkey);
+      const agent = this.host.ready(pubkey);
+      return runner?.type?.pluginId === pluginId &&
+        !runner.transitioning &&
+        agent &&
+        this.runs(pubkey)
+        ? { runner, agent }
+        : undefined;
+    };
+    const now = held();
+    if (!now) return;
+    const { runner, agent } = now;
+    const { signal } = runner.controller;
+    return guarded(this.handleFor(runner, agent, signal), () => {
+      if (signal.aborted || held()?.runner !== runner)
+        throw new Error(
+          `${agent.name} no longer runs here as this plugin's agent; ask for its handle again`,
+        );
+    });
+  }
   /** Whether another copy of the app runs an agent this one could. */
   yielded(pubkey: string) {
     const runner = this.runners.get(pubkey);
@@ -1737,50 +1764,7 @@ export class AgentRunners {
       lifetime,
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
-    const handle: AgentHandle = Object.freeze({
-      pubkey: agent.pubkey,
-      name: agent.name,
-      owner: agent.owner,
-      publish: (event: AgentEventTemplate) => this.publish(runner, event),
-      query: (filters: readonly object[]) =>
-        this.require().query(agent.pubkey, filters),
-      audienceAuthority: async (
-        destination: string,
-        sources: readonly string[],
-      ) => {
-        signal.throwIfAborted();
-        const native = this.require();
-        if (!native.audienceAuthority)
-          throw new Error(
-            "Current audience authority is unsupported by this host.",
-          );
-        const response = await native.audienceAuthority(
-          agent.pubkey,
-          destination,
-          sources,
-        );
-        signal.throwIfAborted();
-        return response;
-      },
-      searchProfiles: (query: string, limit: number) =>
-        this.require().searchProfiles(agent.pubkey, query, limit),
-      upload: (data: string, mime: string) =>
-        this.require().upload(agent.pubkey, data, mime),
-      media: (url: string) => this.require().media(agent.pubkey, url),
-      remember: async (slug: string, body: string, after: number) => {
-        const event = await this.require().remember(
-          agent.pubkey,
-          slug,
-          body,
-          after,
-        );
-        this.host.remembered(agent.pubkey, slug, body);
-        return event;
-      },
-      templates: () => this.host.templates(agent),
-      tabs: () => this.host.tabs(agent),
-      attention: this.attention(agent.pubkey),
-    });
+    const handle = this.handleFor(runner, agent, signal);
     const working = this.working(runner, job, agent);
     const trigger = job.trigger;
     const named =
@@ -1807,6 +1791,8 @@ export class AgentRunners {
         ignored: () => job.work?.remove(),
         acknowledged: () => job.work?.started(),
         superseded: () => job.work?.supersede(),
+        interruptible: (stop: () => Promise<void>) =>
+          job.work?.interruptible(stop),
         ...(named ? { named } : {}),
         step: (tool: string, target?: string) => job.work?.step(tool, target),
         current: () => !lifetime.aborted && this.stillCurrent(runner, job),
@@ -1865,6 +1851,58 @@ export class AgentRunners {
     void held.then(() => {
       runner.busy.delete(lane);
       void this.drain(runner);
+    });
+  }
+
+  /** The agent as `run` holds it; `signal` bounds its audience checks. */
+  private handleFor(
+    runner: Runner,
+    agent: Agent,
+    signal: AbortSignal,
+  ): AgentHandle {
+    return Object.freeze({
+      pubkey: agent.pubkey,
+      name: agent.name,
+      owner: agent.owner,
+      publish: async (event: AgentEventTemplate) => this.publish(runner, event),
+      query: async (filters: readonly object[]) =>
+        this.require().query(agent.pubkey, filters),
+      audienceAuthority: async (
+        destination: string,
+        sources: readonly string[],
+      ) => {
+        signal.throwIfAborted();
+        const native = this.require();
+        if (!native.audienceAuthority)
+          throw new Error(
+            "Current audience authority is unsupported by this host.",
+          );
+        const response = await native.audienceAuthority(
+          agent.pubkey,
+          destination,
+          sources,
+        );
+        signal.throwIfAborted();
+        return response;
+      },
+      searchProfiles: async (query: string, limit: number) =>
+        this.require().searchProfiles(agent.pubkey, query, limit),
+      upload: async (data: string, mime: string) =>
+        this.require().upload(agent.pubkey, data, mime),
+      media: async (url: string) => this.require().media(agent.pubkey, url),
+      remember: async (slug: string, body: string, after: number) => {
+        const event = await this.require().remember(
+          agent.pubkey,
+          slug,
+          body,
+          after,
+        );
+        this.host.remembered(agent.pubkey, slug, body);
+        return event;
+      },
+      templates: () => this.host.templates(agent),
+      tabs: () => this.host.tabs(agent),
+      attention: this.attention(agent.pubkey),
     });
   }
 
@@ -1992,7 +2030,7 @@ export class AgentRunners {
     return Object.freeze({
       enabled: () => record().attentionEnabled === true,
       classifier: () => this.host.classifier(),
-      show: (slug: string, interest?: string) =>
+      show: async (slug: string, interest?: string) =>
         show(record(), slug, seconds(), interest),
       interests: (search?: string) => interestIds(record(), search),
       watches: (filter: WatchFilter = {}) =>
@@ -2037,6 +2075,33 @@ export class AgentRunners {
     bounded(runner.wrote, signed.id);
     return signed;
   }
+}
+
+const AsyncFunction = (async () => {}).constructor;
+
+/** `target`, with `live()` checked before each of its calls, however deep:
+ * its async methods reject when it fails, and the others throw. */
+function guarded<T extends object>(target: T, live: () => void): T {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(target).map(([key, value]) => [
+        key,
+        typeof value !== "function"
+          ? value && typeof value === "object"
+            ? guarded(value, live)
+            : value
+          : value.constructor === AsyncFunction
+            ? async (...args: unknown[]) => {
+                live();
+                return value(...args);
+              }
+            : (...args: unknown[]) => {
+                live();
+                return value(...args);
+              },
+      ]),
+    ),
+  ) as T;
 }
 
 /** Runs a standalone turn with a signal that also aborts

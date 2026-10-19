@@ -622,6 +622,24 @@ export const ROLE_GROUPS: RoleGroup[] = [
     ],
   },
   {
+    id: "chart",
+    name: "Chart series",
+    description:
+      "Marks that tell chart series apart, assigned in order and never cycled. Labels and values keep text roles.",
+    roles: [
+      "blue-10 light / blue-9 dark",
+      "orange-10 light / orange-8 dark",
+      "green-10 light / green-9 dark",
+      "purple-9 light / purple-10 dark",
+    ].map((pointsAt, index) => ({
+      token: `chart-series-${index + 1}`,
+      variable: `--chart-series-${index + 1}`,
+      pointsAt,
+      use: `Series ${index + 1} bars, lines and legend swatches; 3:1 against panels.`,
+      status: "core",
+    })),
+  },
+  {
     id: "scrollbars",
     name: "Scrollbars",
     description:

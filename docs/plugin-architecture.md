@@ -129,6 +129,15 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+An agent type's `run` gets the agent's handle, which publishes, reads and
+uploads as the agent. For agents that act on something other than a message,
+such as a call, `ctx.agents.handle(pubkey)` returns the same handle outside any
+run. It does so only for agents of the calling plugin's own types, while this
+copy of the app runs them, their type is not changing and their community is
+live; otherwise it returns `undefined`. A handle kept from earlier fails each
+call while that no longer holds, and for good once the agent's type or its
+plugin is replaced, so ask for it when acting rather than keeping it. Like any type whose agents run here, the type needs `run`.
+
 ```ts
 ctx.pages.register({
   id: "dashboard",
@@ -245,8 +254,8 @@ contracts with their own layout and local navigation.
 
 ### Bundled defaults
 
-**Channels is the only required bundled plugin.** Bestie
-and Todos are off by default. Feedback, Diff viewer, Identity
+**Channels is the only required bundled plugin.** Bestie,
+Todos and Usage are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -1094,6 +1103,23 @@ contract or relay protocol changes are required. Known channel references and
 unambiguous signed person/agent mentions share the inline hover styling. Names in
 ordinary prose never create notification intent or establish an identity.
 
+`registerCodeBlock({ id, title, matches, component, action? })` contributes optional
+presentation for a fenced code block. `matches(language)` receives the fence's
+info-string language as written; `component` and `action` receive `{ code, language }`. The
+host retains the code frame and its copy action, which copies the source; it
+places the optional `action` control, such as an expand button, before copy. A
+text selection spanning the block also copies its fenced source, not the
+presentation.
+Matching uses the same resolution as links without an `order`; throwing matchers
+are skipped. A render failure or plugin removal restores the plain block, and
+noninteractive previews always show the plain block. The bundled **Mermaid
+diagrams** plugin (`buzz.mermaid`) draws `mermaid` blocks with
+[Pele](https://pele.run), loaded on first use. Diagrams are untrusted content: Pele escapes
+their text and the plugin disables diagram links, images and Pele's own zoom
+controls. Its action opens the diagram in an expanded dialog, which zooms by
+pinch, Ctrl/⌘-scroll, drag, double-click and keyboard and offers Copy code.
+Invalid source shows Pele's error with the source.
+
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components, plus `.Tabs` while a plugin provides it. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
@@ -1127,8 +1153,9 @@ Exact message links still navigate to Channels rather than the page's route.
 
 `conversation.ui.Tabs({ id, session, scope, label, icon, children })` makes the
 page's content the first main tab of the host's conversation tab workspace.
-`children(open)` renders that tab; `open({ channelId, threadId? }, { keep? })`
+`children(open, close, isOpen)` renders that tab; `open({ channelId, threadId?, messageId? }, { keep? })`
 shows a joined conversation in a host tab and returns false for any other. A
+thread opened with `messageId` reveals that message and keeps it in view. A
 thread opens as a side-pane thread tab and a whole conversation as a side-pane
 conversation tab, each with the same reader and composer as Channels tabs, so
 the page stays in view; any thread can then move to the main pane. A plain open
@@ -1137,8 +1164,10 @@ an already-open conversation's tab is selected wherever it is. Each open moves
 keyboard focus to the opened tab's composer (a thread's reply box, keeping any
 reply target chosen in it) once it can take focus, unless the user clicks or
 types first; an open at a message reveals it instead, and a tab restored when
-the page remounts takes no focus. `id` keys the page's tabs, which last for its community session as
-Channels tabs do; they keep no Back/Forward visits.
+the page remounts takes no focus. `close(target)` closes that conversation's tab, leaving focus to the page unless it opens a tab in the same update, and returns false when none is open; `isOpen(target)` says whether it has one, and a thread opened at a reply keeps its tab once its root resolves. `id` keys the page's tabs, which last for its community session as
+Channels tabs do; they keep no Back/Forward visits. Showing a tab enters its
+channel visit, as in Channels; `visits: false` leaves reading to the page, as
+Inbox does.
 The tab workspace belongs to Channels, which supplies it with
 `conversation.registerTabs(component)`; the conversation service only holds that
 slot. `ui.Tabs` is undefined while no enabled plugin provides it, so a page reads

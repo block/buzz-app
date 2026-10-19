@@ -54,6 +54,8 @@ function fixture(
   const sent: Wire[] = [];
   /** Methods the server answers with a JSON-RPC error instead of a result. */
   const failing = new Set<string>();
+  /** Methods the server answers only once their promise settles. */
+  const held = new Map<string, Promise<void>>();
   const toolCalls = new Map<
     number | string,
     { threadId: string | undefined; turnId: string; callId: string }
@@ -82,6 +84,7 @@ function fixture(
         return;
       }
       if (request.id == null) return;
+      await held.get(request.method ?? "");
       if (request.method && failing.has(request.method)) {
         emit({
           id: request.id,
@@ -547,6 +550,7 @@ function fixture(
     process,
     sent,
     failing,
+    held,
     emit,
     publish,
     read,
@@ -1315,6 +1319,230 @@ it("cleans background terminals on server interruption and permits same-thread r
     1,
   );
 });
+it("registers a stopper that interrupts the turn it is running", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(interruptible).toHaveBeenCalledTimes(1);
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  await interruptible.mock.calls[0]?.[0]();
+  const sent = f.sent.filter((wire) => wire.method === "turn/interrupt");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]?.params).toEqual({
+    threadId: (f.starts()[0]?.params as { threadId: string } | undefined)
+      ?.threadId,
+    turnId: "turn-1",
+  });
+});
+
+it("refuses to stop a request still waiting for its turn, and leaves the running turn alone", async () => {
+  const f = fixture();
+  const running = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const waiting = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("first"), interruptible: running });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // Another model cannot be steered in, so it waits for the turn to end.
+  await f.runtime.run({
+    ...f.delivery("deeper"),
+    model: "deep-model",
+    interruptible: waiting,
+  });
+  await expect(waiting.mock.calls[0]?.[0]()).rejects.toThrow(
+    "Codex has not started on this message yet",
+  );
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  // The turn it did not stop ends as any other.
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "FIRST" });
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+});
+
+it("refuses to stop a request queued behind a finished turn that is still cleaning up", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const cleanup = deferred<void>();
+  f.held.set("thread/unsubscribe", cleanup.promise);
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "thread/unsubscribe")).toBe(
+      true,
+    ),
+  );
+  const waiting = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("second"), interruptible: waiting });
+  await expect(waiting.mock.calls[0]?.[0]()).rejects.toThrow(
+    "Codex has not started on this message yet",
+  );
+  // The request it did not stop runs once the finished turn lets go.
+  cleanup.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+});
+
+it("sends one interrupt for stops pressed together, and settles each with it", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const accepted = deferred<void>();
+  f.held.set("turn/interrupt", accepted.promise);
+  const stop = interruptible.mock.calls[0]?.[0];
+  const first = stop?.();
+  const second = stop?.();
+  await vi.waitFor(() =>
+    expect(
+      f.sent.filter((wire) => wire.method === "turn/interrupt"),
+    ).toHaveLength(1),
+  );
+  accepted.resolve();
+  await expect(first).resolves.toBeUndefined();
+  await expect(second).resolves.toBeUndefined();
+  await vi.waitFor(
+    () => expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Stopped"),
+    { timeout: 3_000 },
+  );
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(1);
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
+it("runs a message sent while a stopped turn is ending as the next turn, not steered into it", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const accepted = deferred<void>();
+  f.held.set("turn/interrupt", accepted.promise);
+  const stopping = interruptible.mock.calls[0]?.[0]();
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true),
+  );
+  await f.runtime.run(f.delivery("after"));
+  // It waits for the stopped turn to end, as a turn of its own.
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Starting"),
+  );
+  accepted.resolve();
+  await stopping;
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2), {
+    timeout: 3_000,
+  });
+  expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(false);
+  expect(inputText(f.starts()[1])).toContain("after");
+  f.complete(1, "AFTER");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "AFTER" });
+});
+
+it("rejects a stop Codex does not take, and still reports the turn's interruption", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.failing.add("turn/interrupt");
+  await expect(interruptible.mock.calls[0]?.[0]()).rejects.toThrow(
+    "turn/interrupt failed",
+  );
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(1);
+  // The turn is interrupted anyway, without the owner having stopped it.
+  f.interrupt();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
+  );
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: expect.stringContaining("turn was interrupted"),
+  });
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: false,
+    error: "Codex’s turn was interrupted",
+  });
+});
+
+it("sends nothing when asked to stop a request whose turn has finished", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "DONE");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  await expect(interruptible.mock.calls[0]?.[0]()).resolves.toBeUndefined();
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+});
+
+it("ends a turn the owner stopped as stopped, not as an interruption failure", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await interruptible.mock.calls[0]?.[0]();
+  // The stopped turn lets its shells linger a second before it settles.
+  await vi.waitFor(
+    () => expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Stopped"),
+    { timeout: 3_000 },
+  );
+  for (const method of [
+    "thread/backgroundTerminals/clean",
+    "thread/backgroundTerminals/list",
+  ])
+    expect(f.sent.some((wire) => wire.method === method)).toBe(true);
+  expect(f.publish).not.toHaveBeenCalled();
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
+  });
+});
+
+it("keeps looking for shells for a moment after a stopped turn, and ends one that shows up late", async () => {
+  const late: unknown[] = [];
+  const f = fixture(late, Promise.resolve());
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await interruptible.mock.calls[0]?.[0]();
+  const terminates = () =>
+    f.sent.filter(
+      (wire) => wire.method === "thread/backgroundTerminals/terminate",
+    );
+  // Codex hands the shell over only after the turn has ended.
+  await vi.waitFor(() =>
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/backgroundTerminals/list")
+        .length,
+    ).toBeGreaterThan(0),
+  );
+  expect(f.runtime.sessions(pubkey)[0]?.status).not.toBe("Stopped");
+  late.push({ processId: "77" });
+  await vi.waitFor(() => expect(terminates()).toHaveLength(1));
+  expect(terminates()[0]?.params).toMatchObject({ processId: "77" });
+  // The stopped turn lets its shells linger a second before it settles.
+  await vi.waitFor(
+    () => expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Stopped"),
+    { timeout: 3_000 },
+  );
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
 it("closes a native process returned after runtime disposal", async () => {
   const f = fixture();
   const gate = deferred<Awaited<ReturnType<typeof f.spawn>>>();

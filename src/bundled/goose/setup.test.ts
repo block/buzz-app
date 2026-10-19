@@ -150,6 +150,43 @@ describe("GooseSetup", () => {
     ]);
   });
 
+  it("discovers Databricks V2 models despite a populated catalog and refreshes on check", async () => {
+    const supported = ["goose-gpt-6-1-sol", "workspace.models.gpt-6-astra"];
+    const { fake, setup: goose } = setup({
+      providers: [
+        {
+          providerId: "databricks_v2",
+          providerName: "Databricks AI Gateway",
+          configured: true,
+          visibleInSetup: true,
+          models: [{ id: "goose-gpt-5-5" }],
+        },
+      ],
+      defaults: { providerId: "databricks_v2", modelId: "goose-gpt-5-5" },
+      supported,
+    });
+    expect((await goose.models("databricks_v2")).map(({ id }) => id)).toEqual(
+      supported,
+    );
+    await goose.models("databricks_v2");
+    const requests = () =>
+      fake.geese
+        .flatMap((process) => process.received)
+        .filter(
+          (message) =>
+            message.method ===
+            "_goose/unstable/providers/supported-models/list",
+        );
+    expect(requests()).toHaveLength(1);
+    expect(requests()[0]?.params).toEqual({ providerId: "databricks_v2" });
+    supported.push("goose-gpt-6-luna");
+    await goose.check();
+    expect((await goose.models("databricks_v2")).map(({ id }) => id)).toEqual(
+      supported,
+    );
+    expect(requests()).toHaveLength(2);
+  });
+
   it("offers an agent its provider's models, or those of goose's config", async () => {
     const { setup: goose } = setup({ supported: ["qwen3", "llama4"] });
     await expect(

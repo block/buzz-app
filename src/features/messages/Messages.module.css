@@ -163,12 +163,14 @@
   flex: 1;
   min-width: 0;
 }
-/* Keep both speakers inside the opposing avatar column, including narrow panes. */
+/* Reserve the opposing avatar column when space permits. At narrow widths or
+   enlarged text, keep enough of the row for readable words. The own avatar
+   remains outside this body in its existing flex column. */
 .message:has(> .messageGutter) > .messageBody {
   max-width: min(
     85%,
     46rem,
-    calc(100% - 2 * var(--message-side-space) - var(--space-4))
+    max(60%, calc(100% - 2 * var(--message-side-space) - var(--space-4)))
   );
 }
 .message[data-viewer-message] > .messageBody {
@@ -1765,10 +1767,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   display: contents;
 }
 .messageActions {
-  background: transparent;
-  color: var(--text-standard);
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
   order: 1;
   flex-shrink: 0;
   align-self: flex-end;
@@ -1785,8 +1783,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
   user-select: none;
-}
-.messageActions:not([data-placement="beside"]) {
   @apply popover-surface;
   --floating-radius: var(--radius-control);
   --floating-inset: var(--space-half);
@@ -1863,18 +1859,6 @@ html[data-keyboard-input] .quickReactionGlyph {
     inset: auto;
     opacity: 1;
     pointer-events: auto;
-  }
-  .messageActions[data-placement="beside"] {
-    translate: 0 -50%;
-  }
-  /* Only beside actions have a gap; above actions already meet the bubble. */
-  .messageActions[popover][data-placement="beside"]:popover-open::before {
-    content: "";
-    position: absolute;
-    inset-block: 0;
-    /* Insets start at the padding edge; include the toolbar's 1px border. */
-    inset-inline: calc(-1 * var(--space-2) - 1px);
-    z-index: -1;
   }
 }
 

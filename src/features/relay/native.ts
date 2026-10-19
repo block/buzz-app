@@ -336,6 +336,9 @@ export async function connectNativeTransport(
   const channelIdentity =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-cl");
+  const searchSort =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("buzz-search-sort");
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
@@ -774,6 +777,7 @@ export async function connectNativeTransport(
     uploadAttachment: (file, signal, progress) =>
       nativeAttachmentUpload(origin, file, signal, progress),
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
+    ...(searchSort ? { searchSort: true as const } : {}),
     writer: {
       ...writer,
       kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,

@@ -278,15 +278,18 @@ test("delete confirmation without typing purges the selected channel and survive
   await confirm.click();
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
+  // Its neighbor (not the sidebar's first row) takes its place, so a long
+  // sidebar does not scroll away from where the channel was. It opens as it
+  // does from its row: current, with its composer focused.
   await expect(
-    sidebar.getByRole("button", { name: "Alpha", exact: true }),
+    sidebar.getByRole("button", { name: "Beta", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeFocused();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await expect(row).toHaveCount(0);
   expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual([

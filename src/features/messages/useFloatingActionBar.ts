@@ -100,8 +100,10 @@ export function useFloatingActionBar(
 ) {
   const floating = useSyncExternalStore(subscribe, snapshot, () => false);
   const [revealed, setRevealed] = useState(false);
-  const [hoverAnchor, setHoverAnchor] = useState<Element | null>(null);
-  const contentBounds = useRef<DOMRect | null>(null);
+  const contentBounds = useRef<{
+    content: DOMRect;
+    toolbar: DOMRect;
+  } | null>(null);
 
   useEffect(() => {
     const row = rowRef?.current;
@@ -114,36 +116,46 @@ export function useFloatingActionBar(
     const hoverTarget = (target: EventTarget | null, event: PointerEvent) => {
       if (!(target instanceof Element)) return false;
       if (bar.contains(target) || contentAt(target)) return true;
-      // Retain an already active hover through gaps inside the painted content
-      // envelope. This neither activates whitespace nor intercepts its clicks.
+      // Retain only an active hover: content gaps and the tapered route to the
+      // toolbar are pass-through geometry, never activation or hit surfaces.
       const bounds = contentBounds.current;
-      return !!(
-        hovered &&
-        bounds &&
-        row.contains(target) &&
-        target.closest("[data-message-payload]") &&
-        event.clientX >= bounds.left &&
-        event.clientX <= bounds.right &&
-        event.clientY >= bounds.top &&
-        event.clientY <= bounds.bottom
-      );
-    };
-    const selectAnchor = (content: Element | null) => {
-      // Keep the initiating content stable through toolbar and popup travel.
       if (
-        content &&
-        !open &&
-        !bar.querySelector('[aria-haspopup][aria-expanded="true"]') &&
-        !behindActiveOverlay(row)
+        !hovered ||
+        !bounds ||
+        bounds.content.width <= 0 ||
+        bounds.content.height <= 0 ||
+        bounds.toolbar.width <= 0 ||
+        bounds.toolbar.height <= 0 ||
+        !row.contains(target)
       )
-        setHoverAnchor(content);
+        return false;
+      const { content, toolbar } = bounds;
+      const { clientX: x, clientY: y } = event;
+      if (
+        target.closest("[data-message-payload]") &&
+        x >= content.left &&
+        x <= content.right &&
+        y >= content.top &&
+        y <= content.bottom
+      )
+        return true;
+      if (y < toolbar.bottom || y > content.bottom) return false;
+      const span = content.bottom - toolbar.bottom;
+      const fraction = span > 0 ? (y - toolbar.bottom) / span : 0;
+      const left = Math.min(
+        content.left,
+        toolbar.left + (content.left - toolbar.left) * fraction,
+      );
+      const right = Math.max(
+        content.right,
+        toolbar.right + (content.right - toolbar.right) * fraction,
+      );
+      return x >= left && x <= right;
     };
     // The row includes empty space, bylines and accessories. Only painted
     // message content and the top-layer toolbar reveal pointer actions.
     const initialContent = row.querySelector(`:is(${contentSelector}):hover`);
     let hovered = !!initialContent || bar.matches(":hover");
-    // Deferred controls can mount after the pointer has already entered media.
-    selectAnchor(initialContent);
     // Read modality with focus on every update: pointer focus must not pin the
     // bar when hover leaves, including after keyboard-to-pointer transitions.
     const keyboardFocus = () =>
@@ -155,14 +167,10 @@ export function useFloatingActionBar(
         '[aria-haspopup][aria-expanded="true"]',
       );
       const next = hovered || focused || open || ownsPopup;
-      if (!next) {
-        row.removeAttribute("data-actions-revealed");
-        setHoverAnchor(null);
-      }
+      if (!next) row.removeAttribute("data-actions-revealed");
       setRevealed(next);
     };
     const over = (event: PointerEvent) => {
-      selectAnchor(contentAt(event.target));
       hovered = hoverTarget(event.target, event);
       update();
     };
@@ -240,7 +248,7 @@ export function useFloatingActionBar(
       bar.style.right = "";
       bar.style.maxWidth = "";
       bar.style.visibility = "";
-      delete bar.dataset.placement;
+      bar.style.clipPath = "";
     };
     // A narrow side pane covers, but does not unmount, the channel. Only a
     // second workspace can cover this one, so skip the hit test without it.
@@ -272,7 +280,6 @@ export function useFloatingActionBar(
       if (!bar.isConnected) return;
       // Resolve the painted message again when edits replace text with media.
       const visual =
-        (hoverAnchor && row.contains(hoverAnchor) ? hoverAnchor : null) ??
         row.querySelector<HTMLElement>("[data-message-action-anchor]") ??
         row.querySelector("[data-message-attachments]")?.firstElementChild ??
         slot;
@@ -297,7 +304,6 @@ export function useFloatingActionBar(
           Math.max(whole.bottom, rect.bottom) - top,
         );
       }
-      contentBounds.current = whole;
       if (covered(anchor)) {
         hide();
         return;
@@ -328,49 +334,34 @@ export function useFloatingActionBar(
       const width = bar.offsetWidth;
       // Layout height: an opening scale transition must not move the bar.
       const height = bar.offsetHeight;
-      const towardLeft = rtl !== row.hasAttribute("data-viewer-message");
-      const besideLeft = towardLeft
-        ? anchor.left - overlap - width
-        : anchor.right + overlap;
-      const center = anchor.top + anchor.height / 2;
-      const beside =
-        besideLeft >= start &&
-        besideLeft + width <= end &&
-        (!viewport ||
-          (center - height / 2 >= viewport.top &&
-            center + height / 2 <= viewport.bottom));
-      const placement = beside ? "beside" : "above";
-      if (bar.dataset.placement !== placement)
-        bar.dataset.placement = placement;
-      bar.style.transformOrigin = beside
-        ? towardLeft
-          ? "right center"
-          : "left center"
-        : rtl
-          ? "left bottom"
-          : "right bottom";
-      // Beside actions follow the hovered part; raised actions clear the whole
-      // message. Only a text-first message has bubble padding to overlap.
+      // Keep main's single above location while clearing every part of the
+      // message. No attachment-specific placement or pointer anchor is needed.
+      bar.style.transformOrigin = rtl ? "left bottom" : "right bottom";
+      // Only a text-first message has bubble padding to overlap.
       const aboveOverlap = first.closest("[data-message-attachments]")
         ? 0
         : overlap;
-      const top = beside ? center : whole.top + aboveOverlap;
-      const paintedTop = top - height / (beside ? 2 : 1);
+      const top = whole.top + aboveOverlap;
+      const paintedTop = top - height;
       if (
         viewport &&
-        ((beside ? anchor.top : whole.top) <= viewport.top ||
-          paintedTop >= viewport.bottom)
+        (whole.top <= viewport.top || paintedTop >= viewport.bottom)
       ) {
         hide();
         return;
       }
-      const left = beside
-        ? besideLeft
-        : rtl
-          ? whole.left - overlap
-          : whole.right - width + overlap;
+      // Keep the pane header clickable as actions scroll beneath its edge.
+      const hidden = viewport ? viewport.top - paintedTop : 0;
+      bar.style.clipPath =
+        hidden > 0 ? `inset(${hidden}px -100vmax -100vmax)` : "";
+      const left = rtl ? whole.left - overlap : whole.right - width + overlap;
+      const placedLeft = Math.max(start, Math.min(left, end - width));
+      contentBounds.current = {
+        content: whole,
+        toolbar: new DOMRect(placedLeft, paintedTop, width, height),
+      };
       bar.style.top = `${top}px`;
-      bar.style.left = `${Math.max(start, Math.min(left, end - width))}px`;
+      bar.style.left = `${placedLeft}px`;
       bar.style.right = "auto";
     };
     // A transition or animation on the slot or an ancestor (such as a sliding
@@ -476,7 +467,7 @@ export function useFloatingActionBar(
       unobserveOverlays();
       hide();
     };
-  }, [floating, revealed, hoverAnchor, rowRef, barRef, slotRef]);
+  }, [floating, revealed, rowRef, barRef, slotRef]);
 
   return floating;
 }

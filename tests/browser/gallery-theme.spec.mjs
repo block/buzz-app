@@ -155,9 +155,8 @@ test("an open image gallery follows host appearance while retaining its dark sta
     ).toBeFocused();
     // The app can go fully colorful without tinting the media canvas. Shared
     // controls and surrounding surfaces remain themed; only media roles stay fixed.
-    const vibe = other.getByRole("slider", { name: "Vibe level" });
-    await vibe.focus();
-    await vibe.press("End");
+    await other.getByRole("combobox", { name: "Accent level" }).click();
+    await other.getByRole("option", { name: "Buzzin’", exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute(
       "data-color-level",
       "full",

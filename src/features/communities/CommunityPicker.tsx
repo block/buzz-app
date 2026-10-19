@@ -259,7 +259,6 @@ export function CommunityPicker({
             }}
             align="end"
             padding="list"
-            size="compact"
             finalFocus={() =>
               joining || leaving
                 ? false

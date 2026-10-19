@@ -323,7 +323,8 @@ function MessageRowContent({
     row.attachments.length > 0 &&
     row.attachments.every((attachment) => !!safeMessageUrl(attachment.url));
   // Own-message surface colours apply to a bubble, never to a shown thread root.
-  const ownBubble = !shownRow && !!viewer && row.authorId === viewer;
+  const ownBubble =
+    !shownRow && !row.workflowOwnerId && !!viewer && row.authorId === viewer;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -740,7 +741,9 @@ function MessageRowContent({
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
         data-viewer-message={
-          alignViewer && row.authorId === viewer ? "" : undefined
+          alignViewer && !row.workflowOwnerId && row.authorId === viewer
+            ? ""
+            : undefined
         }
         data-own={(!attachmentOnly && !cardsOnly && ownBubble) || undefined}
       >
@@ -1216,6 +1219,7 @@ function AgentsMessageRow(props: MessageRowProps) {
           data-audience="agents"
           data-viewer-message={
             (props.alignViewer ?? true) &&
+            !row.workflowOwnerId &&
             row.authorId === (props.viewer ?? session?.viewer)
               ? ""
               : undefined

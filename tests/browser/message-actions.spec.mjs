@@ -619,7 +619,17 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
       await page.keyboard.press("ArrowRight");
       await row.getByRole("button", { name: "More message actions" }).focus();
     }
-    await expect(actions).toHaveAttribute("data-placement", "above");
+    await expect
+      .poll(() =>
+        actions.evaluate((bar) => {
+          const bubble = bar
+            .closest("[data-layout]")
+            .querySelector("[data-message-action-anchor]")
+            .getBoundingClientRect();
+          return bar.getBoundingClientRect().top < bubble.top;
+        }),
+      )
+      .toBe(true);
     await expect(actions).toHaveCSS("opacity", "1");
     const prose = await row.locator("p").first().boundingBox();
     const toolbar = await actions.boundingBox();

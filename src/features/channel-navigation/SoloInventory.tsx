@@ -132,11 +132,6 @@ export function SoloInventory({
       {list.status === "error" && !recoveryShown && (
         <p role="alert">{list.error}</p>
       )}
-      {!conversations.length && list.status === "ready" && (
-        <p className={styles.listMessage}>
-          Start a conversation with your agents.
-        </p>
-      )}
     </nav>
   );
 }

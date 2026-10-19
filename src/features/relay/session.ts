@@ -420,7 +420,7 @@ export function createRelaySession(
       activity.accessChanged();
       memories.clear();
       presence.clear();
-      channelActivity.clear();
+      channelActivity.retain(canReadRemote);
       activityRosterKey = undefined;
       archives.clear();
       workflows.clear();
@@ -436,6 +436,23 @@ export function createRelaySession(
       }
     }
   }
+  // Keep ordinary reads on their existing promise chain; page metadata is opt-in.
+  function readVerified(
+    filters: readonly ReadFilter[],
+    settings: ReadOptions | undefined,
+    channelTraffic: true,
+    beforeInbox: undefined,
+    page: { withRelayCount: true },
+  ): Promise<{ events: readonly RelayEvent[]; relayCount: number }>;
+  function readVerified(
+    filters: readonly ReadFilter[],
+    settings?: ReadOptions,
+    channelTraffic?: boolean,
+    beforeInbox?: (
+      events: readonly RelayEvent[],
+      raw: readonly RelayEvent[],
+    ) => void,
+  ): Promise<readonly RelayEvent[]>;
   async function readVerified(
     filters: readonly ReadFilter[],
     settings?: ReadOptions,
@@ -444,6 +461,7 @@ export function createRelaySession(
       events: readonly RelayEvent[],
       raw: readonly RelayEvent[],
     ) => void,
+    page?: { withRelayCount: true },
   ) {
     if (
       options.cachedOnly ||
@@ -478,6 +496,7 @@ export function createRelaySession(
     }
     if (closed || epoch !== accessEpoch)
       throw new DOMException("Stale relay read", "AbortError");
+    const relayCount = events.length;
     // A broken or stale transport must not promote private sidecar events into
     // finite reads, retained views, or store discovery.
     events = events.filter((event) => event.kind !== PRODUCT_FEEDBACK_KIND);
@@ -528,13 +547,14 @@ export function createRelaySession(
     );
     // Discovery must see signed grants/removals even when their channel is
     // currently denied; only the store interprets roster completeness.
-    return channelTraffic
+    const result = channelTraffic
       ? visible
       : events.filter(
           (event) =>
             [39000, 39002, 9007].includes(event.kind) ||
             visible.includes(event),
         );
+    return page ? { events: result, relayCount } : result;
   }
   /** The relay's verified answer only: no projection, discovery or inbox. */
   async function relayRead(
@@ -2140,9 +2160,22 @@ export function createRelaySession(
       return result;
     },
     async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
+      return (await session.readPage(filters, settings)).events;
+    },
+    /** Transport-page count precedes visibility filtering and local/live projection. */
+    async readPage(
+      filters: readonly ReadFilter[],
+      settings?: ReadOptions,
+    ): Promise<{ events: readonly VisibleEvent[]; relayCount: number }> {
       const began = revision;
       const epoch = accessEpoch;
-      const result = await verified.read(filters, settings);
+      const { events: result, relayCount } = await readVerified(
+        filters,
+        settings,
+        true,
+        undefined,
+        { withRelayCount: true },
+      );
       // Applying discovery can itself revoke access. Let that authority-only
       // read finish under current visibility; content/search completions must
       // still be fenced, including mixed discovery + content requests.
@@ -2164,8 +2197,17 @@ export function createRelaySession(
           merged.set(id, observation.event);
       }
       const events = [...merged.values()];
-      return projectEvents(events.filter(visibility(events)), local(), filters);
+      return {
+        events: projectEvents(
+          events.filter(visibility(events)),
+          local(),
+          filters,
+        ),
+        relayCount,
+      };
     },
+    /** Whether read() search filters may ask for `search_sort: "newest"`. */
+    searchSort: transport?.searchSort === true,
     /** An owned retained event view, not a replacement query snapshot. Limits bound
      * requests, not retained results. Ranked search/feed filters require read().
      * Subscribe, refresh and dispose with the plugin's scope. */

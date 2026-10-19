@@ -74,6 +74,7 @@ const PERSON_ROWS = 6;
 
 export function SearchResults({
   session,
+  inlineSettings,
   query,
   onQueryChange,
   input,
@@ -908,13 +909,6 @@ export function SearchResults({
                       ? "Loading recent conversations…"
                       : "No recent activity yet.",
                 },
-                {
-                  label: "Actions",
-                  destinations: pages.map((page) => ({
-                    ...page,
-                    run: choose(page.key, page.run),
-                  })),
-                },
               ]
             : [
                 // Named destinations lead, so typed text selects one first.
@@ -977,6 +971,7 @@ export function SearchResults({
               ];
   return (
     <SearchChoices
+      inlineSettings={inlineSettings}
       query={query}
       onQueryChange={onQueryChange}
       authorChip={
@@ -992,11 +987,6 @@ export function SearchResults({
       onDisplayQueryChange={updateDisplayQuery}
       input={input}
       label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
-      placeholder={
-        scopedChannelId
-          ? "Search messages…"
-          : "Search pages, people, conversations and messages…"
-      }
       scope={
         scopedChannelId && onScopeChange
           ? {

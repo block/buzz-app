@@ -74,6 +74,7 @@ export function AppearanceSettings({
       <div>
         <SettingsGroup>
           <PreferenceRow
+            id="setting-mode"
             title="Color mode"
             trailing={
               <ThemePicker

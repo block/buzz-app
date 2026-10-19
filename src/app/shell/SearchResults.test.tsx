@@ -41,6 +41,13 @@ import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -48,6 +55,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   cleanup();
   vi.useRealTimers();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
@@ -652,7 +660,10 @@ it.each(["", "Crew"])(
       );
       const pending = wire.next();
       expect(owner.session.channels.list().status).toBe("loading");
-      expect(screen.getByRole("option", { name: /Settings/ })).toBeVisible();
+      if (query)
+        expect(screen.getByRole("option", { name: /Settings/ })).toBeVisible();
+      else
+        expect(screen.queryByRole("option", { name: /Settings/ })).toBeNull();
       if (query) {
         expect(screen.getByText("Loading joined conversations…")).toBeVisible();
         expect(screen.queryByText("Loading recent conversations…")).toBeNull();
@@ -663,7 +674,10 @@ it.each(["", "Crew"])(
       await act(async () => pending.respond(discovery));
       expect(await screen.findByRole("option", { name: /Crew/ })).toBeVisible();
       expect(screen.queryByText("Loading joined conversations…")).toBeNull();
-      expect(screen.getByRole("option", { name: /Settings/ })).toBeVisible();
+      if (query)
+        expect(screen.getByRole("option", { name: /Settings/ })).toBeVisible();
+      else
+        expect(screen.queryByRole("option", { name: /Settings/ })).toBeNull();
     } finally {
       cleanup();
       owner.dispose();
@@ -2245,7 +2259,7 @@ it("renders from:<author chip> without exposing the signed operand in the input"
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
     expect(input).toHaveValue("");
     expect(input).toHaveFocus();
-    expect(chip.closest(".buzz-input-group")).toContainElement(input);
+    expect(chip.closest(".search-field")).toContainElement(input);
     await waitFor(() =>
       expect(reads.at(-1)?.[0]).toMatchObject({ authors: [human.pubkey] }),
     );
@@ -3107,7 +3121,7 @@ it("opens an existing DM from a person row and reports a failed start", async ()
       expect(
         within(group)
           .getAllByRole("option")
-          .map((row) => row.querySelector(".text-caption")?.textContent),
+          .map((row) => row.querySelector(".text-subtle")?.textContent),
       ).toEqual(["@ally · Direct message", "Start a direct message"]),
     );
     fireEvent.click(within(group).getByRole("option", { name: /Alice Chen/ }));

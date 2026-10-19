@@ -286,8 +286,12 @@ test.describe("pages inside one second", () => {
         .toBeGreaterThan(height);
       await settle(page);
       // A scrollbar drag moves the scroller with no further input events,
-      // into older rows that measure as they mount.
-      for (let step = 0; step < 10; step++) {
+      // into older rows that measure as they mount, short of the loaded top.
+      for (
+        let step = 0;
+        step < 10 && (await history(page).evaluate((e) => e.scrollTop)) >= 150;
+        step++
+      ) {
         const before = await anchor(page);
         await history(page).evaluate((e) => {
           e.scrollTop -= 150;
@@ -300,29 +304,62 @@ test.describe("pages inside one second", () => {
     }
   });
 
+  // Release the held page, read `distance` px further up, then grow the row
+  // in view: it grows downward from the reader.
+  async function grows(page, pending, distance) {
+    const height = await history(page).evaluate((e) => e.scrollHeight);
+    pending.release();
+    await expect
+      .poll(() => history(page).evaluate((e) => e.scrollHeight))
+      .toBeGreaterThan(height);
+    await settle(page);
+    await wheel(page, -distance);
+    const before = await anchor(page);
+    // An image or embed finishing below the reader's paragraph.
+    await history(page).evaluate((e, id) => {
+      const extra = document.createElement("div");
+      extra.style.height = "300px";
+      e.querySelector(`[data-message-id="${id}"] p`).after(extra);
+    }, before.id);
+    await settle(page);
+    await expectAnchor(page, before);
+  }
   for (const distance of [600, 1200])
     test(`a row in view grows downward ${distance}px above the page's reader`, async ({
       page,
       app,
     }) => {
-      const pending = await reading(page, app, 1400);
-      const height = await history(page).evaluate((e) => e.scrollHeight);
-      pending.release();
-      await expect
-        .poll(() => history(page).evaluate((e) => e.scrollHeight))
-        .toBeGreaterThan(height);
-      await settle(page);
-      await wheel(page, -distance);
-      const before = await anchor(page);
-      // An image or embed finishing below the reader's paragraph.
-      await history(page).evaluate((e, id) => {
-        const extra = document.createElement("div");
-        extra.style.height = "300px";
-        e.querySelector(`[data-message-id="${id}"] p`).after(extra);
-      }, before.id);
-      await settle(page);
-      await expectAnchor(page, before);
+      await grows(page, await reading(page, app, 1400), distance);
     });
+  test("a row in view grows downward above the page's reader in equal-height rows", async ({
+    page,
+    app,
+  }) => {
+    // Moved rows that keep their size measure without changing the list height.
+    for (const [key, events] of app.histories)
+      app.histories.set(
+        key,
+        events.map(({ kind, created_at, tags }) =>
+          app.sign({
+            kind,
+            created_at,
+            tags,
+            content: Array.from({ length: 6 }, (_, i) => `Paragraph ${i}`).join(
+              "\n\n",
+            ),
+          }),
+        ),
+      );
+    await open(page, app);
+    await history(page).hover();
+    for (let step = 0; step < 20 && !app.pending.length; step++)
+      await wheel(page, -500);
+    await expect.poll(() => app.pending.length).toBe(1);
+    if (await history(page).evaluate((e) => e.scrollTop))
+      await wheel(page, -100000);
+    await wheel(page, 600);
+    await grows(page, app.pending.shift(), 600);
+  });
 
   test("a live message in the loaded first second is new", async ({
     page,

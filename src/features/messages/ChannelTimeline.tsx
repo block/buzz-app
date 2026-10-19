@@ -590,12 +590,18 @@ function Timeline({
     };
     let height = list.style.height;
     const since = intent.current;
+    // Virtua re-observes moved rows in the next frame; they have measured by
+    // the one after, whether or not their height changed.
     let measured = false;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        measured = true;
+      });
+    });
     const hold = new MutationObserver(() => {
       const row = top();
       if (list.style.height === height) return;
       height = list.style.height;
-      measured = true;
       if (row !== undefined && settled.current && !follow.current)
         correctScrollTop(
           element,
@@ -603,17 +609,25 @@ function Timeline({
         );
     });
     const release = () => {
+      cancelAnimationFrame(frame);
       hold.disconnect();
       element.removeEventListener("scroll", read);
       element.removeEventListener("scrollend", end);
+      element.ownerDocument.removeEventListener("pointerup", up);
     };
+    // A held pointer can drag across more moved rows; it ends when released.
     const end = () => {
-      if (measured && (intent.current !== since || pointerHeld.current))
+      if (measured && intent.current !== since && !pointerHeld.current)
         release();
+    };
+    const up = () => {
+      if (measured) release();
     };
     hold.observe(list, { attributes: true, attributeFilter: ["style"] });
     element.addEventListener("scroll", read);
     element.addEventListener("scrollend", end);
+    // A drag can end outside the scroller.
+    element.ownerDocument.addEventListener("pointerup", up);
     return release;
   }, [rows, prepend]);
   useLayoutEffect(() => {

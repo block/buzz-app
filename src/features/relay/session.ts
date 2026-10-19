@@ -894,10 +894,15 @@ export function createRelaySession(
       channelActivityRevision = activityRevision;
       const projected = snapshot.channels.map((channel) => {
         const lastActivityAt = channelActivity.last(channel.id);
-        if (lastActivityAt === undefined) return channel;
+        if (!channelActivity.known(channel.id)) return channel;
         const previous = projectedChannels.get(channel);
-        if (previous?.lastActivityAt === lastActivityAt) return previous;
-        const next = Object.freeze({ ...channel, lastActivityAt });
+        if (previous && previous.lastActivityAt === lastActivityAt)
+          return previous;
+        const next = Object.freeze({
+          ...channel,
+          lastActivityAt,
+          activityKnown: true as const,
+        });
         projectedChannels.set(channel, next);
         return next;
       });
@@ -1397,6 +1402,23 @@ export function createRelaySession(
                 AbortSignal.timeout(20_000),
                 signal,
               ]),
+            )
+        : undefined;
+    })(),
+    writeFilter: (() => {
+      const write = transport?.writeSidebarFilter;
+      return write
+        ? (group, mode, sectionIds, signal, activeWindowSeconds) =>
+            write(
+              group,
+              mode,
+              sectionIds,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+              activeWindowSeconds,
             )
         : undefined;
     })(),
@@ -2807,10 +2829,10 @@ export function createRelaySession(
   let activityRosterKey: string | undefined;
   const refreshChannelActivity = () => {
     if (closed || !transport?.channelActivity) return;
+    const preferences = sidebarPreferences.queries.snapshot().data;
     if (
-      !Object.values(
-        sidebarPreferences.queries.snapshot().data?.sort ?? {},
-      ).includes("recent")
+      !Object.values(preferences?.sort ?? {}).includes("recent") &&
+      !Object.values(preferences?.filters ?? {}).includes("active")
     ) {
       channelActivity.cancel();
       activityRosterKey = undefined;

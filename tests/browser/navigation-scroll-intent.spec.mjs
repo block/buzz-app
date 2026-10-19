@@ -32,7 +32,7 @@ for (const cachedStartup of [false, true]) {
         solo.getByText("Start a conversation with your agents."),
       ).toBeVisible();
       await expect(
-        solo.getByText("Loading projects…", { exact: true }),
+        solo.getByText("Loading workspaces…", { exact: true }),
       ).toHaveCount(0);
       // Save a nonzero position, then cold-load that community with preferences held.
       await sidebar.evaluate((element) => {

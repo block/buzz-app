@@ -1,4 +1,5 @@
 import { audienceAuthorityCommunity } from "../src/features/sessions/audience-authority.ts";
+import { isSidebarPreferencesBatch } from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,
   MAX_EVENT_BYTES as CATALOG_EVENT_BYTES,
@@ -12,7 +13,12 @@ import { validStatusTemplate } from "./user-status.mjs";
 import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
 import { memoryResponseText } from "../src/features/agents/memory.ts";
 import { prepareMedia } from "./media-preparation.mjs";
-import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
+import {
+  assertSidebarSortIntent,
+  mutateSidebarSort,
+  assertSidebarFilterIntent,
+  mutateSidebarFilter,
+} from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import {
   communityGitRepository,
@@ -680,7 +686,9 @@ export function validFilters(filters) {
   return (
     Array.isArray(filters) &&
     filters.length >= 1 &&
-    (filters.length <= MAX_FILTERS || isWorkflowDefinitionBatch(filters)) &&
+    (filters.length <= MAX_FILTERS ||
+      isWorkflowDefinitionBatch(filters) ||
+      isSidebarPreferencesBatch(filters)) &&
     filters.every(
       (filter) =>
         filter &&
@@ -1156,6 +1164,7 @@ export function relayBrokerPlugin({
               "/api/relay/sidebar-section-order",
               "/api/relay/sidebar-star",
               "/api/relay/sidebar-sort",
+              "/api/relay/sidebar-filter",
               "/api/relay/sidebar-mute",
             ].includes(route) &&
             req.method === "POST"
@@ -1181,6 +1190,11 @@ export function relayBrokerPlugin({
                 assertSidebarStarIntent,
                 mutateSidebarStar,
               ],
+              "/api/relay/sidebar-filter": [
+                "channel-filter",
+                assertSidebarFilterIntent,
+                mutateSidebarFilter,
+              ],
               "/api/relay/sidebar-sort": [
                 "channel-sort",
                 assertSidebarSortIntent,
@@ -1192,7 +1206,8 @@ export function relayBrokerPlugin({
                 mutateSidebarMute,
               ],
             }[route];
-            const sorting = coordinate === "channel-sort";
+            const sorting =
+              coordinate === "channel-sort" || coordinate === "channel-filter";
             const muting = coordinate === "channel-mutes";
             // Sort and order intents carry up to 100 section IDs.
             const listing =
@@ -1321,7 +1336,14 @@ export function relayBrokerPlugin({
                   readHead,
                   publishEvent,
                 );
-                return sorting ? { groups: result } : result;
+                return coordinate === "channel-filter"
+                  ? {
+                      groups: result.filters,
+                      activeWindowSeconds: result.activeWindowSeconds,
+                    }
+                  : sorting
+                    ? { groups: result }
+                    : result;
               });
             sidebarMutations.set(relay, mutation);
             try {
@@ -1435,6 +1457,7 @@ export function relayBrokerPlugin({
               attachmentUploads: true,
               sidebarPreferences: true,
               sidebarSortWrites: true,
+              sidebarFilterWrites: true,
               channelActivity: true,
               sidebarMuteWrites: true,
               channelKit: true,

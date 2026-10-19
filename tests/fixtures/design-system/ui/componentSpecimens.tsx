@@ -1814,6 +1814,24 @@ function RadioGroupSpecimen() {
   return (
     <>
       <SpecimenGroup
+        label="Text-only tiles"
+        code={`<Field label="Delivery" nativeLabel={false}>
+  <RadioGroup defaultValue="all">
+    <Radio value="all" label="All updates" variant="tile" />
+    <Radio value="mentions" label="Mentions only" variant="tile" />
+    <Radio value="none" label="Unavailable" variant="tile" disabled />
+  </RadioGroup>
+</Field>`}
+      >
+        <Field label="Delivery" nativeLabel={false}>
+          <RadioGroup defaultValue="all">
+            <Radio value="all" label="All updates" variant="tile" />
+            <Radio value="mentions" label="Mentions only" variant="tile" />
+            <Radio value="none" label="Unavailable" variant="tile" disabled />
+          </RadioGroup>
+        </Field>
+      </SpecimenGroup>
+      <SpecimenGroup
         label="Native form reset"
         code={`<form aria-label="Notification preferences">
   <Field label="Notifications">
@@ -2057,6 +2075,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   accordion: () => (
     <SpecimenFrame
       code={`<Accordion
+  animate
   items={[
     {
       value: "purpose",
@@ -2109,6 +2128,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     >
       <InlineHeader title="Active section" />
       <Accordion
+        animate
         variant="section"
         items={[
           {

@@ -109,7 +109,7 @@ export interface BackdropTreatment {
  */
 export const PALETTE: PaletteHue[] = [
   { id: "neutral", usedBy: "structure", steps: [] },
-  { id: "purple", usedBy: "accent", steps: [] },
+  { id: "purple", usedBy: "categorical", steps: [] },
   { id: "red", usedBy: "danger", steps: [] },
   { id: "green", usedBy: "success", steps: [] },
   { id: "amber", usedBy: "warning", steps: [] },
@@ -291,39 +291,22 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-surface-message",
         variable: "--surface-message",
-        pointsAt: "neutral-2 light / neutral-4 dark",
+        pointsAt: "bubble-received in both modes",
         use: "Received message bubbles; pair with standard text and links.",
         status: "core",
       },
       {
         token: "bg-surface-message-own",
         variable: "--surface-message-own",
-        pointsAt:
-          "received fill with 5% black light / 5% white dark; selected accent otherwise",
+        pointsAt: "accent step 4 at Hummin’; step 9 at Buzzin’",
         use: "Own message bubbles; pair with --text-message-own.",
         status: "core",
       },
       {
-        token: "bg-surface-message-action",
-        variable: "--surface-message-action",
-        pointsAt: "neutral-12 by default; selected message accent otherwise",
-        use: "Send button and color swatches; pair with text-message-action.",
-        status: "core",
-      },
-      {
-        token: "bg-surface-message-action-hover",
-        variable: "--surface-message-action-hover",
-        pointsAt:
-          "neutral-11 by default; selected accent darkened 10% otherwise",
-        use: "Hover state for message-colored prominent actions.",
-        status: "core",
-      },
-      {
-        token: "bg-surface-message-action-pressed",
-        variable: "--surface-message-action-pressed",
-        pointsAt:
-          "neutral-action-pressed by default; selected accent darkened 20% otherwise",
-        use: "Pressed state for message-colored prominent actions.",
+        token: "bg-surface-message-highlight",
+        variable: "--surface-message-highlight",
+        pointsAt: "accent step 3",
+        use: "Temporary return-to-message cue; follows the accent color.",
         status: "core",
       },
       {
@@ -362,11 +345,47 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "text-row",
+        variable: "--text-row",
+        pointsAt: "text-navigation; accent step 12 once rows take the accent",
+        use: "Primary navigation text on a hovered or selected row; follows the row's fill.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-subtle",
+        variable: "--text-row-subtle",
+        pointsAt: "text-subtle; accent step 11 once rows take the accent",
+        use: "Supporting text on a hovered or selected row; follows the row's fill.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-metadata",
+        variable: "--text-row-metadata",
+        pointsAt: "text-metadata; accent step 11 once rows take the accent",
+        use: "Metadata on a hovered or selected row; follows the row's fill.",
+        status: "proposed",
+      },
+      {
+        token: "text-chrome-subtle",
+        variable: "--text-chrome-subtle",
+        pointsAt: "text-subtle; accent step 11 once the shell takes the accent",
+        use: "Inactive labels in the chrome capsule on the app shell.",
+        status: "proposed",
+      },
+      {
         token: "text-inverse",
         variable: "--text-inverse",
         pointsAt: "neutral-1 light / neutral-1 dark",
         use: "Text on prominent actions and inverse media surfaces.",
         status: "core",
+      },
+      {
+        token: "text-on-prominent",
+        variable: "--text-on-prominent",
+        pointsAt:
+          "text-inverse; accent contrast ink once strong controls take the accent",
+        use: "Text and icons on a prominent fill: buttons, checked controls, tooltips, badges.",
+        status: "proposed",
       },
       {
         token: "text-unavailable",
@@ -420,22 +439,17 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-message-own",
         variable: "--text-message-own",
-        pointsAt: "text-standard by default; bubble-ink for accents",
+        pointsAt:
+          "text-standard at Neutral; accent 12, or contrast ink at Full",
         use: "Prose on the selected outgoing message surface.",
         status: "core",
       },
       {
         token: "text-message-link-own",
         variable: "--text-message-link-own",
-        pointsAt: "text-link by default; bubble-ink for accents",
+        pointsAt:
+          "text-link at Neutral; accent link, 12, or contrast ink as the amount rises",
         use: "Links and mentions on the selected outgoing message surface.",
-        status: "core",
-      },
-      {
-        token: "text-message-action",
-        variable: "--text-message-action",
-        pointsAt: "neutral-1 by default; bubble-ink for accents",
-        use: "Send icon and selected swatch check on surface-message-action.",
         status: "core",
       },
       {
@@ -448,9 +462,34 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-accent",
         variable: "--text-accent",
-        pointsAt: "purple-12 light / purple-12 dark",
+        pointsAt: "accent step 11",
         use: "Linked or selected identity text.",
         status: "core",
+      },
+    ],
+  },
+  {
+    id: "file-artwork",
+    name: "File artwork",
+    description: "Fixed document-format artwork colors in both themes.",
+    roles: [
+      {
+        token: "file-pdf-surface",
+        variable: "--file-pdf-surface",
+        pointsAt: "#ffffff",
+        use: "White PDF icon tile, paired with file-pdf-ink.",
+        status: "core",
+        exception:
+          "Document-format artwork retains a fixed color pair across themes.",
+      },
+      {
+        token: "file-pdf-ink",
+        variable: "--file-pdf-ink",
+        pointsAt: "#d32f2f",
+        use: "Red PDF glyph on file-pdf-surface.",
+        status: "core",
+        exception:
+          "Document-format artwork retains a fixed color pair across themes.",
       },
     ],
   },
@@ -539,6 +578,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "border-message-thread",
+        variable: "--border-message-thread",
+        pointsAt: "neutral-4 light / neutral-6 dark",
+        use: "Reply connectors and thread spines on conversation surfaces.",
+        status: "core",
+      },
+      {
         token: "border-prominent",
         variable: "--border-prominent",
         pointsAt: "neutral-8 light / neutral-8 dark",
@@ -576,7 +622,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "border-accent",
         variable: "--border-accent",
-        pointsAt: "purple-8 light / purple-8 dark",
+        pointsAt: "accent step 11",
         use: "An identity accent boundary.",
         status: "core",
       },
@@ -590,7 +636,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-prominent",
         variable: "--affordance-prominent",
-        pointsAt: "neutral-12 light / neutral-12 dark",
+        pointsAt: "accent step 9 at either vibe level",
         use: "The main action fill.",
         status: "core",
       },
@@ -607,6 +653,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
         pointsAt: "neutral-action-pressed",
         use: "The main action while pressed.",
         status: "core",
+      },
+      {
+        token: "bg-affordance-prominent-mark",
+        variable: "--affordance-prominent-mark",
+        pointsAt:
+          "affordance-prominent; accent step 11 once strong controls take the accent",
+        use: "A prominent dot, insertion line or label standing alone on a surface; stays 3:1 by itself.",
+        status: "proposed",
       },
       {
         token: "bg-affordance-subtle",
@@ -662,6 +716,30 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--affordance-navigation-quiet",
         pointsAt: "neutral-navigation-quiet",
         use: "Gentle hover and selected fill for the sidenav, requested by Cynthia; paired with standard row text in both themes.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-row-hover",
+        variable: "--affordance-row-hover",
+        pointsAt:
+          "affordance-subtle; accent step 2 light / 3 dark once rows take the accent",
+        use: "A list or navigation row under the pointer, separate from resting quiet control fills.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-chrome",
+        variable: "--affordance-chrome",
+        pointsAt:
+          "affordance-subtle; accent step 3 once the shell takes the accent",
+        use: "The grouped chrome capsule on the app shell, such as Solo and Multiplayer.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-chrome-hover",
+        variable: "--affordance-chrome-hover",
+        pointsAt:
+          "affordance-subtle-hover; accent step 4 once the shell takes the accent",
+        use: "An inactive chrome capsule item under the pointer.",
         status: "proposed",
       },
       {
@@ -773,29 +851,36 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-accent",
         variable: "--affordance-accent",
-        pointsAt: "purple-3 light / purple-3 dark",
+        pointsAt: "accent step 3",
         use: "A quiet identity or selection fill.",
         status: "core",
       },
       {
         token: "bg-affordance-accent-hover",
         variable: "--affordance-accent-hover",
-        pointsAt: "purple-4 light / purple-4 dark",
+        pointsAt: "accent step 4",
         use: "A quiet identity fill under a pointer.",
         status: "core",
       },
       {
         token: "bg-affordance-accent-prominent",
         variable: "--affordance-accent-prominent",
-        pointsAt: "purple-9 light / purple-9 dark",
+        pointsAt: "accent step 9",
         use: "An identity accent fill paired with text-on-accent.",
         status: "core",
       },
       {
         token: "bg-affordance-accent-prominent-hover",
         variable: "--affordance-accent-prominent-hover",
-        pointsAt: "purple-10 light / purple-10 dark",
+        pointsAt: "accent step 10",
         use: "An identity accent fill under a pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-accent-prominent-pressed",
+        variable: "--affordance-accent-prominent-pressed",
+        pointsAt: "accent pressed fill",
+        use: "An identity accent fill while pressed, such as an accent swatch.",
         status: "core",
       },
     ],

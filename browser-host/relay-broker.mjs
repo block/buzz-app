@@ -1,3 +1,4 @@
+import { audienceAuthorityCommunity } from "../src/features/sessions/audience-authority.ts";
 import {
   isCatalogKind,
   MAX_EVENT_BYTES as CATALOG_EVENT_BYTES,
@@ -16,7 +17,7 @@ import { readProjectGit } from "./project-git.mjs";
 import {
   communityGitRepository,
   parseGitRead,
-} from "../src/features/projects/git.ts";
+} from "../src/features/repos/git.ts";
 import { validateMemberAdministrationTemplate } from "../src/features/channel-members/administration-protocol.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
@@ -29,7 +30,7 @@ import {
 } from "./channel-kit.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validateUploadResult } from "../src/features/relay/attachments.ts";
-import { validChannelCommand } from "./session-commands.mjs";
+import { validChannelCommand } from "./channel-commands.mjs";
 import {
   adminReason,
   claimReason,
@@ -313,6 +314,13 @@ async function relayAuthority(fetch, relay) {
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
+    ...(audienceAuthorityCommunity(nip11.audience_authority)
+      ? {
+          audienceAuthorityCommunity: audienceAuthorityCommunity(
+            nip11.audience_authority,
+          ),
+        }
+      : {}),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),

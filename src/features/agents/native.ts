@@ -1,3 +1,4 @@
+import { audienceAuthorityFilter } from "../sessions/audience-authority";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { eventsDto, type RelayEvent } from "../relay/events";
 
@@ -114,6 +115,12 @@ export type AgentsNative = {
   publish(pubkey: string, event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the agent's community as the agent: one to eight filters. */
   query(pubkey: string, filters: readonly object[]): Promise<RelayEvent[]>;
+  /** Current audience decisions, forwarded separately from verified event arrays. */
+  audienceAuthority?(
+    pubkey: string,
+    destination: string,
+    sources: readonly string[],
+  ): Promise<unknown>;
   /** Finds profiles by `name` or `display_name` in the agent's community, as
    * the agent, best match first. `undefined` when the community has no
    * profile name search. */
@@ -177,6 +184,11 @@ export const nativeAgents = (): AgentsNative | undefined =>
           }),
         query: async (pubkey, filters) =>
           eventsDto(await invoke("app_agent_query", { pubkey, filters })),
+        audienceAuthority: (pubkey, destination, sources) =>
+          invoke("app_agent_query", {
+            pubkey,
+            filters: audienceAuthorityFilter(destination, sources),
+          }),
         searchProfiles: async (pubkey, query, limit) => {
           const found = await invoke("app_agent_search_profiles", {
             pubkey,

@@ -6,6 +6,7 @@ import type {
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -440,10 +441,16 @@ it("keeps provider readiness quiet and shows recovery when needed", async () => 
   );
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Default model")).toHaveTextContent(
+    "Model A · Default",
+  );
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
+    "Low · Default",
+  );
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Default model" }));
   expect(
-    await screen.findByRole("option", { name: "Codex default (Model A)" }),
+    await screen.findByRole("option", { name: "Model A · Default" }),
   ).toHaveAccessibleDescription("Following Codex's recommendation");
   const model = await screen.findByRole("option", { name: "Model B" });
   expect(model).toHaveAccessibleDescription("Model B description.");
@@ -508,10 +515,14 @@ it("applies provider precedence without rewriting records and falls back for inc
   render(<f.tabs.SettingsTab {...f.props()} />);
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Model B",
+      "Model B · Default",
     ),
   );
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Medium");
+  // Inheriting a saved provider preference is a default, not a recommendation.
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent(
+    "Medium · Default",
+  );
+  expect(screen.queryByText(/Recommended/)).not.toBeInTheDocument();
   cleanup();
 
   localStorage.setItem("buzz.codex.provider-defaults.v1", "invalid");
@@ -525,14 +536,14 @@ it("offers recommendation and explicit models without inheriting local Codex pre
   const user = userEvent.setup();
   const view = render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
   expect(screen.getByLabelText("Default model")).toHaveTextContent(
-    "Codex default (Model A)",
+    "Model A · Default",
   );
   expect(screen.getByLabelText("Default thinking")).toHaveTextContent("Low");
   await user.click(screen.getByLabelText("Default model"));
   const options = await screen.findAllByRole("option");
   expect(options).toHaveLength(3);
   for (const [index, name] of [
-    "Codex default (Model A)",
+    "Model A · Default",
     "Model A",
     "Model B",
   ].entries())
@@ -558,7 +569,7 @@ it("offers recommendation and explicit models without inheriting local Codex pre
   expect(screen.getByLabelText("Default model")).toHaveTextContent("Model B");
   await user.click(screen.getByLabelText("Default model"));
   await user.click(
-    await screen.findByRole("option", { name: "Codex default (Model A)" }),
+    await screen.findByRole("option", { name: "Model A · Default" }),
   );
   await user.click(screen.getByRole("button", { name: "Save defaults" }));
   expect(f.provider.resolve(defaults).model).toBe("");
@@ -577,7 +588,7 @@ it("offers recommendation and explicit models without inheriting local Codex pre
   await f.provider.check();
   await waitFor(() =>
     expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Codex default (Model A)",
+      "Model A · Default",
     ),
   );
 });
@@ -633,6 +644,37 @@ it("falls back for an unavailable provider default and restores it when the cata
     effort: "high",
   });
 });
+it("shows a provider model recheck inside the disabled picker", async () => {
+  const f = fixture();
+  await f.provider.check();
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  const picker = screen.getByRole("combobox", { name: "Default model" });
+  expect(picker).toHaveTextContent("Model A · Default");
+  const spawn = f.spawn.getMockImplementation();
+  if (!spawn) throw new Error("Missing host fixture");
+  const listed = deferred<void>();
+  f.spawn.mockImplementation((id, options) =>
+    spawn(id, {
+      ...options,
+      onStdout: (data) => {
+        if (id !== "codex" && data.includes('"model-a"'))
+          void listed.promise.then(() => options?.onStdout?.(data));
+        else options?.onStdout?.(data);
+      },
+    }),
+  );
+  const checked = f.provider.check();
+  try {
+    await waitFor(() => expect(picker).toHaveTextContent("Loading models…"));
+    expect(picker).toBeDisabled();
+    expect(picker).not.toHaveTextContent("Default");
+  } finally {
+    listed.resolve();
+  }
+  await act(() => checked);
+  await waitFor(() => expect(picker).toBeEnabled());
+  expect(picker).toHaveTextContent("Model A · Default");
+});
 it("keeps model-default provider thinking dynamic across save and reopen", async () => {
   const f = fixture();
   await f.provider.check();
@@ -661,7 +703,9 @@ it("keeps model-default provider thinking dynamic across save and reopen", async
   await waitFor(() =>
     expect(screen.getByLabelText("Default thinking")).toBeEnabled(),
   );
-  expect(screen.getByLabelText("Default thinking")).toHaveTextContent("Low");
+  expect(screen.getByLabelText("Default thinking")).toHaveTextContent(
+    "Low · Default",
+  );
 });
 it("shows the recommended model and default thinking despite different local Codex preferences", async () => {
   const f = fixture({
@@ -679,7 +723,8 @@ it("loads model/effort choices and saves only after a validated workspace, holdi
   render(<f.tabs.SettingsTab {...f.props(defaults, save)} />);
   await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
   expect(screen.queryByText("Model A description.")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low");
+  expect(screen.getByLabelText("Model")).toHaveTextContent("Model A · Default");
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low · Default");
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   expect(
@@ -757,8 +802,8 @@ it("renders provider, model, and thinking as direct settings inputs", async () =
     modelControl.compareDocumentPosition(thinkingControl) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
-  expect(modelControl).toHaveTextContent("Model B");
-  expect(thinkingControl).toHaveTextContent("Medium");
+  expect(modelControl).toHaveTextContent(/^Model B$/);
+  expect(thinkingControl).toHaveTextContent(/^Medium$/);
   await user.click(modelControl);
   await user.click(
     await screen.findByRole("option", {
@@ -766,7 +811,7 @@ it("renders provider, model, and thinking as direct settings inputs", async () =
       description: "Model A description.",
     }),
   );
-  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low");
+  expect(screen.getByLabelText("Thinking")).toHaveTextContent("Low · Default");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith({ ...saved, model: "", effort: "" });
 });
@@ -876,7 +921,7 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
     model: "model-b",
     effort: "medium",
   });
-  fireEvent.change(screen.getByLabelText("Instructions"), {
+  fireEvent.change(screen.getByLabelText("Instructions Optional"), {
     target: { value: "Triage." },
   });
   expect(onChange).toHaveBeenLastCalledWith({

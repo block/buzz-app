@@ -2,7 +2,7 @@
 
 Review reports and feedback, investigate issues, and take action.
 
-After you enable the plugin in **Settings → Plugins**, Moderation appears in Settings when your account has staff access on the
+After you enable the plugin in **Settings → Manage plugins**, Moderation appears in Settings when your account has staff access on the
 connected relay. Only operators can manage staff.
 
 ## Getting started

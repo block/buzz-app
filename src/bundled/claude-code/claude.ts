@@ -24,6 +24,8 @@ export type Spawn = (
 
 export type ClaudeLaunch = Readonly<{
   cwd: string;
+  /** Folders besides `cwd` that the session may work in and stay in. */
+  directories?: readonly string[];
   /** Read-only catalog probe, without workspace customizations or tools. */
   discovery?: boolean;
   /** Appended to Claude's own system prompt. */
@@ -178,6 +180,10 @@ export class ClaudeProcess {
               "--no-session-persistence",
             ]
           : ["--permission-mode", "bypassPermissions"]),
+        ...(launch.directories ?? []).flatMap((folder) => [
+          "--add-dir",
+          folder,
+        ]),
         ...(launch.model ? ["--model", launch.model] : []),
         ...(launch.effort ? ["--effort", launch.effort] : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),

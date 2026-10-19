@@ -36,3 +36,12 @@
   min-width: 0;
   container-type: inline-size;
 }
+
+.technicalDetails {
+  max-height: min(16rem, 40vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3);
+  border-radius: var(--radius-container);
+  background: var(--surface-inset);
+}

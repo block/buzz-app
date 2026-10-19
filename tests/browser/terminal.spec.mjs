@@ -36,7 +36,7 @@ test("web hides the unusable terminal and does not consume its shortcut, includi
   await button(page, "Beta").click();
   await expect(launcher).toHaveCount(0);
   await page.keyboard.press(`${modifier}+,`);
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   const toggle = pluginAction(page, "Terminal");
   await toggle.click();
   await expect(toggle).toHaveAccessibleName(/^Enable /);

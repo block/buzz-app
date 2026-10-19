@@ -3,7 +3,7 @@ import { expect } from "@playwright/test";
 // The details trigger stays named while Enable/Disable changes after activation.
 export function pluginAction(page, name) {
   return page
-    .getByRole("region", { name: "Plugins", exact: true })
+    .getByRole("region", { name: "Manage plugins", exact: true })
     .getByRole("article")
     .filter({
       has: page.getByRole("button", {

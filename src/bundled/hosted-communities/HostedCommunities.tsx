@@ -420,7 +420,7 @@ export function HostedCommunities({
     <section aria-labelledby="hosted-communities-title">
       <Header
         id="hosted-communities-title"
-        title="Hosted communities"
+        title="Builderlab hosting"
         subtitle="Manage Block-hosted communities with Builderlab. Other relays don’t require this sign-in."
       />
       {failure}

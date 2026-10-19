@@ -49,7 +49,18 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect(row).not.toContainText("<buzz:");
   const link = row.getByRole("link", { name: "Alpha", exact: true });
   await expect(link).toHaveCSS("text-decoration-line", "underline");
-  await expect(link).toHaveCSS("color", "rgb(11, 95, 168)");
+  // Links follow the accent at the default vibe level.
+  await expect(link).toHaveCSS(
+    "color",
+    await link.evaluate((node) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--text-link)";
+      node.parentElement?.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    }),
+  );
   // Release the held profile while the link is focused, before the navigation
   // below: profile reads give up after 10s, and a loaded engine can spend that
   // long on navigation, leaving nothing pending to release.
@@ -634,7 +645,7 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   ).toBeVisible();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await setPluginEnabled(page, "Links", false);
   await openPage(page, "Messages");
   await row.locator("a").first().click();

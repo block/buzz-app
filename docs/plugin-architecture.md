@@ -65,8 +65,8 @@ features/messages/      reusable timeline, message, thread and composer UI
 features/channel-navigation/ persistent sidebar, scoped draft handoff, Channels routes
 bundled/channels/       conversation navigation, page layout and panel placement
 bundled/channel-usage/  optional archive-backed Usage panel and Channels menu launcher
-bundled/projects/       repository/project pages, issue/PR details and Git views
-features/projects/     entity route/data contracts and bounded Git read bridge
+bundled/repos/          repository pages, issue/PR details and Git views
+features/repos/        entity route/data contracts and bounded Git read bridge
 bundled/agents/        Agents page and agent types (harness plugins register theirs)
 features/agents/       Agents service: saved agents, creation, deletion
 features/agents/        session-owned agent inventory, choices, local agents and activity
@@ -76,9 +76,8 @@ bundled/bestie/         builtin Bestie page
 bundled/inbox/          builtin Inbox page for unread conversations and mentions
 ```
 
-The host composes the channel sidebar beside independently mounted pages, with
-Settings and Me supplying their own sidebar contents. Me currently has an empty
-sidebar sharing the channel sidebar's frame and saved width. The channel sidebar reuses
+The host composes the conversation sidebar (Solo and Team inventories) beside
+independently mounted pages; Settings supplies its own sidebar. The sidebar reuses
 session-owned roster, unread, creation and preferences capabilities; it does not
 retain a hidden Channels page or message reader. Sidebar and page render errors
 have separate boundaries. Sidebar presentation helpers currently remain importable
@@ -121,7 +120,7 @@ focus restoration and error boundary. The plugin body supplies Connection and,
 when supported, explicit-save Defaults sections. It also marks active install or
 authentication work as blocking and supplies its cancellation control. Only
 active registered types appear there; plugin activation remains owned by
-Settings → Plugins. Provider defaults are versioned device preferences, not
+Settings → Plugins → Manage plugins. Provider defaults are versioned device preferences, not
 agent-record migrations; blank per-agent values inherit them.
 
 A plugin, bundled or installed, can add a tool to every agent session in the
@@ -249,14 +248,14 @@ contracts with their own layout and local navigation.
 
 **Channels is the only required bundled plugin.** Bestie,
 Todos, Membership, and Moderation are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Me, Inbox,
-Projects, Agents, Claude, Codex, Workflows, Sessions, Builderlab, and Hosted communities are
+Naming, Agent Activity, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
+Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities are
 on by default, but optional. Both browser and native catalogs declare that policy.
 
-Me is an empty, optional default-enabled page. Me and Channels request topbar
-placement; the shell presents Channels as Messages and orders Me before Messages.
-Messages remains the startup destination. Selecting Me changes neither community
-scope nor the legacy Home-to-Messages mapping.
+Solo is part of Channels, not a plugin: Solo chats are channels opened in
+Messages, and Solo drafts are a Messages route. Channels requests topbar
+placement and the shell presents it as Messages, the startup destination.
+Saved `buzz.me` and `buzz.sessions` flags are ignored like any uninstalled owner.
 
 Saved enabled/disabled flags win over defaults (except required Channels). Profiles
 without a saved flag use the current default, so changing a default also changes
@@ -274,11 +273,11 @@ while either plugin is disabled. The catalog leaves details readable, gates only
 Enable on current access, and always permits Disable. These UI checks do not grant
 permissions; relay and native enforcement still apply.
 
-Projects
-is enabled by default and owns versioned, validated entity page routes. It resolves
+Repositories is enabled by default and owns versioned, validated repository, PR
+and issue page routes. Its page is absent from primary navigation. It resolves
 signed metadata through the session reader and reports navigation completion only
 after destination content is presented. Git browsing uses a narrow host-owned,
-authenticated development broker capability; plugins cannot choose a signer or
+authenticated Git capability in the native host and development broker; plugins cannot choose a signer or
 remote URL. See [entity links and limits](deep-links.md).
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
@@ -302,10 +301,13 @@ retention. Plugin enablement controls visibility without changing capture settin
 
 ### Settings cards
 
-`ctx.settingsCards.register({ id, title, icon, component })` contributes a card under
-Settings → Messages, not a new route. Adding `group` instead gives the card its own
-Settings destination under that labelled navigation group; its section id is the
-contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
+`ctx.settingsCards.register({ id, title, icon, component })` contributes a Settings
+destination under the selected community. Adding `group` places it under that
+labelled navigation group instead; the existing `"App"` group appears as **Buzz**.
+Adding `personal: true` also lists a community card under **Personal space**, for
+cards such as Pair mobile that collect their own community address; it cannot be
+combined with `group` or `section`.
+Its section id is the contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
 uses the shared design-system icon gateway; the host supplies a fallback when omitted.
 Cards receive `active()` and use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
@@ -315,13 +317,13 @@ The channel template extension point (`ctx.channelTemplates`) was removed with t
 v1 Agents system. The host sidebar owns channel groups and the existing + creation
 buttons. Channel templates are now device-local (`buzz.channel-templates.v1`,
 `features/channel-templates/local.ts`): a name, agent pubkeys, Agents team ids
-and a starting Canvas, managed under Settings → Channel templates. Picking one in
+and a starting Canvas, managed under Settings → Buzz → Channel templates. Picking one in
 Create resolves its agents and its teams' members to those that are the owner's
 agents in this community and sends them with the Canvas as ordinary channel setup,
 which the session applies and retries as before.
 
 Hosted communities (`block.hosted-communities`) is a Block-specific bundled plugin
-under Settings → Communities. It manages Block-hosted relays through a Builderlab
+under Settings → Plugins → Builderlab hosting. It manages Block-hosted relays through a Builderlab
 account: browser sign-in, binding the local Buzz identity (a locally signed kind
 24243 challenge), and create/archive/unarchive/transfer. A server-declared,
 default-off capability also exposes owner deletion for archived communities. The
@@ -357,6 +359,15 @@ The shared renderer owns deterministic order, error isolation and command
 revocation on removal/unmount. Composer destination keys fence session/channel/
 thread changes. The accessory remains usable on read-only connections.
 
+Message-placed accessories may opt into `decoratesMessageSummary`. The first
+ordered decorator receives the optional `renderMessageSummary(activity?)` hook;
+other accessories do not. The host retains reply counts, participant identity,
+unread state, and thread navigation. The decorator supplies its activity identities,
+inline status content, accessible label and trigger ref, allowing its existing
+popover to wrap the host button. It renders the ordinary summary when idle.
+When no decorator is registered, or it fails, the host renders the ordinary summary.
+This presentation hook grants no additional data or navigation permissions.
+
 Agent Activity is the first consumer. Plugin activation owns its telemetry lease;
 multiple composers subscribe to the same session capability. No global selected
 channel or activity-specific dependency is added to reusable message components.
@@ -391,7 +402,7 @@ not cross-version capability negotiation.
 ### Optional Canvas todos
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
-it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
+it under Settings → Plugins → Manage plugins. Its channel-header ListChecks button opens a right-hand
 side panel, grouping items as To do, In progress and Done, with add, a per-item status
 selector, check/uncheck, one optional assignee per item, automatic
 saving after each action, and explicit Refresh. It uses shared controls and theme
@@ -511,7 +522,7 @@ so this mechanism does not promise persistent agent sessions or drafts. The bund
 Bestie page currently supplies art and truthful not-connected copy, with no send
 control, agent API or top-bar launcher. Both browser and Rust native/CLI catalogs
 keep it bundled but off by default; saved enabled or disabled flags still win.
-Enable it under Settings → Plugins.
+Enable it under Settings → Plugins → Manage plugins.
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.
@@ -731,7 +742,7 @@ A signed installation can only update from the same publisher; remove and
 reinstall to choose a different publisher. Signing identifies an author, but
 does not sandbox plugin code or make a publisher trustworthy.
 
-Desktop Settings → Plugins loads a folder with the native folder picker, or an
+Desktop Settings → Plugins → Manage plugins loads a folder with the native folder picker, or an
 HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional branch
 or tag is separate from the repository URL; GitHub `tree` URLs are rejected with
 guidance rather than ambiguously splitting branch names and subfolders. Discovery
@@ -742,11 +753,21 @@ another plugin without fetching again. New plugins stay disabled. Updates match
 an enabled update may activate immediately except in safe mode. The UI warns before
 that action and shows declared host access, including changes. Installed artifacts do
 not watch/pull the source. Plugins installed from a folder keep the selected folder
-path for Settings → Plugins → Reload while disabled;
+path for Settings → Plugins → Manage plugins → Reload while disabled;
 reloading reads the recorded candidate folder and requires the manifest ID to stay the
 same. Reload rejects changed host declarations; use Load from folder to review and
 install that revision. Enabled plugins must be disabled before reload so memory-only
 plugin state, such as credentials, is not discarded by replacing the running module.
+For development, `buzzodz plugin reload ID` explicitly allows replacing an enabled
+folder plugin while preserving its enabled state. The running desktop observes the
+shared profile catalog every second and disposes the previous revision before
+activating the new one. Use the same `--home` and `--profile` as the app. Reloading
+identical build bytes does not restart the plugin. CLI reload applies the same
+manifest ID and publisher checks as Settings. CLI reload accepts changed host
+access and reports the previous and updated declarations. Rejected builds leave
+the installed revision unchanged. Replacing an active plugin ends its in-memory
+work, including a voice call. This is a host-management capability, since an
+external plugin cannot manage other installations or add CLI commands.
 Git installs and older installs without saved folder metadata must be imported again.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
@@ -978,7 +999,7 @@ unambiguous signed person/agent mentions share the inline hover styling. Names i
 ordinary prose never create notification intent or establish an identity.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
-methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components. Generated
+methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` components, plus `.Tabs` while a plugin provides it. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
@@ -1007,6 +1028,33 @@ Channels, showing a thread is one visit to its channel for unread state, and
 that visit lasts across threads of the same channel. The page holds no second
 message reader, cache or outbox.
 Exact message links still navigate to Channels rather than the page's route.
+
+`conversation.ui.Tabs({ id, session, scope, label, icon, children })` makes the
+page's content the first main tab of the host's conversation tab workspace.
+`children(open)` renders that tab; `open({ channelId, threadId? }, { keep? })`
+shows a joined conversation in a host tab and returns false for any other. A
+thread opens as a side-pane thread tab and a whole conversation as a side-pane
+conversation tab, each with the same reader and composer as Channels tabs, so
+the page stays in view; any thread can then move to the main pane. A plain open
+replaces the tab the previous one added, and `keep: true` adds a tab beside it;
+an already-open conversation's tab is selected wherever it is. `id` keys the page's tabs, which last for its community session as
+Channels tabs do; they keep no Back/Forward visits.
+The tab workspace belongs to Channels, which supplies it with
+`conversation.registerTabs(component)`; the conversation service only holds that
+slot. `ui.Tabs` is undefined while no enabled plugin provides it, so a page reads
+it at render and falls back to its own layout.
+
+`open({ channelId, messageId })` opens the conversation at that message. The
+shared `useMessageOpening` reader waits for verified history (cached rows
+decide nothing), reads older pages until the message loads (at most 25 pages
+of 20 top-level posts) and mounts the list once, at the message; a reply, or a
+message it does not find, opens as its thread in the same tab, scrolled to the
+message. Each open asks again, even for the same message, but a tab restored
+when the page remounts does not jump back to it. With `threadId` too, the
+thread tab opens and scrolls to that message, again on each open. `open(target, { markRead: false })` makes a
+conversation tab mark nothing read, so a page such as For You can keep the
+posts beside the one it opened unread and mark that one itself; threads read
+as they do in Channels.
 
 ### Composer ownership and mention tools
 
@@ -1046,7 +1094,7 @@ editing an existing message, both mention commands insert identity references
 without changing the original notification recipients.
 
 `insertResource({ uri, label })` inserts a host-owned inline reference to plugin
-content, such as a project issue or pull request. The host normalizes the label
+content, such as a repository issue or pull request. The host normalizes the label
 (single line, at most 120 code points), requires a navigation-safe URI, and sends
 exactly one ordinary Markdown link, `[escaped label](uri)`. No tags, recipients or
 access grants are added; the receiving agent sees the link. It returns `true` only
@@ -1061,8 +1109,8 @@ text that will actually be sent, as it does for broken mention intent.
 chooser, not selected recipients, their inline chips and avatar removal controls,
 scoped drafts or pending messages. Editing or deleting a selected mention removes
 its explicit mention intent. Removing an avatar clears that identity's explicit
-mention intent without changing the authored text. This does not suppress Sessions
-routing: the selected agent or sole session agent can still be addressed. The session
+mention intent without changing the authored text. A Solo chat
+still needs a tagged agent to send. The session
 still owns roster/profile data, membership checks, signing and publication/retry.
 Plugins remain trusted same-process code; revocable editor commands do not sandbox the session capabilities they receive.
 
@@ -1259,7 +1307,7 @@ an override; the override follows the plugin across disable, re-enable and
 replacement, and an override whose owner is no longer installed is ignored rather
 than deleted. Rebinding replaces an alias set with the single chosen chord; reset
 restores every alias. On Apple platforms a binding may add Control (`ctrl`) beside
-Command, as in Me's ⌃⌘A Archive chat; elsewhere Control is `mod`, so a `ctrl`
+Command, as in ⌃⌘A Archive chat; elsewhere Control is `mod`, so a `ctrl`
 binding never matches there and capture never records one. Host chords stay reserved: the page refuses to assign a chord
 that another listed shortcut already uses, host or plugin, refuses the copy, cut,
 paste and select-all chords (and close-window/quit in the desktop build) because a

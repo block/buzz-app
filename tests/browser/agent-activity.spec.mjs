@@ -256,7 +256,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   const sockets = app.relay.sockets.length;
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   const toggle = pluginAction(page, "Agent Activity");
   const disabled = page.waitForResponse(
     (response) =>
@@ -282,7 +284,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
 
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   // Capture keeps this wire alive while the display is disabled. Its existence
   // no longer proves that the plugin's new display generation reached the host.
   const enabled = page.waitForResponse(
@@ -373,7 +377,7 @@ for (const mode of ["light", "dark"]) {
           page.locator("[data-shell-sidebar-toggle]"),
         ).toHaveAttribute(
           "aria-label",
-          width <= 650 ? "Show navigation" : "Hide Channel sidebar",
+          width <= 650 ? "Show navigation" : "Hide sidebar",
         );
         await expect(trigger).toBeVisible();
         // Real scrolling and floating-control geometry cannot be proven in jsdom.
@@ -1005,7 +1009,9 @@ test.describe("host archive durability", () => {
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Agents", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Local archive", exact: true })
+      .click();
     const archive = page.getByRole("region", { name: /Saved agent activity/ });
     await expect(archive.getByText(/not in this browser/)).toBeVisible();
     await archive

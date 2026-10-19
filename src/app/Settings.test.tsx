@@ -106,7 +106,6 @@ for (const [path, name] of [
   vi.doMock(path, () => ({ [name]: () => null }));
 const { Settings } = await import("./Settings");
 const { SettingsSidebar } = await import("./SettingsSidebar");
-const { developerMode } = await import("./settings-sections");
 const pluginState = {
   configuration: { status: "loading" },
   activation: {},
@@ -247,8 +246,8 @@ it.each([false, true])("groups plugins (Essentials=%s)", async (essentials) => {
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
-  const content = screen.getByRole("region", { name: "Plugins" });
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+  const content = screen.getByRole("region", { name: "Manage plugins" });
   for (const tab of within(content).getAllByRole("tab")) {
     const panel = document.getElementById(
       tab.getAttribute("aria-controls") ?? "",
@@ -468,7 +467,7 @@ it("opens each plugin's existing metadata and controls in a detail aside", () =>
   } as unknown as Parameters<typeof Settings>[0]["plugins"];
 
   render(<Settings {...host} cards={cards} plugins={plugins} />);
-  fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
 
   const bundledCard = screen.getByRole("button", {
     name: "View Channels details",
@@ -703,7 +702,7 @@ function reviewPluginFixture(
   } as unknown as Parameters<typeof Settings>[0]["plugins"];
   const { cards } = registry([]);
   render(<Settings {...host} cards={cards} plugins={manager} {...extra} />);
-  fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
   return { external, snapshot, publish, manager };
 }
 
@@ -862,7 +861,7 @@ it("features bundled Core plugins once, preserving filters, colors and controls"
 it("omits filter tab semantics when the catalog is unavailable", () => {
   const { cards } = registry([]);
   render(<Settings {...host} cards={cards} />);
-  fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
   expect(screen.queryByRole("tablist", { name: "Plugin filters" })).toBeNull();
   expect(screen.queryByRole("tabpanel", { hidden: true })).toBeNull();
 });
@@ -986,6 +985,29 @@ it.each(["row", "pane"])(
   },
 );
 
+it("keeps a rejected plugin deletion open for retry", async () => {
+  const fixture = reviewPluginFixture();
+  vi.mocked(fixture.manager.change).mockResolvedValueOnce(false);
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete plugin" }));
+  const confirmation = screen.getByRole("alertdialog");
+  expect(await within(confirmation).findByRole("alert")).toHaveTextContent(
+    "Plugin deletion wasn’t confirmed",
+  );
+  expect(
+    within(confirmation).getByRole("button", { name: "Delete plugin" }),
+  ).toBeEnabled();
+  expect(
+    screen.getByRole("complementary", {
+      name: "Zebra external details",
+      hidden: true,
+    }),
+  ).toBeInTheDocument();
+});
+
 it("returns focus to the Plugins section when the selected plugin is deleted", async () => {
   const fixture = reviewPluginFixture();
   fireEvent.click(
@@ -997,6 +1019,17 @@ it("returns focus to the Plugins section when the selected plugin is deleted", a
   const remove = within(details).getByRole("button", { name: "Delete" });
   remove.focus();
   fireEvent.click(remove);
+  expect(fixture.manager.change).not.toHaveBeenCalledWith(
+    "remove",
+    "example.external",
+  );
+  const confirmation = screen.getByRole("alertdialog", {
+    name: "Delete Zebra external?",
+  });
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  fireEvent.click(remove);
+  fireEvent.click(screen.getByRole("button", { name: "Delete plugin" }));
   expect(fixture.manager.change).toHaveBeenCalledWith(
     "remove",
     "example.external",
@@ -1005,7 +1038,9 @@ it("returns focus to the Plugins section when the selected plugin is deleted", a
     expect(
       screen.queryByRole("complementary", { name: "Zebra external details" }),
     ).toBeNull();
-    expect(screen.getByRole("region", { name: "Plugins" })).toHaveFocus();
+    expect(
+      screen.getByRole("region", { name: "Manage plugins" }),
+    ).toHaveFocus();
   });
 });
 
@@ -1035,6 +1070,7 @@ it("keeps grouped cards available without a selected community", () => {
   const { cards } = registry([
     card("hosted", "Hosted communities", "Communities"),
     card("groups", "Personal groups"),
+    { ...card("mobile", "Pair mobile"), personal: true },
   ]);
   const noCommunityState = { ...communityState, selected: null };
   render(
@@ -1051,6 +1087,7 @@ it("keeps grouped cards available without a selected community", () => {
   );
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
   expect(nav).toHaveTextContent("Communities");
+  expect(nav).toHaveTextContent("Personal space");
   fireEvent.click(screen.getByRole("button", { name: "Profile" }));
   expect(screen.getByRole("button", { name: "Profile" })).toHaveAttribute(
     "aria-current",
@@ -1060,6 +1097,9 @@ it("keeps grouped cards available without a selected community", () => {
     screen.getByRole("button", { name: "Hosted communities" }),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Personal groups" })).toBeNull();
+  // Personal-space pairing collects its own address and has no community.
+  fireEvent.click(screen.getByRole("button", { name: "Pair mobile" }));
+  expect(screen.getByText("Pair mobile body")).toBeVisible();
 });
 
 it("shows administration only within a selected community", () => {
@@ -1073,7 +1113,7 @@ it("shows administration only within a selected community", () => {
   const view = render(<Settings {...host} cards={cards} />);
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
   expect(nav).toHaveTextContent("Primary");
-  expect(nav).toHaveTextContent("Administration");
+  expect(nav).toHaveTextContent("Community admin");
   fireEvent.click(screen.getByRole("button", { name: "Membership" }));
   expect(screen.getByText("Membership body for Primary")).toBeVisible();
 
@@ -1083,7 +1123,7 @@ it("shows administration only within a selected community", () => {
     snapshot: () => noCommunityState,
   } as unknown as Parameters<typeof Settings>[0]["communities"];
   view.rerender(<Settings {...host} communities={noCommunity} cards={cards} />);
-  expect(nav).not.toHaveTextContent("Administration");
+  expect(nav).not.toHaveTextContent("Community admin");
   expect(screen.queryByRole("button", { name: "Membership" })).toBeNull();
   expect(screen.queryByText("Membership body")).toBeNull();
 });
@@ -1152,7 +1192,7 @@ it("keeps same-id community cards from different plugins distinct", () => {
   ).not.toHaveAttribute("aria-current");
 });
 
-it("keeps Administration hidden after applying a verified ordinary-member roster", async () => {
+it("keeps Community admin hidden after applying a verified ordinary-member roster", async () => {
   const viewer = "a".repeat(64);
   const relayAuthor = "f".repeat(64);
   let resolveRoster!: (events: unknown[]) => void;
@@ -1225,7 +1265,7 @@ it("keeps Administration hidden after applying a verified ordinary-member roster
   );
 
   const nav = screen.getByRole("navigation", { name: "Settings sections" });
-  expect(nav).not.toHaveTextContent("Administration");
+  expect(nav).not.toHaveTextContent("Community admin");
   expect(screen.queryByRole("button", { name: "Membership" })).toBeNull();
   await fiber.dispose();
   membership.dispose();
@@ -1276,10 +1316,10 @@ it.each(["primary", null])(
       outline(shell as HTMLElement),
     );
     expect(outline(standalone as HTMLElement).map(([label]) => label)).toEqual([
-      ...(selected ? ["Primary", "Administration"] : []),
+      ...(selected ? ["Primary", "Community admin"] : ["Personal space"]),
+      "Buzz",
+      "Plugins",
       "Communities",
-      "App",
-      ...(developerMode ? ["Development"] : []),
     ]);
     // Existing presentations differ only in the contributed-group icon.
     const hosted = (nav: HTMLElement) =>
@@ -1329,7 +1369,7 @@ it("renders a bundled plugin's README below its status, never an external one's"
   } as unknown as Parameters<typeof Settings>[0]["plugins"];
 
   render(<Settings {...host} cards={cards} plugins={plugins} />);
-  fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
   fireEvent.click(
     screen.getByRole("button", { name: "View Channels details" }),
   );
@@ -1453,9 +1493,9 @@ it("keeps related plugins out of the pane even when tags overlap", () => {
   };
 
   render(<Settings {...host} cards={cards} plugins={plugins} />);
-  fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
   const header = screen
-    .getByRole("heading", { name: "Plugins" })
+    .getByRole("heading", { name: "Manage plugins" })
     .closest("[data-buzz-ui]");
   expect(header).toContainElement(screen.getByRole("button", { name: "Add" }));
   fireEvent.click(
@@ -1569,6 +1609,21 @@ it("focuses details on open and restores the row after Escape", () => {
   expect(row).toHaveFocus();
 });
 
+it("keeps navigation focus when returning to Plugins after viewing details", () => {
+  reviewPluginFixture();
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Profile" }));
+  const plugins = screen.getByRole("button", { name: "Manage plugins" });
+  plugins.focus();
+  fireEvent.click(plugins);
+  expect(
+    screen.queryByRole("complementary", { name: "Zebra external details" }),
+  ).toBeNull();
+  expect(plugins).toHaveFocus();
+});
+
 it("announces the selected plugin's failure only once", () => {
   const fixture = reviewPluginFixture();
   fixture.external.error = "Activation failed";
@@ -1613,7 +1668,7 @@ it("restores the Plugins region when the closed detail row was filtered out", ()
       key: "Escape",
     },
   );
-  expect(screen.getByRole("region", { name: "Plugins" })).toHaveFocus();
+  expect(screen.getByRole("region", { name: "Manage plugins" })).toHaveFocus();
 });
 
 it("announces a new action failure while inspecting another failed plugin", () => {
@@ -1789,3 +1844,36 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     expect(release).toHaveBeenCalledTimes(1);
   },
 );
+
+it("keeps identity independent of community profile and clears revealed keys on destination changes", async () => {
+  const exportKey = vi.fn().mockResolvedValue("nsec-public-test-fixture");
+  const { cards } = registry([]);
+  const user = userEvent.setup();
+  render(
+    <ToastProvider>
+      <Settings
+        {...host}
+        cards={cards}
+        identity={
+          { exportKey } as unknown as Parameters<typeof Settings>[0]["identity"]
+        }
+      />
+    </ToastProvider>,
+  );
+  expect(exportKey).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("button", { name: "Reveal private key" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Identity" }));
+  await user.click(screen.getByRole("button", { name: "Reveal private key" }));
+  expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
+    "nsec-public-test-fixture",
+  );
+  await user.click(screen.getByRole("button", { name: "Appearance" }));
+  expect(screen.queryByLabelText("Private key (nsec)")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Identity" }));
+  expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
+    "••••••••••••••••",
+  );
+  expect(exportKey).toHaveBeenCalledTimes(1);
+});

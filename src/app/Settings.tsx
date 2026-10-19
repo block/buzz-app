@@ -15,6 +15,7 @@ import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
+import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
 import { SurfaceButton } from "../shared/design-system/ui/SurfaceButton";
 import { IconButton } from "../shared/design-system/ui/IconButton";
@@ -26,6 +27,7 @@ import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import {
   type ReactNode,
   forwardRef,
+  type RefObject,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -50,6 +52,7 @@ import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
+import { IdentitySettings } from "./IdentitySettings";
 
 import type { Appearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
@@ -239,12 +242,18 @@ function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
   }
 }
 
+/** Narrow containers cover the catalog with details (Settings.module.css). */
+function covered(element: Element | null) {
+  return !!element && getComputedStyle(element).visibility === "hidden";
+}
+
 function PluginDetails({
   plugin,
   failure,
   busy,
   plugins,
   onToggle,
+  close,
   onClose,
   access,
   onCheckAccess,
@@ -254,6 +263,7 @@ function PluginDetails({
   busy: boolean;
   plugins: PluginManager;
   onToggle(): void;
+  close: RefObject<HTMLButtonElement | null>;
   onClose(): void;
   access: AdminAccessState;
   onCheckAccess(): void;
@@ -261,11 +271,14 @@ function PluginDetails({
   const accessReason = restrictedPlugin(plugin)
     ? accessMessage(plugin, access)
     : null;
-  const close = useRef<HTMLButtonElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
+  const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   useLayoutEffect(() => {
     close.current?.focus();
-  }, []);
+  }, [close]);
   // READMEs ship with Buzz; never attach one to an external plugin.
   const readme =
     plugin.source === "bundled" && bundledReadmes.get(plugin.manifest.id);
@@ -465,14 +478,65 @@ function PluginDetails({
         {plugin.source === "external" && (
           <Button
             type="button"
+            ref={deleteTrigger}
             variant="destructive"
             disabled={busy}
-            onClick={() => plugins.change("remove", plugin.manifest.id)}
+            onClick={() => {
+              setDeleteError(null);
+              setConfirmDelete(true);
+            }}
           >
             Delete
           </Button>
         )}
       </div>
+      {confirmDelete && (
+        <AlertDialog
+          title={`Delete ${plugin.manifest.name}?`}
+          description="Removes this plugin and its rollback history from Buzz. You can install it again later."
+          pending={busy || deleting}
+          finalFocus={deleteTrigger}
+          onClose={() => setConfirmDelete(false)}
+          actions={
+            <>
+              <Button
+                disabled={busy || deleting}
+                onClick={() => setConfirmDelete(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={busy || deleting}
+                onClick={async () => {
+                  if (busy || deleting) return;
+                  setDeleting(true);
+                  setDeleteError(null);
+                  try {
+                    if (await plugins.change("remove", plugin.manifest.id))
+                      setConfirmDelete(false);
+                    else
+                      setDeleteError(
+                        plugins.snapshot().error ??
+                          "Plugin deletion wasn’t confirmed. Try again.",
+                      );
+                  } finally {
+                    setDeleting(false);
+                  }
+                }}
+              >
+                Delete plugin
+              </Button>
+            </>
+          }
+        >
+          {deleteError && (
+            <p role="alert" className="error text-body-sm">
+              {deleteError}
+            </p>
+          )}
+        </AlertDialog>
+      )}
     </aside>
   );
 }
@@ -665,14 +729,40 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const [updatingPluginId, setUpdatingPluginId] = useState<string>();
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
   const pluginTrigger = useRef<HTMLButtonElement>(null);
   const restorePluginFocus = useRef(false);
   const pluginSection = useRef<HTMLElement>(null);
+  const layout = useRef<HTMLDivElement>(null);
+  const detailsClose = useRef<HTMLButtonElement>(null);
   const selectedPlugin = catalog?.plugins.find(
     (plugin) => plugin.manifest.id === selectedPluginId,
   );
+  const showingDetails = selected === "plugins" && !!selectedPlugin;
+  const visibleReturn = (target: HTMLElement | null) =>
+    covered(pluginSection.current) ? (detailsClose.current ?? target) : target;
+  useEffect(() => {
+    if (selected !== "plugins") setSelectedPluginId(undefined);
+  }, [selected]);
+  useEffect(() => {
+    const element = layout.current;
+    if (!showingDetails || !element) return;
+    // Resizing can hide the focused catalog control; keep focus in details.
+    const observer = new ResizeObserver(() => {
+      const active = document.activeElement;
+      const details = detailsClose.current?.closest("aside");
+      if (
+        covered(pluginSection.current) &&
+        (active === document.body ||
+          (!!active && element.contains(active) && !details?.contains(active)))
+      )
+        detailsClose.current?.focus();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [showingDetails]);
   useEffect(() => {
     if (selectedPluginId && catalog && !selectedPlugin) {
       pluginSection.current?.focus();
@@ -851,6 +941,19 @@ export function Settings({
                       )}
                     </Target>
                     <div className={styles.pluginRowAction}>
+                      {plugin.source === "external" &&
+                        plugins.imports &&
+                        catalog && (
+                          <Button
+                            size="sm"
+                            aria-label={`Update ${plugin.manifest.name}`}
+                            data-plugin-update-id={id}
+                            disabled={busy}
+                            onClick={() => setUpdatingPluginId(id)}
+                          >
+                            Update
+                          </Button>
+                        )}
                       {isRequiredPlugin(plugin) ? (
                         <Button variant="outline" size="sm" disabled>
                           Required
@@ -905,6 +1008,12 @@ export function Settings({
       </PluginListEntry>
     );
   };
+  const authorizePluginGit = async (repository: string) => {
+    const connection = communities.relay.snapshot();
+    return connection.status === "ready"
+      ? ((await connection.session.authorizeGit?.(repository)) ?? null)
+      : null;
+  };
   return (
     <div
       className={`${styles.root} ${navigationPane ? styles.navigationPane : ""}`}
@@ -925,10 +1034,9 @@ export function Settings({
               : null}
         </div>
         <div
+          ref={layout}
           className={styles.layout}
-          data-plugin-detail={
-            selected === "plugins" && selectedPlugin ? "" : undefined
-          }
+          data-plugin-detail={showingDetails ? "" : undefined}
         >
           <aside className={styles.sidebar}>
             <div className={styles.sidebarHeader}>
@@ -980,17 +1088,7 @@ export function Settings({
               />
             </div>
             <div hidden={selected !== "agents"}>
-              <AgentSettings
-                agents={agents}
-                archive={
-                  <ArchiveSettings
-                    relay={communities.relay}
-                    community={selectedCommunity?.name}
-                    active={selected === "agents"}
-                  />
-                }
-                active={selected === "agents"}
-              />
+              <AgentSettings agents={agents} active={selected === "agents"} />
             </div>
             <div hidden={selected !== "updates"}>
               <UpdateSettings
@@ -1045,10 +1143,25 @@ export function Settings({
                 key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
                 communities={communities}
                 community={selectedCommunity}
-                identity={identity}
-                active={selected === "profile"}
               />
             </div>
+            {selected === "identity" && (
+              <IdentitySettings
+                key={client.viewer}
+                viewer={client.viewer}
+                identity={identity}
+              />
+            )}
+            {selectedCommunity && selected === "local-archive" && (
+              <section aria-labelledby="archive-settings-title">
+                <Header id="archive-settings-title" title="Local archive" />
+                <ArchiveSettings
+                  relay={communities.relay}
+                  community={selectedCommunity.name}
+                  active
+                />
+              </section>
+            )}
             {developerMode && (
               <div hidden={selected !== "developer"}>
                 <DeveloperSettings relay={communities.relay} />
@@ -1063,7 +1176,7 @@ export function Settings({
                 <motion.div {...layoutMotion} className={styles.pluginHeading}>
                   <Header
                     id="plugin-settings-title"
-                    title="Plugins"
+                    title="Manage plugins"
                     actions={
                       plugins.imports && catalog ? (
                         <span ref={setPluginImportActions} />
@@ -1119,14 +1232,8 @@ export function Settings({
                     plugins={plugins}
                     catalog={catalog}
                     busy={busy}
-                    authorizeGit={async (repository) => {
-                      const connection = communities.relay.snapshot();
-                      return connection.status === "ready"
-                        ? ((await connection.session.authorizeGit?.(
-                            repository,
-                          )) ?? null)
-                        : null;
-                    }}
+                    authorizeGit={authorizePluginGit}
+                    returnFocus={() => visibleReturn(null)}
                   />
                 ) : configuration.status === "recovery" ? (
                   <RecoveryScreen plugins={plugins} />
@@ -1135,6 +1242,28 @@ export function Settings({
                     Plugin settings are unavailable. Profile and Appearance
                     still work.
                   </p>
+                )}
+                {catalog && updatingPluginId && (
+                  <PluginImport
+                    updateId={updatingPluginId}
+                    plugins={plugins}
+                    catalog={catalog}
+                    busy={busy}
+                    authorizeGit={authorizePluginGit}
+                    onClosed={() => setUpdatingPluginId(undefined)}
+                    returnFocus={() =>
+                      visibleReturn(
+                        Array.from(
+                          pluginSection.current?.querySelectorAll<HTMLButtonElement>(
+                            "[data-plugin-update-id]",
+                          ) ?? [],
+                        ).find(
+                          (button) =>
+                            button.dataset.pluginUpdateId === updatingPluginId,
+                        ) ?? pluginSection.current,
+                      )
+                    }
+                  />
                 )}
                 <div>
                   <div>
@@ -1220,7 +1349,7 @@ export function Settings({
               </section>
             </div>
           </div>
-          {selected === "plugins" && selectedPlugin && (
+          {showingDetails && selectedPlugin && (
             <PluginDetails
               key={selectedPlugin.manifest.id}
               plugin={selectedPlugin}
@@ -1232,6 +1361,7 @@ export function Settings({
               }
               plugins={plugins}
               onToggle={() => togglePlugin(selectedPlugin)}
+              close={detailsClose}
               onClose={closePluginDetails}
             />
           )}

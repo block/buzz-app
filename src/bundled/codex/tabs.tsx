@@ -514,6 +514,18 @@ export function createTabs(
             variant="preference"
             value={draft.model}
             disabled={checking || !data}
+            valueLabel={
+              checking
+                ? "Loading models…"
+                : draft.model
+                  ? undefined
+                  : nativeModel?.displayName
+            }
+            valueSuffix={
+              !checking && !draft.model && nativeModel
+                ? " · Default"
+                : undefined
+            }
             groups={[
               {
                 label: "",
@@ -521,8 +533,8 @@ export function createTabs(
                   {
                     value: "",
                     label: nativeModel
-                      ? `Codex default (${nativeModel.displayName})`
-                      : "Codex default",
+                      ? `${nativeModel.displayName} · Default`
+                      : "Default",
                     description: nativeModel
                       ? "Following Codex's recommendation"
                       : undefined,
@@ -552,6 +564,7 @@ export function createTabs(
             valueLabel={
               draft.effort ? undefined : codexDefaultEffortLabel("", selected)
             }
+            valueSuffix={draft.effort ? undefined : " · Default"}
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
@@ -904,6 +917,7 @@ export function createTabs(
                 ? undefined
                 : codexDefaultEffortLabel(effective.effort, selected)
             }
+            valueSuffix={draft.effort ? undefined : " · Default"}
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}

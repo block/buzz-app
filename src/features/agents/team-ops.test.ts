@@ -876,6 +876,38 @@ describe("team operations: member ownership", () => {
   });
 });
 
+describe("team operations: resubmitting a first publication", () => {
+  it.each(["create", "import"] as const)(
+    "a %s refused outright publishes its first revision on Resubmit",
+    async (kind) => {
+      const w = world();
+      w.hooks.publish = async () => {
+        throw new PublishRejected("forbidden", "restricted: not allowed");
+      };
+      const teamId = crypto.randomUUID();
+      const source = { kind: "old-buzz-team" as const, id: "beta-1" };
+      const { op, done } = w.runner.start({
+        kind,
+        teamId,
+        intent: team,
+        ...(kind === "create" ? { base: null } : { source }),
+      });
+      expect(await done).toMatchObject({ mode: "reconcile-only" });
+      expect(w.relay.head).toBeUndefined();
+      w.hooks.publish = undefined;
+      const again = await w.runner.resubmit(op.id, null);
+      expect(again.op).toMatchObject({ kind });
+      expect(await again.done).toBeUndefined();
+      expect(w.relay.head?.tags).toContainEqual(["op", "create"]);
+      if (kind === "import")
+        expect(w.relay.head?.tags).toContainEqual([
+          "imported-from",
+          "old-buzz-team:beta-1",
+        ]);
+    },
+  );
+});
+
 describe("team operations: transitions", () => {
   it("a Delete submitted during an edit's head read stops it before any member command", async () => {
     const w = world();

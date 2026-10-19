@@ -846,15 +846,23 @@ export function teamRunner(deps: RunnerDeps) {
       // An unestablished move stays a move: it keeps its local row's link
       // and adopts the team again, so the row is never orphaned.
       const move = old.local !== undefined && !established(old);
+      // A Create or Import refused before any head exists creates (or
+      // adopts) again; with a head, it edits from it.
+      const first =
+        base === null && (old.kind === "create" || old.kind === "import");
       const op: TeamOp = {
         id: crypto.randomUUID(),
         owner: old.owner,
         community: old.community,
         teamId: old.teamId,
-        kind: move ? old.kind : "edit",
+        kind: move || first ? old.kind : "edit",
         intent: old.intent,
-        ...(move ? { local: old.local } : { base }),
-        ...(move && old.source ? { source: old.source } : {}),
+        ...(move
+          ? { local: old.local }
+          : first && old.kind === "import"
+            ? {}
+            : { base }),
+        ...((move || first) && old.source ? { source: old.source } : {}),
         commands: [],
         mode: "may-send",
         seq: ops.nextSeq(),

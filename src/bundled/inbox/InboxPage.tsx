@@ -2,6 +2,7 @@ import type { ConversationHostServices } from "../../features/conversation/Conve
 import { workflowLabel } from "../../features/relay/workflow-attribution";
 import { LightningIcon } from "../../shared/design-system/icons";
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useId,
@@ -14,10 +15,13 @@ import {
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
-import { PageTabs, type PageTabTarget } from "../channels/PageTabs";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { DraftsView } from "./DraftsView";
-import type { ConversationExtensions } from "../../features/conversation/contracts";
+import type {
+  ConversationExtensions,
+  PageTabsProps,
+  PageTabTarget,
+} from "../../features/conversation/contracts";
 import type { Navigation } from "../../features/navigation/controller";
 import type { NavigationScope } from "../../features/navigation/targets";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
@@ -164,6 +168,8 @@ const selections = new WeakMap<
   { opened?: PageTabTarget | undefined; target?: Selection | undefined }
 >();
 
+type InboxPageTabs = (props: PageTabsProps) => ReactNode;
+
 /** The open conversation's Archive/Restore, published for the Inbox shortcut. */
 export type ArchiveShortcut = { current?: (() => void) | undefined };
 
@@ -171,12 +177,15 @@ export function InboxPage({
   relay,
   navigator,
   extensions,
+  tabs,
   host,
   archive,
 }: {
   relay: RelayData;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  /** The host tab workspace, `conversation.ui.Tabs`, while a plugin provides it. */
+  tabs?: InboxPageTabs | undefined;
   host: ConversationHostServices;
   archive?: ArchiveShortcut | undefined;
 }) {
@@ -197,6 +206,7 @@ export function InboxPage({
             }}
             navigator={navigator}
             extensions={extensions}
+            tabs={tabs}
             host={host}
             archive={archive}
           />
@@ -233,28 +243,34 @@ type InboxViewProps = {
   scope: NavigationScope;
   navigator: Navigation;
   extensions?: ConversationExtensions | undefined;
+  tabs?: InboxPageTabs | undefined;
   host: ConversationHostServices;
   archive?: ArchiveShortcut | undefined;
 };
 
+const never = () => false;
+
 /** The conversation list is Inbox's first tab; conversations open beside it. */
-export function InboxView(props: InboxViewProps) {
+export function InboxView({ tabs: Tabs, ...props }: InboxViewProps) {
+  const list = (
+    open: (target: PageTabTarget) => boolean,
+    close: (target: PageTabTarget) => boolean,
+    isOpen: (target: PageTabTarget) => boolean,
+  ) => <InboxList {...props} open={open} close={close} isOpen={isOpen} />;
+  // Without the host tab workspace, rows have nowhere to open.
+  if (!Tabs) return list(never, never, never);
   return (
-    <PageTabs
+    <Tabs
       id="inbox"
       session={props.session}
       scope={props.session.scope}
       label="Inbox"
       icon={<BellIcon size="1rem" />}
-      host={props.host}
-      extensions={props.extensions}
       // Opening reveals a conversation; reading is earned as it is seen.
       visits={false}
     >
-      {(open, close, isOpen) => (
-        <InboxList {...props} open={open} close={close} isOpen={isOpen} />
-      )}
-    </PageTabs>
+      {list}
+    </Tabs>
   );
 }
 

@@ -282,4 +282,7 @@ export type PageTabsProps = {
     close: (target: PageTabTarget) => boolean,
     isOpen: (target: PageTabTarget) => boolean,
   ): ReactNode;
+  /** `false` keeps showing a tab out of its channel visit, so the page decides
+   * what is read; tabs visit as Channels tabs do by default. */
+  visits?: boolean | undefined;
 };

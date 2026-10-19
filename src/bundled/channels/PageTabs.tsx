@@ -50,8 +50,6 @@ export function PageTabs({
 }: PageTabsProps & {
   host: ConversationHostServices;
   extensions?: ConversationExtensions | undefined;
-  /** Whether showing a tab visits its conversation, as Channels does. */
-  visits?: boolean | undefined;
 }) {
   const tabState = useChannelTabState(session, undefined, `page:${id}`);
   const list = useChannelList(session.channels);

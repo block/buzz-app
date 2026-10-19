@@ -725,13 +725,16 @@ function Timeline({
     const previousIds = edges.current.ids;
     // Rows before the loaded first row's second are history. A page also
     // returns rows of that second, which are new only when no page landed.
+    // Rows landing above the kept rows the reader sees are history too.
     const { floor } = edges.current;
     const paged = edges.current.paging && !window.loadingOlder;
-    const arrivals = rows.filter(
-      (row) =>
-        !previousIds.has(row.id) &&
-        (row.createdAt > floor || (row.createdAt === floor && !paged)),
-    ).length;
+    const arrivals = prepend
+      ? 0
+      : rows.filter(
+          (row) =>
+            !previousIds.has(row.id) &&
+            (row.createdAt > floor || (row.createdAt === floor && !paged)),
+        ).length;
     edges.current = {
       order: rows.map((row) => row.id),
       ids: new Set(rows.map((row) => row.id)),

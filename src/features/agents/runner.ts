@@ -1861,8 +1861,8 @@ export class AgentRunners {
       pubkey: agent.pubkey,
       name: agent.name,
       owner: agent.owner,
-      publish: (event: AgentEventTemplate) => this.publish(runner, event),
-      query: (filters: readonly object[]) =>
+      publish: async (event: AgentEventTemplate) => this.publish(runner, event),
+      query: async (filters: readonly object[]) =>
         this.require().query(agent.pubkey, filters),
       audienceAuthority: async (
         destination: string,
@@ -1882,11 +1882,11 @@ export class AgentRunners {
         signal.throwIfAborted();
         return response;
       },
-      searchProfiles: (query: string, limit: number) =>
+      searchProfiles: async (query: string, limit: number) =>
         this.require().searchProfiles(agent.pubkey, query, limit),
-      upload: (data: string, mime: string) =>
+      upload: async (data: string, mime: string) =>
         this.require().upload(agent.pubkey, data, mime),
-      media: (url: string) => this.require().media(agent.pubkey, url),
+      media: async (url: string) => this.require().media(agent.pubkey, url),
       remember: async (slug: string, body: string, after: number) => {
         const event = await this.require().remember(
           agent.pubkey,
@@ -2027,7 +2027,7 @@ export class AgentRunners {
     return Object.freeze({
       enabled: () => record().attentionEnabled === true,
       classifier: () => this.host.classifier(),
-      show: (slug: string, interest?: string) =>
+      show: async (slug: string, interest?: string) =>
         show(record(), slug, seconds(), interest),
       interests: (search?: string) => interestIds(record(), search),
       watches: (filter: WatchFilter = {}) =>
@@ -2074,20 +2074,28 @@ export class AgentRunners {
   }
 }
 
-/** `target`, with `live()` checked before each of its calls, however deep. */
+const AsyncFunction = (async () => {}).constructor;
+
+/** `target`, with `live()` checked before each of its calls, however deep:
+ * its async methods reject when it fails, and the others throw. */
 function guarded<T extends object>(target: T, live: () => void): T {
   return Object.freeze(
     Object.fromEntries(
       Object.entries(target).map(([key, value]) => [
         key,
-        typeof value === "function"
-          ? (...args: unknown[]) => {
-              live();
-              return value(...args);
-            }
-          : value && typeof value === "object"
+        typeof value !== "function"
+          ? value && typeof value === "object"
             ? guarded(value, live)
-            : value,
+            : value
+          : value.constructor === AsyncFunction
+            ? async (...args: unknown[]) => {
+                live();
+                return value(...args);
+              }
+            : (...args: unknown[]) => {
+                live();
+                return value(...args);
+              },
       ]),
     ),
   ) as T;

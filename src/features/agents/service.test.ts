@@ -1482,9 +1482,12 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
   // and a handle kept from before stops working.
   connect(false);
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeUndefined());
-  expect(() => handle?.publish({ kind: 9, content: "late", tags: [] })).toThrow(
-    "ask for its handle again",
-  );
+  await expect(
+    handle?.publish({ kind: 9, content: "late", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
+  await expect(
+    handle?.attention.write("x", null, { expected: "x" }),
+  ).rejects.toThrow("ask for its handle again");
   expect(() => handle?.attention.enabled()).toThrow("ask for its handle again");
   native.claim.mockClear();
   native.claim.mockResolvedValue(false);
@@ -1526,16 +1529,16 @@ it("hands out an agent's handle only to its new type's plugin once a change of t
   await vi.waitFor(() => expect(native.setType).toHaveBeenCalledOnce());
   expect(plugin.agents.handle(bot)).toBeUndefined();
   expect(relay.agents.handle(bot)).toBeUndefined();
-  expect(() => kept?.publish({ kind: 9, content: "mid", tags: [] })).toThrow(
-    "ask for its handle again",
-  );
+  await expect(
+    kept?.publish({ kind: 9, content: "mid", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
   continueType();
   await changing;
   await vi.waitFor(() => expect(relay.agents.handle(bot)).toBeDefined());
   expect(plugin.agents.handle(bot)).toBeUndefined();
-  expect(() => kept?.publish({ kind: 9, content: "after", tags: [] })).toThrow(
-    "ask for its handle again",
-  );
+  await expect(
+    kept?.publish({ kind: 9, content: "after", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
   expect(await published(native, 9)).toEqual([]);
 });
 

@@ -40,6 +40,17 @@ export function useSearchMessages(
    * same way. */
   agentNames: ReadonlyMap<string, string> = noAgentNames,
 ) {
+  const ordinaryChannel = useCallback(
+    (id: string, includePending = false) => {
+      const channel = session.channels.get?.(id);
+      return (
+        !!channel &&
+        !channel.huddle &&
+        (includePending || !channel.metadataPending)
+      );
+    },
+    [session],
+  );
   const parsed = useMemo(() => parseSearchOperators(query), [query]);
   // Rerun the search only when the names change, not on every new map.
   const agentKey = JSON.stringify([...agentNames]);
@@ -81,13 +92,16 @@ export function useSearchMessages(
       session.channels.subscribeList(() => {
         const previous = copied.current;
         if (!previous) return;
-        const messages = previous.messages.filter(
-          (message) => !!session.channels.get?.(message.channelId),
-        );
-        if (messages.length !== previous.messages.length)
-          replace({ ...previous, messages });
+        // Keep bounded search evidence so completed classification can reveal
+        // ordinary results, while render always checks the current destination.
+        replace({
+          ...previous,
+          messages: previous.messages.filter((message) =>
+            ordinaryChannel(message.channelId, true),
+          ),
+        });
       }),
-    [session, replace],
+    [session, replace, ordinaryChannel],
   );
   useEffect(() => {
     if (!canSearch || unresolvedChannel) return;
@@ -195,7 +209,7 @@ export function useSearchMessages(
               destinations.length !== 1 ||
               !hitChannelId ||
               (channelId && hitChannelId !== channelId) ||
-              !session.channels.get?.(hitChannelId)
+              !ordinaryChannel(hitChannelId, true)
             )
               return [];
             // Search returns original indexed events, not an auxiliary edit fold.
@@ -253,11 +267,12 @@ export function useSearchMessages(
     replace,
     scopedChannelId,
     agents,
+    ordinaryChannel,
   ]);
   const current = result?.owner === owner ? result : undefined;
   return {
-    messages: (current?.messages ?? []).filter(
-      (message) => !!session.channels.get?.(message.channelId),
+    messages: (current?.messages ?? []).filter((message) =>
+      ordinaryChannel(message.channelId),
     ),
     loading: canSearch && !unresolvedChannel && !current,
     error: current?.error,

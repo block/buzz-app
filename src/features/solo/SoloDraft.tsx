@@ -19,7 +19,7 @@ import {
 } from "../../shared/view-state";
 import { MessageComposer } from "../messages/MessageComposer";
 import { useDefaultAgent } from "./default-agent";
-import { ProjectControl } from "./ProjectControl";
+import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { ownSolo } from "./labels";
@@ -201,7 +201,7 @@ export function SoloDraft({
         )
       )
         throw new Error(
-          "Solo chats can only use your available agents. Check mentions and project defaults.",
+          "Solo chats can only use your available agents. Check mentions and workspace defaults.",
         );
       // Finish uploads before anything is created, so a failed file blocks
       // the start instead of leaving an empty chat behind.
@@ -298,7 +298,7 @@ export function SoloDraft({
         requireMention
         trailingTool={
           session.soloPreferences ? (
-            <ProjectControl
+            <WorkspaceControl
               session={session}
               value={selectedProject}
               onChange={(project) => {

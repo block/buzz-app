@@ -4,6 +4,7 @@ import type { Contribution, MatchOrder } from "../../plugins/contributions";
 import type { VoiceRecording } from "../relay/voice-media";
 import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "../messages/composer-session";
 
 /**
  * Opens a target, such as a plugin panel URL, where the conversation host
@@ -19,7 +20,7 @@ export type TargetOpener = Readonly<{
 /** Editor-independent reference to plugin content. Not an access grant or recipient. */
 export type ComposerResource = Readonly<{ uri: string; label: string }>;
 export type ComposerToolProps = Readonly<{
-  session: RelaySession;
+  session: ComposerSession;
   scope: string;
   channelId: string;
   threadRootId?: string | undefined;

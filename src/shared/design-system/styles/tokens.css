@@ -545,6 +545,7 @@
   --text-inverse: var(--neutral-1);
   --text-unavailable: var(--neutral-7);
   --text-danger: var(--red-12);
+  --text-call-leave: var(--red-10);
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
   --icon-status-progress: var(--amber-10);
@@ -611,6 +612,14 @@
   --affordance-danger-pressed: var(--red-5);
   --affordance-warning: var(--amber-3);
   --affordance-success: var(--green-3);
+  --affordance-success-hover: var(--green-4);
+  --affordance-success-pressed: var(--green-5);
+  /* Incoming call decisions remain opaque over glass, paired with text-inverse. */
+  --affordance-call-join: var(--green-10);
+  --affordance-call-join-hover: var(--green-9);
+  --affordance-call-decline: var(--red-10);
+  --affordance-call-decline-hover: var(--red-9);
+  --border-success-subtle: var(--green-6);
 }
 
 :root[data-color-mode="dark"],
@@ -634,6 +643,7 @@
   --text-inverse: var(--neutral-1);
   --text-unavailable: var(--neutral-7);
   --text-danger: var(--red-12);
+  --text-call-leave: var(--red-10);
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
   --icon-status-progress: var(--amber-10);
@@ -697,6 +707,14 @@
   --affordance-danger-pressed: var(--red-5);
   --affordance-warning: var(--amber-3);
   --affordance-success: var(--green-3);
+  --affordance-success-hover: var(--green-4);
+  --affordance-success-pressed: var(--green-5);
+  /* Incoming call decisions remain opaque over glass, paired with text-inverse. */
+  --affordance-call-join: var(--green-10);
+  --affordance-call-join-hover: var(--green-9);
+  --affordance-call-decline: var(--red-10);
+  --affordance-call-decline-hover: var(--red-9);
+  --border-success-subtle: var(--green-6);
 }
 
 /* ============================================================
@@ -1392,6 +1410,7 @@
   --text-color-inverse: var(--text-inverse);
   --text-color-unavailable: var(--text-unavailable);
   --text-color-danger: var(--text-danger);
+  --text-color-call-leave: var(--text-call-leave);
   --text-color-warning: var(--text-warning);
   --text-color-success: var(--text-success);
   --text-color-categorical-purple: var(--text-categorical-purple);
@@ -1437,6 +1456,9 @@
   --color-affordance-danger-pressed: var(--affordance-danger-pressed);
   --color-affordance-warning: var(--affordance-warning);
   --color-affordance-success: var(--affordance-success);
+  --color-affordance-success-hover: var(--affordance-success-hover);
+  --color-affordance-success-pressed: var(--affordance-success-pressed);
+  --border-color-success-subtle: var(--border-success-subtle);
   --color-affordance-accent: var(--affordance-accent);
   --color-affordance-accent-hover: var(--affordance-accent-hover);
   --color-affordance-accent-prominent: var(--affordance-accent-prominent);
@@ -1612,4 +1634,52 @@
   --spacing-section-gap: var(--space-section-gap);
   --spacing-chip-inset: var(--space-chip-inset);
   --spacing-chip-gap: var(--space-chip-gap);
+}
+
+/* Plugin category gradients preserve the original cross-color hue pairs.
+   Endpoint luminance targets 0.18; chroma is shared across each pair and capped
+   for sRGB along the entire OKLCH transition. Icon lighting changes final pixels. */
+:root {
+  --art-plugin-communication-start: oklch(55.67495% 0.1 220);
+  --art-plugin-communication-end: oklch(56.46810% 0.1 255);
+  --art-plugin-communication-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-communication-start),
+    var(--art-plugin-communication-end)
+  );
+  --art-plugin-agents-start: oklch(57.29854% 0.1 295);
+  --art-plugin-agents-end: oklch(56.58608% 0.1 260);
+  --art-plugin-agents-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-agents-start),
+    var(--art-plugin-agents-end)
+  );
+  --art-plugin-agent-tools-start: oklch(57.71968% 0.1 335);
+  --art-plugin-agent-tools-end: oklch(57.37636% 0.1 300);
+  --art-plugin-agent-tools-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-agent-tools-start),
+    var(--art-plugin-agent-tools-end)
+  );
+  --art-plugin-developer-tools-and-integrations-start: oklch(57.69208% 0.1 375);
+  --art-plugin-developer-tools-and-integrations-end: oklch(57.74021% 0.1 340);
+  --art-plugin-developer-tools-and-integrations-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-developer-tools-and-integrations-start),
+    var(--art-plugin-developer-tools-and-integrations-end)
+  );
+  --art-plugin-people-and-communities-start: oklch(57.65787% 0.1 380);
+  --art-plugin-people-and-communities-end: oklch(57.22866% 0.1 415);
+  --art-plugin-people-and-communities-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-people-and-communities-start),
+    var(--art-plugin-people-and-communities-end)
+  );
+  --art-plugin-productivity-start: oklch(57.14190% 0.1 420);
+  --art-plugin-productivity-end: oklch(56.41273% 0.1 455);
+  --art-plugin-productivity-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-productivity-start),
+    var(--art-plugin-productivity-end)
+  );
 }

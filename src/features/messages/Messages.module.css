@@ -110,6 +110,10 @@
   flex: 1;
   background: var(--border-standard);
 }
+/* A notice under its day reads as that day's caption, not a new section. */
+[data-membership-row] > .day {
+  margin-block-end: 0;
+}
 .feed[data-chat-presentation] ol > li:first-child .day {
   margin-block-start: var(--space-2);
 }
@@ -1652,8 +1656,9 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  /* Keep spacing inside the virtual row so its measured and visible tops agree. */
-  padding: calc(var(--space-2) + var(--space-5)) 0;
+  /* Keep spacing inside the virtual row so its measured and visible tops agree.
+     A quiet caption, about as tall as the day divider. */
+  padding: var(--space-2) 0;
   color: var(--text-subtle);
   @apply text-caption;
 }

@@ -9,7 +9,7 @@ import {
   ChatCircleIcon,
 } from "../../shared/design-system/icons";
 import { MembershipRow } from "./MembershipRow";
-import { membershipRows } from "./membership-rows";
+import { membershipRows, withoutStartingAgents } from "./membership-rows";
 import { activityGroups, RECENT_ACTIVITY_COUNT } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -206,7 +206,29 @@ function Timeline({
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
-  const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  const profiles = useRowProfiles(queries.profiles, window.rows);
+  const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
+  const visibleRows = useMemo(
+    () =>
+      chatPresentation
+        ? withoutStartingAgents(
+            window.rows,
+            viewer,
+            agentPubkeys,
+            // Live trimming can drop the chat's start without restoring hasMore.
+            !window.hasMore && !window.historyLimited,
+          )
+        : window.rows,
+    [
+      window.rows,
+      window.hasMore,
+      window.historyLimited,
+      chatPresentation,
+      viewer,
+      agentPubkeys,
+    ],
+  );
+  const rows = useMemo(() => membershipRows(visibleRows), [visibleRows]);
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -244,8 +266,6 @@ function Timeline({
     ),
   );
   const resolveName = useChannelIdentityNames(queries, channelId);
-  const profiles = useRowProfiles(queries.profiles, window.rows);
-  const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const [geometry] = useState(() => geometryFor(queries.channels));
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const [focusedActivityId, setFocusedActivityId] = useState<string>();
@@ -272,8 +292,8 @@ function Timeline({
     ),
   );
   const contentSignature = useMemo(
-    () => geometrySignature(window.rows, profiles, resolveName),
-    [window.rows, profiles, resolveName],
+    () => geometrySignature(visibleRows, profiles, resolveName),
+    [visibleRows, profiles, resolveName],
   );
   const signature = `${contentSignature}:${JSON.stringify([...foldedActivity].sort())}`;
   const keptIndices = rows.flatMap((row, index) =>
@@ -504,7 +524,9 @@ function Timeline({
     channelId,
     scroller,
     settled,
-    latestMessageId: window.rows.filter((row) => !row.membership).at(-1)?.id,
+    latestMessageId: window.rows
+      .filter((row) => !row.membership && !row.huddle)
+      .at(-1)?.id,
     enabled: marksRead,
   });
   const prepend =

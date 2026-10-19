@@ -3,6 +3,8 @@ import * as voiceNotes from "./voice-notes";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
+import huddlesManifest from "./huddles/manifest.json";
+import * as huddles from "./huddles";
 import builderlabManifest from "./builderlab/manifest.json";
 import * as builderlab from "./builderlab";
 import * as todos from "./todos";
@@ -31,8 +33,6 @@ import * as codex from "./codex";
 import gooseManifest from "./goose/manifest.json";
 import * as goose from "./goose";
 import channelsManifest from "./channels/manifest.json";
-import usageManifest from "./channel-usage/manifest.json";
-import * as usage from "./channel-usage";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
 import * as github from "./github";
@@ -57,6 +57,11 @@ import relayStaffManifest from "./relay-staff/manifest.json";
 import * as relayStaff from "./relay-staff";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...huddlesManifest, apiVersion: 1 },
+    module: huddles,
+    enabledByDefault: true,
+  },
   {
     manifest: { ...voiceNotesManifest, apiVersion: 1 },
     module: voiceNotes,
@@ -125,11 +130,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...channelsManifest, apiVersion: 1 },
     module: channels,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...usageManifest, apiVersion: 1 },
-    module: usage,
     enabledByDefault: true,
   },
   {

@@ -18,7 +18,7 @@ const shown = (actions) =>
 // Browser-only: measured space, real top-layer hit testing, and responsive
 // placement cannot be established in a DOM emulator.
 for (const own of [true, false]) {
-  test(`actions sit flat beside ${own ? "own" : "received"} bubbles when they fit and lift above in tight panes`, async ({
+  test(`actions stay above ${own ? "own" : "received"} bubbles across pane sizes`, async ({
     page,
     app,
   }) => {
@@ -62,39 +62,31 @@ for (const own of [true, false]) {
           node.dir = direction;
         }, direction);
         await row.getByText("Room for actions", { exact: true }).hover();
-        await expect(actions).toHaveAttribute("data-placement", "beside");
-        await expect(actions).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-        await expect(actions).toHaveCSS("box-shadow", "none");
+        await expect(actions).toHaveAttribute("data-placement", "above");
         await expect
           .poll(() =>
-            actions.evaluate((bar, own) => {
-              const row = bar.closest("[data-layout]");
-              const bubble = row
+            actions.evaluate((bar) => {
+              const bubble = bar
+                .closest("[data-layout]")
                 .querySelector("[data-message-action-anchor]")
                 .getBoundingClientRect();
               const rect = bar.getBoundingClientRect();
-              const rtl = getComputedStyle(row).direction === "rtl";
-              return {
-                gap: Math.round(
-                  rtl !== own
-                    ? bubble.left - rect.right
-                    : rect.left - bubble.right,
-                ),
-                centered:
-                  Math.abs(
-                    rect.top + rect.height / 2 - bubble.top - bubble.height / 2,
-                  ) < 1,
-              };
-            }, own),
+              return (
+                rect.top < bubble.top &&
+                rect.bottom < bubble.bottom &&
+                rect.left >= 0 &&
+                rect.right <= document.documentElement.clientWidth
+              );
+            }),
           )
-          .toEqual({ gap: 8, centered: true });
+          .toBe(true);
         await actions
           .getByRole("button", { name: "React with 👍", exact: true })
           .hover();
         await shown(actions);
         if (direction === "ltr")
           await page.screenshot({
-            path: test.info().outputPath(`message-actions-beside-${mode}.png`),
+            path: test.info().outputPath(`message-actions-above-${mode}.png`),
           });
       }
     }
@@ -139,7 +131,7 @@ for (const own of [true, false]) {
       node.style.removeProperty("--buzz-text-scale");
     });
     await page.setViewportSize({ width: 1440, height: 950 });
-    await expect(actions).toHaveAttribute("data-placement", "beside");
+    await expect(actions).toHaveAttribute("data-placement", "above");
   });
 }
 

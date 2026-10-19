@@ -844,7 +844,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "align: start | center | end",
       "compact subtle",
       "compact value suffix",
-      "leading icon",
+      "20px leading accessory: icon, avatar, or custom UI",
     ],
     status: "proposed",
     collection: "components",

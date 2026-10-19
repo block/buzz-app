@@ -440,7 +440,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-message-own",
         variable: "--text-message-own",
         pointsAt:
-          "text-standard at Neutral; accent 12, or contrast ink at Full",
+          "text-standard at Neutral; accent 12, or contrast ink at Buzzin’",
         use: "Prose on the selected outgoing message surface.",
         status: "core",
       },
@@ -636,7 +636,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-prominent",
         variable: "--affordance-prominent",
-        pointsAt: "accent step 9 at either vibe level",
+        pointsAt: "accent step 9 at every accent level",
         use: "The main action fill.",
         status: "core",
       },

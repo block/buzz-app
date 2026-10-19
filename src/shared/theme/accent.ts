@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 // One device-local accent family; the vibe level decides how much it paints.
 // Chartreuse is the brand default; the vibe level decides how much it paints.
 export const ACCENTS = [
+  "gray",
   "chartreuse",
   "flame",
   "magenta",

@@ -253,7 +253,7 @@ it("selects and restores an accent color, including retry after a failed save", 
   );
   expect(
     screen.getAllByRole("button", { name: / accent color$/ }),
-  ).toHaveLength(6);
+  ).toHaveLength(7);
   expect(
     screen.getByRole("button", { name: "Chartreuse accent color" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -262,11 +262,11 @@ it("selects and restores an accent color, including retry after a failed save", 
     .mockImplementationOnce(() => {
       throw new Error("denied");
     });
-  fireEvent.click(screen.getByRole("button", { name: "Cobalt accent color" }));
+  fireEvent.click(screen.getByRole("button", { name: "Gray accent color" }));
   expect(
-    screen.getByRole("button", { name: "Cobalt accent color" }),
+    screen.getByRole("button", { name: "Gray accent color" }),
   ).toHaveAttribute("aria-pressed", "true");
-  expect(document.documentElement.dataset.accent).toBe("cobalt");
+  expect(document.documentElement.dataset.accent).toBe("gray");
   // Each swatch previews its own family in the current mode.
   expect(
     screen.getByRole("button", { name: "Magenta accent color" }),
@@ -274,15 +274,15 @@ it("selects and restores an accent color, including retry after a failed save", 
   fireEvent.click(
     await screen.findByRole("button", { name: "Retry saving accent color" }),
   );
-  expect(localStorage.getItem("buzz-accent.v1")).toBe("cobalt");
+  expect(localStorage.getItem("buzz-accent.v1")).toBe("gray");
   save.mockRestore();
   appearance.dispose();
   const restored = createAppearance();
-  expect(restored.snapshot().accent).toBe("cobalt");
+  expect(restored.snapshot().accent).toBe("gray");
   restored.dispose();
 });
 
-it("chooses how much of the app the accent colors with a named step slider", async () => {
+it("chooses how much of the app the accent colors with a named dropdown", async () => {
   const appearance = createAppearance();
   render(
     <ToastProvider>
@@ -290,16 +290,16 @@ it("chooses how much of the app the accent colors with a named step slider", asy
     </ToastProvider>,
   );
   const user = userEvent.setup();
-  const vibe = screen.getByRole("slider", { name: "Vibe level" });
-  expect(vibe).toHaveAttribute("aria-valuetext", "Hummin’");
-  // jsdom has no pointer capture; the keyboard is the shared control's contract.
-  act(() => vibe.focus());
-  await user.keyboard("{End}");
-  expect(vibe).toHaveAttribute("aria-valuetext", "Buzzin’");
+  const level = screen.getByRole("combobox", { name: "Accent level" });
+  expect(level).toHaveTextContent("Hummin’");
+  await user.click(level);
+  await user.click(await screen.findByRole("option", { name: "Buzzin’" }));
+  expect(level).toHaveTextContent("Buzzin’");
   expect(document.documentElement.dataset.colorLevel).toBe("full");
   expect(localStorage.getItem("buzz-color-level.v1")).toBe("full");
-  await user.keyboard("{ArrowLeft}");
-  expect(vibe).toHaveAttribute("aria-valuetext", "Swarmin’");
+  await user.click(level);
+  await user.click(await screen.findByRole("option", { name: "Swarmin’" }));
+  expect(level).toHaveTextContent("Swarmin’");
   expect(appearance.snapshot().colorLevel).toBe("more");
   appearance.dispose();
 });

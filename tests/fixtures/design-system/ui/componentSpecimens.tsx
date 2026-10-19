@@ -1581,7 +1581,7 @@ function StepSliderSpecimen() {
   return (
     <SpecimenFrame
       code={`<PreferenceRow
-  title="Vibe level"
+  title="Accent level"
   trailing={(label) => (
     <StepSlider
       aria-labelledby={label["aria-labelledby"]}
@@ -1591,12 +1591,12 @@ function StepSliderSpecimen() {
     />
   )}
 />
-<StepSlider aria-label="Vibe level" steps={steps} value="full" disabled />`}
+<StepSlider aria-label="Accent level" steps={steps} value="full" disabled />`}
     >
       <div className="component-specimen-stack">
         <SettingsGroup>
           <PreferenceRow
-            title="Vibe level"
+            title="Accent level"
             trailing={(label) => (
               <StepSlider
                 aria-labelledby={label["aria-labelledby"]}
@@ -1608,7 +1608,7 @@ function StepSliderSpecimen() {
           />
         </SettingsGroup>
         <StepSlider
-          aria-label="Disabled vibe level"
+          aria-label="Disabled accent level"
           steps={STEPS}
           value="full"
           onValueChange={() => {}}

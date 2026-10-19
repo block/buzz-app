@@ -1799,12 +1799,15 @@ it("presents automation, links the owner and discloses the separate relay signer
         signerId: signer,
         workflowOwnerId: ownerId,
       },
+      viewer: ownerId,
       profile: { name: "Wes" },
       participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
       onOpenLink: open,
       canOpenLink: () => true,
     });
     expect(screen.getByText("Workflow")).toBeTruthy();
+    expect(document.querySelector("[data-viewer-message]")).toBeNull();
+    expect(document.querySelector("[data-own]")).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "View workflow owner Wes profile" }),
     );

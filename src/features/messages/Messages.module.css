@@ -159,12 +159,14 @@
   flex: 1;
   min-width: 0;
 }
-/* Keep both speakers inside the opposing avatar column, including narrow panes. */
+/* Reserve the opposing avatar column when space permits. At narrow widths or
+   enlarged text, keep enough of the row for readable words. The own avatar
+   remains outside this body in its existing flex column. */
 .message:has(> .messageGutter) > .messageBody {
   max-width: min(
     85%,
     46rem,
-    calc(100% - 2 * var(--message-side-space) - var(--space-4))
+    max(60%, calc(100% - 2 * var(--message-side-space) - var(--space-4)))
   );
 }
 .message[data-viewer-message] > .messageBody {
@@ -1781,7 +1783,7 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
      through this bar, and engines copy button labels the user never saw. */
   user-select: none;
 }
-.messageActions:not([data-placement="beside"]) {
+.messageActions {
   @apply popover-surface;
   --floating-radius: var(--radius-control);
   --floating-inset: var(--space-half);
@@ -1858,9 +1860,6 @@ html[data-keyboard-input] .quickReactionGlyph {
     inset: auto;
     opacity: 1;
     pointer-events: auto;
-  }
-  .messageActions[data-placement="beside"] {
-    translate: 0 -50%;
   }
   /* Retain pointer travel to the lifted toolbar without adding row spacing. */
   .message:hover::before {

@@ -65,6 +65,8 @@ export type ThreadPanelProps = {
   /** Retry a failed routed opening with fresh navigation authority. */
   onRetryNavigation?: (() => void) | undefined;
   replyRequest?: number | undefined;
+  /** Each new value focuses the reply box, keeping its target. */
+  focusRequest?: number | undefined;
   /** Inline Inbox visit retains and reveals its exact selected message. */
   revealSelected?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
@@ -353,6 +355,7 @@ function OwnedThreadPanel({
   activityClickOpensPanel,
   disabled,
   replyRequest,
+  focusRequest,
   active = true,
   revealSelected,
   requireReadyRoot,
@@ -421,6 +424,7 @@ function OwnedThreadPanel({
       navigation={navigation}
       messageId={messageId}
       replyRequest={replyRequest}
+      focusRequest={focusRequest}
       active={active}
       revealSelected={revealSelected}
       requireReadyRoot={requireReadyRoot}
@@ -450,6 +454,7 @@ function ThreadMessages({
   activityClickOpensPanel,
   disabled,
   replyRequest,
+  focusRequest,
   active,
   revealSelected,
   revealRequest,
@@ -473,6 +478,7 @@ function ThreadMessages({
   messageId: string;
   view: ThreadView;
   replyRequest?: number | undefined;
+  focusRequest?: number | undefined;
   active?: boolean | undefined;
   revealSelected?: boolean | undefined;
   revealRequest?: number | undefined;
@@ -803,6 +809,9 @@ function ThreadMessages({
   useEffect(() => {
     if (replyRequest) focusReply();
   }, [replyRequest, focusReply]);
+  useEffect(() => {
+    if (focusRequest) setReplyFocus((value) => value + 1);
+  }, [focusRequest]);
   const [mediaSeek, setMediaSeek] = useState<{
     seconds: number;
     request: number;

@@ -69,7 +69,7 @@ export function ConversationTab({
       : undefined;
   const opening = tab.kind === "conversation" ? tab : undefined;
   // Likewise a saved focus request.
-  const focus = opening?.focusRequest;
+  const focus = tab.focusRequest;
   const restoredFocus = useRef(focusOnMount ? undefined : focus);
   if (focus !== restoredFocus.current) restoredFocus.current = undefined;
   const focusRequest = focus === restoredFocus.current ? undefined : focus;
@@ -127,6 +127,7 @@ export function ConversationTab({
             onResolvedRoot={onResolvedRoot}
             onDifferentThread={onDifferentThread}
             replyRequest={reply === restoredReply.current ? undefined : reply}
+            focusRequest={focusRequest}
             revealSelected={threadReveal !== undefined}
             revealRequest={threadReveal}
             close={close}

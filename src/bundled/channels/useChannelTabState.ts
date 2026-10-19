@@ -27,6 +27,8 @@ export type ConversationTab =
       channelId: string;
       messageId: string;
       replyRequest?: number | undefined;
+      /** Each new value focuses the reply box, keeping its target. */
+      focusRequest?: number | undefined;
       /** Each new value reveals `messageId` again; set only by openings at it. */
       revealRequest?: number | undefined;
       /** Transient visual cue when an opening reuses this tab. */
@@ -126,7 +128,7 @@ export const threadTab = (
 
 /** Reply asks for the composer; select keeps the tab's requests; reveal asks
  * the reader to show `messageId` again. */
-export type ThreadIntent = "reply" | "select" | "reveal";
+export type ThreadIntent = "reply" | "select" | "reveal" | "focus";
 
 /** Opening a thread selects its existing tab or adds one in `pane`. */
 function withThread(
@@ -158,9 +160,11 @@ function withThread(
     replyRequest:
       intent === "reply"
         ? (prior?.replyRequest ?? 0) + 1
-        : intent === "select" || intent === "reveal"
+        : intent === "select" || intent === "reveal" || intent === "focus"
           ? prior?.replyRequest
           : undefined,
+    focusRequest:
+      intent === "focus" ? (prior?.focusRequest ?? 0) + 1 : prior?.focusRequest,
     revealRequest:
       intent === "reveal"
         ? (prior?.revealRequest ?? 0) + 1

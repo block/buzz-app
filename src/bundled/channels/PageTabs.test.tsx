@@ -29,9 +29,8 @@ vi.mock("./ConversationTab", () => ({
       data-message={tab.messageId}
       data-reveal={tab.revealRequest}
       data-mark-read={tab.kind === "conversation" ? tab.markRead : undefined}
-      data-focus={
-        tab.kind === "conversation" ? tab.focusRequest : tab.replyRequest
-      }
+      data-focus={tab.focusRequest}
+      data-reply={tab.kind === "thread" ? tab.replyRequest : undefined}
     >
       {tab.kind} in {channel.name}
     </p>
@@ -219,4 +218,8 @@ it("focuses the composer of each tab it opens, except at a message", () => {
   expect(thread()).toHaveAttribute("data-focus", "1");
   page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
   expect(thread()).toHaveAttribute("data-focus", "1");
+  page.open({ channelId: "alpha", threadId: "root" });
+  expect(thread()).toHaveAttribute("data-focus", "2");
+  // Focus is not a Reply, which would retarget the reply box at the root.
+  expect(thread()).not.toHaveAttribute("data-reply");
 });

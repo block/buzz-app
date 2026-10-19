@@ -15,6 +15,7 @@ import type { RelayEvent } from "../../features/relay/events";
 import { createOutbox, type OutgoingEvent } from "../../features/relay/outbox";
 import { keypair, signed } from "../../features/relay/testing";
 import { ConversationTab } from "./ConversationTab";
+import type { ConversationTab as Tab } from "./useChannelTabState";
 
 // Exercise the real tab recovery owner and durable outbox without mounting the
 // independent timelines/composers. Recovery must work with no editor mounted.
@@ -22,17 +23,20 @@ vi.mock("../../features/messages/ThreadPanel", () => ({
   ThreadPanel: ({
     active,
     replyRequest,
+    focusRequest,
     revealSelected,
     revealRequest,
   }: {
     active: boolean;
     replyRequest?: number;
+    focusRequest?: number;
     revealSelected?: boolean;
     revealRequest?: number;
   }) => (
     <aside
       data-active={active}
       data-reply-request={replyRequest}
+      data-focus-request={focusRequest}
       data-reveal-selected={revealSelected}
       data-reveal-request={revealRequest}
     >
@@ -273,20 +277,29 @@ it.each([false, true])(
   },
 );
 
-it.each([false, true])(
-  "restored composer focus is not replayed but fresh requests are delivered (focusOnMount=%s)",
-  (focusOnMount) => {
+it.each([
+  ["conversation", false],
+  ["conversation", true],
+  ["thread", false],
+  ["thread", true],
+] as const)(
+  "restored %s composer focus is not replayed but fresh requests are delivered (focusOnMount=%s)",
+  (kind, focusOnMount) => {
     const channel = { id: "beta", name: "Beta" };
     const snapshot = { status: "ready", channels: [channel] };
     const session = {
       channels: { list: () => snapshot, subscribeList: () => () => {} },
     } as unknown as RelaySession;
-    const tab = {
-      id: "beta-tab",
-      kind: "conversation" as const,
-      channelId: "beta",
-      focusRequest: 1,
-    };
+    const tab: Tab =
+      kind === "thread"
+        ? {
+            id: "beta-tab",
+            kind,
+            channelId: "beta",
+            messageId: "a".repeat(64),
+            focusRequest: 1,
+          }
+        : { id: "beta-tab", kind, channelId: "beta", focusRequest: 1 };
     const props = {
       tab,
       channel,
@@ -300,7 +313,9 @@ it.each([false, true])(
       close: () => {},
     };
     const mounted = render(<ConversationTab {...props} />);
-    const composer = screen.getByText("Composer content");
+    const composer = screen.getByText(
+      kind === "thread" ? "Thread content" : "Composer content",
+    );
     if (focusOnMount)
       expect(composer).toHaveAttribute("data-focus-request", "1");
     else expect(composer).not.toHaveAttribute("data-focus-request");

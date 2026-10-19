@@ -123,7 +123,7 @@ export function PageTabs({
           channelId,
           messageId ?? threadId,
           threadId,
-          messageId ? "reveal" : "reply",
+          messageId ? "reveal" : "focus",
         );
       else {
         const tab = `conversation:${channelId}`;

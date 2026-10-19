@@ -4,7 +4,6 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   DotsThreeIcon,
-  LightningIcon,
   PencilSimpleIcon,
 } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -14,8 +13,6 @@ import {
   MenuRoot,
   MenuTrigger,
   MenuPopup,
-  MenuCheckboxItem,
-  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -49,6 +46,7 @@ export function WorkflowEditor({
   onCancel,
   scope,
   actions,
+  run,
   details,
   status,
   children,
@@ -66,7 +64,8 @@ export function WorkflowEditor({
   locked?: boolean;
   onCancel?: () => void;
   scope?: ReactNode;
-  actions?: (enable: ReactNode) => ReactNode;
+  actions?: ReactNode;
+  run?: ReactNode;
   details?: ReactNode;
   status?: ReactNode;
   children?: ReactNode;
@@ -163,21 +162,46 @@ export function WorkflowEditor({
           : !fields.editable
             ? "Correct the YAML before changing the name or configuration."
             : undefined));
-  const enableControl = (
-    <MenuCheckboxItem
-      checked={fields.enabled !== false && fields.editable}
-      disabled={disabled || !fields.editable}
+  const enableSwitch = fields.editable ? (
+    <Switch
+      label="Enabled in configuration"
       aria-describedby={controlReason ? `${id}-control-reason` : undefined}
-      closeOnClick={false}
+      checked={fields.enabled !== false}
+      disabled={disabled}
       onCheckedChange={(enabled) =>
         changeHeader(yamlWithWorkflowEnabled(yaml, enabled), { enabled })
       }
-    >
-      <MenuIcon>
-        <LightningIcon size={14} />
-      </MenuIcon>
-      Enable
-    </MenuCheckboxItem>
+    />
+  ) : (
+    <span className="text-body-sm text-secondary">
+      Unreadable configuration
+    </span>
+  );
+  const modeTabs = (
+    <Tabs
+      variant="panel"
+      label="Editor mode"
+      value={mode}
+      items={[
+        { value: "form", label: "Form" },
+        { value: "yaml", label: "YAML" },
+      ]}
+      onValueChange={(next) => {
+        if (next === "yaml" && (conditionError || headerError)) {
+          setModeError(
+            "Correct the invalid condition or duplicate header before switching views.",
+          );
+          return;
+        }
+        if (next === "form" && !form) {
+          setModeError(parsed.ok ? null : parsed.error);
+          return;
+        }
+        setModeError(null);
+        setSelection(null);
+        setMode(next);
+      }}
+    />
   );
   return (
     <Dialog
@@ -190,7 +214,7 @@ export function WorkflowEditor({
             : "Edit workflow"
       }
       closeLabel="Close editor"
-      size="expanded"
+      size="wide"
       onOpenChange={(open) => {
         if (!open) onCancel?.();
       }}
@@ -201,47 +225,25 @@ export function WorkflowEditor({
       }}
       headerActions={
         !create && (
-          <MenuRoot>
-            <MenuTrigger
-              render={
-                <IconButton
-                  aria-label="Workflow actions"
-                  icon={<DotsThreeIcon size={20} aria-hidden="true" />}
+          <>
+            {run}
+            {actions && (
+              <MenuRoot>
+                <MenuTrigger
+                  render={
+                    <IconButton
+                      aria-label="Workflow actions"
+                      icon={<DotsThreeIcon size={20} aria-hidden="true" />}
+                    />
+                  }
                 />
-              }
-            />
-            <MenuPopup align="end">
-              {actions ? actions(enableControl) : enableControl}
-            </MenuPopup>
-          </MenuRoot>
+                <MenuPopup align="end">{actions}</MenuPopup>
+              </MenuRoot>
+            )}
+          </>
         )
       }
-      leadingActions={
-        <Tabs
-          variant="panel"
-          label="Editor mode"
-          value={mode}
-          items={[
-            { value: "form", label: "Form" },
-            { value: "yaml", label: "YAML" },
-          ]}
-          onValueChange={(next) => {
-            if (next === "yaml" && (conditionError || headerError)) {
-              setModeError(
-                "Correct the invalid condition or duplicate header before switching views.",
-              );
-              return;
-            }
-            if (next === "form" && !form) {
-              setModeError(parsed.ok ? null : parsed.error);
-              return;
-            }
-            setModeError(null);
-            setSelection(null);
-            setMode(next);
-          }}
-        />
-      }
+      leadingActions={!chooseChannel && enableSwitch}
       actions={
         !readOnly && (
           <>
@@ -322,7 +324,7 @@ export function WorkflowEditor({
               </Field>
             ) : (
               <div className="workflow-name-display">
-                <span className="text-mono-sm">
+                <span className="text-heading">
                   {fields.name || "Untitled workflow"}
                 </span>
                 <IconButton
@@ -347,6 +349,11 @@ export function WorkflowEditor({
                 />
               </div>
             )}
+            {!chooseChannel && scope && (
+              <span className="workflow-name-scope text-body-sm text-secondary">
+                {scope}
+              </span>
+            )}
             {!editingName && issue?.field === "name" && (
               <p
                 id={`${id}-name-error`}
@@ -362,25 +369,9 @@ export function WorkflowEditor({
               {controlReason}
             </span>
           )}
-          {create && fields.editable ? (
-            <Switch
-              label="Enabled in configuration"
-              aria-describedby={
-                controlReason ? `${id}-control-reason` : undefined
-              }
-              checked={fields.enabled !== false}
-              disabled={disabled}
-              onCheckedChange={(enabled) =>
-                changeHeader(yamlWithWorkflowEnabled(yaml, enabled), {
-                  enabled,
-                })
-              }
-            />
-          ) : !fields.editable ? (
-            <span className="text-body-sm text-secondary">
-              Unreadable configuration
-            </span>
-          ) : null}
+          {!chooseChannel && (
+            <div className="workflow-toolbar-end">{modeTabs}</div>
+          )}
         </div>
         <div className="workflow-editor-body">
           {modeError && (
@@ -396,7 +387,6 @@ export function WorkflowEditor({
               issue={issue}
               onChange={mutateForm}
               disabled={disabled}
-              scope={scope}
               selection={selection}
               onSelect={setSelection}
             />

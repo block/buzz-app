@@ -479,6 +479,66 @@ it.each(["shortcut", "row"])(
 );
 
 it.each([false, true])(
+  "retires a conversation moved to the main pane when its room becomes a Huddle (focus elsewhere: %s)",
+  async (elsewhere) => {
+    const h = fixture({ withWriter: true });
+    render(h.view);
+    const list = () =>
+      within(screen.getByRole("list", { name: "Inbox conversations" }));
+    await waitFor(() =>
+      expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+    );
+    const [first] = list().getAllByRole("button", { name: /^Open / });
+    if (!first) throw new Error("Missing fixture row");
+    fireEvent.click(first);
+    await findReader();
+    const [label] = sideTabs();
+    if (!label) throw new Error("Missing side tab");
+    act(() => {
+      fireEvent.keyDown(screen.getByRole("tab", { name: label }), {
+        key: "ArrowLeft",
+        altKey: true,
+        shiftKey: true,
+      });
+    });
+    expect(tabs("Inbox tabs")).toHaveLength(2);
+    // Another visible control, such as the app's sidebar, keeps its focus.
+    const other = document.body.appendChild(document.createElement("button"));
+    if (elsewhere) other.focus();
+    else (await screen.findByRole("textbox")).focus();
+    const about = huddleDescription("00000000-0000-4000-8000-000000000001");
+    act(() =>
+      h.emit([
+        metadata(h.relayKey, "room", "Huddle", 100, [
+          ["private"],
+          ["P", h.viewer.pubkey],
+          ["about", about],
+        ]),
+        signed(h.viewer, {
+          kind: 9007,
+          created_at: 1,
+          content: "",
+          tags: [
+            ["h", "room"],
+            ["visibility", "private"],
+            ["channel_type", "stream"],
+            ["about", about],
+          ],
+        }),
+      ]),
+    );
+    await waitFor(() => expect(tabs("Inbox tabs")).toHaveLength(1));
+    expect(queryReader()).not.toBeInTheDocument();
+    if (elsewhere) expect(other).toHaveFocus();
+    else
+      expect(
+        screen.getByRole("button", { name: "Inbox filters" }),
+      ).toHaveFocus();
+    other.remove();
+  },
+);
+
+it.each([false, true])(
   "retires an opened conversation when its room becomes a Huddle (selection cleared first: %s)",
   async (cleared) => {
     const h = fixture({ withWriter: true });

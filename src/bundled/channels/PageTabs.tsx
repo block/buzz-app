@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { RelaySession } from "../../features/relay/session";
 import type {
@@ -112,6 +112,9 @@ export function PageTabs({
     (target: PageTabTarget, options?: PageTabOptions) => boolean
   >(() => false);
   const closing = useRef<(target: PageTabTarget) => boolean>(() => false);
+  // A page's own close leaves focus to the page, so the workspaces adopt the
+  // selection it leaves without focusing it.
+  const [closes, setCloses] = useState(0);
   // A thread opened at a reply keeps its tab once its root resolves.
   const tabOf = ({ channelId, threadId }: PageTabTarget) =>
     (threadId && threadTab(tabState.tabs, channelId, threadId)) ||
@@ -128,6 +131,7 @@ export function PageTabs({
       const tab = tabOf(target);
       if (!mounted.current || !tab) return false;
       tabState.setTabs((tabs) => tabs.filter((item) => item.id !== tab.id));
+      setCloses((count) => count + 1);
       return true;
     };
     opening.current = (
@@ -307,6 +311,7 @@ export function PageTabs({
               drag={secondary.drag.main}
               label={`${label} tabs`}
               focusOnMount={false}
+              adoptSelection={closes}
               value={secondary.selectedMain}
               select={(tab) =>
                 tabState.selectMain(tab === "conversation" ? undefined : tab)
@@ -354,6 +359,7 @@ export function PageTabs({
                   select={secondary.selectPanelTab}
                   items={secondary.items}
                   focusOnMount={continuing.current}
+                  adoptSelection={closes}
                 />
               </div>
             )}

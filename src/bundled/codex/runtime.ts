@@ -93,6 +93,8 @@ type Active = {
   finished: boolean;
   /** The owner stopped it, so its interruption is not reported. */
   stopped?: boolean;
+  /** The one interrupt every Stop of this turn shares. */
+  stopping?: Promise<void>;
   /** What the turn runs on, once resolved; a differing pick queues a turn. */
   model?: string;
   effort?: string;
@@ -131,6 +133,8 @@ type Entry = {
   saved: Record<string, Saved>;
   /** Standalone turns now running, for their tool calls to find. */
   onces: Set<Once>;
+  /** Requests delivered and not yet taken into a turn, nor ended. */
+  waiting: Set<Request>;
 };
 type Server = {
   rpc: AppServer;
@@ -374,6 +378,7 @@ export class CodexRuntime {
       saved,
       lanes: new Map(),
       onces: new Set(),
+      waiting: new Set(),
     };
     this.entries.set(pubkey, entry);
     return entry;
@@ -569,6 +574,7 @@ export class CodexRuntime {
     const text = textOf(request.event, agent.name);
     const entry = this.entry(agent.pubkey, request.scope);
     delivery.interruptible?.(() => this.interrupt(entry, key, request));
+    entry.waiting.add(request);
     let lane = entry.lanes.get(key);
     if (!lane) {
       lane = { tail: entry.after, queued: 0 };
@@ -576,6 +582,11 @@ export class CodexRuntime {
     }
     if (lane.active) {
       const active = lane.active;
+      let queued = false;
+      const queue = () => {
+        queued = true;
+        this.start(request, text, key, lane, entry);
+      };
       // Startup and history reads stay ordered without holding Agents delivery.
       const accepted = active.steering.then(async () => {
         try {
@@ -588,16 +599,18 @@ export class CodexRuntime {
           // waits for this turn and runs as the next one. Everything after
           // it queues too until the lane drains: steering would run later
           // messages first. A turn keeps the posting policy it was admitted
-          // with, so a request under the other policy waits for it too.
+          // with, so a request under the other policy waits for it too. A
+          // turn the owner stopped takes nothing more.
           if (
             active.finished ||
+            active.stopped ||
             lane.queued ||
             request.conversation.topLevel !==
               active.reply.conversation.topLevel ||
             (request.model && request.model !== active.model) ||
             (request.effort && request.effort !== active.effort)
           ) {
-            this.start(request, text, key, lane, entry);
+            queue();
             return;
           }
           const context = await this.history(request, entry.abort.signal);
@@ -605,8 +618,8 @@ export class CodexRuntime {
             request.failActivity("Codex was stopped");
             return;
           }
-          if (active.finished) {
-            this.start(request, text, key, lane, entry);
+          if (active.finished || active.stopped) {
+            queue();
             return;
           }
           await active.rpc.request("turn/steer", {
@@ -618,6 +631,7 @@ export class CodexRuntime {
           });
           active.reply = request;
           active.requests.push(request);
+          entry.waiting.delete(request);
           this.touch(request, entry, key);
           this.acknowledgeActivity(active, request);
         } catch (error) {
@@ -627,7 +641,7 @@ export class CodexRuntime {
           }
           // A completion racing the request means this is the next ordinary turn.
           if (message(error) === "no active turn to steer") {
-            this.start(request, text, key, lane, entry);
+            queue();
             return;
           }
           request.failActivity(`Steering was not accepted: ${message(error)}`);
@@ -638,6 +652,8 @@ export class CodexRuntime {
           // The running turn never took this request in, so nothing else
           // answers it: let go of its working hold now, not at that turn's end.
           request.answered();
+        } finally {
+          if (!queued) entry.waiting.delete(request);
         }
       });
       active.steering = accepted.catch((error) =>
@@ -767,27 +783,34 @@ export class CodexRuntime {
   }
 
   /** Stops the turn in conversation `key` that took `request` in, once it
-   * started. A request still waiting for its turn is not stopped. */
-  private async interrupt(entry: Entry, key: string, request: Request) {
+   * started. A request still waiting for its turn is not stopped. Stops of
+   * one turn share its interrupt, so one that fails cannot undo another. */
+  private interrupt(entry: Entry, key: string, request: Request) {
+    if (entry.waiting.has(request))
+      return Promise.reject(
+        new Error("Codex has not started on this message yet"),
+      );
     const active = entry.lanes.get(key)?.active;
-    if (!active?.requests.includes(request)) {
-      if (!active || active.finished) return;
-      throw new Error("Codex has not started on this message yet");
-    }
-    if (active.finished) return;
+    if (!active?.requests.includes(request) || active.finished)
+      return Promise.resolve();
     active.stopped = true;
-    try {
-      await active.ready;
-      if (active.finished || !active.threadId || !active.turnId) return;
-      await active.rpc.request("turn/interrupt", {
-        threadId: active.threadId,
-        turnId: active.turnId,
-      });
-    } catch (error) {
-      // A turn that did not stop still reports how it ends.
-      if (!active.finished) active.stopped = false;
-      throw error;
-    }
+    active.stopping ??= (async () => {
+      try {
+        await active.ready;
+        if (active.finished || !active.threadId || !active.turnId) return;
+        await active.rpc.request("turn/interrupt", {
+          threadId: active.threadId,
+          turnId: active.turnId,
+        });
+      } catch (error) {
+        // A turn that did not stop still reports how it ends, and can be
+        // stopped again.
+        delete active.stopping;
+        if (!active.finished) active.stopped = false;
+        throw error;
+      }
+    })();
+    return active.stopping;
   }
 
   /** A positive harness response transfers presentation, not execution or
@@ -818,6 +841,7 @@ export class CodexRuntime {
       .catch(() => undefined)
       .then(async () => {
         current.queued--;
+        entry.waiting.delete(request);
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
           return;

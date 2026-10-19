@@ -1768,11 +1768,12 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     expect(action).toHaveAttribute("data-variant", "outline");
     expect(action).toHaveAttribute("aria-busy", "true");
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(action).toHaveAccessibleDescription("Checking access…");
     await user.hover(action);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "Checking access…",
     );
-    expect(action).toHaveAccessibleDescription("Checking access…");
+    expect(action).toHaveAccessibleDescription(/Checking access…/);
     await user.unhover(action);
     await user.click(action);
     action.focus();
@@ -1789,11 +1790,13 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     });
     expect(enable).toHaveAttribute("aria-disabled", "true");
     expect(enable).toHaveAttribute("data-variant", "outline");
+    expect(enable).toHaveAccessibleDescription("Checking access…");
+    expect(enable).toHaveAttribute("aria-describedby", "plugin-detail-access");
     await user.hover(enable);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "Checking access…",
     );
-    expect(enable).toHaveAccessibleDescription("Checking access…");
+    expect(enable).toHaveAccessibleDescription(/Checking access…/);
     await user.unhover(enable);
     for (const next of [
       "denied",
@@ -1805,6 +1808,23 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
         state = next;
         for (const listener of listeners) listener();
       });
+      const reason =
+        next === "denied"
+          ? id === "buzz.moderation"
+            ? "Select a community where you’re an owner or admin."
+            : "Select a community on a relay where you have staff access."
+          : next === "no-community"
+            ? "Select a community to check access."
+            : next === "error"
+              ? "Could not check access. Try again."
+              : "Access is unavailable in this build or on this relay.";
+      expect(document.getElementById("plugin-detail-access")).toHaveTextContent(
+        reason,
+      );
+      expect(enable).toHaveAttribute(
+        "aria-describedby",
+        expect.stringContaining("plugin-detail-access"),
+      );
       expect(enable).toHaveAccessibleName("Unavailable");
       expect(action).toHaveAccessibleName("Unavailable Restricted plugin");
       expect(enable).toHaveAttribute("aria-disabled", "true");

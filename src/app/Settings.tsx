@@ -237,8 +237,8 @@ function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
       return "Access is unavailable in this build or on this relay.";
     case "denied":
       return plugin.manifest.id === "buzz.moderation"
-        ? "Requires owner or admin access in this community."
-        : "Requires staff access on this relay.";
+        ? "Select a community where you’re an owner or admin."
+        : "Select a community on a relay where you have staff access.";
   }
 }
 
@@ -370,6 +370,11 @@ function PluginDetails({
               restrictedPlugin(plugin) &&
               access === "checking"
             }
+            aria-describedby={
+              !plugin.enabled && accessReason
+                ? "plugin-detail-access"
+                : undefined
+            }
             focusableWhenDisabled
             ref={toggle}
             onClick={onToggle}
@@ -378,6 +383,13 @@ function PluginDetails({
           </Button>
         )}
       </div>
+      {!plugin.enabled && accessReason && (
+        <p id="plugin-detail-access" className="sr-only">
+          {access === "error"
+            ? "Could not check access. Try again."
+            : accessReason}
+        </p>
+      )}
       {!plugin.enabled && accessReason && access === "error" && (
         <div className={styles.pluginAccess}>
           <Button
@@ -989,6 +1001,11 @@ export function Settings({
                             restrictedPlugin(plugin) &&
                             access === "checking"
                           }
+                          aria-describedby={
+                            !plugin.enabled && accessReason
+                              ? `plugin-access-${id}`
+                              : undefined
+                          }
                           focusableWhenDisabled
                           onClick={() => togglePlugin(plugin)}
                         >
@@ -997,6 +1014,11 @@ export function Settings({
                       )}
                     </div>
                   </article>
+                  {!plugin.enabled && accessReason && (
+                    <p id={`plugin-access-${id}`} className="sr-only">
+                      {accessReason}
+                    </p>
+                  )}
                   {failure && (
                     <p
                       className={`${styles.pluginRowError} error text-body-sm`}

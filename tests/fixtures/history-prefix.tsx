@@ -1,6 +1,6 @@
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 // Actual conversation UI/session and folded events; no live identity or relay.
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ChannelTimeline } from "../../src/features/messages/ChannelTimeline";
 import { createRelaySession } from "../../src/features/relay/session";
@@ -25,8 +25,15 @@ const events = Array.from({ length: 121 }, (_, i) =>
 const allRows = foldMessages("images", relay.pubkey, events);
 function Fixture() {
   const [start, setStart] = useState(81);
+  const [loading, setLoading] = useState(false);
   const rows = [...allRows.slice(0, 1), ...allRows.slice(start)];
-  window.prependHistory = () => setStart((n) => Math.max(1, n - 20));
+  // As an older page does, rows land in the commit that ends a load.
+  window.prependHistory = () => setLoading(true);
+  useEffect(() => {
+    if (!loading) return;
+    setStart((n) => Math.max(1, n - 20));
+    setLoading(false);
+  }, [loading]);
   return (
     <div
       data-history-start={start}
@@ -46,7 +53,7 @@ function Fixture() {
           rows,
           status: "ready",
           hasMore: true,
-          loadingOlder: false,
+          loadingOlder: loading,
           error: undefined,
           freshness: "fresh",
         }}

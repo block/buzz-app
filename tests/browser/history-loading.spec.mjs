@@ -465,29 +465,53 @@ test.describe("pages inside one second", () => {
     }
   });
 
-  test("a live message in the loaded first second is new", async ({
-    page,
-    app,
-  }) => {
-    const pending = await reading(page, app, 1400);
-    const before = await anchor(page);
-    // Sorted among loaded history by a sender clock, before any page lands.
+  // A live message sorted among loaded history by a sender clock.
+  const publish = (app, second, ms) =>
     app.relay.publish(
       "primary",
       app.sign({
         kind: 9,
-        created_at: pending.filter.until,
+        created_at: second,
         tags: [
           ["h", "alpha"],
-          ["ms", "999"],
+          ["ms", ms],
         ],
         content: "Delayed live message",
       }),
     );
-    await expect(latest(page)).toHaveText("1 new message");
-    pending.release();
+  // At 0ms it sorts above the reader's rows, at 999ms below them.
+  for (const ms of ["0", "999"])
+    test(`a live message in the loaded first second at ${ms}ms is new`, async ({
+      page,
+      app,
+    }) => {
+      const pending = await reading(page, app, 1400);
+      const before = await anchor(page);
+      publish(app, pending.filter.until, ms);
+      await expect(latest(page)).toHaveText("1 new message");
+      pending.release();
+      await settle(page);
+      await expectAnchor(page, before);
+      await expect(latest(page)).toHaveText("1 new message");
+    });
+
+  test("a live message after a failed older load is new", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    app.relay.quotaNextOlder("alpha", 0);
+    await history(page).hover();
+    await page.mouse.wheel(0, -100000);
+    await expect(history(page).getByRole("alert")).toContainText(
+      "rate-limited",
+    );
     await settle(page);
-    await expectAnchor(page, before);
+    const { filter } = app.report.queries.find(
+      ({ filter }) =>
+        filter.until !== undefined && filter["#h"]?.includes("alpha"),
+    );
+    publish(app, filter.until, "999");
     await expect(latest(page)).toHaveText("1 new message");
   });
 });

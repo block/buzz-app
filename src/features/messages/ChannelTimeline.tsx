@@ -731,17 +731,17 @@ function Timeline({
         : -1;
     const previousIds = edges.current.ids;
     // Rows before the loaded first row's second are history. A page also
-    // returns rows of that second, which are new only when no page landed.
-    // Rows landing above the kept rows the reader sees are history too.
-    const { floor } = edges.current;
+    // returns rows of that second, and can land after a retained first row:
+    // when one lands, only rows after the previous last row are new.
+    const { floor, order } = edges.current;
     const paged = edges.current.paging && !loadingOlder.current;
-    const arrivals = prepend
-      ? 0
-      : rows.filter(
-          (row) =>
-            !previousIds.has(row.id) &&
-            (row.createdAt > floor || (row.createdAt === floor && !paged)),
-        ).length;
+    const tail = rows.findIndex((row) => row.id === order.at(-1));
+    const arrivals = rows.filter(
+      (row, index) =>
+        !previousIds.has(row.id) &&
+        (!paged || index > tail) &&
+        (row.createdAt > floor || (row.createdAt === floor && !paged)),
+    ).length;
     edges.current = {
       order: rows.map((row) => row.id),
       ids: new Set(rows.map((row) => row.id)),
@@ -891,6 +891,10 @@ function Timeline({
     updateJumpToLatest,
     revealMessageId,
   ]);
+  // After positioning reads it: a load that ends without rows lands no page.
+  useLayoutEffect(() => {
+    if (!window.loadingOlder) edges.current.paging = false;
+  }, [window.loadingOlder]);
   const loadNearTop = useCallback(
     (element: HTMLElement, resume = false) => {
       olderDemand.current = false;

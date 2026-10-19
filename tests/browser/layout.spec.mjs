@@ -504,7 +504,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   await expect(projects).toHaveAccessibleName(/^Enable /);
   await expectWorkflowsChoice(0);
   await openSettings(page);
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
   await projects.click();
   await expect(projects).toHaveAccessibleName(/^Disable /);
   await expectWorkflowsChoice(1);
@@ -954,7 +954,7 @@ companionTest(
     // input, not scrollIntoView. Narrow modals scroll their stacked navigation
     // and detail together.
     await openSettings(page);
-    await selectSettingsSection(page, "Plugins");
+    await selectSettingsSection(page, "Manage plugins");
     const settingsPage = settingsDialog(page).locator(
       ".buzz-dialog-navigation-layout",
     );

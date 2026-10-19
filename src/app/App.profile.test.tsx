@@ -211,6 +211,7 @@ it("opens Plugins from the account menu and switches back to profile settings", 
   ).toBeVisible();
 });
 
+// Whole-app journeys through several Settings sections run slower in CI.
 it("keeps the same unsent conversation and companion panel through Settings sections and Close", async () => {
   const user = await setup();
   if (!services) throw new Error("Missing app services");
@@ -283,7 +284,7 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   expect(current.navigation.snapshot().entry.id).toBe(entry.id);
   assertPreserved();
   expect(trigger).toHaveFocus();
-});
+}, 15_000);
 
 it("returns keyboard-opened Settings to the same focused draft", async () => {
   const user = await setup();
@@ -310,6 +311,7 @@ it("returns keyboard-opened Settings to the same focused draft", async () => {
   expect(editor).toHaveTextContent("Keyboard draft");
 });
 
+// Whole-app journeys through several Settings sections run slower in CI.
 it("asks before any Settings dismissal discards unsaved profile edits", async () => {
   const user = await setup();
   await act(async () => {
@@ -392,4 +394,4 @@ it("asks before any Settings dismissal discards unsaved profile edits", async ()
     expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
   );
   expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull();
-});
+}, 15_000);

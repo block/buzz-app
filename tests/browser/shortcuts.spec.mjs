@@ -4,6 +4,7 @@ import {
   openPage,
   pageChoice,
   pageChoices,
+  selectSettingsSection,
   settingsDialog,
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -431,7 +432,7 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
   ).toHaveCount(0);
   await page.keyboard.press(`${modifier}+Shift+k`);
   await page.keyboard.press(`${modifier}+,`);
-  await button(page, "Plugins").click();
+  await selectSettingsSection(page, "Manage plugins");
   await toggle.click();
   await closeSettings(page);
   await openPage(page, "Shortcut counter");

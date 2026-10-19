@@ -269,11 +269,11 @@ test("Personal space pairs with a manually entered community address", async ({
 }) => {
   await open(page, app);
   await selectCommunity(page, "Personal space");
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  const pairing = page
-    .getByRole("complementary", { name: "Settings sidebar" })
-    .getByRole("button", { name: "Pair mobile", exact: true });
+  await openSettings(page);
+  const pairing = settingsSections(page).getByRole("button", {
+    name: "Pair mobile",
+    exact: true,
+  });
   await pairing.click();
   await expect(pairing).toHaveAttribute("aria-current", "page");
   const qr = page.getByAltText("Scan this QR code with Buzz on your phone");

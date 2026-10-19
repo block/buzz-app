@@ -169,7 +169,9 @@ test("disabling the Channel Usage plugin retires the tab and re-enabling does no
   await expect(page.getByRole("tab", { name: "Usage" })).toBeVisible();
   await page.getByRole("button", { name: "Your profile" }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   const toggle = page.getByRole("switch", { name: "Enable Channel Usage" });
   await expect(toggle).toBeChecked();
   await toggle.click();
@@ -186,7 +188,9 @@ test("disabling the Channel Usage plugin retires the tab and re-enabling does no
   ).not.toBeVisible();
   await page.getByRole("button", { name: "Your profile" }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   await toggle.click();
   await expect(toggle).toBeChecked();
   await openPage(page, "Messages");

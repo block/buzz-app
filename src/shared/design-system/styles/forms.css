@@ -50,6 +50,32 @@
     @apply text-body-sm;
     color: var(--text-danger);
   }
+  /* A Field's error opens in place of the field gap: its row grows from
+     nothing as the gap returns, so the container grows and content below
+     slides while the text fades in, the arrive-grow recipe's settle timing. */
+  .buzz-field-error-track {
+    display: grid;
+    grid-template-rows: 1fr;
+  }
+  .buzz-field-error-track > .buzz-field-error {
+    min-height: 0;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .buzz-field-error-track {
+      animation: buzz-field-error-open var(--duration-settle)
+        var(--easing-settle);
+    }
+    .buzz-field-error-track > .buzz-field-error {
+      animation: buzz-arrive-reveal var(--duration-settle) var(--easing-settle);
+    }
+  }
+  @keyframes buzz-field-error-open {
+    from {
+      grid-template-rows: 0fr;
+      margin-top: calc(-1 * var(--space-2));
+      opacity: 0;
+    }
+  }
   .buzz-input,
   .buzz-textarea {
     @apply text-body;
@@ -110,6 +136,14 @@
   .buzz-input:is([data-invalid], [aria-invalid="true"]),
   .buzz-textarea:is([data-invalid], [aria-invalid="true"]) {
     --border: var(--border-danger);
+  }
+  /* Borderless titles have no perimeter to stroke; their message carries
+     validation. Keyboard focus still draws its cue. */
+  .buzz-input:is([data-appearance="title"], [data-appearance="heading"]):is(
+    [data-invalid],
+    [aria-invalid="true"]
+  ) {
+    --border: transparent;
   }
   .buzz-input:disabled,
   .buzz-textarea:disabled {

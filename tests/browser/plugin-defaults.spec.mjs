@@ -7,7 +7,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function plugins(page) {
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
 }
 
 // Representative app wiring: real catalogs -> Settings switches -> sidebar page,

@@ -122,21 +122,25 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         "block.hosted-communities",
         "buzz.agents",
         "buzz.channels",
-        "buzz.channels",
         "buzz.emoji",
         "buzz.pairing",
       ],
     );
-    // Messages owns thread placement through the plugin-settings boundary.
-    assert.equal(services.settingsCards.has("buzz.channels/messages"), true);
-    const messageSettings = services.settingsCards
-      .snapshot()
-      .find((card) => card.key === "buzz.channels/messages");
-    assert.equal(messageSettings.title, "Messages");
+    // The device-local template library remains reachable without a selected community.
+    assert.equal(
+      services.settingsCards
+        .snapshot()
+        .find((card) => card.key === "buzz.channels/templates")?.group,
+      "App",
+    );
+    // Conversation presentation is host-owned in Appearance, not a second plugin page.
+    assert.equal(services.settingsCards.has("buzz.channels/messages"), false);
     const pairingCard = services.settingsCards
       .snapshot()
       .find((card) => card.key === "buzz.pairing/mobile");
     assert.ok(pairingCard);
+    // Pairing collects its own address, so it also belongs in Personal space.
+    assert.equal(pairingCard.personal, true);
     await services.plugins.change("disable", "buzz.pairing");
     assert.equal(services.settingsCards.has("buzz.pairing/mobile"), false);
     await services.plugins.change("enable", "buzz.pairing");
@@ -190,7 +194,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         "block.builderlab",
         "block.hosted-communities",
         "buzz.agents",
-        "buzz.channels",
         "buzz.channels",
         "buzz.emoji",
         "buzz.pairing",

@@ -546,7 +546,8 @@ the reserved 1px border, so state changes do not shift the layout. Keyboard
 focus and reduced motion change immediately. Composite fields own one stroke
 around the input and actions; error strokes retain priority. Borderless title and
 heading inputs keep their perimeter transparent on pointer/autofocus entry and
-show the focus border during keyboard navigation. Placeholders use
+when invalid, where the connected error carries validation, and show the focus
+border during keyboard navigation. Placeholders use
 text-metadata, one step quieter than supporting text, in both themes. This supersedes
 the older keyboard-only
 and no-container-ring recipes for these fields.
@@ -774,7 +775,10 @@ Use Field once per input/textarea, with an 8px internal gap. Select's field
 variant, SearchField, and Combobox.Control already own their label and supporting
 text; do not add a second Field around them. Use description/error for connected
 help and validation. An error replaces the secondary description until it clears;
-keep the accessible description synchronized with the visible message. Validation
+keep the accessible description synchronized with the visible message. Field's
+error opens its space in place of the field gap while fading in, with
+`--duration-settle` and `--easing-settle`, so content below moves instead of
+jumping; reduced motion shows it immediately. Errors outside Field stay static. Validation
 strokes belong to the outer field, never its auxiliary buttons. Keep feature-owned
 asynchronous status connected through
 aria-describedby. Forms own 16px between adjacent fields and the 32px section

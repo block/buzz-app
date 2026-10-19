@@ -576,10 +576,10 @@ it.each([
   ["archive", "Archive channel", "prominent", "subtle", true],
   ["unarchive", "Unarchive channel", "prominent", "subtle", true],
   ["hide", "Hide conversation", "prominent", "subtle", true],
-  ["leave", "Leave channel", "subtle", "prominent", false],
-  ["delete", "Delete channel", "destructive", "prominent", false],
+  ["leave", "Leave channel", "subtle", "subtle", false],
+  ["delete", "Delete channel", "destructive", "subtle", false],
 ] as const)(
-  "Enter presses the prominent default button for %s",
+  "Enter presses the focused default button for %s",
   async (action, label, confirmVariant, cancelVariant, confirms) => {
     const lifecycle = capability();
     const close = vi.fn();

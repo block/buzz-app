@@ -25,7 +25,7 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
   await openPage(page, "Messages");
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Messages", "Messages settings");
+  await selectSettingsSection(page, "Appearance", "Appearance");
   const preference = page.getByRole("combobox", { name: "Follow-up behavior" });
   await expect(preference).toContainText("Send immediately");
   await preference.click();

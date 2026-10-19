@@ -11,7 +11,7 @@ import {
   CheckIcon,
 } from "../shared/design-system/icons";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
-import { Header } from "../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { ThemePicker } from "../shared/design-system/ui/ThemePicker";
@@ -23,6 +23,17 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { Appearance } from "../shared/theme/service";
+
+import {
+  setThreadPlacementPreference,
+  useThreadPlacementPreference,
+} from "../features/messages/thread-preferences";
+import { Select } from "../shared/design-system/ui/Select";
+
+import {
+  useFollowUpBehaviorPreference,
+  setFollowUpBehaviorPreference,
+} from "../features/messages/follow-up-preference";
 
 const COLOR_LEVEL_LABELS: Record<ColorLevel, string> = {
   neutral: "Snoozin’",
@@ -42,6 +53,8 @@ export function AppearanceSettings({
   appearance: Appearance;
   active?: boolean;
 }) {
+  const followUp = useFollowUpBehaviorPreference();
+  const { placement, unsaved } = useThreadPlacementPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
   const resetRef = useCallback((node: HTMLButtonElement | null) => {
@@ -72,6 +85,7 @@ export function AppearanceSettings({
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
       <div>
+        <InlineHeader title="Interface" />
         <SettingsGroup>
           <PreferenceRow
             title="Color mode"
@@ -189,6 +203,87 @@ export function AppearanceSettings({
             )}
           />
         </SettingsGroup>
+      </div>
+      <div className="mt-section-gap">
+        <InlineHeader title="Conversations" />
+        <SettingsGroup>
+          <PreferenceRow
+            title="Follow-up behavior"
+            subtitle="In Solo, send follow-ups immediately or queue them until the agent finishes its previous response."
+            trailing={
+              <Select
+                variant="compact"
+                label="Follow-up behavior"
+                value={followUp.behavior}
+                groups={[
+                  {
+                    label: "Behavior",
+                    options: [
+                      { value: "immediate", label: "Send immediately" },
+                      { value: "queue", label: "Queue" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "immediate" || value === "queue")
+                    setFollowUpBehaviorPreference(value);
+                }}
+              />
+            }
+          />
+
+          <PreferenceRow
+            title="Open threads in"
+            subtitle="New threads open here. Already-open threads stay where you placed them."
+            trailing={
+              <Select
+                variant="compact"
+                label="Open threads in"
+                value={placement}
+                groups={[
+                  {
+                    label: "Pane",
+                    options: [
+                      { value: "side", label: "Side pane" },
+                      { value: "main", label: "Main pane" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (value === "main" || value === "side")
+                    setThreadPlacementPreference(value);
+                }}
+              />
+            }
+          />
+        </SettingsGroup>
+        {active && followUp.unsaved && (
+          <ToastNotice
+            title="Follow-up preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device."
+          >
+            <Button
+              size="sm"
+              onClick={() => setFollowUpBehaviorPreference(followUp.behavior)}
+            >
+              Retry saving follow-up behavior
+            </Button>
+          </ToastNotice>
+        )}
+        {active && unsaved && (
+          <ToastNotice
+            title="Thread preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setThreadPlacementPreference(placement)}
+            >
+              Retry saving thread placement
+            </Button>
+          </ToastNotice>
+        )}
         {active && accentError && (
           <ToastNotice
             title="Accent color wasn’t saved"

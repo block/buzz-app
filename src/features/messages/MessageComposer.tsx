@@ -377,8 +377,8 @@ function Composer({
     };
   }, []);
   const mentionRoster = useContext(DraftMentionRoster);
-  const agentChoices =
-    inviteAgents || !!soloConversation || ownSoloConversation;
+  const solo = !!soloConversation || ownSoloConversation;
+  const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
   const sendPending = useBackgroundSendPending(session, recoveryKey);
   const [accepted, setAccepted] = useState(() => {
@@ -935,7 +935,36 @@ function Composer({
       !recipient.name.trim()
     )
       return false;
-    return insert(`@${recipient.name} `, recipient);
+    if (!solo || editing.target)
+      return insert(`@${recipient.name} `, recipient);
+    return keepProseCaret((at) =>
+      insert(`@${recipient.name} `, recipient, at, undefined, false),
+    );
+  }
+  /** Solo chats address agents up front: a picked tag joins the leading tags,
+   * wherever the caret is. The insertion maps the caret, so the caret and its
+   * Undo both stay in the prose it was in. */
+  function keepProseCaret(add: (at: CompletionQuery) => boolean) {
+    const before = valueRef.current;
+    let start = 0;
+    for (const tag of [...before.recipients].sort(
+      (a, b) => a.start - b.start,
+    )) {
+      if (tag.start !== start || !/[ \t]/.test(before.text[tag.end] ?? ""))
+        break;
+      start = tag.end;
+      while (/[ \t]/.test(before.text[start] ?? "")) start++;
+    }
+    const caret = input.current?.selectionStart ?? before.text.length;
+    if (!add({ start, end: start, query: "" })) return false;
+    // A caret among the leading tags has no prose to stay in.
+    if (caret < start)
+      input.current?.setSelectionRange(
+        valueRef.current.text.length,
+        valueRef.current.text.length,
+      );
+    input.current?.focus();
+    return true;
   }
   function insertMentions(
     recipients: readonly MentionRecipient[],
@@ -986,7 +1015,14 @@ function Composer({
       return false;
     }
     const text = unique.map((person) => `@${person.name} `).join("");
-    if (!input.current.insertText(text, unique, range)) {
+    if (
+      !(solo && !range
+        ? keepProseCaret(
+            (at) =>
+              !!input.current?.insertText(text, unique, at, undefined, false),
+          )
+        : input.current.insertText(text, unique, range))
+    ) {
       setError(
         "The team would exceed the message length or 32-recipient limit. Nothing was added.",
       );

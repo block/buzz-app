@@ -687,6 +687,9 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "2"),
   );
+  // Let the virtual list reconcile resized rows before binding a scroll action
+  // to a node that text scaling can replace. This observes layout, not a delay.
+  await settle(page);
   await row.scrollIntoViewIfNeeded();
   await settle(page);
   await expectClockHidden();

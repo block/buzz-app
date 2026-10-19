@@ -2729,17 +2729,13 @@ it("inbox describes a Solo chat row by its newest top-level message, not only it
       ["t", SOLO_LABEL],
     ]),
   ]);
-  const ping = message(h.alice, "chat", "Ping", 20, [
-    ["p", h.viewer.pubkey],
-  ]);
+  const ping = message(h.alice, "chat", "Ping", 20, [["p", h.viewer.pubkey]]);
   const update = message(h.alice, "chat", "Later update", 21);
   h.emit([
     ping,
     update,
     message(h.viewer, "chat", "My answer", 22),
-    message(h.alice, "chat", "Side reply", 23, [
-      ["e", ping.id, "", "reply"],
-    ]),
+    message(h.alice, "chat", "Side reply", 23, [["e", ping.id, "", "reply"]]),
     message(h.alice, "chat", "Agent note", 24, [["audience", "agents"]]),
   ]);
   const item = h.session.unread

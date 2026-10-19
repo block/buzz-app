@@ -298,11 +298,14 @@ export function PageTabs({
       <div
         className={styles.root}
         onFocus={({ target }) => {
+          const panel = target.closest('[role="tabpanel"]');
           focused.current = {
             node: target,
-            tab: target
-              .closest('[role="tabpanel"]')
-              ?.getAttribute("aria-labelledby"),
+            // A portalled dialog sits outside its tab's panel; it belongs to
+            // the tab focus came from.
+            tab: panel
+              ? panel.getAttribute("aria-labelledby")
+              : focused.current?.tab,
           };
         }}
       >

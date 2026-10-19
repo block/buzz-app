@@ -538,9 +538,14 @@ it.each([false, true])(
   },
 );
 
-it.each([false, true])(
-  "retires an opened conversation when its room becomes a Huddle (selection cleared first: %s)",
-  async (cleared) => {
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  "retires an opened conversation when its room becomes a Huddle (selection cleared first: %s, focus in a link dialog: %s)",
+  async (cleared, dialog) => {
     const h = fixture({ withWriter: true });
     render(h.view);
     const list = () =>
@@ -555,6 +560,18 @@ it.each([false, true])(
     // Showing Archived ends the selection but keeps its tab.
     if (cleared) await chooseFilter("Archived", "Show");
     (await screen.findByRole("textbox")).focus();
+    if (dialog) {
+      // The dialog is portalled outside the tab that owns it.
+      fireEvent.click(
+        screen.getByRole("button", { name: "Toggle formatting" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Link/ }));
+      const [url] = within(
+        await screen.findByRole("dialog", { name: "Add link" }),
+      ).getAllByRole("textbox");
+      url?.focus();
+      expect(url).toHaveFocus();
+    }
     const about = huddleDescription("00000000-0000-4000-8000-000000000001");
     act(() =>
       h.emit([

@@ -547,6 +547,7 @@ html[data-keyboard-navigation]
   .board,
   .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
   }
   .panelStack > [data-panel-resize] {
     display: none;
@@ -568,6 +569,7 @@ html[data-keyboard-navigation]
   .board,
   .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
   }
   .panelStack > [data-panel-resize] {
     display: none;
@@ -589,6 +591,7 @@ html[data-keyboard-navigation]
   .board,
   .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
   }
   .panelStack {
     grid-column: 1 / -1;
@@ -872,6 +875,7 @@ html[data-keyboard-navigation]
   gap: var(--space-1h);
 }
 .channelDrawer {
+  --panel-motion-exit-duration: 0ms;
   --panel-motion-offset: translateY(var(--space-3));
   height: 42%;
   min-height: 11.25rem;

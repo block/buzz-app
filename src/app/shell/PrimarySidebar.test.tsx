@@ -144,7 +144,8 @@ it("keeps a click-away save alive when another row is double-clicked", async () 
     await f.user.dblClick(screen.getByRole("button", { name: /^Other/ }));
     await waitFor(() => expect(f.save).toHaveBeenCalledOnce());
     expect(input).toHaveValue("First renamed");
-    expect(input).toBeDisabled();
+    expect(input).toHaveAttribute("readonly");
+    expect(input).toHaveAttribute("aria-disabled", "true");
     expect(f.signal()?.aborted).toBe(false);
   } finally {
     await f.finish();

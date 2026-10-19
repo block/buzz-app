@@ -146,6 +146,7 @@
     --border: transparent;
   }
   .buzz-input:disabled,
+  .buzz-input[aria-disabled="true"],
   .buzz-textarea:disabled {
     color: var(--text-unavailable);
     background: var(--affordance-disabled);

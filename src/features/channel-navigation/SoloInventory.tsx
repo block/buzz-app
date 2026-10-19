@@ -1,4 +1,9 @@
-import { useSyncExternalStore, type ComponentProps } from "react";
+import {
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+  type ComponentProps,
+} from "react";
 import { useChannelNavigation } from "./ChannelNavigationState";
 import { conversationTarget, soloDraftTarget } from "./routes";
 import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPopover";
@@ -165,6 +170,9 @@ function SoloConversationRow({
   ComponentProps<typeof ChannelActivityPopover>,
   "onOpenThread" | "onOpenWorkingAgent" | "onOpenAgentActivity"
 >) {
+  const click = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pointer = useRef<string | undefined>(undefined);
+  useEffect(() => () => clearTimeout(click.current), []);
   const { agents, agentProfiles, waiting } = useWorkingAgents(
     session,
     id,
@@ -186,10 +194,29 @@ function SoloConversationRow({
           selected={selected}
           data-solo-channel-id={id}
           aria-current={selected ? "page" : undefined}
-          onClick={(event) => {
-            if (event.detail < 2) onSelect();
+          onPointerDown={(event) => {
+            pointer.current = event.pointerType;
           }}
-          onDoubleClick={onRename}
+          onClick={(event) => {
+            if (event.detail >= 2) return;
+            clearTimeout(click.current);
+            const touch = pointer.current === "touch";
+            pointer.current = undefined;
+            if (
+              event.detail === 1 &&
+              !touch &&
+              window.matchMedia("(max-width: 650px)").matches
+            ) {
+              // Keep the drawer present for a mouse double-click. Touch and
+              // keyboard activation, and wide layouts, navigate immediately.
+              click.current = setTimeout(onSelect, 500);
+            } else onSelect();
+          }}
+          onDoubleClick={() => {
+            clearTimeout(click.current);
+            onRename();
+          }}
+          onContextMenu={() => clearTimeout(click.current)}
           icon={
             <span className={styles.conversationIcon} aria-hidden="true">
               <ChatCircleIcon size={16} />

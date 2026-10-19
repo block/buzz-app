@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import { useLifetime } from "../../features/solo/Lifetime";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -23,7 +23,6 @@ export function SoloChatName({
   const name = useLifetime({ session, id, enabled: true });
   const input = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
-  const focused = useRef(false);
   const active = useRef(true);
   const saving = useRef(false);
   useEffect(() => {
@@ -32,11 +31,13 @@ export function SoloChatName({
       active.current = false;
     };
   }, []);
+  useLayoutEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
   useEffect(() => {
-    if (!name.base || focused.current || !input.current) return;
-    input.current.focus();
-    input.current.select();
-    focused.current = true;
+    if (name.base && document.activeElement === input.current)
+      input.current?.select();
   }, [name.base]);
   const finish = (focus: boolean) => {
     active.current = false;
@@ -52,6 +53,8 @@ export function SoloChatName({
     )
       return;
     saving.current = true;
+    // Recovery buttons disappear while busy; leave focus in the stable field.
+    if (form.current?.contains(document.activeElement)) input.current?.focus();
     try {
       await name.run(name.checkOnly ? "check" : "save");
       if (active.current)
@@ -116,8 +119,8 @@ export function SoloChatName({
               ref={input}
               controlSize="sm"
               value={name.base ? name.name : title}
-              disabled={!name.base || name.busy}
-              readOnly={name.blocked}
+              readOnly={!name.base || name.busy || name.blocked}
+              aria-disabled={!name.base || name.busy || name.blocked}
               onChange={(event) => name.changeName(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && event.nativeEvent.isComposing)
@@ -136,7 +139,7 @@ export function SoloChatName({
       </div>
       {!name.busy &&
         (name.checkOnly ? (
-          <Button type="submit" size="sm" disabled={name.busy}>
+          <Button type="submit" size="sm">
             Check save status
           </Button>
         ) : (
@@ -144,8 +147,10 @@ export function SoloChatName({
             <Button
               type="button"
               size="sm"
-              disabled={name.busy}
-              onClick={() => void name.run("reload").catch(() => {})}
+              onClick={() => {
+                input.current?.focus();
+                void name.run("reload").catch(() => {});
+              }}
             >
               Reload chat details
             </Button>

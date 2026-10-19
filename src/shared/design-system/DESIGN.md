@@ -629,6 +629,11 @@ is called complete; token math alone cannot validate the CSS cascade.
 
 ## Controls
 
+An Input that must retain focus during asynchronous work can pair `readOnly` with
+`aria-disabled="true"` to use the shared disabled appearance without removing
+keyboard focus. Its feature owner must prevent edits and keep `aria-busy` on the
+working region; `aria-disabled` alone does not prevent native input.
+
 Navigation labels are controls, not selectable document text. `NavigationItem`,
 tabs, and sidebar section/project disclosure headings prevent text selection,
 including when opening a context menu. Keep this behavior on the navigation

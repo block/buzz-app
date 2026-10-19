@@ -1,0 +1,194 @@
+import { test, expect } from "./fixture.mjs";
+import { newChat } from "./navigation.mjs";
+
+const alpha = "33333333-3333-4333-8333-333333333333";
+const beta = "44444444-4444-4444-8444-444444444444";
+test.use({
+  productionBroker: true,
+  hasTouch: true,
+  channelIds: [alpha, beta],
+  channelNames: { [alpha]: "Alpha", [beta]: "Beta" },
+  soloChannels: [alpha, beta],
+  ownSoloChannels: [alpha, beta],
+  historyCounts: { [alpha]: 1, [beta]: 1 },
+});
+
+const sidebar = (page) =>
+  page.getByRole("navigation", { name: "Solo conversations" });
+const row = (page, id) =>
+  sidebar(page).locator(`[data-solo-channel-id="${id}"]`);
+const input = (page) =>
+  sidebar(page).getByRole("textbox", { name: "Chat name", exact: true });
+const composer = (page) =>
+  page.getByRole("textbox", { name: "Message your agents", exact: true });
+
+// These exercise native focus loss, actual drawer hit targets and signed live
+// metadata. DOM-only tests cannot establish these browser/host contracts.
+async function holdDetails(page) {
+  let release;
+  let started;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const requested = new Promise((resolve) => {
+    started = resolve;
+  });
+  let holding = true;
+  await page.route("**/api/relay/**/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      holding &&
+      filters.some(
+        (filter) =>
+          filter.kinds?.includes(39000) && filter["#d"]?.includes(alpha),
+      )
+    ) {
+      holding = false;
+      started();
+      await gate;
+    }
+    await route.continue();
+  });
+  return { requested, release };
+}
+
+test("a delayed initial name read keeps focus on a different chat", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await newChat(page);
+  await row(page, alpha).click();
+  await expect(composer(page)).toBeVisible();
+  const held = await holdDetails(page);
+  try {
+    await row(page, alpha).dblclick();
+    await held.requested;
+    await expect(input(page)).toBeFocused();
+    await expect(input(page)).toHaveAttribute("readonly");
+    await row(page, beta).click();
+    await expect(row(page, beta)).toHaveAttribute("aria-current", "page");
+    await composer(page).focus();
+    held.release();
+    await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+    await expect(composer(page)).toBeFocused();
+  } finally {
+    held.release();
+  }
+});
+
+test("failed Enter-save and explicit reload retain keyboard control", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await newChat(page);
+  await row(page, alpha).dblclick();
+  await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+  let refused = false;
+  await page.route("**/api/relay/**/channel-details-sign", async (route) => {
+    if (!refused) {
+      refused = true;
+      return route.fulfill({ json: {} });
+    }
+    return route.continue();
+  });
+  await input(page).fill("Keep this draft");
+  await input(page).press("Enter");
+  await expect(sidebar(page).getByRole("alert")).toBeVisible();
+  await expect(input(page)).toBeFocused();
+  await expect(input(page)).toHaveValue("Keep this draft");
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  const held = await holdDetails(page);
+  try {
+    await sidebar(page)
+      .getByRole("button", { name: "Reload chat details" })
+      .click();
+    await held.requested;
+    await expect(input(page)).toBeFocused();
+    await expect(input(page)).toHaveAttribute("readonly");
+    held.release();
+    await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+    await expect(input(page)).toBeFocused();
+    await expect(input(page)).toHaveValue("Keep this draft");
+    expect(app.report.detailsPublications ?? []).toHaveLength(0);
+    await input(page).press("Enter");
+    await expect(input(page)).toHaveCount(0);
+    await expect(row(page, alpha)).toContainText("Keep this draft");
+    expect(app.report.detailsPublications).toHaveLength(1);
+    await row(page, alpha).dblclick();
+    await expect(input(page)).toBeFocused();
+    await input(page).press("Escape");
+    await expect(row(page, alpha)).toBeFocused();
+  } finally {
+    held.release();
+  }
+});
+
+test("narrow mouse double-click renames while single-click and keyboard still navigate", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 600, height: 850 });
+  await page.goto(app.origin);
+  await newChat(page);
+  const show = page.getByRole("button", {
+    name: "Show navigation",
+    exact: true,
+  });
+  await show.click();
+  await expect(row(page, alpha)).toBeVisible();
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  await row(page, alpha).dblclick();
+  await expect(input(page)).toBeFocused();
+  await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+  await page.clock.runFor(501);
+  await expect(input(page)).toBeVisible();
+  await input(page).press("Escape");
+  await row(page, beta).click();
+  await page.clock.runFor(400);
+  await expect(row(page, beta)).toBeVisible();
+  await page.clock.runFor(100);
+  await expect(sidebar(page)).not.toBeVisible();
+  await expect(composer(page)).toBeVisible();
+  await show.click();
+  await row(page, alpha).focus();
+  await row(page, alpha).press("Enter");
+  await expect(sidebar(page)).not.toBeVisible();
+  await show.click();
+  await row(page, beta).tap();
+  await expect(sidebar(page)).not.toBeVisible();
+});
+
+test("live conversion removes the old editor and permits renaming another Solo chat", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await newChat(page);
+  await row(page, alpha).dblclick();
+  await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+  await expect.poll(() => app.relay.hasRoute("primary", alpha)).toBe(true);
+  app.relay.publish(
+    "primary",
+    app.signRelay({
+      kind: 39000,
+      created_at: Math.floor(Date.now() / 1000) + 10,
+      tags: [
+        ["d", alpha],
+        ["name", "Alpha"],
+        ["about", ""],
+        ["t", "stream"],
+        ["private"],
+      ],
+      content: "",
+    }),
+  );
+  await expect(input(page)).toHaveCount(0);
+  await expect(row(page, alpha)).toHaveCount(0);
+  await row(page, beta).dblclick();
+  await expect(input(page)).toHaveValue("Beta");
+  await expect(input(page)).toBeFocused();
+  await input(page).press("Escape");
+});

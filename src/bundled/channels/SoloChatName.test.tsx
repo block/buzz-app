@@ -149,7 +149,8 @@ it("quietly disables the name while a real pending receipt is saving", async () 
   await f.user.keyboard("New name{Enter}");
   try {
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    expect(input).toBeDisabled();
+    expect(input).toHaveAttribute("readonly");
+    expect(input).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("form", { name: "Rename Plan" })).toHaveAttribute(
       "aria-busy",
       "true",

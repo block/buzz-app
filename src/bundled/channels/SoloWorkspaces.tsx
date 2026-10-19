@@ -114,6 +114,8 @@ export function SoloWorkspaces({
     visit: AbortSignal | undefined;
   }>();
   const [renaming, setRenaming] = useState<string>();
+  if (renaming && !chats.some((chat) => chat.id === renaming))
+    setRenaming(undefined);
   const [deleting, setDeleting] = useState<string>();
   const [projectError, setProjectError] = useState("");
   const [readError, setReadError] = useState<{ id: string; message: string }>();

@@ -64,7 +64,6 @@ features/relay/         shared channel data, queries, profiles and durable deliv
 features/messages/      reusable timeline, message, thread and composer UI
 features/channel-navigation/ persistent sidebar, scoped draft handoff, Channels routes
 bundled/channels/       conversation navigation, page layout and panel placement
-bundled/channel-usage/  optional archive-backed Usage panel and Channels menu launcher
 bundled/repos/          repository pages, issue/PR details and Git views
 features/repos/        entity route/data contracts and bounded Git read bridge
 bundled/agents/        Agents page and agent types (harness plugins register theirs)
@@ -248,9 +247,10 @@ contracts with their own layout and local navigation.
 
 **Channels is the only required bundled plugin.** Bestie
 and Todos are off by default. Feedback, Diff viewer, Identity
-Naming, Agent Activity, Channel Usage, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
+Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
-Membership, and Moderation are on by default, but optional. Both browser and native catalogs declare that policy.
+Membership, and Moderation are on by default, but optional. Both browser and
+native catalogs declare that policy.
 
 Solo is part of Channels, not a plugin: Solo chats are channels opened in
 Messages, and Solo drafts are a Messages route. Channels requests topbar
@@ -296,9 +296,7 @@ Disabling or replacing a plugin retires its open tab; a channel change or loss o
 eligibility closes it and unmounts its archive reader. Re-enabling never reopens a
 stale tab. Eligibility and `channelContext` are presentation, **not authority**:
 the panel must independently verify access before reading any sensitive data and
-fence asynchronous reads on revocation. Channel Usage owns this panel and its
-archive projection; the session continues to own archive capture, access and
-retention. Plugin enablement controls visibility without changing capture settings.
+fence asynchronous reads on revocation.
 
 ### Settings cards
 

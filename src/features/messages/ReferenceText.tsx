@@ -172,6 +172,7 @@ export function ReferenceText({
           key={reference.start}
           className={styles.link}
           data-mention-kind={reference.kind}
+          data-mention-self={reference.id === session?.viewer ? "" : undefined}
           title={`${reference.kind === "agent" ? "Agent" : "Person"}: ${label}\n${reference.id}`}
         >
           <Icon aria-hidden="true" className={styles.icon} />

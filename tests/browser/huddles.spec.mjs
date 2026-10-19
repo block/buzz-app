@@ -1136,6 +1136,13 @@ test("detached regular composer keeps failed drafts, uploads real file bytes and
   await companion
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
+  // This offline fixture cannot search the community directory. Wait for its
+  // terminal state so the error row cannot shift the target during the click.
+  await expect(
+    page.getByText("Could not search community people. Retry to refresh.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: `Alex ${"cd".repeat(32)}`, exact: true })
     .click();

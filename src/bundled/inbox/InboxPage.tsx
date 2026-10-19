@@ -498,8 +498,15 @@ function InboxList({
   useLayoutEffect(() => {
     if (!retiredFocus.current) return;
     retiredFocus.current = false;
-    // A retired tab that held focus took it along; focus elsewhere stays.
-    if (document.activeElement === document.body)
+    // Focus the retired tab held, removed or leaving with it, returns to the
+    // filters; focus elsewhere stays.
+    const focused = document.activeElement;
+    if (
+      !(focused instanceof HTMLElement) ||
+      focused === document.body ||
+      !focused.isConnected ||
+      focused.closest('[inert], [hidden], [aria-hidden="true"]')
+    )
       fallbackControl.current?.focus({ preventScroll: true });
   });
   useEffect(() => {

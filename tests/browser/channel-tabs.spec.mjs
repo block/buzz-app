@@ -1,3 +1,4 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
@@ -171,7 +172,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   const row = beta
     .locator("[data-message-id]")
     .filter({ has: page.getByText("Beta draft", { exact: true }) });
-  await row.hover();
+  await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const reply = workspace.getByRole("textbox", {
     name: "Reply to thread",
@@ -194,7 +195,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   // Restored side content must not take focus from the main conversation.
   await expect(alphaComposer).toBeFocused();
   await workspace.getByRole("tab", { name: "Beta", exact: true }).click();
-  await row.hover();
+  await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   await expect(reply).toBeFocused();
   await expect(reply).toHaveText("Beta reply draft");

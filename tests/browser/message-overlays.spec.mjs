@@ -1,3 +1,4 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./source-fixture.mjs";
 import { settle } from "./timeline.mjs";
 
@@ -330,7 +331,7 @@ test("focused actions follow sibling growth and shrinkage without scrolling", as
     name: "Message actions",
     includeHidden: true,
   });
-  await row.hover();
+  await hoverMessage(row);
   await expect
     .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
     .toBe(true);
@@ -641,7 +642,7 @@ test("comment actions revealed while the drawer slides realign when it settles",
     .getByRole("button", { name: "Show comments", exact: true })
     .click();
   await page.evaluate(() => window.drawerHeld);
-  await row.getByText("Alex", { exact: true }).hover();
+  await hoverMessage(row);
   await shown();
   const anchoring = () =>
     actions.evaluate((bar) => {

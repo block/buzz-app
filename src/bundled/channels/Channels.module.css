@@ -1019,8 +1019,41 @@ html[data-keyboard-navigation]
 }
 
 /* Hovered and selected rows take the row's paired ink, so navigation text
-   follows the fill instead of staying gray on an accent row. */
-.sidebar [data-variant="row"]:is(:hover, [data-selected]),
-.sidebar :is(:hover, [data-selected]) > * > [data-variant="row"] {
+   follows the fill instead of staying gray on an accent row. Selection has
+   its own ink: in dark mode it carries the accent on a neutral fill.
+   A row owner (a channel row or Solo chat row with its attached actions)
+   holds exactly one row, so hovering its actions still inks that row.
+   Structural selectors such as `:hover > * > row` also match a hovered
+   list and would ink every row in it. */
+.sidebar [data-variant="row"]:hover,
+.sidebar
+  :is([data-channel-sidebar-row], [data-solo-menu-id]):hover
+  [data-variant="row"]:not([data-selected]) {
   color: var(--text-row);
+}
+.sidebar [data-variant="row"][data-selected],
+.sidebar
+  :is([data-channel-sidebar-row], [data-solo-menu-id])[data-selected]
+  [data-variant="row"] {
+  color: var(--text-row-selected);
+}
+
+/* A selected destination carries its fill's ink. Small status/count badges
+   use a quieter paired surface so working never resembles the overflow glyph. */
+.sidebar [data-selected],
+.sidebar
+  :is([data-channel-sidebar-row], [data-solo-menu-id]):has(
+    [aria-current="page"]
+  ) {
+  --text-standard: var(--text-row-selected);
+}
+.sidebar [data-selected] :is(.dmCount, .typing, .thinkingBadge) {
+  background: var(--surface-row-selected-detail);
+  color: var(--text-row-selected-detail);
+}
+.sidebar [data-selected] .typing > span {
+  background: currentColor;
+}
+.sidebar [data-selected] :is(.priorityDot, .threadActivityDot) {
+  background: var(--text-row-selected);
 }

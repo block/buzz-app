@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { RelaySession } from "../../features/relay/session";
 import type {
@@ -112,6 +112,14 @@ export function PageTabs({
     (target: PageTabTarget, options?: PageTabOptions) => boolean
   >(() => false);
   const closing = useRef<(target: PageTabTarget) => boolean>(() => false);
+  // A page's own close leaves focus to the page, so the workspaces adopt the
+  // selection it leaves without focusing it; an open in the same update, as
+  // when Archive advances, focuses its tab as usual.
+  const [closes, setCloses] = useState(0);
+  const committedCloses = useRef(closes);
+  useLayoutEffect(() => {
+    committedCloses.current = closes;
+  });
   // A thread opened at a reply keeps its tab once its root resolves.
   const tabOf = ({ channelId, threadId }: PageTabTarget) =>
     (threadId && threadTab(tabState.tabs, channelId, threadId)) ||
@@ -128,6 +136,7 @@ export function PageTabs({
       const tab = tabOf(target);
       if (!mounted.current || !tab) return false;
       tabState.setTabs((tabs) => tabs.filter((item) => item.id !== tab.id));
+      setCloses(committedCloses.current + 1);
       return true;
     };
     opening.current = (
@@ -136,31 +145,33 @@ export function PageTabs({
     ) => {
       if (!mounted.current || !secondary.canOpenConversation(channelId))
         return false;
+      setCloses(committedCloses.current);
       const known = new Set(tabState.tabs.map((tab) => tab.id));
       // An open thread keeps its tab in whichever pane it was moved to, and
       // under its verified root.
       const existing = threadId ? tabOf({ channelId, threadId }) : undefined;
+      // Each open at a message asks the reader to show it again; any other
+      // open focuses the composer.
       if (threadId)
-        // Each open at a message asks the thread reader to show it again.
         secondary.openConversationThread(
           channelId,
           messageId ?? threadId,
           (existing?.kind === "thread" && existing.rootId) || threadId,
-          messageId ? "reveal" : undefined,
+          messageId ? "reveal" : "focus",
         );
       else {
         const tab = `conversation:${channelId}`;
         tabState.setTabs((tabs) => {
           const previous = tabs.find((item) => item.id === tab);
-          // Each open at a message asks again, even for the same message.
-          const asked =
-            previous?.kind === "conversation" ? previous.revealRequest : 0;
+          const prior =
+            previous?.kind === "conversation" ? previous : undefined;
           const next: ConversationTab = {
             id: tab,
             kind: "conversation",
             channelId,
             ...(messageId && { messageId }),
-            revealRequest: (asked ?? 0) + (messageId ? 1 : 0),
+            revealRequest: (prior?.revealRequest ?? 0) + (messageId ? 1 : 0),
+            focusRequest: (prior?.focusRequest ?? 0) + (messageId ? 0 : 1),
             ...(markRead === false && { markRead: false }),
           };
           return previous
@@ -240,6 +251,25 @@ export function PageTabs({
       ) ?? fallbackFocus.current
     )?.focus({ preventScroll: true });
   });
+  // An update that removes the control in use, such as a reader whose room
+  // became a Huddle, returns focus to the tab that showed it.
+  const focused = useRef<{ node: Element; tab: string | null | undefined }>(
+    undefined,
+  );
+  useLayoutEffect(() => {
+    const last = focused.current;
+    if (
+      !last ||
+      last.node.isConnected ||
+      document.activeElement !== document.body
+    )
+      return;
+    focused.current = undefined;
+    (
+      (last.tab && document.getElementById(last.tab)) ||
+      fallbackFocus.current
+    )?.focus({ preventScroll: true });
+  });
   const split = usePanelSplit();
   const hasTabs = secondary.items.length > 0;
   const showingPanel = tabState.paneOpen && hasTabs;
@@ -264,7 +294,21 @@ export function PageTabs({
   );
   return (
     <LinkThreadTabContext value={secondary.openLinkedThread}>
-      <div className={styles.root}>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: Focus within records the control in use, restored if an update removes it. */}
+      <div
+        className={styles.root}
+        onFocus={({ target }) => {
+          const panel = target.closest('[role="tabpanel"]');
+          focused.current = {
+            node: target,
+            // A portalled dialog sits outside its tab's panel; it belongs to
+            // the tab focus came from.
+            tab: panel
+              ? panel.getAttribute("aria-labelledby")
+              : focused.current?.tab,
+          };
+        }}
+      >
         <div ref={split.ref} style={split.style} className={styles.board}>
           <div
             ref={fallbackFocus}
@@ -277,6 +321,7 @@ export function PageTabs({
               drag={secondary.drag.main}
               label={`${label} tabs`}
               focusOnMount={false}
+              adoptSelection={closes}
               value={secondary.selectedMain}
               select={(tab) =>
                 tabState.selectMain(tab === "conversation" ? undefined : tab)
@@ -324,6 +369,7 @@ export function PageTabs({
                   select={secondary.selectPanelTab}
                   items={secondary.items}
                   focusOnMount={continuing.current}
+                  adoptSelection={closes}
                 />
               </div>
             )}

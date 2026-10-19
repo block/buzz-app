@@ -479,8 +479,73 @@ it.each(["shortcut", "row"])(
 );
 
 it.each([false, true])(
-  "retires an opened conversation when its room becomes a Huddle (selection cleared first: %s)",
-  async (cleared) => {
+  "retires a conversation moved to the main pane when its room becomes a Huddle (focus elsewhere: %s)",
+  async (elsewhere) => {
+    const h = fixture({ withWriter: true });
+    render(h.view);
+    const list = () =>
+      within(screen.getByRole("list", { name: "Inbox conversations" }));
+    await waitFor(() =>
+      expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+    );
+    const [first] = list().getAllByRole("button", { name: /^Open / });
+    if (!first) throw new Error("Missing fixture row");
+    fireEvent.click(first);
+    await findReader();
+    const [label] = sideTabs();
+    if (!label) throw new Error("Missing side tab");
+    act(() => {
+      fireEvent.keyDown(screen.getByRole("tab", { name: label }), {
+        key: "ArrowLeft",
+        altKey: true,
+        shiftKey: true,
+      });
+    });
+    expect(tabs("Inbox tabs")).toHaveLength(2);
+    // Another visible control, such as the app's sidebar, keeps its focus.
+    const other = document.body.appendChild(document.createElement("button"));
+    if (elsewhere) other.focus();
+    else (await screen.findByRole("textbox")).focus();
+    const about = huddleDescription("00000000-0000-4000-8000-000000000001");
+    act(() =>
+      h.emit([
+        metadata(h.relayKey, "room", "Huddle", 100, [
+          ["private"],
+          ["P", h.viewer.pubkey],
+          ["about", about],
+        ]),
+        signed(h.viewer, {
+          kind: 9007,
+          created_at: 1,
+          content: "",
+          tags: [
+            ["h", "room"],
+            ["visibility", "private"],
+            ["channel_type", "stream"],
+            ["about", about],
+          ],
+        }),
+      ]),
+    );
+    await waitFor(() => expect(tabs("Inbox tabs")).toHaveLength(1));
+    expect(queryReader()).not.toBeInTheDocument();
+    if (elsewhere) expect(other).toHaveFocus();
+    else
+      expect(
+        screen.getByRole("button", { name: "Inbox filters" }),
+      ).toHaveFocus();
+    other.remove();
+  },
+);
+
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  "retires an opened conversation when its room becomes a Huddle (selection cleared first: %s, focus in a link dialog: %s)",
+  async (cleared, dialog) => {
     const h = fixture({ withWriter: true });
     render(h.view);
     const list = () =>
@@ -494,7 +559,19 @@ it.each([false, true])(
     await findReader();
     // Showing Archived ends the selection but keeps its tab.
     if (cleared) await chooseFilter("Archived", "Show");
-    else (await screen.findByRole("textbox")).focus();
+    (await screen.findByRole("textbox")).focus();
+    if (dialog) {
+      // The dialog is portalled outside the tab that owns it.
+      fireEvent.click(
+        screen.getByRole("button", { name: "Toggle formatting" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Link/ }));
+      const [url] = within(
+        await screen.findByRole("dialog", { name: "Add link" }),
+      ).getAllByRole("textbox");
+      url?.focus();
+      expect(url).toHaveFocus();
+    }
     const about = huddleDescription("00000000-0000-4000-8000-000000000001");
     act(() =>
       h.emit([
@@ -518,11 +595,14 @@ it.each([false, true])(
     );
     await waitFor(() => expect(queryReader()).not.toBeInTheDocument());
     expect(h.archive.current).toBeUndefined();
-    if (cleared)
+    if (cleared) {
       expect(
         screen.getByText("This conversation is no longer available."),
       ).toBeInTheDocument();
-    else {
+      // The retained tab keeps focus its reader held.
+      expect(document.activeElement).toHaveAttribute("role", "tab");
+      expect(document.activeElement).toHaveAttribute("aria-selected", "true");
+    } else {
       expect(sideTabs()).toEqual([]);
       expect(
         screen.getByRole("button", { name: "Inbox filters" }),
@@ -652,6 +732,65 @@ it.each([
     expect(await screen.findByRole("textbox")).toHaveTextContent(
       "Keep the selected draft",
     );
+  },
+);
+
+it.each([
+  ["shortcut", "message"],
+  ["menu", "message"],
+  ["shortcut", "DM"],
+  ["menu", "DM"],
+] as const)(
+  "Archive via %s from the composer hands focus to its %s successor",
+  async (action, successor) => {
+    const dm = successor === "DM";
+    const h = fixture({ withWriter: true, withDm: dm });
+    render(h.view);
+    await waitFor(() => expect(rows()).toHaveLength(dm ? 3 : 2));
+    if (dm) {
+      // Leave the DM above the opened row with nothing below it, so Archive
+      // advances to the DM.
+      expect(rows()[0]).toHaveTextContent("A direct reply");
+      const last = rows()[2];
+      if (!last) throw new Error("Missing fixture row");
+      fireEvent.click(within(last).getByRole("button", { name: /^Archive / }));
+      await waitFor(() => expect(rows()).toHaveLength(2));
+    }
+    const row = dm
+      ? rows()[1]
+      : rows().find((item) => item.textContent?.includes("A thread update"));
+    const label = (item: HTMLElement | undefined) =>
+      item && within(item).getByRole("button", { name: /^Open / }).ariaLabel;
+    const after = label(rows().find((item) => item !== row));
+    if (!row || !after) throw new Error("Missing fixture row");
+    const open = within(row).getByRole("button", { name: /^Open / });
+    fireEvent.click(open);
+    (await screen.findByRole("textbox")).focus();
+    if (action === "shortcut") await archiveOpened(h);
+    else {
+      fireEvent.contextMenu(open);
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: "Archive conversation" }),
+      );
+    }
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveAttribute("data-selected");
+    expect(label(rows()[0])).toBe(after);
+    expect(sideTabs()).toHaveLength(1);
+    // Focus settles in the successor: a revealed message, or the composer of a
+    // conversation opened without one.
+    await waitFor(() => {
+      const list = screen
+        .getAllByRole("tablist")
+        .find((item) => item.getAttribute("aria-label") !== "Inbox tabs");
+      if (!list) throw new Error("Missing side tabs");
+      const tab = within(list).getByRole("tab", { selected: true });
+      const panel = document.getElementById(
+        tab.getAttribute("aria-controls") ?? "",
+      );
+      expect(panel).toContainElement(document.activeElement as HTMLElement);
+      if (dm) expect(document.activeElement).toHaveAttribute("role", "textbox");
+    });
   },
 );
 

@@ -185,13 +185,14 @@ export class AcpSession {
         try {
           await this.select(model);
           const lead = this.preamble;
-          this.preamble = "";
           const { stopReason } = (await this.acp.request("session/prompt", {
             sessionId: this.id,
             prompt: [
               { type: "text", text: lead ? `${lead}\n\n${text}` : text },
             ],
           })) as { stopReason?: string };
+          // A rejected prompt never reached the model: the next one leads.
+          this.preamble = "";
           if (stopReason === "refusal")
             this.lastError = `${this.acp.hooks.label} refused the request`;
         } catch (error) {

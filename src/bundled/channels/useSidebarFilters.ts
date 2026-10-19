@@ -87,7 +87,7 @@ export function useSidebarFilters(
         (mode === "unreads" && unreadSet.has(channel.id)) ||
         (mode === "active" &&
           (channel.lastActivityAt === undefined
-            ? !activityReady
+            ? !channel.activityKnown && !activityReady
             : channel.lastActivityAt * 1000 + activeWindow > now))
       );
     });

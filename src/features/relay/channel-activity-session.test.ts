@@ -341,3 +341,27 @@ function take<T>(pending: T[]): T {
   assert.exists(next, "Expected a pending operation");
   return next;
 }
+
+it("projects authoritative empty activity through later loading and failed refreshes", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    await h.preferences.setFilter("channels", "active", []);
+    take(h.pending).resolve([]);
+    await flush();
+    const quiet = () =>
+      h.channels.list().channels.find(({ id }) => id === "beta");
+    expect(quiet()).toMatchObject({ activityKnown: true });
+    expect(quiet()?.lastActivityAt).toBeUndefined();
+    await h.preferences.setFilter("channels", "all", []);
+    await h.preferences.setFilter("channels", "active", []);
+    expect(h.channels.list().activityStatus).toBe("loading");
+    expect(quiet()?.activityKnown).toBe(true);
+    take(h.pending).reject(new Error("offline"));
+    await flush();
+    expect(h.channels.list().activityStatus).toBe("error");
+    expect(quiet()?.activityKnown).toBe(true);
+  } finally {
+    h.owner.dispose();
+  }
+});

@@ -894,10 +894,15 @@ export function createRelaySession(
       channelActivityRevision = activityRevision;
       const projected = snapshot.channels.map((channel) => {
         const lastActivityAt = channelActivity.last(channel.id);
-        if (lastActivityAt === undefined) return channel;
+        if (!channelActivity.known(channel.id)) return channel;
         const previous = projectedChannels.get(channel);
-        if (previous?.lastActivityAt === lastActivityAt) return previous;
-        const next = Object.freeze({ ...channel, lastActivityAt });
+        if (previous && previous.lastActivityAt === lastActivityAt)
+          return previous;
+        const next = Object.freeze({
+          ...channel,
+          lastActivityAt,
+          activityKnown: true as const,
+        });
         projectedChannels.set(channel, next);
         return next;
       });

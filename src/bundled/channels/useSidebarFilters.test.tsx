@@ -283,3 +283,30 @@ it("preserves unknown activity until a successful read, including first-read fai
   unmount();
   owner.dispose();
 });
+
+it("keeps known-inactive rows hidden through refreshes while new rows remain visible", () => {
+  const owner = createRelaySession(null);
+  const sections = sidebarSections([
+    { id: "quiet", name: "Quiet", activityKnown: true },
+    { id: "new", name: "New" },
+  ]);
+  const { result, rerender, unmount } = renderHook(
+    ({ ready, current }) =>
+      useSidebarFilters(
+        sections,
+        { channels: "active" },
+        current,
+        owner.session.unread,
+        {},
+        ready,
+      ),
+    { initialProps: { ready: true, current: "elsewhere" } },
+  );
+  expect(result.current[0]?.rows).toEqual([]);
+  rerender({ ready: false, current: "elsewhere" });
+  expect(result.current[0]?.rows.map(({ id }) => id)).toEqual(["new"]);
+  rerender({ ready: false, current: "quiet" });
+  expect(result.current[0]?.rows.map(({ id }) => id)).toEqual(["new", "quiet"]);
+  unmount();
+  owner.dispose();
+});

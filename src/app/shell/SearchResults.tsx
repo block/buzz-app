@@ -892,6 +892,7 @@ export function SearchResults({
           ? [
               {
                 label: "Most relevant",
+                rank: Infinity,
                 destinations: messages,
                 empty: messageEmpty,
               },
@@ -959,6 +960,7 @@ export function SearchResults({
                   : []),
                 {
                   label: "Most relevant",
+                  rank: Infinity,
                   destinations: messages,
                   empty:
                     matchingChannels.length ||

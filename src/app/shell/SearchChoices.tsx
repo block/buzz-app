@@ -35,6 +35,8 @@ export type SearchDestination = {
 
 export type SearchGroup = {
   label: string;
+  /** Message-content scores are not comparable to named destinations. */
+  rank?: number;
   destinations: readonly SearchDestination[];
   empty?: ReactNode;
   notice?: ReactNode;
@@ -98,7 +100,9 @@ export function SearchChoices({
   }, []);
   const needle = query.trim().toLowerCase();
   const score = (group: SearchGroup) =>
+    group.rank ??
     Math.min(
+      matchRank(group.label, needle) ?? Infinity,
       ...group.destinations.map(
         (row) =>
           row.rank ??

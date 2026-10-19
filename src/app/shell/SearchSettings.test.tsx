@@ -119,3 +119,58 @@ it("retains inline matches and keyboard selection when conversation results arri
     section: "notifications",
   });
 });
+
+it("keeps an exact category ahead of late conversation and message matches", () => {
+  const input = createRef<HTMLElement>();
+  const plugin: SearchGroup = {
+    label: "Plugins",
+    destinations: [
+      {
+        key: "plugin",
+        label: "Productivity",
+        detail: "Example",
+        rank: 2,
+        content: <button type="button">Enable Example</button>,
+        icon: GearIcon,
+        run: vi.fn(),
+      },
+    ],
+  };
+  const props = {
+    query: "plugins",
+    onQueryChange: () => {},
+    input,
+    inlineSettings: [plugin],
+  };
+  const { rerender } = render(<SearchChoices {...props} groups={[]} />);
+  rerender(
+    <SearchChoices
+      {...props}
+      groups={[
+        {
+          label: "Channels",
+          destinations: [
+            {
+              key: "chat",
+              label: "Plugins discussion",
+              icon: GearIcon,
+              run: vi.fn(),
+            },
+          ],
+        },
+        {
+          label: "Most relevant",
+          rank: Infinity,
+          destinations: [
+            { key: "message", label: "plugins", icon: GearIcon, run: vi.fn() },
+          ],
+        },
+      ]}
+    />,
+  );
+  expect(
+    screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label")),
+  ).toEqual(["Plugins", "Channels", "Most relevant"]);
+});

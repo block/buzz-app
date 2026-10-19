@@ -202,6 +202,7 @@ it("marks the totals of a session it could not fully read as partial", () => {
           session("whole", [seen(today, full(1e6))]),
           session("gapped", [seen(today, full(1e6))], {
             gaps: ["A subagent’s transcript is gone"],
+            startedAt: dayStart(now, 2) + HOUR,
           }),
         ],
       },
@@ -218,6 +219,39 @@ it("marks the totals of a session it could not fully read as partial", () => {
     ["whole", false],
     ["gapped", true],
   ]);
+  // What it missed may be on any day since the session started.
+  expect(result.days.map((day) => day.costs.get("x/claude"))).toEqual([
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { partial: true },
+    { partial: true },
+    { value: expect.closeTo(8), partial: true },
+  ]);
+});
+
+it("marks every day of a harness whose read failed as partial", () => {
+  const result = stats(
+    [
+      {
+        agent: agent("pixel"),
+        harness: "x/claude",
+        sessions: [session("s", [seen(today, full(1e6))])],
+      },
+    ],
+    now,
+    7,
+    new Set(["x/codex"]),
+  );
+  expect(result.cost).toEqual({ value: expect.closeTo(4), partial: true });
+  expect(result.days.at(-1)?.costs.get("x/claude")).toEqual({
+    value: expect.closeTo(4),
+    partial: false,
+  });
+  expect(result.days.map((day) => day.costs.get("x/codex"))).toEqual(
+    Array(7).fill({ partial: true }),
+  );
 });
 
 it("replaces a session's snapshot only with a complete one, and keeps sessions a read missed", () => {

@@ -138,12 +138,13 @@ export function merge(
   return [...sessions.values()];
 }
 
-/** `unread` when an agent's latest read failed, so its usage may be missing. */
+/** `unread` names the harnesses of agents whose latest read failed, so their
+ * usage may be missing. */
 export function stats(
   usage: readonly AgentUsage[],
   now: number,
   days: number,
-  unread = false,
+  unread: ReadonlySet<string> = new Set(),
 ): Stats {
   const start = dayStart(now, days - 1);
   const previous = dayStart(now, 2 * days - 1);
@@ -151,10 +152,19 @@ export function stats(
     dayStart(now, days - 1 - index),
   );
   const dayCosts = dayStarts.map(() => new Map<string, Sum>());
-  const dayOf = (at: number) => {
+  const dayIndex = (at: number) => {
     let index = dayStarts.length - 1;
     while (index > 0 && (dayStarts[index] ?? 0) > at) index -= 1;
-    return dayCosts[index];
+    return index;
+  };
+  const dayOf = (at: number) => dayCosts[dayIndex(at)];
+  /** Marks `harness`'s cost partial on each day from the one `at` is in. */
+  const uncertain = (harness: string, at = start) => {
+    for (const day of dayCosts.slice(dayIndex(at))) {
+      const spent = day.get(harness) ?? new Sum();
+      spent.partial = true;
+      day.set(harness, spent);
+    }
   };
   const cost = new Sum();
   const previousCost = new Sum();
@@ -218,6 +228,7 @@ export function stats(
         // What the read missed may be in the period.
         for (const sum of [sessionCost, tokens, output, read])
           sum.partial = true;
+        uncertain(harness, session.startedAt);
       }
       agentSessions += 1;
       agentCost.include(sessionCost);
@@ -240,9 +251,10 @@ export function stats(
       sessions: agentSessions,
     });
   }
-  if (unread)
+  if (unread.size)
     for (const sum of [cost, previousCost, tokens, output, read])
       sum.partial = true;
+  for (const harness of unread) uncertain(harness);
   const hit = read.total();
   return {
     cost: cost.total(),

@@ -60,20 +60,21 @@ export function DailyCostChart({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  // A harness with no entry spent nothing that day.
+  // A series with no entry spent nothing that day, so adds nothing to it.
   const cells = days.map((entry) =>
-    series.map((line) =>
-      sum(
-        line.harnesses.flatMap((key) => {
-          const spent = entry.costs.get(key);
-          return spent ? [spent] : [];
-        }),
-      ),
-    ),
+    series.map((line) => {
+      const spent = line.harnesses.flatMap((key) => {
+        const total = entry.costs.get(key);
+        return total ? [total] : [];
+      });
+      return spent.length ? sum(spent) : undefined;
+    }),
   );
-  const dayTotals: Total[] = cells.map((row) => sum(row));
+  const dayTotals: Total[] = cells.map((row) =>
+    sum(row.filter((total) => total !== undefined)),
+  );
   // Bars show what is known; the tooltip and table say what is not.
-  const values = cells.map((row) => row.map((total) => total.value ?? 0));
+  const values = cells.map((row) => row.map((total) => total?.value ?? 0));
   const totals = dayTotals.map((total) => total.value ?? 0);
   const y = scaleLinear()
     .domain([0, Math.max(...totals, 0) || 1])

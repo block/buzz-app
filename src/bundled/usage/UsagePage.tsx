@@ -186,7 +186,7 @@ export function UsagePage({
       load.usage.filter((entry) => included(entry.agent)),
       load.now,
       days,
-      load.failed.some(included),
+      new Set(load.failed.filter(included).map((agent) => agent.type)),
     );
   }, [load, agentFilter, harnessFilter, days]);
   const loading = !load || load.loading;

@@ -63,8 +63,13 @@ const session = (
 const summary = (text: string) => (_: string, element: Element | null) =>
   element?.tagName === "P" && element.textContent === text;
 
-/** Agents whose Claude type reads usage through `usage`. */
-function host(agents: Agent[], usage: RegisteredAgentType["usage"]) {
+/** Agents whose Claude type reads usage through `usage`, and Codex type
+ * through `codex` when given. */
+function host(
+  agents: Agent[],
+  usage: RegisteredAgentType["usage"],
+  codex?: RegisteredAgentType["usage"],
+) {
   const snapshot = {
     status: "ready",
     agents,
@@ -76,7 +81,11 @@ function host(agents: Agent[], usage: RegisteredAgentType["usage"]) {
       title: "Claude",
       usage,
     },
-    { key: "buzz.codex/codex", title: "Codex" },
+    {
+      key: "buzz.codex/codex",
+      title: "Codex",
+      ...(codex ? { usage: codex } : {}),
+    },
   ] as unknown as RegisteredAgentType[];
   return {
     snapshot: () => snapshot,
@@ -273,6 +282,25 @@ it("says what it could not count instead of counting it as zero", async () => {
   const today = within(screen.getByRole("table")).getAllByRole("row").at(-1);
   expect(today?.textContent).toContain("Unavailable");
   expect(today?.textContent).not.toContain("$0.00");
+});
+
+it("keeps a day unknown when the only harness active then is unpriced", async () => {
+  render(
+    <UsagePage
+      agents={host(
+        [agent("Pixel"), agent("Sol", "buzz.codex/codex")],
+        async () => [],
+        async () => [session("a", 1000, "Fix the build", "gpt-6.1-sol")],
+      )}
+      open={vi.fn()}
+    />,
+  );
+  await screen.findByRole("region", { name: "Estimated cost" });
+  // Claude spent nothing today, which leaves Codex's cost unknown, not $0.
+  const today = within(screen.getByRole("table")).getAllByRole("row").at(-1);
+  expect(
+    [...(today?.querySelectorAll("td") ?? [])].map((cell) => cell.textContent),
+  ).toEqual(["$0.00", "Unavailable", "Unavailable"]);
 });
 
 it("compares nothing while an agent it shows could not be read", async () => {

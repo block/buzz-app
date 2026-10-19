@@ -875,6 +875,10 @@ export function Settings({
                       }
                       type="button"
                       data-plugin-id={id}
+                      data-updatable={
+                        (plugin.source === "external" && !!plugins.imports) ||
+                        undefined
+                      }
                       className={styles.pluginRow}
                       data-enabled={plugin.enabled}
                       aria-label={`View ${plugin.manifest.name} details`}

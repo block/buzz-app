@@ -729,6 +729,9 @@ other IconButtons.
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
 
+An `xs` Button whose label starts with an icon reduces its leading padding to its
+4px vertical padding, so the icon sits evenly in the capsule's leading corner.
+
 Utility icon actions share the rounded rectangle in resting, hover, pressed, and
 selected states. Avatar controls default to round; use `shape="round"` for deliberate
 circular controls such as media playback, the avatar edit badge, and Add reaction.
@@ -1441,6 +1444,10 @@ Tailwind namespaces so a border cannot accidentally inherit a text color.
 
 - Use `text-danger` for error text and pair it with the documented surface.
 - Add a categorical role when a feature needs to distinguish identities by hue.
+- Chart marks use `chart-series-1` to `chart-series-4` in that order, following
+  the entity rather than its rank, so filtering never repaints a series. Fold a
+  fifth series into “Other”. Labels, values and legends keep text roles; a swatch
+  beside them carries the identity.
 - Keep transparency in shared material recipes. Do not dim tokens locally.
 - Author both light and dark values; do not derive one by dimming the other.
 - When two roles share a decision, reference the same token rather than copying a literal.

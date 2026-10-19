@@ -66,6 +66,8 @@ fn native_command_permissions_isolate_webviews() {
     let application_commands = [
         "identity_restore",
         "identity_import",
+        "identity_legacy_available",
+        "identity_import_legacy",
         "identity_create",
         "identity_export",
         "nsec_backup_available",

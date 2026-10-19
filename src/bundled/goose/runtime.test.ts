@@ -240,6 +240,19 @@ describe("GooseRuntime", () => {
     ]);
   });
 
+  it("hands the host a stopper that cancels the mention's running turn", async () => {
+    const { deliver, goose } = setup({ hold: true });
+    const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+    await deliver(message("1", "@Gander hi"), { interruptible });
+    await flush(100);
+    expect(interruptible).toHaveBeenCalledTimes(1);
+    const process = goose();
+    expect(process?.cancelled).toEqual([]);
+    await interruptible.mock.calls[0]?.[0]();
+    await flush(100);
+    expect(process?.cancelled).toEqual([process?.turns[0]?.sessionId]);
+  });
+
   it("tells a subscriber when a new conversation's first turn starts working", async () => {
     const { deliver, goose, runtime } = setup({ hold: true });
     // As a view does: each notification reads the snapshot again.

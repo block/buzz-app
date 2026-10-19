@@ -185,6 +185,7 @@ function setup(
     },
   };
   const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
   const attention = { on: true };
   // Slugs the host would no longer run, as when a watch was tightened.
   const stale = new Set<string>();
@@ -209,6 +210,7 @@ function setup(
       config: DEFAULT_CONFIG,
       signal,
       workingUntil,
+      interruptible,
       ...(options.named ? { named: options.named } : {}),
       // The host's answer, as it is when asked.
       current: () =>
@@ -245,6 +247,7 @@ function setup(
     data,
     agent,
     workingUntil,
+    interruptible,
     attention,
     objects,
     stale,
@@ -325,6 +328,27 @@ it("tells a subscriber when a new conversation's first turn starts working", asy
   claude?.finish();
   await flush(10);
   expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
+});
+
+it("hands the host a stopper that interrupts the mention's running turn", async () => {
+  const { deliver, claudes, interruptible } = setup([], { hold: true });
+  await deliver({ type: "mention", event: message("1", "@Claude hi") });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(interruptible).toHaveBeenCalledTimes(1);
+  const stop = interruptible.mock.calls[0]?.[0];
+  if (!stop) throw new Error("no stopper");
+  const interrupts = () =>
+    claude?.received.filter(
+      (item) =>
+        item.type === "control_request" &&
+        (item.request as { subtype?: string }).subtype === "interrupt",
+    );
+  expect(interrupts()).toEqual([]);
+  await stop();
+  expect(interrupts()).toHaveLength(1);
+  claude?.finish();
+  await flush(10);
 });
 
 const EFFORTS = [

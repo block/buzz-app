@@ -26,6 +26,7 @@ export function IdentitySetup({
   const [importing, setImporting] = useState(false);
   const [nsec, setNsec] = useState("");
   const [backupAvailable, setBackupAvailable] = useState(false);
+  const [legacyAvailable, setLegacyAvailable] = useState(false);
   const missing = state.status === "missing";
   useEffect(() => {
     if (!missing) return;
@@ -33,6 +34,10 @@ export function IdentitySetup({
     void identity.backupAvailable().then(
       (available) => active && setBackupAvailable(available),
       () => active && setBackupAvailable(false),
+    );
+    void identity.legacyAvailable().then(
+      (available) => active && setLegacyAvailable(available),
+      () => active && setLegacyAvailable(false),
     );
     return () => {
       active = false;
@@ -128,9 +133,18 @@ export function IdentitySetup({
             </form>
           ) : (
             <div className="flex flex-wrap gap-3">
+              {legacyAvailable && (
+                <Button
+                  disabled={state.busy}
+                  variant="primary"
+                  onClick={() => void identity.importLegacy()}
+                >
+                  Continue with your Buzz identity
+                </Button>
+              )}
               <Button
                 disabled={state.busy}
-                variant="primary"
+                variant={legacyAvailable ? "subtle" : "primary"}
                 onClick={() => setImporting(true)}
               >
                 Use an existing key

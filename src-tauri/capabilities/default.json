@@ -18,6 +18,8 @@
     "allow-pairing-cancel",
     "allow-identity-restore",
     "allow-identity-import",
+    "allow-identity-legacy-available",
+    "allow-identity-import-legacy",
     "allow-identity-create",
     "allow-identity-export",
     "allow-nsec-backup-available",

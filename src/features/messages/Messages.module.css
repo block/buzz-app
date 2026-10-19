@@ -1444,7 +1444,7 @@ button.mediaPreview {
 .text > :last-child {
   margin-bottom: 0;
 }
-.text :where(p, ul, ol, blockquote, pre, table, hr) {
+.text :where(p, ul, ol, blockquote, pre, .codeBlock, table, hr) {
   margin: var(--space-4) 0;
 }
 .text > p:has(+ :is(ul, ol)) {
@@ -1535,8 +1535,9 @@ button.mediaPreview {
   line-height: var(--text-mono-sm--line-height);
   letter-spacing: var(--text-mono-sm--letter-spacing);
 }
-/* The code scrolls inside its frame so the copy action stays in the corner. */
-.text pre {
+/* The code scrolls inside its frame so the copy action stays in the corner.
+   A plugin-presented block keeps the same frame and action. */
+.text :is(pre, .codeBlock) {
   position: relative;
   max-width: 100%;
   overflow: hidden;
@@ -1555,15 +1556,17 @@ button.mediaPreview {
   overflow-wrap: normal;
 }
 /* Keep every line end reachable beside the pinned action. */
-.text pre:has(> .codeCopy) code {
+.text pre:has(> .codeActions) code {
   padding-inline-end: calc(var(--size-control-sm) + var(--space-3));
 }
 /* `pre` clips, so a focusable scroller draws its ring inside. */
 html[data-keyboard-navigation] .text pre code:focus-visible {
   outline-offset: -2px;
 }
-.codeCopy {
+.codeActions {
   position: absolute;
+  display: flex;
+  gap: var(--space-half);
   top: var(--space-1);
   inset-inline-end: var(--space-1);
   border-radius: var(--radius-icon-button);
@@ -1571,7 +1574,7 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   user-select: none;
 }
 @media (hover: hover) and (pointer: fine) {
-  .text pre:not(:hover, :focus-within) .codeCopy {
+  .text :is(pre, .codeBlock):not(:hover, :focus-within) .codeActions {
     opacity: 0;
   }
 }
@@ -2669,7 +2672,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .messageBubble .text [data-mention-kind] {
   font-weight: var(--type-weight-medium);
 }
-.messageBubble .text :is(pre, table) {
+.messageBubble .text :is(pre, .codeBlock, table) {
   border-radius: var(--message-inner-radius);
   background: var(--surface-panel);
   color: var(--text-standard);
@@ -2728,7 +2731,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: inherit;
   border-color: currentColor;
 }
-.messageBubble[data-own] .text :is(code, pre) {
+.messageBubble[data-own] .text :is(code, pre, .codeBlock) {
   color: var(--text-standard);
 }
 .messageBubble[data-own] .spoilerMask {

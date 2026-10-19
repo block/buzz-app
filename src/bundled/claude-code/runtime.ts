@@ -340,6 +340,7 @@ export class ClaudeRuntime {
     step,
     acknowledged,
     superseded,
+    interruptible,
     named,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
@@ -443,6 +444,7 @@ export class ClaudeRuntime {
     if (!wait) await handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(done);
+    interruptible?.(() => entry.sessions.interrupt(key));
     this.notify();
     this.watch(done, async (error) => {
       if (error) await this.report(agent, channel, event, error, topLevel);

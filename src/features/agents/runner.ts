@@ -1791,6 +1791,8 @@ export class AgentRunners {
         ignored: () => job.work?.remove(),
         acknowledged: () => job.work?.started(),
         superseded: () => job.work?.supersede(),
+        interruptible: (stop: () => Promise<void>) =>
+          job.work?.interruptible(stop),
         ...(named ? { named } : {}),
         step: (tool: string, target?: string) => job.work?.step(tool, target),
         current: () => !lifetime.aborted && this.stillCurrent(runner, job),

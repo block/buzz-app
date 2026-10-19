@@ -5147,6 +5147,91 @@ it("deletes an unfinished hosted agent from its community too, as its profile ma
   expect(service.find(hostedKey)).toBeUndefined();
 });
 
+it("offers Stop for a finished hosted agent whose provider can stop its turns", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register({
+    ...type,
+    remote: { ...remote, interrupt: vi.fn(async () => true) },
+  });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  expect(service.interruptible(hostedKey)).toBe(true);
+  // A local agent has no provider to ask.
+  await service.create({ type: "example/echo", name: "Echo" });
+  expect(service.interruptible(bot)).toBe(false);
+  expect(service.interruptible("f".repeat(64))).toBe(false);
+});
+
+it("offers no Stop for a hosted agent whose provider cannot stop its turns", async () => {
+  const { service, plugin } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  expect(service.interruptible(hostedKey)).toBe(false);
+});
+
+it("does not offer Stop for a hosted agent whose setup is unfinished", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register({
+    ...type,
+    remote: { ...remote, interrupt: vi.fn(async () => true) },
+  });
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(
+    service.create({ type: "example/cloud", name: "Sky" }),
+  ).rejects.toThrow("provider down");
+  expect(service.interruptible(hostedKey)).toBe(false);
+});
+
+it("has a hosted agent's provider stop its turn in one conversation", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  const interrupt = vi.fn(
+    async (_: {
+      pubkey: string;
+      community: string;
+      channelId: string;
+      threadRootId: string;
+      signal: AbortSignal;
+    }) => false,
+  );
+  plugin.agents.register({ ...type, remote: { ...remote, interrupt } });
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await expect(
+    service.interrupt(hostedKey, {
+      channelId: "channel-1",
+      threadRootId: "m1",
+    }),
+  ).resolves.toBe(false);
+  expect(interrupt).toHaveBeenCalledWith({
+    pubkey: hostedKey,
+    community: "wss://relay.example.test",
+    channelId: "channel-1",
+    threadRootId: "m1",
+    signal: expect.any(AbortSignal),
+  });
+  interrupt.mockResolvedValueOnce(true);
+  await expect(
+    service.interrupt(hostedKey, {
+      channelId: "channel-1",
+      threadRootId: "m1",
+    }),
+  ).resolves.toBe(true);
+});
+
+it("refuses to stop a hosted agent whose provider cannot", async () => {
+  const { service, plugin } = await setup();
+  const { type } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  await expect(
+    service.interrupt(hostedKey, {
+      channelId: "channel-1",
+      threadRootId: "m1",
+    }),
+  ).rejects.toThrow("This agent can't be stopped here");
+});
+
 it("refuses to finish a hosted agent's setup while it is being deleted", async () => {
   const { service, plugin } = await setup();
   const { type, remote } = cloud();

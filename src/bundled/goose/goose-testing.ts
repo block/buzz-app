@@ -104,6 +104,8 @@ export function fakeSpawn(
     supported?: readonly string[];
     /** Saved sessions `session/list` and `session/export` read. */
     history?: readonly FakeSession[];
+    /** How many sessions a `session/list` page holds; all by default. */
+    page?: number;
     /** Requests each process never answers. */
     silent?: readonly string[];
     /** The thinking levels a session lists on each model, `""` being the
@@ -408,18 +410,22 @@ export function fakeSpawn(
           );
           const mentions = (session: FakeSession) =>
             JSON.stringify(session.conversation).includes(query);
+          const listed = (options.history ?? []).filter(
+            (session) =>
+              session.cwd === params.cwd && (!query || mentions(session)),
+          );
+          const from = Number(params.cursor ?? 0);
+          const to = from + (options.page ?? listed.length);
           return reply(id, {
-            sessions: (options.history ?? [])
-              .filter(
-                (session) =>
-                  session.cwd === params.cwd && (!query || mentions(session)),
-              )
+            sessions: listed
+              .slice(from, to)
               .map(({ sessionId, title, cwd, updatedAt }) => ({
                 sessionId,
                 title,
                 cwd,
                 updatedAt,
               })),
+            nextCursor: to < listed.length ? String(to) : null,
           });
         }
         case "_goose/unstable/session/export": {

@@ -223,6 +223,55 @@ export type AgentSessions = Readonly<{
   list(pubkey: string): readonly AgentSession[];
   subscribe(listener: () => void): () => void;
 }>;
+/** Token counts as the harness reported them. An absent count is unknown, not
+ * zero. `input` excludes the cache counts; together they are the prompt. */
+export type TokenCounts = Readonly<{
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  /** Of `cacheWrite`, those cached for an hour rather than five minutes. */
+  cacheWrite1h?: number;
+}>;
+/** One model request of a session, as the harness recorded it. */
+export type UsageObservation = Readonly<{
+  /** The harness's id for the request, when it records one; unique within
+   * the session. */
+  requestId?: string;
+  /** When the harness recorded the request, in milliseconds. */
+  at: number;
+  model: string;
+  tokens: TokenCounts;
+  /** USD the harness itself recorded, and how it says it got it, e.g.
+   * goose's `estimated`; absent when it records none. */
+  cost?: Readonly<{ usd: number; source: string }>;
+}>;
+/**
+ * A snapshot of one harness session an agent ran on this device: all its
+ * usage, its descendants' (subagents') included, so a consumer never adds a
+ * child session again. `channelId` and `root` say where in Buzz it started,
+ * when the session records it.
+ *
+ * A snapshot without `gaps` is complete: it replaces whatever a consumer kept
+ * for the session. An incomplete one should leave the consumer's previous
+ * snapshot in place and report the gap. A session missing from a later read
+ * is not deleted: its source may be gone, not its usage.
+ */
+export type SessionUsage = Readonly<{
+  /** The harness's own session id, opaque to others. */
+  id: string;
+  /** Equal for two reads that saw the same usage. Opaque and unordered: it
+   * says whether a snapshot changed, not which is newer. */
+  revision: string;
+  /** What the read could not see, e.g. a subagent's vanished file. */
+  gaps: readonly string[];
+  channelId?: string;
+  root?: string;
+  title?: string;
+  startedAt: number;
+  lastAt: number;
+  observations: readonly UsageObservation[];
+}>;
 /** The agent as `run` holds it. A run's handle works for as long as the
  * agent exists; one from `Agents.handle` fails each call while `handle`
  * would not return it, and for good once the agent's type or its plugin is
@@ -385,6 +434,10 @@ export type Delivery<Config = unknown> = Readonly<{
   /** A newer acknowledged request owns this turn's activity; hide this message's
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
+  /** Offers the owner Stop on this request's activity: `stop` stops the turn
+   * the request is in, and resolves once the harness has asked it to. The
+   * turn still settles what it handed to `workingUntil`. */
+  interruptible?(stop: () => Promise<void>): void;
   /** The harness's own title for this mention's conversation. The host may
    * name a Solo chat with it once; the type need not know whether it did. */
   named?(title: string): void;
@@ -486,6 +539,15 @@ export type AgentType<Config = unknown> = {
    * mentioning the agent. Discovery may be async but must not start a turn.
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
+  /** Read-only: snapshots of the sessions the agent ran from Buzz on this
+   * device with activity since `since` (milliseconds). `since` only bounds
+   * activity time; it is no checkpoint, and a session last active before it
+   * that the harness later corrected is not read again. Reading never starts,
+   * stops or changes a session; rejects when `signal` aborts. */
+  usage?(
+    agent: Agent<Config>,
+    options: Readonly<{ since: number; signal: AbortSignal }>,
+  ): Promise<readonly SessionUsage[]>;
   /** The settings that sync across devices and how they merge into this
    * device's config. Without it, the type's settings never sync. */
   syncedSettings?: Readonly<{
@@ -536,6 +598,18 @@ export type RemoteAgentType = Readonly<{
       signal: AbortSignal;
     }>,
   ): Promise<void>;
+  /** Stops the turn it is running in one conversation, named by its channel
+   * and thread root (a top-level message's own id). False when nothing there
+   * was running. Without it, its turns offer no Stop. */
+  interrupt?(
+    input: Readonly<{
+      pubkey: string;
+      community: string;
+      channelId: string;
+      threadRootId: string;
+      signal: AbortSignal;
+    }>,
+  ): Promise<boolean>;
   /** Stops it and deletes its key. An agent already gone counts as removed. */
   remove(
     input: Readonly<{ pubkey: string; community: string; signal: AbortSignal }>,
@@ -701,6 +775,14 @@ export type Agents = {
    * leaves its channels and is removed from its provider before this resolves.
    * One on another device is deleted there. */
   remove(pubkey: string): Promise<void>;
+  /** Whether the owner can stop a hosted agent's turns through its provider. */
+  interruptible(pubkey: string): boolean;
+  /** Has a hosted agent's provider stop its turn in one conversation. False
+   * when nothing there was running. */
+  interrupt(
+    pubkey: string,
+    place: Readonly<{ channelId: string; threadRootId: string }>,
+  ): Promise<boolean>;
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(pubkey: string): Promise<string | undefined>;
@@ -1806,6 +1888,32 @@ export class AgentsService extends Service implements Agents {
       prior: this.rowOf(origin, pubkey)?.prior,
     });
   }
+  /** Whether the owner can stop a hosted agent's turn: its provider can. */
+  interruptible(pubkey: string) {
+    const agent = this.state.agents.find(
+      (entry) =>
+        entry.pubkey === pubkey &&
+        entry.place === "hosted" &&
+        !entry.unfinished,
+    );
+    return !!this.types().find((entry) => entry.key === agent?.type)?.remote
+      ?.interrupt;
+  }
+  /** Stops the hosted agent's turn in `place`; false when none was running. */
+  async interrupt(
+    pubkey: string,
+    place: Readonly<{ channelId: string; threadRootId: string }>,
+  ) {
+    const { agent, remote, binding } = this.hosted(pubkey);
+    if (!remote.interrupt) throw new Error("This agent can't be stopped here");
+    return remote.interrupt({
+      pubkey,
+      community: agent.relay,
+      ...place,
+      signal: binding.controller.signal,
+    });
+  }
+
   /** A hosted agent shown now, its provider, and its community's live session. */
   private hosted(pubkey: string, unfinished = false) {
     const agent = this.state.agents.find(

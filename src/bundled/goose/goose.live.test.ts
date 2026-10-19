@@ -349,6 +349,49 @@ describe.skipIf(!BIN)("goose-acp", () => {
     }
   });
 
+  it("stops the running turn without posting what it wrote", {
+    timeout: 180_000,
+  }, async () => {
+    const { goose, cwd, tools, sends } = await live();
+    try {
+      const session = await goose.open({
+        cwd,
+        tools,
+        systemPrompt:
+          "You are a Buzz agent. You reply in Buzz only by calling the send tool, once, with final true.",
+      });
+      const steps: string[] = [];
+      const started = Date.now();
+      const settled = session.send(
+        "Run the shell command `sleep 60`, then reply in Buzz with the word done.",
+        { step: (tool) => steps.push(tool) },
+      );
+      await expect
+        .poll(
+          () =>
+            steps.some(
+              (step) => step !== "Thinking" && step !== "Writing reply",
+            ),
+          { timeout: 60_000, interval: 200 },
+        )
+        .toBe(true);
+      session.interrupt();
+      const answer = await settled;
+      expect(answer).toEqual({ ok: true });
+      // It ended well before the command would have.
+      expect(Date.now() - started).toBeLessThan(55_000);
+      expect(session.busy).toBe(false);
+      expect(sends()).toEqual([]);
+      // The session takes the next message as usual.
+      await expect(
+        session.send("Reply in Buzz with the word again."),
+      ).resolves.toEqual({ ok: true });
+      expect(sends().at(-1)?.arguments?.text?.toLowerCase()).toContain("again");
+    } finally {
+      await goose.kill();
+    }
+  });
+
   it("serves two agents in one goose, each in its workspace with its tools", {
     timeout: 180_000,
   }, async () => {

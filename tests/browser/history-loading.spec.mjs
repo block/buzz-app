@@ -237,7 +237,33 @@ test.describe("pages inside one second", () => {
     const pending = await reading(page, app, 1400);
     const before = await anchor(page);
     const height = await history(page).evaluate((e) => e.scrollHeight);
-    // Hold every animation frame: input can arrive before any deferred work.
+    await holdFrames(page);
+    try {
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      await expectAnchor(page, before);
+      const wheeled = await history(page).evaluateHandle((e) => {
+        const state = { wheel: false };
+        e.addEventListener("wheel", () => (state.wheel = true), {
+          once: true,
+          passive: true,
+        });
+        return state;
+      });
+      await page.mouse.wheel(0, -40);
+      await expect
+        .poll(() => wheeled.evaluate((state) => state.wheel))
+        .toBe(true);
+      await expectAnchor(page, { ...before, y: before.y + 40 });
+    } finally {
+      await page.evaluate(() => window.releaseFrames());
+    }
+  });
+
+  // Hold every animation frame: input can arrive before any deferred work.
+  async function holdFrames(page) {
     await page.evaluate(() => {
       const { requestAnimationFrame: request, cancelAnimationFrame: cancel } =
         window;
@@ -257,18 +283,7 @@ test.describe("pages inside one second", () => {
         for (const callback of held.values()) request(callback);
       };
     });
-    try {
-      pending.release();
-      await expect
-        .poll(() => history(page).evaluate((e) => e.scrollHeight))
-        .toBeGreaterThan(height);
-      await expectAnchor(page, before);
-      await page.mouse.wheel(0, -40);
-      await expectAnchor(page, { ...before, y: before.y + 40 });
-    } finally {
-      await page.evaluate(() => window.releaseFrames());
-    }
-  });
+  }
 
   test("a held pointer scrolls across the page without being pulled back", async ({
     page,
@@ -287,8 +302,9 @@ test.describe("pages inside one second", () => {
       await settle(page);
       // A scrollbar drag moves the scroller with no further input events,
       // into older rows that measure as they mount, short of the loaded top.
+      let step = 0;
       for (
-        let step = 0;
+        ;
         step < 10 && (await history(page).evaluate((e) => e.scrollTop)) >= 150;
         step++
       ) {
@@ -299,6 +315,7 @@ test.describe("pages inside one second", () => {
         await settle(page);
         await expectAnchor(page, { ...before, y: before.y + 150 });
       }
+      expect(step).toBeGreaterThanOrEqual(3);
     } finally {
       await page.mouse.up();
     }
@@ -314,6 +331,9 @@ test.describe("pages inside one second", () => {
       .toBeGreaterThan(height);
     await settle(page);
     await wheel(page, -distance);
+    await grow(page);
+  }
+  async function grow(page) {
     const before = await anchor(page);
     // An image or embed finishing below the reader's paragraph.
     await history(page).evaluate((e, id) => {
@@ -359,6 +379,53 @@ test.describe("pages inside one second", () => {
       await wheel(page, -100000);
     await wheel(page, 600);
     await grows(page, app.pending.shift(), 600);
+  });
+
+  test("a press released outside history leaves no hold behind", async ({
+    page,
+    app,
+  }) => {
+    const pending = await reading(page, app, 1400);
+    const box = await history(page).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height - 40);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height + 30, {
+      steps: 5,
+    });
+    await page.mouse.up();
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await history(page).hover();
+    await grows(page, pending, 600);
+  });
+
+  test("a drag released before the page's rows measure ends the hold", async ({
+    page,
+    app,
+  }) => {
+    const pending = await reading(page, app, 1400);
+    const box = await history(page).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    const height = await history(page).evaluate((e) => e.scrollHeight);
+    await holdFrames(page);
+    try {
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      await history(page).evaluate(
+        (e) =>
+          new Promise((resolve) => {
+            e.addEventListener("scrollend", resolve, { once: true });
+            e.scrollTop -= 600;
+          }),
+      );
+      await page.mouse.up();
+    } finally {
+      await page.evaluate(() => window.releaseFrames());
+    }
+    await settle(page);
+    await grow(page);
   });
 
   test("a live message in the loaded first second is new", async ({

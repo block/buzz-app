@@ -590,12 +590,15 @@ function Timeline({
     };
     let height = list.style.height;
     const since = intent.current;
-    // Virtua re-observes moved rows in the next frame; they have measured by
-    // the one after, whether or not their height changed.
+    // Virtua re-observes moved rows in the next frame and, as patched, applies
+    // their sizes in the frame after (patches/README.md), whether or not their
+    // height changed. Input that ended before then releases the frame after.
     let measured = false;
+    let ended = false;
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
         measured = true;
+        if (ended) frame = requestAnimationFrame(release);
       });
     });
     const hold = new MutationObserver(() => {
@@ -613,21 +616,21 @@ function Timeline({
       hold.disconnect();
       element.removeEventListener("scroll", read);
       element.removeEventListener("scrollend", end);
-      element.ownerDocument.removeEventListener("pointerup", up);
+      element.ownerDocument.removeEventListener("pointerup", done);
+    };
+    const done = () => {
+      if (measured) release();
+      else ended = true;
     };
     // A held pointer can drag across more moved rows; it ends when released.
     const end = () => {
-      if (measured && intent.current !== since && !pointerHeld.current)
-        release();
-    };
-    const up = () => {
-      if (measured) release();
+      if (intent.current !== since && !pointerHeld.current) done();
     };
     hold.observe(list, { attributes: true, attributeFilter: ["style"] });
     element.addEventListener("scroll", read);
     element.addEventListener("scrollend", end);
     // A drag can end outside the scroller.
-    element.ownerDocument.addEventListener("pointerup", up);
+    element.ownerDocument.addEventListener("pointerup", done);
     return release;
   }, [rows, prepend]);
   useLayoutEffect(() => {
@@ -965,6 +968,15 @@ function Timeline({
       onKeyDown={(event) => gesture(scrollsHistoryUp(event))}
       onPointerDown={() => {
         pointerHeld.current = true;
+        // A press can end outside history.
+        const document = scroller.current?.ownerDocument;
+        const up = () => {
+          pointerHeld.current = false;
+          document?.removeEventListener("pointerup", up);
+          document?.removeEventListener("pointercancel", up);
+        };
+        document?.addEventListener("pointerup", up);
+        document?.addEventListener("pointercancel", up);
         gesture();
       }}
       onPointerUp={() => {

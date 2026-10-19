@@ -10,7 +10,7 @@ import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 
 export const inject = ["host", "settingsCards", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -91,11 +91,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   );
   ctx.settingsCards.register({
     id: "login",
-    title: "Builderlab",
-    group: "Integrations",
+    title: "Builderlab agents",
+    group: "Plugins",
     component: ({ active }) => (
-      <>
+      <section aria-labelledby="builderlab-agents-title">
+        <Header id="builderlab-agents-title" title="Builderlab agents" />
         <Login
+          showHeading={false}
           session={session}
           available={loginAvailable}
           unavailableReason={
@@ -106,7 +108,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           active={active}
         />
         <RemoteAgents client={agents} session={session} active={active} />
-      </>
+      </section>
     ),
   });
 };

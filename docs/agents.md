@@ -95,7 +95,7 @@ rows show only ready, checking, attention, or a neutral unavailable state. The
 Agents host owns the submenu, modal framing, focus restoration and contribution
 error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
-dialog can close. Disabled or unloaded types remain in Settings → Plugins.
+dialog can close. Disabled or unloaded types remain in Settings → Plugins → Manage plugins.
 
 Workspace, instructions and session scope are always per-agent. Claude and Codex
 model/thinking choices may instead be blank, which means inherited rather than
@@ -320,7 +320,7 @@ or the shared agent-choice projection (library and local agents), not a new look
 permission grant. Human recipients and
 plain typed names are not carried forward. The prefill is an ordinary scoped draft:
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
-**Settings → Agents → Messages → Remember mentioned agents** defaults on and is saved on this
+**Settings → Buzz → Agent setup → Agent behavior → Remember mentioned agents** defaults on and is saved on this
 device. Turning it off stops future prefills without changing the current draft;
 turning it back on does not restore old recipients. Solo chat auto-recipient rules are
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
@@ -620,7 +620,7 @@ rewinding pagination. Unknown/capped/suspended membership hides history rather t
 erasing it; positive access can reveal it again. Agent removal and sign-out do not
 erase ciphertext; another account cannot open that partition.
 
-**Settings → Agents → Saved agent activity** has independent capture switches,
+**Settings → Local archive → Saved agent activity** has independent capture switches,
 activity retention and confirmed **Clear activity history** / **Clear turn metrics**
 actions for this account/community. Shortening retention requires confirmation.
 Turning capture off preserves saved rows. Clear advances a durable revision to
@@ -657,8 +657,8 @@ interrupted feed, not that an agent is idle.
 
 Select an active agent above the channel or thread composer, or its bubble under
 the triggering message: it opens the agent's profile on its Activity tab. In
-**Settings → Agents → Saved agent activity**, verify both capture switches and the
-host path. Disable the **Agent Activity** plugin in **Settings → Plugins**, give the
+**Settings → Local archive → Saved agent activity**, verify both capture switches and the
+host path. Disable the **Agent Activity** plugin in **Settings → Plugins → Manage plugins**, give the
 agent work, then re-enable: archive capture should continue independently, and
 restored rows must not claim the agent is working. Saved rows have no viewer in
 the app; inspect the archive file to confirm they remain.
@@ -755,7 +755,7 @@ archive history.
 The channel's **Channel actions → View channel usage** item opens a dedicated
 **Usage** tab in the channel's side pane. It is available only while this
 account has positive access to the current channel and the default-on Channel Usage
-plugin is enabled under Settings → Plugins. Closing the tab unmounts its
+plugin is enabled under Settings → Plugins → Manage plugins. Closing the tab unmounts its
 archive reader; disabling the plugin removes the tab and stops reads. It
 does not change metric capture or retention. Opening the Usage tab reads archive
 pages automatically until exhaustion or the 2,000-record limit; an early page

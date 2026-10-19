@@ -54,7 +54,9 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   // Disable it before exercising the actual Profiles provider.
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   await pluginAction(page, "Notes fixture").click();
   for (const [mode, id] of [
     ["cold root", app.exact.root.id],

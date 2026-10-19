@@ -63,7 +63,7 @@ test("management Leave restores focus on cancel, holds pending, and completes th
   ).toBeFocused();
   await expect(
     dialog.getByRole("button", { name: "Cancel", exact: true }),
-  ).toHaveAttribute("data-variant", "prominent");
+  ).toHaveAttribute("data-variant", "subtle");
   await dialog.screenshot({
     path: testInfo.outputPath("leave-confirmation.png"),
   });

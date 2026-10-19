@@ -485,7 +485,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toHaveValue("Fixture Reader");
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
   // Channels is required; use another page to exercise UI activation.
   const projects = pluginAction(page, "Workflows");
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
@@ -816,7 +816,7 @@ companionTest(
     await launch.click();
     await button(page, "Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await selectSettingsSection(page, "Plugins");
+    await selectSettingsSection(page, "Manage plugins");
     await expect(companion).toHaveCount(1);
     const enabled = pluginAction(page, "Companion fixture");
     await enabled.click();
@@ -904,7 +904,7 @@ companionTest(
     await expect(companion).toHaveCount(1);
     await button(page, "Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await selectSettingsSection(page, "Plugins");
+    await selectSettingsSection(page, "Manage plugins");
     await expect(companion).toHaveCount(1);
     for (const [width, height] of [
       [800, 600],
@@ -981,7 +981,7 @@ todosOverlapTest(
     await open(page, app);
     await button(page, "Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await selectSettingsSection(page, "Plugins");
+    await selectSettingsSection(page, "Manage plugins");
     await pluginAction(page, "Todos").click();
     await openPage(page, "Messages");
     const todos = page.getByRole("region", {

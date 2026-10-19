@@ -74,9 +74,12 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
     includeHidden: true,
   });
   await settingsSidebar
-    .getByRole("button", { name: "Plugins", exact: true })
+    .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
-  const content = page.getByRole("region", { name: "Plugins", exact: true });
+  const content = page.getByRole("region", {
+    name: "Manage plugins",
+    exact: true,
+  });
   const row = content.getByRole("article").filter({
     has: page.getByRole("button", { name: "View GitHub details", exact: true }),
   });
@@ -234,7 +237,7 @@ test.describe("community administration permissions", () => {
     const sections = page.getByRole("navigation", {
       name: "Settings sections",
     });
-    await expect(sections).toContainText("Administration");
+    await expect(sections).toContainText("Community admin");
     // The account menu finishes its focus handoff before testing section focus.
     await expect(page.getByRole("main")).toBeFocused();
     const membership = sections.getByRole("button", {
@@ -443,16 +446,8 @@ confirmedPresence(
       name: "Channel templates",
       exact: true,
     });
-    const customEmoji = sections.getByRole("button", {
-      name: "Custom emoji",
-      exact: true,
-    });
-    const hostedCommunities = sections.getByRole("button", {
-      name: "Hosted communities",
-      exact: true,
-    });
     const plugins = sections.getByRole("button", {
-      name: "Plugins",
+      name: "Manage plugins",
       exact: true,
       includeHidden: true,
     });
@@ -461,7 +456,7 @@ confirmedPresence(
       exact: true,
     });
     const pluginContent = page.getByRole("region", {
-      name: "Plugins",
+      name: "Manage plugins",
       exact: true,
     });
     await expect(profile).toHaveAttribute("aria-current", "page");
@@ -474,12 +469,15 @@ confirmedPresence(
     ).toBeVisible();
     await profile.click();
     // Exercise the real shell's destination allowlist, not just the settings component.
-    const agents = sections.getByRole("button", {
-      name: "Agents",
+    const providers = sections.getByRole("button", {
+      name: "Agent setup",
       exact: true,
     });
-    await agents.click();
-    await expect(agents).toHaveAttribute("aria-current", "page");
+    await providers.click();
+    await expect(providers).toHaveAttribute("aria-current", "page");
+    await expect(
+      page.getByRole("region", { name: "Agent setup", exact: true }),
+    ).toBeVisible();
     const remember = page.getByRole("switch", {
       name: "Remember mentioned agents",
     });
@@ -487,8 +485,24 @@ confirmedPresence(
     await remember.click();
     await expect(remember).not.toBeChecked();
     await profile.click();
-    await agents.click();
+    await providers.click();
     await expect(remember).not.toBeChecked();
+    const appearance = sections.getByRole("button", {
+      name: "Appearance",
+      exact: true,
+    });
+    await appearance.click();
+    await expect(remember).toHaveCount(0);
+    const placement = page.getByRole("combobox", {
+      name: "Open threads in",
+      exact: true,
+    });
+    await placement.click();
+    await page.getByRole("option", { name: "Main pane", exact: true }).click();
+    await expect(placement).toHaveText("Main pane");
+    await profile.click();
+    await appearance.click();
+    await expect(placement).toHaveText("Main pane");
     await profile.click();
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 844 });
@@ -502,36 +516,19 @@ confirmedPresence(
       }
       await expect(settingsSidebar).toBeVisible();
       await profile.focus();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Messages", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(channelTemplates).toBeFocused();
-      await tab();
-      await expect(customEmoji).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Leave or remove", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Builderlab", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Jev classifier", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Pair mobile", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(hostedCommunities).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Appearance", exact: true }),
-      ).toBeFocused();
+      for (const name of [
+        "Custom emoji",
+        "Local archive",
+        "Pair mobile",
+        "Leave or remove",
+        "Identity",
+        "Appearance",
+      ]) {
+        await tab();
+        await expect(
+          sections.getByRole("button", { name, exact: true }),
+        ).toBeFocused();
+      }
       await plugins.focus();
       await page.keyboard.press("Enter");
       await expect(plugins).toHaveAttribute("aria-current", "page");
@@ -588,52 +585,28 @@ confirmedPresence(
         await button(page, "Show navigation").click();
         await profile.focus();
       }
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Messages", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(channelTemplates).toBeFocused();
-      await tab();
-      await expect(customEmoji).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Leave or remove", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Builderlab", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Jev classifier", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Pair mobile", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(hostedCommunities).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Appearance", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Notifications", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Shortcuts", exact: true }),
-      ).toBeFocused();
-      await tab();
-      await expect(agents).toBeFocused();
-      await tab();
-      await expect(plugins).toBeFocused();
-      await tab();
-      await expect(
-        sections.getByRole("button", { name: "Updates", exact: true }),
-      ).toBeFocused();
+      for (const name of [
+        "Custom emoji",
+        "Local archive",
+        "Pair mobile",
+        "Leave or remove",
+        "Identity",
+        "Appearance",
+        "Notifications",
+        "Shortcuts",
+        "Agent setup",
+        "Channel templates",
+        "Software updates",
+        "Manage plugins",
+        "Builderlab agents",
+        "Builderlab hosting",
+        "Jev classifier",
+      ]) {
+        await tab();
+        await expect(
+          sections.getByRole("button", { name, exact: true }),
+        ).toBeFocused();
+      }
       await tab();
       // Wide Settings includes the shared sidebar resize stop before its content.
       const handle = page.getByRole("separator", {
@@ -720,7 +693,7 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
   await page.reload();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Hosted communities").click();
+  await button(page, "Builderlab hosting").click();
   await expect(
     page.getByText("Deletion status is unknown", { exact: true }),
   ).toBeVisible();
@@ -739,7 +712,7 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
   await page.reload();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Hosted communities").click();
+  await button(page, "Builderlab hosting").click();
   await expect(button(page, "Check deletion status")).toBeEnabled();
   await button(page, "Check deletion status").click();
   await expect(
@@ -802,7 +775,7 @@ test("hosted deletion keeps a foreign owner's full npub inside the dialog and no
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Hosted communities").click();
+  await button(page, "Builderlab hosting").click();
   await button(page, "Delete").click();
   const dialog = page.getByRole("dialog", { name: /Permanently delete north/ });
   await dialog
@@ -890,7 +863,7 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(button(page, "Edit profile")).toHaveCount(0);
   await name.fill("Do not save");
   await expect(name).toHaveValue("Do not save");
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await expect(name).toBeHidden();
   await button(page, "Profile").click();
   await expect(name).toHaveValue("Do not save");
@@ -964,13 +937,6 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(
     profileRegion().getByRole("textbox", {
       name: "Profile description (optional)",
-    }),
-  ).toBeFocused();
-  await page.keyboard.press(tab);
-  await expect(
-    profileRegion().getByRole("button", {
-      name: "Copy public key",
-      exact: true,
     }),
   ).toBeFocused();
   await expect(save()).toHaveCount(0);
@@ -1104,7 +1070,9 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
     name: "Settings sidebar",
     includeHidden: true,
   });
-  await sidebar.getByRole("button", { name: "Plugins", exact: true }).click();
+  await sidebar
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);

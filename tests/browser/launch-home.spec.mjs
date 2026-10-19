@@ -104,10 +104,12 @@ test("Channels stays enabled despite saved disabled settings and has no disable 
   app,
 }) => {
   await page.goto(address(app.origin, settings));
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   await expect(
     page
-      .getByRole("region", { name: "Plugins", exact: true })
+      .getByRole("region", { name: "Manage plugins", exact: true })
       .getByRole("article")
       .filter({ has: page.getByText("Channels", { exact: true }) })
       .getByText("Required", { exact: true }),
@@ -129,10 +131,12 @@ test("Channels stays enabled despite saved disabled settings and has no disable 
   await page.reload();
   await expect(messages(page)).toBeVisible();
   await page.goto(address(app.origin, settings));
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   await expect(
     page
-      .getByRole("region", { name: "Plugins", exact: true })
+      .getByRole("region", { name: "Manage plugins", exact: true })
       .getByRole("article")
       .filter({ has: page.getByText("Channels", { exact: true }) })
       .getByText("Required", { exact: true }),

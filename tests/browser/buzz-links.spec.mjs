@@ -645,7 +645,7 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   ).toBeVisible();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
+  await button(page, "Manage plugins").click();
   await setPluginEnabled(page, "Links", false);
   await openPage(page, "Messages");
   await row.locator("a").first().click();

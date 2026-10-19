@@ -10,7 +10,7 @@
   margin: 0;
 }
 .capture {
-  min-height: 40px;
+  min-height: var(--size-control-sm);
   animation: capture-in 180ms var(--easing-enter);
 }
 .iconButton {
@@ -40,13 +40,6 @@
 .iconButton:disabled {
   cursor: default;
   color: var(--text-unavailable);
-}
-.divider {
-  flex-shrink: 0;
-  width: 1px;
-  height: 20px;
-  margin-inline: var(--space-1);
-  background: var(--border-standard);
 }
 .timer {
   font-size: var(--text-caption);
@@ -132,24 +125,16 @@
     fill 150ms var(--easing-state),
     stroke 150ms var(--easing-state);
 }
-.play,
-.discard {
+.play {
   display: inline-flex;
   border-radius: var(--radius-icon-button);
 }
-.play[data-smooth-corners] > button,
-.discard[data-smooth-corners] > button {
+.play[data-smooth-corners] > button {
   clip-path: var(--media-corner-clip);
 }
-.play:has(:focus-visible),
-.discard:has(:focus-visible) {
+.play:has(:focus-visible) {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
-}
-.discard {
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
 }
 .play {
   flex-shrink: 0;

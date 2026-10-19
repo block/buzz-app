@@ -4,6 +4,7 @@ import {
   CaretDownIcon,
   Cube3dSphereIcon,
 } from "../../shared/design-system/icons";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   MenuItem,
@@ -68,17 +69,32 @@ export function ProjectControl({
             snapshot.status === "loading"
           }
           aria-label={project ? `Project: ${project.name}` : "Add project"}
-          render={(props) => (
-            <Button {...props} variant="ghost" size="xs">
-              <Cube3dSphereIcon size={16} aria-hidden="true" />
-              <span>{project?.name ?? "Add project"}</span>
-              <CaretDownIcon
-                size={12}
-                className="buzz-dropdown-chevron"
-                aria-hidden="true"
+          render={(props) =>
+            project ? (
+              <Button
+                {...props}
+                variant="ghost"
+                size="sm"
+                title={`Project: ${project.name}`}
+              >
+                <Cube3dSphereIcon size={16} aria-hidden="true" />
+                <span>{project.name}</span>
+                <CaretDownIcon
+                  size={12}
+                  className="buzz-dropdown-chevron"
+                  aria-hidden="true"
+                />
+              </Button>
+            ) : (
+              <IconButton
+                {...props}
+                aria-label="Add project"
+                title="Add project"
+                size="sm"
+                icon={<Cube3dSphereIcon size={16} aria-hidden="true" />}
               />
-            </Button>
-          )}
+            )
+          }
         />
         <MenuPopup side="top" align="end" aria-label="Choose project">
           <MenuRadioGroup value={projectId} onValueChange={choose}>

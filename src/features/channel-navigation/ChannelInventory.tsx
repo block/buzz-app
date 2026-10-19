@@ -453,18 +453,25 @@ export function ChannelInventory({
     ),
     list.activityStatus === "ready",
   );
+  const channelSectionKey = useCallback(
+    (channelId: string) => {
+      const data = queries.sidebarPreferences.snapshot().data;
+      const sectionId = data?.assignments[channelId];
+      const channel = queries.channels
+        .list()
+        .channels.find((row) => row.id === channelId);
+      return data?.starred.includes(channelId)
+        ? "starred"
+        : sectionId
+          ? `group:${sectionId}`
+          : channel?.channelType === "dm"
+            ? "dms"
+            : "channels";
+    },
+    [queries],
+  );
   const focusChannelPlacement = (channelId: string) => {
-    const data = queries.sidebarPreferences.snapshot().data;
-    const sectionId = data?.assignments[channelId];
-    const channel = sidebarChannels.find((row) => row.id === channelId);
-    const sectionKey = data?.starred.includes(channelId)
-      ? "starred"
-      : sectionId
-        ? `group:${sectionId}`
-        : channel?.channelType === "dm"
-          ? "dms"
-          : "channels";
-    sidebar.toggle(sectionKey, true);
+    sidebar.toggle(channelSectionKey(channelId), true);
     setRowFocus(channelId);
   };
   const moveChannel = (
@@ -785,23 +792,32 @@ export function ChannelInventory({
       pendingCreate.current = undefined;
     }
   }, []);
+  const rowFocusTarget = useCallback(
+    (channelId: string) => {
+      const list = sidebar.list.current;
+      const row = list?.querySelector<HTMLElement>(
+        `[data-channel-id="${CSS.escape(channelId)}"]`,
+      );
+      if (row) return row;
+      return list?.querySelector<HTMLElement>(
+        `[data-sidebar-section="${CSS.escape(channelSectionKey(channelId))}"] details > summary`,
+      );
+    },
+    [channelSectionKey, sidebar.list],
+  );
   const rowMenuFinalFocus = useCallback(
     (channelId: string) =>
       pendingCreate.current
         ? false
         : removedDmFocus.current?.channelId === channelId
           ? removedDmFocus.current.target
-          : (sidebar.list.current?.querySelector<HTMLButtonElement>(
-              `[data-channel-id="${CSS.escape(channelId)}"]`,
-            ) ?? false),
-    [sidebar.list],
+          : (rowFocusTarget(channelId) ?? false),
+    [rowFocusTarget],
   );
   useLayoutEffect(() => {
     if (!rowFocus) return;
     (
-      sidebar.list.current?.querySelector<HTMLButtonElement>(
-        `[data-channel-id="${CSS.escape(rowFocus)}"]`,
-      ) ??
+      rowFocusTarget(rowFocus) ??
       [
         ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
           "[data-channel-id]",
@@ -812,7 +828,7 @@ export function ChannelInventory({
         ?.querySelector<HTMLButtonElement>("button")
     )?.focus({ preventScroll: true });
     setRowFocus(undefined);
-  }, [rowFocus, sidebar.list]);
+  }, [rowFocus, rowFocusTarget, sidebar.list]);
   const [groupFocus, setGroupFocus] = useState<string>();
   // Group recovery removes its focused notice; return focus to the group header.
   useLayoutEffect(() => {

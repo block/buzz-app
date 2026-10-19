@@ -399,3 +399,47 @@ test("failed activity reads explain the filter and recover on Retry", async ({
   ).toHaveCount(0);
   await expect(unknown).toHaveCount(0);
 });
+
+test.describe("filter action focus", () => {
+  test.use({ readState: true });
+  // Native focus handoff after a menu action unmounts its trigger is browser-owned.
+  test("filtered-out row actions return focus to the owning section", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    const channels = page.locator('[data-sidebar-section="channels"]');
+    const work = page.locator('[data-sidebar-section="group:work"]');
+    const row = channels.locator('[data-channel-id="delta"]');
+    const filter = async (section, title, name) => {
+      await section
+        .getByRole("button", { name: `More actions for ${title}`, exact: true })
+        .click();
+      await page.getByRole("menuitem", { name: "Filter", exact: true }).hover();
+      await page.getByRole("menuitemradio", { name, exact: true }).click();
+    };
+    await expect(row).toBeVisible();
+    await filter(channels, "Channels", "Unreads");
+    await expect(row).toBeVisible();
+    await row.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Mark as Read", exact: true })
+      .click();
+    await expect(row).toHaveCount(0);
+    await expect(channels.locator("details > summary")).toBeFocused();
+    await filter(work, "Work", "Unreads");
+    await filter(channels, "Channels", "All");
+    await expect(row).toBeVisible();
+    await row.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Move channel", exact: true })
+      .hover();
+    await page
+      .getByRole("menuitemradio", { name: "Work", exact: true })
+      .click();
+    await expect(row).toHaveCount(0);
+    await expect(work.locator('[data-channel-id="delta"]')).toHaveCount(0);
+    await expect(work.locator("details > summary")).toBeFocused();
+  });
+});

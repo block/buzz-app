@@ -53,7 +53,13 @@ fn read(path: &str, cwd: Option<&str>) -> Result<Vec<u8>, String> {
         std::io::ErrorKind::NotFound => format!("{path}: No such file"),
         _ => format!("Could not read {path}: {error}"),
     };
-    let file = std::fs::File::open(&full).map_err(failed)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    // Opening a FIFO without a writer would block until one came; without
+    // waiting, it opens and then fails the check below. A file reads alike.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let file = options.open(&full).map_err(failed)?;
     if !file.metadata().map_err(failed)?.is_file() {
         return Err(format!("{path} is not a file"));
     }
@@ -132,6 +138,13 @@ mod tests {
         assert!(read("-project", Some(cwd))
             .unwrap_err()
             .contains("not a file"));
+        #[cfg(unix)]
+        {
+            let fifo = root.path().join("fifo");
+            let name = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+            assert!(read("fifo", Some(cwd)).unwrap_err().contains("not a file"));
+        }
         assert!(read("a.bin", None).is_err());
         assert!(read("", Some(cwd)).is_err());
         assert!(read("a.bin", Some("relative")).is_err());

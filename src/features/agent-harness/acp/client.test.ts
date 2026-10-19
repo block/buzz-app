@@ -4,6 +4,7 @@ import {
   fakeSpawn as fakeGoose,
   flush,
 } from "../../../bundled/goose/goose-testing";
+import { GOOSE } from "../../../bundled/goose/goose";
 import { SharedProcess } from "../../../bundled/goose/sessions";
 import type {
   HostMcpServer,
@@ -50,6 +51,8 @@ function fakeHarness(
     rejectPrompts?: number;
     /** Every prompt is answered with this error. */
     promptError?: { code: number; message: string };
+    /** Why a turn that ran ends. */
+    stopReason?: string;
   }> = {},
 ) {
   const started: {
@@ -148,7 +151,7 @@ function fakeHarness(
               finish: () => {
                 running.delete(sessionId);
                 run(sessionId, null);
-                reply(id, { stopReason: "end_turn" });
+                reply(id, { stopReason: options.stopReason ?? "end_turn" });
               },
             };
             turns.push(turn);
@@ -228,18 +231,31 @@ describe("starting a harness", () => {
     }
   });
 
+  const diagnosing: AcpHooks = { ...HOOKS, diagnoseStartup: true };
+
   it("names the install hint when the program is missing or cannot run", async () => {
     for (const exitCode of [127, 126]) {
       const harness = fakeHarness({ exitCode });
-      await expect(start(harness)).rejects.toThrow("Install the harness CLI.");
+      await expect(start(harness, {}, diagnosing)).rejects.toThrow(
+        "Install the harness CLI.",
+      );
     }
   });
 
   it("reports another early exit as itself", async () => {
     const harness = fakeHarness({ exitCode: 1 });
-    await expect(start(harness)).rejects.toThrow(
+    await expect(start(harness, {}, diagnosing)).rejects.toThrow(
       "env: harness: No such file or directory",
     );
+  });
+
+  it("reports goose's early exit by its code alone", async () => {
+    for (const exitCode of [1, 127]) {
+      const harness = fakeHarness({ exitCode });
+      await expect(start(harness, {}, GOOSE)).rejects.toThrow(
+        new Error(`goose exited (${exitCode})`),
+      );
+    }
   });
 
   it("stops a harness that never answers initialize", async () => {
@@ -474,6 +490,18 @@ describe("a session without hooks", () => {
       ok: false,
       error: "Authentication required",
       code: -32000,
+    });
+  });
+
+  it("drops an earlier prompt's error code when a later one is refused", async () => {
+    const harness = fakeHarness({ rejectPrompts: 1, stopReason: "refusal" });
+    const acp = await start(harness);
+    const session = await acp.open({ cwd: "/work", systemPrompt: "" });
+    void session.send("first");
+    // The latest message owns the burst's error.
+    await expect(session.send("second")).resolves.toEqual({
+      ok: false,
+      error: "Harness refused the request",
     });
   });
 

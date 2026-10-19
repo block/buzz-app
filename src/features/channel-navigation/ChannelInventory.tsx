@@ -830,23 +830,33 @@ export function ChannelInventory({
   });
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
   const lifecycleCallbacks = handoff?.lifecycleCallbacks;
-  // The rows beside the confirmed channel, nearest first, captured while it is
-  // still listed: completion can arrive after the roster has dropped it.
+  // The shown rows nearest the confirmed channel: its own section's, then the
+  // nearest expanded sections'. Captured while it is still listed: completion
+  // can arrive after the roster has dropped it.
   const lifecycleNeighbors = useRef<{ id: string; ids: string[] }>(undefined);
   useLayoutEffect(() => {
     if (!lifecycleCallbacks) return;
     const dialogId = lifecycleDialog?.channel.id;
-    const placement = sections.find(
-      (section) =>
-        !sidebar.collapsed.includes(section.key) &&
-        section.rows.some((row) => row.id === dialogId),
+    if (!dialogId) lifecycleNeighbors.current = undefined;
+    const at = sections.findIndex((section) =>
+      section.rows.some((row) => row.id === dialogId),
     );
+    const placement = sections[at];
     if (dialogId && placement) {
-      const ids = placement.rows.map((row) => row.id);
-      const index = ids.indexOf(dialogId);
+      const shown = (section: typeof placement) =>
+        sidebar.collapsed.includes(section.key)
+          ? []
+          : section.rows.map((row) => row.id);
+      const own = shown(placement);
+      const index = Math.max(own.indexOf(dialogId), 0);
       lifecycleNeighbors.current = {
         id: dialogId,
-        ids: [...ids.slice(index + 1), ...ids.slice(0, index).reverse()],
+        ids: [
+          ...own.slice(index + 1),
+          ...own.slice(0, index).reverse(),
+          ...sections.slice(at + 1).flatMap(shown),
+          ...sections.slice(0, at).flatMap(shown).reverse(),
+        ],
       };
     }
     lifecycleCallbacks.current = lifecycleDialog

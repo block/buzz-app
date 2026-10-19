@@ -790,8 +790,11 @@ it.each(["archive", "unarchive", "delete"] as const)(
   },
 );
 
-function pendingLifecycle(action: "archive" | "delete" | "leave" | "hide") {
-  const h = fixture();
+function pendingLifecycle(
+  action: "archive" | "delete" | "leave" | "hide",
+  preferences?: Parameters<typeof fixture>[0],
+) {
+  const h = fixture(preferences);
   const channel = h.list.channels[1];
   assert(channel);
   let finish!: () => void;
@@ -927,6 +930,30 @@ it("deleting the open channel opens its neighbor after the roster drops it", asy
     ),
   );
   expect(h.navigator.open).toHaveBeenCalledOnce();
+});
+
+it("deleting the only row in its section opens the nearest row below it", async () => {
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [{ id: "laptop", name: "Laptop", order: 0 }],
+      assignments: { beta: "laptop" },
+      starred: ["alpha"],
+      muted: [],
+    }),
+    available: true,
+    write: async () => ({ sections: [], assignments: {} }),
+    writeStar: async () => [],
+  });
+  await preferences.queries.ensure();
+  // Starred: alpha; Laptop: beta; Channels: gamma.
+  const h = pendingLifecycle("delete", preferences.queries);
+  await h.start();
+  await act(async () => h.finish());
+  await waitFor(() =>
+    expect(h.navigator.open).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
+    ),
+  );
 });
 
 it("session teardown still aborts submitted lifecycle work", async () => {

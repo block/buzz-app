@@ -996,13 +996,14 @@ async function mcp(
   id: number,
   method: string,
   params: object = {},
+  server = "buzz",
 ) {
   claude?.emit({
     type: "control_request",
     request_id: `mcp-${id}`,
     request: {
       subtype: "mcp_message",
-      server_name: "buzz",
+      server_name: server,
       message: { jsonrpc: "2.0", id, method, params },
     },
   });
@@ -1146,9 +1147,13 @@ it("always offers attention tools and guidance, and says in each turn whether at
     claudes().find((process) =>
       process.prompts[0]?.includes(`Content: @Claude ${id}`),
     );
-  const names = async (claude: FakeClaude | undefined, id: number) =>
+  const names = async (
+    claude: FakeClaude | undefined,
+    id: number,
+    server?: string,
+  ) =>
     (
-      ((await mcp(claude, id, "tools/list")) as unknown as {
+      ((await mcp(claude, id, "tools/list", {}, server)) as unknown as {
         tools: { name: string }[];
       }) ?? { tools: [] }
     ).tools.map((tool) => tool.name);
@@ -1156,8 +1161,9 @@ it("always offers attention tools and guidance, and says in each turn whether at
   await mention("6");
   await flush(10);
   const on = asked("6");
-  expect(await names(on, 1)).toContain("watch_add");
-  expect(systemPromptOf(on)).toContain("## Attention");
+  // On their own server, which Claude loads when the model searches for it.
+  expect(await names(on, 1)).not.toContain("watch_add");
+  expect(await names(on, 9, "buzz_attention")).toContain("watch_add");
   expect(on?.prompts[0]).toMatch(/<attention>\nHandle the work/);
   // Turned off, the session keeps its tools and prompt: nothing restarts.
   attention.on = false;
@@ -1167,8 +1173,8 @@ it("always offers attention tools and guidance, and says in each turn whether at
   await mention("7");
   await flush(10);
   const off = asked("7");
-  expect(await names(off, 2)).toContain("watch_add");
-  expect(systemPromptOf(off)).toContain("## Attention");
+  expect(await names(off, 2, "buzz_attention")).toContain("watch_add");
+  expect(systemPromptOf(off)).toBe(systemPromptOf(on));
   // Only the turn says that attention is off, and the tools refuse.
   expect(off?.prompts[0]).toMatch(/<attention>\nYour owner has attention off/);
   expect(off?.prompts[0]).not.toContain("Handle the work");
@@ -1208,9 +1214,13 @@ it("offers the tools plugins add, runs them as the agent, and replaces an idle s
         prompt.includes(`Content: @Claude ${id}`),
       ),
     );
-  const names = async (claude: FakeClaude | undefined, id: number) =>
+  const names = async (
+    claude: FakeClaude | undefined,
+    id: number,
+    server?: string,
+  ) =>
     (
-      ((await mcp(claude, id, "tools/list")) as unknown as {
+      ((await mcp(claude, id, "tools/list", {}, server)) as unknown as {
         tools: { name: string }[];
       }) ?? { tools: [] }
     ).tools.map((tool) => tool.name);
@@ -1218,9 +1228,7 @@ it("offers the tools plugins add, runs them as the agent, and replaces an idle s
   await mention("6");
   await flush(10);
   const first = asked("6");
-  expect(await names(first, 1)).toEqual(
-    expect.arrayContaining(["send", "tasks_create"]),
-  );
+  expect(await names(first, 1, "plugin")).toEqual(["tasks_create"]);
   const reply = (await mcp(first, 2, "tools/call", {
     name: "tasks_create",
     arguments: { title: "Ship it" },
@@ -1238,7 +1246,7 @@ it("offers the tools plugins add, runs them as the agent, and replaces an idle s
   const second = asked("7");
   expect(first?.killed).toBe(true);
   expect(second).not.toBe(first);
-  expect(await names(second, 3)).not.toContain("tasks_create");
+  expect(await names(second, 3, "plugin")).toEqual([]);
 });
 
 it("keeps one spare for all its agents, and none once they are gone", async () => {

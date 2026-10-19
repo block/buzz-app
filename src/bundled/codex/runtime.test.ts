@@ -2882,19 +2882,36 @@ it("always offers the attention tools and guidance, keeps the thread when attent
   const thread = (index: number) =>
     f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as {
       developerInstructions: string;
-      dynamicTools: { tools: { name: string }[] }[];
+      dynamicTools: {
+        name: string;
+        tools: { name: string; deferLoading?: boolean }[];
+      }[];
     };
-  const names = (index: number) =>
-    thread(index)?.dynamicTools[0]?.tools.map((tool) => tool.name) ?? [];
-  expect(names(0)).toEqual(expect.arrayContaining(["send", "interest_show"]));
-  expect(thread(0)?.developerInstructions).toContain("## Attention");
+  const group = (index: number, name: string) =>
+    thread(index)?.dynamicTools.find((each) => each.name === name)?.tools ?? [];
+  // The Buzz tools are listed up front, and the attention tools, with their
+  // guidance, once the model searches for them.
+  expect(group(0, "buzz").map((tool) => tool.name)).toContain("send");
+  expect(group(0, "buzz").some((tool) => tool.deferLoading)).toBe(false);
+  expect(group(0, "buzz_attention").map((tool) => tool.name)).toContain(
+    "interest_show",
+  );
+  expect(group(0, "buzz_attention").every((tool) => tool.deferLoading)).toBe(
+    true,
+  );
+  expect(thread(0)?.developerInstructions).not.toContain("## Attention");
   const start = f.starts()[0]?.params as { input: { text: string }[] };
   expect(start.input[0]?.text).toMatch(
     /<attention>\nHandle the work that caused this turn/,
   );
-  // An attention call goes to the agent's attention, through the shared tools.
-  const shown = await f.tool("interest_show", { id: "ops" });
+  // An attention call goes to the agent's attention, through the shared
+  // tools, under its group or, from a thread started before the groups, buzz.
+  const shown = await f.tool("interest_show", { id: "ops" }, undefined, {
+    namespace: "buzz_attention",
+  });
   expect(JSON.stringify(shown?.result)).toContain("Watch ops");
+  const old = await f.tool("interest_show", { id: "ops" });
+  expect(JSON.stringify(old?.result)).toContain("Watch ops");
   // Turned off mid-turn, the listed tools refuse rather than write.
   f.attention.on = false;
   const refused = await f.tool("interest_remove", {
@@ -2941,10 +2958,12 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
   const names = (index: number) =>
     (
       f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as
-        | { dynamicTools: { tools: { name: string }[] }[] }
+        | { dynamicTools: { name: string; tools: { name: string }[] }[] }
         | undefined
-    )?.dynamicTools[0]?.tools.map((tool) => tool.name);
-  expect(names(0)).toEqual(expect.arrayContaining(["send", "tasks_create"]));
+    )?.dynamicTools
+      .find((group) => group.name === "plugin")
+      ?.tools.map((tool) => tool.name);
+  expect(names(0)).toEqual(["tasks_create"]);
   const reply = await f.tool("tasks_create", { title: "Ship it" });
   expect(JSON.stringify(reply?.result)).toContain("created");
   expect(call).toHaveBeenCalledWith(
@@ -2979,7 +2998,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
   expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
     1,
   );
-  expect(names(1)).not.toContain("tasks_create");
+  expect(names(1)).toBeUndefined();
   const gone = await f.tool("tasks_create", { title: "Late" });
   expect(JSON.stringify(gone)).toContain("No active Buzz tool");
   expect(call).toHaveBeenCalledTimes(1);
@@ -3015,12 +3034,14 @@ it("runs a watch or timer as a one-off ephemeral turn with the attention tools, 
   const started = f.sent.find((wire) => wire.method === "thread/start")
     ?.params as {
     ephemeral?: boolean;
-    dynamicTools: { tools: { name: string }[] }[];
+    dynamicTools: { name: string; tools: { name: string }[] }[];
   };
   expect(started.ephemeral).toBe(true);
-  expect(started.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
-    "watch_update",
-  );
+  expect(
+    started.dynamicTools
+      .find((group) => group.name === "buzz_attention")
+      ?.tools.map((tool) => tool.name),
+  ).toContain("watch_update");
   const text = (
     f.starts()[0]?.params as { input: { text: string }[] } | undefined
   )?.input[0]?.text;

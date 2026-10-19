@@ -469,27 +469,39 @@ it("allows tool use and acknowledges hooks it is asked about", async () => {
 
 it("serves the Buzz tools over the pipe and ends a turn on a final send", async () => {
   const { spawn, processes } = fakeSpawn();
-  const tools = vi.fn(async (_conversation: unknown, message: unknown) => ({
-    jsonrpc: "2.0",
-    id: (message as { id: number }).id,
-    result: { content: [{ type: "text", text: "sent" }] },
-  }));
+  const answer = vi.fn(
+    async (_conversation: unknown, _server: string, message: unknown) => ({
+      jsonrpc: "2.0",
+      id: (message as { id: number }).id,
+      result: { content: [{ type: "text", text: "sent" }] },
+    }),
+  );
   const claude = await ClaudeProcess.start(spawn, {
     ...launch,
     sessionId: "s1",
-    tools,
+    tools: {
+      servers: [
+        { name: "buzz", alwaysLoad: true },
+        { name: "buzz_attention", alwaysLoad: false },
+      ],
+      answer,
+    },
   });
   claude.conversation = "chan/root";
   const fake = processes[0];
   if (!fake) throw new Error("no process");
   const config =
     fake.options.args?.[fake.options.args.indexOf("--mcp-config") + 1];
+  // Only the core server's tools are listed up front.
   expect(JSON.parse(config ?? "{}")).toEqual({
-    mcpServers: { buzz: { type: "sdk", name: "buzz", alwaysLoad: true } },
+    mcpServers: {
+      buzz: { type: "sdk", name: "buzz", alwaysLoad: true },
+      buzz_attention: { type: "sdk", name: "buzz_attention" },
+    },
   });
   expect(fake.received[0]).toMatchObject({
     request: {
-      sdkMcpServers: ["buzz"],
+      sdkMcpServers: ["buzz", "buzz_attention"],
       hooks: {
         PostToolUse: [
           { matcher: "mcp__buzz__send", hookCallbackIds: ["final"] },
@@ -521,7 +533,7 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send", async 
   fake.emit(hook(false));
   fake.emit(hook(true));
   await flush();
-  expect(tools).toHaveBeenCalledWith("chan/root", call);
+  expect(answer).toHaveBeenCalledWith("chan/root", "buzz", call);
   const responses = fake.received
     .filter((message) => message.type === "control_response")
     .map((message) => message.response);

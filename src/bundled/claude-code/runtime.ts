@@ -10,6 +10,7 @@ import { respond } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
   addedKey,
+  sessionGroups,
   turnNote,
 } from "../../buzz-mcp/session-tools";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
@@ -141,7 +142,10 @@ export class ClaudeRuntime {
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     (id, options) => this.spawn(id, options),
-    (_conversation, message) => respond(undefined, {}, message, this.added()),
+    () =>
+      this.toolServer((_conversation, server, message) =>
+        respond(undefined, {}, message, this.added(), server),
+      ),
     undefined,
     () => addedKey(this.added()),
   );
@@ -157,6 +161,17 @@ export class ClaudeRuntime {
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
   ) {}
+
+  /** One server for each group of the session tools plugins add now. */
+  private toolServer(answer: ToolServer["answer"]): ToolServer {
+    return {
+      servers: sessionGroups(this.added()).map(({ name, load }) => ({
+        name,
+        alwaysLoad: load === "always",
+      })),
+      answer,
+    };
+  }
 
   private get spawn(): Spawn {
     const spawn = this.host.spawn?.bind(this.host);
@@ -671,9 +686,8 @@ export class ClaudeRuntime {
     };
     // Each process reads files where it was started, and keeps the tool list
     // it was given, until it is replaced.
-    const tools =
-      (cwd: string): ToolServer =>
-      async (conversation, message) => {
+    const tools = (cwd: string): ToolServer =>
+      this.toolServer(async (conversation, server, message) => {
         const handle = entry.handle;
         const client =
           handle &&
@@ -689,8 +703,8 @@ export class ClaudeRuntime {
           });
         const context =
           (conversation && entry.contexts.get(conversation)) || {};
-        return respond(client, context, message, this.added());
-      };
+        return respond(client, context, message, this.added(), server);
+      });
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
       spare: this.spare,

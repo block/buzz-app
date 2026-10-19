@@ -19,6 +19,8 @@ export type ServeMcp = (handler: McpHandler) => Promise<HostMcpServer>;
 export type Settled = Readonly<{
   ok: boolean;
   error?: string;
+  /** The JSON-RPC code of the harness's error answer behind `error`. */
+  code?: number;
   /** What the harness wrote, when it answered nowhere in Buzz. Nobody saw it. */
   text?: string;
 }>;

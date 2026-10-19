@@ -1,6 +1,6 @@
 import type { HostMcpServer } from "../../host/service";
 import type { AcpProcess } from "./process";
-import { errorMessage, stepLabel } from "./steps";
+import { codeOf, errorMessage, stepLabel } from "./steps";
 import type { ActivityReceipt, Choice, Settled } from "./types";
 
 /** The most of a turn's text kept, to post when it answers nowhere in Buzz. */
@@ -35,6 +35,7 @@ export class AcpSession {
   private readonly active = new Map<string, ActivityReceipt>();
   private lastStep = "";
   private lastError: string | undefined;
+  private lastCode: number | undefined;
   /** Whether this work answered in Buzz, and what the harness wrote meanwhile: a
    * provider failure comes back as text, and text is never posted. */
   private acted = false;
@@ -197,6 +198,7 @@ export class AcpSession {
             this.lastError = `${this.acp.hooks.label} refused the request`;
         } catch (error) {
           this.lastError = errorMessage(error);
+          this.lastCode = codeOf(error);
         }
       }
     } finally {
@@ -236,8 +238,10 @@ export class AcpSession {
     // harness: a model that forgot `send`, or one that cannot reach its provider.
     const text = this.acted ? "" : this.written.trim();
     const error = this.lastError;
+    const code = this.lastCode;
     this.settle({
       ...(error ? { ok: false, error } : { ok: true }),
+      ...(error && code !== undefined ? { code } : {}),
       ...(text ? { text } : {}),
     });
   }
@@ -245,6 +249,7 @@ export class AcpSession {
     this.pending = 0;
     this.active.clear();
     this.lastError = undefined;
+    this.lastCode = undefined;
     this.acted = false;
     this.written = "";
     const owner = this.owner ?? this.waiters.at(-1);

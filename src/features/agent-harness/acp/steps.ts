@@ -49,6 +49,12 @@ export function allow(params: Record<string, unknown>) {
     : { outcome: "cancelled" };
 }
 
+/** The JSON-RPC code of a harness's error answer, when `error` is one. */
+export function codeOf(error: unknown) {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "number" ? code : undefined;
+}
+
 export function errorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "message" in error) {

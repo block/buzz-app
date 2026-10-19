@@ -256,10 +256,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("emoji manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/channels/manifest.json"))
             .expect("channels manifest"),
-        serde_json::from_str(include_str!(
-            "../../../src/bundled/channel-usage/manifest.json"
-        ))
-        .expect("channel usage manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/github/manifest.json"))
             .expect("github manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
@@ -307,7 +303,6 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.diffs"
             | "buzz.identity-naming"
             | "buzz.agent-activity"
-            | "buzz.channel-usage"
             | "buzz.terminal"
             | "buzz.profiles"
             | "buzz.links"

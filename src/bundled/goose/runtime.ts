@@ -316,13 +316,10 @@ export class GooseRuntime {
     this.notify();
     void done
       .then((result) => {
-        // Of the messages one turn answered, only one has its error or text.
+        // Of the messages one turn answered, only one has its error. An
+        // answer goose wrote without `send` stays in local activity.
         if (result.error !== undefined)
           return this.report(agent, channel, event, result.error, topLevel);
-        // An answer goose wrote without `send` is posted for it, so the
-        // thread is not left waiting.
-        if (result.text)
-          return this.post(agent, channel, event, result.text, topLevel);
       })
       .catch((error) => console.warn("goose turn failed", error))
       .finally(() => this.notify());

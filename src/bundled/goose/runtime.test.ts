@@ -240,6 +240,22 @@ describe("GooseRuntime", () => {
     ]);
   });
 
+  it("posts nothing goose wrote without `send`", async () => {
+    // Text the agent writes outside `send` is narration, not a reply.
+    for (const reply of ["I've replied to Will.", "Plain answer"]) {
+      const { deliver, published } = setup({ reply });
+      let activity: Promise<unknown> = Promise.resolve();
+      await deliver(message("1", "@Gander hi"), {
+        workingUntil: (done: Promise<unknown>) => {
+          activity = done;
+        },
+      });
+      await flush(100);
+      expect(published, reply).toEqual([]);
+      expect(await activity, reply).toMatchObject({ ok: true, text: reply });
+    }
+  });
+
   it("tells a subscriber when a new conversation's first turn starts working", async () => {
     const { deliver, goose, runtime } = setup({ hold: true });
     // As a view does: each notification reads the snapshot again.
@@ -268,7 +284,6 @@ describe("GooseRuntime", () => {
     const { deliver, goose, published } = setup({
       scope: "channel",
       hold: true,
-      reply: "Forgot to send",
     });
     await deliver(reply("3", one));
     await flush(100);
@@ -277,17 +292,14 @@ describe("GooseRuntime", () => {
     const process = goose();
     expect(process?.turns).toHaveLength(1);
     expect(process?.turns[0]?.steered).toHaveLength(1);
-    process?.turns[0]?.finish();
+    process?.exit(1, "crashed\n");
     await flush(100);
-    expect(published).toEqual([
-      {
-        kind: 9,
-        content: "Forgot to send",
-        tags: [
-          ["h", channel],
-          ["e", two.id, "", "reply"],
-        ],
-      },
+    expect(published.map((event) => event.tags)).toEqual([
+      [
+        ["h", channel],
+        ["e", two.id, "", "reply"],
+        ["p", alice],
+      ],
     ]);
   });
 
@@ -302,24 +314,6 @@ describe("GooseRuntime", () => {
     );
     expect(core).toHaveBeenCalledWith(self);
     expect(memoryOpen).not.toHaveBeenCalled();
-  });
-
-  it("posts goose's own text in the thread, or at a Solo chat's top level", async () => {
-    const plain = setup({ reply: "Plain answer" });
-    await plain.deliver(message("1", "@Gander hi"));
-    await flush(100);
-    expect(plain.published.map((event) => event.tags)).toEqual([
-      [
-        ["h", channel],
-        ["e", "1".repeat(64), "", "reply"],
-      ],
-    ]);
-    const solo = setup({ reply: "Plain answer", solo: new Set([channel]) });
-    await solo.deliver(message("1", "@Gander hi"));
-    await flush(100);
-    expect(solo.published.map((event) => event.tags)).toEqual([
-      [["h", channel]],
-    ]);
   });
 
   it("names the agent in a timer's prompt, so its session is listed as the agent's", async () => {

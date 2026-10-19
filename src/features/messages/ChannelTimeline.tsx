@@ -528,21 +528,20 @@ function Timeline({
       .at(-1)?.id,
     enabled: marksRead,
   });
-  // Shift keeps the distance from the end. Relay pages break same-second ties
-  // by id, rows by send time, so a page can also land below the first row;
-  // it is still a prepend while the rows from the reader's view down are kept.
+  // Shift keeps the distance from the end, so it holds the reader only while
+  // the rows from their first visible item to the end are kept. Relay pages
+  // break same-second ties by id, rows by send time: a page can land below the
+  // first row, or around the reader, where the saved anchor is restored instead.
   const previous = edges.current.order;
   const reading = previous.slice(
     handle.current?.findItemIndex(handle.current.scrollOffset) ?? 0,
   );
   const prepend =
     !!previous.length &&
-    previous.at(-1) === rows.at(-1)?.id &&
-    (previous[0] !== rows[0]?.id ||
-      (rows.length > previous.length &&
-        reading.every(
-          (id, index) => rows[rows.length - reading.length + index]?.id === id,
-        )));
+    (previous[0] !== rows[0]?.id || rows.length !== previous.length) &&
+    reading.every(
+      (id, index) => rows[rows.length - reading.length + index]?.id === id,
+    );
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -631,9 +630,19 @@ function Timeline({
           )
         : -1;
     const previousIds = edges.current.ids;
-    const arrivals = prepend
-      ? 0
-      : rows.filter((row) => !previousIds.has(row.id)).length;
+    const previousCount = edges.current.order.length;
+    // Only rows after the previous last row are new; history lands before it.
+    const tail = rows.findIndex((row) => row.id === edges.current.order.at(-1));
+    const arrivals = rows
+      .slice(tail + 1)
+      .filter((row) => !previousIds.has(row.id)).length;
+    if (
+      !prepend &&
+      previousCount &&
+      rows.length > previousCount &&
+      tail === rows.length - 1
+    )
+      settled.current = false;
     edges.current = {
       order: rows.map((row) => row.id),
       ids: new Set(rows.map((row) => row.id)),

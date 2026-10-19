@@ -189,35 +189,42 @@ test.describe("quota retry without threshold-driven continuation", () => {
 });
 
 test.describe("pages inside one second", () => {
-  // More rows share a second than a page holds, so the next page sorts below
-  // the loaded first row: relay pages break ties by id, rows by send time.
+  // More rows share a second than a page holds. Relay pages break ties by id,
+  // rows by send time, so the next page lands among the loaded rows of that second.
   test.use({ historyRowsPerSecond: 30 });
-  test("an older page below the first row keeps the reading position", async ({
-    page,
-    app,
-  }) => {
-    await open(page, app);
-    await history(page).hover();
-    await wheel(page, -250);
-    await expect.poll(() => app.pending.length).toBe(1);
-    const pending = app.pending.shift();
-    expect(
-      pending.events.every(
-        (event) => event.created_at === pending.filter.until,
-      ),
-    ).toBe(true);
-    const before = await anchor(page);
-    const height = await history(page).evaluate((e) => e.scrollHeight);
-    pending.release();
-    await expect
-      .poll(() => history(page).evaluate((e) => e.scrollHeight))
-      .toBeGreaterThan(height);
-    await settle(page);
-    await expectAnchor(page, before);
-    await expect(
-      page.getByRole("button", { name: "Jump to latest", exact: true }),
-    ).toBeVisible();
-  });
+  for (const depth of [250, 1400])
+    test(`an older page among the loaded rows keeps a reader ${depth}px up`, async ({
+      page,
+      app,
+    }) => {
+      await open(page, app);
+      await history(page).hover();
+      await wheel(page, -250);
+      await expect.poll(() => app.pending.length).toBe(1);
+      if (depth > 250) await wheel(page, 250 - depth);
+      const pending = app.pending.shift();
+      expect(
+        pending.events.every(
+          (event) => event.created_at === pending.filter.until,
+        ),
+      ).toBe(true);
+      const before = await anchor(page);
+      const height = await history(page).evaluate((e) => e.scrollHeight);
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      await settle(page);
+      await expectAnchor(page, before);
+      // History is not new; a live message still is.
+      const latest = page.getByRole("button", {
+        name: /^(Jump to latest|\d+ new messages?)$/,
+      });
+      await expect(latest).toHaveText("Jump to latest");
+      app.append("primary", "alpha", undefined, true, false);
+      await expect(latest).toHaveText("1 new message");
+      await expectAnchor(page, before);
+    });
 });
 
 test("cancelled navigation keeps relay reads usable in the same document", async ({

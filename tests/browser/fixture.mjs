@@ -441,6 +441,18 @@ export const test = base.extend({
                 ...(syntax.startsWith("@")
                   ? [["p", getPublicKey(peerKey)]]
                   : []),
+                // Shared seconds keep the send order real messages carry.
+                ...(historyRowsPerSecond > 1
+                  ? [
+                      [
+                        "ms",
+                        String(
+                          (i % historyRowsPerSecond) *
+                            Math.floor(1000 / historyRowsPerSecond),
+                        ),
+                      ],
+                    ]
+                  : []),
               ],
               `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}${syntax ? `\n${syntax}` : ""}`,
               readState ? peerKey : userKey,

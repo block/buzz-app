@@ -19,6 +19,7 @@ import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { localSessions } from "./sessions";
 import { wake } from "../../features/agent-harness/wakes";
+import { workspaceCanvas } from "../../features/solo/workspace";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -54,6 +55,8 @@ function setup(
     solo?: Set<string>;
     named?: Delivery["named"];
     title?: string;
+    /** The channel's Canvas, as it reads now. */
+    canvas?: { content: string; pubkey?: string };
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -107,6 +110,19 @@ function setup(
       ensure: vi.fn(async (): Promise<void> => {}),
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
+    },
+    canvas: {
+      available: !!options.canvas,
+      read: vi.fn(
+        async () =>
+          options.canvas && {
+            pubkey: alice,
+            kind: 40100,
+            created_at: 100,
+            tags: [["h", channel]],
+            ...options.canvas,
+          },
+      ),
     },
   };
   const relay = {
@@ -1564,4 +1580,107 @@ it("a failed first Solo chat turn releases naming so a successful retry can offe
   await flush();
   expect(named).toHaveBeenCalledExactlyOnceWith("A useful title");
   f.runtime.dispose();
+});
+
+it("hands a Solo chat's Canvas to each turn and lets its session stay in the workspace's folders", async () => {
+  const mention = (id: string) =>
+    message(id, "@Claude go", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    });
+  const canvasValue = {
+    content: workspaceCanvas({
+      folders: ["~/Development/app"],
+      worktree: { location: "~/Development/app-trees", baseBranch: "main" },
+      canvas: "Use the design system.",
+    }),
+  };
+  const { deliver, claudes, runtime, session } = setup([], {
+    solo: new Set([channel]),
+    canvas: canvasValue,
+  });
+  await deliver({ type: "mention", event: mention("1") });
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  expect(first?.options.cwd).toBe("~/.buzz");
+  expect(first?.options.args).toEqual(
+    expect.arrayContaining([
+      "--add-dir",
+      "~/Development/app",
+      "--add-dir",
+      "~/Development/app-trees",
+    ]),
+  );
+  expect(first?.prompts[0]).toContain("<workspace-canvas>");
+  expect(first?.prompts[0]).toContain(
+    "not your own workspace: `~/Development/app`, `~/Development/app-trees`",
+  );
+  expect(first?.prompts[0]).toContain("Use the design system.");
+
+  // A Canvas that cannot be read keeps the session and its folders.
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  session.canvas.read.mockRejectedValueOnce(new Error("offline"));
+  await deliver({ type: "mention", event: mention("3") });
+  await flush(10);
+  expect(first?.killed).toBe(false);
+  expect(first?.prompts).toHaveLength(2);
+  expect(first?.prompts[1]).not.toContain("<workspace-canvas>");
+
+  // New folders restart the idle session, resumed where it was.
+  const canvas: { content: string; pubkey?: string } = canvasValue;
+  canvas.content = workspaceCanvas({
+    folders: ["~/Development/other"],
+    canvas: "",
+  });
+  await deliver({ type: "mention", event: mention("2") });
+  await flush(10);
+  const second = claudes().filter((process) => process.prompts.length)[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(second?.options.args).toContain("~/Development/other");
+  expect(second?.options.args).not.toContain("~/Development/app");
+  expect(second?.prompts[0]).toContain("`~/Development/other`");
+
+  // Someone else's edit, as in a shared Solo chat, is not handed over: the
+  // session is told to drop the earlier Canvas and loses its folders.
+  canvas.pubkey = "b".repeat(64);
+  canvas.content = workspaceCanvas({ folders: ["~/elsewhere"], canvas: "x" });
+  await deliver({ type: "mention", event: mention("4") });
+  await flush(10);
+  const third = claudes().filter((process) => process.prompts.length)[2];
+  expect(second?.killed).toBe(true);
+  expect(third?.options.args).not.toContain("--add-dir");
+  expect(third?.prompts[0]).not.toContain("~/elsewhere");
+  expect(third?.prompts[0]).toContain("Disregard any earlier workspace Canvas");
+
+  // So is a Canvas its owner cleared.
+  delete canvas.pubkey;
+  canvas.content = "";
+  await deliver({ type: "mention", event: mention("5") });
+  await flush(10);
+  expect(third?.prompts[1]).toContain("Disregard any earlier workspace Canvas");
+  runtime.dispose();
+});
+
+it("hands no Canvas to a shared channel's turns", async () => {
+  const event = message("1", "@Claude go", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, runtime, session } = setup([], {
+    canvas: {
+      content: workspaceCanvas({ folders: ["~/repo"], canvas: "Steer me" }),
+    },
+  });
+  await deliver({ type: "mention", event });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(session.canvas.read).not.toHaveBeenCalled();
+  expect(claude?.options.args).not.toContain("--add-dir");
+  expect(claude?.prompts[0]).not.toContain("workspace-canvas");
+  runtime.dispose();
 });

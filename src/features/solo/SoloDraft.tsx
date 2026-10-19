@@ -24,6 +24,7 @@ import { rememberedMentions } from "../messages/remembered-mentions";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { ownSolo } from "./labels";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
+import type { ComposerInputElement } from "../messages/composer-dom";
 import {
   attachmentDraft,
   transferAttachmentDraft,
@@ -124,10 +125,13 @@ export function SoloDraft({
   }, [scope, draftKey, projectId]);
   const prompt = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (focusRequest)
-      prompt.current
-        ?.querySelector<HTMLElement>('textarea, [contenteditable="true"]')
-        ?.focus();
+    if (!focusRequest) return;
+    const input = prompt.current?.querySelector<
+      HTMLTextAreaElement | ComposerInputElement
+    >('textarea, [contenteditable="true"]');
+    input?.focus();
+    // A returning draft resumes at its end, not before its first tag.
+    input?.setSelectionRange(input.value.length, input.value.length);
   }, [focusRequest]);
   const available = session.channelWrites.available;
   const [channelId] = useState(() => crypto.randomUUID());

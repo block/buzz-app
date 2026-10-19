@@ -1492,8 +1492,8 @@ export function createChannelStore(
   }
   /** Resolve only returned/demanded nonmember channels, through the verified reader.
    *
-   * Search, channel-writes.ts `refresh`, and session.ts membership hints rely on
-   * these properties. The create-channel path guards them with real-store tests
+   * Search, channel-writes.ts `refresh`, findLabeled, and session.ts membership
+   * hints rely on these properties. The create-channel path guards them with real-store tests
    * in channel-writes.test.ts rather than through this store's own suite:
    * - The id filter keeps every channel the store does not yet authorize, so a
    *   just-created channel is confirmed by one exact `#d` read instead of the
@@ -1517,14 +1517,19 @@ export function createChannelStore(
   async function resolve(
     channelIds: readonly string[],
     settings?: ChannelReadOptions,
+    unnamed = false,
   ) {
     if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
+    // `unnamed` also reads an authorized channel whose metadata has not
+    // arrived yet (the full pass applies rosters before it reads names):
+    // a label lookup needs its creator and labels now, not after the pass.
     const ids = [...new Set(channelIds)].filter(
       (id) =>
         !discovery.authorized(id) ||
         discovery.get(id)?.cached ||
         !discovery.metadataVersion(id) ||
+        (unnamed && !discovery.named(id)) ||
         (settings?.consistency === "strong" && !discovery.get(id)?.huddle),
     );
     if (!ids.length) return;
@@ -1860,7 +1865,7 @@ export function createChannelStore(
         }),
       ),
     ];
-    if (ids.length) await resolve(ids, settings);
+    if (ids.length) await resolve(ids, settings, true);
     if (disposed || generation !== epoch)
       throw new DOMException("Stale channel lookup", "AbortError");
     return ids

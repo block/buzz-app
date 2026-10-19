@@ -69,6 +69,8 @@ jobs:
         with:
           key: native
           save-if: ${{ github.event_name == 'push' }}
+      - name: Dependency policy
+        run: ./bin/cargo-deny --locked check
       - name: Rust formatting
         run: ./bin/cargo fmt --all --check
       - name: Rust lint

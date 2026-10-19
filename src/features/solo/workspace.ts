@@ -90,6 +90,30 @@ export function workspaceCanvas(input: Workspace): string {
 
 export function readWorkspace(content: string): Workspace {
   if (!content.startsWith(prefix)) return { folders: [], canvas: content };
+  const value = parseWorkspace(content);
+  // Never silently discard manually edited instructions inside the managed block.
+  if (workspaceCanvas(value) !== content)
+    throw new Error(
+      "Workspace instructions were edited in Canvas. Use the raw Canvas editor to preserve those changes.",
+    );
+  return value;
+}
+
+/** The folders a Canvas's workspace block lets an agent work in: its project
+ * folders, then its worktree location. Unlike `readWorkspace`, hand edits to
+ * the block's instructions are kept, so an agent still finds its folders; a
+ * missing or malformed block names none. */
+export function workspaceDirectories(content: string): string[] {
+  if (!content.startsWith(prefix)) return [];
+  try {
+    const { folders, worktree } = parseWorkspace(content);
+    return [...new Set([...folders, ...(worktree ? [worktree.location] : [])])];
+  } catch {
+    return [];
+  }
+}
+
+function parseWorkspace(content: string): Workspace {
   const lineEnd = content.indexOf(" -->\n");
   const blockEnd = content.indexOf(`\n${end}\n\n`, lineEnd);
   if (lineEnd < 0 || blockEnd < 0)
@@ -123,19 +147,13 @@ export function readWorkspace(content: string): Workspace {
       typeof worktree.baseBranch !== "string")
   )
     throw new Error("Invalid worktree settings.");
-  const value = validateWorkspace({
+  return validateWorkspace({
     folders: raw.folders,
     ...(worktree
       ? { worktree: worktree as { location: string; baseBranch: string } }
       : {}),
     canvas: content.slice(blockEnd + end.length + 3),
   });
-  // Never silently discard manually edited instructions inside the managed block.
-  if (workspaceCanvas(value) !== content)
-    throw new Error(
-      "Workspace instructions were edited in Canvas. Use the raw Canvas editor to preserve those changes.",
-    );
-  return value;
 }
 
 /** One existing encrypted template record per project. */

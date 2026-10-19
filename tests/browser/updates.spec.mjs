@@ -104,7 +104,7 @@ async function openUpdates(page, app) {
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Updates").click();
+  await button(page, "Software updates").click();
   return page
     .getByRole("region", { name: "Software updates", exact: true })
     .getByRole("status");
@@ -271,7 +271,7 @@ test("the ready toast yields to Settings → Updates, which offers the same acti
 
   await button(page, "Appearance").click();
   await expect(toast).toBeVisible();
-  await button(page, "Updates").click();
+  await button(page, "Software updates").click();
   await expect(toast).toHaveCount(0);
 
   await button(page, "Update now").click();

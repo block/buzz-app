@@ -4141,7 +4141,7 @@ it.each(
         "Remove explicit mention of Honey (aaaaaaaa)",
       );
       await view.user.click(remove);
-      expect(view.input()).toHaveValue("Keep going @Honey ");
+      expect(view.input()).toHaveValue("@Honey Keep going ");
       expect(view.input().querySelector(".inline-chip")).toBeNull();
       expect(
         screen.queryByRole("region", { name: "Explicit mentions" }),
@@ -4157,14 +4157,14 @@ it.each(
       expect(view.messages.reply).toHaveBeenCalledExactlyOnceWith(
         "channel",
         root,
-        removeMention ? "Keep going @Honey " : "Keep going ",
+        removeMention ? "@Honey Keep going " : "Keep going ",
         [first.pubkey],
         [],
       );
     else
       expect(view.messages.send).toHaveBeenCalledExactlyOnceWith(
         "channel",
-        removeMention ? "Keep going @Honey " : "Keep going ",
+        removeMention ? "@Honey Keep going " : "Keep going ",
         [first.pubkey],
         [],
       );

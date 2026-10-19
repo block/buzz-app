@@ -4,8 +4,11 @@ mod enterprise_adapter_url;
 mod enterprise_auth_build;
 #[path = "src/enterprise_relay_url.rs"]
 mod enterprise_relay_url;
+#[path = "src/nsec_backup_config.rs"]
+mod nsec_backup_config;
 
 fn main() {
+    configure_nsec_backup();
     configure_enterprise_auth();
     // Release builds enable the updater only when both values are supplied; its
     // `plugins.updater` config comes from the same values via `tauri build --config`.
@@ -55,6 +58,15 @@ fn main() {
             "identity_import",
             "identity_create",
             "identity_export",
+            "nsec_backup_available",
+            "nsec_backup_session",
+            "nsec_backup_retry",
+            "nsec_restore_begin",
+            "nsec_restore_wait",
+            "nsec_restore_install",
+            "nsec_restore_cancel",
+            "nsec_backup_choice",
+            "nsec_backup_set_choice",
             "sign_out",
             "sign_out_wipe_refusal",
             "identity_prepare_remote_agent_authorization",
@@ -166,6 +178,21 @@ fn main() {
         ])),
     )
     .expect("Could not build Tauri resources")
+}
+
+fn configure_nsec_backup() {
+    const SERVICE: &str = "BUZZ_NSEC_BACKUP_SERVICE_URL";
+    const NAMESPACE: &str = "BUZZ_NSEC_BACKUP_NAMESPACE";
+    println!("cargo:rerun-if-env-changed={SERVICE}");
+    println!("cargo:rerun-if-env-changed={NAMESPACE}");
+    let service = std::env::var(SERVICE).ok();
+    let namespace = std::env::var(NAMESPACE).ok();
+    if let Some(config) = nsec_backup_config::configured(service.as_deref(), namespace.as_deref())
+        .unwrap_or_else(|error| panic!("{error}"))
+    {
+        println!("cargo:rustc-env={SERVICE}={}", config.service_url);
+        println!("cargo:rustc-env={NAMESPACE}={}", config.namespace);
+    }
 }
 
 fn configure_enterprise_auth() {

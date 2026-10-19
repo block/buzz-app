@@ -74,7 +74,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "read",
-    'Read a thread (default: current), a channel\'s latest, or search with q (every channel you can read unless channel is given; q wins over thread). Oldest first, a line each: id, from pubkey, "name", in channel, re thread root (each left out when a header line names it), at time: content. A thread or channel read ends saying whether older messages remain, and how to continue.',
+    "Read a thread (default: current), a channel's latest, or search with q.",
     {
       channel: str,
       thread: str,

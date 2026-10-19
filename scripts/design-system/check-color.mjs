@@ -228,7 +228,7 @@ function auditLayers() {
   for (const match of css.matchAll(/(--art-[a-z0-9-]+):\s*([^;]+);/g)) {
     const [declaration, name, value] = match;
     const alias =
-      /^var\(--(?:(?:amber|blue|cyan|green|orange|purple|red)-(?:[1-9]|1[0-2])|(?:chartreuse|flame|magenta|iris|cobalt|jade)-9)\)$/.test(
+      /^var\(--(?:(?:amber|blue|cyan|green|orange|purple|red)-(?:[1-9]|1[0-2])|(?:chartreuse|flame|magenta|iris|cobalt|jade)-(?:[1-9]|1[0-2]))\)$/.test(
         value.trim(),
       );
     const category = /^--art-plugin-(.+)-gradient$/.exec(name)?.[1];
@@ -324,7 +324,7 @@ function auditLayers() {
     }
   }
 
-  // Existing Appearance solid fills are shared palette owners, not new ramps.
+  // Appearance palettes retain explicit mode owners and scoped ramp bindings.
   for (const family of [
     "chartreuse",
     "flame",
@@ -333,15 +333,32 @@ function auditLayers() {
     "cobalt",
     "jade",
   ]) {
-    for (const [mode, block] of Object.entries(modes)) {
-      const value = read(block, `--${family}-9`);
-      if (!value || !/^#[0-9a-f]{6}$/i.test(value))
-        failures.push({
-          at: `${rel} (${mode})`,
-          found: `--${family}-9`,
-          why: "Shared Appearance solid fills must have authored palette values in both modes.",
-        });
+    for (let step = 1; step <= 12; step += 1) {
+      for (const [mode, block] of Object.entries(modes)) {
+        const owner = `--${family}-${step}-${mode}`;
+        if (
+          !/^#[0-9a-f]{6}$/i.test(
+            read(css.slice(0, css.indexOf("LAYER 1 — FAMILIES")), owner) ?? "",
+          ) ||
+          read(block, `--${family}-${step}`) !== `var(${owner})`
+        ) {
+          failures.push({
+            at: `${rel} (${mode})`,
+            found: owner,
+            why: "Each Appearance step needs a literal mode owner and the matching scoped binding.",
+          });
+        }
+      }
     }
+  }
+  for (const match of css.matchAll(
+    /--accent-[a-z0-9-]+:\s*(#[0-9a-f]{3,8})/g,
+  )) {
+    failures.push({
+      at: rel,
+      found: match[0],
+      why: "Accent mappings must reference named palette owners, not literals.",
+    });
   }
 
   // Semantic names describe purpose even when both themes choose the same step.

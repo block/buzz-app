@@ -427,12 +427,14 @@ existing minimum heights. The extra-small capsule keeps its caption role.
 
 ## Colorways and plugin gradients
 
-Plugin artwork uses existing palette colors, including the six Appearance solid
-fills now exposed as named step-9 tokens: Chartreuse, Flame, Magenta, Iris,
-Cobalt and Jade. Their existing light/dark values are unchanged; Appearance
-references these owners instead of repeating the values. Only the solid fill
-has current shared callers, so no extra shade ranges are invented or exposed.
-The palette registry and Color viewer include these six solid steps.
+Plugin artwork uses existing palette colors, including the complete Appearance
+ramps: Chartreuse, Flame, Magenta, Iris, Cobalt and Jade. All twelve steps and
+existing ink, pressed and link mappings reference explicit palette owners.
+Values are extracted unchanged. Mode-specific owners (for example
+`--jade-3-light`) remain available independently of the page mode; the resolved
+`--jade-3` follows the nearest light/dark scope. This preserves mixed-mode
+specimens as well as product Appearance choices. Registry and Color viewer
+expose all twelve steps of every existing family. No new colors are invented.
 
 | Category | Top → bottom | Identity |
 | --- | --- | --- |

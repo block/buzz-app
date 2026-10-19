@@ -127,14 +127,16 @@ export const PALETTE: PaletteHue[] = [
   })),
 }));
 
-// Only the existing solid-fill step is shared; no invented shade ranges.
+// Existing Appearance ramps are palette owners in both modes.
 PALETTE.push(
   ...ACCENTS.map((id) => ({
     id,
     usedBy: "Appearance and artwork",
-    steps: [
-      { step: 9, variable: `--${id}-9`, job: "existing Appearance solid fill" },
-    ],
+    steps: STEP_JOBS.map((job, index) => ({
+      step: index + 1,
+      variable: `--${id}-${index + 1}`,
+      job,
+    })),
   })),
 );
 

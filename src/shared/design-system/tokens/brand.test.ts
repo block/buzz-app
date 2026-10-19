@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { BRAND_FAMILIES, BRAND_GRADIENTS } from "./brand";
+import { BRAND_GRADIENTS } from "./brand";
 
 const css = readFileSync(
   new URL("../styles/tokens.css", import.meta.url),
@@ -20,17 +20,15 @@ function rgb(l: number, c: number, h: number) {
 }
 
 it("gives six distinct identities comparable contrast across the full gradient", () => {
-  expect(new Set(BRAND_GRADIENTS.map(({ family }) => family))).toEqual(
-    new Set(BRAND_FAMILIES.map(({ id }) => id)),
-  );
-  for (const family of BRAND_FAMILIES) {
+  expect(new Set(BRAND_GRADIENTS.map(({ category }) => category)).size).toBe(6);
+  for (const gradient of BRAND_GRADIENTS) {
     const readStop = (stop: string) => {
       const match = css.match(
         new RegExp(
-          `--art-${family.id}-${stop}: oklch\\(([\\d.]+)% ([\\d.]+) ([\\d.]+)\\)`,
+          `--art-plugin-${gradient.category}-${stop}: oklch\\(([\\d.]+)% ([\\d.]+) ([\\d.]+)\\)`,
         ),
       );
-      if (!match) throw new Error(`Missing ${family.id} ${stop}`);
+      if (!match) throw new Error(`Missing ${gradient.category} ${stop}`);
       return [
         Number(match[1]) / 100,
         Number(match[2]),
@@ -39,6 +37,10 @@ it("gives six distinct identities comparable contrast across the full gradient",
     };
     const start = readStop("start");
     const end = readStop("end");
+    expect(start[2]).toBe(gradient.fromHue);
+    expect(end[2]).toBe(gradient.toHue);
+    expect(Math.abs(end[2] - start[2])).toBe(35);
+    expect(gradient.from).not.toBe(gradient.to);
     for (let index = 0; index <= 20; index++) {
       const t = index / 20;
       const l = start[0] + (end[0] - start[0]) * t;
@@ -56,12 +58,4 @@ it("gives six distinct identities comparable contrast across the full gradient",
       expect((luminance + 0.05) / 0.05).toBeGreaterThanOrEqual(4.5);
     }
   }
-  const hues = BRAND_FAMILIES.map(({ hue }) => hue).sort((a, b) => a - b);
-  for (const a of hues)
-    for (const b of hues) {
-      if (a !== b)
-        expect(
-          Math.min(Math.abs(a - b), 360 - Math.abs(a - b)),
-        ).toBeGreaterThan(16);
-    }
 });

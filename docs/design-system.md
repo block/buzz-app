@@ -427,16 +427,14 @@ existing minimum heights. The extra-small capsule keeps its caption role.
 
 ## Colorways and plugin gradients
 
-The Color viewer reuses the six existing accent ramps, including their authored
-light/dark values. No parallel family palette or saved-preference migration is needed.
-Category mapping: Communication → Cobalt, Agents → Iris, Agent tools → Magenta,
-Developer tools → Flame, People & communities → Jade, Productivity → Chartreuse.
+The viewer retains the six existing Appearance ramps as references, with their
+real light/dark values. Plugin category gradients keep the original cross-color
+pairs: cyan→blue, violet→indigo, fuchsia→purple, coral→pink, scarlet→orange,
+and gold→lime. Each retains its original 35-degree hue transition.
 
-Shared `--art-<family>-gradient` tokens supply decorative plugin backgrounds.
-Their hue centers come from the existing light-mode accent step 9, with an
-8-degree sweep either side. Endpoints target relative luminance 0.18, with chroma
-capped to sRGB. This equalizes bare-background contrast (white about 4.57:1,
-black about 4.60:1), rather than assuming equal OKLCH lightness means equal
-contrast. These backgrounds are independent of theme; icon lighting remains
-host-owned and must be checked separately. The existing semantic roles and
-Appearance choices retain their values.
+Shared `--art-plugin-<category>-gradient` tokens own the decorative backgrounds.
+Endpoint luminance targets 0.18 and chroma is capped across the full OKLCH path.
+Tests check the original endpoint hues, gamut and sampled contrast, so contrast
+normalization cannot silently collapse the color-to-color transitions again.
+Icon lighting changes composite pixels and needs separate visual acceptance.
+Appearance preferences and existing semantic colors retain their values.

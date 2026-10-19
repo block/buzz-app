@@ -36,23 +36,23 @@ export function BrandColors() {
   return (
     <Section
       title="Colorways and plugin gradients"
-      description="Six existing accent families, shared with plugin identities. The ramps below are the real theme-aware accent values. Decorative gradients follow each family’s hue at matched luminance, so the categories stay distinct without one looking substantially brighter than another."
+      description="Plugin gradients retain their original color-to-color transitions, with brightness balanced across categories. The six existing Appearance ramps below remain available as palette references."
     >
       <div className="brand-gradient-grid">
         {BRAND_GRADIENTS.map((gradient) => (
           <div
-            key={gradient.name}
+            key={gradient.category}
             className="flex w-full min-w-0 flex-col gap-2"
           >
             <div
               className="h-16 rounded-md"
               style={{
-                background: `var(--art-${gradient.family}-gradient)`,
+                background: `var(--art-plugin-${gradient.category}-gradient)`,
               }}
             />
             <span className="text-body-sm text-primary">{gradient.name}</span>
             <span className="text-body-sm text-secondary">
-              {gradient.family}
+              {gradient.from} → {gradient.to}
             </span>
           </div>
         ))}

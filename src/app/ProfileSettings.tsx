@@ -203,11 +203,13 @@ export function ProfileSettings({
     ? (draft ?? persisted)
     : { name: "", picture: "", about: "" };
   const hasChanges = draft !== null && !profilesEqual(draft, persisted);
+  // A dispatched save continues after Settings closes, so it is not discardable.
+  const discardable = hasChanges && !saving;
   useEffect(() => {
-    if (!hasChanges) return;
+    if (!discardable) return;
     onUnsavedChange?.(true);
     return () => onUnsavedChange?.(false);
-  }, [hasChanges, onUnsavedChange]);
+  }, [discardable, onUnsavedChange]);
   const thumbnailMedia = selectedProfileSession(
     communities,
     communityId,

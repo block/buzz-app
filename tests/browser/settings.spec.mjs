@@ -845,7 +845,7 @@ test("Settings loads and publishes the selected community profile", async ({
     .click();
   // Unsaved profile edits ask before Settings closes.
   await page
-    .getByRole("dialog", { name: "Discard changes?" })
+    .getByRole("alertdialog", { name: "Discard changes?" })
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(settingsDialog(page)).toHaveCount(0);

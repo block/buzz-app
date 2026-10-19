@@ -329,7 +329,7 @@ it("asks before any Settings dismissal discards unsaved profile edits", async ()
   await user.clear(name);
   await user.type(name, "Unsaved name");
   const confirmation = () =>
-    screen.findByRole("dialog", { name: "Discard changes?" });
+    screen.findByRole("alertdialog", { name: "Discard changes?" });
   const keepEditing = async () => {
     await user.click(
       within(await confirmation()).getByRole("button", {
@@ -338,7 +338,7 @@ it("asks before any Settings dismissal discards unsaved profile edits", async ()
     );
     await waitFor(() =>
       expect(
-        screen.queryByRole("dialog", { name: "Discard changes?" }),
+        screen.queryByRole("alertdialog", { name: "Discard changes?" }),
       ).toBeNull(),
     );
     expect(screen.getByRole("dialog", { name: "Settings" })).toBe(settings);
@@ -355,11 +355,15 @@ it("asks before any Settings dismissal discards unsaved profile edits", async ()
     within(settings).getByRole("button", { name: "Close Settings" }),
   );
   await confirmation();
+  // The confirmation needs a deliberate choice; its backdrop does nothing.
+  const backdrops = document.querySelectorAll(".buzz-dialog-backdrop");
+  await user.click(backdrops[backdrops.length - 1] as HTMLElement);
+  expect(await confirmation()).toBeVisible();
   // Escape backs out of the prompt, not out of Settings.
   await user.keyboard("{Escape}");
   await waitFor(() =>
     expect(
-      screen.queryByRole("dialog", { name: "Discard changes?" }),
+      screen.queryByRole("alertdialog", { name: "Discard changes?" }),
     ).toBeNull(),
   );
   expect(screen.getByRole("dialog", { name: "Settings" })).toBe(settings);
@@ -393,5 +397,7 @@ it("asks before any Settings dismissal discards unsaved profile edits", async ()
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
   );
-  expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull();
+  expect(
+    screen.queryByRole("alertdialog", { name: "Discard changes?" }),
+  ).toBeNull();
 }, 15_000);

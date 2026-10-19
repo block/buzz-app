@@ -183,6 +183,43 @@ it("keeps a newer profile seed when an older community publication finishes last
   expect(service.saveProfile).toHaveBeenCalledTimes(1);
 });
 
+it("stops reporting a discardable draft once its save is dispatched", async () => {
+  const publication = deferred();
+  let saved = { name: "Saved", picture: "" };
+  vi.spyOn(communityApi, "inspectProfile").mockImplementation(async () => ({
+    exists: true,
+    existing: { name: saved.name },
+    profile: saved,
+  }));
+  vi.spyOn(communityApi, "publishProfile").mockImplementation(
+    async (_id, profile) => {
+      await publication.promise;
+      saved = profile;
+    },
+  );
+  const onUnsavedChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={communities()}
+      community={{ id: "primary", name: "Primary" }}
+      onUnsavedChange={onUnsavedChange}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const name = await screen.findByLabelText("Display name");
+  await user.clear(name);
+  await user.type(name, "Edited");
+  expect(onUnsavedChange).toHaveBeenLastCalledWith(true);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  // The save continues even if Settings closes, so nothing is left to discard.
+  await waitFor(() => expect(onUnsavedChange).toHaveBeenLastCalledWith(false));
+  publication.resolve();
+  await publication.promise;
+  await waitFor(() => expect(name).not.toBeDisabled());
+  expect(onUnsavedChange).toHaveBeenLastCalledWith(false);
+});
+
 it("keeps a community draft when publication fails and retries a failed read", async () => {
   const service = communities();
   const inspect = vi

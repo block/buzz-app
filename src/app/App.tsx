@@ -5,6 +5,7 @@ import { PrimarySidebar } from "./shell/PrimarySidebar";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
+import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
 import { ModalWindowDragProvider } from "../shared/design-system/ui/ModalWindowDrag";
 import { modalWindowDragHandlers } from "./shell/title-bar";
@@ -424,33 +425,29 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 />
               )}
             </div>
-            <Dialog
-              open={confirmSettingsDiscard && settings}
-              onOpenChange={(open) => {
-                if (!open) setConfirmSettingsDiscard(false);
-              }}
-              title="Discard changes?"
-              description="Your profile has unsaved changes."
-              closeLabel="Back to Settings"
-              actions={
-                <>
-                  <Button onClick={() => setConfirmSettingsDiscard(false)}>
-                    Keep editing
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => {
-                      setConfirmSettingsDiscard(false);
-                      route.leaveSettings();
-                    }}
-                  >
-                    Discard changes
-                  </Button>
-                </>
-              }
-            >
-              {null}
-            </Dialog>
+            {confirmSettingsDiscard && settings && (
+              <AlertDialog
+                title="Discard changes?"
+                description="Your profile has unsaved changes."
+                onClose={() => setConfirmSettingsDiscard(false)}
+                actions={
+                  <>
+                    <Button onClick={() => setConfirmSettingsDiscard(false)}>
+                      Keep editing
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => {
+                        setConfirmSettingsDiscard(false);
+                        route.leaveSettings();
+                      }}
+                    >
+                      Discard changes
+                    </Button>
+                  </>
+                }
+              />
+            )}
           </Dialog>
         </AgentsContext.Provider>
       </ChannelNavigationProvider>

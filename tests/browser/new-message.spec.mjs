@@ -801,7 +801,7 @@ test("a send finishing behind Settings keeps Settings and its unsaved edit", asy
     .getByRole("button", { name: "Close Settings", exact: true })
     .click();
   await page
-    .getByRole("dialog", { name: "Discard changes?" })
+    .getByRole("alertdialog", { name: "Discard changes?" })
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(settingsDialog(page)).toHaveCount(0);

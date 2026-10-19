@@ -5,6 +5,10 @@ import type {
   WorkflowRunCursor,
   WorkflowReference,
 } from "../../features/workflows/types";
+import {
+  formatFullTimestamp,
+  formatItemTimestamp,
+} from "../../shared/datetime";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useWorkflowView } from "./useWorkflowView";
 
@@ -86,7 +90,12 @@ function RunPage({
         <article key={run.id} className="workflow-step">
           <p className="text-body">
             <strong>{run.status.replaceAll("_", " ")}</strong> ·{" "}
-            {new Date(run.createdAt * 1000).toISOString()}
+            <time
+              dateTime={new Date(run.createdAt * 1000).toISOString()}
+              title={formatFullTimestamp(run.createdAt)}
+            >
+              {formatItemTimestamp(run.createdAt, { withTime: true })}
+            </time>
           </p>
           <p className="text-body-sm text-secondary">
             Current step: {run.currentStep}

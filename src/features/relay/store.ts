@@ -25,7 +25,6 @@ import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import type { RelayReader, ReadOptions, Priority } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
-import { readSessionWindow } from "./session-window";
 import { ByteLru, byteSize, listByteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
@@ -144,7 +143,6 @@ export function createChannelStore(
   ) => {
     const started = performance.now();
     const rows = foldMessages(channelId, author, events, {
-      includeReplies: discovery?.isSolo(channelId) ?? false,
       signingAuthority: transport?.archiveAuthority,
     });
     clientMetrics.cpu("fold", performance.now() - started, events.length);
@@ -426,7 +424,6 @@ export function createChannelStore(
         channelId,
         transport?.relayAuthor ?? "",
         profiling,
-        () => discovery?.isSolo(channelId) ?? false,
         clock,
         transport?.archiveAuthority,
       ),
@@ -499,8 +496,6 @@ export function createChannelStore(
   function save(channelId: string, head: Head, previousProfiles?: string) {
     if (
       !persistence ||
-      // Compatibility queries have no signed bounds to restore from disk.
-      isSolo(channelId) ||
       !discovery?.authorized(channelId) ||
       disposed ||
       heads.peek(channelId) !== head
@@ -559,22 +554,12 @@ export function createChannelStore(
       saveDiscovery();
     }, [channelId]);
   }
-  const isSolo = (channelId: string) => !!discovery?.isSolo(channelId);
   async function readPage(
     channelId: string,
     cursor: WindowCursor | null,
     settings: ReadOptions,
   ) {
     if (!transport) throw new Error("Relay is unavailable");
-    if (isSolo(channelId)) {
-      const page = await readSessionWindow(
-        transport,
-        channelId,
-        cursor,
-        settings,
-      );
-      return { events: page.events, page };
-    }
     const events = await transport.read(
       [windowFilter(channelId, cursor)],
       settings,
@@ -771,7 +756,6 @@ export function createChannelStore(
       if (disposed || generation !== epoch) return;
       if (
         !allowed?.has(record.channelId) ||
-        isSolo(record.channelId) ||
         heads.peek(record.channelId) ||
         !Number.isFinite(record.savedAt) ||
         record.savedAt > now() ||

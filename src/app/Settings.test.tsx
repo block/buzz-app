@@ -123,6 +123,7 @@ const communityState = {
 const host = {
   plugins: { subscribe: () => () => {}, snapshot: () => pluginState },
   communities: {
+    retainPresentation: () => () => {},
     subscribe: () => () => {},
     snapshot: () => communityState,
   },
@@ -1078,6 +1079,7 @@ it("keeps grouped cards available without a selected community", () => {
       {...host}
       communities={
         {
+          retainPresentation: () => () => {},
           subscribe: () => () => {},
           snapshot: () => noCommunityState,
         } as unknown as Parameters<typeof Settings>[0]["communities"]
@@ -1119,6 +1121,7 @@ it("shows administration only within a selected community", () => {
 
   const noCommunityState = { ...communityState, selected: null };
   const noCommunity = {
+    retainPresentation: () => () => {},
     subscribe: () => () => {},
     snapshot: () => noCommunityState,
   } as unknown as Parameters<typeof Settings>[0]["communities"];
@@ -1283,6 +1286,7 @@ it.each(["primary", null])(
     const state = { ...communityState, selected };
     const connection = { scope: "settings-parity-test" };
     const communities = {
+      retainPresentation: () => () => {},
       subscribe: () => () => {},
       snapshot: () => state,
       relay: {
@@ -1587,7 +1591,7 @@ it("retains departure confirmation until local cleanup settles", async () => {
   expect(screen.queryByRole("button", { name: "Leave or remove" })).toBeNull();
   expect(
     screen.getByText(
-      "Primary was removed from this device. Your membership wasn’t changed. You can add it again later.",
+      "Primary — https://primary.example was removed from this device. Your membership wasn’t changed. You can add it again later.",
     ),
   ).toBeVisible();
 });

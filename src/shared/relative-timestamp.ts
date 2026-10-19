@@ -2,7 +2,7 @@
 export function relativeTimestamp(
   unixSeconds: number,
   nowSeconds = Date.now() / 1000,
-) {
+): string {
   const age = Math.max(0, nowSeconds - unixSeconds);
   const ago = (value: number, unit: string) =>
     `${value} ${unit}${value === 1 ? "" : "s"} ago`;

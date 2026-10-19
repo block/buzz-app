@@ -126,6 +126,17 @@ describe("synced teams", () => {
     ]);
   });
 
+  it("marks a team unreadable instead of dropping a member whose ownership can't be read", async () => {
+    const f = await setup();
+    f.deps.channels.owns = vi.fn(async (pubkey: string) => {
+      if (pubkey === b) throw new Error("relay down");
+      return true;
+    });
+    expect(await discoverTeams(f.deps)).toMatchObject([
+      { id: teamId, unreadable: true, members: [] },
+    ]);
+  });
+
   it("counts only agents this owner attests to as members", async () => {
     const human = keypair().pubkey;
     const f = await setup([owner.pubkey, a, human, b]);

@@ -640,13 +640,20 @@ export function teamRunner(deps: RunnerDeps) {
       if (!roster.has(pubkey))
         wanted.push({ action: "add", pubkey, state: "planned" });
     if (start.kind === "edit")
-      for (const pubkey of roster)
-        if (
-          pubkey !== deps.owner &&
-          !want.has(pubkey) &&
-          (await channels.owns(pubkey, signal).catch(() => false))
-        )
-          wanted.push({ action: "remove", pubkey, state: "planned" });
+      for (const pubkey of roster) {
+        if (pubkey === deps.owner || want.has(pubkey)) continue;
+        let owned: boolean;
+        try {
+          owned = await channels.owns(pubkey, signal);
+        } catch (error) {
+          // Unknown ownership plans nothing: the change stays, to retry.
+          const now = live();
+          return now
+            ? save({ ...now, error: message(error) })
+            : ops.get(start.id);
+        }
+        if (owned) wanted.push({ action: "remove", pubkey, state: "planned" });
+      }
     // A plan holds only for the whole intent it was built from: a revise
     // while this step waited ends it, and the next step publishes and plans
     // afresh before anything finishes.

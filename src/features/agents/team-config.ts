@@ -171,11 +171,12 @@ export async function discoverTeams(
 ): Promise<SyncedTeam[]> {
   const { signal } = deps.writes;
   const found: SyncedTeam[] = [];
-  const owned = new Map<string, Promise<boolean>>();
+  // `undefined`: ownership couldn't be read, which never means "not owned".
+  const owned = new Map<string, Promise<boolean | undefined>>();
   const owns = (pubkey: string) => {
     let proof = owned.get(pubkey);
     if (!proof) {
-      proof = deps.channels.owns(pubkey, signal).catch(() => false);
+      proof = deps.channels.owns(pubkey, signal).catch(() => undefined);
       owned.set(pubkey, proof);
     }
     return proof;
@@ -205,17 +206,20 @@ export async function discoverTeams(
       ]);
     const occupants = (channel.members ?? []).filter((p) => p !== deps.owner);
     const members: string[] = [];
-    for (const pubkey of occupants)
-      if (prior?.members.includes(pubkey) || (await owns(pubkey)))
-        members.push(pubkey);
+    let unknown = false;
+    for (const pubkey of occupants) {
+      const proof = prior?.members.includes(pubkey) || (await owns(pubkey));
+      if (proof) members.push(pubkey);
+      else if (proof === undefined) unknown = true;
+    }
     found.push({
       id,
       channel: channel.id,
       archived: channel.archived,
-      unreadable: !proven,
+      unreadable: !proven || unknown,
       subject: teamArtifact(deps, id, channel.id),
       ...(proven && head ? { head: head.id } : {}),
-      members: channel.members ? members : (prior?.members ?? []),
+      members: channel.members && !unknown ? members : (prior?.members ?? []),
     });
   }
   return found;

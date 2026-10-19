@@ -852,6 +852,30 @@ describe("team operations: failures before sending", () => {
   });
 });
 
+describe("team operations: member ownership", () => {
+  it("an Edit whose ownership read fails keeps the removal pending and retries it", async () => {
+    const w = world();
+    const teamId = await existing(w, [a, b]);
+    w.channels.owns.mockRejectedValueOnce(new Error("profile read failed"));
+    const { op, done } = edit(w, teamId, { members: [a] });
+    expect(await done).toMatchObject({
+      mode: "may-send",
+      error: "profile read failed",
+    });
+    expect(w.relay.roster.has(b)).toBe(true);
+    expect(await w.runner.run(op.id)).toBeUndefined();
+    expect(w.relay.roster.has(b)).toBe(false);
+  });
+
+  it("an Edit leaves a member it verifies isn't owned", async () => {
+    const w = world();
+    const teamId = await existing(w, [a, b]);
+    w.agents.delete(b);
+    expect(await edit(w, teamId, { members: [a] }).done).toBeUndefined();
+    expect(w.channels.removeMember).not.toHaveBeenCalled();
+  });
+});
+
 describe("team operations: transitions", () => {
   it("a Delete submitted during an edit's head read stops it before any member command", async () => {
     const w = world();

@@ -359,6 +359,7 @@ function InboxList({
   const focusRow = useRef<string | undefined>(undefined);
   const workspace = useRef<HTMLDivElement | null>(null);
   const retryFocus = useRef(false);
+  const retiredFocus = useRef(false);
   const retryButton = useCallback((button: HTMLButtonElement | null) => {
     if (!button) return;
     // Capture ownership before removal, not after focus has fallen to body.
@@ -459,7 +460,8 @@ function InboxList({
       (selectedRetired || !showing || (!selected && inbox.status !== "loading"))
     ) {
       // Restoring the channel does not reopen its conversation.
-      if (selectedRetired && opened) closeTab(opened);
+      if (selectedRetired && opened && closeTab(opened))
+        retiredFocus.current = true;
       // A closed tab ends its visit, so reopening the row reads it again.
       if (selectedRetired || !showing) {
         intentRevision.current++;
@@ -477,6 +479,13 @@ function InboxList({
     closeTab,
     inbox.status,
   ]);
+  useLayoutEffect(() => {
+    if (!retiredFocus.current) return;
+    retiredFocus.current = false;
+    // A retired tab that held focus took it along; focus elsewhere stays.
+    if (document.activeElement === document.body)
+      fallbackControl.current?.focus({ preventScroll: true });
+  });
   useEffect(() => {
     if (menu && !items.some((item) => item.id === menu.id)) setMenu(undefined);
   }, [items, menu]);

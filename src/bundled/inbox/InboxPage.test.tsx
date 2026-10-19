@@ -477,43 +477,58 @@ it.each(["shortcut", "row"])(
   },
 );
 
-it("retires an opened conversation when its room is classified as a Huddle", async () => {
-  const h = fixture();
-  render(h.view);
-  const list = () =>
-    within(screen.getByRole("list", { name: "Inbox conversations" }));
-  await waitFor(() =>
-    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
-  );
-  const [first] = list().getAllByRole("button", { name: /^Open / });
-  if (!first) throw new Error("Missing fixture row");
-  fireEvent.click(first);
-  await findReader();
-  const about = huddleDescription("00000000-0000-4000-8000-000000000001");
-  act(() =>
-    h.emit([
-      metadata(h.relayKey, "room", "Huddle", 100, [
-        ["private"],
-        ["P", h.viewer.pubkey],
-        ["about", about],
-      ]),
-      signed(h.viewer, {
-        kind: 9007,
-        created_at: 1,
-        content: "",
-        tags: [
-          ["h", "room"],
-          ["visibility", "private"],
-          ["channel_type", "stream"],
+it.each([false, true])(
+  "retires an opened conversation when its room becomes a Huddle (selection cleared first: %s)",
+  async (cleared) => {
+    const h = fixture({ withWriter: true });
+    render(h.view);
+    const list = () =>
+      within(screen.getByRole("list", { name: "Inbox conversations" }));
+    await waitFor(() =>
+      expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+    );
+    const [first] = list().getAllByRole("button", { name: /^Open / });
+    if (!first) throw new Error("Missing fixture row");
+    fireEvent.click(first);
+    await findReader();
+    // Showing Archived ends the selection but keeps its tab.
+    if (cleared) await chooseFilter("Archived", "Show");
+    else (await screen.findByRole("textbox")).focus();
+    const about = huddleDescription("00000000-0000-4000-8000-000000000001");
+    act(() =>
+      h.emit([
+        metadata(h.relayKey, "room", "Huddle", 100, [
+          ["private"],
+          ["P", h.viewer.pubkey],
           ["about", about],
-        ],
-      }),
-    ]),
-  );
-  await waitFor(() => expect(queryReader()).not.toBeInTheDocument());
-  expect(sideTabs()).toEqual([]);
-  expect(h.archive.current).toBeUndefined();
-});
+        ]),
+        signed(h.viewer, {
+          kind: 9007,
+          created_at: 1,
+          content: "",
+          tags: [
+            ["h", "room"],
+            ["visibility", "private"],
+            ["channel_type", "stream"],
+            ["about", about],
+          ],
+        }),
+      ]),
+    );
+    await waitFor(() => expect(queryReader()).not.toBeInTheDocument());
+    expect(h.archive.current).toBeUndefined();
+    if (cleared)
+      expect(
+        screen.getByText("This conversation is no longer available."),
+      ).toBeInTheDocument();
+    else {
+      expect(sideTabs()).toEqual([]);
+      expect(
+        screen.getByRole("button", { name: "Inbox filters" }),
+      ).toHaveFocus();
+    }
+  },
+);
 
 it("offers no Archive shortcut while Drafts is shown", async () => {
   const h = fixture();

@@ -476,6 +476,22 @@ it.each(["shortcut", "row"])(
   },
 );
 
+it("offers no Archive shortcut while Drafts is shown", async () => {
+  const h = fixture();
+  render(h.view);
+  const list = () =>
+    within(screen.getByRole("list", { name: "Inbox conversations" }));
+  await waitFor(() =>
+    expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+  );
+  const [first] = list().getAllByRole("button", { name: /^Open / });
+  if (!first) throw new Error("Missing fixture row");
+  fireEvent.click(first);
+  await waitFor(() => expect(h.archive.current).toBeDefined());
+  await chooseFilter("Drafts");
+  await waitFor(() => expect(h.archive.current).toBeUndefined());
+});
+
 it("archives from the row without opening it, remembers filters, and clears an empty unread archive", async () => {
   const h = fixture();
   const view = render(h.view);

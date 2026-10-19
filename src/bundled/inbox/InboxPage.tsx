@@ -804,7 +804,7 @@ function InboxList({
   const canRead = sync.capability === "frontier-sync";
   // The Archive shortcut acts on the conversation opened last.
   useLayoutEffect(() => {
-    if (!archiveShortcut || !selected || pending) return;
+    if (!archiveShortcut || !selected || pending || drafts) return;
     const current = () => archive(selected, !archived(selected));
     archiveShortcut.current = current;
     return () => {

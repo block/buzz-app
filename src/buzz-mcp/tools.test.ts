@@ -265,7 +265,7 @@ it("reads the current thread with each message's latest edit", async () => {
     `thread ${root} in chan`,
     `${root} from ${alice} "Alice Smith" at 1970-01-01T00:01Z: `,
     `${nested} from ${alice} "Alice Smith" at 1970-01-01T00:01Z: edited`,
-    "No older replies.",
+    "The relay returned no older replies.",
   ]);
 });
 
@@ -354,7 +354,7 @@ it("tells apart people with the same name, and where each message is", async () 
   ).toEqual([
     "channel other",
     `${"4".repeat(64)} from ${bob} "Sam" re ${root} at 1970-01-01T00:02Z: ship it too`,
-    "No older messages.",
+    "The relay returned no older messages.",
   ]);
 });
 
@@ -392,11 +392,11 @@ it("pages a thread to its start, each reply once, through timestamp ties", async
     [tied[1], tied[2]],
     ["3".repeat(64)],
   ]);
-  expect(last.split("\n").at(-1)).toBe("No older replies.");
+  expect(last.split("\n").at(-1)).toBe("The relay returned no older replies.");
   // Exactly a limit of replies, with the root besides, is the whole thread.
   const whole = await read(client, { limit: replies.length });
   expect(ids(whole)).toHaveLength(replies.length + 1);
-  expect(whole.split("\n").at(-1)).toBe("No older replies.");
+  expect(whole.split("\n").at(-1)).toBe("The relay returned no older replies.");
   // `before` alone bounds a thread read too, inclusively.
   expect(ids(await read(client, { thread: tied[1], before: 120 }))).toEqual([
     "3".repeat(64),

@@ -515,6 +515,8 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     }
     // One more than the limit tells whether older messages remain; the last
     // shown, in the relay's newest-first order, is where the next page starts.
+    // A short page is only what the relay returned: serving-time filtering and
+    // retention can leave older history unseen.
     const shown = found.slice(0, max);
     const last = shown.at(-1);
     const lines = await tools.messages(
@@ -528,7 +530,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ...lines,
       last && found.length > max
         ? `Older ${noun} remain; continue with ${JSON.stringify({ ...more, before: last.created_at, before_id: last.id })}`
-        : `No older ${noun}.`,
+        : `The relay returned no older ${noun}.`,
     ].join("\n");
   },
 

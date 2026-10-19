@@ -437,6 +437,45 @@ it("offers the Archive shortcut only for an opened conversation while no action 
   await waitFor(() => expect(h.archive.current).toBeDefined());
 });
 
+it.each(["shortcut", "row"])(
+  "a conversation tab restored after leaving Inbox still archives and advances from its %s",
+  async (from) => {
+    const h = fixture();
+    const view = render(h.view);
+    const list = () =>
+      within(screen.getByRole("list", { name: "Inbox conversations" }));
+    await waitFor(() =>
+      expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(2),
+    );
+    const [first] = list().getAllByRole("button", { name: /^Open / });
+    if (!first) throw new Error("Missing fixture row");
+    fireEvent.click(first);
+    await waitFor(() => expect(h.archive.current).toBeDefined());
+    const [tab] = sideTabs();
+    // Leaving Inbox and returning restores the tab with its row's selection.
+    view.unmount();
+    render(h.view);
+    await waitFor(() => expect(sideTabs()).toEqual([tab]));
+    const selected = await waitFor(() => {
+      const row = list()
+        .getAllByRole("listitem")
+        .find((item) => item.hasAttribute("data-selected"));
+      if (!row) throw new Error("No selected row");
+      return row;
+    });
+    if (from === "shortcut") await archiveOpened(h);
+    else
+      fireEvent.click(
+        within(selected).getByRole("button", { name: /^Archive / }),
+      );
+    await waitFor(() =>
+      expect(list().getAllByRole("button", { name: /^Open / })).toHaveLength(1),
+    );
+    expect(list().getByRole("listitem")).toHaveAttribute("data-selected");
+    expect(sideTabs()).toHaveLength(1);
+  },
+);
+
 it("archives from the row without opening it, remembers filters, and clears an empty unread archive", async () => {
   const h = fixture();
   const view = render(h.view);

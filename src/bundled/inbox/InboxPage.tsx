@@ -156,6 +156,14 @@ const tabTarget = (
         messageId: item.messageId,
       };
 
+type Selection = { channelId: string; messageId: string; rootId?: string };
+// The row a tab opened, kept as long as the session's tabs so returning to
+// Inbox still archives and advances from the conversation it restores.
+const selections = new WeakMap<
+  RelaySession,
+  { opened?: PageTabTarget | undefined; target?: Selection | undefined }
+>();
+
 /** The open conversation's Archive/Restore, published for the Inbox shortcut. */
 export type ArchiveShortcut = { current?: (() => void) | undefined };
 
@@ -321,7 +329,7 @@ function InboxList({
   );
   // The tab a row opened, which archive closes even after its row regroups.
   // Selection lasts as long as that tab.
-  const [opened, setOpened] = useState<PageTabTarget>();
+  const [opened, setOpened] = useState(() => selections.get(session)?.opened);
   const openRow = (item: InboxItem, channel?: { channelType?: string }) => {
     const tab = tabTarget(item, channel);
     const shown = openTab(tab);
@@ -329,11 +337,12 @@ function InboxList({
     return shown;
   };
   const showing = !!opened && isOpen(opened);
-  const [selectedTarget, setSelectedTarget] = useState<{
-    channelId: string;
-    messageId: string;
-    rootId?: string;
-  }>();
+  const [selectedTarget, setSelectedTarget] = useState(
+    () => selections.get(session)?.target,
+  );
+  useEffect(() => {
+    selections.set(session, { opened, target: selectedTarget });
+  }, [session, opened, selectedTarget]);
   const fallbackRow = useRef<HTMLButtonElement | null>(null);
   const fallbackControl = useRef<HTMLButtonElement | null>(null);
   const viewFocus = useRef(false);

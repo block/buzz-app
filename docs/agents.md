@@ -51,9 +51,10 @@ that it is off when it is off.
 of `always` or `search`. The Buzz tools load up front and the attention tools on
 search. Only the Buzz tools choose: tools plugins add always load on search, so
 installing plugins never grows what every turn carries. `sessionHint` says what
-the searchable tools are. Claude marks each tool that loads up front with
-`_meta["anthropic/alwaysLoad"]` in `tools/list` and lists the rest by name until
-the model searches for them; the hint is the server's `instructions`. Codex gets
+the searchable tools are. `respond` stays harness-neutral: a harness passes a
+`Listing` to shape it. Claude's marks each tool that loads up front with
+`_meta["anthropic/alwaysLoad"]`, so Claude lists the rest by name until the
+model searches for them, and makes the hint the server's `instructions`. Codex gets
 `deferLoading` on each searched tool and the hint as the namespace description.
 Every model in Codex's catalog supports tool search; one that did not would not
 see the deferred tools. goose cannot load tools on demand, so it gets every tool

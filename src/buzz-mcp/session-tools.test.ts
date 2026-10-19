@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { ATTENTION_TOOLS } from "./attention";
-import { respond } from "./rpc";
+import { type Listing, respond } from "./rpc";
 import {
   type AddedTool,
   addedKey,
@@ -39,32 +39,28 @@ it("loads the Buzz tools up front, and attention and plugins' tools on search", 
   );
 });
 
-it("marks only the tools that load up front for a harness with search", async () => {
-  const added = [tool("notes_add")];
-  const answer = (method: string, search: boolean) =>
-    respond(undefined, {}, { id: 1, method }, added, search) as Promise<{
+it("lists the tools as the harness has it, and without their load by default", async () => {
+  const answer = (method: string, listing?: Listing) =>
+    respond(undefined, {}, { id: 1, method }, [], listing) as Promise<{
       result: {
         instructions?: string;
-        tools?: { name: string; load?: unknown; _meta?: unknown }[];
+        tools?: { name: string; load?: unknown; marked?: unknown }[];
       };
     }>;
-  const marked = async (search: boolean) =>
-    (await answer("tools/list", search)).result.tools
-      ?.filter((each) => each._meta)
-      .map((each) => each.name);
-  // Claude loads the rest on search, and the server says what they are.
-  expect(await marked(true)).toEqual(TOOLS.map((each) => each.name));
-  expect((await answer("initialize", true)).result.instructions).toBe(
-    sessionHint(added),
+  const plain = (await answer("tools/list")).result.tools ?? [];
+  expect(plain.map((each) => each.name)).toEqual(
+    sessionTools().map((each) => each.name),
   );
-  // goose loads every tool, so nothing is marked or said.
-  expect(await marked(false)).toEqual([]);
-  expect((await answer("initialize", false)).result.instructions).toBe(
-    undefined,
+  expect(plain.some((each) => "load" in each)).toBe(false);
+  expect((await answer("initialize")).result.instructions).toBe(undefined);
+  const listing: Listing = {
+    instructions: "Search for the rest.",
+    tool: ({ name, load }) => ({ name, marked: load === "always" }),
+  };
+  const shaped = (await answer("tools/list", listing)).result.tools ?? [];
+  expect(shaped.find((each) => each.name === "send")?.marked).toBe(true);
+  expect(shaped.find((each) => each.name === "watch_add")?.marked).toBe(false);
+  expect((await answer("initialize", listing)).result.instructions).toBe(
+    "Search for the rest.",
   );
-  const listed = (await answer("tools/list", true)).result.tools ?? [];
-  expect(listed.some((each) => "load" in each)).toBe(false);
-  expect(listed.find((each) => each.name === "send")?._meta).toEqual({
-    "anthropic/alwaysLoad": true,
-  });
 });

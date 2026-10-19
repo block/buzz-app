@@ -6,7 +6,7 @@ import type { BuzzClient, Context } from "./client";
 import {
   type AddedTool,
   callSessionTool,
-  sessionHint,
+  type SessionTool,
   sessionTools,
 } from "./session-tools";
 import type { Reply } from "./tools";
@@ -17,16 +17,21 @@ type Message = Readonly<{
   params?: Readonly<Record<string, unknown>>;
 }>;
 
+/** How a harness has the server list its tools. By default each is listed
+ * without its `load`, and the server says nothing up front. */
+export type Listing = Readonly<{
+  instructions?: string;
+  tool?: (tool: SessionTool) => object;
+}>;
+
 /** Answers `input`, listing the session's Buzz tools and the `added` ones
- * plugins add. Without a client, tools are listed but cannot be called. For a
- * harness that loads tools on `search` (Claude), it marks the tools that load
- * up front and says what the rest are. */
+ * plugins add. Without a client, tools are listed but cannot be called. */
 export async function respond(
   client: BuzzClient | undefined,
   context: Context,
   input: unknown,
   added: readonly AddedTool[] = [],
-  search = false,
+  listing: Listing = {},
 ) {
   const { id, method, params = {} } = (input ?? {}) as Message;
   // A notification needs no answer, but the pipe expects one.
@@ -39,16 +44,16 @@ export async function respond(
         protocolVersion: params.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: { name: "buzz", version: "1" },
-        ...(search ? { instructions: sessionHint(added) } : {}),
+        ...(listing.instructions === undefined
+          ? {}
+          : { instructions: listing.instructions }),
       });
     case "ping":
       return result({});
     case "tools/list":
       return result({
-        tools: sessionTools(added).map(({ load, ...tool }) =>
-          search && load === "always"
-            ? { ...tool, _meta: { "anthropic/alwaysLoad": true } }
-            : tool,
+        tools: sessionTools(added).map(
+          listing.tool ?? (({ load: _, ...tool }) => tool),
         ),
       });
     case "tools/call":

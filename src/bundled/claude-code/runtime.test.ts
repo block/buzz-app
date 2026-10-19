@@ -1167,6 +1167,10 @@ it("always offers attention tools, on search, and says in each turn whether atte
   expect(listed.find((tool) => tool.name === "send")?._meta).toEqual({
     "anthropic/alwaysLoad": true,
   });
+  const initialized = (await mcp(on, 8, "initialize")) as unknown as {
+    instructions?: string;
+  };
+  expect(initialized?.instructions).toContain("your attention");
   expect(systemPromptOf(on)).not.toContain("## Attention");
   expect(on?.prompts[0]).toMatch(/<attention>\nHandle the work/);
   // Turned off, the session keeps its tools and prompt: nothing restarts.

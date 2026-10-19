@@ -87,3 +87,38 @@ Hermes Agent: the bundled `icons/hermes.png` is reused unchanged from Block Buzz
 cropped the border, padded it to square, resized to 64×64 and quantised it to
 16 colours. The MIT license terms above also apply to this artwork, with the
 Nous Research copyright notice.
+
+## Plugin catalog artwork
+
+The remaining bundled plugin PNG artwork in `src/bundled/*/icon.png` was
+created by Taylor Ho using GPT Image 2.5 and supplied for Buzz.
+
+GitHub and Codex catalog tiles use Tabler's `brand-github` and `brand-openai`
+glyphs. Claude uses the generic `code` glyph; Goose uses `terminal-2`.
+These are flat white glyphs with unchanged paths and proportions; the category
+gradient belongs to the tile behind them. No effects are applied to the glyphs.
+The marks identify integrations and do not imply endorsement. Trademark rights
+remain with their respective owners; the icon license does not grant trademark
+rights. Tabler Icons 3.46.0: https://tabler.io/icons
+
+MIT License
+
+Copyright (c) 2020-2026 Paweł Kuna
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

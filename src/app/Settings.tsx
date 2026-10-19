@@ -39,6 +39,10 @@ import {
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import {
+  GithubLogoIcon,
+  OpenAILogoIcon,
+  CodeIcon,
+  TerminalWindowIcon,
   CheckCircleIcon,
   SparklesIcon,
   SquaresFourIcon,
@@ -162,6 +166,13 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
   ];
 }
 
+const bundledGlyphs = new Map([
+  ["buzz.github", GithubLogoIcon],
+  ["buzz.codex", OpenAILogoIcon],
+  ["buzz.claude-code", CodeIcon],
+  ["buzz.goose", TerminalWindowIcon],
+]);
+
 function PluginIcon({
   plugin,
   size = 24,
@@ -173,15 +184,22 @@ function PluginIcon({
     plugin.source === "bundled"
       ? bundledIcons.get(plugin.manifest.id)
       : undefined;
+  const Glyph =
+    plugin.source === "bundled"
+      ? bundledGlyphs.get(plugin.manifest.id)
+      : undefined;
   const [failedUrl, setFailedUrl] = useState<string>();
   return (
     <span
       className={styles.pluginIcon}
-      data-branded={Boolean(url && url !== failedUrl) || undefined}
+      data-branded={Boolean(Glyph || (url && url !== failedUrl)) || undefined}
+      data-glyph={Boolean(Glyph) || undefined}
       data-category={plugin.manifest.discovery?.category}
       aria-hidden="true"
     >
-      {url && url !== failedUrl ? (
+      {Glyph ? (
+        <Glyph size="50%" />
+      ) : url && url !== failedUrl ? (
         <img src={url} alt="" onError={() => setFailedUrl(url)} />
       ) : (
         <SquaresFourIcon size={size} />

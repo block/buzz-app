@@ -110,6 +110,9 @@
   --chartreuse-contrast-light: #000000;
   --chartreuse-ink-light: var(--chartreuse-12-light);
   --chartreuse-pressed-light: #c3c315;
+  /* Darkened chartreuse turns olive, so light-mode links use light Blue 11
+     (#0b5fa8) and Blue 3 hover (#e6f4fe). Explicit values preserve light
+     specimens inside dark pages; dark-mode links keep bright chartreuse. */
   --chartreuse-link-light: #0b5fa8;
   --chartreuse-link-hover-light: #e6f4fe;
   --chartreuse-1-dark: #10100a;

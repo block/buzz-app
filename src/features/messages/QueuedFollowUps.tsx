@@ -22,19 +22,22 @@ export function QueuedFollowUps({
     (entry) => entry.channelId === channelId,
   );
   const section = useRef<HTMLElement>(null);
-  const focused = useRef<string | undefined>(undefined);
+  const focused = useRef<{ id: string; action: "send" | "remove" } | undefined>(
+    undefined,
+  );
   useLayoutEffect(() => {
     if (
       !focused.current ||
-      entries.some((entry) => entry.id === focused.current)
+      entries.some((entry) => entry.id === focused.current?.id)
     )
       return;
+    const { action } = focused.current;
     focused.current = undefined;
     // Removal may unmount the entire section. Do not steal focus moved elsewhere
     // while asynchronous send validation was pending.
     if (document.activeElement !== document.body) return;
     const next = section.current?.querySelector<HTMLButtonElement>(
-      "button:not(:disabled)",
+      `button[data-queue-action="${action}"]:not(:disabled)`,
     );
     if (next) next.focus();
     else focusComposer();
@@ -48,13 +51,7 @@ export function QueuedFollowUps({
     >
       <ol className={styles.list}>
         {entries.map((entry) => (
-          <li
-            key={entry.id}
-            className={styles.row}
-            onFocusCapture={() => {
-              focused.current = entry.id;
-            }}
-          >
+          <li key={entry.id} className={styles.row}>
             <div className={styles.content}>
               <p className={styles.preview}>{entry.text || "Attachment"}</p>
               {entry.error && (
@@ -65,6 +62,10 @@ export function QueuedFollowUps({
             </div>
             <div className={styles.actions}>
               <IconButton
+                data-queue-action="remove"
+                onFocus={() => {
+                  focused.current = { id: entry.id, action: "remove" };
+                }}
                 data-remove-action
                 variant="destructive-quiet"
                 shape="inset"
@@ -74,6 +75,10 @@ export function QueuedFollowUps({
                 onClick={() => queue.remove(entry.id)}
               />
               <Button
+                data-queue-action="send"
+                onFocus={() => {
+                  focused.current = { id: entry.id, action: "send" };
+                }}
                 variant="subtle-muted"
                 size="caption"
                 disabled={disabled}

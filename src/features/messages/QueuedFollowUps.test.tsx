@@ -107,3 +107,18 @@ it("does not steal focus moved outside a row during validation", async () => {
   });
   expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
 });
+
+it("preserves Send focus so consecutive Enter presses send both queued messages", async () => {
+  const h = fixture();
+  const first = h.add("first");
+  const second = h.add("second");
+  h.mount();
+  const user = userEvent.setup();
+  screen.getAllByRole("button", { name: "Send" })[0]?.focus();
+  await user.keyboard("{Enter}");
+  expect(first).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(second).toHaveBeenCalledOnce();
+  expect(screen.getByRole("textbox")).toHaveFocus();
+});

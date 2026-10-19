@@ -563,8 +563,10 @@ test("DM actions open the correct reply thread", async ({ page, app }) => {
 test.describe("touch", () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 850 } });
   test("opens the message menu without hover", async ({ page, app }) => {
+    // This checks touch access, not live-append scrolling. Include the message
+    // in initial history so open() settles its layout before the single tap.
+    const event = app.append("primary", "alpha", "Touch menu check", false);
     await open(page, app);
-    const event = app.append("primary", "alpha", "Touch menu check");
     const row = page.locator(
       `[data-channel-timeline] [data-message-id="${event.id}"]`,
     );

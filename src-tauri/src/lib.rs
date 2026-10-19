@@ -45,6 +45,8 @@ use nsec_backup::{
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
+#[cfg(any(not(target_os = "macos"), test))]
+mod microphone;
 
 mod notifications;
 mod os_idle;
@@ -635,6 +637,15 @@ pub fn run() {
                 if let Some(settings) = gtk::Settings::default() {
                     settings.set_gtk_xft_hintstyle(Some("hintslight"));
                 }
+                // WebKitGTK hides `navigator.mediaDevices` unless media streams are on.
+                if let Some(main) = app.get_webview_window("main") {
+                    main.with_webview(|webview| {
+                        use webkit2gtk::{SettingsExt, WebViewExt};
+                        if let Some(settings) = webview.inner().settings() {
+                            settings.set_enable_media_stream(true);
+                        }
+                    })?;
+                }
             }
             if let Some(window) = app.get_window("main") {
                 if let Err(error) = window_state::restore(&window) {
@@ -702,6 +713,15 @@ pub fn run() {
             ));
             Ok(())
         });
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.on_permission_request(|webview, kind| {
+        microphone::decide(
+            webview.label(),
+            webview.url().ok().as_ref(),
+            webview.config().build.dev_url.as_ref(),
+            kind,
+        )
+    });
     #[cfg(target_os = "macos")]
     let builder = builder
         .manage(TitleBarFillFrames::default())

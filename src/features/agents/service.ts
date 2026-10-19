@@ -2678,7 +2678,7 @@ export class AgentsService extends Service implements Agents {
     };
     const synced = operation
       ? this.operationOwner(operation, creation)
-      : this.syncedTeam(id, members);
+      : (this.formOwner(creation) ?? this.syncedTeam(id, members));
     if (synced) {
       // The form's id: Save again from it revises that same change.
       const form = creation ?? crypto.randomUUID();
@@ -2893,6 +2893,25 @@ export class AgentsService extends Service implements Agents {
     return origins.size === 1 && only
       ? this.communityConfigs.get(only)
       : undefined;
+  }
+
+  /** The community config form `creation` already submitted to: its
+   * Create's record or the team it made. A submitted form never moves or
+   * falls through to a local write, whatever its edited members are. */
+  private formOwner(creation: string | undefined) {
+    if (!creation) return undefined;
+    const config = [...this.communityConfigs.values()].find(
+      (c) =>
+        c.teamOps().some((op) => op.teamId === creation) ||
+        c.teams()?.some((t) => t.id === creation),
+    );
+    if (
+      !config &&
+      (this.configJournals.ops.every().some((op) => op.teamId === creation) ||
+        this.configJournals.teams.synced(creation))
+    )
+      throw new Error("This team's community isn't available; try again");
+    return config;
   }
 
   /** The community config holding stored change `operation`, or the team

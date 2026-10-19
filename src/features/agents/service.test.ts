@@ -7876,6 +7876,44 @@ describe("Delete as a recoverable archive", () => {
     }
   });
 
+  it("the still-open New team form saves again into its unconfirmed Create, never a local team", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const f = await setup({ identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.find(alder)?.configBase).toBeDefined(),
+      );
+      relay.addMember.mockImplementation(
+        async () => ({ status: "uncertain" }) as never,
+      );
+      const creation = crypto.randomUUID();
+      await expect(
+        f.service.saveTeam({
+          creation,
+          name: "First",
+          instructions: "RULE",
+          members: [alder],
+        }),
+      ).rejects.toThrow();
+      // The same form, edited: its last member removed and renamed.
+      await f.service
+        .saveTeam({
+          creation,
+          name: "Second",
+          instructions: "RULE",
+          members: [],
+        })
+        .catch(() => {});
+      expect(readTeams(f.storage)).toEqual([]);
+      expect(teamOps(f.storage).every()).toEqual([
+        expect.objectContaining({ kind: "create", teamId: creation }),
+      ]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it("the discovered card refuses dropping a joined member of its unfinished Create", async () => {
     const relay = configRelay();
     communityFake.value = relay.opens;

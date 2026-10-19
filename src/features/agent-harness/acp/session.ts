@@ -34,8 +34,8 @@ export class AcpSession {
   private owner: Waiter | undefined;
   private readonly active = new Map<string, ActivityReceipt>();
   private lastStep = "";
-  private lastError: string | undefined;
-  private lastCode: number | undefined;
+  /** The burst's latest error, with the JSON-RPC code of that same error. */
+  private lastFailure: { error: string; code?: number } | undefined;
   /** Whether this work answered in Buzz, and what the harness wrote meanwhile: a
    * provider failure comes back as text, and text is never posted. */
   private acted = false;
@@ -225,10 +225,15 @@ export class AcpSession {
           // A rejected prompt never reached the model: the next one leads.
           this.preamble = "";
           if (stopReason === "refusal")
-            this.lastError = `${this.acp.hooks.label} refused the request`;
+            this.lastFailure = {
+              error: `${this.acp.hooks.label} refused the request`,
+            };
         } catch (error) {
-          this.lastError = errorMessage(error);
-          this.lastCode = codeOf(error);
+          const code = codeOf(error);
+          this.lastFailure = {
+            error: errorMessage(error),
+            ...(code === undefined ? {} : { code }),
+          };
         }
       }
     } finally {
@@ -267,11 +272,9 @@ export class AcpSession {
     // Work that wrote text and never answered in Buzz answered only the
     // harness: a model that forgot `send`, or one that cannot reach its provider.
     const text = this.acted || this.stopped ? "" : this.written.trim();
-    const error = this.lastError;
-    const code = this.lastCode;
+    const failure = this.lastFailure;
     this.settle({
-      ...(error ? { ok: false, error } : { ok: true }),
-      ...(error && code !== undefined ? { code } : {}),
+      ...(failure?.error ? { ok: false, ...failure } : { ok: true }),
       ...(text ? { text } : {}),
     });
   }
@@ -280,8 +283,8 @@ export class AcpSession {
     const stopped = this.stopped;
     if (!stopped) return;
     this.stopped = undefined;
-    const error = this.lastError;
-    this.lastError = undefined;
+    const failure = this.lastFailure;
+    this.lastFailure = undefined;
     this.acted = false;
     this.written = "";
     for (const [scope, receipt] of this.active)
@@ -297,14 +300,15 @@ export class AcpSession {
     this.pending = this.waiters.length;
     for (const resolve of stopped.waiters)
       resolve(
-        resolve === owner && error ? { ok: false, error } : { ok: !error },
+        resolve === owner && failure?.error
+          ? { ok: false, ...failure }
+          : { ok: !failure?.error },
       );
   }
   private settle(settled: Settled) {
     this.pending = 0;
     this.active.clear();
-    this.lastError = undefined;
-    this.lastCode = undefined;
+    this.lastFailure = undefined;
     this.acted = false;
     this.written = "";
     this.stopped = undefined;

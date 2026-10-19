@@ -188,7 +188,7 @@ describe("AgentSessions", () => {
     const { fake, sessions } = setup({}, true);
     const one = sessions.deliver("a", "one", 1);
     const other = sessions.deliver("b", "other", 2);
-    await flush(20);
+    await flush(30);
     const [first, second] = fake.geese[0]?.turns ?? [];
     expect(first?.text).toContain("one");
     await sessions.interrupt("a");

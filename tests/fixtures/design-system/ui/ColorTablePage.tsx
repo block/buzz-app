@@ -1,7 +1,4 @@
-import {
-  BRAND_FAMILIES,
-  BRAND_SHADES,
-} from "../../../../src/shared/design-system/tokens/brand";
+import { BRAND_FAMILIES } from "../../../../src/shared/design-system/tokens/brand";
 import { Link } from "@tanstack/react-router";
 import { Fragment, useState } from "react";
 
@@ -74,12 +71,12 @@ function collectRows(): TableRow[] {
   }
 
   for (const family of BRAND_FAMILIES) {
-    for (const shade of BRAND_SHADES) {
+    for (const endpoint of ["start", "end"] as const) {
       rows.push({
-        token: `brand-${family.id}-${shade}`,
-        variable: `--brand-${family.id}-${shade}`,
+        token: `art-${family.id}-${endpoint}`,
+        variable: `--art-${family.id}-${endpoint}`,
         layer: "ramp",
-        group: `Plugin artwork — ${family.id}`,
+        group: `Plugin gradient — ${family.id}`,
       });
     }
   }

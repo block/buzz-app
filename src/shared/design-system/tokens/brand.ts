@@ -1,29 +1,26 @@
-/** Decorative artwork palette. Fixed scales, not theme-aware semantic roles.
- * Source: plugin branding Settings.module.css, revision 834b8ea4b.
- * Each step 9 preserves one exact OKLCH gradient endpoint, including its hue.
- * Other stops vary lightness and taper chroma within sRGB; review before adoption.
- */
+/** Existing accent identities, reused by plugin artwork. */
 export const BRAND_SHADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 export const BRAND_FAMILIES = [
-  { id: "cyan", hue: 220, chroma: 0.109 },
-  { id: "blue", hue: 255, chroma: 0.14 },
-  { id: "violet", hue: 295, chroma: 0.14 },
-  { id: "indigo", hue: 260, chroma: 0.14 },
-  { id: "fuchsia", hue: 335, chroma: 0.14 },
-  { id: "purple", hue: 300, chroma: 0.14 },
-  { id: "coral", hue: 375, chroma: 0.14 },
-  { id: "pink", hue: 340, chroma: 0.14 },
-  { id: "scarlet", hue: 380, chroma: 0.14 },
-  { id: "orange", hue: 415, chroma: 0.14 },
-  { id: "gold", hue: 420, chroma: 0.14 },
-  { id: "lime", hue: 455, chroma: 0.123 },
+  { id: "cobalt", hue: 266.6948 },
+  { id: "iris", hue: 284.502 },
+  { id: "magenta", hue: 355.6028 },
+  { id: "flame", hue: 34.6181 },
+  { id: "jade", hue: 169.9836 },
+  { id: "chartreuse", hue: 109.5919 },
 ] as const;
-
 export const BRAND_GRADIENTS = [
-  { name: "Communication", from: "cyan", to: "blue" },
-  { name: "Agents", from: "violet", to: "indigo" },
-  { name: "Agent tools", from: "fuchsia", to: "purple" },
-  { name: "Developer tools & integrations", from: "coral", to: "pink" },
-  { name: "People & communities", from: "scarlet", to: "orange" },
-  { name: "Productivity", from: "gold", to: "lime" },
+  { name: "Communication", category: "communication", family: "cobalt" },
+  { name: "Agents", category: "agents", family: "iris" },
+  { name: "Agent tools", category: "agent-tools", family: "magenta" },
+  {
+    name: "Developer tools & integrations",
+    category: "developer-tools-and-integrations",
+    family: "flame",
+  },
+  {
+    name: "People & communities",
+    category: "people-and-communities",
+    family: "jade",
+  },
+  { name: "Productivity", category: "productivity", family: "chartreuse" },
 ] as const;

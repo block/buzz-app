@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
 import { createElement } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { beforeAll, afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { BrandColors } from "./BrandColors";
+
+beforeAll(() => {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: () => ({ matches: false }),
+  });
+});
 
 const clipboardDescriptor = Object.getOwnPropertyDescriptor(
   navigator,
@@ -23,22 +30,24 @@ it("selects a shade and copies its CSS reference, with a manual fallback", async
     value: { writeText },
   });
   render(createElement(BrandColors));
-  fireEvent.click(screen.getByRole("button", { name: "violet 11" }));
-  expect(screen.getByRole("button", { name: "cyan 9" })).toHaveAttribute(
+  fireEvent.click(screen.getByRole("button", { name: "iris 11" }));
+  expect(screen.getByRole("button", { name: "cobalt 9" })).toHaveAttribute(
     "aria-pressed",
     "false",
   );
-  expect(screen.getByRole("button", { name: "violet 11" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "iris 11" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   fireEvent.click(screen.getByRole("button", { name: "Copy CSS" }));
   expect(await screen.findByText("Copied CSS variable.")).toBeInTheDocument();
-  expect(writeText).toHaveBeenCalledWith("var(--brand-violet-11)");
-  fireEvent.click(screen.getByRole("button", { name: "lime 12" }));
+  expect(writeText).toHaveBeenCalledWith(
+    '[data-accent="iris"][data-color-mode="light"] { color: var(--accent-11); }',
+  );
+  fireEvent.click(screen.getByRole("button", { name: "jade 12" }));
   expect(screen.getByRole("status")).toBeEmptyDOMElement();
   writeText.mockRejectedValueOnce(new Error("denied"));
   fireEvent.click(screen.getByRole("button", { name: "Copy CSS" }));
   expect(await screen.findByText(/Could not copy/)).toBeInTheDocument();
-  expect(screen.getByText("var(--brand-lime-12)")).toBeInTheDocument();
+  expect(screen.getByText("jade · var(--accent-12)")).toBeInTheDocument();
 });

@@ -4,23 +4,27 @@ import {
   BRAND_GRADIENTS,
   BRAND_SHADES,
 } from "../../../../src/shared/design-system/tokens/brand";
+import { useColorScheme } from "../../../../src/shared/design-system/theme/useColorScheme";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 import { useResolvedTokens } from "../useResolvedToken";
 import { Section } from "./primitives";
 
-const variables = BRAND_FAMILIES.flatMap((family) =>
-  BRAND_SHADES.map((shade) => `--brand-${family.id}-${shade}`),
-);
+const variables = BRAND_SHADES.map((shade) => `--accent-${shade}`);
 
 export function BrandColors() {
-  const [selected, setSelected] = useState("--brand-cyan-9");
+  const [selected, setSelected] = useState("--accent-9");
+  const [family, setFamily] = useState("cobalt");
+  const [scope, setScope] = useState<HTMLDivElement | null>(null);
+  const { scheme } = useColorScheme();
   const [copyStatus, setCopyStatus] = useState("");
-  const resolved = useResolvedTokens(variables);
+  const resolved = useResolvedTokens(variables, scope);
   const value = resolved.get(selected)?.value ?? "";
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(`var(${selected})`);
+      await navigator.clipboard.writeText(
+        `[data-accent="${family}"][data-color-mode="${scheme}"] { color: var(${selected}); }`,
+      );
       setCopyStatus("Copied CSS variable.");
     } catch {
       setCopyStatus(
@@ -31,8 +35,8 @@ export function BrandColors() {
 
   return (
     <Section
-      title="Artwork color studies"
-      description="Additional colors drawn from plugin artwork, alongside the existing palette above. Twelve steps follow Buzz’s palette vocabulary; step 9 preserves the original gradient color. These studies keep the same values in both themes and do not replace existing colorways or semantic roles."
+      title="Colorways and plugin gradients"
+      description="Six existing accent families, shared with plugin identities. The ramps below are the real theme-aware accent values. Decorative gradients follow each family’s hue at matched luminance, so the categories stay distinct without one looking substantially brighter than another."
     >
       <div className="brand-gradient-grid">
         {BRAND_GRADIENTS.map((gradient) => (
@@ -43,22 +47,28 @@ export function BrandColors() {
             <div
               className="h-16 rounded-md"
               style={{
-                background: `linear-gradient(to bottom, var(--brand-${gradient.from}-9), var(--brand-${gradient.to}-9))`,
+                background: `var(--art-${gradient.family}-gradient)`,
               }}
             />
             <span className="text-body-sm text-primary">{gradient.name}</span>
             <span className="text-body-sm text-secondary">
-              {gradient.from} → {gradient.to}
+              {gradient.family}
             </span>
           </div>
         ))}
       </div>
       <p className="text-body-sm text-secondary">
-        Original gradient stops, before the icon lighting and artwork overlays.
-        Family names are exploratory; nearby hues remain separate to preserve
-        every source color.
+        Gradient endpoints target the same luminance: approximately 4.57:1
+        against white and 4.60:1 against black. Lighting and artwork overlays
+        need a separate visual check; these measurements describe the bare
+        gradients.
       </p>
-      <div className="brand-color-selection">
+      <div
+        className="brand-color-selection"
+        ref={setScope}
+        data-accent={family}
+        data-color-mode={scheme}
+      >
         <span
           aria-hidden="true"
           className="h-10 w-16 shrink-0 rounded-md border border-primary"
@@ -66,7 +76,7 @@ export function BrandColors() {
         />
         <div className="flex min-w-0 flex-1 flex-col gap-1" aria-live="polite">
           <code className="break-all text-mono text-primary">
-            var({selected})
+            {family} · var({selected})
           </code>
           <code className="break-all text-mono text-secondary">{value}</code>
         </div>
@@ -78,22 +88,29 @@ export function BrandColors() {
         {copyStatus}
       </p>
       <div className="flex flex-col gap-6">
-        {BRAND_FAMILIES.map((family) => (
-          <div key={family.id} className="flex flex-col gap-2">
-            <h3 className="text-label text-primary">{family.id}</h3>
+        {BRAND_FAMILIES.map((colorway) => (
+          <div
+            key={colorway.id}
+            className="flex flex-col gap-2"
+            data-accent={colorway.id}
+            data-color-mode={scheme}
+          >
+            <h3 className="text-label text-primary">{colorway.id}</h3>
             <div className="brand-color-ramp">
               {BRAND_SHADES.map((shade) => {
-                const variable = `--brand-${family.id}-${shade}`;
+                const variable = `--accent-${shade}`;
+                const active = selected === variable && family === colorway.id;
                 return (
                   <Button
                     key={shade}
-                    variant={selected === variable ? "outline" : "ghost"}
+                    variant={active ? "outline" : "ghost"}
                     shape="control"
                     size="sm"
-                    aria-label={`${family.id} ${shade}`}
-                    aria-pressed={selected === variable}
+                    aria-label={`${colorway.id} ${shade}`}
+                    aria-pressed={active}
                     onClick={() => {
                       setSelected(variable);
+                      setFamily(colorway.id);
                       setCopyStatus("");
                     }}
                   >

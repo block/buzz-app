@@ -425,17 +425,18 @@ icons, subtitles, disabled states, and required-status text.
 Standard Button sizes use the 14px `text-label-sm` role while retaining their
 existing minimum heights. The extra-small capsule keeps its caption role.
 
-## Plugin color-family exploration
+## Colorways and plugin gradients
 
-The Color viewer includes twelve fixed OKLCH artwork families with twelve steps, following Buzz’s existing
-palette vocabulary. The established palette remains first in the viewer and its
-values and semantic mappings are unchanged.
-`--brand-<family>-9` preserves each exact gradient endpoint from plugin branding
-(`src/app/Settings.module.css` on `tho/plugin-icons`, revision `834b8ea4b`).
-The six original gradient pairs are recorded in `tokens/brand.ts`; the values
-live in `styles/tokens.css`. Lightness descends from 99% to 30%; chroma tapers
-and is capped to sRGB outside the exact source stops. These are exploratory
-artwork colors, independent of theme, not new semantic roles or appearance choices.
-Select a swatch to inspect its actual CSS value and copy its variable. Product
-controls continue to consume semantic roles; the plugin branch is not a dependency
-of this viewer and no plugin artwork is imported.
+The Color viewer reuses the six existing accent ramps, including their authored
+light/dark values. No parallel family palette or saved-preference migration is needed.
+Category mapping: Communication → Cobalt, Agents → Iris, Agent tools → Magenta,
+Developer tools → Flame, People & communities → Jade, Productivity → Chartreuse.
+
+Shared `--art-<family>-gradient` tokens supply decorative plugin backgrounds.
+Their hue centers come from the existing light-mode accent step 9, with an
+8-degree sweep either side. Endpoints target relative luminance 0.18, with chroma
+capped to sRGB. This equalizes bare-background contrast (white about 4.57:1,
+black about 4.60:1), rather than assuming equal OKLCH lightness means equal
+contrast. These backgrounds are independent of theme; icon lighting remains
+host-owned and must be checked separately. The existing semantic roles and
+Appearance choices retain their values.

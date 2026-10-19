@@ -83,6 +83,7 @@ function readDeclaredValues(isDark: boolean): Map<string, string> {
  */
 export function useResolvedTokens(
   variables: string[],
+  scope?: HTMLElement | null,
 ): Map<string, ResolvedToken> {
   const [resolved, setResolved] = useState<Map<string, ResolvedToken>>(
     () => new Map(),
@@ -98,7 +99,7 @@ export function useResolvedTokens(
     const read = () => {
       const isDark = root.classList.contains("dark");
       const declaredValues = readDeclaredValues(isDark);
-      const computed = getComputedStyle(root);
+      const computed = getComputedStyle(scope ?? root);
 
       const next = new Map<string, ResolvedToken>();
       for (const variable of key.split(",")) {
@@ -125,8 +126,9 @@ export function useResolvedTokens(
     // React that every colour on the page just changed.
     const observer = new MutationObserver(read);
     observer.observe(root, { attributeFilter: ["class", "style"] });
+    if (scope) observer.observe(scope, { attributes: true });
     return () => observer.disconnect();
-  }, [key]);
+  }, [key, scope]);
 
   return resolved;
 }

@@ -3832,7 +3832,14 @@ export class AgentsService extends Service implements Agents {
     await config
       .migrateTeams(
         this.teamList,
-        (pubkey) => originOf(this.live(pubkey)?.relay ?? ""),
+        // Only the viewer's own agents: another owner's team never moves
+        // into this viewer's config channels.
+        (pubkey) => {
+          const identity = this.live(pubkey);
+          return identity?.owner === binding.viewer
+            ? originOf(identity.relay)
+            : undefined;
+        },
         (team) => {
           const old = imports.get(team.id);
           return old

@@ -8883,6 +8883,42 @@ describe("Delete as a recoverable archive", () => {
     }
   });
 
+  it("moves only local teams whose members all belong to the signed-in owner", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const storage = memoryStorage();
+    const mine = {
+      id: "local-mine",
+      name: "Mine",
+      instructions: "MINE RULE",
+      members: [alder],
+    };
+    const shared = {
+      id: "local-shared",
+      name: "Shared",
+      instructions: "OTHER OWNER RULE",
+      members: [alder, birch],
+    };
+    writeTeams(storage, [mine, shared]);
+    const f = await setup({
+      storage,
+      identities: [here(alder), { ...here(birch), owner: keypair().pubkey }],
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(readTeams(storage).map((t) => t.id)).toEqual([shared.id]),
+      );
+      expect(new TeamOps(storage).every()).toEqual([]);
+      expect(
+        [...relay.heads.values()].some((h) =>
+          h.content.includes("OTHER OWNER RULE"),
+        ),
+      ).toBe(false);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   /** A local team whose move onto the relay is held: its relay team exists
    * with other text, made elsewhere, and the move hasn't adopted it yet. */
   async function heldMove(options: { models?: () => Promise<void> } = {}) {

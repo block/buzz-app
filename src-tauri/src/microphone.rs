@@ -68,6 +68,7 @@ mod tests {
             );
             assert_eq!(decision, Default, "{label} {page}");
         }
+        // Packaged builds pass no development origin, so a local server is denied.
         let page = Url::parse("http://localhost:1430/").unwrap();
         assert_eq!(
             decide("main", Some(&page), None, PermissionKind::Microphone),

@@ -718,7 +718,13 @@ pub fn run() {
         microphone::decide(
             webview.label(),
             webview.url().ok().as_ref(),
-            webview.config().build.dev_url.as_ref(),
+            // Packaged builds keep `devUrl` in their config but never load it.
+            webview
+                .config()
+                .build
+                .dev_url
+                .as_ref()
+                .filter(|_| tauri::is_dev()),
             kind,
         )
     });

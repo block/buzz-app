@@ -145,6 +145,9 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
   await page.keyboard.press("Enter");
   await expect(
     queue.getByRole("button", { name: "Send", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    queue.getByRole("button", { name: "Send", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(queue).toHaveCount(0);

@@ -718,17 +718,35 @@ it.each([
   },
 );
 
-it.each(["shortcut", "menu"])(
-  "Archive via %s from the composer focuses the successor's tab",
-  async (action) => {
-    const h = fixture({ withWriter: true });
+it.each([
+  ["shortcut", "message"],
+  ["menu", "message"],
+  ["shortcut", "DM"],
+  ["menu", "DM"],
+] as const)(
+  "Archive via %s from the composer hands focus to its %s successor",
+  async (action, successor) => {
+    const dm = successor === "DM";
+    const h = fixture({ withWriter: true, withDm: dm });
     render(h.view);
-    await waitFor(() => expect(rows()).toHaveLength(2));
-    const thread = rows().find((row) =>
-      row.textContent?.includes("A thread update"),
-    );
-    if (!thread) throw new Error("Missing fixture thread row");
-    const open = within(thread).getByRole("button", { name: /^Open / });
+    await waitFor(() => expect(rows()).toHaveLength(dm ? 3 : 2));
+    if (dm) {
+      // Leave the DM above the opened row with nothing below it, so Archive
+      // advances to the DM.
+      expect(rows()[0]).toHaveTextContent("A direct reply");
+      const last = rows()[2];
+      if (!last) throw new Error("Missing fixture row");
+      fireEvent.click(within(last).getByRole("button", { name: /^Archive / }));
+      await waitFor(() => expect(rows()).toHaveLength(2));
+    }
+    const row = dm
+      ? rows()[1]
+      : rows().find((item) => item.textContent?.includes("A thread update"));
+    const label = (item: HTMLElement | undefined) =>
+      item && within(item).getByRole("button", { name: /^Open / }).ariaLabel;
+    const after = label(rows().find((item) => item !== row));
+    if (!row || !after) throw new Error("Missing fixture row");
+    const open = within(row).getByRole("button", { name: /^Open / });
     fireEvent.click(open);
     (await screen.findByRole("textbox")).focus();
     if (action === "shortcut") await archiveOpened(h);
@@ -740,12 +758,22 @@ it.each(["shortcut", "menu"])(
     }
     await waitFor(() => expect(rows()).toHaveLength(1));
     expect(rows()[0]).toHaveAttribute("data-selected");
+    expect(label(rows()[0])).toBe(after);
     expect(sideTabs()).toHaveLength(1);
-    await waitFor(() =>
-      expect(document.activeElement).toHaveAttribute("role", "tab"),
-    );
-    expect(document.activeElement).toHaveAttribute("aria-selected", "true");
-    expect(document.activeElement?.textContent).toBe(sideTabs()[0]);
+    // Focus settles in the successor: a revealed message, or the composer of a
+    // conversation opened without one.
+    await waitFor(() => {
+      const list = screen
+        .getAllByRole("tablist")
+        .find((item) => item.getAttribute("aria-label") !== "Inbox tabs");
+      if (!list) throw new Error("Missing side tabs");
+      const tab = within(list).getByRole("tab", { selected: true });
+      const panel = document.getElementById(
+        tab.getAttribute("aria-controls") ?? "",
+      );
+      expect(panel).toContainElement(document.activeElement as HTMLElement);
+      if (dm) expect(document.activeElement).toHaveAttribute("role", "textbox");
+    });
   },
 );
 

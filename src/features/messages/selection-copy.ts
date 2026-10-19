@@ -61,6 +61,15 @@ function serialize(
   if (tag === "BR") return format === "html" ? "<br>" : "\n";
   if (tag === "IMG")
     return text(node.getAttribute("data-copy-emoji") ?? "", format);
+  // A plugin-presented code block copies as its whole source, not its drawing.
+  const source = node.getAttribute("data-copy-code");
+  if (source !== null)
+    return format === "text"
+      ? source
+      : fence(
+          node.getAttribute("data-copy-language") ?? "",
+          text(source, format),
+        );
   const inner = children(node, format, range);
   const target = node.getAttribute("data-profile-target");
   if (target !== null)
@@ -106,7 +115,7 @@ function serialize(
           if (remainder.toString()) code += "\n";
         }
       }
-      return `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${code}</code></pre>`;
+      return fence(language, code);
     }
   }
   if (
@@ -227,6 +236,10 @@ function markdown(node: Node, range?: Range): string {
   ]);
   const doc = parser.parse(container, { preserveWhitespace: "full" });
   return composerMarkdown(projectComposerDocument(doc).draft);
+}
+
+function fence(language: string, code: string): string {
+  return `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${code}</code></pre>`;
 }
 
 function text(value: string, format: CopyFormat): string {

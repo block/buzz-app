@@ -799,7 +799,12 @@ function CodeBlock({
       key={`${contributionKey(renderer)}:${language}:${code}`}
       fallback={fallback}
     >
-      <div className={styles.codeBlock}>
+      {/* Selection copy reads the source here (selection-copy.ts). */}
+      <div
+        className={styles.codeBlock}
+        data-copy-code={code}
+        data-copy-language={language}
+      >
         <Renderer code={code} language={language} />
         <CodeActions code={code}>
           {Action && <Action code={code} language={language} />}

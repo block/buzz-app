@@ -27,6 +27,7 @@ import { profileTarget } from "../profiles/target";
 import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { serializeSelection } from "./selection-copy";
 import { createRelaySession } from "../relay/session";
 import { createAgentDirectory } from "../identity-names/testing";
 import { bindNames } from "../identity-names/service";
@@ -1135,6 +1136,35 @@ describe("code block renderers", () => {
     } finally {
       error.mockRestore();
     }
+  });
+
+  it("copies a presented block in a selection as its fenced source", () => {
+    const codeBlocks = store([
+      diagram(() => (
+        <svg aria-hidden="true">
+          <text>A</text>
+          <text>B</text>
+        </svg>
+      )),
+    ]);
+    const view = renderDom(
+      <MessageMarkdown
+        {...props(fenced, { extensions: { ...extensions, codeBlocks } })}
+      />,
+      { wrapper: ToastProvider },
+    );
+    const range = document.createRange();
+    range.setStartBefore(view.container.querySelector("p") as Node);
+    range.setEndAfter(view.container.querySelector("pre") as Node);
+    const selection = document.getSelection() as Selection;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(serializeSelection(selection, "markdown")).toBe(
+      "Before\n\n```Mermaid\nflowchart LR\n  A --> B\n```\n\n```ts\nconst x = 1\n```",
+    );
+    expect(serializeSelection(selection, "text")).toContain(
+      "Before\nflowchart LR\n  A --> B\nconst x = 1",
+    );
   });
 
   it("retries the renderer when an edit changes a block it failed on", () => {

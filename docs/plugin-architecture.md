@@ -1001,7 +1001,9 @@ ordinary prose never create notification intent or establish an identity.
 presentation for a fenced code block. `matches(language)` receives the fence's
 info-string language as written; `component` and `action` receive `{ code, language }`. The
 host retains the code frame and its copy action, which copies the source; it
-places the optional `action` control, such as an expand button, before copy.
+places the optional `action` control, such as an expand button, before copy. A
+text selection spanning the block also copies its fenced source, not the
+presentation.
 Matching uses the same resolution as links without an `order`; throwing matchers
 are skipped. A render failure or plugin removal restores the plain block, and
 noninteractive previews always show the plain block. The bundled **Mermaid

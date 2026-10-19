@@ -175,6 +175,9 @@ it("a new chat's first message reaches its local agent at once and the relay rig
     pending: true,
     members: expect.arrayContaining([h.agent.pubkey]),
   });
+  // It lists and opens before its metadata arrives, unlike a temporary room.
+  expect(listed()?.metadataPending).toBeUndefined();
+  expect(h.session.channels.get?.(id)?.metadataPending).toBeUndefined();
   const message = h.session.messages.send(id, "@Agent go", [h.agent.pubkey]);
   h.session.channels.ensure(id);
   await vi.advanceTimersByTimeAsync(0);

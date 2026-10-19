@@ -412,3 +412,108 @@ it("rejects a late upload submission after its destination disappeared without a
   expect(entry.publish).not.toHaveBeenCalled();
   expect(activate).not.toHaveBeenCalled();
 });
+
+it("preserves an older unknown turn when an explicit overlapping send finishes first", () => {
+  const h = fixture();
+  h.remote("working");
+  const first = h.entry("explicit");
+  const next = h.entry("automatic");
+  h.queue.submit(first);
+  h.queue.submit(next);
+  h.remote("unknown");
+  h.queue.sendNow(h.queue.snapshot()[0]?.id ?? "missing");
+  expect(first.publish).toHaveBeenCalledOnce();
+  h.work("explicit", "done");
+  expect(next.publish).not.toHaveBeenCalled();
+  h.remote("ended");
+  expect(next.publish).toHaveBeenCalledOnce();
+});
+
+it("observes independent owned-agent typing and releases on its updates", () => {
+  let typing: { channelId: string; pubkey: string; threadRootId?: string }[] = [
+    { channelId: "chat", pubkey: "agent" },
+  ];
+  const listeners = new Set<() => void>();
+  const unsubscribe = vi.fn();
+  const h = fixture({
+    typing: {
+      snapshot: () => typing,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+          unsubscribe();
+        };
+      },
+    } as RelaySession["typing"],
+    agentChoices: {
+      snapshot: () => ({ identities: [{ pubkey: "agent" }] }),
+      subscribe: () => () => {},
+    } as unknown as RelaySession["agentChoices"],
+  });
+  const entry = h.entry("next");
+  h.queue.submit(entry);
+  expect(entry.publish).not.toHaveBeenCalled();
+  typing = [
+    { channelId: "chat", pubkey: "human" },
+    { channelId: "other", pubkey: "agent" },
+    { channelId: "chat", pubkey: "agent", threadRootId: "thread" },
+  ];
+  for (const listener of listeners) listener();
+  expect(entry.publish).toHaveBeenCalledOnce();
+  h.work("next", "done");
+  expect(unsubscribe).toHaveBeenCalledOnce();
+});
+
+it.each(["missing", "read-only", "denied-error"])(
+  "retires %s destinations on confirmed roster updates, including pending validation",
+  async (loss) => {
+    let roster = {
+      status: "ready",
+      channels: [
+        { id: "chat", name: "Chat" },
+        { id: "other", name: "Other" },
+      ],
+    } as ReturnType<RelaySession["channels"]["list"]>;
+    let changed = () => {};
+    const off = vi.fn();
+    const h = fixture({
+      channels: {
+        list: () => roster,
+        subscribeList: (listener: () => void) => {
+          changed = listener;
+          return off;
+        },
+      } as unknown as RelaySession["channels"],
+    });
+    h.remote("working");
+    const gate = deferred();
+    const entry = { ...h.entry("next"), beforeRelease: () => gate.promise };
+    h.queue.submit(entry);
+    h.queue.sendNow(h.queue.snapshot()[0]?.id ?? "missing");
+    roster = { ...roster, status: "error" };
+    changed();
+    expect(h.queue.snapshot()).toHaveLength(1);
+    roster = {
+      status: "ready",
+      channels: [{ id: "chat", name: "Chat", readOnly: true, cached: true }],
+    } as typeof roster;
+    changed();
+    expect(h.queue.snapshot()).toHaveLength(1);
+    roster = {
+      status: "ready",
+      channels:
+        loss !== "read-only"
+          ? []
+          : [{ id: "chat", name: "Chat", readOnly: true }],
+    } as typeof roster;
+    if (loss === "denied-error") roster = { ...roster, status: "error" };
+    changed();
+    expect(h.queue.snapshot()).toEqual([]);
+    expect(h.deactivate).toHaveBeenCalledOnce();
+    expect(off).toHaveBeenCalledOnce();
+    gate.resolve();
+    await gate.promise;
+    expect(entry.publish).not.toHaveBeenCalled();
+  },
+);

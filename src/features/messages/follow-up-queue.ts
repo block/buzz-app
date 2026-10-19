@@ -84,6 +84,14 @@ function createQueue(session: RelaySession) {
     else waits.delete(channelId);
     return (
       current.length > 0 ||
+      (session.typing?.snapshot() ?? []).some(
+        (entry) =>
+          entry.channelId === channelId &&
+          !entry.threadRootId &&
+          session.agentChoices
+            ?.snapshot()
+            .identities.some((agent) => agent.pubkey === entry.pubkey),
+      ) ||
       (activity?.typing ?? []).some(
         (entry) => entry.channelId === channelId && !entry.threadRootId,
       ) ||
@@ -97,6 +105,27 @@ function createQueue(session: RelaySession) {
     activating = true;
     const unsubscribe = session.agentActivity.subscribe(pump);
     const deactivate = session.agentActivity.activate();
+    const offTyping = session.typing?.subscribe(pump);
+    const offChoices = session.agentChoices?.subscribe(pump);
+    const offChannels = session.channels.subscribeList?.(() => {
+      const roster = session.channels.list();
+      // The store retains channels on ordinary loading/read failures. Confirmed
+      // denial removes them even when list status is error; cached membership
+      // alone does not establish revocation.
+      const retired = new Set(
+        [...waits.keys(), ...entries.map((entry) => entry.channelId)].filter(
+          (id) => {
+            const channel = roster.channels.find((row) => row.id === id);
+            return !channel || (channel.readOnly && !channel.cached);
+          },
+        ),
+      );
+      if (!retired.size) return;
+      entries = entries.filter((entry) => !retired.has(entry.channelId));
+      for (const id of retired) waits.delete(id);
+      emit();
+      pump();
+    });
     const offDismiss = session.outbox?.observeDismiss((item) => {
       if (item.delivery !== "failed") return;
       for (const [channelId, current] of waits) {
@@ -116,6 +145,9 @@ function createQueue(session: RelaySession) {
     });
     stop = () => {
       unsubscribe();
+      offTyping?.();
+      offChoices?.();
+      offChannels?.();
       offDismiss?.();
       offRemoval?.();
       deactivate();
@@ -126,9 +158,7 @@ function createQueue(session: RelaySession) {
     const id = entry.publish();
     // Include the gap between publication and the first working signal.
     waits.set(entry.channelId, [
-      ...(waits.get(entry.channelId) ?? []).filter(
-        (wait) => !entry.recipients.includes(wait.agent),
-      ),
+      ...(waits.get(entry.channelId) ?? []),
       ...entry.recipients.map((agent) => ({ agent, message: id })),
     ]);
     watch();

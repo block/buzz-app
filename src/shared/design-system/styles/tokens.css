@@ -1359,6 +1359,8 @@
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
   --text-color-link: var(--text-link);
+  --text-color-swatch-selection: var(--text-swatch-selection);
+  --text-color-navigation-selected: var(--text-navigation-selected);
   --text-color-message-own: var(--text-message-own);
   --text-color-message-link-own: var(--text-message-link-own);
   --text-color-navigation: var(--text-navigation);

@@ -633,6 +633,8 @@ entry points and any required setup in those steps. Focus on using the plugin;
 skip default-enabled status and descriptions of what turning it off removes.
 For bundled plugins, `src/bundled/readmes.test.ts` enforces this heading structure.
 Contributor specifications may follow a `---` separator after the user guide.
+Settings still displays that content below the guide; the separator only limits
+the heading check in the test.
 
 For example, the bundled Voice Notes guide uses:
 

@@ -380,4 +380,32 @@ it("opens another conversation's tab in its channel, but not the current channel
       channelId: "beta",
     }),
   );
+  // A tab whose id was taken keeps its root before a suffix in its own id.
+  const other = "e".repeat(64);
+  act(() =>
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      {
+        id: `thread:beta:${other}:${crypto.randomUUID()}`,
+        kind: "thread",
+        channelId: "beta",
+        messageId: other,
+      },
+    ]),
+  );
+  await h.user.click(
+    (await menu("Thread · Beta")).getByRole("menuitem", {
+      name: "Open in channel",
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "beta",
+      messageId: other,
+      threadRootId: other,
+    }),
+  );
 });

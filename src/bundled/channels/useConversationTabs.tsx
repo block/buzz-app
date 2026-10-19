@@ -35,6 +35,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import { useChannelPanels } from "./useChannelPanels";
 import {
   panelTabId,
+  rootOfTab,
   selectedTabId,
   tabPane,
   type ConversationTab as Tab,
@@ -600,12 +601,10 @@ export function useConversationTabs({
       linkedThread.current(channelId, messageId, rootId),
     [],
   );
-  const rootOf = (tab: Extract<Tab, { kind: "thread" }>) =>
-    tab.rootId ?? tab.id.slice(tab.id.lastIndexOf(":") + 1);
   // Several open threads stay distinguishable by their original message.
   function threadLabel(tab: Extract<Tab, { kind: "thread" }>, name?: string) {
     if (tab.name) return tab.name;
-    const rootId = rootOf(tab);
+    const rootId = rootOfTab(tab);
     const root = queries.channels
       .window(tab.channelId)
       .rows.find((row) => row.id === rootId);
@@ -658,7 +657,9 @@ export function useConversationTabs({
                   },
                   channelId: tab.channelId,
                   ...(tab.messageId && { messageId: tab.messageId }),
-                  ...(tab.kind === "thread" && { threadRootId: rootOf(tab) }),
+                  ...(tab.kind === "thread" && {
+                    threadRootId: rootOfTab(tab),
+                  }),
                 }),
             },
           ],

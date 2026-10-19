@@ -1210,8 +1210,10 @@ Names pasted as text never create notification intent.
 Tools receive `insertText`, `insertMention({ pubkey, name })`,
 `insertMentions([{ pubkey, name }, …])`, `insertResource` and `focus` commands,
 and read-only `recipients`: the draft's selected mentions as `{ pubkey, name }` in
-draft order, so a tool can act for whoever the draft addresses. The array keeps its
-identity until the recipients change.
+draft order, so a tool can act for whoever the draft addresses. There is one entry
+per mention, so a person mentioned twice appears twice. Recipients the host adds
+at send time, such as a Solo channel's sole agent, are not included. The array
+keeps its identity until the recipients change.
 Mention insertion atomically records visible text and exact notification intent;
 `true` means the edit was accepted, **not** that membership or delivery succeeded.
 The host serializes successive commands using the latest draft and selection,

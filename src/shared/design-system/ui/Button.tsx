@@ -24,9 +24,12 @@ export type ButtonProps = Omit<
   children: ReactNode;
   variant?: ButtonVariant;
   size?: ButtonSize;
-  shape?: "capsule" | "control" | "icon";
   loading?: boolean;
-};
+} & (
+    | { shape?: "capsule" | "control" }
+    // Icon geometry has no visible label, so it requires an accessible name.
+    | { shape: "icon"; "aria-label": string }
+  );
 
 /** Base UI owns activation. Legacy variant/size names remain during migration. */
 export function Button({

@@ -57,6 +57,7 @@ export function WorkspaceControl({
       )
       .finally(() => setBusy(false));
   };
+  const name = project ? `Workspace: ${project.name}` : "Add workspace";
   return (
     <span>
       <MenuRoot>
@@ -67,14 +68,14 @@ export function WorkspaceControl({
             snapshot.status === "idle" ||
             snapshot.status === "loading"
           }
-          aria-label={project ? `Workspace: ${project.name}` : "Add workspace"}
           render={(props) => (
             <Button
               {...props}
               variant="ghost"
               size="sm"
               shape={project ? "capsule" : "icon"}
-              title={project ? `Workspace: ${project.name}` : "Add workspace"}
+              aria-label={name}
+              title={name}
             >
               <Cube3dSphereIcon size={16} aria-hidden="true" />
               {project && (

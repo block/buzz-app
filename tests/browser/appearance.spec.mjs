@@ -120,7 +120,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
       return color;
     }),
   );
-  // Selection follows the chosen accent at the default vibe level.
+  // Selection follows the chosen accent at the default accent level.
   await expect(button(page, "Appearance")).toHaveCSS(
     "background-color",
     await page.evaluate(() => {
@@ -552,7 +552,7 @@ test("compiled host preserves compatibility utility meanings", async ({
       "border-top-color",
       mode === "Light" ? "rgb(232, 232, 232)" : "rgb(35, 35, 35)",
     );
-    // The legacy fill keeps meaning "prominent", whatever the vibe level.
+    // The legacy fill keeps meaning "prominent", whatever the accent level.
     await expect(page.locator("#old-primary")).toHaveCSS(
       "background-color",
       await page.evaluate(() => {

@@ -36,7 +36,7 @@ const COLOR_LEVEL_LABELS: Record<ColorLevel, string> = {
   more: "Swarmin’",
   full: "Buzzin’",
 };
-const COLOR_LEVEL_STEPS = COLOR_LEVELS.map((level) => ({
+const COLOR_LEVEL_OPTIONS = COLOR_LEVELS.map((level) => ({
   value: level,
   label: COLOR_LEVEL_LABELS[level],
   leading: <AccentLevelIndicator level={level} />,
@@ -192,7 +192,7 @@ export function AppearanceSettings({
                 label="Accent level"
                 value={colorLevel}
                 leading={<AccentLevelIndicator level={colorLevel} />}
-                groups={[{ label: "", options: COLOR_LEVEL_STEPS }]}
+                groups={[{ label: "", options: COLOR_LEVEL_OPTIONS }]}
                 onValueChange={(value) =>
                   appearance.setColorLevel(value as ColorLevel)
                 }

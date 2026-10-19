@@ -329,21 +329,6 @@ function audit(mode, map, baseline) {
       `${mode}: --border-floating-control on --surface-popover — ${floatingBoundary === null ? "unresolved color" : `${floatingBoundary.toFixed(3)}:1`}, needs 3:1`,
     );
   }
-  // A step slider's selected track meets the unfilled track, and its thumb
-  // sits on both the track and panel. These are standalone marks, not button
-  // fills with paired ink; keyboard focus is not their resting boundary.
-  for (const surfaceRole of [
-    "--affordance-subtle-pressed",
-    "--surface-panel",
-  ]) {
-    const mark = resolve(map, "--affordance-prominent-mark");
-    const surface = resolve(map, surfaceRole);
-    const ratio = mark && surface ? wcagRatio(mark, surface) : null;
-    if (ratio === null || ratio < 3)
-      boundaryFailures.push(
-        `${mode}: step-slider --affordance-prominent-mark on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
-      );
-  }
   for (const role of BOUNDARY_ROLES) {
     const surfaces =
       role.startsWith("--status-avatar-") || role === "--status-away"

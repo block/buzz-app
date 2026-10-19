@@ -240,7 +240,7 @@ test.describe("community administration permissions", () => {
     });
     // The account menu finishes its focus handoff before testing section focus.
     await expect(page.getByRole("main")).toBeFocused();
-    await selectSettingsSection(page, "Plugins");
+    await selectSettingsSection(page, "Manage plugins");
     await setPluginEnabled(page, "Membership", true);
     await expect(sections).toContainText("Community admin");
     const membership = sections.getByRole("button", {

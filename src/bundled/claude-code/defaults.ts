@@ -1,6 +1,9 @@
 import { config, type Config } from "./runtime";
 
-export type ClaudeProviderDefaults = Readonly<{ model: string }>;
+export type ClaudeProviderDefaults = Readonly<{
+  model: string;
+  effort?: string;
+}>;
 const NATIVE_DEFAULTS: ClaudeProviderDefaults = Object.freeze({ model: "" });
 const STORAGE_KEY = "buzz.claude-code.provider-defaults.v1";
 
@@ -24,12 +27,20 @@ export class ClaudeDefaults {
     return {
       ...explicit,
       model: explicit.model.trim() ? explicit.model : this.state.model,
+      effort:
+        explicit.effort ||
+        (!explicit.model.trim() || explicit.model === this.state.model
+          ? (this.state.effort ?? "")
+          : ""),
     };
   }
   save(next: ClaudeProviderDefaults) {
-    const { model } = next;
-    this.storage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, model }));
-    this.state = Object.freeze({ model });
+    const { model, effort = "" } = next;
+    this.storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ version: 1, model, effort }),
+    );
+    this.state = Object.freeze({ model, effort });
     for (const listener of this.listeners) listener();
   }
   private read(): ClaudeProviderDefaults {
@@ -43,7 +54,12 @@ export class ClaudeDefaults {
         (value as { version?: unknown }).version === 1 &&
         typeof (value as { model?: unknown }).model === "string"
       )
-        return Object.freeze({ model: (value as { model: string }).model });
+        return Object.freeze({
+          model: (value as { model: string }).model,
+          ...(typeof (value as { effort?: unknown }).effort === "string"
+            ? { effort: (value as { effort: string }).effort }
+            : {}),
+        });
     } catch {
       // Malformed local preferences preserve Claude Code's native default.
     }

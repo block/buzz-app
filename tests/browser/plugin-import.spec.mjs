@@ -448,6 +448,8 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
       manifest: {
         id: `example.${name}`,
         name: `Example ${name}`,
+        description:
+          "Review repository activity and share detailed project updates with your community and collaborators.",
         apiVersion: 1,
       },
       revision: name,
@@ -562,6 +564,42 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   ).toEqual({ token: "preview-one", path: "dist" });
   const enabled = pluginAction(page, "Example two");
   await expect(enabled).toHaveAccessibleName("Enable Example two");
+  const row = button(page, "View Example two details");
+  await expect(row).toHaveAttribute("data-updatable", "true");
+  for (const width of [1100, 768]) {
+    await page.setViewportSize({ width, height: 950 });
+    await row.scrollIntoViewIfNeeded();
+    await expect
+      .poll(() =>
+        row.evaluate((node) => {
+          const description = node.querySelector('[id^="plugin-description-"]');
+          const actions = [...node.parentElement.querySelectorAll("button")]
+            .filter((button) => button !== node)
+            .map((button) => button.getBoundingClientRect());
+          const range = document.createRange();
+          range.selectNodeContents(description);
+          return [...range.getClientRects()].every((rect) =>
+            actions.every(
+              (action) =>
+                rect.right <= action.left ||
+                rect.left >= action.right ||
+                rect.bottom <= action.top ||
+                rect.top >= action.bottom,
+            ),
+          );
+        }),
+      )
+      .toBe(true);
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.screenshot({ path: info.outputPath("updatable-row-light.png") });
+  await page.setViewportSize({ width: 480, height: 850 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({
+    path: info.outputPath("updatable-row-dark-narrow.png"),
+  });
+  await page.setViewportSize({ width: 1440, height: 950 });
+
   await button(page, "View Example two details").click();
   await expect(button(page, "Reload")).toBeVisible();
   await button(page, "Reload").click();

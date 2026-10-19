@@ -11,7 +11,7 @@ export function pluginAction(page, name) {
         exact: true,
       }),
     })
-    .getByRole("button", { name: /^(Enable|Disable) / });
+    .getByRole("button", { name: /^(Enable|Disable|Unavailable) / });
 }
 
 export async function setPluginEnabled(page, name, enabled) {

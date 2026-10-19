@@ -430,6 +430,8 @@ export type AgentProvider = Readonly<{
   attentionAction?: (() => void) | undefined;
   /** Provider-owned recovery/progress controls and optional saved defaults. */
   DialogBody: ComponentType<{ onClose(): void }>;
+  /** Compact device default picker; persistence remains provider-owned. */
+  DefaultControl?: ComponentType<{ onConfigure(): void }>;
 }>;
 /** The artifact types an agent's config channel binding has made synced. */
 export type ConfigBinding = Readonly<{

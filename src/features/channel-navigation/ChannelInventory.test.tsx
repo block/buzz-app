@@ -19,6 +19,7 @@ import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-stor
 import type {
   SidebarGroups,
   SidebarPreferences,
+  SidebarFilterMode,
 } from "../relay/sidebar-preferences";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList } from "../relay/contracts";
@@ -198,6 +199,104 @@ function fixture(
   );
   return { view, navigator, snapshot, list, session, publish };
 }
+
+it("uses relay section filters across navigation and remount, and offers only hidden channels", async () => {
+  const user = userEvent.setup();
+  let filters: Record<string, SidebarFilterMode> = {};
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+      filters,
+    }),
+    available: true,
+    writeFilter: async (group, mode) => {
+      filters = mode === "all" ? {} : { [group]: mode };
+      return { filters, activeWindowSeconds: {} };
+    },
+  });
+  const h = fixture(preferences.queries);
+  const mounted = render(h.view("alpha"));
+  await screen.findByRole("button", { name: "gamma" });
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  expect(screen.queryByRole("menuitem", { name: "View All" })).toBeNull();
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  fireEvent.click(
+    await screen.findByRole("menuitemradio", { name: "Unreads" }),
+  );
+  expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  const betaChoice = await screen.findByRole("menuitem", { name: "beta" });
+  const choices = betaChoice.closest('[role="menu"]');
+  assert(choices instanceof HTMLElement);
+  expect(within(choices).queryByRole("menuitem", { name: "alpha" })).toBeNull();
+  expect(
+    within(choices).getByRole("menuitem", { name: "gamma" }),
+  ).toBeVisible();
+  fireEvent.click(betaChoice);
+  expect(h.navigator.open).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "conversation", channelId: "beta" }),
+  );
+  mounted.rerender(h.view("beta"));
+  expect(screen.getByRole("button", { name: "beta" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "alpha" })).toBeNull();
+  mounted.rerender(h.view("not-in-this-section"));
+  expect(screen.queryByText("0 matches")).toBeNull();
+  expect(
+    screen
+      .getByLabelText("Channels", { selector: "summary" })
+      .closest("details"),
+  ).toHaveAttribute("open");
+  expect(screen.queryByText("No channels match this filter.")).toBeNull();
+  mounted.unmount();
+  expect(filters).toEqual({ channels: "unreads" });
+  expect(
+    readView("https://relay.test:viewer", "channel-sidebar", {}),
+  ).not.toHaveProperty("sectionFilters");
+  const restored = render(h.view("gamma"));
+  expect(await screen.findByRole("button", { name: "gamma" })).toBeVisible();
+  expect(screen.queryByText("0 matches")).toBeNull();
+  expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+  restored.rerender(h.view("alpha"));
+  expect(screen.getByRole("button", { name: "alpha" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "gamma" })).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: "All" }));
+  expect(screen.getByRole("button", { name: "beta" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "gamma" })).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  expect(screen.queryByRole("menuitem", { name: "View All" })).toBeNull();
+  restored.unmount();
+  expect(
+    readView("https://relay.test:viewer", "channel-sidebar", {}),
+  ).not.toHaveProperty("sectionFilters");
+  expect(filters).toEqual({});
+  preferences.dispose();
+});
+
+it("ignores local and legacy filter state", async () => {
+  writeView("https://relay.test:viewer", "channel-sidebar", {
+    filter: "unreads",
+    sectionFilters: { channels: "bogus", dms: null },
+  });
+  const h = fixture();
+  render(h.view("alpha"));
+  expect(await screen.findByRole("button", { name: "beta" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "gamma" })).toBeVisible();
+});
 
 it("does not rebuild unchanged rows on channel switches", async () => {
   const h = fixture();

@@ -25,6 +25,8 @@ export type ChannelSummary = Readonly<{
   preview?: string | undefined;
   /** Newest verified user-visible activity for sidebar ordering, in Unix seconds. */
   lastActivityAt?: number | undefined;
+  /** Activity has been observed or read successfully, including an empty result. */
+  activityKnown?: true;
   /** Readable public nonmember channel; not part of the joined roster. */
   readOnly?: true;
   /** Downloaded membership is display-only pending current relay confirmation. */

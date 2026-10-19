@@ -100,6 +100,14 @@ import TablerChatCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessage
 export const ChatCircleIcon = defineIcon("tabler", TablerChatCircleIcon);
 import TablerChatsCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessages.mjs";
 export const ChatsCircleIcon = defineIcon("tabler", TablerChatsCircleIcon);
+import { ChatUnreadArtwork } from "./ChatUnread";
+export const ChatUnreadIcon = defineIcon("custom", ChatUnreadArtwork, {
+  meaning: "Conversations with unread messages",
+  category: "Message filtering",
+  provenance:
+    "Designer-requested adaptation of the MIT-licensed Tabler MessageCircle geometry with an unread dot.",
+  intendedSizes: [{ width: 14, height: 14 }],
+});
 import TablerCheckIcon from "@tabler/icons-react/dist/esm/icons/IconCheck.mjs";
 export const CheckIcon = defineIcon("tabler", TablerCheckIcon);
 import TablerChecksIcon from "@tabler/icons-react/dist/esm/icons/IconChecks.mjs";
@@ -259,6 +267,8 @@ import TablerSmileyPlusIcon from "@tabler/icons-react/dist/esm/icons/IconMoodPlu
 export const SmileyPlusIcon = defineIcon("tabler", TablerSmileyPlusIcon);
 import TablerSmileyStickerIcon from "@tabler/icons-react/dist/esm/icons/IconSticker2.mjs";
 export const SmileyStickerIcon = defineIcon("tabler", TablerSmileyStickerIcon);
+import TablerFilter2Icon from "@tabler/icons-react/dist/esm/icons/IconFilter2.mjs";
+export const Filter2Icon = defineIcon("tabler", TablerFilter2Icon);
 import TablerSlidersHorizontalIcon from "@tabler/icons-react/dist/esm/icons/IconAdjustmentsHorizontal.mjs";
 export const SlidersHorizontalIcon = defineIcon(
   "tabler",
@@ -515,6 +525,8 @@ export const BrainIcon = defineIcon("tabler", TablerBrainIcon);
 import TablerThinkingHighIcon from "@tabler/icons-react/dist/esm/icons/IconThinkingHigh.mjs";
 export const ThinkingHighIcon = defineIcon("tabler", TablerThinkingHighIcon);
 
+import TablerMetaLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandMeta.mjs";
+export const MetaLogoIcon = defineIcon("tabler", TablerMetaLogoIcon);
 import TablerFileTypePdfIcon from "@tabler/icons-react/dist/esm/icons/IconFileTypePdf.mjs";
 export const FileTypePdfIcon = defineIcon("tabler", TablerFileTypePdfIcon);
 

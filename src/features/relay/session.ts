@@ -420,7 +420,7 @@ export function createRelaySession(
       activity.accessChanged();
       memories.clear();
       presence.clear();
-      channelActivity.clear();
+      channelActivity.retain(canReadRemote);
       activityRosterKey = undefined;
       archives.clear();
       workflows.clear();

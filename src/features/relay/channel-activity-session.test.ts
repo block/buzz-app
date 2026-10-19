@@ -272,6 +272,29 @@ it("cancels only after the last Recent section clears and refreshes unchanged ro
     h.owner.dispose();
   }
 });
+// Clearing every value on one channel's access loss flashed Recent sections to
+// A–Z until the next read finished.
+it("losing one channel keeps the others' activity while the roster rereads", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    await h.preferences.setSort("channels", "recent", []);
+    take(h.pending).resolve([
+      message(h.peer, "alpha", "a", 50),
+      message(h.peer, "beta", "b", 60),
+    ]);
+    await flush();
+    h.live().receive([
+      roster(h.relay, "alpha", [], Math.floor(Date.now() / 1000) + 1),
+    ]);
+    const find = (id: string) =>
+      h.channels.list().channels.find((channel) => channel.id === id);
+    expect(find("beta")?.lastActivityAt).toBe(60);
+    expect(find("alpha")?.lastActivityAt).toBeUndefined();
+  } finally {
+    h.owner.dispose();
+  }
+});
 it.each(["clear", "dispose", "revoke", "disconnect"] as const)(
   "%s fences activity reads and cannot leak late data into a new lifetime",
   async (action) => {

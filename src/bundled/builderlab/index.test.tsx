@@ -13,6 +13,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { HostService, type HostResponse } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
+import { DecisionsService } from "../../features/decisions/service";
 import {
   AgentsService,
   type AgentCommunities,
@@ -95,6 +96,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
     const cards = new SettingsCardsService(root);
+    const decisions = new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     const agents = provideAgents(root, community);
@@ -126,6 +128,8 @@ it.each([undefined, "", "http://builderlab.example"])(
         ),
       ).toEqual([]);
       expect(agents.types()).toHaveLength(0);
+      // Nor a decision provider.
+      expect(decisions.providers()).toEqual([]);
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
       // With no agent type to create, the empty page's Create tile is off.
@@ -175,6 +179,7 @@ it.each([undefined, false, true])(
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
     const cards = new SettingsCardsService(root);
+    new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     const agents = provideAgents(root, community);
@@ -313,6 +318,7 @@ it.each([
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
     const cards = new SettingsCardsService(root);
+    new DecisionsService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     provideAgents(root, community);
@@ -477,6 +483,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
   const cards = new SettingsCardsService(root);
+  const decisions = new DecisionsService(root, localStorage);
   const community = communityFixture();
   root.provide("relay", community.relay as never);
   const agents = provideAgents(root, community);
@@ -535,6 +542,15 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       "Signed in as a@example.com.",
     );
     expect(document.body).not.toHaveTextContent("private-token");
+    // The sign-in makes Builderlab a ready decision provider, but decisions
+    // move to it only when the user chooses it.
+    const [provider] = decisions.providers();
+    expect(provider?.key).toBe("block.builderlab/builderlab");
+    expect(provider?.status()).toBe("ready");
+    expect(decisions.backend()).toBeUndefined();
+    decisions.setBackend("block.builderlab/builderlab");
+    expect(decisions.status()).toBe("ready");
+    expect(decisions.backend()).toBe("block.builderlab/builderlab");
     expect(native.invoke).toHaveBeenCalledWith("oauth_callback_wait", {
       id: "native-attempt-id",
     });

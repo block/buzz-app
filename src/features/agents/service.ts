@@ -224,8 +224,9 @@ export type AgentSessions = Readonly<{
   subscribe(listener: () => void): () => void;
 }>;
 /** The agent as `run` holds it. A run's handle works for as long as the
- * agent exists; one from `Agents.handle` throws on each call once `handle`
- * would no longer return it. */
+ * agent exists; one from `Agents.handle` fails each call while `handle`
+ * would not return it, and for good once the agent's type or its plugin is
+ * replaced, so ask for a new one then. */
 export type AgentHandle = Readonly<{
   pubkey: string;
   name: string;

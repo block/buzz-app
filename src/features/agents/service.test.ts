@@ -1539,6 +1539,12 @@ it("hands out an agent's handle only to its new type's plugin once a change of t
   await expect(
     kept?.publish({ kind: 9, content: "after", tags: [] }),
   ).rejects.toThrow("ask for its handle again");
+  // Changing back hands out a new handle, but never revives the kept one.
+  await service.retype(bot, "example/echo");
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  await expect(
+    kept?.publish({ kind: 9, content: "revived", tags: [] }),
+  ).rejects.toThrow("ask for its handle again");
   expect(await published(native, 9)).toEqual([]);
 });
 

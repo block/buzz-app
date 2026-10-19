@@ -473,8 +473,9 @@ export class AgentRunners {
   }
   /** The agent's handle outside any run, while this copy runs it with a
    * type of `pluginId`, not changing it, and its community is live. Each
-   * call through the handle checks that again, with the same runner and
-   * type, so a kept handle stops working once it no longer holds. */
+   * call through the handle checks that again, so a kept handle stops
+   * working while it no longer holds, and for good once the agent's type
+   * or its plugin is replaced. */
   handle(pubkey: string, pluginId: string) {
     const held = () => {
       const runner = this.runners.get(pubkey);

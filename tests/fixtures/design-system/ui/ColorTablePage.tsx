@@ -1,4 +1,3 @@
-import { BRAND_GRADIENTS } from "../../../../src/shared/design-system/tokens/brand";
 import { Link } from "@tanstack/react-router";
 import { Fragment, useState } from "react";
 
@@ -66,17 +65,6 @@ function collectRows(): TableRow[] {
         variable: step.variable,
         layer: "ramp",
         group: hue.usedBy ? `${hue.id} — ${hue.usedBy}` : hue.id,
-      });
-    }
-  }
-
-  for (const gradient of BRAND_GRADIENTS) {
-    for (const endpoint of ["start", "end"] as const) {
-      rows.push({
-        token: `art-plugin-${gradient.category}-${endpoint}`,
-        variable: `--art-plugin-${gradient.category}-${endpoint}`,
-        layer: "ramp",
-        group: `Plugin gradient — ${gradient.category}`,
       });
     }
   }

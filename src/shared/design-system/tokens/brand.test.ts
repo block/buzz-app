@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { BRAND_GRADIENTS } from "./brand";
+import { ROLE_GROUPS } from "./registry";
 
 const css = readFileSync(
   new URL("../styles/tokens.css", import.meta.url),
@@ -58,4 +59,21 @@ it("gives six distinct identities comparable contrast across the full gradient",
       expect((luminance + 0.05) / 0.05).toBeGreaterThanOrEqual(4.5);
     }
   }
+});
+
+it("keeps proposed artwork in the palette and registers every public token", () => {
+  const start = css.indexOf("/* PLUGIN ARTWORK PALETTE");
+  const end = css.indexOf("/* END PLUGIN ARTWORK PALETTE */");
+  expect(start).toBeGreaterThan(0);
+  expect(end).toBeLessThan(css.indexOf("LAYER 1 — FAMILIES"));
+  const roles = ROLE_GROUPS.flatMap(({ roles }) => roles);
+  for (const gradient of BRAND_GRADIENTS)
+    for (const part of ["start", "end", "gradient"]) {
+      const variable = `--art-plugin-${gradient.category}-${part}`;
+      expect(css.slice(start, end)).toContain(`${variable}:`);
+      expect(roles.find((role) => role.variable === variable)).toMatchObject({
+        status: "proposed",
+        owner: "Settings plugin catalog",
+      });
+    }
 });

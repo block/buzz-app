@@ -1,3 +1,5 @@
+import { BRAND_GRADIENTS } from "./brand";
+
 /**
  * Documentation metadata for the shared tokens: names, purposes, sources,
  * and adoption status. The viewer renders these entries; token guards check
@@ -248,6 +250,31 @@ export const RAMPS: Ramp[] = [
 
 /** Semantic roles name color jobs; the palette remains an implementation detail. */
 export const ROLE_GROUPS: RoleGroup[] = [
+  {
+    id: "plugin-artwork",
+    name: "Plugin artwork (proposed)",
+    description:
+      "Category gradients for the pending Settings plugin catalog migration.",
+    roles: BRAND_GRADIENTS.flatMap((gradient) =>
+      (["start", "end", "gradient"] as const).map(
+        (part): Role => ({
+          token: `art-plugin-${gradient.category}-${part}`,
+          variable: `--art-plugin-${gradient.category}-${part}`,
+          pointsAt:
+            part === "gradient"
+              ? `${gradient.from} → ${gradient.to}`
+              : part === "start"
+                ? gradient.from
+                : gradient.to,
+          use: `${gradient.name} decorative artwork ${part}.`,
+          status: "proposed",
+          owner: "Settings plugin catalog",
+          exception:
+            "Named artwork palette: fixed OKLCH endpoints and complete gradient, shared across themes.",
+        }),
+      ),
+    ),
+  },
   {
     id: "semantic-surface",
     name: "Surface",

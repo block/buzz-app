@@ -29,9 +29,9 @@ it("selects a shade and copies its CSS reference, with a manual fallback", async
     configurable: true,
     value: { writeText },
   });
-  render(createElement(BrandColors));
+  const { container } = render(createElement(BrandColors));
   fireEvent.click(screen.getByRole("button", { name: "iris 11" }));
-  expect(screen.getByRole("button", { name: "cobalt 9" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "chartreuse 9" })).toHaveAttribute(
     "aria-pressed",
     "false",
   );
@@ -39,15 +39,17 @@ it("selects a shade and copies its CSS reference, with a manual fallback", async
     "aria-pressed",
     "true",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Copy CSS" }));
-  expect(await screen.findByText("Copied CSS variable.")).toBeInTheDocument();
-  expect(writeText).toHaveBeenCalledWith(
-    '[data-accent="iris"][data-color-mode="light"] { color: var(--accent-11); }',
-  );
+  const scope = container.querySelector<HTMLElement>(".brand-color-selection");
+  if (!scope) throw new Error("Missing selected color scope");
+  scope.style.setProperty("--accent-11", "#5b4bbe");
+  await screen.findByText("#5b4bbe");
+  fireEvent.click(screen.getByRole("button", { name: "Copy value" }));
+  expect(await screen.findByText("Copied color value.")).toBeInTheDocument();
+  expect(writeText).toHaveBeenCalledWith("#5b4bbe");
   fireEvent.click(screen.getByRole("button", { name: "jade 12" }));
   expect(screen.getByRole("status")).toBeEmptyDOMElement();
   writeText.mockRejectedValueOnce(new Error("denied"));
-  fireEvent.click(screen.getByRole("button", { name: "Copy CSS" }));
+  fireEvent.click(screen.getByRole("button", { name: "Copy value" }));
   expect(await screen.findByText(/Could not copy/)).toBeInTheDocument();
   expect(screen.getByText("jade · var(--accent-12)")).toBeInTheDocument();
 });

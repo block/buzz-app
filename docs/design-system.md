@@ -438,3 +438,14 @@ Tests check the original endpoint hues, gamut and sampled contrast, so contrast
 normalization cannot silently collapse the color-to-color transitions again.
 Icon lighting changes composite pixels and needs separate visual acceptance.
 Appearance preferences and existing semantic colors retain their values.
+
+Plugin artwork tokens are proposed and registered under the Settings plugin
+catalog owner. Keep this PR in draft and merge it only with/after the #1246
+consumer migration, including its agent-tools category. The standalone viewer
+is an exploration, not a shipped plugin-category contract.
+
+The approved treatment deliberately uses C 0.10 for every endpoint, so all six
+gradients share chroma as well as reference luminance. Per-pair gamut limits
+could permit more saturation; that is a future visual decision, not an automatic
+consequence of contrast normalization. Hues above 360 retain the original
+unwrapped coordinates so direction and the 35-degree sweep remain explicit.

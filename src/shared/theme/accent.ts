@@ -1,15 +1,9 @@
 import type { CSSProperties } from "react";
+import { ACCENTS } from "../design-system/tokens/brand";
 
 // One device-local accent family; the vibe level decides how much it paints.
 // Chartreuse is the brand default; the vibe level decides how much it paints.
-export const ACCENTS = [
-  "chartreuse",
-  "flame",
-  "magenta",
-  "iris",
-  "cobalt",
-  "jade",
-] as const;
+export { ACCENTS };
 export type Accent = (typeof ACCENTS)[number];
 export const DEFAULT_ACCENT: Accent = "chartreuse";
 export const ACCENT_KEY = "buzz-accent.v1";

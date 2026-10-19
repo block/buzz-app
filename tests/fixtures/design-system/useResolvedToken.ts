@@ -79,7 +79,8 @@ function readDeclaredValues(isDark: boolean): Map<string, string> {
 
 /**
  * Resolves a list of custom properties, re-running whenever the colour scheme
- * changes.
+ * changes. When scope is supplied, only value is scoped; declared and
+ * pointsAtVariable describe the root stylesheet chain.
  */
 export function useResolvedTokens(
   variables: string[],

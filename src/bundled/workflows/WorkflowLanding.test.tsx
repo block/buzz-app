@@ -856,6 +856,12 @@ it("keeps run feedback after the card leaves the filtered view", async () => {
   ).toBeNull();
   act(() => fixture.finish("rejected"));
   expect(await screen.findByText("Failed to trigger workflow")).toBeVisible();
+  // Dismissing a failed run also clears it from the outbox.
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
+  await waitFor(() =>
+    expect(fixture.capability.operations.snapshot()).toEqual([]),
+  );
+  expect(fixture.calls.dismiss).toHaveLength(1);
 });
 
 it("shows a synchronous detail action failure outside the card grid", async () => {
@@ -894,6 +900,10 @@ it("keeps the detail mounted and focused across a revision readback", async () =
       name: "Enabled in configuration",
     });
     expect(toggle).not.toBeChecked();
+    // The page footnote is hidden while a narrow detail pane is open.
+    expect(
+      within(detail).getByText(/Turning off does not confirm runs/),
+    ).toBeVisible();
     toggle.focus();
     const user = userEvent.setup();
     await user.click(toggle);

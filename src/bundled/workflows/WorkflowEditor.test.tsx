@@ -231,6 +231,9 @@ test("valid advanced YAML stays valid when Form mode cannot represent it", async
   expect(screen.getByRole("alert")).toBeInTheDocument();
   expect(yaml).not.toHaveAttribute("aria-invalid", "true");
   expect(yaml).toHaveAccessibleDescription(/Original text is kept/);
+  expect(
+    screen.getByRole("switch", { name: "Enabled in configuration" }),
+  ).toBeVisible();
   expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
 });
 

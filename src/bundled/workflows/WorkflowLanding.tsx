@@ -715,7 +715,10 @@ function WorkflowCard({
         <SettingsGroup>
           <SwitchPreferenceRow
             label="Enabled in configuration"
-            {...(toggleReason ? { description: toggleReason } : {})}
+            description={
+              toggleReason ??
+              "Saved configuration only. Turning off does not confirm runs have stopped or cancel active runs."
+            }
             checked={enabled}
             disabled={!!toggleReason}
             onCheckedChange={(next) => {
@@ -1073,11 +1076,22 @@ export function WorkflowLanding({
                   : "error"
             }
             timeout={run.outcome === "succeeded" ? 4000 : 0}
-            onDismiss={() =>
+            onDismiss={() => {
               setRunRequests((current) =>
                 current.filter((eventId) => eventId !== run.eventId),
-              )
-            }
+              );
+              // A failed run stays in the outbox until dismissed there.
+              if (run.outcome !== "succeeded")
+                capability.operations
+                  .dismiss(run.eventId)
+                  .catch((cause: unknown) =>
+                    setError(
+                      cause instanceof Error
+                        ? cause.message
+                        : "The notice could not be dismissed. Try again.",
+                    ),
+                  );
+            }}
           />
         ))}
       {error && (

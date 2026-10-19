@@ -154,7 +154,8 @@ export function WorkflowEditor({
     <SwitchPreferenceRow
       label="Enabled in configuration"
       description={
-        controlReason ??
+        // In YAML view the status line directly below already shows the reason.
+        (mode === "form" || readOnly ? controlReason : undefined) ??
         "Configuration changes apply on save. Turning off does not confirm runs have stopped or cancel active runs."
       }
       checked={fields.enabled !== false}
@@ -345,26 +346,30 @@ export function WorkflowEditor({
               }
             />
           ) : (
-            <Field
-              label="Workflow YAML"
-              error={error}
-              description="Original text is kept until you edit. Form changes may reformat YAML. Schedules use UTC."
-            >
-              <Textarea
-                id={`${id}-yaml`}
-                variant="code"
-                rows={18}
-                spellCheck={false}
-                autoCapitalize="off"
-                readOnly={disabled}
-                value={yaml}
-                onChange={(event) => {
-                  setFormDraft(null);
-                  setModeError(null);
-                  onChange(event.currentTarget.value);
-                }}
-              />
-            </Field>
+            <div className="workflow-form">
+              <Field
+                label="Workflow YAML"
+                error={error}
+                description="Original text is kept until you edit. Form changes may reformat YAML. Schedules use UTC."
+              >
+                <Textarea
+                  id={`${id}-yaml`}
+                  variant="code"
+                  rows={18}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  readOnly={disabled}
+                  value={yaml}
+                  onChange={(event) => {
+                    setFormDraft(null);
+                    setModeError(null);
+                    onChange(event.currentTarget.value);
+                  }}
+                />
+              </Field>
+              {enableSwitch}
+              {details}
+            </div>
           )}
           {error &&
             // Runs and step settings hide the field an error belongs to.

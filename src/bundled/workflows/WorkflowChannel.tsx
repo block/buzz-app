@@ -438,13 +438,31 @@ export function WorkflowChannel({
                         : "text-body-sm text-secondary"
                     }
                   >
-                    {runOperation.outcome === "unknown"
-                      ? "The run may have started, but its response was lost."
-                      : messages.trigger[runOperation.outcome]}
+                    {messages.trigger[runOperation.outcome]}
                     {runOperation.outcome === "rejected" &&
                       `: ${runOperation.error || "The relay did not create a workflow run."}`}
                   </p>
                 )}
+                {runOperation &&
+                  runOperation.outcome !== "pending" &&
+                  runOperation.outcome !== "succeeded" && (
+                    <Button
+                      size="compact"
+                      onClick={() =>
+                        void dismiss(runOperation.eventId).then(
+                          () => setRunRequest(undefined),
+                          (cause: unknown) =>
+                            setError(
+                              cause instanceof Error
+                                ? cause.message
+                                : "The notice could not be dismissed. Try again.",
+                            ),
+                        )
+                      }
+                    >
+                      Dismiss notice
+                    </Button>
+                  )}
                 {operation?.outcome === "rejected" && (
                   <Button
                     onClick={() => {
@@ -468,17 +486,23 @@ export function WorkflowChannel({
               </>
             }
             details={
-              draft.original && (
-                <details>
-                  <summary>Configuration details</summary>
-                  <p className="text-mono-sm workflow-key">
-                    Owner: {draft.original.owner}
-                  </p>
-                  <p className="text-mono-sm workflow-key">
-                    Revision: {draft.original.revision}
-                  </p>
-                </details>
-              )
+              <>
+                <p className="text-body-sm text-subtle">
+                  Unsaved changes stay in this editor. Leaving or reloading
+                  discards them without cancelling submitted operations.
+                </p>
+                {draft.original && (
+                  <details>
+                    <summary>Configuration details</summary>
+                    <p className="text-mono-sm workflow-key">
+                      Owner: {draft.original.owner}
+                    </p>
+                    <p className="text-mono-sm workflow-key">
+                      Revision: {draft.original.revision}
+                    </p>
+                  </details>
+                )}
+              </>
             }
           >
             {pendingSelection && (

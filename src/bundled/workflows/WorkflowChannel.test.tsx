@@ -137,8 +137,14 @@ it("releases a mounted run latch after unknown delivery without replaying it", a
   act(() => fixture.finish("unknown"));
   expect(fixture.calls.trigger).toBe(1);
   expect(screen.getByText(/The run may have started/)).toBeVisible();
-  // The editor has no notice to dismiss.
-  expect(screen.queryByText(/dismissing this notice/)).not.toBeInTheDocument();
+  // Dismissal also clears the run from the outbox.
+  const [unknownRun] = fixture.capability.operations.snapshot();
+  await user.click(screen.getByRole("button", { name: "Dismiss notice" }));
+  expect(fixture.calls.dismiss).toEqual([unknownRun?.eventId]);
+  expect(fixture.capability.operations.snapshot()).toEqual([]);
+  expect(
+    screen.queryByText(/The run may have started/),
+  ).not.toBeInTheDocument();
   await user.click(runNow());
   expect(fixture.calls.trigger).toBe(2);
   act(() => fixture.finish("unknown"));

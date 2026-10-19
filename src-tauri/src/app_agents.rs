@@ -728,20 +728,16 @@ pub(crate) struct AgentMedia {
 /// Downloads one of its community's media blobs (its URL or `sha256[.ext]`)
 /// as the agent, of any type the community serves. It is saved to a local file
 /// so the agent's own tools can open it; an image is also returned to be shown.
+/// The file goes in the OS temp dir, as the Node MCP server saves it, so the OS
+/// removes it later; the agent needs it only for its turn.
 #[tauri::command]
-pub(crate) async fn app_agent_media<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
+pub(crate) async fn app_agent_media(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     url: String,
 ) -> Result<AgentMedia, String> {
     use base64::Engine;
-    use tauri::Manager;
-    let dir = app
-        .path()
-        .app_cache_dir()
-        .map_err(|_| "Media storage unavailable")?
-        .join("agent-media");
+    let dir = std::env::temp_dir().join("buzz-agent-media");
     let (agent, key) = state.key(state.agent(pubkey).await?).await?;
     let url = agent.media_url(&url)?;
     let auth =

@@ -304,7 +304,12 @@ export function useFloatingActionBar(
         : rtl
           ? "left bottom"
           : "right bottom";
-      const top = beside ? center : anchor.top + overlap;
+      // Attachments have no bubble padding to overlap: even a small image
+      // must keep its entire preview clickable beneath raised actions.
+      const aboveOverlap = visual.closest("[data-message-attachments]")
+        ? 0
+        : overlap;
+      const top = beside ? center : anchor.top + aboveOverlap;
       const paintedTop = top - height / (beside ? 2 : 1);
       if (
         viewport &&

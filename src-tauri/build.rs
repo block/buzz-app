@@ -47,6 +47,8 @@ fn main() {
             "pairing_cancel",
             "identity_restore",
             "identity_import",
+            "identity_legacy_available",
+            "identity_import_legacy",
             "identity_create",
             "identity_export",
             "nsec_backup_available",

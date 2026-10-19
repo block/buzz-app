@@ -51,8 +51,9 @@ mod relay;
 mod relay_admin;
 mod sign_out;
 use identity::{
-    identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
-    identity_restore, identity_sign_builderlab_binding, IdentityHost,
+    identity_create, identity_export, identity_import, identity_import_legacy,
+    identity_legacy_available, identity_prepare_remote_agent_authorization, identity_restore,
+    identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
     media_copy_image, media_download, media_stream_base, relay_agent_library,
@@ -443,6 +444,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         pairing::pairing_cancel,
         identity_restore,
         identity_import,
+        identity_legacy_available,
+        identity_import_legacy,
         identity_create,
         identity_export,
         nsec_backup_choice,

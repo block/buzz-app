@@ -94,6 +94,7 @@ export function WorkflowCommunity({
   const split = usePanelSplit(448, 320);
   const [detail, setDetail] = useState<{ key: string; name: string }>();
   const [detailTarget, setDetailTarget] = useState<HTMLElement | null>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
   const selectDetail = useCallback((key: string | undefined, name?: string) => {
     setDetail((current) =>
       !key
@@ -108,26 +109,20 @@ export function WorkflowCommunity({
   const open = !!detail;
   useEffect(() => {
     const narrow = window.matchMedia?.("(max-width: 52rem)");
-    const root = split.ref.current;
-    if (!open || !narrow || !root) return;
+    if (!open || !narrow || !detailTarget) return;
     // Below 52rem the pane replaces the list, so focus left there moves to it.
     const handoff = () => {
       const focus = document.activeElement;
       if (
         narrow.matches &&
-        (focus === document.body ||
-          root.querySelector(".workflows-main")?.contains(focus))
+        (focus === document.body || mainRef.current?.contains(focus))
       )
-        root
-          .querySelector<HTMLElement>(
-            '.workflows-side [role="tab"][aria-selected="true"]',
-          )
-          ?.focus();
+        detailTarget.focus();
     };
     handoff();
     narrow.addEventListener("change", handoff);
     return () => narrow.removeEventListener("change", handoff);
-  }, [open, split.ref]);
+  }, [open, detailTarget]);
   const channel = eligible.find((item) => item.id === selected);
   // A filtered channel that leaves the list shows every workflow again.
   const shown = eligible.some((item) => item.id === filter) ? filter : "";
@@ -204,7 +199,7 @@ export function WorkflowCommunity({
         className="workflows-split"
         data-side={detail ? "" : undefined}
       >
-        <div className="workflows-main">
+        <div className="workflows-main" ref={mainRef}>
           <WorkflowsPanel>
             <WorkflowPageHeader
               actions={
@@ -311,9 +306,11 @@ export function WorkflowCommunity({
                     label: detail.name,
                     icon: <LightningIcon size="1rem" />,
                     content: (
-                      <div
+                      <section
                         className="workflow-detail-host"
                         ref={setDetailTarget}
+                        aria-label={`${detail.name} details`}
+                        tabIndex={-1}
                       />
                     ),
                     close: () => selectDetail(undefined),

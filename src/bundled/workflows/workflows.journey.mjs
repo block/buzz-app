@@ -736,7 +736,9 @@ test("keyboard focus follows an open detail into the narrow layout and back", as
   await expect(open).toBeFocused();
   await page.setViewportSize({ width: 760, height: 900 });
   await expect(open).toBeHidden();
-  await expect(tab).toBeFocused();
+  await expect(
+    page.getByRole("region", { name: "Fixture A helper details", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("complementary")).toHaveCount(0);
   await expect(open).toBeFocused();
@@ -1824,7 +1826,15 @@ test("generic Outbox offers message retry but no workflow replay", async ({
     )
     .toBe(1);
   await page.evaluate(() => window.workflowSessionFixture.reject());
-  await expect(page.getByText(/^Failed to trigger workflow: /)).toBeVisible();
+  await expect(
+    page.getByText("Failed to trigger workflow", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Workflow command rejected; retain the draft and refresh the saved configuration.",
+      { exact: true },
+    ),
+  ).toBeVisible();
   // The Outbox is page chrome beneath the modal editor.
   await button("Close editor").click();
   await page.getByText("Outbox · 1 items", { exact: true }).click();

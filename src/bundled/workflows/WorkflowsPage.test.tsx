@@ -1011,9 +1011,11 @@ it("moves focus into a pane that replaces the list and returns it on close", asy
     });
     open.focus();
     fireEvent.click(open);
-    const tab = detailPane().getByRole("tab", { name: "Message helper" });
-    await waitFor(() => expect(tab).toHaveFocus());
-    fireEvent.keyDown(tab, { key: "Escape" });
+    const detail = detailPane().getByRole("region", {
+      name: "Message helper details",
+    });
+    await waitFor(() => expect(detail).toHaveFocus());
+    fireEvent.keyDown(detail, { key: "Escape" });
     expect(
       screen.queryByRole("region", { name: "Workflow details" }),
     ).toBeNull();
@@ -1032,11 +1034,13 @@ it("moves list focus into an open pane when the page narrows", async () => {
     });
     open.focus();
     fireEvent.click(open);
-    const tab = detailPane().getByRole("tab", { name: "Message helper" });
+    const detail = detailPane().getByRole("region", {
+      name: "Message helper details",
+    });
     expect(open).toHaveFocus();
     act(() => media.resize(true));
-    expect(tab).toHaveFocus();
-    fireEvent.keyDown(tab, { key: "Escape" });
+    expect(detail).toHaveFocus();
+    fireEvent.keyDown(detail, { key: "Escape" });
     expect(
       screen.queryByRole("region", { name: "Workflow details" }),
     ).toBeNull();

@@ -137,14 +137,11 @@ it("releases a mounted run latch after unknown delivery without replaying it", a
   act(() => fixture.finish("unknown"));
   expect(fixture.calls.trigger).toBe(1);
   expect(screen.getByText(/The run may have started/)).toBeVisible();
-  // Dismissal also clears the run from the outbox.
-  const [unknownRun] = fixture.capability.operations.snapshot();
   await user.click(screen.getByRole("button", { name: "Dismiss notice" }));
-  expect(fixture.calls.dismiss).toEqual([unknownRun?.eventId]);
+  await user.click(
+    screen.getByRole("button", { name: "Dismiss notice and continue" }),
+  );
   expect(fixture.capability.operations.snapshot()).toEqual([]);
-  expect(
-    screen.queryByText(/The run may have started/),
-  ).not.toBeInTheDocument();
   await user.click(runNow());
   expect(fixture.calls.trigger).toBe(2);
   act(() => fixture.finish("unknown"));
@@ -187,7 +184,7 @@ it("runs despite a lost earlier run receipt, rereads open history on success and
   expect(fixture.calls.trigger).toBe(2);
   // A pending run explains the paused save without pointing at save recovery.
   expect(screen.getAllByText("Requesting a run…")[0]).toBeVisible();
-  expect(screen.queryByText(/Recent activity/)).not.toBeInTheDocument();
+  expect(screen.getByText(/Recent activity/)).toBeVisible();
   act(() => fixture.finish("succeeded"));
   expect(
     screen.getByText("Run requested. Inspect run history for its result."),
@@ -196,15 +193,53 @@ it("runs despite a lost earlier run receipt, rereads open history on success and
   await run();
   expect(fixture.calls.trigger).toBe(3);
   act(() => fixture.finish("rejected"));
-  expect(
-    screen.getByText("Failed to trigger workflow: Fixture conflict"),
-  ).toBeVisible();
+  expect(screen.getByText("Failed to trigger workflow")).toBeVisible();
+  expect(screen.getByText("Fixture conflict")).toBeVisible();
   // Delete stays available for the owner.
   await user.click(screen.getByRole("button", { name: "Workflow actions" }));
   expect(
     await screen.findByRole("menuitem", { name: "Delete workflow" }),
   ).not.toHaveAttribute("aria-disabled", "true");
 });
+
+it.each(["rejected", "unknown"] as const)(
+  "recovers a restored %s run through durable dismissal",
+  async (outcome) => {
+    const fixture = createWorkflowFixture();
+    fixture.capability.trigger(fixtureDefinition);
+    fixture.finish(outcome);
+    render(
+      <WorkflowChannel
+        capability={fixture.capability}
+        channelId={fixtureChannel}
+        channelName="Fixture channel"
+        viewer={fixtureViewer}
+        initialSelection={fixtureDefinition}
+        onClose={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    const user = userEvent.setup();
+    fixture.setDismissError("Journal unavailable");
+    await user.click(screen.getByRole("tab", { name: "YAML" }));
+    expect(
+      screen.getByText(/Unsaved changes stay in this editor/),
+    ).toBeVisible();
+    expect(screen.getByText("Configuration details")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Dismiss notice" }));
+    await user.click(
+      screen.getByRole("button", { name: "Dismiss notice and continue" }),
+    );
+    expect(await screen.findByText("Journal unavailable")).toBeVisible();
+    expect(fixture.capability.operations.snapshot()).toHaveLength(1);
+    fixture.setDismissError(undefined);
+    await user.click(
+      screen.getByRole("button", { name: "Dismiss notice and continue" }),
+    );
+    expect(fixture.capability.operations.snapshot()).toEqual([]);
+    expect(fixture.calls.trigger).toBe(1);
+  },
+);
 
 it("runs once a newer head supersedes a save whose receipt was lost", async () => {
   const fixture = createWorkflowFixture();

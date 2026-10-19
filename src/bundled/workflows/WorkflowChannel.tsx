@@ -429,40 +429,11 @@ export function WorkflowChannel({
                     {error}
                   </p>
                 )}
-                {runOperation && runOperation.outcome !== "pending" && (
-                  <p
-                    role="status"
-                    className={
-                      runOperation.outcome === "rejected"
-                        ? "text-body-sm text-danger"
-                        : "text-body-sm text-secondary"
-                    }
-                  >
-                    {messages.trigger[runOperation.outcome]}
-                    {runOperation.outcome === "rejected" &&
-                      `: ${runOperation.error || "The relay did not create a workflow run."}`}
+                {runOperation?.outcome === "succeeded" && (
+                  <p role="status" className="text-body-sm text-secondary">
+                    {messages.trigger.succeeded}
                   </p>
                 )}
-                {runOperation &&
-                  runOperation.outcome !== "pending" &&
-                  runOperation.outcome !== "succeeded" && (
-                    <Button
-                      size="compact"
-                      onClick={() =>
-                        void dismiss(runOperation.eventId).then(
-                          () => setRunRequest(undefined),
-                          (cause: unknown) =>
-                            setError(
-                              cause instanceof Error
-                                ? cause.message
-                                : "The notice could not be dismissed. Try again.",
-                            ),
-                        )
-                      }
-                    >
-                      Dismiss notice
-                    </Button>
-                  )}
                 {operation?.outcome === "rejected" && (
                   <Button
                     onClick={() => {
@@ -476,7 +447,11 @@ export function WorkflowChannel({
                 )}
                 <WorkflowOperations
                   operations={ownOperations.filter(
-                    (item) => item.action === "save",
+                    (item) =>
+                      item.action === "save" ||
+                      (item.action === "trigger" &&
+                        (item.outcome === "unknown" ||
+                          item.outcome === "rejected")),
                   )}
                   snapshot={snapshot}
                   onCheckSaved={refresh}

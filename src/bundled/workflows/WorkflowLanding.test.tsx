@@ -719,6 +719,46 @@ function landing() {
 }
 const fixtureKey = `${fixtureChannel}:${fixtureViewer}:${fixtureDefinition.id}`;
 
+it.each(["rejected", "unknown"] as const)(
+  "durably dismisses a %s run and retains recovery after a persistence failure",
+  async (outcome) => {
+    const { fixture, target } = landing();
+    const user = userEvent.setup();
+    try {
+      await user.click(
+        await screen.findByRole("button", { name: "Run now: Message helper" }),
+      );
+      act(() => fixture.finish(outcome));
+      const [operation] = fixture.capability.operations.snapshot();
+      expect(operation).toBeDefined();
+      fixture.setDismissError("Journal unavailable");
+      await user.click(
+        await screen.findByRole("button", { name: "Dismiss notice" }),
+      );
+      expect(await screen.findByText("Journal unavailable")).toBeVisible();
+      expect(fixture.capability.operations.snapshot()).toEqual([operation]);
+      fixture.setDismissError(undefined);
+      fixture.holdDismiss();
+      await user.click(screen.getByRole("button", { name: "Dismiss notice" }));
+      expect(
+        screen.getByRole("button", { name: "Dismiss notice" }),
+      ).toBeDisabled();
+      expect(fixture.capability.operations.snapshot()).toEqual([operation]);
+      await act(async () => fixture.releaseDismiss());
+      await waitFor(() =>
+        expect(fixture.capability.operations.snapshot()).toEqual([]),
+      );
+      expect(
+        screen.queryByRole("button", { name: "Dismiss notice" }),
+      ).toBeNull();
+      expect(fixture.calls.trigger).toBe(1);
+    } finally {
+      fixture.releaseDismiss();
+      target.remove();
+    }
+  },
+);
+
 it("runs a card once without confirmation and announces the settled request", async () => {
   const { fixture, target } = landing();
   try {
@@ -764,6 +804,17 @@ it("renders the selected card's detail into the target and toggles the selection
       within(detail).getByRole("button", { name: "Edit workflow" }),
     ).toBeEnabled();
     expect(open).toHaveAttribute("aria-pressed", "true");
+    expect(
+      within(detail).getByRole("switch", { name: "Enabled in configuration" }),
+    ).toHaveAccessibleDescription(
+      "Saved configuration only. Turning off does not confirm runs have stopped or cancel active runs.",
+    );
+    fireEvent.click(within(detail).getByRole("button", { name: "Run now" }));
+    expect(
+      within(detail).getByRole("switch", { name: "Enabled in configuration" }),
+    ).toHaveAccessibleDescription(
+      "Waiting for the submitted change to be resolved.",
+    );
     expect(selections.at(-1)).toEqual([fixtureKey, "Message helper"]);
     fireEvent.click(open);
     await waitFor(() => expect(target).toBeEmptyDOMElement());
@@ -856,8 +907,7 @@ it("keeps run feedback after the card leaves the filtered view", async () => {
   ).toBeNull();
   act(() => fixture.finish("rejected"));
   expect(await screen.findByText("Failed to trigger workflow")).toBeVisible();
-  // Dismissing a failed run also clears it from the outbox.
-  fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss notice" }));
   await waitFor(() =>
     expect(fixture.capability.operations.snapshot()).toEqual([]),
   );
@@ -900,7 +950,6 @@ it("keeps the detail mounted and focused across a revision readback", async () =
       name: "Enabled in configuration",
     });
     expect(toggle).not.toBeChecked();
-    // The page footnote is hidden while a narrow detail pane is open.
     expect(
       within(detail).getByText(/Turning off does not confirm runs/),
     ).toBeVisible();

@@ -914,6 +914,24 @@ export function WorkflowLanding({
   // Feedback outlives the card, which a filter may unmount.
   const [runRequests, setRunRequests] = useState<readonly string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [dismissingRun, setDismissingRun] = useState(false);
+  const dismissRun = async (eventId: string) => {
+    if (dismissingRun) return;
+    setDismissingRun(true);
+    try {
+      await capability.operations.dismiss(eventId);
+      setRunRequests((current) => current.filter((id) => id !== eventId));
+      setError(null);
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Couldn't dismiss this notice. Try again.",
+      );
+    } finally {
+      setDismissingRun(false);
+    }
+  };
   const runRequest = (eventId: string) =>
     setRunRequests((current) => [...current, eventId]);
   const operationRefreshKey = operations
@@ -1076,23 +1094,25 @@ export function WorkflowLanding({
                   : "error"
             }
             timeout={run.outcome === "succeeded" ? 4000 : 0}
-            onDismiss={() => {
-              setRunRequests((current) =>
-                current.filter((eventId) => eventId !== run.eventId),
-              );
-              // A failed run stays in the outbox until dismissed there.
-              if (run.outcome !== "succeeded")
-                capability.operations
-                  .dismiss(run.eventId)
-                  .catch((cause: unknown) =>
-                    setError(
-                      cause instanceof Error
-                        ? cause.message
-                        : "The notice could not be dismissed. Try again.",
+            {...(run.outcome === "succeeded"
+              ? {
+                  onDismiss: () =>
+                    setRunRequests((current) =>
+                      current.filter((eventId) => eventId !== run.eventId),
                     ),
-                  );
-            }}
-          />
+                }
+              : {})}
+          >
+            {run.outcome !== "succeeded" && (
+              <Button
+                size="compact"
+                disabled={dismissingRun}
+                onClick={() => void dismissRun(run.eventId)}
+              >
+                Dismiss notice
+              </Button>
+            )}
+          </ToastNotice>
         ))}
       {error && (
         <ToastNotice

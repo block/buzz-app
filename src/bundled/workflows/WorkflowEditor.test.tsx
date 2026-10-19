@@ -81,6 +81,55 @@ test("titles the dialog with the name and applies header changes only on save", 
   });
 });
 
+test.each([false, true])(
+  "keeps configuration controls and details in YAML (YAML-only: %s)",
+  async (yamlOnly) => {
+    const initial = yamlOnly
+      ? fixtureYaml.replace("action: send_message", "action: future_action")
+      : fixtureYaml;
+    function Editor() {
+      const [yaml, setYaml] = useState(initial);
+      return (
+        <WorkflowEditor
+          yaml={yaml}
+          initialYaml={initial}
+          onChange={setYaml}
+          onSave={vi.fn()}
+          details={
+            <details>
+              <summary>Configuration details</summary>Owner and revision
+            </details>
+          }
+        />
+      );
+    }
+    render(<Editor />);
+    const user = userEvent.setup();
+    if (!yamlOnly) await user.click(screen.getByRole("tab", { name: "YAML" }));
+    expect(screen.getByRole("textbox", { name: "Workflow YAML" })).toHaveValue(
+      initial,
+    );
+    expect(screen.getByText("Configuration details")).toBeVisible();
+    const toggle = screen.getByRole("switch", {
+      name: "Enabled in configuration",
+    });
+    expect(toggle).toHaveAccessibleDescription(
+      "Configuration changes apply on save. Turning off does not confirm runs have stopped or cancel active runs.",
+    );
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(
+      parse(
+        (
+          screen.getByRole("textbox", {
+            name: "Workflow YAML",
+          }) as HTMLTextAreaElement
+        ).value,
+      ).enabled,
+    ).not.toBe(false);
+  },
+);
+
 test.each([
   [{ readOnly: true }, "Only the author can change this workflow."],
   [{ busy: true }, "Review Recent activity before editing."],

@@ -1762,10 +1762,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   display: contents;
 }
 .messageActions {
-  background: transparent;
-  color: var(--text-standard);
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
   order: 1;
   flex-shrink: 0;
   align-self: flex-end;
@@ -1782,8 +1778,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
   user-select: none;
-}
-.messageActions {
   @apply popover-surface;
   --floating-radius: var(--radius-control);
   --floating-inset: var(--space-half);

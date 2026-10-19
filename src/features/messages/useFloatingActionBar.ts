@@ -196,7 +196,7 @@ export function useFloatingActionBar(
       bar.style.right = "";
       bar.style.maxWidth = "";
       bar.style.visibility = "";
-      delete bar.dataset.placement;
+      bar.style.clipPath = "";
     };
     // A narrow side pane covers, but does not unmount, the channel. Only a
     // second workspace can cover this one, so skip the hit test without it.
@@ -267,7 +267,6 @@ export function useFloatingActionBar(
       // Keep one location across short/long messages and wide/narrow panes.
       // Scrolling may hide an offscreen anchor, but never relocates its actions
       // to a different edge of the message.
-      bar.dataset.placement = "above";
       bar.style.transformOrigin = rtl ? "left bottom" : "right bottom";
       const top = anchor.top + overlap;
       const paintedTop = top - height;
@@ -278,6 +277,12 @@ export function useFloatingActionBar(
         hide();
         return;
       }
+      // The top layer would paint over the pane header and take its clicks.
+      // Clip at the scroller's top so the bar slides under the header like the
+      // message does; the other sides keep the shadow.
+      const hidden = viewport ? viewport.top - paintedTop : 0;
+      bar.style.clipPath =
+        hidden > 0 ? `inset(${hidden}px -100vmax -100vmax)` : "";
       const left = rtl ? anchor.left - overlap : anchor.right - width + overlap;
       bar.style.top = `${top}px`;
       bar.style.left = `${Math.max(start, Math.min(left, end - width))}px`;

@@ -15,6 +15,25 @@ const shown = (actions) =>
   expect
     .poll(() => actions.evaluate((bar) => bar.matches(":popover-open")))
     .toBe(true);
+// The bar sits above its bubble, inside the page.
+const above = (actions) =>
+  expect
+    .poll(() =>
+      actions.evaluate((bar) => {
+        const bubble = bar
+          .closest("[data-layout]")
+          .querySelector("[data-message-action-anchor]")
+          .getBoundingClientRect();
+        const rect = bar.getBoundingClientRect();
+        return (
+          rect.top < bubble.top &&
+          rect.bottom < bubble.bottom &&
+          rect.left >= 0 &&
+          rect.right <= document.documentElement.clientWidth
+        );
+      }),
+    )
+    .toBe(true);
 // Browser-only: measured space, real top-layer hit testing, and responsive
 // placement cannot be established in a DOM emulator.
 for (const own of [true, false]) {
@@ -62,24 +81,7 @@ for (const own of [true, false]) {
           node.dir = direction;
         }, direction);
         await row.getByText("Room for actions", { exact: true }).hover();
-        await expect(actions).toHaveAttribute("data-placement", "above");
-        await expect
-          .poll(() =>
-            actions.evaluate((bar) => {
-              const bubble = bar
-                .closest("[data-layout]")
-                .querySelector("[data-message-action-anchor]")
-                .getBoundingClientRect();
-              const rect = bar.getBoundingClientRect();
-              return (
-                rect.top < bubble.top &&
-                rect.bottom < bubble.bottom &&
-                rect.left >= 0 &&
-                rect.right <= document.documentElement.clientWidth
-              );
-            }),
-          )
-          .toBe(true);
+        await above(actions);
         await actions
           .getByRole("button", { name: "React with 👍", exact: true })
           .hover();
@@ -96,7 +98,7 @@ for (const own of [true, false]) {
     await page.setViewportSize({ width: 390, height: 950 });
     await settle(page);
     await row.getByText("Room for actions", { exact: true }).hover();
-    await expect(actions).toHaveAttribute("data-placement", "above");
+    await above(actions);
     await expect(actions).not.toHaveCSS("box-shadow", "none");
     // Park the pointer first: after the resize, its narrow-pane position can
     // land on a sidebar activity badge whose hover popover covers the row.
@@ -107,17 +109,7 @@ for (const own of [true, false]) {
     });
     await settle(page);
     await row.getByText("Room for actions", { exact: true }).hover();
-    await expect(actions).toHaveAttribute("data-placement", "above");
-    await expect
-      .poll(() =>
-        actions.evaluate((bar) => {
-          const rect = bar.getBoundingClientRect();
-          return (
-            rect.left >= 0 && rect.right <= document.documentElement.clientWidth
-          );
-        }),
-      )
-      .toBe(true);
+    await above(actions);
     const menu = actions.getByRole("button", { name: "More message actions" });
     await menu.focus();
     await menu.press("Enter");
@@ -131,7 +123,7 @@ for (const own of [true, false]) {
       node.style.removeProperty("--buzz-text-scale");
     });
     await page.setViewportSize({ width: 1440, height: 950 });
-    await expect(actions).toHaveAttribute("data-placement", "above");
+    await above(actions);
   });
 }
 
@@ -267,7 +259,7 @@ test("thread actions and growing reactions paint beyond the scroller without mov
   await expect(actions).toHaveCSS("opacity", "0");
 });
 
-test("compact timeline actions escape the top edge, track scrolling and preserve keyboard order", async ({
+test("compact timeline actions slide under the top edge, track scrolling and preserve keyboard order", async ({
   page,
   app,
   browserName,
@@ -336,11 +328,12 @@ test("compact timeline actions escape the top edge, track scrolling and preserve
         const edge = bar
           .closest("[data-message-scroller]")
           .getBoundingClientRect().top;
+        const x = rect.x + rect.width / 2;
+        // The part above the edge is clipped: the header keeps its clicks.
         return (
-          rect.top < edge &&
-          [rect.top + 2, rect.bottom - 2].every((y) =>
-            bar.contains(document.elementFromPoint(rect.x + rect.width / 2, y)),
-          )
+          rect.top < edge - 2 &&
+          bar.contains(document.elementFromPoint(x, rect.bottom - 2)) &&
+          !bar.contains(document.elementFromPoint(x, edge - 2))
         );
       }),
     )

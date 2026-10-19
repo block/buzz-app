@@ -309,3 +309,87 @@ it("returns keyboard-opened Settings to the same focused draft", async () => {
   expect(editor).toHaveFocus();
   expect(editor).toHaveTextContent("Keyboard draft");
 });
+
+it("asks before any Settings dismissal discards unsaved profile edits", async () => {
+  const user = await setup();
+  await act(async () => {
+    void services?.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "profile",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  const name = await within(settings).findByRole("textbox", {
+    name: "Display name",
+  });
+  await waitFor(() => expect(name).toHaveValue("Community name"));
+  await user.clear(name);
+  await user.type(name, "Unsaved name");
+  const confirmation = () =>
+    screen.findByRole("dialog", { name: "Discard changes?" });
+  const keepEditing = async () => {
+    await user.click(
+      within(await confirmation()).getByRole("button", {
+        name: "Keep editing",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Discard changes?" }),
+      ).toBeNull(),
+    );
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBe(settings);
+    expect(name).toHaveValue("Unsaved name");
+  };
+
+  await user.keyboard("{Escape}");
+  await keepEditing();
+  await user.click(
+    document.querySelector(".buzz-dialog-backdrop") as HTMLElement,
+  );
+  await keepEditing();
+  await user.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await confirmation();
+  // Escape backs out of the prompt, not out of Settings.
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Discard changes?" }),
+    ).toBeNull(),
+  );
+  expect(screen.getByRole("dialog", { name: "Settings" })).toBe(settings);
+
+  await user.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await user.click(
+    within(await confirmation()).getByRole("button", {
+      name: "Discard changes",
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  await act(async () => {
+    void services?.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "profile",
+    });
+  });
+  const reopened = await screen.findByRole("dialog", { name: "Settings" });
+  expect(
+    within(reopened).getByRole("textbox", { name: "Display name" }),
+  ).toHaveValue("Community name");
+  // A clean profile closes without asking.
+  await user.click(
+    within(reopened).getByRole("button", { name: "Close Settings" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull();
+});

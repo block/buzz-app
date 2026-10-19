@@ -581,6 +581,7 @@ export function Settings({
   onSection,
   navigationPane = false,
   onDeparturePending,
+  onUnsavedChange,
 }: {
   agents?: Agents | undefined;
   cards: SettingsCards;
@@ -599,6 +600,7 @@ export function Settings({
   onSection?: (section: string) => void;
   navigationPane?: boolean;
   onDeparturePending?: (pending: boolean) => void;
+  onUnsavedChange?: (unsaved: boolean) => void;
 }) {
   useEffect(() => cards.retainVisibility(), [cards]);
   useEffect(() => adminAccess?.ensure(), [adminAccess]);
@@ -1148,6 +1150,7 @@ export function Settings({
             key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
             communities={communities}
             community={selectedCommunity}
+            onUnsavedChange={onUnsavedChange}
           />
         </div>
         {selected === "identity" && (

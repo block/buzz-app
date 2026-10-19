@@ -73,6 +73,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
     useState<HTMLDivElement | null>(null);
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
   const launching = useSyncExternalStore(subscribeLaunch, launchVisible);
+  // Unsaved Profile edits turn a Settings dismissal into a discard prompt.
+  const [settingsUnsaved, setSettingsUnsaved] = useState(false);
+  const [confirmSettingsDiscard, setConfirmSettingsDiscard] = useState(false);
   const [departure, setDeparture] = useState<PendingSettingsDeparture | null>(
     null,
   );
@@ -97,6 +100,8 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
+  // A prompt left over from a Settings visit that ended another way is stale.
+  if (!settings && confirmSettingsDiscard) setConfirmSettingsDiscard(false);
   const settingsFocus = useRef<HTMLElement | null>(null);
   const wasSettings = useRef(false);
   const workspaceEntry = useRef<string | undefined>(undefined);
@@ -362,7 +367,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
               ),
             }}
             onOpenChange={(open) => {
-              if (!open) route.leaveSettings();
+              if (open) return;
+              if (settingsUnsaved) setConfirmSettingsDiscard(true);
+              else route.leaveSettings();
             }}
             finalFocus={() => {
               // Only a return to the visit Settings covered restores the prior
@@ -413,9 +420,37 @@ function ConnectedApp({ services }: { services: AppServices }) {
                       );
                   }}
                   onSection={openSettingsSection}
+                  onUnsavedChange={setSettingsUnsaved}
                 />
               )}
             </div>
+            <Dialog
+              open={confirmSettingsDiscard && settings}
+              onOpenChange={(open) => {
+                if (!open) setConfirmSettingsDiscard(false);
+              }}
+              title="Discard changes?"
+              description="Your profile has unsaved changes."
+              closeLabel="Back to Settings"
+              actions={
+                <>
+                  <Button onClick={() => setConfirmSettingsDiscard(false)}>
+                    Keep editing
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      setConfirmSettingsDiscard(false);
+                      route.leaveSettings();
+                    }}
+                  >
+                    Discard changes
+                  </Button>
+                </>
+              }
+            >
+              {null}
+            </Dialog>
           </Dialog>
         </AgentsContext.Provider>
       </ChannelNavigationProvider>

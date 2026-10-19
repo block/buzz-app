@@ -81,9 +81,11 @@ function isCurrentProfileSave(communities: Communities, generation: number) {
 export function ProfileSettings({
   communities,
   community,
+  onUnsavedChange,
 }: {
   communities: Communities;
   community?: Membership | undefined;
+  onUnsavedChange?: ((unsaved: boolean) => void) | undefined;
 }) {
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -201,6 +203,11 @@ export function ProfileSettings({
     ? (draft ?? persisted)
     : { name: "", picture: "", about: "" };
   const hasChanges = draft !== null && !profilesEqual(draft, persisted);
+  useEffect(() => {
+    if (!hasChanges) return;
+    onUnsavedChange?.(true);
+    return () => onUnsavedChange?.(false);
+  }, [hasChanges, onUnsavedChange]);
   const thumbnailMedia = selectedProfileSession(
     communities,
     communityId,

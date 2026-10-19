@@ -29,9 +29,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
   );
   const spawn = host.spawn?.bind(host);
-  const setup = new GooseSetup(spawn);
+  const setup = new GooseSetup(spawn, () => runtime.defaultsChanged());
   const history = new GooseHistory(spawn);
-  const { Create, CreateModel, SettingsTab, ActivityTab } = createTabs({
+  const {
+    Create,
+    CreateModel,
+    SettingsTab,
+    ActivityTab,
+    DefaultControl,
+    ProviderDialogBody,
+  } = createTabs({
     setup,
     runtime,
     history,
@@ -59,6 +66,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    provider: {
+      snapshot: setup.snapshot,
+      subscribe: setup.subscribe,
+      check: setup.check,
+      DialogBody: ProviderDialogBody,
+      DefaultControl,
+    },
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,

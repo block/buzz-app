@@ -31,15 +31,13 @@ import * as codex from "./codex";
 import gooseManifest from "./goose/manifest.json";
 import * as goose from "./goose";
 import channelsManifest from "./channels/manifest.json";
-import usageManifest from "./channel-usage/manifest.json";
-import * as usage from "./channel-usage";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
 import * as github from "./github";
 import bestieManifest from "./bestie/manifest.json";
 import * as bestie from "./bestie";
-import agentUsageManifest from "./usage/manifest.json";
-import * as agentUsage from "./usage";
+import usageManifest from "./usage/manifest.json";
+import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import remindersManifest from "./reminders/manifest.json";
@@ -130,11 +128,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...usageManifest, apiVersion: 1 },
-    module: usage,
-    enabledByDefault: true,
-  },
-  {
     manifest: { ...githubManifest, apiVersion: 1 },
     module: github,
     enabledByDefault: true,
@@ -145,8 +138,8 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: false,
   },
   {
-    manifest: { ...agentUsageManifest, apiVersion: 1 },
-    module: agentUsage,
+    manifest: { ...usageManifest, apiVersion: 1 },
+    module: usage,
     enabledByDefault: false,
   },
   {

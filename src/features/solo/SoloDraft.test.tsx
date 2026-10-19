@@ -565,10 +565,12 @@ it("re-entering a mounted project clears changed defaults", async () => {
       onStarted={started}
     />,
   );
-  expect(screen.getByRole("button", { name: "Project: Other" })).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Workspace: Other" }),
+  ).toBeVisible();
   act(() => resetNewChatProject(scope, "work"));
   expect(
-    await screen.findByRole("button", { name: "Project: Work" }),
+    await screen.findByRole("button", { name: "Workspace: Work" }),
   ).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Chat settings" }));
   expect(
@@ -608,13 +610,13 @@ it("keeps a locally chosen project when its persistence fails and other draft wr
         onStarted={started}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Project: Work" }));
+    await user.click(screen.getByRole("button", { name: "Workspace: Work" }));
     await user.click(
       await screen.findByRole("menuitemradio", { name: "Other" }),
     );
     await user.type(screen.getByRole("textbox"), "Keep this project");
     expect(
-      screen.getByRole("button", { name: "Project: Other" }),
+      screen.getByRole("button", { name: "Workspace: Other" }),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
@@ -637,7 +639,9 @@ it("inherits the project's defaults for two consecutive new chats", async () => 
         onStarted={started}
       />,
     );
-    expect(screen.getByRole("button", { name: "Project: Work" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Workspace: Work" }),
+    ).toBeVisible();
     await user.type(screen.getByRole("textbox"), `Chat ${index}`);
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledTimes(index + 1));
@@ -692,7 +696,7 @@ it.each([
     }
     await user.click(
       screen.getByRole("button", {
-        name: fromProject ? "Project: Work" : "Add project",
+        name: fromProject ? "Workspace: Work" : "Add workspace",
       }),
     );
     await user.click(

@@ -97,6 +97,13 @@ error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
 dialog can close. Disabled or unloaded types remain in Settings → Plugins → Manage plugins.
 
+Goose's Settings → AI defaults contribution reads and writes Goose's own
+configuration through `GooseSetup`. Provider keys stay in Goose's secret store;
+Buzz keeps no separate Goose defaults store. Readiness requires a working
+`goose-acp` and a configured default provider. The per-agent provider/model
+fields remain overrides. Types without a provider contribution have no AI
+defaults row; a failed contribution retains the unavailable fallback.
+
 Workspace, instructions and session scope are always per-agent. Claude and Codex
 model/thinking choices may instead be blank, which means inherited rather than
 rewritten. Their effective order is explicit agent override, saved device-wide
@@ -734,38 +741,20 @@ or relay-directory startup scan.
 Discovery is not global coverage, verified membership, credentials, or execution
 status. No keys, config, memory, membership, or runtime state are changed by it.
 
-## Channel session usage
+### Model-menu design exception
 
-The Usage tab reads saved kind-44200 metrics from the current account/community's
-host archive. Its strip and detail are **channel-associated session**
-usage, not thread attribution or context-window capacity. Each signed agent key
-and reported harness session remains separate; missing session IDs are individual
-unidentified records. The latest cumulative snapshot is selected by turn sequence;
-turn deltas are shown only when reliable. Unknown counters are not zero and cache
-counters are subsets of input. Cost is a publisher-supplied estimate, not a bill.
+The AI defaults and Goose creation controls intentionally use the shared Menu
+for family → model → effort navigation, as explicitly requested in product
+review. This is a scoped exception to DESIGN.md's Select/Combobox form-value
+guidance. Keep the selected model and effort accessible, preserve compact chip
+appearance and truncation, and offer a trailing action to restore inheritance
+without duplicating the current model as the first option. Provider selection
+continues to use a searchable Combobox.
 
-The Usage tab's agent dropdown shows each agent's latest total or session count;
-selecting an agent reveals an aggregate of the latest trustworthy cumulative
-snapshot from each of its sessions. Counters missing in any session remain unknown
-rather than silently understating the total. The outlined Session dropdown then
-selects one session for provenance and turn detail without filling the pane with
-session buttons. The aggregate may cover other threads and is limited to loaded
-archive history.
-
-The channel's **Channel actions → View channel usage** item opens a dedicated
-**Usage** tab in the channel's side pane. It is available only while this
-account has positive access to the current channel and the default-on Channel Usage
-plugin is enabled under Settings → Plugins → Manage plugins. Closing the tab unmounts its
-archive reader; disabling the plugin removes the tab and stops reads. It
-does not change metric capture or retention. Opening the Usage tab reads archive
-pages automatically until exhaustion or the 2,000-record limit; an early page
-without channel matches does not prove the archive has none. **Refresh** starts
-a new scan from the newest page; neither action fetches relay history. The client
-retains at most 2,000 decoded records while this tab lives and fences late reads
-on channel/access changes. Saved metrics remain
-subject to the independent 90-day/byte eviction policy above, so loaded history
-is never a completeness guarantee. Restored usage is display-only and cannot
-establish working, typing, or online status.
+Provider dropdowns are intentionally text-only. The model control shows the
+selected model family icon, not the Goose runtime or Databricks/provider mark,
+as explicitly confirmed by the product owner. Goose device defaults have no
+reset action: omitting a model in Goose retains its stored provider model.
 
 ## Usage
 
@@ -840,5 +829,4 @@ provider bills. Totals add only known values. A total is marked partial when an
 unknown count, a model without known rates (such as Codex's OpenAI models) or an
 incomplete snapshot left something out, and unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
-recorded usage. Kind-44200 metrics remain the
-Channel Usage source; Usage does not read or publish them.
+recorded usage. Usage does not read or publish kind-44200 metrics.

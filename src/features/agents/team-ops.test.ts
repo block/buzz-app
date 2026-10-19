@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { ReadFilter, RelayEvent } from "../relay/events";
+import { ChannelLifecycleUnconfirmed } from "../relay/channel-lifecycle";
 import { PublishRejected } from "../relay/outbox";
 import { keypair, signed } from "../relay/testing";
 import {
@@ -442,7 +443,7 @@ describe("team operations: witnesses", () => {
     const w = world();
     const teamId = await existing(w, []);
     w.hooks.archive = async () => {
-      throw new Error("timeout");
+      throw new ChannelLifecycleUnconfirmed(new Error("timeout"));
     };
     const lifecycle = { name: "", instructions: "", members: [] };
     const del = w.runner.start({
@@ -695,7 +696,7 @@ describe("team operations: corrections", () => {
       .done) as TeamOp;
     w.hooks.publish = undefined;
     w.hooks.archive = async () => {
-      throw new Error("timeout");
+      throw new ChannelLifecycleUnconfirmed(new Error("timeout"));
     };
     const lifecycle = { name: "", instructions: "", members: [] };
     // An uncertain archive, then a Recover: the archive fence stays open.
@@ -776,6 +777,52 @@ function base(who: string, where: string): TeamOp {
     seq: ++seq,
   };
 }
+
+describe("team operations: failures before sending", () => {
+  it("a lifecycle command refused before publishing stays planned and archives on the next run", async () => {
+    const w = world();
+    const teamId = await existing(w, []);
+    w.hooks.archive = async () => {
+      throw new Error("Another channel action is still in progress");
+    };
+    const del = w.runner.start({
+      kind: "delete",
+      teamId,
+      channel: CH,
+      intent: { name: "", instructions: "", members: [] },
+    });
+    const after = (await del.done) as TeamOp;
+    expect(after.commands[0]?.state).toBe("planned");
+    expect(unresolved(after)).toBe(false);
+    // Another change on the team isn't fenced by it.
+    w.hooks.archive = undefined;
+    w.restart();
+    expect(await w.runner.run(del.op.id)).toBeUndefined();
+    expect(w.relay.archived).toBe(true);
+  });
+
+  it("a member command whose ownership read throws stays planned and joins on the next run", async () => {
+    const w = world();
+    const teamId = await existing(w, []);
+    w.hooks.add = async () => {
+      throw new Error("profile read failed");
+    };
+    const { op, done } = edit(w, teamId, { members: [a] });
+    const after = (await done) as TeamOp;
+    expect(after.commands).toEqual([
+      {
+        action: "add",
+        pubkey: a,
+        state: "planned",
+        error: "profile read failed",
+      },
+    ]);
+    expect(unresolved(after)).toBe(false);
+    w.hooks.add = undefined;
+    expect(await w.runner.run(op.id)).toBeUndefined();
+    expect(w.relay.roster.has(a)).toBe(true);
+  });
+});
 
 describe("team operations: transitions", () => {
   it("a Delete submitted during an edit's head read stops it before any member command", async () => {
@@ -1029,7 +1076,7 @@ describe("team operations: overlapping steps", () => {
       return false;
     });
     w.hooks.archive = async () => {
-      throw new Error("timeout");
+      throw new ChannelLifecycleUnconfirmed(new Error("timeout"));
     };
     const first = w.runner.start({
       kind: "delete",
@@ -1280,7 +1327,7 @@ describe("team operations: revisions during member work", () => {
     w.hooks.archive = async () => {
       entered.open();
       await release.promise;
-      throw new Error("timeout");
+      throw new ChannelLifecycleUnconfirmed(new Error("timeout"));
     };
     const first = w.runner.start({
       kind: "delete",

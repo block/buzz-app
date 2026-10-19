@@ -4,6 +4,7 @@
 // revision whose outcome is unknown, and member and lifecycle commands persisted before they are sent.
 // Nothing whose outcome is unknown is sent again automatically; only a fresh
 // read resolves it. Dormant until config sync ships.
+import { ChannelLifecycleUnconfirmed } from "../relay/channel-lifecycle";
 import { PublishRejected } from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
 import type { RelayWriter } from "../relay/transport";
@@ -699,9 +700,12 @@ export function teamRunner(deps: RunnerDeps) {
         ? channels.addMember(channel, pubkey, signal)
         : channels.removeMember(channel, pubkey)
       ).catch((error: unknown) => ({
-        status: "uncertain" as const,
+        // A member change throws only before it sends: a roster or
+        // ownership read failed. It stays planned, to retry.
+        status: "unsent" as const,
         error: message(error),
       }));
+      if (result.status === "unsent") return at("planned", result.error);
       if (result.status === "uncertain") return at("maybe-sent", result.error);
       at(result.status === "confirmed" ? "confirmed" : "refused", result.error);
     }
@@ -761,7 +765,12 @@ export function teamRunner(deps: RunnerDeps) {
     } catch (error) {
       if (error instanceof PublishRejected)
         return state("refused", message(error));
-      return state("maybe-sent", message(error));
+      // Only a command whose publication started may have taken effect;
+      // anything earlier (busy, unauthorized, a failed read) stays planned.
+      return state(
+        error instanceof ChannelLifecycleUnconfirmed ? "maybe-sent" : "planned",
+        message(error),
+      );
     }
     try {
       if ((await settled()) && !fenced(op.teamId, op.id)) return finish();

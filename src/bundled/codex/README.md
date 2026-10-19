@@ -1,3 +1,15 @@
+# Codex
+
+Create agents that run Codex on your computer and answer you in Buzz. Each agent works in its own **Workspace** folder and can run commands and edit files on its own.
+
+## Getting started
+
+1. Go to **Agents** → **More agent actions** → **Provider settings** → **Codex** to install Codex and sign in.
+2. Choose **New agent** → **Create a new agent**, and pick **Codex** as the **Harness**.
+3. Mention your agent in a conversation to give it work.
+
+---
+
 # Codex for Agents
 
 A bundled desktop plugin, on by default on macOS and Linux, using the native process host introduced in #731.

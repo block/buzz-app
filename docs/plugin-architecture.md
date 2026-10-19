@@ -827,8 +827,9 @@ capability boundary as folder import.
 
 These files are publisher-supplied presentation content, not an endorsement or a
 runtime asset directory. Buzz-owned framing and fallback artwork remain
-authoritative. The bundled README renderer skips raw HTML and does not load
-embedded data URLs or passive remote media; the package API does not
+authoritative. Any surface that renders packaged READMEs must keep raw HTML and
+scripts disabled and must not load embedded data URLs or passive remote media; the
+bundled README renderer already follows these rules. The package API does not
 turn README links, images, or the icon into plugin runtime resources.
 
 A signed installation can only update from the same publisher; remove and

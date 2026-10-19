@@ -919,7 +919,7 @@ it.each([true, false])(
         "example.new",
       );
     else expect(manager.change).not.toHaveBeenCalled();
-    expect(manager.imports?.discard).not.toHaveBeenCalled();
+    expect(manager.imports?.discard).toHaveBeenCalledExactlyOnceWith("new");
   },
 );
 
@@ -952,7 +952,10 @@ it("limits row updates to the selected plugin without modifying the source previ
     error: null,
   };
   const manager = {
-    imports: { folder: vi.fn(async () => preview), discard: vi.fn() },
+    imports: {
+      folder: vi.fn(async () => preview),
+      discard: vi.fn(async () => {}),
+    },
     installImport: vi.fn(async () => true),
     change: vi.fn(),
   } as unknown as PluginManager;

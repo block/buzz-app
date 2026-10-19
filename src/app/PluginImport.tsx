@@ -489,7 +489,9 @@ export function PluginImport({
                         );
                         return;
                       }
+                      // Native keeps the prepared preview after install.
                       current.token = "";
+                      void imports.discard(preview.token).catch(() => {});
                       if (!existing && enableOnInstall)
                         await plugins.change("enable", candidate.manifest.id);
                       if (!current.active) return;

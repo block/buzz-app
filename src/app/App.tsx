@@ -101,8 +101,10 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
-  // A prompt left over from a Settings visit that ended another way is stale.
-  if (!settings && confirmSettingsDiscard) setConfirmSettingsDiscard(false);
+  // The prompt is stale once Settings ends another way or nothing is left to
+  // discard, such as when a pending save is sent behind it.
+  if (confirmSettingsDiscard && (!settings || !settingsUnsaved))
+    setConfirmSettingsDiscard(false);
   const settingsFocus = useRef<HTMLElement | null>(null);
   const wasSettings = useRef(false);
   const workspaceEntry = useRef<string | undefined>(undefined);
@@ -425,7 +427,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 />
               )}
             </div>
-            {confirmSettingsDiscard && settings && (
+            {confirmSettingsDiscard && settings && settingsUnsaved && (
               <AlertDialog
                 title="Discard changes?"
                 description="Your profile has unsaved changes."

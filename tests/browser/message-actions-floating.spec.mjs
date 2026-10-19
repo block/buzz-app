@@ -213,7 +213,7 @@ for (const own of [false, true]) {
     const event = app.append(
       "primary",
       "alpha",
-      "A caption\nwith three lines\nabove its attachment",
+      "A caption\nwith three lines\n[Caption reference](https://example.com/caption)",
       true,
       own,
       undefined,
@@ -304,6 +304,112 @@ for (const own of [false, true]) {
         );
       })
       .toBeLessThan(1);
+
+    await page.mouse.move(0, 0);
+    await page.setViewportSize({ width: 390, height: 950 });
+    await settle(page);
+    await attachment.hover();
+    await shown(actions);
+    await expect(actions).toHaveAttribute("data-placement", "above");
+    await actions.evaluate((bar) =>
+      Promise.all(bar.getAnimations().map((animation) => animation.finished)),
+    );
+    const reference = row.getByRole("link", { name: "Caption reference" });
+    // The hovered media's toolbar must not take hits from the caption above it.
+    expect(
+      await reference.evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        return node.contains(
+          document.elementFromPoint(
+            rect.x + rect.width / 2,
+            rect.y + rect.height / 2,
+          ),
+        );
+      }),
+    ).toBe(true);
+    await reference.evaluate((node) =>
+      node.addEventListener(
+        "click",
+        (event) => {
+          event.preventDefault();
+          node.dataset.clicked = "true";
+        },
+        { once: true },
+      ),
+    );
+    await reference.click();
+    await expect(reference).toHaveAttribute("data-clicked", "true");
+    await page
+      .getByRole("textbox", { name: "Message #Alpha", exact: true })
+      .click();
+    const captionBox = await caption.boundingBox();
+    const attachmentBox = await attachment.boundingBox();
+    // Use the interior beside the shorter caption, clear of Chromium's
+    // fractional hit-test expansion at the tiny inter-block margin.
+    const contentGap = {
+      x: own
+        ? (attachmentBox.x + captionBox.x) / 2
+        : (captionBox.x +
+            captionBox.width +
+            attachmentBox.x +
+            attachmentBox.width) /
+          2,
+      y: captionBox.y + captionBox.height / 2,
+    };
+    expect(
+      await row.evaluate((node, point) => {
+        const hit = document.elementFromPoint(point.x, point.y);
+        return (
+          node.contains(hit) &&
+          !!hit?.closest("[data-message-payload]") &&
+          !hit.closest(
+            "[data-message-action-anchor], [data-message-attachments] > *",
+          )
+        );
+      }, contentGap),
+    ).toBe(true);
+    // A gap cannot activate actions, but must retain them after media hover.
+    await page.mouse.move(contentGap.x, contentGap.y);
+    await hidden(actions);
+    await attachment.hover();
+    await shown(actions);
+    await page.mouse.move(contentGap.x, contentGap.y, { steps: 10 });
+    await shown(actions);
+    // Leaving the painted content envelope ends retention; returning to its
+    // interior whitespace must not reactivate actions.
+    const outside = {
+      x: own
+        ? Math.min(captionBox.x, attachmentBox.x) - 4
+        : Math.max(
+            captionBox.x + captionBox.width,
+            attachmentBox.x + attachmentBox.width,
+          ) + 4,
+      y: contentGap.y,
+    };
+    await page.mouse.move(outside.x, outside.y, { steps: 10 });
+    await hidden(actions);
+    await page.mouse.move(contentGap.x, contentGap.y);
+    await hidden(actions);
+    await attachment.hover();
+    await shown(actions);
+    await page.mouse.move(contentGap.x, contentGap.y, { steps: 10 });
+    await shown(actions);
+    const raisedButton = await target.boundingBox();
+    await page.mouse.move(
+      raisedButton.x + raisedButton.width / 2,
+      raisedButton.y + raisedButton.height / 2,
+      { steps: 30 },
+    );
+    await shown(actions);
+    await target.click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    await page.mouse.move(contentGap.x, contentGap.y);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(target).toBeFocused();
+    await shown(actions);
+    await page.mouse.move(contentGap.x, contentGap.y + 1);
+    await shown(actions);
   });
 }
 

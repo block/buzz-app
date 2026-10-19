@@ -1,6 +1,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type RefObject,
@@ -10,6 +11,9 @@ import {
   behindActiveOverlay,
   observeOverlays,
 } from "../../shared/design-system/overlayLayer";
+
+const contentSelector =
+  "[data-message-action-anchor], [data-message-attachments] > *";
 
 const floatingQuery = "(hover: hover) and (pointer: fine)";
 // One MediaQueryList for every row: `matchMedia` allocates and evaluates the
@@ -97,20 +101,33 @@ export function useFloatingActionBar(
   const floating = useSyncExternalStore(subscribe, snapshot, () => false);
   const [revealed, setRevealed] = useState(false);
   const [hoverAnchor, setHoverAnchor] = useState<Element | null>(null);
+  const contentBounds = useRef<DOMRect | null>(null);
 
   useEffect(() => {
     const row = rowRef?.current;
     const bar = barRef.current;
     if (!floating || !row || !bar) return;
-    const contentSelector =
-      "[data-message-action-anchor], [data-message-attachments] > *";
     const contentAt = (target: EventTarget | null) =>
       target instanceof Element && row.contains(target)
         ? target.closest(contentSelector)
         : null;
-    const hoverTarget = (target: EventTarget | null) =>
-      target instanceof Element &&
-      (bar.contains(target) || !!contentAt(target));
+    const hoverTarget = (target: EventTarget | null, event: PointerEvent) => {
+      if (!(target instanceof Element)) return false;
+      if (bar.contains(target) || contentAt(target)) return true;
+      // Retain an already active hover through gaps inside the painted content
+      // envelope. This neither activates whitespace nor intercepts its clicks.
+      const bounds = contentBounds.current;
+      return !!(
+        hovered &&
+        bounds &&
+        row.contains(target) &&
+        target.closest("[data-message-payload]") &&
+        event.clientX >= bounds.left &&
+        event.clientX <= bounds.right &&
+        event.clientY >= bounds.top &&
+        event.clientY <= bounds.bottom
+      );
+    };
     const selectAnchor = (content: Element | null) => {
       // Keep the initiating content stable through toolbar and popup travel.
       if (
@@ -146,11 +163,17 @@ export function useFloatingActionBar(
     };
     const over = (event: PointerEvent) => {
       selectAnchor(contentAt(event.target));
-      hovered = hoverTarget(event.target);
+      hovered = hoverTarget(event.target, event);
       update();
     };
     const out = (event: PointerEvent) => {
-      hovered = hoverTarget(event.relatedTarget);
+      hovered = hoverTarget(event.relatedTarget, event);
+      update();
+    };
+    const move = (event: PointerEvent) => {
+      const next = hoverTarget(event.target, event);
+      if (hovered === next) return;
+      hovered = next;
       update();
     };
     const focusIn = () => update();
@@ -164,6 +187,7 @@ export function useFloatingActionBar(
     // Delegation also covers content replaced by an edit or attachment load.
     row.addEventListener("pointerover", over);
     row.addEventListener("pointerout", out);
+    row.addEventListener("pointermove", move);
     row.addEventListener("focusin", focusIn);
     row.addEventListener("focusout", focusOut);
     const observer = new MutationObserver(() => {
@@ -180,6 +204,7 @@ export function useFloatingActionBar(
     return () => {
       row.removeEventListener("pointerover", over);
       row.removeEventListener("pointerout", out);
+      row.removeEventListener("pointermove", move);
       row.removeEventListener("focusin", focusIn);
       row.removeEventListener("focusout", focusOut);
       observer.disconnect();
@@ -206,6 +231,7 @@ export function useFloatingActionBar(
       bar.style.visibility = blocked ? "hidden" : "";
     };
     const hide = () => {
+      contentBounds.current = null;
       if (bar.hasAttribute("popover")) bar.hidePopover?.();
       // Closed popovers return to their slot's containing block. Viewport offsets
       // there would create invisible overflow and interfere with scrolling.
@@ -253,6 +279,25 @@ export function useFloatingActionBar(
       // Read every rect before writing any style. A write between reads forces
       // a synchronous layout of the whole timeline on each positioning frame.
       const anchor = visual.getBoundingClientRect();
+      // The payload wrapper can be full width. Measure only rendered content,
+      // excluding bylines, reactions, activity and the row's empty side space.
+      let whole = anchor;
+      let first = visual;
+      for (const element of row.querySelectorAll(contentSelector)) {
+        const rect =
+          element === visual ? anchor : element.getBoundingClientRect();
+        if (!rect.width || !rect.height) continue;
+        if (rect.top < whole.top) first = element;
+        const left = Math.min(whole.left, rect.left);
+        const top = Math.min(whole.top, rect.top);
+        whole = new DOMRect(
+          left,
+          top,
+          Math.max(whole.right, rect.right) - left,
+          Math.max(whole.bottom, rect.bottom) - top,
+        );
+      }
+      contentBounds.current = whole;
       if (covered(anchor)) {
         hide();
         return;
@@ -304,16 +349,17 @@ export function useFloatingActionBar(
         : rtl
           ? "left bottom"
           : "right bottom";
-      // Attachments have no bubble padding to overlap: even a small image
-      // must keep its entire preview clickable beneath raised actions.
-      const aboveOverlap = visual.closest("[data-message-attachments]")
+      // Beside actions follow the hovered part; raised actions clear the whole
+      // message. Only a text-first message has bubble padding to overlap.
+      const aboveOverlap = first.closest("[data-message-attachments]")
         ? 0
         : overlap;
-      const top = beside ? center : anchor.top + aboveOverlap;
+      const top = beside ? center : whole.top + aboveOverlap;
       const paintedTop = top - height / (beside ? 2 : 1);
       if (
         viewport &&
-        (anchor.top <= viewport.top || paintedTop >= viewport.bottom)
+        ((beside ? anchor.top : whole.top) <= viewport.top ||
+          paintedTop >= viewport.bottom)
       ) {
         hide();
         return;
@@ -321,8 +367,8 @@ export function useFloatingActionBar(
       const left = beside
         ? besideLeft
         : rtl
-          ? anchor.left - overlap
-          : anchor.right - width + overlap;
+          ? whole.left - overlap
+          : whole.right - width + overlap;
       bar.style.top = `${top}px`;
       bar.style.left = `${Math.max(start, Math.min(left, end - width))}px`;
       bar.style.right = "auto";

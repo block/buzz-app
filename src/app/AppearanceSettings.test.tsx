@@ -394,9 +394,7 @@ it("preserves follow-up choice and save recovery when Appearance is hidden", asy
       throw new Error("unavailable");
     });
   await user.click(choice());
-  await user.click(
-    await screen.findByRole("option", { name: "Queue", exact: true }),
-  );
+  await user.click(await screen.findByRole("option", { name: "Queue" }));
   expect(followUpBehaviorPreference()).toBe("queue");
   expect(await screen.findByRole("dialog")).toHaveTextContent(
     "Follow-up preference wasn’t saved",

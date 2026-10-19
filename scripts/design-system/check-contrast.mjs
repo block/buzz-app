@@ -190,8 +190,8 @@ const PAIRS = [
     "--text-row-selected-subtle",
     "--text-row-selected-metadata",
   ].map((role) => [role, "--affordance-navigation-selected"]),
-  // Chips and dots on the selection invert its pair.
-  ["--affordance-navigation-selected", "--text-row-selected"],
+  // Small status/count badges on a selected row keep their own readable pair.
+  ["--text-row-selected-detail", "--surface-row-selected-detail"],
   ["--text-subtle", "--affordance-popover-selected"],
   ...["control", "control-hover", "control-pressed", "selected"].map(
     (state) => ["--text-standard", `--affordance-floating-${state}`],

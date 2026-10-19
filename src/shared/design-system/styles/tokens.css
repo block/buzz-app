@@ -607,6 +607,9 @@
   --text-row-selected-subtle: var(--text-row-subtle);
   --text-row-selected-metadata: var(--text-row-metadata);
   --affordance-navigation-selected: var(--affordance-selected);
+  /* Small badges on a selected row stay distinct without another strong fill. */
+  --surface-row-selected-detail: var(--neutral-2);
+  --text-row-selected-detail: var(--neutral-standard-text);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
   --affordance-chrome: var(--affordance-subtle);
@@ -719,6 +722,8 @@
   --text-row-selected-subtle: var(--text-row-subtle);
   --text-row-selected-metadata: var(--text-row-metadata);
   --affordance-navigation-selected: var(--affordance-selected);
+  --surface-row-selected-detail: var(--neutral-6);
+  --text-row-selected-detail: var(--text-row-selected);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
   --affordance-chrome: var(--affordance-subtle);
@@ -1302,6 +1307,7 @@
      with its ink. Pale tints of chartreuse read as khaki, so other selection
      and hover stay neutral until Buzzin’ tints every surface. */
   --affordance-navigation-selected: var(--accent-9);
+  --surface-row-selected-detail: var(--accent-3);
   --text-row-selected: var(--accent-contrast);
   --text-row-selected-subtle: var(--accent-contrast);
   --text-row-selected-metadata: var(--accent-contrast);
@@ -1406,6 +1412,9 @@
   --text-row-metadata: var(--text-metadata);
   --text-row: var(--text-navigation);
   --affordance-navigation-selected: var(--neutral-5);
+  /* Rebind after the light level rules, which also match a dark root. */
+  --surface-row-selected-detail: var(--neutral-6);
+  --text-row-selected-detail: var(--text-row-selected);
   --text-row-selected: var(--accent-11);
   --text-row-selected-subtle: var(--text-subtle);
   --text-row-selected-metadata: var(--text-metadata);
@@ -1527,6 +1536,8 @@
   --color-affordance-navigation-quiet: var(--affordance-navigation-quiet);
   --color-affordance-row-hover: var(--affordance-row-hover);
   --color-affordance-navigation-selected: var(--affordance-navigation-selected);
+  --color-surface-row-selected-detail: var(--surface-row-selected-detail);
+  --text-color-row-selected-detail: var(--text-row-selected-detail);
   --text-color-row-subtle: var(--text-row-subtle);
   --text-color-row-metadata: var(--text-row-metadata);
   --text-color-row: var(--text-row);

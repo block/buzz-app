@@ -467,7 +467,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "chrome",
       "avatar",
       "media",
-      "bare (glyph-state toggle, no background in any state; 20px artwork at sm)",
+      "bare (no background in any state; same size and artwork as ghost: glyph-state toggles and row-revealed actions whose row supplies the state)",
       "shape: control (default, 10px) | round (avatar default) | row-end | squircle (prominent avatar edit action)",
       "size: xs (20px, 12px icon) | sm (default, 32px, 16px icon) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",

@@ -1030,19 +1030,18 @@ html[data-keyboard-navigation]
   color: var(--text-row-selected);
 }
 
-/* A selected destination carries its fill's ink. Chips and dots on it invert
-   that pair (ink fill, selection-colored marks) so they stay readable on any
-   accent, and row actions take the same ink as the label. */
+/* A selected destination carries its fill's ink. Small status/count badges
+   use a quieter paired surface so working never resembles the overflow glyph. */
 .sidebar [data-selected],
 .sidebar :has(> * > [aria-current="page"]) {
   --text-standard: var(--text-row-selected);
 }
-.sidebar [data-selected] :is(.dmCount, .typing) {
-  background: var(--text-row-selected);
-  color: var(--affordance-navigation-selected);
+.sidebar [data-selected] :is(.dmCount, .typing, .thinkingBadge) {
+  background: var(--surface-row-selected-detail);
+  color: var(--text-row-selected-detail);
 }
 .sidebar [data-selected] .typing > span {
-  background: var(--affordance-navigation-selected);
+  background: currentColor;
 }
 .sidebar [data-selected] :is(.priorityDot, .threadActivityDot) {
   background: var(--text-row-selected);

@@ -704,10 +704,18 @@ keep the dashed border static. This is a status cue, so retain an
 explicit status label or group heading and the scheduled time. Danger hover
 and pressed fills, disabled boundaries, and keyboard focus remain shared.
 
-IconButton's `bare` variant is for toggles whose glyph supplies the state:
-no resting, hover, pressed or selected background. The small control keeps its
-32px hit area with 20px artwork. The caller supplies outline/filled artwork,
-aria-pressed and the accessible name; focus behavior remains unchanged.
+IconButton's `bare` variant has no resting, hover, pressed or selected
+background. Use it where something else already supplies the state:
+
+- Toggles whose glyph shows the state. The caller supplies outline/filled
+  artwork, aria-pressed and the accessible name.
+- Actions revealed by a row, such as a sidebar row's overflow menu. Row hover
+  reveals the action and the row's own hover or selected fill is its state, so a
+  second fill inside the row would compete with it (and, on a brand-filled
+  selection, lose its paired ink).
+
+Bare changes only the fill: size, artwork and focus behave like any other
+IconButton.
 
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
@@ -1290,7 +1298,7 @@ roles, so nothing stays gray on a background that turned accent.
 | --- | --- |
 | Moments | Own messages, the links and mentions on them |
 | Strong | Prominent buttons (including send), checked controls, switches, badges, tooltips; `text-on-prominent` is their ink, `affordance-prominent-mark` their standalone dots, lines and slider track/thumb |
-| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row`, `text-row-selected`, `text-row-subtle`, `text-row-metadata`). The selected sidebar destination uses `affordance-navigation-selected` with `text-row-selected` and its subtle and metadata inks: in light mode the brand fill with its contrast ink, because only one row is ever selected and pale chartreuse reads as khaki. Hover stays neutral until Buzzin’. In dark mode fills stay neutral, because dark chartreuse has no vivid form, and the selected label carries the accent at its glowing step; unread labels retain Semibold `text-navigation-unread` on hover and selection (near-black in light mode below Buzzin’, paired accent ink at Buzzin’; white in dark mode). Black ink is allowed on accent fills. |
+| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row`, `text-row-selected`, `text-row-subtle`, `text-row-metadata`). Small status/count badges on a selected row use `surface-row-selected-detail` with `text-row-selected-detail`: a pale accent fill with black ink in light mode, and a neutral raised fill with the selected row’s ink in dark mode. The selected sidebar destination uses `affordance-navigation-selected` with `text-row-selected` and its subtle and metadata inks: in light mode the brand fill with its contrast ink, because only one row is ever selected and pale chartreuse reads as khaki. Hover stays neutral until Buzzin’. In dark mode fills stay neutral, because dark chartreuse has no vivid form, and the selected label carries the accent at its glowing step; unread labels retain Semibold `text-navigation-unread` on hover and selection (near-black in light mode below Buzzin’, paired accent ink at Buzzin’; white in dark mode). Black ink is allowed on accent fills. |
 | Controls | Resting quiet fills, their hover and pressed states, floating controls, control outlines |
 | Shell | `bg-app`, its dots, and the chrome on it (`affordance-chrome`, its hover, `text-chrome-subtle`, `bg-chrome-selected`) |
 | Lines | Separators, thread lines, scrollbars |

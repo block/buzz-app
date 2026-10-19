@@ -213,6 +213,7 @@ it.each(ACCENTS)(
           palette["--affordance-accent"],
         );
         for (const [text, fill] of [
+          ["--text-row-selected-detail", "--surface-row-selected-detail"],
           ["--text-message-own", "--surface-message-own"],
           ["--text-message-link-own", "--surface-message-own"],
           ["--text-on-prominent", "--affordance-prominent"],

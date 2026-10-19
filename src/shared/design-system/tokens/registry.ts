@@ -384,6 +384,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "proposed",
       },
       {
+        token: "bg-surface-row-selected-detail",
+        variable: "--surface-row-selected-detail",
+        pointsAt:
+          "neutral-2 light; accent 3 light from Hummin’; neutral-6 dark",
+        use: "Quiet fill for working, typing and count badges on a selected sidebar row.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-selected-detail",
+        variable: "--text-row-selected-detail",
+        pointsAt: "neutral standard ink light / text-row-selected dark",
+        use: "Readable marks on surface-row-selected-detail, independent of the row's strong fill.",
+        status: "proposed",
+      },
+      {
         token: "text-row-subtle",
         variable: "--text-row-subtle",
         pointsAt: "text-subtle; accent step 11 once rows take the accent",

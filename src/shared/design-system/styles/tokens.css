@@ -955,6 +955,43 @@
   --accent-link-dark: #e6e76a;
   --accent-link-hover-dark: #23230b;
 }
+:root[data-accent="gray"],
+[data-accent="gray"] {
+  --accent-1-light: #ffffff;
+  --accent-2-light: #fafafa;
+  --accent-3-light: #f0f0f0;
+  --accent-4-light: #e8e8e8;
+  --accent-5-light: #dedede;
+  --accent-6-light: #d4d4d4;
+  --accent-7-light: #bfbfbf;
+  --accent-8-light: #a0a0a0;
+  --accent-9-light: #525252;
+  --accent-10-light: #404040;
+  --accent-11-light: #525252;
+  --accent-12-light: #171717;
+  --accent-contrast-light: #ffffff;
+  --accent-ink-light: #ffffff;
+  --accent-pressed-light: #303030;
+  --accent-link-light: #404040;
+  --accent-link-hover-light: #f0f0f0;
+  --accent-1-dark: #111111;
+  --accent-2-dark: #191919;
+  --accent-3-dark: #232323;
+  --accent-4-dark: #2a2a2a;
+  --accent-5-dark: #313131;
+  --accent-6-dark: #3a3a3a;
+  --accent-7-dark: #484848;
+  --accent-8-dark: #606060;
+  --accent-9-dark: #c7c7c7;
+  --accent-10-dark: #dedede;
+  --accent-11-dark: #c7c7c7;
+  --accent-12-dark: #eeeeee;
+  --accent-contrast-dark: #111111;
+  --accent-ink-dark: #111111;
+  --accent-pressed-dark: #b8b8b8;
+  --accent-link-dark: #c7c7c7;
+  --accent-link-hover-dark: #232323;
+}
 :root[data-accent="flame"],
 [data-accent="flame"] {
   --accent-1-light: #fefcfc;
@@ -1203,7 +1240,7 @@
   --text-on-accent: var(--accent-contrast);
 }
 
-/* Vibe levels switch whole color groups onto the accent ramp. Snoozin’ is the
+/* Accent levels switch whole color groups onto the accent ramp. Snoozin’ is the
    neutral role layer. Hummin’ adds links, strong controls and rows. Swarmin’
    adds your own messages and the shell (background, dots and chrome on it). Buzzin’ also colors quiet controls, the shell and its
    dots, lines, surfaces and text. Shared groups are declared

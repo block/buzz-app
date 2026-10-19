@@ -146,6 +146,14 @@ function fixture(
       };
       for (const listener of listeners) listener();
     });
+  const drop = (id: string) =>
+    act(() => {
+      list = {
+        ...list,
+        channels: list.channels.filter((channel) => channel.id !== id),
+      };
+      for (const listener of listeners) listener();
+    });
   const snapshot: RelaySnapshot = {
     status,
     ...(status === "ready"
@@ -197,7 +205,7 @@ function fixture(
       </ChannelNavigationProvider>
     </ToastProvider>
   );
-  return { view, navigator, snapshot, list, session, publish };
+  return { view, navigator, snapshot, list, session, publish, drop };
 }
 
 it("uses relay section filters across navigation and remount, and offers only hidden channels", async () => {
@@ -1015,14 +1023,17 @@ it.each(["archive", "unarchive", "delete"] as const)(
     expect(screen.getByRole("button", { name: "Other control" })).toHaveFocus();
     if (action === "delete")
       expect(h.navigator.open).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: "conversation", channelId: "alpha" }),
+        expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
       );
     else expect(h.navigator.open).not.toHaveBeenCalled();
   },
 );
 
-function pendingLifecycle(action: "archive" | "delete" | "leave" | "hide") {
-  const h = fixture();
+function pendingLifecycle(
+  action: "archive" | "delete" | "leave" | "hide",
+  preferences?: Parameters<typeof fixture>[0],
+) {
+  const h = fixture(preferences);
   const channel = h.list.channels[1];
   assert(channel);
   let finish!: () => void;
@@ -1143,6 +1154,45 @@ it("a failed lifecycle action releases its gate while keeping recovery visible",
     screen.getByText("Refresh channels before trying again."),
   ).toBeVisible();
   expect(h.run).toHaveBeenCalledOnce();
+});
+
+// Opening the sidebar's first row would scroll a long sidebar away from where
+// the channel was; its neighbor is already in view.
+it("deleting the open channel opens its neighbor after the roster drops it", async () => {
+  const h = pendingLifecycle("delete");
+  await h.start();
+  h.drop("beta");
+  await act(async () => h.finish());
+  await waitFor(() =>
+    expect(h.navigator.open).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
+    ),
+  );
+  expect(h.navigator.open).toHaveBeenCalledOnce();
+});
+
+it("deleting the only row in its section opens the nearest row below it", async () => {
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [{ id: "laptop", name: "Laptop", order: 0 }],
+      assignments: { beta: "laptop" },
+      starred: ["alpha"],
+      muted: [],
+    }),
+    available: true,
+    write: async () => ({ sections: [], assignments: {} }),
+    writeStar: async () => [],
+  });
+  await preferences.queries.ensure();
+  // Starred: alpha; Laptop: beta; Channels: gamma.
+  const h = pendingLifecycle("delete", preferences.queries);
+  await h.start();
+  await act(async () => h.finish());
+  await waitFor(() =>
+    expect(h.navigator.open).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
+    ),
+  );
 });
 
 it("session teardown still aborts submitted lifecycle work", async () => {

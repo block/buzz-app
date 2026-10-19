@@ -17,10 +17,19 @@ import { useMentionArchives } from "../../features/messages/use-mention-archives
 import { archiveHides } from "../../features/relay/identity-archives";
 import { foldProfiles } from "../../features/relay/profiles";
 import {
+  ArrowsDownUpIcon,
   CalendarIcon,
   ChatCircleIcon,
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRoot,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
 import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
 import { matchName, matchRank } from "../../features/search/match";
@@ -31,7 +40,7 @@ import {
   searchOrder,
 } from "../../features/search/usage";
 import { usePublicChannelSearch } from "../../features/channels/usePublicChannelSearch";
-import { useSearchMessages } from "./useSearchMessages";
+import { type SearchSort, useSearchMessages } from "./useSearchMessages";
 import { matchPerson } from "../../features/search/person-match";
 import {
   personKey,
@@ -241,6 +250,7 @@ export function SearchResults({
     session.agentChoices.snapshot,
     session.agentChoices.snapshot,
   );
+  const [sort, setSort] = useState<SearchSort>("relevance");
   const search = useSearchMessages(
     session,
     query,
@@ -254,7 +264,10 @@ export function SearchResults({
         )
         .map((agent) => [agent.pubkey, agent.name]),
     ),
+    // Only scoped search offers the choice, so global search keeps relevance.
+    scopedChannelId ? sort : "relevance",
   );
+  const messageOrder = search.newestFirst ? "Most recent" : "Most relevant";
   const showAmbiguousPicker = !!search.ambiguousAuthor && !pickerPrompt;
   // Ambiguity is known only after a completed token. Keep its original span so
   // choosing a key does not discard free text or other operators after it.
@@ -892,8 +905,20 @@ export function SearchResults({
         : scopedChannelId
           ? [
               {
-                label: "Most relevant",
-                destinations: messages,
+                label: messageOrder,
+                destinations: search.hasMore
+                  ? [
+                      ...messages,
+                      {
+                        key: "more-messages",
+                        label: search.loadingMore
+                          ? "Loading more messages…"
+                          : "Show more messages",
+                        icon: ChatCircleIcon,
+                        run: search.loadMore,
+                      },
+                    ]
+                  : messages,
                 empty: messageEmpty,
               },
             ]
@@ -966,7 +991,7 @@ export function SearchResults({
                   ? [{ label: "This conversation", destinations: scopeAction }]
                   : []),
                 {
-                  label: "Most relevant",
+                  label: messageOrder,
                   destinations: messages,
                   empty:
                     matchingChannels.length ||
@@ -998,6 +1023,43 @@ export function SearchResults({
         scopedChannelId
           ? "Search messages…"
           : "Search pages, people, conversations and messages…"
+      }
+      scopeAction={
+        scopedChannelId && session.searchSort && parsed.text ? (
+          <MenuRoot>
+            <MenuTrigger
+              render={(props) => (
+                <IconButton
+                  {...props}
+                  variant="ghost"
+                  aria-label="Sort messages"
+                  title="Sort messages"
+                  icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
+                />
+              )}
+            />
+            <MenuPopup
+              align="end"
+              size="compact"
+              aria-label="Sort messages"
+              finalFocus={input}
+            >
+              <MenuRadioGroup
+                value={sort}
+                onValueChange={(value) =>
+                  setSort(value === "newest" ? "newest" : "relevance")
+                }
+              >
+                <MenuRadioItem value="relevance" closeOnClick>
+                  Most relevant
+                </MenuRadioItem>
+                <MenuRadioItem value="newest" closeOnClick>
+                  Most recent
+                </MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuPopup>
+          </MenuRoot>
+        ) : undefined
       }
       scope={
         scopedChannelId && onScopeChange
@@ -1085,6 +1147,7 @@ export function SearchResults({
             </Button>
           </div>
         )}
+        {search.moreError && <p>{search.moreError}</p>}
         {search.error && (
           <div>
             <p>{search.error}</p>

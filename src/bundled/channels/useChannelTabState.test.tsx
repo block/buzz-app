@@ -277,6 +277,11 @@ test("moving a thread reorders it within a pane and across panes", () => {
   expect(
     h.result.current.tabs.find((tab) => tab.id === "thread:alpha:a"),
   ).toMatchObject({ replyRequest: 1 });
+  // Focusing keeps the reply request, so the reply box keeps its target.
+  act(() => h.result.current.openThreadTab("alpha", "a", "a", "focus"));
+  expect(
+    h.result.current.tabs.find((tab) => tab.id === "thread:alpha:a"),
+  ).toMatchObject({ replyRequest: 1, focusRequest: 1 });
 });
 
 // A link's root hint is not identity: the reader's verified root merges a

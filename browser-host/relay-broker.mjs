@@ -327,6 +327,10 @@ async function relayAuthority(fetch, relay) {
           ),
         }
       : {}),
+    // Bridge search accepts `search_sort: "newest"`.
+    searchSort:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-search-sort"),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -774,21 +778,6 @@ export function relayBrokerPlugin({
       const viewer = getPublicKey(key);
       let archive;
       const localArchive = () => (archive ??= openArchive(archiveFile));
-      const archiveSettings = (relay) =>
-        localArchive().request(viewer, relay, { action: "settings" }, key);
-      const updateArchiveCapture = (stream) => {
-        const settings = archiveSettings(stream.relay);
-        stream.archiveRevision = settings.revision;
-        stream.archiveObserver = settings.observer;
-        if (stream.archiveFailureRevision !== settings.revision) {
-          stream.archiveFailureRevision = undefined;
-          stream.archiveState(settings.observer ? "saving" : "off");
-        }
-        stream.traffic.archive([
-          ...(settings.observer ? [24200] : []),
-          ...(settings.metrics ? [44200] : []),
-        ]);
-      };
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
@@ -1387,17 +1376,11 @@ export function relayBrokerPlugin({
             )
               return json(res, 400, { error: "Invalid archive request" });
             try {
-              const result = localArchive().request(viewer, relay, body, key);
-              if (["configure", "clear"].includes(body.action))
-                for (const stream of streams.values())
-                  if (stream.relay === relay) {
-                    try {
-                      updateArchiveCapture(stream);
-                    } catch {
-                      stream.archiveState("error");
-                    }
-                  }
-              return json(res, 200, result);
+              return json(
+                res,
+                200,
+                localArchive().request(viewer, relay, body, key),
+              );
             } catch {
               return json(res, 500, {
                 error:
@@ -1717,7 +1700,6 @@ export function relayBrokerPlugin({
               joined,
               interestRevision,
               traffic: undefined,
-              archiveState: (state) => write("archive-state", { state }),
               close: undefined,
             };
             const traffic = subscribeRelayTraffic(
@@ -1734,33 +1716,6 @@ export function relayBrokerPlugin({
                     });
                 },
                 presence: (event) => write("presence", event),
-                capture: (event) => {
-                  try {
-                    localArchive().ingest(
-                      viewer,
-                      relay,
-                      event,
-                      stream.archiveRevision,
-                      key,
-                    );
-                    if (event.kind === 24200) {
-                      stream.archiveFailureRevision = undefined;
-                      stream.archiveState(
-                        stream.archiveObserver ? "saving" : "off",
-                      );
-                    }
-                  } catch {
-                    if (event.kind === 24200) {
-                      stream.archiveFailureRevision = stream.archiveRevision;
-                      write("archive-error", {});
-                    }
-                    try {
-                      updateArchiveCapture(stream);
-                    } catch {
-                      /* Live decode stays independent of disk failure. */
-                    }
-                  }
-                },
                 telemetry: (event, generation) => {
                   if (res.destroyed) return;
                   try {
@@ -1819,11 +1774,6 @@ export function relayBrokerPlugin({
               res.destroy();
             };
             Object.assign(stream, { traffic, close });
-            try {
-              updateArchiveCapture(stream);
-            } catch {
-              write("archive-error", {});
-            }
             streams.set(streamId, stream);
             res.once("close", close);
             if (res.destroyed) close();

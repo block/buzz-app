@@ -34,6 +34,8 @@ vi.mock("./ConversationTab", () => ({
       data-message={tab.messageId}
       data-reveal={tab.revealRequest}
       data-mark-read={tab.kind === "conversation" ? tab.markRead : undefined}
+      data-focus={tab.focusRequest}
+      data-reply={tab.kind === "thread" ? tab.replyRequest : undefined}
     >
       {tab.kind} in {channel.name}
       {!visit && " unvisited"}
@@ -268,4 +270,24 @@ it("closes a conversation's tab only when one is open", () => {
   expect(side()).toEqual(["beta"]);
   expect(page.close({ channelId: "beta" })).toBe(true);
   expect(screen.getAllByRole("tablist")).toHaveLength(1);
+});
+
+it("focuses the composer of each tab it opens, except at a message", () => {
+  const page = fixture();
+  const tab = () => screen.getByText("conversation in beta");
+  const thread = () => screen.getByText("thread in alpha");
+  page.open({ channelId: "beta" });
+  expect(tab()).toHaveAttribute("data-focus", "1");
+  page.open({ channelId: "beta" });
+  expect(tab()).toHaveAttribute("data-focus", "2");
+  page.open({ channelId: "beta", messageId: "post" });
+  expect(tab()).toHaveAttribute("data-focus", "2");
+  page.open({ channelId: "alpha", threadId: "root" }, { keep: true });
+  expect(thread()).toHaveAttribute("data-focus", "1");
+  page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
+  expect(thread()).toHaveAttribute("data-focus", "1");
+  page.open({ channelId: "alpha", threadId: "root" });
+  expect(thread()).toHaveAttribute("data-focus", "2");
+  // Focus is not a Reply, which would retarget the reply box at the root.
+  expect(thread()).not.toHaveAttribute("data-reply");
 });

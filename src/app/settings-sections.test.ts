@@ -83,7 +83,6 @@ it.each([
           "buzz.emoji/custom-emoji",
           "example/groups",
           "other/groups",
-          "local-archive",
           "buzz.pairing/mobile",
           "leave-community",
         ],
@@ -122,7 +121,6 @@ it("classifies built-in sections apart from plugin card keys", () => {
     "profile",
     "identity",
     "plugins",
-    "local-archive",
     "leave-community",
     ...app.filter((id) => id !== "buzz.channels/templates"),
   ])

@@ -16,6 +16,7 @@
   let accent = "chartreuse";
   try {
     const accents = [
+      "gray",
       "chartreuse",
       "flame",
       "magenta",

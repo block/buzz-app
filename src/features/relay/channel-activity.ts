@@ -18,7 +18,7 @@ export function createChannelActivity(
   read: ChannelActivityReader | undefined,
   notify = (listener: () => void) => listener(),
 ) {
-  let values = new Map<string, number>();
+  let values = new Map<string, number | null>();
   let generation = 0;
   let revision = 0;
   let closed = false;
@@ -46,7 +46,8 @@ export function createChannelActivity(
   };
   return {
     status: () => status,
-    last: (channelId: string) => values.get(channelId),
+    last: (channelId: string) => values.get(channelId) ?? undefined,
+    known: (channelId: string) => values.has(channelId),
     revision: () => revision,
     subscribe(listener: () => void) {
       if (closed) return () => {};
@@ -96,8 +97,8 @@ export function createChannelActivity(
       const wanted = new Set(ids);
       const next = new Map(values);
       for (const id of ids) {
-        const displayed = values.get(id);
-        const started = atStart.get(id);
+        const displayed = values.get(id) ?? undefined;
+        const started = atStart.get(id) ?? undefined;
         const result = refreshed.get(id);
         const changedDuringRead = displayed !== started;
         if (
@@ -105,8 +106,8 @@ export function createChannelActivity(
           (result !== undefined ? displayed > result : changedDuringRead)
         )
           continue;
-        if (result === undefined) next.delete(id);
-        else next.set(id, result);
+        // Retain authoritative absence through later refreshes and failures.
+        next.set(id, result ?? null);
       }
       for (const id of next.keys()) if (!wanted.has(id)) next.delete(id);
       status = "ready";

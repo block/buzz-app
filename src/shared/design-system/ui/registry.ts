@@ -48,6 +48,7 @@ export const BASE_UI_PARTS = {
     module: "@base-ui/react/combobox",
   },
   switch: { name: "Switch", docs: "switch", module: "@base-ui/react/switch" },
+  slider: { name: "Slider", docs: "slider", module: "@base-ui/react/slider" },
   tabs: { name: "Tabs", docs: "tabs", module: "@base-ui/react/tabs" },
   accordion: {
     name: "Accordion",
@@ -227,9 +228,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "radio-group",
     name: "RadioGroup",
-    purpose: "Choose one option, including labelled settings cards.",
+    purpose:
+      "Choose one option, including labelled settings cards and text-only tiles.",
     behavior: "Base UI owns form and keyboard semantics.",
-    variants: ["default", "disabled", "invalid"],
+    variants: ["default", "card", "tile", "disabled", "invalid"],
     status: "proposed",
     collection: "components",
     source: "shared/design-system/ui/RadioGroup.tsx",
@@ -419,6 +421,21 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: [],
   },
   {
+    slug: "step-slider",
+    name: "Step slider",
+    purpose:
+      "Choose one of a few ordered steps, such as how much of the app the accent colors.",
+    behavior:
+      "Base UI owns dragging, snapping and keyboard steps. Each step is a visible stop; the thumb announces the step's name, which also appears beneath it.",
+    variants: ["each step", "disabled"],
+    status: "proposed",
+    collection: "components",
+    owner: "desktop-new Design system",
+    source: "shared/design-system/ui/StepSlider.tsx",
+    baseUi: [BASE_UI_PARTS.slider],
+    composes: [],
+  },
+  {
     slug: "button",
     name: "Button",
     purpose:
@@ -433,6 +450,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "attention (proposed): light dashed danger outline with slow marching ants",
       "inverted",
       "link",
+      "plain: unfilled text disclosure without an underline",
       "size: inline | xs | sm | md (default) | lg",
       "shape: capsule (default) | control (12px)",
       "SurfaceButton: artwork layout with shared activation and focus (proposed)",
@@ -505,7 +523,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Show up to three overlapping identities and an overflow count on one line. The enclosing control supplies the accessible name.",
     behavior:
       "Decorative artwork composed from Avatar; identity data stays with the caller.",
-    variants: ["compact", "small", "circle", "squircle", "overflow count"],
+    variants: [
+      "mini",
+      "compact",
+      "small",
+      "circle",
+      "squircle",
+      "overflow count",
+    ],
     status: "proposed",
     collection: "components",
     owner: "Messages",
@@ -520,7 +545,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "Show received/waiting activity with unison breathing, and working activity with staggered dots. The caller supplies the state and accessible text.",
     behavior:
       "CSS-only decorative motion. Reduced motion keeps the dots still; receipt detection and lifecycle state stay with the feature.",
-    variants: ["waiting", "working (default)", "reduced motion"],
+    variants: ["waiting", "working (default)", "small", "reduced motion"],
     status: "proposed",
     collection: "components",
     owner: "Messages",
@@ -602,7 +627,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Group workspace content on a shared surface. Panel owns fill, border, corners, shadow, and clipping; the feature owns headers, spacing, scrolling, and resizing.",
     behavior: "Semantic native region.",
-    variants: ["panel"],
+    variants: ["panel", "capsule"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",
@@ -614,10 +639,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "tabs",
     name: "Tabs",
     purpose:
-      "Switch between sibling views. Choose chrome for the app backdrop, panel for a plain surface, workspace for combined panes, or navigation for content-sized tabs capped at 12rem with icons or avatars. Closable tabs provide a sibling close button and support Delete or middle-click. The caller owns selection, retained content, and the next selection after closing.",
+      "Switch between sibling views. Choose chrome for the app backdrop, panel for a plain surface, segmented for grouped filters on an opaque surface, workspace for combined panes, or navigation for content-sized tabs capped at 12rem with icons or avatars. Closable tabs provide a sibling close button and support Delete or middle-click. The caller owns selection, retained content, and the next selection after closing.",
     behavior:
       "Base UI Tabs. Navigation items accept attentionRequest to identify a repeated opening without changing focus or remounting content. Hosts may opt movable tabs into Panel Swap title-only dragging using TabDragFeedback; hosts own hit testing, cancellation and the committed order. tabMenu composes the host’s scoped Close all tabs action with Rename tab in one shared menu, without changing tab selection.",
-    variants: ["chrome", "panel", "workspace", "navigation"],
+    variants: ["chrome", "panel", "workspace", "navigation", "segmented"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",
@@ -743,7 +768,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "combobox",
     name: "Combobox",
     purpose:
-      "Search and choose from a set of options. The field includes a browse control and a shared option popup.",
+      "Search and choose from a set of options. The field includes a browse control and a shared option popup. A dropdown trigger can place search inside the popup.",
     behavior:
       "Base UI owns keyboard navigation and selection; callers own filtering, custom values and async discovery.",
     variants: ["default", "compact", "loading", "disabled"],
@@ -786,7 +811,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Menu",
     purpose: "Present contextual actions and choices from a compact trigger.",
     behavior:
-      "Base UI owns positioning, dismissal, keyboard navigation, selection, and nested submenus.",
+      "Base UI owns positioning, dismissal, keyboard navigation, selection, and nested submenus. Context menus appear immediately and expose their visible lifetime to source rows; dropdowns and submenus retain their entrance motion.",
     variants: [
       "actions",
       "compact",
@@ -796,6 +821,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "group label: default | quiet",
       "nested submenus",
       "danger: matching label/icon color and danger hover/pressed fill",
+      "disabled: matching label, trailing text, and indicator color",
     ],
     status: "proposed",
     collection: "components",
@@ -819,6 +845,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "disabled",
       "align: start | center | end",
       "compact subtle",
+      "compact value suffix",
       "leading icon",
     ],
     status: "proposed",

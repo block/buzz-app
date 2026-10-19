@@ -916,7 +916,7 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
-        const session = channel.channelType === "session";
+        const session = channel.channelType === "solo";
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
           return entry.event.pubkey !== viewer && !!category(entry, dm);
@@ -1252,8 +1252,15 @@ export function createUnread({
   function want(entry: Evidence, dm: boolean) {
     const { event, channelId, parentId, threadRootId } = entry;
     if (!parentId || event.pubkey === viewer) return;
+    // Activity groups unread thread replies by root, so fetch a root the
+    // sampled window dropped for a followed thread or an unread reply in it.
     const structuralRootId =
-      chosen(entry) === true && !entry.rootId ? threadRootId : undefined;
+      !entry.rootId &&
+      (chosen(entry) === true ||
+        ((entry.mentioned || entry.broadcast || conversation(entry)) &&
+          isUnread(entry, reads.state(), dm)))
+        ? threadRootId
+        : undefined;
     const structuralRecovery = structuralRootId !== undefined;
     const key = structuralRecovery
       ? `${conversationKey(channelId, structuralRootId)}:structure`

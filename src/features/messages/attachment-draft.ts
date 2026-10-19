@@ -5,6 +5,7 @@ import {
   UPLOAD_MAX_BYTES,
   UploadError,
   type UploadedAttachment,
+  type UploadProgress,
 } from "../relay/attachments";
 import { prepareAttachment } from "./prepare-attachment";
 
@@ -72,11 +73,13 @@ const drafts = new WeakMap<RelaySession, Map<string, AttachmentDraft>>();
 export const MAX_ATTACHMENT_FILES = 10;
 const MAX_RETAINED_BYTES = 2 * UPLOAD_MAX_BYTES;
 
-/** Tab-local files survive navigation, not reload. Delivery remains outbox-owned. */
+/** Tab-local files survive navigation, not reload. Delivery remains outbox-owned.
+ * A new chat's draft uploads before its channel exists. */
 export function attachmentDraft(
   session: RelaySession,
   key: string,
   channelId: string,
+  newChat = false,
 ): AttachmentDraft {
   let partition = drafts.get(session);
   if (!partition) {
@@ -158,7 +161,12 @@ export function attachmentDraft(
   ): Promise<UploadedAttachment> {
     if (item.uploaded) return item.uploaded;
     const attachments = session.attachments;
-    if (!attachments) throw new UploadError("unavailable");
+    const upload = newChat
+      ? attachments?.uploadForNewChat
+      : attachments &&
+        ((file: File, signal: AbortSignal, progress: UploadProgress) =>
+          attachments.upload(file, channelId, signal, progress));
+    if (!upload) throw new UploadError("unavailable");
     const controller = new AbortController();
     const combined = AbortSignal.any([signal, controller.signal]);
     const owner = active;
@@ -174,7 +182,7 @@ export function attachmentDraft(
       combined.throwIfAborted();
       task.update(item.id, { status: "uploading" });
       const result = await abortable(
-        attachments.upload(prepared, channelId, combined, (sent, total) => {
+        upload(prepared, combined, (sent, total) => {
           if (
             !combined.aborted &&
             owner.get(item.id) === task &&
@@ -414,9 +422,12 @@ export function useAttachmentDraft(
   session: RelaySession,
   key: string,
   channelId: string,
+  newChat = false,
 ) {
   // Composer's destination key remounts this hook on a session/channel/thread change.
-  const [store] = useState(() => attachmentDraft(session, key, channelId));
+  const [store] = useState(() =>
+    attachmentDraft(session, key, channelId, newChat),
+  );
   const items = useSyncExternalStore(
     store.subscribe,
     store.snapshot,

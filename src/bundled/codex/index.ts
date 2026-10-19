@@ -80,8 +80,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     runtime.dispose();
     setup.dispose();
   });
-  const { Create, CreateModel, ProviderDialogBody, SettingsTab, ActivityTab } =
-    createTabs(providerController, runtime, start, setup);
+  const {
+    Create,
+    CreateModel,
+    DefaultControl,
+    ProviderDialogBody,
+    SettingsTab,
+    ActivityTab,
+  } = createTabs(providerController, runtime, start, setup);
   ctx.agents.register({
     id: TYPE_ID,
     title: "Codex",
@@ -131,6 +137,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
       subscribe: providerController.subscribe,
       check: () => providerController.check(),
       DialogBody: ProviderDialogBody,
+      DefaultControl,
+    },
+    sessions: {
+      list: (pubkey) => {
+        const views = new Map(
+          runtime.sessions(pubkey).map((view) => [view.key, view.status]),
+        );
+        return runtime
+          .conversations(pubkey)
+          .map(({ key, channelId, root, at }) => {
+            const status = views.get(key);
+            return {
+              channelId,
+              ...(root && { root }),
+              ...(at !== undefined && { at }),
+              ...(status && { status }),
+            };
+          });
+      },
+      subscribe: runtime.subscribe,
     },
     tabs: [
       {

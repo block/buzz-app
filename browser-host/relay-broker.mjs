@@ -1,3 +1,5 @@
+import { audienceAuthorityCommunity } from "../src/features/sessions/audience-authority.ts";
+import { isSidebarPreferencesBatch } from "../src/features/relay/sidebar-preferences.ts";
 import {
   isCatalogKind,
   MAX_EVENT_BYTES as CATALOG_EVENT_BYTES,
@@ -11,12 +13,17 @@ import { validStatusTemplate } from "./user-status.mjs";
 import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
 import { memoryResponseText } from "../src/features/agents/memory.ts";
 import { prepareMedia } from "./media-preparation.mjs";
-import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
+import {
+  assertSidebarSortIntent,
+  mutateSidebarSort,
+  assertSidebarFilterIntent,
+  mutateSidebarFilter,
+} from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import {
   communityGitRepository,
   parseGitRead,
-} from "../src/features/projects/git.ts";
+} from "../src/features/repos/git.ts";
 import { validateMemberAdministrationTemplate } from "../src/features/channel-members/administration-protocol.ts";
 import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import { validateDetailsTemplate } from "../src/features/relay/channel-details-protocol.ts";
@@ -29,7 +36,7 @@ import {
 } from "./channel-kit.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validateUploadResult } from "../src/features/relay/attachments.ts";
-import { validChannelCommand } from "./session-commands.mjs";
+import { validChannelCommand } from "./channel-commands.mjs";
 import {
   adminReason,
   claimReason,
@@ -313,6 +320,13 @@ async function relayAuthority(fetch, relay) {
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
+    ...(audienceAuthorityCommunity(nip11.audience_authority)
+      ? {
+          audienceAuthorityCommunity: audienceAuthorityCommunity(
+            nip11.audience_authority,
+          ),
+        }
+      : {}),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -672,7 +686,9 @@ export function validFilters(filters) {
   return (
     Array.isArray(filters) &&
     filters.length >= 1 &&
-    (filters.length <= MAX_FILTERS || isWorkflowDefinitionBatch(filters)) &&
+    (filters.length <= MAX_FILTERS ||
+      isWorkflowDefinitionBatch(filters) ||
+      isSidebarPreferencesBatch(filters)) &&
     filters.every(
       (filter) =>
         filter &&
@@ -1148,6 +1164,7 @@ export function relayBrokerPlugin({
               "/api/relay/sidebar-section-order",
               "/api/relay/sidebar-star",
               "/api/relay/sidebar-sort",
+              "/api/relay/sidebar-filter",
               "/api/relay/sidebar-mute",
             ].includes(route) &&
             req.method === "POST"
@@ -1173,6 +1190,11 @@ export function relayBrokerPlugin({
                 assertSidebarStarIntent,
                 mutateSidebarStar,
               ],
+              "/api/relay/sidebar-filter": [
+                "channel-filter",
+                assertSidebarFilterIntent,
+                mutateSidebarFilter,
+              ],
               "/api/relay/sidebar-sort": [
                 "channel-sort",
                 assertSidebarSortIntent,
@@ -1184,7 +1206,8 @@ export function relayBrokerPlugin({
                 mutateSidebarMute,
               ],
             }[route];
-            const sorting = coordinate === "channel-sort";
+            const sorting =
+              coordinate === "channel-sort" || coordinate === "channel-filter";
             const muting = coordinate === "channel-mutes";
             // Sort and order intents carry up to 100 section IDs.
             const listing =
@@ -1313,7 +1336,14 @@ export function relayBrokerPlugin({
                   readHead,
                   publishEvent,
                 );
-                return sorting ? { groups: result } : result;
+                return coordinate === "channel-filter"
+                  ? {
+                      groups: result.filters,
+                      activeWindowSeconds: result.activeWindowSeconds,
+                    }
+                  : sorting
+                    ? { groups: result }
+                    : result;
               });
             sidebarMutations.set(relay, mutation);
             try {
@@ -1427,6 +1457,7 @@ export function relayBrokerPlugin({
               attachmentUploads: true,
               sidebarPreferences: true,
               sidebarSortWrites: true,
+              sidebarFilterWrites: true,
               channelActivity: true,
               sidebarMuteWrites: true,
               channelKit: true,

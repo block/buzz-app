@@ -322,6 +322,24 @@ impl Identity {
         self.state = State::Ready(key); // Commit in memory only after secure persistence.
         Ok(viewer)
     }
+    fn require_missing(&mut self) -> Result<()> {
+        if self.restore()?.is_some() || self.store.read()?.is_some() {
+            return Err("An identity is already saved; nothing was overwritten".into());
+        }
+        Ok(())
+    }
+    fn install_recovered(&mut self, secret: Zeroizing<[u8; 32]>, expected: &str) -> Result<String> {
+        self.require_missing()?;
+        let key = Key(secret);
+        let viewer = key.viewer()?;
+        if viewer != expected {
+            return Err("The recovered identity could not be verified".into());
+        }
+        let nsec = Zeroizing::new(key.nsec()?);
+        self.store.add(nsec.as_bytes())?;
+        self.state = State::Ready(key);
+        Ok(viewer)
+    }
     fn close(&mut self) {
         self.state = State::Closed;
     }
@@ -411,23 +429,46 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                 }
             }
         }
-        "channel-sort" => {
+        "channel-sort" | "channel-filter" => {
             let groups = data
                 .get("groups")
                 .and_then(|v| v.as_object())
                 .ok_or_else(invalid)?;
+            if coordinate == "channel-filter" {
+                if let Some(windows) = data.get("activeWindowSeconds") {
+                    let windows = windows.as_object().ok_or_else(invalid)?;
+                    if windows.len() > 104
+                        || windows.iter().any(|(group, value)| {
+                            group.trim().is_empty()
+                                || group.encode_utf16().count() > 264
+                                || !value.as_u64().is_some_and(|seconds| {
+                                    (86400..=31536000).contains(&seconds) && seconds % 86400 == 0
+                                })
+                        })
+                    {
+                        return Err(invalid());
+                    }
+                }
+            }
             if groups.len() > 104
-                || groups
-                    .iter()
-                    .any(|(group, mode)| group.encode_utf16().count() > 264 || !mode.is_string())
+                || groups.iter().any(|(group, mode)| {
+                    group.encode_utf16().count() > 264
+                        || !mode.is_string()
+                        || (coordinate == "channel-filter"
+                            && !matches!(mode.as_str(), Some("all" | "unreads" | "active")))
+                })
             {
                 return Err(invalid());
             }
         }
+
         _ => return Err(invalid()),
     }
     if let Some(meta) = data.get("meta") {
-        if matches!(coordinate, "channel-sections" | "channel-sort") {
+        if matches!(
+            coordinate,
+            "channel-sections" | "channel-sort" | "channel-filter"
+        ) {
             validate_sidebar_meta(coordinate, meta)?;
             let projection = project_sidebar_meta(coordinate, meta);
             let projected = projection.as_object().ok_or_else(invalid)?;
@@ -488,10 +529,15 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
     {
         return Err(invalid());
     }
-    let valid = if coordinate == "channel-sort" {
+    let valid = if matches!(coordinate, "channel-sort" | "channel-filter") {
         map(meta.get("g"), 264, |v| {
             reg(v, |v| {
-                v.is_null() || matches!(v.as_str(), Some("alpha" | "recent"))
+                v.is_null()
+                    || if coordinate == "channel-filter" {
+                        matches!(v.as_str(), Some("unreads" | "active"))
+                    } else {
+                        matches!(v.as_str(), Some("alpha" | "recent"))
+                    }
             })
         })
     } else {
@@ -521,7 +567,7 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
 // metadata's live counts to the existing projection limits above.
 fn project_sidebar_meta(coordinate: &str, meta: &serde_json::Value) -> serde_json::Value {
     use serde_json::{json, Value};
-    if coordinate == "channel-sort" {
+    if matches!(coordinate, "channel-sort" | "channel-filter") {
         let groups: serde_json::Map<_, _> = meta["g"]
             .as_object()
             .into_iter()
@@ -566,7 +612,7 @@ fn project_sidebar_meta(coordinate: &str, meta: &serde_json::Value) -> serde_jso
 pub(crate) fn sidebar_coordinate(value: &str) -> bool {
     matches!(
         value,
-        "channel-sections" | "channel-stars" | "channel-mutes" | "channel-sort"
+        "channel-sections" | "channel-stars" | "channel-mutes" | "channel-sort" | "channel-filter"
     )
 }
 
@@ -620,6 +666,27 @@ impl IdentityHost {
         .await
     }
 
+    pub(crate) async fn require_missing(&self) -> Result<()> {
+        with_identity(self.clone(), |identity| identity.require_missing()).await
+    }
+
+    pub(crate) async fn install_recovered(
+        &self,
+        secret: Zeroizing<[u8; 32]>,
+        expected: String,
+        admission: Arc<Mutex<bool>>,
+    ) -> Result<String> {
+        with_identity(self.clone(), move |identity| {
+            // Keep cancellation serialized with the final create-only storage write.
+            let admitted = admission.lock().map_err(|_| "Restore is unavailable")?;
+            if !*admitted {
+                return Err("Restore was canceled. Try again.".into());
+            }
+            identity.install_recovered(secret, &expected)
+        })
+        .await
+    }
+
     /// Only verified, self-authored sidebar coordinates may cross the decrypt boundary.
     pub(crate) async fn decode_sidebar(
         &self,
@@ -630,11 +697,11 @@ impl IdentityHost {
             let State::Ready(key) = &identity.state else {
                 return Err("Set up your identity first".into());
             };
-            if events.len() > 4
+            if events.len() > 5
                 || serde_json::to_vec(&events)
                     .map_err(|_| "Invalid sidebar records")?
                     .len()
-                    > 768 * 1024
+                    > 960 * 1024
             {
                 return Err("Invalid sidebar records".into());
             }
@@ -1028,16 +1095,31 @@ pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Op
     with_identity(host.inner().clone(), Identity::restore).await
 }
 #[tauri::command]
-pub async fn identity_import(host: tauri::State<'_, IdentityHost>, nsec: String) -> Result<String> {
+pub async fn identity_import(
+    host: tauri::State<'_, IdentityHost>,
+    backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
+    nsec: String,
+) -> Result<String> {
     let nsec = Zeroizing::new(nsec);
-    with_identity(host.inner().clone(), move |identity| {
+    let public = with_identity(host.inner().clone(), move |identity| {
         identity.save(Some(&nsec))
     })
-    .await
+    .await?;
+    let backup = backup.inner().clone();
+    let identity = host.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    Ok(public)
 }
 #[tauri::command]
-pub async fn identity_create(host: tauri::State<'_, IdentityHost>) -> Result<String> {
-    with_identity(host.inner().clone(), |identity| identity.save(None)).await
+pub async fn identity_create(
+    host: tauri::State<'_, IdentityHost>,
+    backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
+) -> Result<String> {
+    let public = with_identity(host.inner().clone(), |identity| identity.save(None)).await?;
+    let backup = backup.inner().clone();
+    let identity = host.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    Ok(public)
 }
 #[tauri::command]
 pub async fn identity_export(host: tauri::State<'_, IdentityHost>) -> Result<String> {
@@ -1045,7 +1127,7 @@ pub async fn identity_export(host: tauri::State<'_, IdentityHost>) -> Result<Str
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 impl IdentityHost {
     /// Only recipe plaintext may cross this boundary. Never export arbitrary decrypt.

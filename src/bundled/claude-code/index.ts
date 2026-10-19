@@ -67,12 +67,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   }
 
-  const { Create, CreateModel, ProviderDialogBody, SettingsTab, ActivityTab } =
-    createTabs({
-      setup,
-      defaults: providerDefaults,
-      runtime,
-    });
+  const {
+    Create,
+    CreateModel,
+    DefaultControl,
+    ProviderDialogBody,
+    SettingsTab,
+    ActivityTab,
+  } = createTabs({
+    setup,
+    defaults: providerDefaults,
+    runtime,
+  });
   agents.register<Config>({
     id: TYPE_ID,
     title: "Claude",
@@ -123,6 +129,28 @@ export const apply: PluginModule["apply"] = (ctx) => {
             : undefined;
       },
       DialogBody: ProviderDialogBody,
+      DefaultControl,
+    },
+    sessions: {
+      list: (pubkey) => {
+        const busy = new Map(
+          runtime.sessions(pubkey).map((view) => [view.key, view.busy]),
+        );
+        return runtime
+          .conversations(pubkey)
+          .map(({ key, channelId, root, at }) => {
+            const working = busy.get(key);
+            return {
+              channelId,
+              ...(root && { root }),
+              at,
+              ...(working !== undefined && {
+                status: working ? "Working" : "Idle",
+              }),
+            };
+          });
+      },
+      subscribe: (listener) => runtime.subscribe(listener),
     },
     tabs: [
       {

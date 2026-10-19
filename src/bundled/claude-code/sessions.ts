@@ -43,13 +43,16 @@ export type SessionsOptions = Readonly<{
   /** Where a new conversation looks for a process already started. */
   spare?: Spare;
   store: SessionStore;
-  /** How to start a process with the agent's current settings. */
-  launch(): Promise<Omit<ClaudeLaunch, "resume" | "sessionId">>;
-  /** Changes when a setting that a running process fixed has changed. */
-  fingerprint(): string;
+  /** How to start a process with the agent's current settings, for the
+   * conversation `key` when given. */
+  launch(key?: string): Promise<Omit<ClaudeLaunch, "resume" | "sessionId">>;
+  /** Changes when a setting that a running process fixed has changed, for the
+   * conversation `key` when given. */
+  fingerprint(key?: string): string;
   now?(): number;
   newId?(): string;
-  /** Called when a conversation's process starts or stops. */
+  /** Called when a conversation's process starts, is sent a message, or
+   * stops. */
   onChange?(): void;
 }>;
 
@@ -192,7 +195,8 @@ export class AgentSessions {
     if (
       live &&
       (!live.process.running ||
-        (live.fingerprint !== this.options.fingerprint() && !live.process.busy))
+        (live.fingerprint !== this.options.fingerprint(key) &&
+          !live.process.busy))
     ) {
       this.drop(key, live);
       live = undefined;
@@ -208,7 +212,7 @@ export class AgentSessions {
       });
     }
     const saved = this.options.store.get(key);
-    const starting = this.start(saved?.id).catch((error) => {
+    const starting = this.start(saved?.id, key).catch((error) => {
       console.warn("Claude could not start", error);
       return undefined;
     });
@@ -300,9 +304,11 @@ export class AgentSessions {
    * next fall idle. */
   reconfigure() {
     this.clearDiscovery();
-    const fingerprint = this.options.fingerprint();
     for (const [key, live] of this.live)
-      if (live.fingerprint !== fingerprint && !live.process.busy)
+      if (
+        live.fingerprint !== this.options.fingerprint(key) &&
+        !live.process.busy
+      )
         this.drop(key, live);
   }
 
@@ -313,18 +319,18 @@ export class AgentSessions {
     for (const live of this.once.values()) void live?.process.kill();
   }
 
-  private async start(resume: string | undefined): Promise<Live> {
+  private async start(resume: string | undefined, key?: string): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
-    const fingerprint = this.options.fingerprint();
-    const launch = await this.options.launch();
+    const fingerprint = this.options.fingerprint(key);
+    const launch = await this.options.launch(key);
     const process = resume
       ? await ClaudeProcess.start(this.options.spawn, { ...launch, resume })
       : await this.fresh(launch);
-    if (fingerprint === this.options.fingerprint() || this.disposed)
+    if (fingerprint === this.options.fingerprint(key) || this.disposed)
       return { process, fingerprint, used: this.now() };
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
-    return this.start(resume);
+    return this.start(resume, key);
   }
   /** A process for a new session: the spare when it fits, else a new one. */
   private async fresh(launch: Omit<ClaudeLaunch, "resume" | "sessionId">) {
@@ -356,22 +362,25 @@ export class AgentSessions {
     text: string,
     activity: TurnPick & ActivityReceipt,
   ) {
-    const settled = await live.process.send(text, activity);
+    const sent = live.process.send(text, activity);
+    // Sending made it busy; a snapshot read when it started is not.
+    this.options.onChange?.();
+    const settled = await sent;
     if (this.live.get(key) === live) {
       this.touch(key, live);
-      if (live.fingerprint !== this.options.fingerprint() && !live.process.busy)
+      if (
+        live.fingerprint !== this.options.fingerprint(key) &&
+        !live.process.busy
+      )
         this.drop(key, live);
     }
     return settled;
   }
-  /** Saves the session and restarts its idle countdown. */
+  /** Saves the session as used now, when it takes in a message or ends a
+   * turn, and restarts its idle countdown. */
   private touch(key: string, live: Live, seen?: number) {
     live.used = this.now();
-    clearTimeout(live.timer);
-    live.timer = setTimeout(() => {
-      if (live.process.busy) this.touch(key, live);
-      else if (this.live.get(key) === live) this.drop(key, live);
-    }, IDLE_MS);
+    this.countdown(key, live);
     const id = live.process.sessionId;
     if (!id) return;
     const prior = this.options.store.get(key);
@@ -380,6 +389,15 @@ export class AgentSessions {
       seen: Math.max(seen ?? 0, prior?.id === id ? prior.seen : 0),
       at: live.used,
     });
+  }
+  /** Stops the process after IDLE_MS, or waits again while it is busy: a
+   * long turn is not new use. */
+  private countdown(key: string, live: Live) {
+    clearTimeout(live.timer);
+    live.timer = setTimeout(() => {
+      if (live.process.busy) this.countdown(key, live);
+      else if (this.live.get(key) === live) this.drop(key, live);
+    }, IDLE_MS);
   }
   private drop(key: string, live: Live) {
     clearTimeout(live.timer);
@@ -391,10 +409,11 @@ export class AgentSessions {
   }
 }
 
-/** Where a process runs, its model and effort: all a spare is started with. */
-type Where = Pick<ClaudeLaunch, "cwd" | "model" | "effort">;
-const place = ({ cwd, model, effort }: Where) =>
-  JSON.stringify([cwd, model ?? "", effort ?? ""]);
+/** Where a process runs and may work, its model and effort: all a spare is
+ * started with. */
+type Where = Pick<ClaudeLaunch, "cwd" | "directories" | "model" | "effort">;
+const place = ({ cwd, directories = [], model, effort }: Where) =>
+  JSON.stringify([cwd, directories, model ?? "", effort ?? ""]);
 
 /** One process started ahead of need, for whichever agent next starts a
  * conversation where it runs and with its model and effort. Starting is most

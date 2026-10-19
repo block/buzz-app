@@ -409,6 +409,63 @@ export function createTabs(
     );
   }
 
+  function DefaultControl({ onConfigure }: { onConfigure(): void }) {
+    const state = useProvider();
+    const [error, setError] = useState("");
+    return (
+      <>
+        <ModelPicker
+          includeDefault={false}
+          resetLabel="Use Codex recommended"
+          compact
+          groupByFamily
+          label="Codex default model"
+          loading={state.checking}
+          models={choices(state.data).map((choice) => ({
+            ...choice,
+            efforts: [
+              { id: "", label: "Automatic" },
+              ...(
+                catalogModel(choice.id, state.data)
+                  ?.supportedReasoningEfforts ?? []
+              ).map((level) => ({
+                id: level.reasoningEffort,
+                label: effortName(level.reasoningEffort),
+              })),
+            ],
+          }))}
+          effort={state.defaults.effort}
+          effortLabel={
+            state.defaults.effort
+              ? effortName(state.defaults.effort)
+              : "Automatic"
+          }
+          onEffortChange={(model, effort) => {
+            try {
+              provider.saveDefaults({ model, effort });
+              setError("");
+            } catch (reason) {
+              setError(String(reason));
+            }
+          }}
+          value={state.defaults.model}
+          defaultModel={catalogModel("", state.data)?.model}
+          defaultLabel={providerDefaultLabel("", state.data)}
+          onConfigure={onConfigure}
+          onChange={(model) => {
+            try {
+              provider.saveDefaults({ model, effort: "" });
+              setError("");
+            } catch (reason) {
+              setError(String(reason));
+            }
+          }}
+        />
+        {error && <span role="alert">{error}</span>}
+      </>
+    );
+  }
+
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
     const defaultsForm = useId();
     const state = useProvider();
@@ -427,7 +484,6 @@ export function createTabs(
           ? ({ step: "login", label: "Sign in" } as const)
           : undefined;
     useEffect(() => setDraft(state.defaults), [state.defaults]);
-    const nativeModel = data?.models.find((model) => model.isDefault);
     const selected = catalogModel(draft.model, data);
     const efforts = [
       {
@@ -510,48 +566,11 @@ export function createTabs(
           }}
         >
           <Select
-            label="Default model"
-            variant="preference"
-            value={draft.model}
-            disabled={checking || !data}
-            groups={[
-              {
-                label: "",
-                options: [
-                  {
-                    value: "",
-                    label: nativeModel
-                      ? `Codex default (${nativeModel.displayName})`
-                      : "Codex default",
-                    description: nativeModel
-                      ? "Following Codex's recommendation"
-                      : undefined,
-                    disabled: !nativeModel,
-                  },
-                  ...(draft.model &&
-                  !data?.models.some((model) => model.model === draft.model)
-                    ? [
-                        {
-                          value: draft.model,
-                          label: `${draft.model} (unavailable)`,
-                        },
-                      ]
-                    : []),
-                  ...(data?.models.map((model) => ({
-                    value: model.model,
-                    label: model.displayName,
-                    description: model.description,
-                  })) ?? []),
-                ],
-              },
-            ]}
-            onValueChange={(model) => setDraft({ ...draft, model, effort: "" })}
-          />
-          <Select
             label="Default thinking"
             valueLabel={
               draft.effort ? undefined : codexDefaultEffortLabel("", selected)
             }
+            valueSuffix={draft.effort ? undefined : " · Default"}
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
@@ -904,6 +923,7 @@ export function createTabs(
                 ? undefined
                 : codexDefaultEffortLabel(effective.effort, selected)
             }
+            valueSuffix={draft.effort ? undefined : " · Default"}
             variant="preference"
             value={draft.effort}
             groups={[{ label: "", options: efforts }]}
@@ -983,6 +1003,7 @@ export function createTabs(
     CreateModel,
     Create,
     ProviderDialogBody,
+    DefaultControl,
     SettingsTab,
     ActivityTab,
   };

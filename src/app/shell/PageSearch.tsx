@@ -32,6 +32,7 @@ import {
   type SearchDestination,
 } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
+import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import { usageScope } from "../../features/search/usage";
 
 export type SearchServices = Pick<
@@ -156,6 +157,7 @@ export function PageSearch({
       <IconButton
         ref={trigger}
         variant="ghost"
+        shape="round"
         aria-label="Search Buzz"
         title={`Search Buzz (${shortcut})`}
         onClick={() => {
@@ -296,7 +298,7 @@ function CommunitySearch({
                     label: "Recent activity",
                     destinations: [],
                     empty: !enabled
-                      ? "Enable Multiplayer to see conversations."
+                      ? "Enable Messages to see conversations."
                       : !client.selected
                         ? "Choose a community to see recent conversations."
                         : "Connecting to this community…",
@@ -359,6 +361,21 @@ function CommunitySearch({
           channelId,
           ...(messageId ? { messageId } : {}),
         });
+      }}
+      openAgentSession={(pubkey) => {
+        const current = services.communities.snapshot();
+        const relay = services.communities.relay.snapshot();
+        if (
+          current.viewer !== scope.viewer ||
+          current.selected !== client.selected ||
+          relay.session !== connection.session ||
+          !relay.scope
+        )
+          return;
+        close();
+        void services.navigation.open(
+          soloDraftTarget(relay.scope, { agent: pubkey }),
+        );
       }}
     />
   );

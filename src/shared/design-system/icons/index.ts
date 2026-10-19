@@ -38,6 +38,8 @@ export const ArrowCounterClockwiseIcon = defineIcon(
   TablerArrowCounterClockwiseIcon,
 );
 // Tabler only. Add individual exports as needed; outline icons are the default.
+import TablerSparklesIcon from "@tabler/icons-react/dist/esm/icons/IconSparkles.mjs";
+export const SparklesIcon = defineIcon("tabler", TablerSparklesIcon);
 import TablerStarFilledIcon from "@tabler/icons-react/dist/esm/icons/IconStarFilled.mjs";
 export const StarFilledIcon = defineIcon("tabler", TablerStarFilledIcon);
 import TablerBrowserIcon from "@tabler/icons-react/dist/esm/icons/IconBrowser.mjs";
@@ -98,6 +100,14 @@ import TablerChatCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessage
 export const ChatCircleIcon = defineIcon("tabler", TablerChatCircleIcon);
 import TablerChatsCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessages.mjs";
 export const ChatsCircleIcon = defineIcon("tabler", TablerChatsCircleIcon);
+import { ChatUnreadArtwork } from "./ChatUnread";
+export const ChatUnreadIcon = defineIcon("custom", ChatUnreadArtwork, {
+  meaning: "Conversations with unread messages",
+  category: "Message filtering",
+  provenance:
+    "Designer-requested adaptation of the MIT-licensed Tabler MessageCircle geometry with an unread dot.",
+  intendedSizes: [{ width: 14, height: 14 }],
+});
 import TablerCheckIcon from "@tabler/icons-react/dist/esm/icons/IconCheck.mjs";
 export const CheckIcon = defineIcon("tabler", TablerCheckIcon);
 import TablerChecksIcon from "@tabler/icons-react/dist/esm/icons/IconChecks.mjs";
@@ -213,6 +223,8 @@ import TablerMoonIcon from "@tabler/icons-react/dist/esm/icons/IconMoon.mjs";
 export const MoonIcon = defineIcon("tabler", TablerMoonIcon);
 import TablerMonitorIcon from "@tabler/icons-react/dist/esm/icons/IconDeviceDesktop.mjs";
 export const MonitorIcon = defineIcon("tabler", TablerMonitorIcon);
+import TablerDeviceMobileIcon from "@tabler/icons-react/dist/esm/icons/IconDeviceMobile.mjs";
+export const DeviceMobileIcon = defineIcon("tabler", TablerDeviceMobileIcon);
 import TablerNotionLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandNotion.mjs";
 export const NotionLogoIcon = defineIcon("tabler", TablerNotionLogoIcon);
 import TablerPaletteIcon from "@tabler/icons-react/dist/esm/icons/IconPalette.mjs";
@@ -255,6 +267,8 @@ import TablerSmileyPlusIcon from "@tabler/icons-react/dist/esm/icons/IconMoodPlu
 export const SmileyPlusIcon = defineIcon("tabler", TablerSmileyPlusIcon);
 import TablerSmileyStickerIcon from "@tabler/icons-react/dist/esm/icons/IconSticker2.mjs";
 export const SmileyStickerIcon = defineIcon("tabler", TablerSmileyStickerIcon);
+import TablerFilter2Icon from "@tabler/icons-react/dist/esm/icons/IconFilter2.mjs";
+export const Filter2Icon = defineIcon("tabler", TablerFilter2Icon);
 import TablerSlidersHorizontalIcon from "@tabler/icons-react/dist/esm/icons/IconAdjustmentsHorizontal.mjs";
 export const SlidersHorizontalIcon = defineIcon(
   "tabler",
@@ -461,6 +475,15 @@ export const ImageIcon = defineIcon("tabler", TablerImageIcon);
 
 import TablerOpenAILogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandOpenai.mjs";
 export const OpenAILogoIcon = defineIcon("tabler", TablerOpenAILogoIcon);
+import TablerGoogleLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandGoogle.mjs";
+export const GoogleLogoIcon = defineIcon("tabler", TablerGoogleLogoIcon);
+import TablerDatabricksLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandDatabricks.mjs";
+export const DatabricksLogoIcon = defineIcon(
+  "tabler",
+  TablerDatabricksLogoIcon,
+);
+import TablerAwsLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandAws.mjs";
+export const AwsLogoIcon = defineIcon("tabler", TablerAwsLogoIcon);
 import TablerMicrophoneIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophone.mjs";
 export const MicrophoneIcon = defineIcon("tabler", TablerMicrophoneIcon);
 
@@ -480,3 +503,20 @@ export const BrainIcon = defineIcon("tabler", TablerBrainIcon);
 
 import TablerThinkingHighIcon from "@tabler/icons-react/dist/esm/icons/IconThinkingHigh.mjs";
 export const ThinkingHighIcon = defineIcon("tabler", TablerThinkingHighIcon);
+
+import TablerMetaLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandMeta.mjs";
+export const MetaLogoIcon = defineIcon("tabler", TablerMetaLogoIcon);
+import TablerFileTypePdfIcon from "@tabler/icons-react/dist/esm/icons/IconFileTypePdf.mjs";
+export const FileTypePdfIcon = defineIcon("tabler", TablerFileTypePdfIcon);
+
+import TablerFileCodeIcon from "@tabler/icons-react/dist/esm/icons/IconFileCode.mjs";
+export const FileCodeIcon = defineIcon("tabler", TablerFileCodeIcon);
+
+import TablerFileZipIcon from "@tabler/icons-react/dist/esm/icons/IconFileZip.mjs";
+export const FileZipIcon = defineIcon("tabler", TablerFileZipIcon);
+
+import TablerFileSpreadsheetIcon from "@tabler/icons-react/dist/esm/icons/IconFileSpreadsheet.mjs";
+export const FileSpreadsheetIcon = defineIcon(
+  "tabler",
+  TablerFileSpreadsheetIcon,
+);

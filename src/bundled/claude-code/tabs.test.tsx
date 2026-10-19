@@ -22,6 +22,7 @@ import type { HostProcessOptions } from "../../features/host/service";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
+import { ClaudeSetup } from "./setup";
 import { ClaudeDefaults } from "./defaults";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
@@ -69,6 +70,8 @@ const CATALOG = [
   },
   {
     value: "opus",
+    supportsEffort: true,
+    supportedEffortLevels: ["low", "high"],
     resolvedModel: "claude-opus-5-5",
     displayName: "Opus",
     description: "Opus 5.5 · Best for everyday, complex tasks",
@@ -102,15 +105,17 @@ function applied({
   loggedIn = true,
   available = true,
   version = "2.1.292",
+  latest = version,
   files = {},
   catalog = { listed: true },
 }: {
   loggedIn?: boolean;
   available?: boolean;
   version?: string;
+  latest?: string;
   files?: Record<string, string>;
   /** Whether Claude lists its models when asked. */
-  catalog?: { listed: boolean };
+  catalog?: { listed: boolean; ready?: Promise<void> };
 } = {}) {
   let type: AgentType<Config> | undefined;
   const spawn = vi.fn(async (id: string, options: HostProcessOptions = {}) => {
@@ -194,6 +199,7 @@ function applied({
           request?: { subtype?: string };
         };
         if (message.request?.subtype !== "initialize") return;
+        await catalog.ready;
         queueMicrotask(() =>
           options.onStdout?.(
             `${JSON.stringify({
@@ -218,12 +224,12 @@ function applied({
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: {
       spawn,
-      // downloads.claude.ai offering the release installed, so no update runs.
+      // Offer the installed release unless the test requests an update.
       request: vi.fn(async ({ url }: { url: string }) => ({
         status: 200,
         headers: {},
         body: url.endsWith("/latest")
-          ? version
+          ? latest
           : JSON.stringify({
               platforms: { "darwin-arm64": { checksum: "a".repeat(64) } },
             }),
@@ -461,11 +467,8 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   const installedType = installed().type;
   const Setup = providerSetup(installedType);
   render(<Setup onClose={vi.fn()} />);
-  await waitFor(() =>
-    expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Claude default (Opus 5.5)",
-    ),
-  );
+  expect(await screen.findByText("Claude is signed in.")).toBeVisible();
+  expect(screen.queryByLabelText("Default model")).not.toBeInTheDocument();
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   cleanup();
@@ -481,35 +484,22 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   ).toBeInTheDocument();
 });
 
-it("saves a provider model default explicitly and leaves blank agent config inherited", async () => {
+it("edits the model through the Settings dropdown and preserves agent inheritance", async () => {
   const installedType = installed().type;
-  const Provider = providerSetup(installedType);
-  const onClose = vi.fn();
-  render(<Provider onClose={onClose} />);
-  await waitFor(() =>
-    expect(screen.getByLabelText("Default model")).toHaveTextContent(
-      "Claude default (Opus 5.5)",
-    ),
-  );
+  const Control = installedType.provider?.DefaultControl;
+  if (!Control) throw new Error("Missing default control");
+  render(<Control onConfigure={vi.fn()} />);
   const user = userEvent.setup();
-  const defaultModel = screen.getByRole("combobox", { name: "Default model" });
-  expect(defaultModel).toHaveTextContent("Claude default (Opus 5.5)");
-  await user.click(defaultModel);
-  expect(
-    await screen.findByRole("option", {
-      name: "Claude default (Opus 5.5)",
-    }),
-  ).toHaveAccessibleDescription("Following Claude Code's recommendation");
-  // Every model Claude lists is offered, not only the aliases.
-  const fable = await screen.findByRole("option", { name: "Fable 5.1" });
-  expect(fable).toHaveAccessibleDescription(
-    "Most capable for your hardest tasks",
+  const control = await screen.findByRole("button", {
+    name: /^Claude default model:/,
+  });
+  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  await user.click(control);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
+  fireEvent.click(
+    await screen.findByRole("menuitemradio", { name: "Fable 5.1" }),
   );
-  await user.click(fable);
-  await user.click(screen.getByRole("button", { name: "Save defaults" }));
-  expect(onClose).toHaveBeenCalledOnce();
   cleanup();
-
   const Settings = tab(installedType, 0);
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
@@ -519,29 +509,6 @@ it("saves a provider model default explicitly and leaves blank agent config inhe
     ),
   );
   expect(save).not.toHaveBeenCalled();
-});
-
-it("says when Claude's models could not be loaded and tries again", async () => {
-  const catalog = { listed: false };
-  const Provider = providerSetup(installed({ catalog }).type);
-  render(<Provider onClose={() => undefined} />);
-  const defaultModel = await screen.findByRole("combobox", {
-    name: "Default model",
-  });
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Couldn't load Claude's models: Claude did not list its models",
-  );
-  const retry = await screen.findByRole("button", { name: "Try again" });
-  catalog.listed = true;
-  const user = userEvent.setup();
-  await user.click(retry);
-  await waitFor(() =>
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
-  );
-  await user.click(defaultModel);
-  expect(
-    await screen.findByRole("option", { name: "Fable 5.1" }),
-  ).toBeInTheDocument();
 });
 
 it("preserves native behavior for invalid defaults and keeps explicit agent models", () => {
@@ -685,7 +652,7 @@ it("offers the model's thinking levels, dropping one the next model lacks", asyn
   await user.click(screen.getByRole("combobox", { name: "Model" }));
   await user.click(await screen.findByRole("option", { name: "Haiku 4.5" }));
   const thinking = screen.getByRole("combobox", { name: "Thinking" });
-  expect(thinking).toHaveTextContent("Automatic");
+  expect(thinking).toHaveTextContent("Automatic · Default");
   await user.click(thinking);
   await user.click(await screen.findByRole("option", { name: "High" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -713,6 +680,7 @@ it("keeps a saved thinking level changeable without Claude's model list", async 
   await user.click(
     await screen.findByRole("option", { name: "Automatic · Default" }),
   );
+  expect(thinking).toHaveTextContent("Automatic · Default");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledWith(DEFAULT_CONFIG);
 });
@@ -776,8 +744,8 @@ it("starts a new agent with finite model choices and preserves its other setting
     }),
   );
   expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "" });
-  expect(screen.getByLabelText("Instructions")).toHaveValue("Triage.");
-  fireEvent.change(screen.getByLabelText("Instructions"), {
+  expect(screen.getByLabelText("Instructions Optional")).toHaveValue("Triage.");
+  fireEvent.change(screen.getByLabelText("Instructions Optional"), {
     target: { value: "Plan." },
   });
   expect(onChange).toHaveBeenLastCalledWith({
@@ -790,7 +758,7 @@ it("disables a new agent's controls while it is being created", () => {
   const Create = installed().type.Create;
   if (!Create) throw new Error("no create choices");
   render(<Create config={DEFAULT_CONFIG} onChange={vi.fn()} disabled />);
-  expect(screen.getByLabelText("Instructions")).toBeDisabled();
+  expect(screen.getByLabelText("Instructions Optional")).toBeDisabled();
 });
 
 it("edits a custom model and instructions in settings", async () => {
@@ -1089,3 +1057,128 @@ it.each(["Identity", "Settings"])(
     });
   },
 );
+
+it("saves model-specific default effort from the nested menu and inherits it", async () => {
+  const installedType = installed().type;
+  const Control = installedType.provider?.DefaultControl;
+  if (!Control) throw new Error("Missing default control");
+  render(<Control onConfigure={vi.fn()} />);
+  const control = await screen.findByRole("button", {
+    name: /^Claude default model:/,
+  });
+  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  expect(control).toHaveTextContent("Automatic");
+  fireEvent.click(control);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
+  fireEvent.click(
+    await screen.findByRole("menuitemradio", { name: "Sonnet 5.5" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
+  expect(control).toHaveAccessibleName(
+    "Claude default model: Sonnet 5.5, High",
+  );
+
+  const reopened = new ClaudeDefaults(localStorage);
+  expect(reopened.resolve(DEFAULT_CONFIG)).toMatchObject({
+    model: "sonnet",
+    effort: "high",
+  });
+  expect(reopened.resolve({ ...DEFAULT_CONFIG, effort: "low" }).effort).toBe(
+    "low",
+  );
+  expect(reopened.resolve({ ...DEFAULT_CONFIG, model: "haiku" }).effort).toBe(
+    "",
+  );
+  fireEvent.click(control);
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Use Claude default" }),
+  );
+  expect(new ClaudeDefaults(localStorage).snapshot().model).toBe("");
+});
+
+it("retries failed model discovery from the defaults row", async () => {
+  const catalog = { listed: false };
+  const Control = installed({ catalog }).type.provider?.DefaultControl;
+  if (!Control) throw new Error("Missing default control");
+  render(<Control onConfigure={vi.fn()} />);
+  await screen.findByRole("alert");
+  catalog.listed = true;
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Claude default model:/ }),
+    ).toHaveTextContent("Opus 5.5"),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("keeps the model inherited when changing the default model's effort", async () => {
+  const Control = installed().type.provider?.DefaultControl;
+  if (!Control) throw new Error("Missing default control");
+  render(<Control onConfigure={vi.fn()} />);
+  const control = await screen.findByRole("button", {
+    name: /^Claude default model:/,
+  });
+  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5 · Default"));
+  fireEvent.click(control);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
+  fireEvent.click(
+    await screen.findByRole("menuitemradio", { name: "Opus 5.5" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
+  expect(new ClaudeDefaults(localStorage).snapshot()).toMatchObject({
+    model: "",
+    effort: "high",
+  });
+  expect(control).toHaveTextContent("· Default");
+});
+
+it("keeps keyboard focus through Claude defaults discovery retries", async () => {
+  const startup = vi.spyOn(ClaudeSetup.prototype, "update");
+  const calls = vi.spyOn(ClaudeSetup.prototype, "loadModels");
+  const catalog: { listed: boolean; ready?: Promise<void> } = { listed: false };
+  const Control = installed({ catalog }).type.provider?.DefaultControl;
+  if (!Control) throw new Error("Missing default control");
+  // Plugin activation checks/updates Claude before the recovery flow begins.
+  // Its final readiness check otherwise races the keyboard retry.
+  expect(startup).toHaveBeenCalledOnce();
+  await startup.mock.results[0]?.value;
+  render(<Control onConfigure={vi.fn()} />);
+  await screen.findByRole("alert");
+  const retry = screen.getByRole("button", { name: "Try again" });
+  await act(async () => {
+    await Promise.all(calls.mock.results.map((result) => result.value));
+  });
+  const user = userEvent.setup();
+  for (const succeeds of [false, true]) {
+    let release!: () => void;
+    catalog.ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    catalog.listed = succeeds;
+    await waitFor(() =>
+      expect(retry).not.toHaveAttribute("aria-disabled", "true"),
+    );
+    retry.focus();
+    const previousCalls = calls.mock.calls.length;
+    try {
+      await user.keyboard("{Enter}");
+      await waitFor(() => {
+        expect(calls.mock.calls.length).toBeGreaterThan(previousCalls);
+        expect(retry).toHaveAttribute("aria-disabled", "true");
+      });
+      expect(retry).toHaveFocus();
+      expect(retry).not.toHaveAttribute("disabled");
+    } finally {
+      await act(async () => release());
+    }
+    if (!succeeds) {
+      await screen.findByRole("alert");
+      expect(retry).toHaveFocus();
+    }
+  }
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(
+    screen.getByRole("button", { name: /^Claude default model:/ }),
+  ).toHaveFocus();
+});

@@ -616,6 +616,7 @@ dependencies = [
  "block2",
  "buzz-agent-controller",
  "buzz-credential-store",
+ "buzz-nsec-backup",
  "buzz-pairing",
  "buzzodz-plugins",
  "bytes",
@@ -633,6 +634,7 @@ dependencies = [
  "hyper-util",
  "image",
  "libc",
+ "nix 0.31.3",
  "nostr 0.44.8",
  "nostr 0.45.5",
  "objc2",
@@ -4676,9 +4678,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.44"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6725596c3f2c3a0aef021139e145d4eafe314a6623e4680ca83852b2c67ab2ba"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
@@ -5541,9 +5543,9 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
 name = "tauri"
-version = "2.12.3"
+version = "2.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c404ecf956ff241bf6b39dd688614724e1bf1f63255abb4fc46d1c40371672ea"
+checksum = "f316751027fc2644221d1a448564d519efb07067fda584879d9cda966391d212"
 dependencies = [
  "anyhow",
  "bytes",

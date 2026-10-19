@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, end, settle, wheel } from "./timeline.mjs";
@@ -53,10 +54,10 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   // Disable it before exercising the actual Profiles provider.
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await page
-    .getByRole("switch", { name: "Enable Notes fixture", exact: true })
+    .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
+  await pluginAction(page, "Notes fixture").click();
   for (const [mode, id] of [
     ["cold root", app.exact.root.id],
     ["cold reply", app.exact.target.id],
@@ -602,17 +603,54 @@ test("post-success membership loss removes the thread and live updates do not sn
   const channelButton = page.locator(
     '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
   );
+  await expect(region.locator("[data-message-id]")).toHaveCount(81);
+  // A shorter edit can legitimately clamp a bottom-aligned scroll offset.
+  // Force that geometry instead of depending on the platform's text wrapping.
+  const exact = region.locator(`[data-message-id="${app.exact.target.id}"]`);
+  await exact.locator("[data-message-action-anchor]").evaluate((bubble) => {
+    bubble.style.maxWidth = "10ch";
+  });
+  await settle(page, region);
+  const geometry = () =>
+    region.evaluate((element) => ({
+      top: element.scrollTop,
+      max: element.scrollHeight - element.clientHeight,
+    }));
   await channelButton.focus();
-  const before = await region.evaluate((element) => element.scrollTop);
+  const before = await geometry();
   app.edit(
     "primary",
     "alpha",
     { ...app.exact.target, created_at: app.exact.target.created_at + 10 },
     "Live edited exact reply",
   );
-  await expect(region).toContainText("Live edited exact reply");
+  await expect(exact).toContainText("Live edited exact reply");
+  await settle(page, region);
   await expect(channelButton).toBeFocused();
-  expect(await region.evaluate((element) => element.scrollTop)).toBe(before);
+  const after = await geometry();
+  expect(after.max).toBeLessThan(before.max);
+  expect(after.top).toBe(Math.min(before.top, after.max));
+
+  // Establish newer reader intent away from the exact target. A later edit
+  // must not replay that completed reveal, even when the target shrinks again.
+  await region.hover();
+  await wheel(page, -400, region);
+  await channelButton.focus();
+  await expect(exact).not.toBeInViewport();
+  const reading = await geometry();
+  app.edit(
+    "primary",
+    "alpha",
+    { ...app.exact.target, created_at: app.exact.target.created_at + 20 },
+    "Edited",
+  );
+  await expect(exact).toContainText("Edited");
+  await settle(page, region);
+  const edited = await geometry();
+  expect(edited.max).toBeGreaterThan(reading.top);
+  expect(edited.top).toBe(reading.top);
+  await expect(exact).not.toBeInViewport();
+  await expect(channelButton).toBeFocused();
   app.omitChannel("alpha");
   await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();

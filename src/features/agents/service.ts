@@ -1,4 +1,10 @@
 import { createLocalAgentActivity } from "./local-activity";
+import {
+  AgentConfigStore,
+  type SettingsSchema,
+  type Subject,
+} from "./agent-config";
+import { isSynced, type Mode, resolveStart } from "./agent-start";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import { ownerReads } from "./reads";
@@ -16,6 +22,7 @@ import { ownerReads } from "./reads";
 // records with its type as the `runtime` tag, so every device of the owner's
 // can show it: as here, hosted, or on another device.
 import { migrateAgentStorage } from "./migrate-storage";
+import { migrateWatchFilters } from "./migrate-filter";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
@@ -99,9 +106,10 @@ import {
   type Team,
   type Unfinished,
 } from "./store";
-import { meChat } from "./me-chat";
+import { soloChat } from "./solo-chat";
 import { readCheckpoints, writeCheckpoints } from "./catch-up";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
+import { nameSoloChat } from "./solo-chat-name";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -197,6 +205,23 @@ export type AgentTab<Config = unknown> = Readonly<{
   splitSettings?: boolean;
   component: ComponentType<AgentViewProps<Config>>;
 }>;
+/** One of an agent's conversation sessions on this device. Without `root` it
+ * is the channel's one session: a channel-scoped agent's, a DM's or a Solo
+ * chat's; with it, the thread's. `at` is when it last took in a message
+ * or ended a turn, in milliseconds. `status` is the type's latest
+ * observation of it while running here, such as "Working", "Idle" or a
+ * failed turn's outcome; absent means unobserved, not idle. */
+export type AgentSession = Readonly<{
+  channelId: string;
+  root?: string;
+  at?: number;
+  status?: string;
+}>;
+/** Read-only: reading never starts, stops or changes a session. */
+export type AgentSessions = Readonly<{
+  list(pubkey: string): readonly AgentSession[];
+  subscribe(listener: () => void): () => void;
+}>;
 /** The agent as `run` holds it. It works for as long as the agent exists. */
 export type AgentHandle = Readonly<{
   pubkey: string;
@@ -205,6 +230,10 @@ export type AgentHandle = Readonly<{
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
+  audienceAuthority?(
+    destination: string,
+    sources: readonly string[],
+  ): Promise<unknown>;
   /** Finds profiles by `name` or `display_name`, as the agent, best match
    * first. `undefined` when its community has no profile name search. */
   searchProfiles(
@@ -325,6 +354,8 @@ export type Delivery<Config = unknown> = Readonly<{
   agent: AgentHandle;
   /** The agent's config when this run started. */
   config: Config;
+  /** The synced config revisions this run started from; empty when local. */
+  revisions?: readonly string[];
   /** The model the owner asked for in the triggering message: one of the
    * type's `models`. Absent means the agent's own model. */
   model?: string;
@@ -349,6 +380,9 @@ export type Delivery<Config = unknown> = Readonly<{
   /** A newer acknowledged request owns this turn's activity; hide this message's
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
+  /** The harness's own title for this mention's conversation. The host may
+   * name a Solo chat with it once; the type need not know whether it did. */
+  named?(title: string): void;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
    * attention was turned off or its object disabled or removed; and for a
@@ -396,7 +430,15 @@ export type AgentProvider = Readonly<{
   attentionAction?: (() => void) | undefined;
   /** Provider-owned recovery/progress controls and optional saved defaults. */
   DialogBody: ComponentType<{ onClose(): void }>;
+  /** Compact device default picker; persistence remains provider-owned. */
+  DefaultControl?: ComponentType<{ onConfigure(): void }>;
 }>;
+/** The artifact types an agent's config channel binding has made synced. */
+export type ConfigBinding = Readonly<{
+  settings?: Readonly<{ mode: Mode; subject: Subject }>;
+  instructions?: Readonly<{ mode: Mode; subject: Subject }>;
+}>;
+
 export type AgentType<Config = unknown> = {
   id: string;
   title: string;
@@ -433,10 +475,21 @@ export type AgentType<Config = unknown> = {
   provider?: AgentProvider;
   /** The type's settings tabs, in order. The host adds Attention after them. */
   tabs?: readonly AgentTab<Config>[];
+  /** Each agent's sessions, for views across agents. */
+  sessions?: AgentSessions;
   /** Models and effort levels the owner can pick for the next run while
    * mentioning the agent. Discovery may be async but must not start a turn.
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
+  /** The settings that sync across devices and how they merge into this
+   * device's config. Without it, the type's settings never sync. */
+  syncedSettings?: Readonly<{
+    schema: SettingsSchema;
+    withSynced(
+      config: Config,
+      settings: Readonly<Record<string, string>>,
+    ): Config;
+  }>;
   run?(delivery: Delivery<Config>): void | Promise<void>;
   /** Runs a standalone turn and settles when it ends, stopping it when
    * `turn.signal` aborts. With it, the host runs watches and timers as
@@ -882,6 +935,8 @@ export class AgentsService extends Service implements Agents {
       unable?: boolean;
     }
   >();
+  /** Confirmed synced config copies, the only synced launch source. */
+  private readonly configStore: AgentConfigStore;
   /** Origins whose presence is being sent. */
   private announcing = new Set<string>();
 
@@ -896,11 +951,15 @@ export class AgentsService extends Service implements Agents {
     ) => Promise<NipOaAuthorization> = prepareRemoteAgentAuthorization,
     localActivity = createLocalAgentActivity(),
     private readonly jev: ClassifierNative | undefined = nativeClassifier(),
+    /** Which artifact types an agent has synced, from its config channel
+     * binding. Unset, every agent starts `local`. */
+    private readonly configBinding?: (agent: Agent) => ConfigBinding,
   ) {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     migrateAgentStorage(storage);
+    migrateWatchFilters(storage);
     this.records = readRecords(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);
@@ -913,6 +972,7 @@ export class AgentsService extends Service implements Agents {
       running: [],
       teams: this.teamList,
     });
+    this.configStore = new AgentConfigStore(storage);
     this.coreMemory = new CoreMemoryCache((pubkey) =>
       ownerReads(this.relay(pubkey), pubkey),
     );
@@ -935,6 +995,36 @@ export class AgentsService extends Service implements Agents {
         return this.recordOf(identity);
       },
       write: (record) => this.write(record),
+      start: (agent) => {
+        const { settings, instructions } = this.configBinding?.(agent) ?? {};
+        const merge = this.types().find(
+          (type) => type.key === agent.type,
+        )?.syncedSettings;
+        if (!merge && isSynced(this.configStore, settings))
+          return {
+            ok: false,
+            state: "invalid",
+            reason: "This agent type has no synced settings",
+          };
+        return resolveStart({
+          store: this.configStore,
+          local: agent.config as object,
+          agentType: agent.type,
+          ...(settings && merge
+            ? {
+                settings: {
+                  ...settings,
+                  schema: merge.schema,
+                  withSynced: merge.withSynced as (
+                    config: object,
+                    synced: Readonly<Record<string, string>>,
+                  ) => object,
+                },
+              }
+            : {}),
+          ...(instructions ? { instructions } : {}),
+        });
+      },
       team: (pubkey) =>
         teamPrompt(
           this.teamList,
@@ -975,11 +1065,19 @@ export class AgentsService extends Service implements Agents {
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
       activity: localActivity,
-      meChat: (agent, channel, signal) =>
-        meChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
+      soloChat: (agent, channel, signal) =>
+        soloChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
       remembered: (pubkey, slug, body) =>
         this.coreMemory.wrote(pubkey, slug, body),
       finished: (pubkey) => void this.coreMemory.refresh(pubkey),
+      named: (agent, event, title) =>
+        void nameSoloChat(
+          this.relay(agent.pubkey),
+          agent.owner,
+          agent.pubkey,
+          event,
+          title,
+        ).catch((error) => console.warn("Couldn't name the Solo chat", error)),
     });
     ctx.effect(() => {
       const stops = [
@@ -1126,8 +1224,14 @@ export class AgentsService extends Service implements Agents {
       agents: Object.freeze(
         identities
           .filter((identity) => !identity.deleted)
-          .map(({ pubkey, name, relay, owner }) =>
-            Object.freeze({ pubkey, name, relayUrl: relay, owner }),
+          .map(({ pubkey, name, relay, owner, picture }) =>
+            Object.freeze({
+              pubkey,
+              name,
+              relayUrl: relay,
+              owner,
+              ...(picture ? { picture } : {}),
+            }),
           ),
       ),
       ...(state.error ? { error: state.error } : {}),

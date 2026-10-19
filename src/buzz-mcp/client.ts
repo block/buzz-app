@@ -67,6 +67,14 @@ export type Memory = Readonly<{
 
 export interface BuzzClient {
   readonly pubkey: string;
+  /** Trusted connection authorities, never inferred from query results. */
+  readonly relayAuthor?: string | undefined;
+  readonly signingAuthority?: string | undefined;
+  /** Host-bound current server decision, never a model-supplied assertion. */
+  authorizeAudience?(
+    destination: string,
+    sources: readonly string[],
+  ): Promise<ReadonlySet<string>>;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
   /** Finds profiles whose `name` or `display_name` matches `query`, best

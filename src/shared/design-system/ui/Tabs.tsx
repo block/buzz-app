@@ -38,7 +38,8 @@ export type TabItem<Value extends string> = {
  * Which background this control is drawn for.
  *
  * `chrome` is the glass pill that belongs on the app gradient. `panel` is an
- * underline for a plain light or dark surface.
+ * underline for a plain light or dark surface. `segmented` groups filters
+ * on an opaque surface with an inset track and a raised selection.
  *
  * **A variant rather than a second component**, because behaviour, keyboard
  * model, accessibility, props, and the Base UI tabs underneath are identical —
@@ -47,7 +48,12 @@ export type TabItem<Value extends string> = {
  *
  * `chrome` is the default because every existing call site is on the gradient.
  */
-export type TabsVariant = "chrome" | "panel" | "workspace" | "navigation";
+export type TabsVariant =
+  | "chrome"
+  | "panel"
+  | "workspace"
+  | "navigation"
+  | "segmented";
 
 export function Tabs<Value extends string>({
   value,
@@ -63,8 +69,15 @@ export function Tabs<Value extends string>({
   renderPanel,
   tabMenu,
 }: {
-  /** Scoped host action, composed with each tab's Rename action. */
-  tabMenu?: { key: string; closeAll(): boolean } | undefined;
+  /** Scoped host actions, composed with each tab's Rename action. */
+  tabMenu?:
+    | {
+        key: string;
+        closeAll(): boolean;
+        /** Closes every tab but `value`, which stays open and selected. */
+        closeOthers?: ((value: Value) => boolean) | undefined;
+      }
+    | undefined;
   /** Omit only when composing an existing externally owned view. */
   renderPanel?: (value: Value) => ReactNode;
   value: Value | null;
@@ -96,6 +109,10 @@ export function Tabs<Value extends string>({
             key={JSON.stringify([tabMenu?.key, item.value])}
             label={item.label}
             closeAll={tabMenu?.closeAll}
+            closeOthers={
+              tabMenu?.closeOthers &&
+              (() => tabMenu.closeOthers?.(item.value) ?? false)
+            }
             onClose={item.onClose}
             onRename={item.onRename && (() => setRenaming(item.value))}
           >
@@ -235,18 +252,21 @@ export function Tabs<Value extends string>({
   );
 }
 
-/** One shared menu composes tab naming with the host's close-all action. */
+/** One shared menu composes tab naming with the host's close actions. */
 function TabMenu({
   label,
   onClose,
   onRename,
   closeAll,
+  closeOthers,
   children,
 }: {
   label: string;
   onClose: (() => void) | undefined;
   onRename: (() => void) | undefined;
   closeAll: (() => boolean) | undefined;
+  /** This tab stays, so the menu returns focus to it. */
+  closeOthers: (() => boolean) | undefined;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -308,6 +328,9 @@ function TabMenu({
         }
       >
         {onRename && <MenuItem onClick={onRename}>Rename tab</MenuItem>}
+        {closeOthers && (
+          <MenuItem onClick={closeOthers}>Close other tabs</MenuItem>
+        )}
         {closeAll && (
           <MenuItem
             onClick={() => {

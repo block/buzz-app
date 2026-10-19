@@ -198,11 +198,12 @@ export function PluginImport({
       errorTrigger.current = null;
     }
   }, [error, busy, loading, discarding]);
-  function showError(reason: unknown) {
+  // Pending operations disable their control, so callers capture the return
+  // target before starting rather than reading focus when the failure arrives.
+  function showError(reason: unknown, returnTo: Element | null) {
     if (!error) {
-      errorTrigger.current = document.activeElement as HTMLElement | null;
-      errorReturnsToBack.current =
-        document.activeElement === previewBack.current;
+      errorTrigger.current = returnTo as HTMLElement | null;
+      errorReturnsToBack.current = returnTo === previewBack.current;
     }
     setError(String(reason));
   }
@@ -223,7 +224,8 @@ export function PluginImport({
 
   async function load(operation: () => Promise<ImportPreview | null>) {
     if (pending.current || blocked) return;
-    sourceTrigger.current = document.activeElement as HTMLElement | null;
+    const returnTo = document.activeElement as HTMLElement | null;
+    sourceTrigger.current = returnTo;
     pending.current = true;
     const current = lifetime.current;
     setLoading(true);
@@ -261,7 +263,7 @@ export function PluginImport({
         next?.candidates.length === 1 ? (next.candidates[0]?.path ?? "") : "",
       );
     } catch (reason) {
-      if (current.active) showError(reason);
+      if (current.active) showError(reason, returnTo);
     } finally {
       pending.current = false;
       if (current.active) setLoading(false);
@@ -276,7 +278,7 @@ export function PluginImport({
       lifetime.current.token = "";
       setPreview(null);
     } catch (reason) {
-      showError(reason);
+      showError(reason, previewBack.current);
     } finally {
       pending.current = false;
       setDiscarding(false);
@@ -284,6 +286,7 @@ export function PluginImport({
   }
   async function close() {
     if (blocked || pending.current) return;
+    const returnTo = document.activeElement;
     pending.current = true;
     setDiscarding(true);
     try {
@@ -297,7 +300,7 @@ export function PluginImport({
       setOpen(false);
       onClosed?.();
     } catch (reason) {
-      showError(reason);
+      showError(reason, returnTo);
     } finally {
       pending.current = false;
       setDiscarding(false);
@@ -481,6 +484,7 @@ export function PluginImport({
                         showError(
                           plugins.snapshot().error ??
                             "Plugin installation wasn’t confirmed. Check the preview and try again.",
+                          installButton.current,
                         );
                         return;
                       }

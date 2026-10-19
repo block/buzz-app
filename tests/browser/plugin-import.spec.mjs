@@ -107,8 +107,12 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
         }
         if (command === "plugin_import_discard") return;
         if (command === "plugin_import_install") {
-          if (window.importInstallError)
+          if (window.importInstallError) {
+            await new Promise((resolve) => {
+              window.rejectInstall = resolve;
+            });
             throw new Error(window.importInstallError);
+          }
           const candidate = preview.candidates.find(
             (p) => p.path === args.path,
           );
@@ -599,7 +603,15 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
     "feature/plugins",
   );
   await page.getByLabel("Git or GitHub repository").fill("bad");
+  await page.evaluate(() => {
+    window.importDelay = true;
+  });
   await button(page, "Find plugins").click();
+  await expect(button(page, "Find plugins")).toBeDisabled();
+  await page.evaluate(() => {
+    window.importDelay = false;
+    window.resolveImport();
+  });
   await expect(
     page.getByRole("alert").filter({ hasText: "Repository unavailable" }),
   ).toBeVisible();
@@ -956,6 +968,10 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   await dialog
     .getByRole("button", { name: "Install plugin", exact: true })
     .click();
+  await expect(
+    dialog.getByRole("button", { name: "Install plugin", exact: true }),
+  ).toBeDisabled();
+  await page.evaluate(() => window.rejectInstall());
   await expect(dialog.getByRole("alert")).toContainText("Publisher mismatch");
   await expect(
     dialog.getByRole("region", { name: "Plugin import preview" }),

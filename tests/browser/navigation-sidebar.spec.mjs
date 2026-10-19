@@ -102,6 +102,19 @@ test("channel sidebar resizes from the full gutter and persists", async ({
       };
     });
   await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  // Hover must resolve to the resize target across the grip and both gutter edges.
+  expect(
+    await handle.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return [1, bounds.width / 2, bounds.width - 1].map((offset) => {
+        const hit = document.elementFromPoint(
+          bounds.left + offset,
+          bounds.top + bounds.height / 2,
+        );
+        return hit === element && getComputedStyle(hit).cursor === "ew-resize";
+      });
+    }),
+  ).toEqual([true, true, true]);
   await expect.poll(async () => (await tooltip()).delay).toBe("0.6s");
   await expect.poll(tooltip).toMatchObject({
     opacity: "1",
@@ -130,7 +143,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
         return hovered ? getComputedStyle(hovered).cursor : undefined;
       }),
     )
-    .toBe("col-resize");
+    .toBe("ew-resize");
   await page.mouse.up();
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("");
   await expect

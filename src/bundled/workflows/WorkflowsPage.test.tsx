@@ -41,11 +41,11 @@ function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
       items: [{ ...fixtureDefinition, owner, yaml: initialYaml }],
     },
   });
-  const list = {
+  let list: ChannelList = {
     status: "ready",
-    coverage: "complete",
     channels: [{ id: fixtureChannel, name: "Fixture channel" }],
   };
+  const listeners = new Set<() => void>();
   const session = {
     workflows: save
       ? fixture.capability
@@ -56,7 +56,10 @@ function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
     channels: {
       list: () => list,
       ensureList: () => {},
-      subscribeList: () => () => {},
+      subscribeList: (fn: () => void) => {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
     },
   } as unknown as RelaySession;
   render(
@@ -64,7 +67,13 @@ function mount(initialYaml = fixtureYaml, owner = fixtureViewer, save = true) {
       <WorkflowCommunity session={session} viewer={fixtureViewer} />
     </ToastProvider>,
   );
-  return fixture;
+  return {
+    ...fixture,
+    setChannels(next: ChannelList) {
+      list = next;
+      for (const fn of listeners) fn();
+    },
+  };
 }
 
 it("delivers a late webhook secret on the landing page after confirmed navigation", async () => {
@@ -772,3 +781,33 @@ it("does not add a channel-loading banner above retained workflow cards", async 
   ).toBeVisible();
   expect(screen.queryByText("Reading channels…")).toBeNull();
 });
+
+it.each([{ huddle: true as const }, { metadataPending: true as const }])(
+  "retires an excluded workflow destination even in a partial list: %j",
+  async (excluded) => {
+    const fixture = mount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open Message helper" }),
+    );
+    expect(
+      screen.getByRole("region", { name: "Workflow editor" }),
+    ).toBeVisible();
+    act(() =>
+      fixture.setChannels({
+        status: "ready",
+        coverage: "partial",
+        channels: [
+          { id: fixtureChannel, name: "Fixture channel", ...excluded },
+        ],
+      }),
+    );
+    expect(
+      screen.queryByRole("region", { name: "Workflow editor" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Open Message helper" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
+    expect(fixture.calls.save).toBe(0);
+  },
+);

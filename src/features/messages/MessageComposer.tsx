@@ -67,6 +67,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { fullSession, type ComposerSession } from "./composer-session";
 import type { RelaySession } from "../relay/session";
 import {
   readView,
@@ -110,7 +111,7 @@ import type {
 import { TargetOpenerProvider } from "../conversation/opener";
 import { avatarMedia } from "../../shared/avatar-source";
 
-const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
+const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
   channels: [],
 };
@@ -123,28 +124,34 @@ type AcceptedDraft = {
 };
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
-const acceptedDrafts = new WeakMap<RelaySession, Map<string, AcceptedDraft>>();
+const acceptedDrafts = new WeakMap<
+  ComposerSession,
+  Map<string, AcceptedDraft>
+>();
 type RecoveredSend = {
   draft: MentionDraft;
   picks?: MentionPicks;
   preparationError?: unknown;
 };
 const recoveryListeners = new WeakMap<
-  RelaySession,
+  ComposerSession,
   Map<string, Set<(recovered: RecoveredSend) => void>>
 >();
 // A recovery that no mounted composer consumed replays on remount. Only the
 // unpersisted parts need it: the pick snapshot and a preparation failure. The
 // saved draft and attachment store remain the owners of the recovered content.
-const missedRecovery = new WeakMap<RelaySession, Map<string, RecoveredSend>>();
-function takeMissedRecovery(session: RelaySession, key: string) {
+const missedRecovery = new WeakMap<
+  ComposerSession,
+  Map<string, RecoveredSend>
+>();
+function takeMissedRecovery(session: ComposerSession, key: string) {
   const byKey = missedRecovery.get(session);
   const recovered = byKey?.get(key);
   byKey?.delete(key);
   return recovered;
 }
 function notifyRecovered(
-  session: RelaySession,
+  session: ComposerSession,
   key: string,
   recovered: RecoveredSend,
 ) {
@@ -165,7 +172,7 @@ function errorForRecovery(reason: unknown) {
       : undefined;
 }
 function subscribeRecovery(
-  session: RelaySession,
+  session: ComposerSession,
   key: string,
   listener: (recovered: RecoveredSend) => void,
 ) {
@@ -185,7 +192,7 @@ function subscribeRecovery(
     if (!listeners.size) byKey.delete(key);
   };
 }
-function recoveryFor(session: RelaySession) {
+function recoveryFor(session: ComposerSession) {
   let recovery = acceptedDrafts.get(session);
   if (!recovery) {
     recovery = new Map();
@@ -197,7 +204,7 @@ function recoveryFor(session: RelaySession) {
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
   scope: string;
-  session: RelaySession;
+  session: ComposerSession | RelaySession;
   channelId: string;
   channelName: string;
   label?: string | undefined;
@@ -493,7 +500,10 @@ function Composer({
     if (permitted.current) input.current?.focus();
   });
   useEffect(() => {
-    if (focusRequest) input.current?.focus();
+    const editor = input.current;
+    if (!focusRequest || !editor) return;
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
   }, [focusRequest]);
   const restoreSelection = useRef<{ start: number; end: number } | undefined>(
     undefined,
@@ -1375,15 +1385,20 @@ function Composer({
             : session.messages.send(channelId, content, recipients, uploaded);
       };
       let id: string | undefined;
-      if (capturedAttachments.length) {
+      if (capturedAttachments.length && !fullSession(session)) {
+        setSending(true);
+        const uploaded = await attachments.store.prepareForSend(attempt.signal);
+        attempt.signal.throwIfAborted();
+        id = await publish(uploaded);
+      } else if (capturedAttachments.length) {
         const followup = JSON.stringify(next);
         sendInBackground(
           session,
           recoveryKey,
           channelId,
           capturedAttachments,
-          (uploaded) => {
-            const sent = publish(uploaded);
+          async (uploaded) => {
+            const sent = await publish(uploaded);
             if (live.current) onSend?.(sent);
           },
           (files, preparationError) => {
@@ -1454,7 +1469,11 @@ function Composer({
           },
           attachments.store,
         );
-      } else id = publish([]);
+      } else {
+        const result = publish([]);
+        if (typeof result !== "string") setSending(true);
+        id = typeof result === "string" ? result : await result;
+      }
       const pending = { next, revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
@@ -1493,6 +1512,7 @@ function Composer({
       }
     }
   }
+  const host = fullSession(session);
   const readingOnly = !outbox?.supports(9) && !cached;
   // The attachments section animates out over 180 ms; the form's gap and
   // padding (data-attachments) collapse when it has, not when the list empties.
@@ -1517,10 +1537,10 @@ function Composer({
           openActivity={onOpenLink}
         />
       )}
-      {extensions?.accessories && (
+      {host && extensions?.accessories && (
         <ComposerAccessories
           registry={extensions.accessories}
-          session={session}
+          session={host}
           scope={scope}
           channelId={channelId}
           threadRootId={threadRootId}
@@ -2042,7 +2062,7 @@ function RecipientAvatars({
   disabled,
   remove,
 }: {
-  session: RelaySession;
+  session: ComposerSession | RelaySession;
   recipients: readonly MentionRecipient[];
   disabled: boolean;
   remove(pubkey: string): void;

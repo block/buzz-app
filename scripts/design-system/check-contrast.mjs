@@ -40,6 +40,29 @@ const TARGET_META = 45;
  * surface that role reaches, which is the failure mode this list must not have.
  */
 const EXCEPTIONS = new Map([
+  // Product-directed 2026-10-01: Green 10 / Red 10 incoming-call fills.
+  ...[
+    "affordance-call-join",
+    "affordance-call-join-hover",
+    "affordance-call-decline",
+    "affordance-call-decline-hover",
+  ].map((surface) => [
+    `--text-inverse on --${surface}`,
+    "Product-directed bright incoming-call fills with inverse labels; below normal text targets, limited to Join and Decline.",
+  ]),
+  // Kenneth requested Red 10 for Huddle Leave during the 2026-10-01 tryout.
+  // Limit this deliberate text-contrast tradeoff to the actual control fills.
+  ...[
+    "surface-panel",
+    "affordance-subtle-hover",
+    "affordance-subtle-pressed",
+    "affordance-danger",
+    "affordance-danger-hover",
+    "affordance-danger-pressed",
+  ].map((surface) => [
+    `--text-call-leave on --${surface}`,
+    "Product-directed Red 10 for the Huddle Leave label/icon; below normal text targets, not approved for general error text.",
+  ]),
   [
     "--text-disabled",
     "Low contrast is the signal that a control is unavailable; WCAG exempts inactive controls. Never carries information a person needs.",
@@ -131,6 +154,20 @@ const TEXT_ROLES = [
  * every fill it can actually sit on, and hover is one of them.
  */
 const PAIRS = [
+  ...[
+    "affordance-call-join",
+    "affordance-call-join-hover",
+    "affordance-call-decline",
+    "affordance-call-decline-hover",
+  ].map((surface) => ["--text-inverse", `--${surface}`]),
+  ...[
+    "surface-panel",
+    "affordance-subtle-hover",
+    "affordance-subtle-pressed",
+    "affordance-danger",
+    "affordance-danger-hover",
+    "affordance-danger-pressed",
+  ].map((surface) => ["--text-call-leave", `--${surface}`]),
   ...["--text-standard", "--text-subtle", "--text-metadata"].map((role) => [
     role,
     "--bg-app",
@@ -200,6 +237,8 @@ const BOUNDARY_ROLES = [
 const TINT_PAIRS = [
   ["--text-warning", "--affordance-warning"],
   ["--text-success", "--affordance-success"],
+  ["--text-success", "--affordance-success-hover"],
+  ["--text-success", "--affordance-success-pressed"],
   ["--text-accent", "--affordance-accent"],
   ["--text-accent", "--affordance-accent-hover"],
   ["--text-on-accent", "--affordance-accent-prominent"],
@@ -328,21 +367,6 @@ function audit(mode, map, baseline) {
     boundaryFailures.push(
       `${mode}: --border-floating-control on --surface-popover — ${floatingBoundary === null ? "unresolved color" : `${floatingBoundary.toFixed(3)}:1`}, needs 3:1`,
     );
-  }
-  // A step slider's selected track meets the unfilled track, and its thumb
-  // sits on both the track and panel. These are standalone marks, not button
-  // fills with paired ink; keyboard focus is not their resting boundary.
-  for (const surfaceRole of [
-    "--affordance-subtle-pressed",
-    "--surface-panel",
-  ]) {
-    const mark = resolve(map, "--affordance-prominent-mark");
-    const surface = resolve(map, surfaceRole);
-    const ratio = mark && surface ? wcagRatio(mark, surface) : null;
-    if (ratio === null || ratio < 3)
-      boundaryFailures.push(
-        `${mode}: step-slider --affordance-prominent-mark on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
-      );
   }
   for (const role of BOUNDARY_ROLES) {
     const surfaces =

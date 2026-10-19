@@ -118,15 +118,16 @@ test("management Leave restores focus on cancel, holds pending, and completes th
   await expect(sidebar.locator(`[data-channel-id="${channelId}"]`)).toHaveCount(
     0,
   );
+  // Its sidebar neighbor opens as it does from its row.
   await expect(
-    sidebar.getByRole("button", { name: "Alpha", exact: true }),
+    sidebar.getByRole("button", { name: "Beta", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeFocused();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await expect(sidebar.locator(`[data-channel-id="${channelId}"]`)).toHaveCount(
     0,

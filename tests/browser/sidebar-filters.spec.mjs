@@ -145,7 +145,16 @@ test("section filters save activity windows and recover hidden channels", async 
   await expect(
     page.getByRole("menuitem", { name: "Archive", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("group", {
+      name: "No activity in the last 7 days",
+      exact: true,
+    }),
+  ).toBeVisible();
   await shot("06-hidden-channels");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await shot("06-hidden-channels-dark");
+  await page.emulateMedia({ colorScheme: "light" });
   await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
   await expect(section.locator('[data-channel-id="delta"]')).toBeVisible();
   await shot("07-open-hidden-channel");

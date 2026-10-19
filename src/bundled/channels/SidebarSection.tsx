@@ -289,7 +289,9 @@ export function SidebarSection({
                           <MenuSeparator />
                           <MenuGroup>
                             <MenuGroupLabel emphasis="quiet">
-                              Hidden by filter
+                              {filter.value === "unreads"
+                                ? "No unread messages"
+                                : `No activity in the last ${activeWindowLabel(filter.activeWindowSeconds)}`}
                             </MenuGroupLabel>
                             {channels.rows.map((channel) => {
                               const select = () => {

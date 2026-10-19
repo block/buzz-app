@@ -56,7 +56,7 @@ it("chooses a filter with the keyboard and appends hidden channels below its opt
   await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
   const quiet = await screen.findByRole("menuitem", { name: "Quiet channel" });
   expect(
-    within(screen.getByRole("group", { name: "Hidden by filter" })).getByRole(
+    within(screen.getByRole("group", { name: "No unread messages" })).getByRole(
       "menuitem",
       { name: "Quiet channel" },
     ),

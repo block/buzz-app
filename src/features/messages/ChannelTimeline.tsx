@@ -31,6 +31,7 @@ import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
+import { correctScrollTop } from "./scroll-correction";
 import { readingPositioned, useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
@@ -327,7 +328,14 @@ function Timeline({
   const edges = useRef<{
     order: readonly string[];
     ids: ReadonlySet<string>;
-  }>({ order: [], ids: new Set() });
+    floor: number;
+    paging: boolean;
+  }>({ order: [], ids: new Set(), floor: 0, paging: false });
+  // The reader's anchor row and its offset before this render's rows.
+  const reader = useRef<{ id: string | undefined; top: number }>({
+    id: undefined,
+    top: 0,
+  });
   const intent = useRef(0);
   const upwardGesture = useRef<false | "candidate" | "moving">(false);
   const gestureFrame = useRef<number | undefined>(undefined);
@@ -531,17 +539,72 @@ function Timeline({
   // Shift keeps the distance from the end, so it holds the reader only while
   // the rows from their first visible item to the end are kept. Relay pages
   // break same-second ties by id, rows by send time: a page can land below the
-  // first row, or around the reader, where the saved anchor is restored instead.
+  // first row, or around the reader, who is then scrolled back to their row.
   const previous = edges.current.order;
   const reading = previous.slice(
     handle.current?.findItemIndex(handle.current.scrollOffset) ?? 0,
   );
+  const held = previous.indexOf(savedPosition.current?.anchor?.id ?? "");
+  reader.current = {
+    id: previous[held],
+    top: held < 0 ? 0 : (handle.current?.getItemOffset(held) ?? 0),
+  };
   const prepend =
     !!previous.length &&
     (previous[0] !== rows[0]?.id || rows.length !== previous.length) &&
     reading.every(
       (id, index) => rows[rows.length - reading.length + index]?.id === id,
     );
+  // Without shift, rows landing above the reader push them down. Scroll by
+  // that height before paint, so input that follows starts from the reader's
+  // row. Rows that moved keep another row's size until they measure; hold the
+  // reader's latest row through those measurements.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const list = element?.querySelector("ol");
+    const index = rows.findIndex((row) => row.id === reader.current.id);
+    if (
+      prepend ||
+      !settled.current ||
+      follow.current ||
+      index < 0 ||
+      !element ||
+      !list ||
+      !handle.current
+    )
+      return;
+    const moved = handle.current.getItemOffset(index) - reader.current.top;
+    const id = reader.current.id;
+    if (!moved || !id) return;
+    correctScrollTop(element, moved);
+    const top = () =>
+      element
+        .querySelector(`[data-message-id="${CSS.escape(id)}"]`)
+        ?.getBoundingClientRect().top;
+    // The row's offset from the viewport, as last placed by the reader.
+    let y = savedPosition.current?.anchor?.y ?? 0;
+    const read = () => {
+      const row = top();
+      if (row !== undefined) y = row - element.getBoundingClientRect().top;
+    };
+    let height = list.style.height;
+    const hold = new MutationObserver(() => {
+      const row = top();
+      if (list.style.height === height) return;
+      height = list.style.height;
+      if (row !== undefined && settled.current && !follow.current)
+        correctScrollTop(
+          element,
+          row - element.getBoundingClientRect().top - y,
+        );
+    });
+    hold.observe(list, { attributes: true, attributeFilter: ["style"] });
+    element.addEventListener("scroll", read);
+    return () => {
+      hold.disconnect();
+      element.removeEventListener("scroll", read);
+    };
+  }, [rows, prepend]);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -630,22 +693,20 @@ function Timeline({
           )
         : -1;
     const previousIds = edges.current.ids;
-    const previousCount = edges.current.order.length;
-    // Only rows after the previous last row are new; history lands before it.
-    const tail = rows.findIndex((row) => row.id === edges.current.order.at(-1));
-    const arrivals = rows
-      .slice(tail + 1)
-      .filter((row) => !previousIds.has(row.id)).length;
-    if (
-      !prepend &&
-      previousCount &&
-      rows.length > previousCount &&
-      tail === rows.length - 1
-    )
-      settled.current = false;
+    // Rows before the loaded first row's second are history. A page also
+    // returns rows of that second, which are new only when no page landed.
+    const { floor } = edges.current;
+    const paged = edges.current.paging && !window.loadingOlder;
+    const arrivals = rows.filter(
+      (row) =>
+        !previousIds.has(row.id) &&
+        (row.createdAt > floor || (row.createdAt === floor && !paged)),
+    ).length;
     edges.current = {
       order: rows.map((row) => row.id),
       ids: new Set(rows.map((row) => row.id)),
+      floor: rows[0]?.createdAt ?? 0,
+      paging: window.loadingOlder,
     };
     if (
       arrivals > 0 &&
@@ -783,6 +844,7 @@ function Timeline({
     rows,
     size,
     prepend,
+    window.loadingOlder,
     recordPosition,
     targetId,
     targetSignal,

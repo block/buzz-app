@@ -192,22 +192,29 @@ test.describe("pages inside one second", () => {
   // More rows share a second than a page holds. Relay pages break ties by id,
   // rows by send time, so the next page lands among the loaded rows of that second.
   test.use({ historyRowsPerSecond: 30 });
+  // Hold the next older page while reading `depth` px above the newest rows.
+  async function reading(page, app, depth) {
+    await open(page, app);
+    await history(page).hover();
+    await wheel(page, -250);
+    await expect.poll(() => app.pending.length).toBe(1);
+    if (depth > 250) await wheel(page, 250 - depth);
+    const pending = app.pending.shift();
+    expect(
+      pending.events.every(
+        (event) => event.created_at === pending.filter.until,
+      ),
+    ).toBe(true);
+    return pending;
+  }
+  const latest = (page) =>
+    page.getByRole("button", { name: /^(Jump to latest|\d+ new messages?)$/ });
   for (const depth of [250, 1400])
     test(`an older page among the loaded rows keeps a reader ${depth}px up`, async ({
       page,
       app,
     }) => {
-      await open(page, app);
-      await history(page).hover();
-      await wheel(page, -250);
-      await expect.poll(() => app.pending.length).toBe(1);
-      if (depth > 250) await wheel(page, 250 - depth);
-      const pending = app.pending.shift();
-      expect(
-        pending.events.every(
-          (event) => event.created_at === pending.filter.until,
-        ),
-      ).toBe(true);
+      const pending = await reading(page, app, depth);
       const before = await anchor(page);
       const height = await history(page).evaluate((e) => e.scrollHeight);
       pending.release();
@@ -217,14 +224,107 @@ test.describe("pages inside one second", () => {
       await settle(page);
       await expectAnchor(page, before);
       // History is not new; a live message still is.
-      const latest = page.getByRole("button", {
-        name: /^(Jump to latest|\d+ new messages?)$/,
-      });
-      await expect(latest).toHaveText("Jump to latest");
+      await expect(latest(page)).toHaveText("Jump to latest");
       app.append("primary", "alpha", undefined, true, false);
-      await expect(latest).toHaveText("1 new message");
+      await expect(latest(page)).toHaveText("1 new message");
       await expectAnchor(page, before);
     });
+
+  test("input after the page lands starts from the reader's row", async ({
+    page,
+    app,
+  }) => {
+    const pending = await reading(page, app, 1400);
+    const before = await anchor(page);
+    const height = await history(page).evaluate((e) => e.scrollHeight);
+    // Hold every animation frame: input can arrive before any deferred work.
+    await page.evaluate(() => {
+      const { requestAnimationFrame: request, cancelAnimationFrame: cancel } =
+        window;
+      const held = new Map();
+      let id = 0;
+      window.requestAnimationFrame = (callback) => {
+        held.set(--id, callback);
+        return id;
+      };
+      window.cancelAnimationFrame = (id) =>
+        id < 0 ? held.delete(id) : cancel(id);
+      window.releaseFrames = () => {
+        Object.assign(window, {
+          requestAnimationFrame: request,
+          cancelAnimationFrame: cancel,
+        });
+        for (const callback of held.values()) request(callback);
+      };
+    });
+    try {
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      await expectAnchor(page, before);
+      await page.mouse.wheel(0, -40);
+      await expectAnchor(page, { ...before, y: before.y + 40 });
+    } finally {
+      await page.evaluate(() => window.releaseFrames());
+    }
+  });
+
+  test("a held pointer scrolls across the page without being pulled back", async ({
+    page,
+    app,
+  }) => {
+    const pending = await reading(page, app, 1400);
+    const box = await history(page).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    try {
+      const height = await history(page).evaluate((e) => e.scrollHeight);
+      pending.release();
+      await expect
+        .poll(() => history(page).evaluate((e) => e.scrollHeight))
+        .toBeGreaterThan(height);
+      await settle(page);
+      // A scrollbar drag moves the scroller with no further input events,
+      // into older rows that measure as they mount.
+      for (let step = 0; step < 10; step++) {
+        const before = await anchor(page);
+        await history(page).evaluate((e) => {
+          e.scrollTop -= 150;
+        });
+        await settle(page);
+        await expectAnchor(page, { ...before, y: before.y + 150 });
+      }
+    } finally {
+      await page.mouse.up();
+    }
+  });
+
+  test("a live message in the loaded first second is new", async ({
+    page,
+    app,
+  }) => {
+    const pending = await reading(page, app, 1400);
+    const before = await anchor(page);
+    // Sorted among loaded history by a sender clock, before any page lands.
+    app.relay.publish(
+      "primary",
+      app.sign({
+        kind: 9,
+        created_at: pending.filter.until,
+        tags: [
+          ["h", "alpha"],
+          ["ms", "999"],
+        ],
+        content: "Delayed live message",
+      }),
+    );
+    await expect(latest(page)).toHaveText("1 new message");
+    pending.release();
+    await settle(page);
+    await expectAnchor(page, before);
+    await expect(latest(page)).toHaveText("1 new message");
+  });
 });
 
 test("cancelled navigation keeps relay reads usable in the same document", async ({

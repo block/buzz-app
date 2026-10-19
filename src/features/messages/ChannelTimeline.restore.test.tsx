@@ -27,6 +27,7 @@ vi.mock("virtua", async () => {
       useImperativeHandle(ref, () => ({
         cache: undefined,
         findItemIndex: () => 0,
+        getItemOffset: () => 0,
         scrollToIndex: scroll.toIndex,
         scrollTo: scroll.toOffset,
       }));

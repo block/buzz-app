@@ -40,6 +40,7 @@ vi.mock("virtua", async () => {
           },
           cache: [[], 40],
           findItemIndex: () => viewport.start,
+          getItemOffset: () => 0,
           scrollTo: vi.fn(),
           scrollToIndex: vi.fn(),
         }),

@@ -3,6 +3,7 @@ import { openChannelDetails } from "./channel-details.mjs";
 import {
   openPage,
   pageChoices,
+  pageChoice,
   selectSettingsSection,
   settleShellToggle,
 } from "./navigation.mjs";
@@ -492,14 +493,13 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
   });
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const expectWorkflowsChoice = async (count) => {
-    const choices = await pageChoices(page);
+    const choices = await pageChoices(page, "Messages");
     // Messages proves the Pages group rendered before counting Workflows.
-    await expect(
-      choices.getByRole("option", { name: "Messages", exact: true }),
-    ).toBeVisible();
-    await expect(
-      choices.getByRole("option", { name: "Workflows", exact: true }),
-    ).toHaveCount(count);
+    await expect(pageChoice(choices, "Messages")).toBeVisible();
+    await page
+      .getByRole("combobox", { name: "Search Buzz", exact: true })
+      .fill("Workflows");
+    await expect(pageChoice(choices, "Workflows")).toHaveCount(count);
     await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
   };

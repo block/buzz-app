@@ -174,3 +174,66 @@ it("keeps an exact category ahead of late conversation and message matches", () 
       .map((group) => group.getAttribute("aria-label")),
   ).toEqual(["Plugins", "Channels", "Most relevant"]);
 });
+
+it.each(["Enter", "shortcut", "title"])(
+  "focuses the plugin switch without saving on %s, reserving writes for its control",
+  (action) => {
+    const change = vi.fn();
+    const state = {
+      configuration: {
+        status: "ready",
+        catalog: {
+          plugins: [
+            {
+              manifest: {
+                id: "example",
+                name: "Example",
+                description: "Example plugin",
+              },
+              enabled: true,
+            },
+          ],
+        },
+      },
+      activation: {},
+      busy: false,
+    };
+    const plugins = {
+      subscribe: () => () => {},
+      snapshot: () => state,
+      change,
+    } as unknown as AppServices["plugins"];
+    function Palette() {
+      const groups = useSearchSettings({
+        query: "Example",
+        plugins,
+        navigation: {} as AppServices["navigation"],
+        close: vi.fn(),
+      });
+      return (
+        <SearchChoices
+          query="Example"
+          onQueryChange={() => {}}
+          input={createRef()}
+          groups={[]}
+          inlineSettings={groups}
+        />
+      );
+    }
+    render(<Palette />);
+    const input = screen.getByRole("combobox", { name: "Search Buzz" });
+    if (action === "title") fireEvent.click(screen.getByText("Example"));
+    else
+      fireEvent.keyDown(
+        input,
+        action === "Enter"
+          ? { key: "Enter" }
+          : { key: "1", code: "Digit1", shiftKey: true, ctrlKey: true },
+      );
+    const toggle = screen.getByRole("switch", { name: "Enable Example" });
+    expect(change).not.toHaveBeenCalled();
+    expect(toggle).toHaveFocus();
+    fireEvent.click(toggle);
+    expect(change).toHaveBeenCalledWith("disable", "example");
+  },
+);

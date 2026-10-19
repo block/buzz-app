@@ -1,4 +1,4 @@
-import { openPage, pageChoices } from "./navigation.mjs";
+import { openPage, pageChoices, pageChoice } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, edge, settle } from "./timeline.mjs";
 
@@ -410,13 +410,12 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
   await button(page, "Plugins").click();
   const toggle = page.getByRole("switch", { name: "Enable Shortcut counter" });
   await toggle.click();
-  const choices = await pageChoices(page);
-  await expect(
-    choices.getByRole("option", { name: "Settings", exact: true }),
-  ).toBeVisible();
-  await expect(
-    choices.getByRole("option", { name: "Shortcut counter", exact: true }),
-  ).toHaveCount(0);
+  const choices = await pageChoices(page, "Settings");
+  await expect(pageChoice(choices, "Settings")).toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Search Buzz", exact: true })
+    .fill("Shortcut counter");
+  await expect(pageChoice(choices, "Shortcut counter")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),

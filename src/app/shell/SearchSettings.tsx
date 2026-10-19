@@ -50,16 +50,13 @@ function controlDestination(
     run: () => {
       const control = document
         .getElementById(key)
-        ?.querySelector<HTMLElement>(
-          'button[role="switch"], button[role="combobox"]',
-        );
+        ?.querySelector<HTMLElement>('[role="switch"], [role="combobox"]');
       if (
         control?.getAttribute("aria-disabled") === "true" ||
         control?.hasAttribute("disabled")
       )
         return;
       control?.focus();
-      control?.click();
     },
   };
 }

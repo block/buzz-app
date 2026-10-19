@@ -1,10 +1,12 @@
 import { expect } from "@playwright/test";
 
-export async function pageChoices(page) {
+export async function pageChoices(page, query = "") {
   await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
-  return page
-    .getByRole("dialog", { name: "Search Buzz", exact: true })
-    .getByRole("group", { name: "Actions", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  await dialog
+    .getByRole("combobox", { name: "Search Buzz", exact: true })
+    .fill(query);
+  return dialog.getByRole("group", { name: "Pages", exact: true });
 }
 
 export async function openPage(page, name, { connected = true } = {}) {
@@ -30,9 +32,11 @@ export async function newChat(page) {
 export async function selectPage(page, name, { connected = true } = {}) {
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const input = dialog.getByRole("combobox", { name: "Search Buzz" });
-  const choice = dialog
-    .getByRole("group", { name: "Actions", exact: true })
-    .getByRole("option", { name, exact: true });
+  await input.fill(name);
+  const choice = pageChoice(
+    dialog.getByRole("group", { name: "Pages", exact: true }),
+    name,
+  );
   // Registered page actions are visible only after the plugin catalog is ready.
   await expect(choice).toBeVisible();
   // Until the community connects, the palette is a placeholder. The connected
@@ -46,7 +50,7 @@ export async function selectPage(page, name, { connected = true } = {}) {
   // every row below them, so a pointer click can land between rows. Keyboard
   // selection follows the choice itself, not its position.
   const id = await choice.getAttribute("id");
-  const limit = await dialog.getByRole("option").count();
+  const limit = await dialog.locator("[role=option], [role=row]").count();
   for (
     let step = 0;
     (await input.getAttribute("aria-activedescendant")) !== id;
@@ -144,4 +148,10 @@ export async function selectCommunity(page, name) {
       exact: true,
     }),
   ).toBeVisible();
+}
+
+export function pageChoice(group, name) {
+  return group
+    .getByRole("option", { name, exact: true })
+    .or(group.getByRole("button", { name, exact: true }));
 }

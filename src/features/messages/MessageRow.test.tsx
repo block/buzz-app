@@ -2763,7 +2763,7 @@ it("lets message plugins open targets through the row's link handler", async () 
   }
 });
 
-it("keeps coordination attribution accessible while suppressing repeated author artwork", () => {
+it("keeps coordination author artwork visible across grouping and disclosure changes", () => {
   const props = {
     row: {
       ...row,
@@ -2783,15 +2783,19 @@ it("keeps coordination attribution accessible while suppressing repeated author 
     );
   expect(authorArtwork()).not.toBeNull();
   view.rerender(<MessageRow {...props} stackPrevious />);
-  expect(authorArtwork()).toBeNull();
+  expect(authorArtwork()).not.toBeNull();
   const disclosure = screen.getByRole("button", {
     name: "Working agent: Still working on this",
   });
   fireEvent.click(disclosure);
   expect(authorArtwork()).not.toBeNull();
   expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(disclosure);
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  expect(authorArtwork()).not.toBeNull();
   view.rerender(<MessageRow {...props} stackPrevious day />);
   expect(authorArtwork()).not.toBeNull();
+  cleanup();
 });
 
 it.each([0, 23])(

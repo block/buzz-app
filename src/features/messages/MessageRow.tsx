@@ -1239,11 +1239,7 @@ function AgentsMessageRow(props: MessageRowProps) {
               className={styles.audienceLine}
               aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}`}
             >
-              {props.stackPrevious && !props.day && !open ? (
-                <span className={styles.audienceAvatar} aria-hidden="true" />
-              ) : (
-                avatar(author)
-              )}
+              {avatar(author)}
               {to.length > 0 && (
                 <>
                   <ArrowRightIcon

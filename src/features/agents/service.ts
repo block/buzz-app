@@ -639,9 +639,10 @@ export type Agents = {
   /** The agent of this pubkey in the selected community, if it is an agent. */
   find(pubkey: string): Agent | undefined;
   /** The agent as `run` holds it, outside any run: for one of the calling
-   * plugin's types while this copy of the app runs it and its community is
-   * live, else undefined. A type whose agents act on something other than
-   * a message, such as a call, publishes with it. */
+   * plugin's types while this copy of the app runs it, its type is not
+   * changing and its community is live, else undefined. A type whose agents
+   * act on something other than a message, such as a call, publishes with
+   * it; like any type whose agents run here, it has `run`. */
   handle(pubkey: string): AgentHandle | undefined;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */

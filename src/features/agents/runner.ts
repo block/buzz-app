@@ -472,11 +472,14 @@ export class AgentRunners {
     return !!runner?.type?.run && !!runner.asked && runner.mayHold;
   }
   /** The agent's handle outside any run, while this copy runs it with a
-   * type of `pluginId` and its community is live. */
+   * type of `pluginId`, not changing it, and its community is live. */
   handle(pubkey: string, pluginId: string) {
     const runner = this.runners.get(pubkey);
     const agent = this.host.ready(pubkey);
-    return runner?.type?.pluginId === pluginId && agent && this.runs(pubkey)
+    return runner?.type?.pluginId === pluginId &&
+      !runner.transitioning &&
+      agent &&
+      this.runs(pubkey)
       ? this.handleFor(runner, agent, runner.controller.signal)
       : undefined;
   }

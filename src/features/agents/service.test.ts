@@ -1487,6 +1487,13 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
   await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
   await settle();
   expect(plugin.agents.handle(bot)).toBeUndefined();
+  // Nor once it is deleted.
+  native.claim.mockResolvedValue(true);
+  connect(false);
+  connect(true);
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  await service.remove(bot);
+  expect(plugin.agents.handle(bot)).toBeUndefined();
 });
 
 it("keeps running an agent while another community is selected, and gives it only its community's events", async () => {

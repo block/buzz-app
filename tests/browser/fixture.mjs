@@ -36,7 +36,6 @@ export const test = base.extend({
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
   liveSetupTimeoutMs: [undefined, { option: true }],
-  archiveOnDisk: [false, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
   profilePicture: ["", { option: true }],
@@ -99,7 +98,6 @@ export const test = base.extend({
       browser,
       productionBroker,
       liveSetupTimeoutMs,
-      archiveOnDisk,
       actionProfile,
       agentMessageDeletion,
       profilePicture,
@@ -2156,9 +2154,7 @@ export const test = base.extend({
                   next();
                 });
                 const broker = relayBrokerPlugin({
-                  archiveFile: archiveOnDisk
-                    ? testInfo.outputPath("archive.sqlite3")
-                    : ":memory:",
+                  archiveFile: ":memory:",
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
@@ -2274,9 +2270,6 @@ export const test = base.extend({
         { viewer, profilePicture, iconCongestion },
       );
       await use({
-        archiveFile: archiveOnDisk
-          ? testInfo.outputPath("archive.sqlite3")
-          : undefined,
         sign: (template) => finalizeEvent(template, userKey),
         channelMetadata: (id, tags) => sign(39000, [["d", id], ...tags]),
         signRelay: (template) => finalizeEvent(template, relayKey),

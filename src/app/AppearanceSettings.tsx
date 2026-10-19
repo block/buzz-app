@@ -4,7 +4,8 @@ import {
   accentButtonStyle,
   type ColorLevel,
 } from "../shared/theme/accent";
-import { StepSlider } from "../shared/design-system/ui/StepSlider";
+import { Select } from "../shared/design-system/ui/Select";
+import styles from "./AccentLevelIndicator.module.css";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import {
   ArrowCounterClockwiseIcon,
@@ -28,7 +29,6 @@ import {
   setThreadPlacementPreference,
   useThreadPlacementPreference,
 } from "../features/messages/thread-preferences";
-import { Select } from "../shared/design-system/ui/Select";
 
 import {
   useFollowUpBehaviorPreference,
@@ -41,9 +41,10 @@ const COLOR_LEVEL_LABELS: Record<ColorLevel, string> = {
   more: "Swarmin’",
   full: "Buzzin’",
 };
-const COLOR_LEVEL_STEPS = COLOR_LEVELS.map((level) => ({
+const COLOR_LEVEL_OPTIONS = COLOR_LEVELS.map((level) => ({
   value: level,
   label: COLOR_LEVEL_LABELS[level],
+  leading: <AccentLevelIndicator level={level} />,
 }));
 
 export function AppearanceSettings({
@@ -190,17 +191,19 @@ export function AppearanceSettings({
             )}
           />
           <PreferenceRow
-            title="Vibe level"
-            trailing={(label) => (
-              <StepSlider
-                aria-labelledby={label["aria-labelledby"]}
-                steps={COLOR_LEVEL_STEPS}
+            title="Accent level"
+            trailing={
+              <Select
+                variant="compact"
+                label="Accent level"
                 value={colorLevel}
+                leading={<AccentLevelIndicator level={colorLevel} />}
+                groups={[{ label: "", options: COLOR_LEVEL_OPTIONS }]}
                 onValueChange={(value) =>
                   appearance.setColorLevel(value as ColorLevel)
                 }
               />
-            )}
+            }
           />
         </SettingsGroup>
       </div>
@@ -296,14 +299,14 @@ export function AppearanceSettings({
         )}
         {active && colorLevelError && (
           <ToastNotice
-            title="Vibe level wasn’t saved"
+            title="Accent level wasn’t saved"
             description={colorLevelError}
           >
             <Button
               size="sm"
               onClick={() => appearance.setColorLevel(colorLevel)}
             >
-              Retry saving vibe level
+              Retry saving accent level
             </Button>
           </ToastNotice>
         )}
@@ -334,5 +337,17 @@ export function AppearanceSettings({
         )}
       </div>
     </section>
+  );
+}
+
+function AccentLevelIndicator({ level }: { level: ColorLevel }) {
+  return (
+    <span
+      className={styles.chip}
+      aria-hidden="true"
+      style={{
+        opacity: (COLOR_LEVELS.indexOf(level) + 1) / COLOR_LEVELS.length,
+      }}
+    />
   );
 }

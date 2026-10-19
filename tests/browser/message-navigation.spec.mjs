@@ -1040,6 +1040,25 @@ const liveTest = test.extend({ productionBroker: true });
 liveTest(
   "stream repair retains thread rows, reading position and composer focus after exact opening",
   async ({ page, app }) => {
+    // The deliberate outage tests thread repair, not read-state publication.
+    // Settle admitted writes, then hold new ones until the live route is back.
+    let publicationGate;
+    const publishing = new Set();
+    await page.route(
+      "**/api/relay/primary/read-state-publish",
+      async (route) => {
+        if (publicationGate) await publicationGate.promise;
+        const done = Promise.withResolvers();
+        publishing.add(done.promise);
+        try {
+          const response = await route.fetch();
+          await route.fulfill({ response });
+        } finally {
+          publishing.delete(done.promise);
+          done.resolve();
+        }
+      },
+    );
     await open(page, app);
     await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
     expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
@@ -1056,51 +1075,71 @@ liveTest(
       exact: true,
     });
     await composer.fill("Preserve my thread draft");
-    await settle(page);
+    await settle(page, region);
     const before = await region.evaluate((element) => element.scrollTop);
-    let release;
-    const held = new Promise((resolve) => {
-      release = resolve;
-    });
-    let intercepted;
-    const seen = new Promise((resolve) => {
-      intercepted = resolve;
-    });
+    const held = Promise.withResolvers();
+    const seen = Promise.withResolvers();
+    const isExactQuery = (request) =>
+      request.url().endsWith("/query") &&
+      request
+        .postDataJSON()
+        .some((filter) => filter.ids?.includes(app.exact.target.id));
     let first = true;
     await page.route("**/api/relay/**/query", async (route) => {
-      if (
-        !first ||
-        !route
-          .request()
-          .postDataJSON()
-          .some((filter) => filter.ids?.includes(app.exact.target.id))
-      )
-        return route.continue();
+      if (!first || !isExactQuery(route.request())) return route.continue();
       first = false;
-      intercepted();
-      await held;
-      await route.continue().catch(() => {});
+      seen.resolve();
+      await held.promise;
+      await route.continue();
     });
-    app.relay.disconnect("primary");
-    await seen;
-    await expect(region.locator("[data-message-id]")).toHaveCount(81);
-    await expect(composer).toBeFocused();
-    expect(await region.evaluate((element) => element.scrollTop)).toBeCloseTo(
-      before,
-      0,
-    );
-    release();
-    await expect(region.getByText("Loading thread…")).toHaveCount(0);
-    await expect(composer).toBeFocused();
-    await expect(composer).toHaveJSProperty(
-      "value",
-      "Preserve my thread draft",
-    );
-    expect(await region.evaluate((element) => element.scrollTop)).toBeCloseTo(
-      before,
-      0,
-    );
-    await expect(readingRow).toBeInViewport();
+    publicationGate = Promise.withResolvers();
+    const pendingPublication = publicationGate;
+    try {
+      await Promise.all([...publishing]);
+      // Miss a real reply while the socket is down. Its later paint proves the
+      // retained-range repair finished, not merely that its first lookup returned.
+      app.relay.disconnect("primary");
+      const missedReply = app.reply(app.exact.root.id, false, false);
+      await seen.promise;
+      await expect
+        .poll(() => app.relay.hasRoute("primary", "alpha"))
+        .toBe(true);
+      publicationGate = undefined;
+      pendingPublication.resolve();
+      await expect(region.locator("[data-message-id]")).toHaveCount(81);
+      await expect(composer).toBeFocused();
+      expect(await region.evaluate((element) => element.scrollTop)).toBeCloseTo(
+        before,
+        0,
+      );
+      held.resolve();
+      await expect(
+        region.locator(`[data-message-id="${missedReply.id}"]`),
+      ).toBeAttached();
+      await expect(region.locator("[data-message-id]")).toHaveCount(82);
+      // Arrival count updates only after the retained traversal is ready and
+      // exhausted, including its empty final page. Paint alone can precede it.
+      await expect(
+        region.getByRole("button", { name: "1 new message", exact: true }),
+      ).toBeVisible();
+      await expect(region.getByText("Loading thread…")).toHaveCount(0);
+      await settle(page, region);
+      await expect(composer).toBeFocused();
+      await expect(composer).toHaveJSProperty(
+        "value",
+        "Preserve my thread draft",
+      );
+      expect(await region.evaluate((element) => element.scrollTop)).toBeCloseTo(
+        before,
+        0,
+      );
+      await expect(readingRow).toBeInViewport();
+    } finally {
+      publicationGate = undefined;
+      pendingPublication.resolve();
+      held.resolve();
+      await Promise.all([...publishing]);
+    }
   },
 );
 

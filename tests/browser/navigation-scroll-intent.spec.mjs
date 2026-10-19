@@ -28,9 +28,9 @@ for (const cachedStartup of [false, true]) {
       // Save the settled combined inventory, before cold-loading it with Team
       // preferences held. Solo's two independent reads also change its height.
       const solo = page.getByRole("navigation", { name: "Solo conversations" });
-      await expect(
-        solo.getByText("Start a conversation with your agents."),
-      ).toBeVisible();
+      // An empty Solo inventory has no painted box after its hint is removed.
+      await expect(solo).toBeAttached();
+      await expect(solo.getByRole("status")).toHaveCount(0);
       await expect(
         solo.getByText("Loading workspaces…", { exact: true }),
       ).toHaveCount(0);

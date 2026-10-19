@@ -163,12 +163,14 @@
   flex: 1;
   min-width: 0;
 }
-/* Keep both speakers inside the opposing avatar column, including narrow panes. */
+/* Reserve the opposing avatar column when space permits. At narrow widths or
+   enlarged text, keep enough of the row for readable words. The own avatar
+   remains outside this body in its existing flex column. */
 .message:has(> .messageGutter) > .messageBody {
   max-width: min(
     85%,
     46rem,
-    calc(100% - 2 * var(--message-side-space) - var(--space-4))
+    max(60%, calc(100% - 2 * var(--message-side-space) - var(--space-4)))
   );
 }
 .message[data-viewer-message] > .messageBody {
@@ -1672,6 +1674,8 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
    color while hovered or keyboard-focused. The shared chip fill and ring stay. */
 .membership .membershipName {
   --link-text: var(--text-subtle);
+  /* Restated over the channel host's button reset. */
+  color: var(--link-text);
   font-weight: var(--type-weight-medium);
 }
 .membership .membershipName:hover,
@@ -1765,10 +1769,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   display: contents;
 }
 .messageActions {
-  background: transparent;
-  color: var(--text-standard);
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
   order: 1;
   flex-shrink: 0;
   align-self: flex-end;
@@ -1785,8 +1785,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
   user-select: none;
-}
-.messageActions:not([data-placement="beside"]) {
   @apply popover-surface;
   --floating-radius: var(--radius-control);
   --floating-inset: var(--space-half);
@@ -1863,9 +1861,6 @@ html[data-keyboard-input] .quickReactionGlyph {
     inset: auto;
     opacity: 1;
     pointer-events: auto;
-  }
-  .messageActions[data-placement="beside"] {
-    translate: 0 -50%;
   }
   /* Retain pointer travel to the lifted toolbar without adding row spacing. */
   .message:hover::before {
@@ -2671,7 +2666,8 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .messageBubble > :is(.text, .plainText) {
   margin: 0;
 }
-.messageBubble .text :is(a, [data-mention-kind]):not([data-solo-link]) {
+/* Links take the bubble's paired link ink; mentions keep their own tint. */
+.messageBubble .text a:not([data-solo-link]) {
   --link-text: var(--message-link);
   --link-hover: transparent;
   --link-focus: currentColor;
@@ -2687,6 +2683,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: var(--text-standard);
   /* Neutral inset surfaces keep their own link palette inside colored bubbles. */
   --message-link: var(--text-link);
+  /* Neutral insets drop own-bubble mention pairing back to the shared role. */
+  --mention-fill: initial;
+  --mention-hover: initial;
+  --mention-text: initial;
 }
 .messageContent {
   position: relative;
@@ -2722,6 +2722,9 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: var(--text-message-own);
   background: var(--surface-message-own);
   --message-link: var(--text-message-link-own);
+  --mention-fill: var(--affordance-mention-own);
+  --mention-hover: var(--affordance-mention-own-hover);
+  --mention-text: var(--text-mention-own);
 }
 .messageBubble[data-emoji-only] {
   background: transparent;
@@ -2749,6 +2752,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
   background: var(--surface-panel);
   color: var(--text-standard);
   --message-link: var(--text-link);
+  /* Neutral insets drop own-bubble mention pairing back to the shared role. */
+  --mention-fill: initial;
+  --mention-hover: initial;
+  --mention-text: initial;
 }
 
 .threadAvatar:nth-child(1) {

@@ -366,7 +366,7 @@ export function IconButtonSpecimen() {
       <ExamplePreview
         label="Glyph-state toggle"
         code={
-          '<IconButton variant="bare" size="sm" aria-pressed={unread} aria-label="Unread only" icon={unread ? <NotificationFilledIcon /> : <NotificationIcon />} />'
+          '<IconButton variant="bare" size="sm" aria-pressed={unread} aria-label="Unread only" icon={unread ? <NotificationFilledIcon size="1.25rem" /> : <NotificationIcon size="1.25rem" />} />'
         }
       >
         <IconButton
@@ -376,7 +376,13 @@ export function IconButtonSpecimen() {
           aria-pressed={unread}
           title="Show unread only"
           onClick={() => setUnread(!unread)}
-          icon={unread ? <NotificationFilledIcon /> : <NotificationIcon />}
+          icon={
+            unread ? (
+              <NotificationFilledIcon size="1.25rem" />
+            ) : (
+              <NotificationIcon size="1.25rem" />
+            )
+          }
         />
       </ExamplePreview>
       <ButtonMatrix kind="icon" />

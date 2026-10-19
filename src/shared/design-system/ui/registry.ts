@@ -421,21 +421,6 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: [],
   },
   {
-    slug: "step-slider",
-    name: "Step slider",
-    purpose:
-      "Choose one of a few ordered steps, such as how much of the app the accent colors.",
-    behavior:
-      "Base UI owns dragging, snapping and keyboard steps. Each step is a visible stop; the thumb announces the step's name, which also appears beneath it.",
-    variants: ["each step", "disabled"],
-    status: "proposed",
-    collection: "components",
-    owner: "desktop-new Design system",
-    source: "shared/design-system/ui/StepSlider.tsx",
-    baseUi: [BASE_UI_PARTS.slider],
-    composes: [],
-  },
-  {
     slug: "button",
     name: "Button",
     purpose:
@@ -487,7 +472,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "chrome",
       "avatar",
       "media",
-      "bare (glyph-state toggle, no background in any state; 20px artwork at sm)",
+      "bare (no background in any state; glyph-state toggles use 20px artwork at sm; row-revealed actions retain standard artwork sizing)",
       "shape: inset (container radius minus inset via --control-inset-radius) | control (default, 10px) | round (avatar default) | row-end | squircle (prominent avatar edit action)",
       "size: xs (20px, 12px icon) | sm (default, 32px, 16px icon) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
@@ -851,7 +836,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "align: start | center | end",
       "compact subtle",
       "compact value suffix",
-      "leading icon",
+      "20px leading accessory: icon, avatar, or custom UI",
     ],
     status: "proposed",
     collection: "components",

@@ -492,7 +492,7 @@ export function useConversationTabs({
     channelId: string,
     messageId: string,
     rootId: string,
-    intent?: "reply" | "reveal",
+    intent?: "reply" | "reveal" | "focus",
   ) => {
     if (!currentVisit()) return;
     // Flat sessions keep their side-only host; channels support both panes.

@@ -65,6 +65,10 @@ export type AcpHooks = Readonly<{
   program: string;
   /** The error when that program cannot be found, or cannot run. */
   missing: string;
+  /** Keeps stderr written before the host reports the spawn, and reads exit
+   * 126 or 127 before `initialize` answers as `missing`: for a program the
+   * owner launches through `env`. */
+  diagnoseStartup?: boolean;
   /** Its environment, under the launch's own. The Buzz identity is always
    * removed, whatever either says. */
   env: Readonly<Record<string, string | null>>;

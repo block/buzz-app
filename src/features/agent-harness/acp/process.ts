@@ -118,7 +118,10 @@ export class AcpProcess {
       ...(launch.args ? { args: launch.args } : {}),
       env: { ...hooks.env, ...launch.env, ...PROTECTED_ENV },
       onStdout: (data) => (acp ? acp.read(data) : early.push(data)),
-      onStderr: (data) => (acp ? acp.readError(data) : earlyErrors.push(data)),
+      onStderr: (data) => {
+        if (acp) acp.readError(data);
+        else if (hooks.diagnoseStartup) earlyErrors.push(data);
+      },
     }).catch((error: unknown) => {
       throw /os error 2|no such file|not found/i.test(errorMessage(error))
         ? new Error(hooks.missing)
@@ -174,7 +177,8 @@ export class AcpProcess {
       }
       await acp.stop(STOP_TIMEOUT_MS);
       // A program `env` cannot find or run exits before it answers.
-      if (MISSING_CODES.has(acp.code ?? 0)) throw new Error(hooks.missing);
+      if (hooks.diagnoseStartup && MISSING_CODES.has(acp.code ?? 0))
+        throw new Error(hooks.missing);
       throw error;
     } finally {
       signal?.removeEventListener("abort", abort);

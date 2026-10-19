@@ -93,7 +93,9 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   await page.screenshot({ path: testInfo.outputPath("launch-messages.png") });
   await page.getByRole("button", { name: "Search Buzz" }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
-  await expect(dialog.getByRole("group", { name: "This conversation" })).toBeVisible();
+  await expect(
+    dialog.getByRole("group", { name: "This conversation" }),
+  ).toBeVisible();
   await dialog
     .getByRole("combobox", { name: "Search Buzz", exact: true })
     .fill("Messages");

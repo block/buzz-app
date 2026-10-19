@@ -987,7 +987,7 @@ export function SearchResults({
                   : []),
                 {
                   label: messageOrder,
-                rank: Infinity,
+                  rank: Infinity,
                   destinations: messages,
                   empty:
                     matchingChannels.length ||

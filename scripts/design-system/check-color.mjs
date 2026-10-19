@@ -223,24 +223,25 @@ auditLayers();
  */
 function auditLayers() {
   const css = readFileSync(TOKENS_FILE, "utf8");
-  // Deliberate exception: complete decorative plugin artwork has fixed OKLCH
-  // endpoints rather than theme-aware UI roles. Keep all literals in its named
-  // palette block; registry/tests cover ownership and endpoint/contrast values.
-  const artworkStart = css.indexOf("/* PLUGIN ARTWORK PALETTE");
-  const artworkEnd = css.indexOf("/* END PLUGIN ARTWORK PALETTE */");
-  for (const match of css.matchAll(/--art-[a-z0-9-]+:\s*([^;]+);/g)) {
-    if (/^var\(--[a-z0-9-]+\)$/.test(match[1].trim())) continue;
-    if (
-      artworkStart < 0 ||
-      match.index < artworkStart ||
-      match.index > artworkEnd
-    ) {
+  // Artwork endpoints follow the same palette ownership as other aliases.
+  // Complete plugin gradients may compose their own two palette-backed endpoints.
+  for (const match of css.matchAll(/(--art-[a-z0-9-]+):\s*([^;]+);/g)) {
+    const [declaration, name, value] = match;
+    const alias =
+      /^var\(--(?:amber|blue|cyan|green|orange|purple|red)-(?:[1-9]|1[0-2])\)$/.test(
+        value.trim(),
+      );
+    const category = /^--art-plugin-(.+)-gradient$/.exec(name)?.[1];
+    const composition =
+      category &&
+      value.replace(/\s+/g, " ").trim() ===
+        `linear-gradient( to bottom in oklch, var(--art-plugin-${category}-start), var(--art-plugin-${category}-end) )`;
+    if (!alias && !composition)
       failures.push({
         at: "styles/tokens.css",
-        found: match[0],
-        why: "Artwork literals belong in the named proposed artwork palette exception.",
+        found: declaration,
+        why: "Artwork must reference an existing family step or compose its own palette-backed endpoints.",
       });
-    }
   }
 
   const rel = "styles/tokens.css";

@@ -9,55 +9,54 @@ export const ACCENTS = [
   "cobalt",
   "jade",
 ] as const;
-/** Proposed cross-color pairs preserve plugin artwork direction independently
+/** Proposed artwork mapping uses existing theme-aware palette families independently
  * of the existing Appearance choices above. */
 export const BRAND_GRADIENTS = [
   {
     name: "Communication",
     category: "communication",
-    from: "cyan",
-    to: "blue",
-    fromHue: 220,
-    toHue: 255,
+    start: "cyan-11",
+    end: "blue-11",
+    compromise:
+      "Cyan and blue use existing families; their different step-11 theme values change the balance.",
   },
   {
     name: "Agents",
     category: "agents",
-    from: "violet",
-    to: "indigo",
-    fromHue: 295,
-    toHue: 260,
+    start: "purple-9",
+    end: "blue-11",
+    compromise:
+      "Violet maps to purple; indigo maps to blue. Exact source hues are unavailable.",
   },
   {
     name: "Agent tools",
     category: "agent-tools",
-    from: "fuchsia",
-    to: "purple",
-    fromHue: 335,
-    toHue: 300,
+    start: "purple-9",
+    end: "purple-9",
+    compromise:
+      "Fuchsia and purple both map to purple 9: this category becomes a flat fill.",
   },
   {
     name: "Developer tools & integrations",
     category: "developer-tools-and-integrations",
-    from: "coral",
-    to: "pink",
-    fromHue: 375,
-    toHue: 340,
+    start: "red-10",
+    end: "purple-9",
+    compromise:
+      "Coral maps to red; pink maps to purple. The transition is red to purple.",
   },
   {
     name: "People & communities",
     category: "people-and-communities",
-    from: "scarlet",
-    to: "orange",
-    fromHue: 380,
-    toHue: 415,
+    start: "red-10",
+    end: "orange-11",
+    compromise: "Scarlet maps to red; orange uses the existing orange family.",
   },
   {
     name: "Productivity",
     category: "productivity",
-    from: "orange",
-    to: "amber",
-    fromHue: 420,
-    toHue: 455,
+    start: "orange-11",
+    end: "amber-11",
+    compromise:
+      "Both original warm hues use existing orange and amber; no new yellow-green family.",
   },
 ] as const;

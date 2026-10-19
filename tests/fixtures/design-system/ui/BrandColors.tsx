@@ -34,7 +34,7 @@ export function BrandColors() {
   return (
     <Section
       title="Colorways and plugin gradients"
-      description="Plugin gradients retain their original color-to-color transitions, with brightness balanced across categories. The six existing Appearance ramps below remain available as palette references."
+      description="Plugin artwork now uses existing palette steps. Each endpoint follows its family in light and dark mode. Hue substitutions and collapsed transitions are called out below; the Appearance ramps remain references."
     >
       <div className="brand-gradient-grid">
         {BRAND_GRADIENTS.map((gradient) => (
@@ -50,16 +50,16 @@ export function BrandColors() {
             />
             <span className="text-body-sm text-primary">{gradient.name}</span>
             <span className="text-body-sm text-secondary">
-              {gradient.from} → {gradient.to}
+              {gradient.start} → {gradient.end}
             </span>
+            <p className="text-body-sm text-secondary">{gradient.compromise}</p>
           </div>
         ))}
       </div>
       <p className="text-body-sm text-secondary">
-        Gradient endpoints target the same luminance: approximately 4.57:1
-        against white and 4.60:1 against black. Lighting and artwork overlays
-        need a separate visual check; these measurements describe the bare
-        gradients.
+        Family references follow the active theme. Shared luminance, chroma,
+        contrast and the original 35° hue shifts are no longer guaranteed.
+        Compare the real catalog in both modes before judging the mapping.
       </p>
       <div
         className="brand-color-selection"

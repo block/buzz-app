@@ -427,24 +427,24 @@ existing minimum heights. The extra-small capsule keeps its caption role.
 
 ## Colorways and plugin gradients
 
-The viewer retains the six existing Appearance ramps as references, with their
-real light/dark values. Plugin category gradients keep the original cross-color
-pairs: cyan→blue, violet→indigo, fuchsia→purple, coral→pink, scarlet→orange,
-and gold→lime. Each retains its original 35-degree hue transition.
+Plugin artwork endpoints reference existing palette steps. No new hue families
+or literal artwork colors are introduced. Selection first minimizes circular hue
+distance to each light-mode family's step 9, then minimizes Euclidean OKLab
+distance to the old endpoint among that family's twelve light steps. The same
+step references are used in dark mode, preserving the palette's theme behavior.
 
-Shared `--art-plugin-<category>-gradient` tokens own the decorative backgrounds.
-Endpoint luminance targets 0.18 and chroma is capped across the full OKLCH path.
-Tests check the original endpoint hues, gamut and sampled contrast, so contrast
-normalization cannot silently collapse the color-to-color transitions again.
-Icon lighting changes composite pixels and needs separate visual acceptance.
-Appearance preferences and existing semantic colors retain their values.
+| Category | Start → end | Compromise |
+| --- | --- | --- |
+| Communication | cyan 11 → blue 11 | Theme-dependent brightness replaces the old matched luminance. |
+| Agents | purple 9 → blue 11 | Violet/indigo are approximated. |
+| Agent tools | purple 9 → purple 9 | Fuchsia has no family; the gradient becomes flat. |
+| Developer tools & integrations | red 10 → purple 9 | Coral/pink are approximated. |
+| People & communities | red 10 → orange 11 | Scarlet is approximated. |
+| Productivity | orange 11 → amber 11 | Warm endpoint hues are approximated. |
 
-Plugin artwork tokens are proposed and registered under the Settings plugin
-catalog owner. The plugin catalog on main consumes these tokens, including the agent-tools
-category. The viewer exposes those shipped values without redefining them.
-
-The approved treatment deliberately uses C 0.10 for every endpoint, so all six
-gradients share chroma as well as reference luminance. Per-pair gamut limits
-could permit more saturation; that is a future visual decision, not an automatic
-consequence of contrast normalization. Hues above 360 retain the original
-unwrapped coordinates so direction and the 35-degree sweep remain explicit.
+The proposed registry entries are owned by Settings plugin catalog; their
+complete gradients compose palette-backed endpoints. There is no artwork-literal
+exception. Existing UI palettes, Appearance preference IDs and semantic roles
+are unchanged. The mapping does not preserve the original fixed luminance,
+chroma, contrast or 35-degree hue sweep. Inspect real catalog captures in both
+themes; artwork and lighting also affect the resulting tiles.

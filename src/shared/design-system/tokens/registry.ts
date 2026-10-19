@@ -254,7 +254,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
     id: "plugin-artwork",
     name: "Plugin artwork (proposed)",
     description:
-      "Category gradients for the pending Settings plugin catalog migration.",
+      "Palette-backed category artwork used by the Settings plugin catalog.",
     roles: BRAND_GRADIENTS.flatMap((gradient) =>
       (["start", "end", "gradient"] as const).map(
         (part): Role => ({
@@ -262,15 +262,19 @@ export const ROLE_GROUPS: RoleGroup[] = [
           variable: `--art-plugin-${gradient.category}-${part}`,
           pointsAt:
             part === "gradient"
-              ? `${gradient.from} → ${gradient.to}`
+              ? `${gradient.start} → ${gradient.end}`
               : part === "start"
-                ? gradient.from
-                : gradient.to,
+                ? `--${gradient.start}`
+                : `--${gradient.end}`,
           use: `${gradient.name} decorative artwork ${part}.`,
           status: "proposed",
           owner: "Settings plugin catalog",
-          exception:
-            "Named artwork palette: fixed OKLCH endpoints and complete gradient, shared across themes.",
+          ...(part === "gradient"
+            ? {
+                exception:
+                  "Complete decorative composition of palette-backed endpoints.",
+              }
+            : {}),
         }),
       ),
     ),

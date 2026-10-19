@@ -260,58 +260,6 @@
   --orange-12: #ffe0c2;
 }
 
-/* PLUGIN ARTWORK PALETTE
-   Deliberate literal exception: decorative category endpoints and complete
-   gradients preserve cross-color identity at fixed reference luminance.
-   Proposed owner: Settings plugin catalog. Guarded by check-color.mjs.
-   Fixed across modes; not replacements for semantic UI colors. */
-:root {
-  --art-plugin-communication-start: oklch(55.67495% 0.1 220);
-  --art-plugin-communication-end: oklch(56.46810% 0.1 255);
-  --art-plugin-communication-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-communication-start),
-    var(--art-plugin-communication-end)
-  );
-  --art-plugin-agents-start: oklch(57.29854% 0.1 295);
-  --art-plugin-agents-end: oklch(56.58608% 0.1 260);
-  --art-plugin-agents-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-agents-start),
-    var(--art-plugin-agents-end)
-  );
-  --art-plugin-agent-tools-start: oklch(57.71968% 0.1 335);
-  --art-plugin-agent-tools-end: oklch(57.37636% 0.1 300);
-  --art-plugin-agent-tools-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-agent-tools-start),
-    var(--art-plugin-agent-tools-end)
-  );
-  --art-plugin-developer-tools-and-integrations-start: oklch(57.69208% 0.1 375);
-  --art-plugin-developer-tools-and-integrations-end: oklch(57.74021% 0.1 340);
-  --art-plugin-developer-tools-and-integrations-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-developer-tools-and-integrations-start),
-    var(--art-plugin-developer-tools-and-integrations-end)
-  );
-  --art-plugin-people-and-communities-start: oklch(57.65787% 0.1 380);
-  --art-plugin-people-and-communities-end: oklch(57.22866% 0.1 415);
-  --art-plugin-people-and-communities-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-people-and-communities-start),
-    var(--art-plugin-people-and-communities-end)
-  );
-  --art-plugin-productivity-start: oklch(57.14190% 0.1 420);
-  --art-plugin-productivity-end: oklch(56.41273% 0.1 455);
-  --art-plugin-productivity-gradient: linear-gradient(
-    to bottom in oklch,
-    var(--art-plugin-productivity-start),
-    var(--art-plugin-productivity-end)
-  );
-}
-
-/* END PLUGIN ARTWORK PALETTE */
-
 /* ============================================================
    LAYER 1 — FAMILIES
    The jobs a hue does. Steps are named for their job because a
@@ -549,6 +497,54 @@
     linear-gradient(155deg, #100914 0%, #21113c 52%, #081622 100%);
 
   --texture-dots-color: color-mix(in srgb, var(--bg-app) 92%, white);
+}
+
+/* Plugin artwork aliases: existing palette steps own values in each theme.
+   Mapped by nearest light-mode hue family, then nearest OKLab step within it.
+   No fixed-luminance or 35-degree hue-sweep guarantee remains. */
+:root {
+  --art-plugin-communication-start: var(--cyan-11);
+  --art-plugin-communication-end: var(--blue-11);
+  --art-plugin-communication-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-communication-start),
+    var(--art-plugin-communication-end)
+  );
+  --art-plugin-agents-start: var(--purple-9);
+  --art-plugin-agents-end: var(--blue-11);
+  --art-plugin-agents-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-agents-start),
+    var(--art-plugin-agents-end)
+  );
+  --art-plugin-agent-tools-start: var(--purple-9);
+  --art-plugin-agent-tools-end: var(--purple-9);
+  --art-plugin-agent-tools-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-agent-tools-start),
+    var(--art-plugin-agent-tools-end)
+  );
+  --art-plugin-developer-tools-and-integrations-start: var(--red-10);
+  --art-plugin-developer-tools-and-integrations-end: var(--purple-9);
+  --art-plugin-developer-tools-and-integrations-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-developer-tools-and-integrations-start),
+    var(--art-plugin-developer-tools-and-integrations-end)
+  );
+  --art-plugin-people-and-communities-start: var(--red-10);
+  --art-plugin-people-and-communities-end: var(--orange-11);
+  --art-plugin-people-and-communities-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-people-and-communities-start),
+    var(--art-plugin-people-and-communities-end)
+  );
+  --art-plugin-productivity-start: var(--orange-11);
+  --art-plugin-productivity-end: var(--amber-11);
+  --art-plugin-productivity-gradient: linear-gradient(
+    to bottom in oklch,
+    var(--art-plugin-productivity-start),
+    var(--art-plugin-productivity-end)
+  );
 }
 
 /* ============================================================

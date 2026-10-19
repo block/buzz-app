@@ -72,10 +72,7 @@
 .organizedRow [data-solo-row-action] {
   width: var(--session-action-size);
   height: var(--session-action-size);
-  margin-inline-end: calc(
-    var(--session-trailing-offset) +
-    var(--channel-row-fill-end, 0%)
-  );
+  margin-inline-end: var(--session-trailing-end);
 }
 .organizedRow:is(
     :hover,
@@ -94,20 +91,27 @@
   }
 }
 
+/* The surface paints beneath the row's content without positioning it, so the
+   trailing indicators measure from the row's end, under the hover action. */
 .organizedRow {
+  /* The trailing slot's inset from the row's painted end, shared by every
+     trailing indicator and the hover action. */
+  --session-trailing-end: calc(
+    var(--session-trailing-offset) +
+    var(--channel-row-fill-end, 0%)
+  );
   position: relative;
+  isolation: isolate;
   border-radius: var(--radius-row);
 }
 .organizedRow::before {
   content: "";
   position: absolute;
+  z-index: -1;
   inset-block: 0;
   inset-inline: var(--channel-row-fill-start, 0) var(--channel-row-fill-end, 0);
   border-radius: inherit;
   pointer-events: none;
-}
-.organizedRow > * {
-  position: relative;
 }
 .organizedRow:is(
   :hover,
@@ -165,7 +169,7 @@
   inset-inline-end: calc(
     (var(--session-action-size) - 0.375rem) /
     2 +
-    var(--session-trailing-offset)
+    var(--session-trailing-end)
   );
   top: 50%;
   transform: translateY(-50%);
@@ -207,7 +211,7 @@
 /* Working occupies the same trailing action slot as attention, as in Messages. */
 .organizedRow [data-solo-working-indicator] {
   position: absolute;
-  inset-inline-end: var(--session-trailing-offset);
+  inset-inline-end: var(--session-trailing-end);
   top: 50%;
   transform: translateY(-50%);
   width: var(--session-action-size);
@@ -229,7 +233,7 @@
   .organizedRow [data-solo-working-indicator] {
     inset-inline-end: calc(
       var(--session-action-size) +
-      var(--session-trailing-offset)
+      var(--session-trailing-end)
     );
   }
   .organizedRow:has([data-channel-working]) .chatRow {

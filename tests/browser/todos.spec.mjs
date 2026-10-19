@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import {
   openPage,
   selectSettingsSection,
@@ -84,13 +85,10 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   const launcher = button("Toggle channel todos");
   await expect(launcher).toHaveCount(0);
   await plugins();
-  const enabled = page.getByRole("switch", {
-    name: "Enable Todos",
-    exact: true,
-  });
-  await expect(enabled).not.toBeChecked();
+  const enabled = pluginAction(page, "Todos");
+  await expect(enabled).toHaveAccessibleName(/^Enable /);
   await enabled.click();
-  await expect(enabled).toBeChecked();
+  await expect(enabled).toHaveAccessibleName(/^Disable /);
   await messages();
   await launcher.click();
   const drawer = page.getByRole("region", {
@@ -247,7 +245,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   ).toBeChecked();
   await plugins();
   await enabled.click();
-  await expect(enabled).not.toBeChecked();
+  await expect(enabled).toHaveAccessibleName(/^Enable /);
   await messages();
   await expect(launcher).toHaveCount(0);
   await expect(drawer).toHaveCount(0);

@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { test, expect } from "./fixture.mjs";
@@ -258,10 +259,7 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   await page
     .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
-  const toggle = page.getByRole("switch", {
-    name: "Enable Agent Activity",
-    exact: true,
-  });
+  const toggle = pluginAction(page, "Agent Activity");
   const disabled = page.waitForResponse(
     (response) =>
       response.url().endsWith("/stream-observer") &&

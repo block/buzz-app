@@ -5,6 +5,6 @@
   "description": "Start audio conversations with people in your channels.",
   "discovery": {
     "category": "communication",
-    "tags": ["Audio"]
+    "tags": ["messaging"]
   }
 }

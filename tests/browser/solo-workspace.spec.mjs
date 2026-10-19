@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { newChat, openPage } from "./navigation.mjs";
@@ -88,9 +89,7 @@ test("Solo chat Activity opens the agent's profile locally, restores per convers
   await page
     .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
-  await page
-    .getByRole("switch", { name: "Enable Agent Activity", exact: true })
-    .click();
+  await pluginAction(page, "Agent Activity").click();
   await newChat(page);
   await expect(trigger).toHaveCount(0);
 });

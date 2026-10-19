@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { openPage, pageChoices } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -195,7 +196,7 @@ test("default navigation retries failed metadata and accepts a completed empty l
   ).toBeVisible();
 });
 
-test("Channels stays enabled despite saved disabled settings and has no switch", async ({
+test("Channels stays enabled despite saved disabled settings and has no disable action", async ({
   page,
   app,
 }) => {
@@ -210,12 +211,8 @@ test("Channels stays enabled despite saved disabled settings and has no switch",
       .filter({ has: page.getByText("Channels", { exact: true }) })
       .getByText("Required", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("switch", { name: "Enable Channels", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("switch", { name: "Enable Workflows", exact: true }),
-  ).toBeVisible();
+  await expect(pluginAction(page, "Channels")).toHaveCount(0);
+  await expect(pluginAction(page, "Workflows")).toBeVisible();
   // Older disabled preferences cannot turn off the required launch destination.
   await page.evaluate(() => {
     const key = "buzzodz.plugins.v1";
@@ -241,9 +238,7 @@ test("Channels stays enabled despite saved disabled settings and has no switch",
       .filter({ has: page.getByText("Channels", { exact: true }) })
       .getByText("Required", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("switch", { name: "Enable Channels", exact: true }),
-  ).toHaveCount(0);
+  await expect(pluginAction(page, "Channels")).toHaveCount(0);
   await openPage(page, "Messages");
   await expect(messages(page)).toBeVisible();
 });

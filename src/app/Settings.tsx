@@ -1,16 +1,17 @@
 import type { Agents } from "../features/agents/service";
-import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
+import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
-import { Switch } from "../shared/design-system/ui/Switch";
-import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
+import { IconButton } from "../shared/design-system/ui/IconButton";
+import { ChoiceRow } from "../shared/design-system/ui/ChoiceRow";
+import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import {
+  type RefObject,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -19,11 +20,19 @@ import {
 } from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
-import { SquaresFourIcon } from "../shared/design-system/icons/index";
+import {
+  CheckCircleIcon,
+  SparklesIcon,
+  SquaresFourIcon,
+  XIcon,
+} from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import { PluginReadme } from "./PluginReadme";
+import { bundledReadmes } from "../bundled/readmes";
+import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
 import { IdentitySettings } from "./IdentitySettings";
@@ -44,6 +53,7 @@ import type { Updates } from "../features/updates/updates";
 import { UpdateSettings } from "../features/updates/UpdateSettings";
 import { CommunityDepartureSettings } from "./CommunityDepartureSettings";
 import { developerMode, settingsSections } from "./settings-sections";
+
 import { pluginCategoryDefinitions } from "./plugin-categories";
 
 function isRequiredPlugin(plugin: PluginInfo) {
@@ -52,9 +62,11 @@ function isRequiredPlugin(plugin: PluginInfo) {
 
 function isEssentialPlugin(plugin: PluginInfo) {
   return (
-    plugin.manifest.discovery?.tags?.some(
+    plugin.source === "bundled" &&
+    (plugin.manifest.discovery?.tags?.some(
       (tag) => tag.trim().toLowerCase() === "essentials",
-    ) ?? false
+    ) ??
+      false)
   );
 }
 
@@ -74,9 +86,7 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
     const group = known.get(plugin.manifest.discovery?.category ?? "");
     (group ?? other).push(plugin);
   }
-  for (const entries of known.values()) {
-    entries.sort(comparePlugins);
-  }
+  for (const entries of known.values()) entries.sort(comparePlugins);
   other.sort(comparePlugins);
   return [
     ...pluginCategoryDefinitions.flatMap(({ id, label }) => {
@@ -85,6 +95,315 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
     }),
     ...(other.length ? [{ id: "other", label: "Other", plugins: other }] : []),
   ];
+}
+
+function PluginIcon({
+  plugin,
+  size = 24,
+}: {
+  plugin: PluginInfo;
+  size?: number;
+}) {
+  const url =
+    plugin.source === "bundled"
+      ? bundledIcons.get(plugin.manifest.id)
+      : undefined;
+  const [failedUrl, setFailedUrl] = useState<string>();
+  return (
+    <span className={styles.pluginIcon} aria-hidden="true">
+      {url && url !== failedUrl ? (
+        <img src={url} alt="" onError={() => setFailedUrl(url)} />
+      ) : (
+        <SquaresFourIcon size={size} />
+      )}
+    </span>
+  );
+}
+
+function PluginProvenance({
+  source,
+  publisher,
+  className,
+}: {
+  source: "bundled" | "external";
+  publisher?: string | null | undefined;
+  className?: string | undefined;
+}) {
+  if (source !== "bundled" && !publisher) return null;
+  return (
+    <span className={`${styles.pluginProvenance} ${className ?? ""}`}>
+      <span>{source === "bundled" ? "Buzz" : publisher}</span>
+    </span>
+  );
+}
+
+/** Narrow containers cover the catalog with details (Settings.module.css). */
+function covered(element: Element | null) {
+  return !!element && getComputedStyle(element).visibility === "hidden";
+}
+
+function PluginDetails({
+  plugin,
+  failure,
+  busy,
+  plugins,
+  close,
+  onClose,
+}: {
+  plugin: PluginInfo;
+  failure: string | null;
+  busy: boolean;
+  plugins: PluginManager;
+  close: RefObject<HTMLButtonElement | null>;
+  onClose(): void;
+}) {
+  const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    close.current?.focus();
+  }, [close]);
+  // READMEs ship with Buzz; never attach one to an external plugin.
+  const readme =
+    plugin.source === "bundled" && bundledReadmes.get(plugin.manifest.id);
+  const otherTags = (plugin.manifest.discovery?.tags ?? []).filter(
+    (tag) =>
+      !isEssentialPlugin(plugin) || tag.trim().toLowerCase() !== "essentials",
+  );
+  return (
+    <aside
+      id="plugin-details"
+      className={styles.pluginAside}
+      aria-label={`${plugin.manifest.name} details`}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.stopPropagation();
+        onClose();
+      }}
+    >
+      <div className={styles.pluginAsideHeader}>
+        <div className={styles.pluginAsideIdentity}>
+          <PluginIcon plugin={plugin} size={48} />
+          <h2>{plugin.manifest.name}</h2>
+          <div className={styles.pluginBadges}>
+            {plugin.source === "bundled" ? (
+              <span className={styles.pluginInstallBadge}>
+                <CheckCircleIcon size={14} aria-hidden="true" />
+                Made by Buzz
+              </span>
+            ) : (
+              <PluginProvenance
+                source={plugin.source}
+                publisher={plugin.publisher}
+              />
+            )}
+            {isEssentialPlugin(plugin) && (
+              <span
+                className={`${styles.pluginInstallBadge} ${styles.pluginTag}`}
+                data-essential
+              >
+                <SparklesIcon size={14} aria-hidden="true" />
+                Essentials
+              </span>
+            )}
+          </div>
+          {plugin.manifest.description && (
+            <p className={styles.pluginAsideDescription}>
+              {plugin.manifest.description}
+            </p>
+          )}
+        </div>
+        <IconButton
+          ref={close}
+          aria-label="Close plugin details"
+          size="sm"
+          icon={<XIcon size={16} aria-hidden="true" />}
+          onClick={onClose}
+        />
+      </div>
+      {plugin.source === "external" && (
+        <span className={styles.pluginInstallBadge}>
+          <CheckCircleIcon size={14} aria-hidden="true" />
+          Installed
+        </span>
+      )}
+      <div className={styles.pluginStatus}>
+        {/* Channels is required and has no enable/disable control. */}
+        {plugin.manifest.id === "buzz.channels" ? (
+          <Button variant="outline" size="sm" disabled>
+            Required
+          </Button>
+        ) : (
+          <Button
+            variant={plugin.enabled ? "subtle" : "prominent"}
+            size="sm"
+            disabled={busy}
+            focusableWhenDisabled
+            onClick={() => {
+              if (busy) return;
+              void plugins.change(
+                plugin.enabled ? "disable" : "enable",
+                plugin.manifest.id,
+              );
+            }}
+          >
+            {plugin.enabled ? "Disable" : "Enable"}
+          </Button>
+        )}
+      </div>
+      {readme && (
+        <section
+          className={styles.pluginAsideSection}
+          aria-label={`${plugin.manifest.name} README`}
+        >
+          <PluginReadme key={plugin.manifest.id} text={readme} />
+        </section>
+      )}
+      <section
+        className={styles.pluginAsideSection}
+        aria-labelledby="plugin-metadata-title"
+      >
+        <h3 id="plugin-metadata-title">Details</h3>
+        <table
+          className={styles.pluginMetadata}
+          aria-labelledby="plugin-metadata-title"
+        >
+          <tbody>
+            <tr>
+              <th scope="row">Identifier</th>
+              <td>
+                <code>{plugin.manifest.id}</code>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">Plugin API</th>
+              <td>{plugin.manifest.apiVersion}</td>
+            </tr>
+            {otherTags.length > 0 && (
+              <tr>
+                <th scope="row">Tags</th>
+                <td>{otherTags.join(", ")}</td>
+              </tr>
+            )}
+            {plugin.source === "external" && (
+              <>
+                <tr>
+                  <th scope="row">Revision</th>
+                  <td>
+                    <code>{plugin.revision}</code>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Signature</th>
+                  <td>{plugin.hasSignature ? "Signed" : "Unsigned"}</td>
+                </tr>
+                {plugin.publisher && (
+                  <tr>
+                    <th scope="row">Publisher</th>
+                    <td>
+                      <code title={plugin.publisher}>{plugin.publisher}</code>
+                    </td>
+                  </tr>
+                )}
+              </>
+            )}
+          </tbody>
+        </table>
+      </section>
+      {failure && (
+        <p role="alert" className="error text-body-sm">
+          {failure}
+        </p>
+      )}
+      <div className="actions items-center">
+        {plugin.previous && (
+          <Button
+            type="button"
+            disabled={busy || !!plugin.rollbackBlockedReason}
+            onClick={() => plugins.change("rollback", plugin.manifest.id)}
+          >
+            Roll back
+          </Button>
+        )}
+        {plugin.rollbackBlockedReason && (
+          <span className="text-body-sm text-muted">
+            {plugin.rollbackBlockedReason}
+          </span>
+        )}
+        {plugin.reloadable && !plugin.enabled && (
+          <Button
+            type="button"
+            disabled={busy}
+            onClick={() => plugins.reload(plugin.manifest.id)}
+          >
+            Reload
+          </Button>
+        )}
+        {plugin.source === "external" && (
+          <Button
+            type="button"
+            ref={deleteTrigger}
+            variant="destructive"
+            disabled={busy}
+            onClick={() => {
+              setDeleteError(null);
+              setConfirmDelete(true);
+            }}
+          >
+            Delete
+          </Button>
+        )}
+      </div>
+      {confirmDelete && (
+        <AlertDialog
+          title={`Delete ${plugin.manifest.name}?`}
+          description="Removes this plugin and its rollback history from Buzz. You can install it again later."
+          pending={busy || deleting}
+          finalFocus={deleteTrigger}
+          onClose={() => setConfirmDelete(false)}
+          actions={
+            <>
+              <Button
+                disabled={busy || deleting}
+                onClick={() => setConfirmDelete(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={busy || deleting}
+                onClick={async () => {
+                  if (busy || deleting) return;
+                  setDeleting(true);
+                  setDeleteError(null);
+                  try {
+                    if (await plugins.change("remove", plugin.manifest.id))
+                      setConfirmDelete(false);
+                    else
+                      setDeleteError(
+                        plugins.snapshot().error ??
+                          "Plugin deletion wasn’t confirmed. Try again.",
+                      );
+                  } finally {
+                    setDeleting(false);
+                  }
+                }}
+              >
+                Delete plugin
+              </Button>
+            </>
+          }
+        >
+          {deleteError && (
+            <p role="alert" className="error text-body-sm">
+              {deleteError}
+            </p>
+          )}
+        </AlertDialog>
+      )}
+    </aside>
+  );
 }
 
 export function Settings({
@@ -184,11 +503,76 @@ export function Settings({
   const ready = configuration.status === "ready" ? configuration : undefined;
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
-  const pluginControlPrefix = useId();
   const pluginGroups = useMemo(
     () => groupPlugins(catalog?.plugins ?? []),
     [catalog?.plugins],
   );
+  const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const [updatingPluginId, setUpdatingPluginId] = useState<string>();
+  const [pluginImportActions, setPluginImportActions] =
+    useState<HTMLSpanElement | null>(null);
+  const pluginTrigger = useRef<HTMLButtonElement>(null);
+  const restorePluginFocus = useRef(false);
+  const pluginSection = useRef<HTMLElement>(null);
+  const layout = useRef<HTMLDivElement>(null);
+  const detailsClose = useRef<HTMLButtonElement>(null);
+  const selectedPlugin = catalog?.plugins.find(
+    (plugin) => plugin.manifest.id === selectedPluginId,
+  );
+  const showingDetails = selected === "plugins" && !!selectedPlugin;
+  const visibleReturn = (target: HTMLElement | null) =>
+    covered(pluginSection.current) ? (detailsClose.current ?? target) : target;
+  useEffect(() => {
+    if (selected !== "plugins") setSelectedPluginId(undefined);
+  }, [selected]);
+  useEffect(() => {
+    const element = layout.current;
+    if (!showingDetails || !element) return;
+    // Resizing can hide the focused catalog control; keep focus in details.
+    const observer = new ResizeObserver(() => {
+      const active = document.activeElement;
+      const details = detailsClose.current?.closest("aside");
+      if (
+        covered(pluginSection.current) &&
+        (active === document.body ||
+          (!!active && element.contains(active) && !details?.contains(active)))
+      )
+        detailsClose.current?.focus();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [showingDetails]);
+  useEffect(() => {
+    if (selectedPluginId && catalog && !selectedPlugin) {
+      pluginSection.current?.focus();
+      setSelectedPluginId(undefined);
+    }
+  }, [catalog, selectedPlugin, selectedPluginId]);
+  const closePluginDetails = () => {
+    restorePluginFocus.current = true;
+    setSelectedPluginId(undefined);
+  };
+  useLayoutEffect(() => {
+    if (!selectedPlugin && restorePluginFocus.current) {
+      restorePluginFocus.current = false;
+      pluginTrigger.current?.focus();
+    }
+  }, [selectedPlugin]);
+  const selectedRunning = selectedPlugin
+    ? activation[selectedPlugin.manifest.id]
+    : undefined;
+  const selectedFailure = selectedPlugin
+    ? (selectedPlugin.error ??
+      (selectedRunning?.revision === selectedPlugin.revision
+        ? selectedRunning.error
+        : null))
+    : null;
+  const authorizePluginGit = async (repository: string) => {
+    const connection = communities.relay.snapshot();
+    return connection.status === "ready"
+      ? ((await connection.session.authorizeGit?.(repository)) ?? null)
+      : null;
+  };
   return (
     <div
       className={`${styles.root} ${navigationPane ? styles.navigationPane : ""}`}
@@ -197,7 +581,11 @@ export function Settings({
         aria-label={navigationPane ? "Settings" : undefined}
         aria-labelledby={navigationPane ? undefined : "settings-title"}
       >
-        <div className={styles.layout}>
+        <div
+          ref={layout}
+          className={styles.layout}
+          data-plugin-detail={showingDetails ? "" : undefined}
+        >
           <aside className={styles.sidebar}>
             <div className={styles.sidebarHeader}>
               <h1 id="settings-title" className="m-0 text-label">
@@ -328,29 +716,28 @@ export function Settings({
               </div>
             )}
             <div hidden={selected !== "plugins"}>
-              <section aria-labelledby="plugin-settings-title">
+              <section
+                ref={pluginSection}
+                tabIndex={-1}
+                aria-labelledby="plugin-settings-title"
+              >
                 <Header
                   id="plugin-settings-title"
                   title="Manage plugins"
-                  subtitle={
-                    !plugins.imports
-                      ? "Open the desktop app to load plugins from a folder or Git repository."
-                      : undefined
+                  actions={
+                    plugins.imports && catalog ? (
+                      <span ref={setPluginImportActions} />
+                    ) : undefined
                   }
                 />
                 {catalog ? (
                   <PluginImport
+                    actionTarget={pluginImportActions}
                     plugins={plugins}
                     catalog={catalog}
                     busy={busy}
-                    authorizeGit={async (repository) => {
-                      const connection = communities.relay.snapshot();
-                      return connection.status === "ready"
-                        ? ((await connection.session.authorizeGit?.(
-                            repository,
-                          )) ?? null)
-                        : null;
-                    }}
+                    authorizeGit={authorizePluginGit}
+                    returnFocus={() => visibleReturn(null)}
                   />
                 ) : configuration.status === "recovery" ? (
                   <RecoveryScreen plugins={plugins} />
@@ -360,7 +747,29 @@ export function Settings({
                     still work.
                   </p>
                 )}
-                <div className="overflow-hidden">
+                {catalog && updatingPluginId && (
+                  <PluginImport
+                    updateId={updatingPluginId}
+                    plugins={plugins}
+                    catalog={catalog}
+                    busy={busy}
+                    authorizeGit={authorizePluginGit}
+                    onClosed={() => setUpdatingPluginId(undefined)}
+                    returnFocus={() =>
+                      visibleReturn(
+                        Array.from(
+                          pluginSection.current?.querySelectorAll<HTMLButtonElement>(
+                            "[data-plugin-update-id]",
+                          ) ?? [],
+                        ).find(
+                          (button) =>
+                            button.dataset.pluginUpdateId === updatingPluginId,
+                        ) ?? pluginSection.current,
+                      )
+                    }
+                  />
+                )}
+                <div>
                   <div>
                     {externalPluginsPaused && (
                       <p role="status" className="text-body-sm text-subtle">
@@ -384,7 +793,7 @@ export function Settings({
                       />
                     )}
                   </div>
-                  <div className="grid grid-cols-1 gap-section-gap">
+                  <div className={styles.pluginCategories}>
                     {pluginGroups.map((group) => (
                       <section
                         aria-labelledby={`plugin-category-${group.id}`}
@@ -409,18 +818,7 @@ export function Settings({
                         <SettingsGroup>
                           {group.plugins.map((plugin) => {
                             const id = plugin.manifest.id;
-                            const essentialMarker = isEssentialPlugin(
-                              plugin,
-                            ) && (
-                              <span
-                                className="text-caption"
-                                role="img"
-                                aria-label="Essential"
-                                title="Essential"
-                              >
-                                ✨
-                              </span>
-                            );
+                            const active = id === selectedPluginId;
                             const running = activation[id];
                             const failure =
                               plugin.error ??
@@ -428,110 +826,154 @@ export function Settings({
                                 ? running.error
                                 : null);
                             return (
-                              <article
-                                className="py-1"
-                                data-preference-description-layout="wide"
-                                key={id}
-                              >
-                                {/* Channels is required and has no enable/disable control. */}
-                                {isRequiredPlugin(plugin) ? (
-                                  <PreferenceRow
-                                    icon={<SquaresFourIcon size={20} />}
-                                    title={plugin.manifest.name}
-                                    subtitle={plugin.manifest.description}
-                                    trailing={
-                                      <span className={styles.pluginControls}>
-                                        {essentialMarker}
-                                        <span className="text-body-sm text-subtle">
-                                          Required
-                                        </span>
-                                      </span>
+                              <div key={id}>
+                                <article className={styles.plugin}>
+                                  <button
+                                    type="button"
+                                    className={styles.pluginRow}
+                                    data-enabled={plugin.enabled}
+                                    data-updatable={
+                                      (plugin.source === "external" &&
+                                        !!plugins.imports) ||
+                                      undefined
                                     }
-                                  />
-                                ) : (
-                                  <PreferenceRow
-                                    icon={<SquaresFourIcon size={20} />}
-                                    title={plugin.manifest.name}
-                                    subtitle={plugin.manifest.description}
-                                    controlId={`${pluginControlPrefix}-${id}`}
-                                    accessibleTitle={`Enable ${plugin.manifest.name}`}
-                                    trailing={(labelProps) => (
-                                      <span className={styles.pluginControls}>
-                                        {essentialMarker}
-                                        <Switch
-                                          {...labelProps}
-                                          id={`${pluginControlPrefix}-${id}`}
-                                          aria-label={`Enable ${plugin.manifest.name}`}
-                                          checked={plugin.enabled}
-                                          readOnly={busy}
-                                          aria-disabled={busy}
-                                          onClick={(event) =>
-                                            event.currentTarget.focus()
-                                          }
-                                          onCheckedChange={() => {
-                                            if (busy) return;
-                                            void plugins.change(
-                                              plugin.enabled
-                                                ? "disable"
-                                                : "enable",
-                                              id,
-                                            );
-                                          }}
+                                    aria-label={`View ${plugin.manifest.name} details`}
+                                    aria-describedby={
+                                      [
+                                        plugin.manifest.description
+                                          ? `plugin-description-${id}`
+                                          : null,
+                                        plugin.source === "external" &&
+                                        plugin.publisher
+                                          ? `plugin-publisher-${id}`
+                                          : null,
+                                        isEssentialPlugin(plugin)
+                                          ? `plugin-essential-${id}`
+                                          : null,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" ") || undefined
+                                    }
+                                    aria-expanded={active}
+                                    aria-controls={
+                                      active ? "plugin-details" : undefined
+                                    }
+                                    onClick={(event) => {
+                                      pluginTrigger.current =
+                                        event.currentTarget;
+                                      setSelectedPluginId(
+                                        active ? undefined : id,
+                                      );
+                                    }}
+                                  >
+                                    {isEssentialPlugin(plugin) && (
+                                      <span
+                                        id={`plugin-essential-${id}`}
+                                        className="sr-only"
+                                      >
+                                        Essential
+                                      </span>
+                                    )}
+                                    <ChoiceRow
+                                      leading={<PluginIcon plugin={plugin} />}
+                                      label={
+                                        <span className={styles.pluginName}>
+                                          {plugin.manifest.name}
+                                          {plugin.source === "bundled" && (
+                                            <CheckCircleIcon
+                                              size={14}
+                                              strokeWidth={2.5}
+                                              aria-hidden="true"
+                                            />
+                                          )}
+                                          {isEssentialPlugin(plugin) && (
+                                            <SparklesIcon
+                                              size={14}
+                                              aria-hidden={false}
+                                              role="img"
+                                              aria-label="Essential"
+                                              data-essential
+                                            />
+                                          )}
+                                        </span>
+                                      }
+                                      description={
+                                        plugin.manifest.description ? (
+                                          <span id={`plugin-description-${id}`}>
+                                            {plugin.manifest.description}
+                                          </span>
+                                        ) : undefined
+                                      }
+                                    />
+                                    {plugin.source === "external" && (
+                                      <span id={`plugin-publisher-${id}`}>
+                                        <PluginProvenance
+                                          source={plugin.source}
+                                          publisher={plugin.publisher}
+                                          className={styles.pluginRowAuthor}
                                         />
                                       </span>
                                     )}
-                                  />
-                                )}
+                                  </button>
+                                  <div className={styles.pluginRowAction}>
+                                    {plugin.source === "external" &&
+                                      plugins.imports &&
+                                      catalog && (
+                                        <Button
+                                          size="sm"
+                                          aria-label={`Update ${plugin.manifest.name}`}
+                                          data-plugin-update-id={id}
+                                          disabled={busy}
+                                          onClick={() =>
+                                            setUpdatingPluginId(id)
+                                          }
+                                        >
+                                          Update
+                                        </Button>
+                                      )}
+                                    {isRequiredPlugin(plugin) ? (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled
+                                      >
+                                        Required
+                                      </Button>
+                                    ) : (
+                                      <Button
+                                        variant={
+                                          plugin.enabled
+                                            ? "subtle"
+                                            : "prominent"
+                                        }
+                                        size="sm"
+                                        aria-label={`${plugin.enabled ? "Disable" : "Enable"} ${plugin.manifest.name}`}
+                                        disabled={busy}
+                                        focusableWhenDisabled
+                                        onClick={() => {
+                                          if (busy) return;
+                                          void plugins.change(
+                                            plugin.enabled
+                                              ? "disable"
+                                              : "enable",
+                                            id,
+                                          );
+                                        }}
+                                      >
+                                        {plugin.enabled ? "Disable" : "Enable"}
+                                      </Button>
+                                    )}
+                                  </div>
+                                </article>
                                 {failure && (
                                   <p
-                                    role="alert"
-                                    className="error text-body-sm"
+                                    role={active ? undefined : "alert"}
+                                    className={`${styles.pluginRowError} error text-body-sm`}
                                   >
                                     {failure}
                                   </p>
                                 )}
-                                <div className="actions items-center">
-                                  {plugin.previous && (
-                                    <Button
-                                      type="button"
-                                      disabled={
-                                        busy || !!plugin.rollbackBlockedReason
-                                      }
-                                      onClick={() =>
-                                        plugins.change("rollback", id)
-                                      }
-                                    >
-                                      Roll back
-                                    </Button>
-                                  )}
-                                  {plugin.rollbackBlockedReason && (
-                                    <span className="text-body-sm text-muted">
-                                      {plugin.rollbackBlockedReason}
-                                    </span>
-                                  )}
-                                  {plugin.reloadable && !plugin.enabled && (
-                                    <Button
-                                      type="button"
-                                      disabled={busy}
-                                      onClick={() => plugins.reload(id)}
-                                    >
-                                      Reload
-                                    </Button>
-                                  )}
-                                  {plugin.source === "external" && (
-                                    <Button
-                                      type="button"
-                                      variant="destructive"
-                                      disabled={busy}
-                                      onClick={() =>
-                                        plugins.change("remove", id)
-                                      }
-                                    >
-                                      Delete
-                                    </Button>
-                                  )}
-                                </div>
-                              </article>
+                              </div>
                             );
                           })}
                         </SettingsGroup>
@@ -542,6 +984,17 @@ export function Settings({
               </section>
             </div>
           </div>
+          {showingDetails && selectedPlugin && (
+            <PluginDetails
+              key={selectedPlugin.manifest.id}
+              plugin={selectedPlugin}
+              failure={selectedFailure}
+              busy={busy}
+              plugins={plugins}
+              close={detailsClose}
+              onClose={closePluginDetails}
+            />
+          )}
         </div>
       </Panel>
     </div>

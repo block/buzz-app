@@ -422,9 +422,9 @@ test("measurement specs list no engine journeys, alone or beside functional spec
   assert.ok(repeatableLines(journeys).length < journeys.length);
 });
 
-test("browser repetitions get one shard per five journeys, at most eight", () => {
+test("browser repetitions get one shard per five journeys, at most sixteen", () => {
   assert.deepEqual(
-    [0, 1, 5, 6, 18, 40, 41, 200].map(browserShards),
-    [1, 1, 1, 2, 4, 8, 8, 8],
+    [0, 1, 5, 6, 18, 40, 41, 80, 81, 200].map(browserShards),
+    [1, 1, 1, 2, 4, 8, 9, 16, 16, 16],
   );
 });

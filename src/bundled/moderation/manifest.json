@@ -3,5 +3,5 @@
   "name": "Community admin",
   "apiVersion": 1,
   "description": "Manage community membership and invitations.",
-  "discovery": { "category": "people-and-communities" }
+  "discovery": { "category": "people-and-communities", "tags": ["people"] }
 }

@@ -78,10 +78,13 @@ it("keeps Agents blue above violet with a lighter top in both themes", () => {
       0,
     );
   };
-  for (const mode of [light, dark]) {
+  for (const [modeName, mode] of [
+    ["light", light],
+    ["dark", dark],
+  ] as const) {
     const value = (token: string) => {
       const source = token === "iris-9" ? css : mode;
-      const name = token === "iris-9" ? `${token}-light` : token;
+      const name = token === "iris-9" ? `${token}-${modeName}` : token;
       const match = source.match(new RegExp(`--${name}: #([a-f0-9]{6});`));
       if (!match?.[1]) throw new Error(`Missing palette token ${token}`);
       return match[1];

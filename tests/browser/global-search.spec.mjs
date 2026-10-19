@@ -572,6 +572,21 @@ test("inline search exposes selected grid rows and hands focus to the destinatio
   const snapshot = await grid.ariaSnapshot();
   expect(snapshot).toContain('rowgroup "Settings"');
   expect(snapshot).toContain('row "Appearance — Color mode" [selected]');
+  const mode = row.getByRole("combobox", { name: "Color mode" });
+  await mode.click();
+  await page.getByRole("option", { name: "Dark", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await expect(dialog).toBeVisible();
+  await mode.focus();
+  await mode.press("Enter");
+  await page.getByRole("option", { name: "Light", exact: true }).focus();
+  await page.getByRole("option", { name: "Light", exact: true }).press("Enter");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-color-mode",
+    "light",
+  );
+  await expect(dialog).toBeVisible();
+  await input.focus();
   await input.press("Enter");
   await expect(dialog).toBeHidden();
   const target = page.locator("#setting-mode");

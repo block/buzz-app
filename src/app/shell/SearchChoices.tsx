@@ -276,6 +276,12 @@ export function SearchChoices({
                               data-highlighted={selected === key || undefined}
                               onClick={(event) => {
                                 if (
+                                  !event.currentTarget.contains(
+                                    event.target as Node,
+                                  )
+                                )
+                                  return;
+                                if (
                                   (event.target as HTMLElement).closest(
                                     "button, input, label, [role=switch], [role=combobox]",
                                   )

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { createPortal } from "react-dom";
 import { createRef } from "react";
 import {
   cleanup,
@@ -271,4 +272,114 @@ it("announces selected rows and lets arrows leave inline switches", () => {
   expect(page).toHaveFocus();
   expect(page).toHaveAttribute("aria-selected", "true");
   expect(input).toHaveAttribute("aria-activedescendant", page.id);
+});
+
+it.each(["buzz.moderation", "buzz.relay-staff"])(
+  "gates restricted enablement for %s",
+  (id) => {
+    const change = vi.fn();
+    let access = "checking";
+    const state = {
+      configuration: {
+        status: "ready",
+        catalog: {
+          plugins: [
+            {
+              source: "bundled",
+              manifest: { id, name: "Restricted", description: "" },
+              enabled: false,
+            },
+          ],
+        },
+      },
+      activation: {},
+      busy: false,
+    };
+    const plugins = {
+      subscribe: () => () => {},
+      snapshot: () => state,
+      change,
+    } as unknown as AppServices["plugins"];
+    const adminAccess = {
+      ensure: vi.fn(),
+      subscribe: () => () => {},
+      status: () => access,
+    } as unknown as AppServices["adminAccess"];
+    function Palette() {
+      const groups = useSearchSettings({
+        query: "Restricted",
+        plugins,
+        adminAccess,
+        navigation: {} as AppServices["navigation"],
+        close: vi.fn(),
+      });
+      return (
+        <SearchChoices
+          query="Restricted"
+          onQueryChange={() => {}}
+          input={createRef()}
+          groups={[]}
+          inlineSettings={groups}
+        />
+      );
+    }
+    const view = render(<Palette />);
+    for (const status of ["checking", "denied", "unavailable", "allowed"]) {
+      access = status;
+      view.rerender(<Palette />);
+      const toggle = screen.getByRole("switch", { name: "Enable Restricted" });
+      fireEvent.click(toggle);
+      if (status !== "allowed") expect(change).not.toHaveBeenCalled();
+    }
+    expect(change).toHaveBeenCalledExactlyOnceWith("enable", id);
+  },
+);
+
+it("ignores portaled control clicks while retaining row navigation", () => {
+  const run = vi.fn(),
+    select = vi.fn();
+  render(
+    <SearchChoices
+      query="Color"
+      onQueryChange={() => {}}
+      input={createRef()}
+      groups={[]}
+      inlineSettings={[
+        {
+          label: "Settings",
+          destinations: [
+            {
+              key: "color",
+              label: "Appearance",
+              detail: "Color mode",
+              icon: GearIcon,
+              run,
+              content: (
+                <>
+                  <span>Color mode</span>
+                  {createPortal(
+                    <div
+                      role="option"
+                      aria-selected="false"
+                      onClick={select}
+                      onKeyDown={() => {}}
+                      tabIndex={0}
+                    >
+                      Dark
+                    </div>,
+                    document.body,
+                  )}
+                </>
+              ),
+            },
+          ],
+        },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole("option", { name: "Dark" }));
+  expect(select).toHaveBeenCalledOnce();
+  expect(run).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText("Color mode"));
+  expect(run).toHaveBeenCalledOnce();
 });

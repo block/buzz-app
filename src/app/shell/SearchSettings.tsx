@@ -1,6 +1,6 @@
 import { pluginCategoryDefinitions } from "../plugin-categories";
 import { GearIcon, SquaresFourIcon } from "../../shared/design-system/icons";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import type { AppServices } from "../services";
 import type { SearchDestination, SearchGroup } from "./SearchChoices";
 import { matchRank } from "../../features/search/match";
@@ -66,12 +66,14 @@ export function useSearchSettings({
   appearance,
   notifications,
   plugins,
+  adminAccess,
   navigation,
   close,
 }: {
   navigation: AppServices["navigation"];
   close: () => void;
   plugins?: AppServices["plugins"] | undefined;
+  adminAccess?: AppServices["adminAccess"] | undefined;
   query: string;
   appearance?: AppServices["appearance"] | undefined;
   notifications?: AppServices["notifications"] | undefined;
@@ -79,6 +81,15 @@ export function useSearchSettings({
   const pluginState = useSyncExternalStore(
     plugins?.subscribe ?? noSubscribe,
     plugins?.snapshot ?? noSnapshot,
+  );
+  useEffect(() => adminAccess?.ensure(), [adminAccess]);
+  const moderationAccess = useSyncExternalStore(
+    adminAccess?.subscribe ?? noSubscribe,
+    () => adminAccess?.status("buzz.moderation") ?? "unavailable",
+  );
+  const staffAccess = useSyncExternalStore(
+    adminAccess?.subscribe ?? noSubscribe,
+    () => adminAccess?.status("buzz.relay-staff") ?? "unavailable",
   );
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
@@ -160,6 +171,17 @@ export function useSearchSettings({
                 Infinity) + 2,
             );
             if (!Number.isFinite(rank)) return [];
+            const restricted =
+              plugin.source === "bundled" &&
+              (plugin.manifest.id === "buzz.moderation" ||
+                plugin.manifest.id === "buzz.relay-staff");
+            const access =
+              plugin.manifest.id === "buzz.moderation"
+                ? moderationAccess
+                : staffAccess;
+            const blocked =
+              pluginState.busy ||
+              (!plugin.enabled && restricted && access !== "allowed");
             const key = "search-plugin-" + plugin.manifest.id;
             const failure =
               plugin.error ??
@@ -193,10 +215,16 @@ export function useSearchSettings({
                       description={plugin.manifest.name}
                       aria-label={`Enable ${plugin.manifest.name}`}
                       checked={plugin.enabled}
-                      readOnly={pluginState.busy}
-                      aria-disabled={pluginState.busy}
+                      readOnly={blocked}
+                      aria-disabled={blocked}
                       onCheckedChange={() => {
-                        if (!pluginState.busy)
+                        if (
+                          !pluginState.busy &&
+                          (plugin.enabled ||
+                            !restricted ||
+                            adminAccess?.status(plugin.manifest.id) ===
+                              "allowed")
+                        )
                           void plugins.change(
                             plugin.enabled ? "disable" : "enable",
                             plugin.manifest.id,

@@ -40,7 +40,12 @@ export type SearchServices = Pick<
   AppServices,
   "communities" | "shortcuts" | "shortcutBindings" | "navigation"
 > &
-  Partial<Pick<AppServices, "appearance" | "notifications" | "plugins">>;
+  Partial<
+    Pick<
+      AppServices,
+      "appearance" | "notifications" | "plugins" | "adminAccess"
+    >
+  >;
 const SEARCH_ID = "global-search";
 const SEARCH_BINDING: KeyBinding = { key: "k", mod: true };
 const CONVERSATION_SEARCH_ID = "conversation-search";
@@ -260,6 +265,7 @@ function CommunitySearch({
     appearance: services.appearance,
     notifications: services.notifications,
     plugins: services.plugins,
+    adminAccess: services.adminAccess,
     navigation: services.navigation,
     close,
   });

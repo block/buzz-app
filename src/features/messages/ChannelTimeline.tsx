@@ -524,7 +524,9 @@ function Timeline({
     channelId,
     scroller,
     settled,
-    latestMessageId: window.rows.filter((row) => !row.membership).at(-1)?.id,
+    latestMessageId: window.rows
+      .filter((row) => !row.membership && !row.huddle)
+      .at(-1)?.id,
     enabled: marksRead,
   });
   const prepend =

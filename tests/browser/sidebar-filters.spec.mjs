@@ -39,6 +39,14 @@ test("section filters save activity windows and recover hidden channels", async 
   }
   await page.goto(app.origin);
   await openPage(page, "Messages");
+  // Filters preserve the current channel; choose a different destination from
+  // the row whose exclusion this journey exercises, regardless of startup order.
+  await page
+    .locator('[data-sidebar-section] [data-channel-id="alpha"]')
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #General" }),
+  ).toBeVisible();
   const section = page.locator('[data-sidebar-section="channels"]');
   await expect(section.locator('[data-channel-id="gamma"]')).toBeVisible();
   const shot = async (name) => {
@@ -353,6 +361,14 @@ test("failed activity reads explain the filter and recover on Retry", async ({
   });
   await page.goto(app.origin);
   await openPage(page, "Messages");
+  // Filters preserve the current channel; choose a different destination from
+  // the row whose exclusion this journey exercises, regardless of startup order.
+  await page
+    .locator('[data-sidebar-section] [data-channel-id="alpha"]')
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #General" }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "More actions for Channels", exact: true })
     .click();
@@ -418,6 +434,14 @@ test.describe("filter action focus", () => {
   }) => {
     await page.goto(app.origin);
     await openPage(page, "Messages");
+    // Filters preserve the current channel; choose a different destination from
+    // the row whose exclusion this journey exercises, regardless of startup order.
+    await page
+      .locator('[data-sidebar-section] [data-channel-id="alpha"]')
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #General" }),
+    ).toBeVisible();
     const channels = page.locator('[data-sidebar-section="channels"]');
     const work = page.locator('[data-sidebar-section="group:work"]');
     const row = channels.locator('[data-channel-id="delta"]');

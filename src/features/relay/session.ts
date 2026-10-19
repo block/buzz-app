@@ -532,7 +532,8 @@ export function createRelaySession(
       ? visible
       : events.filter(
           (event) =>
-            [39000, 39002].includes(event.kind) || visible.includes(event),
+            [39000, 39002, 9007].includes(event.kind) ||
+            visible.includes(event),
         );
   }
   /** The relay's verified answer only: no projection, discovery or inbox. */

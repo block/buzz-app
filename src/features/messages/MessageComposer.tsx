@@ -68,6 +68,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { fullSession, type ComposerSession } from "./composer-session";
 import type { RelaySession } from "../relay/session";
 import {
   readView,
@@ -114,7 +115,7 @@ import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
 import { QueuedFollowUps } from "./QueuedFollowUps";
 
-const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
+const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
   channels: [],
 };
@@ -127,28 +128,34 @@ type AcceptedDraft = {
 };
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
-const acceptedDrafts = new WeakMap<RelaySession, Map<string, AcceptedDraft>>();
+const acceptedDrafts = new WeakMap<
+  ComposerSession,
+  Map<string, AcceptedDraft>
+>();
 type RecoveredSend = {
   draft: MentionDraft;
   picks?: MentionPicks;
   preparationError?: unknown;
 };
 const recoveryListeners = new WeakMap<
-  RelaySession,
+  ComposerSession,
   Map<string, Set<(recovered: RecoveredSend) => void>>
 >();
 // A recovery that no mounted composer consumed replays on remount. Only the
 // unpersisted parts need it: the pick snapshot and a preparation failure. The
 // saved draft and attachment store remain the owners of the recovered content.
-const missedRecovery = new WeakMap<RelaySession, Map<string, RecoveredSend>>();
-function takeMissedRecovery(session: RelaySession, key: string) {
+const missedRecovery = new WeakMap<
+  ComposerSession,
+  Map<string, RecoveredSend>
+>();
+function takeMissedRecovery(session: ComposerSession, key: string) {
   const byKey = missedRecovery.get(session);
   const recovered = byKey?.get(key);
   byKey?.delete(key);
   return recovered;
 }
 function notifyRecovered(
-  session: RelaySession,
+  session: ComposerSession,
   key: string,
   recovered: RecoveredSend,
 ) {
@@ -169,7 +176,7 @@ function errorForRecovery(reason: unknown) {
       : undefined;
 }
 function subscribeRecovery(
-  session: RelaySession,
+  session: ComposerSession,
   key: string,
   listener: (recovered: RecoveredSend) => void,
 ) {
@@ -189,7 +196,7 @@ function subscribeRecovery(
     if (!listeners.size) byKey.delete(key);
   };
 }
-function recoveryFor(session: RelaySession) {
+function recoveryFor(session: ComposerSession) {
   let recovery = acceptedDrafts.get(session);
   if (!recovery) {
     recovery = new Map();
@@ -201,7 +208,7 @@ function recoveryFor(session: RelaySession) {
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
   scope: string;
-  session: RelaySession;
+  session: ComposerSession | RelaySession;
   channelId: string;
   channelName: string;
   label?: string | undefined;
@@ -378,6 +385,7 @@ function Composer({
   }, []);
   const mentionRoster = useContext(DraftMentionRoster);
   const solo = !!soloConversation || ownSoloConversation;
+  const host = fullSession(session);
   const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
   const sendPending = useBackgroundSendPending(session, recoveryKey);
@@ -1252,6 +1260,7 @@ function Composer({
     const capturedPicks = picks;
     const capturedRunPicks = { ...picks, ...resolvedPicks.current };
     const queueFollowUp =
+      !!host &&
       ownSoloConversation &&
       !threadRootId &&
       followUpBehaviorPreference() === "queue";
@@ -1349,7 +1358,18 @@ function Composer({
         stagedSessions.has(id),
       );
       // Destination and content are fixed here; a background send never retargets.
-      const publishNow = (uploaded: readonly UploadedAttachment[]) => {
+      function publishNow(
+        uploaded: readonly UploadedAttachment[],
+        sender: RelaySession,
+      ): string;
+      function publishNow(
+        uploaded: readonly UploadedAttachment[],
+        sender: ComposerSession,
+      ): string | Promise<string>;
+      function publishNow(
+        uploaded: readonly UploadedAttachment[],
+        sender: ComposerSession,
+      ) {
         const destination = session.channels
           .list()
           .channels.find((channel) => channel.id === channelId);
@@ -1373,7 +1393,7 @@ function Composer({
             "This Solo chat or its recipients are no longer available.",
           );
         return threadRootId
-          ? session.messages.reply(
+          ? sender.messages.reply(
               channelId,
               threadRootId,
               content,
@@ -1392,7 +1412,7 @@ function Composer({
               ...(sharedSessions.length ? [sharedSessions] : []),
             )
           : references.length || tuned || sharedSessions.length
-            ? session.messages.send(
+            ? sender.messages.send(
                 channelId,
                 content,
                 recipients,
@@ -1402,11 +1422,11 @@ function Composer({
                 ...(tuned || sharedSessions.length ? [sentPicks] : []),
                 ...(sharedSessions.length ? [sharedSessions] : []),
               )
-            : session.messages.send(channelId, content, recipients, uploaded);
-      };
+            : sender.messages.send(channelId, content, recipients, uploaded);
+      }
       const publish = (uploaded: readonly UploadedAttachment[]) =>
-        queueFollowUp
-          ? followUpQueue(session).submit({
+        queueFollowUp && host
+          ? followUpQueue(host).submit({
               channelId,
               text: content,
               recipients,
@@ -1418,22 +1438,27 @@ function Composer({
                     "A queued recipient is no longer a member of this chat.",
                   );
               },
-              publish: () => publishNow(uploaded),
+              publish: () => publishNow(uploaded, host),
               onSend: (id) => {
                 if (live.current) onSend?.(id);
               },
             })
-          : publishNow(uploaded);
+          : publishNow(uploaded, session);
       let id: string | undefined;
-      if (capturedAttachments.length) {
+      if (capturedAttachments.length && !fullSession(session)) {
+        setSending(true);
+        const uploaded = await attachments.store.prepareForSend(attempt.signal);
+        attempt.signal.throwIfAborted();
+        id = await publish(uploaded);
+      } else if (capturedAttachments.length) {
         const followup = JSON.stringify(next);
         sendInBackground(
           session,
           recoveryKey,
           channelId,
           capturedAttachments,
-          (uploaded) => {
-            const sent = publish(uploaded);
+          async (uploaded) => {
+            const sent = await publish(uploaded);
             if (sent && live.current) onSend?.(sent);
           },
           (files, preparationError) => {
@@ -1504,7 +1529,11 @@ function Composer({
           },
           attachments.store,
         );
-      } else id = publish([]);
+      } else {
+        const result = publish([]);
+        if (typeof result !== "string") setSending(true);
+        id = typeof result === "string" ? result : await result;
+      }
       const pending = { next, revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
@@ -1567,10 +1596,10 @@ function Composer({
           openActivity={onOpenLink}
         />
       )}
-      {extensions?.accessories && (
+      {host && extensions?.accessories && (
         <ComposerAccessories
           registry={extensions.accessories}
-          session={session}
+          session={host}
           scope={scope}
           channelId={channelId}
           threadRootId={threadRootId}
@@ -1635,9 +1664,9 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
-      {!submission && !threadRootId && (
+      {!submission && !threadRootId && host && (
         <QueuedFollowUps
-          session={session}
+          session={host}
           channelId={channelId}
           disabled={disabled || !active}
         />
@@ -2099,7 +2128,7 @@ function RecipientAvatars({
   disabled,
   remove,
 }: {
-  session: RelaySession;
+  session: ComposerSession | RelaySession;
   recipients: readonly MentionRecipient[];
   disabled: boolean;
   remove(pubkey: string): void;

@@ -207,6 +207,8 @@ export function ChannelInventory({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
+      !channel.huddle &&
+      !channel.metadataPending &&
       // Solo lists the viewer's own Solo chats.
       !ownSolo(channel, queries.viewer) &&
       (!preparingDm ||

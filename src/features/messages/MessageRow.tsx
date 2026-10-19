@@ -95,6 +95,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
   row: ChannelMessage;
+  staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
@@ -159,6 +160,7 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
 });
 function MessageRowContent({
   row,
+  staticMentions,
   shownRow,
   renderMessage,
   getThreadRoot,
@@ -372,6 +374,7 @@ function MessageRowContent({
   );
   const report =
     !row.membership &&
+    !row.huddle &&
     (!row.delivery || ["accepted", "seen"].includes(row.delivery))
       ? session?.messages.report
       : undefined;
@@ -441,6 +444,7 @@ function MessageRowContent({
       session={session}
       scope={scope}
       row={displayRow}
+      staticMentions={staticMentions}
       extensions={extensions}
       media={media}
       onOpenLink={openLink}
@@ -724,7 +728,10 @@ function MessageRowContent({
     );
   };
   const message = (
-    <div data-message-id={renderMessage ? undefined : row.id}>
+    <div
+      data-message-id={renderMessage ? undefined : row.id}
+      data-huddle-row={row.huddle ? "" : undefined}
+    >
       {day && <DayDivider createdAt={row.createdAt} />}
       <div
         ref={rowRef}
@@ -752,7 +759,10 @@ function MessageRowContent({
               <div className={styles.messageAvatar}>{avatar}</div>
             )}
             <div className={styles.messageHeader}>
-              {!row.membership && !renderMessage && messageActions()}
+              {!row.membership &&
+                !row.huddle &&
+                !renderMessage &&
+                messageActions()}
               {/* Screen-reader text stays out of selections: the clipboard carries
                 what the reader saw, so a continuation copies without a byline. */}
               <div
@@ -937,6 +947,11 @@ function MessageRowContent({
                       if (attachment.kind === "image") {
                         return (
                           <AttachmentImage
+                            onOpenLink={
+                              canOpenLink?.(attachment.url)
+                                ? openLink
+                                : undefined
+                            }
                             key={url}
                             session={session}
                             attachment={{ ...attachment, url }}

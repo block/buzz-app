@@ -24,7 +24,7 @@ export type ButtonProps = Omit<
   children: ReactNode;
   variant?: ButtonVariant;
   size?: ButtonSize;
-  shape?: "capsule" | "control";
+  shape?: "capsule" | "control" | "icon";
   loading?: boolean;
 };
 
@@ -44,6 +44,13 @@ export function Button({
   const control = (
     <BaseButton
       {...props}
+      {...(shape === "icon"
+        ? {
+            "data-icon-variant": variant,
+            "data-icon-shape": "control",
+            "data-icon-size": size,
+          }
+        : {})}
       type={type}
       disabled={disabled || loading}
       focusableWhenDisabled={

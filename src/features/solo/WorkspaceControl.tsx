@@ -4,7 +4,6 @@ import {
   CaretDownIcon,
   Cube3dSphereIcon,
 } from "../../shared/design-system/icons";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   MenuItem,
@@ -69,32 +68,27 @@ export function WorkspaceControl({
             snapshot.status === "loading"
           }
           aria-label={project ? `Workspace: ${project.name}` : "Add workspace"}
-          render={(props) =>
-            project ? (
-              <Button
-                {...props}
-                variant="ghost"
-                size="sm"
-                title={`Workspace: ${project.name}`}
-              >
-                <Cube3dSphereIcon size={16} aria-hidden="true" />
-                <span>{project.name}</span>
-                <CaretDownIcon
-                  size={12}
-                  className="buzz-dropdown-chevron"
-                  aria-hidden="true"
-                />
-              </Button>
-            ) : (
-              <IconButton
-                {...props}
-                aria-label="Add workspace"
-                title="Add workspace"
-                size="sm"
-                icon={<Cube3dSphereIcon size={16} aria-hidden="true" />}
-              />
-            )
-          }
+          render={(props) => (
+            <Button
+              {...props}
+              variant="ghost"
+              size="sm"
+              shape={project ? "capsule" : "icon"}
+              title={project ? `Workspace: ${project.name}` : "Add workspace"}
+            >
+              <Cube3dSphereIcon size={16} aria-hidden="true" />
+              {project && (
+                <>
+                  <span>{project.name}</span>
+                  <CaretDownIcon
+                    size={12}
+                    className="buzz-dropdown-chevron"
+                    aria-hidden="true"
+                  />
+                </>
+              )}
+            </Button>
+          )}
         />
         <MenuPopup side="top" align="end" aria-label="Choose workspace">
           <MenuRadioGroup value={projectId} onValueChange={choose}>

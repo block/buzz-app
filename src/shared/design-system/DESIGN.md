@@ -686,6 +686,12 @@ remain compatibility aliases: primary/solid → prominent, quiet → subtle,
 compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
 Buzz's tint and chrome icon variants remain for composer and backdrop actions.
 
+Proposed: when a trigger changes between icon-only and labelled content, keep one
+`Button` mounted and switch `shape="icon"` / `shape="capsule"`. The icon shape
+reuses IconButton's square geometry and rounded corners; provide an accessible
+name. The workspace picker uses this to preserve menu focus restoration across
+selection changes. Standalone icon actions continue to use `IconButton`.
+
 Disabled controls retain their filled, outline, or unfilled treatment and cannot
 activate. Loading retains the label's geometry, accessible name, focus and variant
 colors while blocking activation; never swap in a differently sized loading label.

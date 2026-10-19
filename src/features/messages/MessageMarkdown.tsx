@@ -582,6 +582,7 @@ function PreparedMessageMarkdown({
           type={clickable ? "button" : undefined}
           className={referenceStyles.link}
           data-mention-kind={agent ? "agent" : "person"}
+          data-mention-self={key && key === session?.viewer ? "" : undefined}
           data-profile-target={target}
           data-mention-name={label}
           aria-label={clickable ? `View ${label} profile` : undefined}

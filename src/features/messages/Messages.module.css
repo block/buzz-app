@@ -1674,6 +1674,8 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
    color while hovered or keyboard-focused. The shared chip fill and ring stay. */
 .membership .membershipName {
   --link-text: var(--text-subtle);
+  /* Restated over the channel host's button reset. */
+  color: var(--link-text);
   font-weight: var(--type-weight-medium);
 }
 .membership .membershipName:hover,
@@ -1859,14 +1861,6 @@ html[data-keyboard-input] .quickReactionGlyph {
     inset: auto;
     opacity: 1;
     pointer-events: auto;
-  }
-  /* Retain pointer travel to the lifted toolbar without adding row spacing. */
-  .message:hover::before {
-    content: "";
-    position: absolute;
-    bottom: 100%;
-    inset-inline: 0;
-    height: var(--space-2);
   }
 }
 
@@ -2664,7 +2658,8 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .messageBubble > :is(.text, .plainText) {
   margin: 0;
 }
-.messageBubble .text :is(a, [data-mention-kind]):not([data-solo-link]) {
+/* Links take the bubble's paired link ink; mentions keep their own tint. */
+.messageBubble .text a:not([data-solo-link]) {
   --link-text: var(--message-link);
   --link-hover: transparent;
   --link-focus: currentColor;
@@ -2680,6 +2675,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: var(--text-standard);
   /* Neutral inset surfaces keep their own link palette inside colored bubbles. */
   --message-link: var(--text-link);
+  /* Neutral insets drop own-bubble mention pairing back to the shared role. */
+  --mention-fill: initial;
+  --mention-hover: initial;
+  --mention-text: initial;
 }
 .messageContent {
   position: relative;
@@ -2715,6 +2714,9 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: var(--text-message-own);
   background: var(--surface-message-own);
   --message-link: var(--text-message-link-own);
+  --mention-fill: var(--affordance-mention-own);
+  --mention-hover: var(--affordance-mention-own-hover);
+  --mention-text: var(--text-mention-own);
 }
 .messageBubble[data-emoji-only] {
   background: transparent;
@@ -2742,6 +2744,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
   background: var(--surface-panel);
   color: var(--text-standard);
   --message-link: var(--text-link);
+  /* Neutral insets drop own-bubble mention pairing back to the shared role. */
+  --mention-fill: initial;
+  --mention-hover: initial;
+  --mention-text: initial;
 }
 
 .threadAvatar:nth-child(1) {

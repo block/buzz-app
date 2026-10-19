@@ -171,9 +171,36 @@ describe("semantic contrast contract", () => {
     );
     expect(result.status, result.output).toBe(1);
     expect(result.output).toContain(
-      "chartreuse/more/light: --text-chrome-subtle #525252 is gray on --affordance-chrome",
+      "chartreuse/full/light: --text-chrome-subtle #525252 is gray on --affordance-chrome",
     );
   });
+
+  it.each([
+    ["#000000", false],
+    ["#262626", false],
+    ["#404040", true],
+  ])(
+    "distinguishes black ink %s from gray on the brand-filled selection",
+    (ink, gray) => {
+      const from = "--text-row-selected-subtle: var(--accent-contrast);";
+      expect(tokens).toContain(from);
+      const result = check(
+        tokens.replace(from, `--text-row-selected-subtle: ${ink};`),
+      );
+      if (gray) {
+        expect(result.status, result.output).toBe(1);
+        expect(result.output).toContain(
+          `chartreuse/touch/light: --text-row-selected-subtle ${ink} is gray on --affordance-navigation-selected`,
+        );
+      } else {
+        // A literal ink applies to every family, so saturated accents may fail
+        // contrast; only the gray verdict is under test here.
+        expect(result.output).not.toContain(
+          "is gray on --affordance-navigation-selected",
+        );
+      }
+    },
+  );
 
   it("rejects a shell color that hides navigation text", () => {
     const result = check(

@@ -659,6 +659,9 @@ use rounded rectangles. Icon actions retain their independent 10px radius.
 Floating unread cues and Jump to latest use Button's `shape="control"` with
 12px `--radius-control` corners in every state. Any backing surface uses the
 same radius so its painted edges align with the button.
+A sidebar unread cue is strong (`prominent`) only when a DM, a mention of you or
+a thread reply waits past its edge; ordinary unread uses the `subtle` Button,
+whose light gray fill holds up over the list where glass would disappear.
 
 The message hover toolbar uses the 12px rounded-container radius
 with a 2px inset. Its independent icon actions retain their shared 10px corners.
@@ -701,10 +704,20 @@ keep the dashed border static. This is a status cue, so retain an
 explicit status label or group heading and the scheduled time. Danger hover
 and pressed fills, disabled boundaries, and keyboard focus remain shared.
 
-IconButton's `bare` variant is for toggles whose glyph supplies the state:
-no resting, hover, pressed or selected background. The small control keeps its
-32px hit area with 20px artwork. The caller supplies outline/filled artwork,
-aria-pressed and the accessible name; focus behavior remains unchanged.
+IconButton's `bare` variant has no resting, hover, pressed or selected
+background. Use it where something else already supplies the state:
+
+- Toggles whose glyph shows the state. Small toggles use 20px artwork inside
+  the same 32px hit area, so the glyph's state is easy to distinguish. The caller
+  supplies outline/filled artwork, aria-pressed and the accessible name.
+- Actions revealed by a row, such as a sidebar row's overflow menu. Row hover
+  reveals the action and the row's own hover or selected fill is its state, so a
+  second fill inside the row would compete with it (and, on a brand-filled
+  selection, lose its paired ink).
+
+Bare keeps the standard control size and focus behavior. Only glyph-state
+toggles enlarge the artwork; ordinary actions use the same artwork sizing as
+other IconButtons.
 
 IconButton also offers `xs` (20px with 12px icons) for dense formatting actions. Mode
 toggles remain `sm`.
@@ -1285,9 +1298,9 @@ roles, so nothing stays gray on a background that turned accent.
 
 | Group | Roles |
 | --- | --- |
-| Moments | Own messages, links |
+| Moments | Own messages, the links and mentions on them |
 | Strong | Prominent buttons (including send), checked controls, switches, badges, tooltips; `text-on-prominent` is their ink, `affordance-prominent-mark` their standalone dots, lines and slider track/thumb |
-| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row-subtle`, `text-row-metadata`) |
+| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row`, `text-row-selected`, `text-row-subtle`, `text-row-metadata`). Small status/count badges on a selected row use `surface-row-selected-detail` with `text-row-selected-detail`: a pale accent fill with black ink in light mode, and a neutral raised fill with the selected row’s ink in dark mode. The selected sidebar destination uses `affordance-navigation-selected` with `text-row-selected` and its subtle and metadata inks: in light mode the brand fill with its contrast ink, because only one row is ever selected and pale chartreuse reads as khaki. Hover stays neutral until Buzzin’. In dark mode fills stay neutral, because dark chartreuse has no vivid form, and the selected label carries the accent at its glowing step; unread labels retain Semibold `text-navigation-unread` on hover and selection (near-black in light mode below Buzzin’, paired accent ink at Buzzin’; white in dark mode). Black ink is allowed on accent fills. |
 | Controls | Resting quiet fills, their hover and pressed states, floating controls, control outlines |
 | Shell | `bg-app`, its dots, and the chrome on it (`affordance-chrome`, its hover, `text-chrome-subtle`, `bg-chrome-selected`) |
 | Lines | Separators, thread lines, scrollbars |
@@ -1299,8 +1312,8 @@ roles, so nothing stays gray on a background that turned accent.
 | --- | --- |
 | Snoozin’ | None; accent tints, lines and accent text only |
 | Hummin’ | Links, strong, rows |
-| Swarmin’ | Adds your own messages and the shell |
-| Buzzin’ | Adds controls, lines, secondary text, surfaces and primary text |
+| Swarmin’ | Adds your own messages, on the brand fill |
+| Buzzin’ | Adds the shell, controls, lines, secondary text, surfaces and primary text |
 
 Status colors, focus, categorical purple, shadows and media-specific roles stay
 fixed. Media pixels, the black viewing canvas and the white-on-dark media-glass
@@ -1312,9 +1325,9 @@ one component. Row hover is its own role because rows take color before
 resting controls do. The contrast check fails when a gray role sits on an accent
 ground.
 
-When the shell is colored (Swarmin’ and Buzzin’), its dots use an accent step two
+When the shell is colored (Buzzin’), its dots use an accent step two
 steps from the background, never a gray mix. Chartreuse keeps its brand value as the strong fill in both modes. Controls on it
-take black ink; reading text on it, such as own messages at Buzzin’, takes the
+take black ink; reading text on it, such as own messages from Swarmin’, takes the
 family's darkest olive. Send is an ordinary prominent button, never a separately
 colored one. On light surfaces its text and lines step down to olive. Status
 colors, focus and categorical purple stay independent of the accent. Dark-mode primary text stays white at Buzzin’ to preserve readability on the
@@ -1459,7 +1472,25 @@ separate WCAG 3:1 non-text ratio; decorative separators and hover fills do not.
 
 ### Link contrast
 
-Inline links and mentions use Blue 11 with Blue 3 hover in both modes.
+Inline links use `text-link`. At Snoozin’ that is Blue 11 with Blue 3 hover in
+both modes. From Hummin’ each accent family supplies a link partner that stays
+readable as text on its grounds: chartreuse keeps Blue 11 in light mode, because
+darkened chartreuse turns olive, and uses bright chartreuse in dark mode, where
+it can glow. Own messages use `text-message-link-own`, which pairs with that
+level's bubble fill. Components consume `text-link` or `text-message-link-own`;
+never pick a link color per component.
+
+Mentions are people, not destinations, so they are chips rather than links.
+Spend the accent on mentions of you, not on mentions in general: ordinary
+mentions repeat in almost every message, so they stay a neutral chip
+(`text-mention` on `affordance-mention`) at every level, matching the composer.
+A mention of you asks for your attention and joins the strong group:
+`text-mention-self` on `affordance-mention-self`, the prominent fill and its ink
+in light mode, and a neutral chip with the prominent mark as ink in dark mode,
+where fills stay neutral. Inside your own bubble the `-own` pair wins; on the
+brand-filled bubble (from Swarmin’) it is tone-on-tone: a deeper step of the bubble's fill with the bubble's ink, deeper again on hover. System notices
+name people as quiet text, never as chips.
+
 Blue 11 is tuned for the supported surface stack: #0b5fa8 in light mode and
 #83c4ff in dark. These pairs have no link-specific contrast exemptions.
 The contrast guard checks APCA and WCAG AA (4.5:1) on opaque text pairs, including

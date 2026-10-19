@@ -352,6 +352,53 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "proposed",
       },
       {
+        token: "text-row-selected",
+        variable: "--text-row-selected",
+        pointsAt:
+          "text-row; the accent's contrast ink in light and accent step 11 in dark from Hummin’",
+        use: "Navigation label on the selected row. Dark rows keep neutral fills, so the selected label carries the accent.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-selected-subtle",
+        variable: "--text-row-selected-subtle",
+        pointsAt:
+          "text-row-subtle; the accent's contrast ink in light from Hummin’; text-subtle in dark",
+        use: "Icons and supporting text on the selected sidebar destination.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-selected-metadata",
+        variable: "--text-row-selected-metadata",
+        pointsAt:
+          "text-row-metadata; the accent's contrast ink in light from Hummin’; text-metadata in dark",
+        use: "Counts and metadata on the selected sidebar destination.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-navigation-selected",
+        variable: "--affordance-navigation-selected",
+        pointsAt:
+          "affordance-selected; accent 9 in light from Hummin’; neutral-5 in dark",
+        use: "The one selected sidebar destination. Only one is selected at a time, so light mode can spend the brand fill on it.",
+        status: "proposed",
+      },
+      {
+        token: "bg-surface-row-selected-detail",
+        variable: "--surface-row-selected-detail",
+        pointsAt:
+          "neutral-2 light; accent 3 light from Hummin’; neutral-6 dark",
+        use: "Quiet fill for working, typing and count badges on a selected sidebar row.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-selected-detail",
+        variable: "--text-row-selected-detail",
+        pointsAt: "neutral standard ink light / text-row-selected dark",
+        use: "Readable marks on surface-row-selected-detail, independent of the row's strong fill.",
+        status: "proposed",
+      },
+      {
         token: "text-row-subtle",
         variable: "--text-row-subtle",
         pointsAt: "text-subtle; accent step 11 once rows take the accent",
@@ -440,8 +487,9 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-link",
         variable: "--text-link",
-        pointsAt: "blue-11 light / blue-11 dark",
-        use: "Inline links and mentions in prose.",
+        pointsAt:
+          "blue-11 at Snoozin’; the family link partner from Hummin’ (chartreuse: blue-11 light, bright chartreuse dark)",
+        use: "Inline links in prose. Mentions use text-mention on a highlight instead.",
         status: "core",
       },
       {
@@ -456,8 +504,30 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-message-link-own",
         variable: "--text-message-link-own",
         pointsAt:
-          "text-link at Neutral; accent link, 12, or contrast ink as the amount rises",
-        use: "Links and mentions on the selected outgoing message surface.",
+          "text-link on neutral bubbles; accent ink on the brand-filled bubble from Swarmin’",
+        use: "Links on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-mention",
+        variable: "--text-mention",
+        pointsAt: "text-standard",
+        use: "Ordinary mention labels, paired with bg-affordance-mention. Mentions are people, not links.",
+        status: "core",
+      },
+      {
+        token: "text-mention-own",
+        variable: "--text-mention-own",
+        pointsAt:
+          "text-mention; the own bubble's ink from Swarmin’ (tone-on-tone chip)",
+        use: "Mention labels inside your own bubble, paired with bg-affordance-mention-own.",
+        status: "core",
+      },
+      {
+        token: "text-mention-self",
+        variable: "--text-mention-self",
+        pointsAt: "text-on-prominent light / affordance-prominent-mark dark",
+        use: "A mention of you, paired with bg-affordance-mention-self. It asks for your attention, so it joins the strong group.",
         status: "core",
       },
       {
@@ -914,6 +984,48 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--affordance-accent",
         pointsAt: "accent step 3",
         use: "A quiet identity or selection fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention",
+        variable: "--affordance-mention",
+        pointsAt: "neutral-4 light / neutral-6 dark",
+        use: "Ordinary mention chip fill, paired with text-mention. Frequent, so it stays neutral at every level.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-hover",
+        variable: "--affordance-mention-hover",
+        pointsAt: "neutral-5 light / neutral-5 dark",
+        use: "Mention chip under the pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-own",
+        variable: "--affordance-mention-own",
+        pointsAt: "affordance-mention; accent 10 from Swarmin’",
+        use: "Mention chip fill inside your own bubble, paired with text-mention-own.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-own-hover",
+        variable: "--affordance-mention-own-hover",
+        pointsAt: "affordance-mention-hover; accent pressed from Swarmin’",
+        use: "Own-bubble mention chip under the pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-self",
+        variable: "--affordance-mention-self",
+        pointsAt: "affordance-prominent light / neutral-6 dark",
+        use: "Chip fill for a mention of you, paired with text-mention-self.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-self-hover",
+        variable: "--affordance-mention-self-hover",
+        pointsAt: "affordance-prominent-hover light / neutral-5 dark",
+        use: "A mention of you under the pointer.",
         status: "core",
       },
       {

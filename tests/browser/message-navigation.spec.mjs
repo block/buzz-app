@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, end, settle, wheel } from "./timeline.mjs";
@@ -53,10 +54,10 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   // Disable it before exercising the actual Profiles provider.
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await page
-    .getByRole("switch", { name: "Enable Notes fixture", exact: true })
+    .getByRole("button", { name: "Manage plugins", exact: true })
     .click();
+  await pluginAction(page, "Notes fixture").click();
   for (const [mode, id] of [
     ["cold root", app.exact.root.id],
     ["cold reply", app.exact.target.id],

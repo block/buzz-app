@@ -433,7 +433,7 @@ it("opens the side panel with the type's tabs and the app's Attention and Memory
   );
 });
 
-it("checks providers in AI defaults and opens their host-owned dialogs", async () => {
+it("checks providers in Agent setup and opens their host-owned dialogs", async () => {
   const user = userEvent.setup();
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   const relay = {
@@ -477,24 +477,15 @@ it("checks providers in AI defaults and opens their host-owned dialogs", async (
     expect(
       screen.queryByRole("button", { name: "More agent actions" }),
     ).toBeNull();
-    const defaults = render(
-      <AgentSettings
-        agents={agents}
-        active={false}
-        archive={<div>Archived agents</div>}
-      />,
-    );
+    const defaults = render(<AgentSettings agents={agents} active={false} />);
     expect(echoProvider.check).not.toHaveBeenCalled();
-    expect(screen.queryByText("AI defaults")).toBeNull();
-    defaults.rerender(
-      <AgentSettings agents={agents} archive={<div>Archived agents</div>} />,
-    );
+    expect(screen.queryByRole("heading", { name: "Providers" })).toBeNull();
+    defaults.rerender(<AgentSettings agents={agents} />);
+    expect(screen.getByRole("heading", { name: "Agent setup" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Providers" })).toBeVisible();
     expect(
-      screen
-        .getByText("AI defaults")
-        .compareDocumentPosition(screen.getByText("Archived agents")) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+      screen.getByRole("switch", { name: "Remember mentioned agents" }),
+    ).toBeVisible();
     const menu = defaults.container;
     const echo = within(menu).getByRole("button", {
       name: "Echo, ready",

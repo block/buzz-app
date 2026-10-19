@@ -536,6 +536,101 @@ it("keeps membership notices visible in personal chats", () => {
   }
 });
 
+it("hides the owner's starting agents only in a complete personal chat", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const viewer = keypair(),
+    agent = keypair();
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: keypair().pubkey,
+    media: () => undefined,
+    query: async () => [],
+  });
+  const choices = owner.session.agentChoices;
+  const library = {
+    ...choices.snapshot(),
+    identities: [{ pubkey: agent.pubkey }],
+  } as unknown as ReturnType<typeof choices.snapshot>;
+  const queries = {
+    ...owner.session,
+    agentChoices: { ...choices, snapshot: () => library },
+  };
+  const row = (
+    id: string,
+    content: string,
+    createdAt: number,
+  ): ChannelMessage => ({
+    id,
+    channelId: "alpha",
+    authorId: viewer.pubkey,
+    content,
+    createdAt,
+    mentions: [],
+    participants: [],
+    attachments: [],
+    reactions: [],
+    replyCount: 0,
+  });
+  const added: ChannelMessage = {
+    ...row("added", "", 1),
+    membership: {
+      type: "member_joined",
+      actor: viewer.pubkey,
+      target: agent.pubkey,
+    },
+  };
+  const window: ChannelWindow = {
+    channelId: "alpha",
+    rows: [added, row("first", "First message", 2)],
+    status: "ready",
+    hasMore: false,
+    loadingOlder: false,
+    freshness: "verified",
+    error: undefined,
+  };
+  const timeline = (
+    chatPresentation: boolean,
+    hasMore = false,
+    historyLimited = false,
+  ) => (
+    <ChannelTimeline
+      channelId="alpha"
+      scope="starting-agents"
+      viewer={viewer.pubkey}
+      queries={queries}
+      window={{ ...window, hasMore, historyLimited }}
+      chatPresentation={chatPresentation}
+      onOpenLink={() => false}
+    />
+  );
+  const notice = () => document.querySelector("[data-membership-row]");
+  try {
+    const view = render(timeline(true));
+    expect(screen.getByText("First message")).toBeVisible();
+    expect(notice()).toBeNull();
+    // Partial history cannot prove the addition started the chat.
+    view.rerender(timeline(true, true));
+    expect(notice()).not.toBeNull();
+    // Nor can a live window whose older rows were trimmed after reaching it.
+    view.rerender(timeline(true, false, true));
+    expect(notice()).not.toBeNull();
+    // Team channels keep every notice.
+    view.rerender(timeline(false));
+    expect(notice()).not.toBeNull();
+    view.unmount();
+  } finally {
+    owner.dispose();
+  }
+});
+
 it.each([0, 600])(
   "prepend compensation requires a measured virtualizer viewport (%s)",
   (size) => {

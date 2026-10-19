@@ -38,6 +38,8 @@ export const ArrowCounterClockwiseIcon = defineIcon(
   TablerArrowCounterClockwiseIcon,
 );
 // Tabler only. Add individual exports as needed; outline icons are the default.
+import TablerSparklesIcon from "@tabler/icons-react/dist/esm/icons/IconSparkles.mjs";
+export const SparklesIcon = defineIcon("tabler", TablerSparklesIcon);
 import TablerStarFilledIcon from "@tabler/icons-react/dist/esm/icons/IconStarFilled.mjs";
 export const StarFilledIcon = defineIcon("tabler", TablerStarFilledIcon);
 import TablerBrowserIcon from "@tabler/icons-react/dist/esm/icons/IconBrowser.mjs";
@@ -213,6 +215,8 @@ import TablerMoonIcon from "@tabler/icons-react/dist/esm/icons/IconMoon.mjs";
 export const MoonIcon = defineIcon("tabler", TablerMoonIcon);
 import TablerMonitorIcon from "@tabler/icons-react/dist/esm/icons/IconDeviceDesktop.mjs";
 export const MonitorIcon = defineIcon("tabler", TablerMonitorIcon);
+import TablerDeviceMobileIcon from "@tabler/icons-react/dist/esm/icons/IconDeviceMobile.mjs";
+export const DeviceMobileIcon = defineIcon("tabler", TablerDeviceMobileIcon);
 import TablerNotionLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandNotion.mjs";
 export const NotionLogoIcon = defineIcon("tabler", TablerNotionLogoIcon);
 import TablerPaletteIcon from "@tabler/icons-react/dist/esm/icons/IconPalette.mjs";

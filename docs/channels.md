@@ -1103,6 +1103,9 @@ mixed arrivals do not invent an adder. Grouping is presentation-only: signed eve
 IDs, pagination cursors and retention budgets remain per event. Profiles reuse the
 shared background directory/cache, and reading anchors can resolve a member of a
 group. Activity has no message actions, thread, unread evidence or chat preview.
+A Solo chat omits its owner's additions and removals of agents before its first
+message once history reaches its start; later changes, people and agents added by others still
+show. Membership, access and pagination are unchanged.
 
 An already-running development broker needs a coordinated restart to load the
 expanded live filter; frontend hot reload alone changes only the history/rendering

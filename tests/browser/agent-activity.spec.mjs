@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { test, expect } from "./fixture.mjs";
@@ -255,11 +256,10 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
   const sockets = app.relay.sockets.length;
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
-  const toggle = page.getByRole("switch", {
-    name: "Enable Agent Activity",
-    exact: true,
-  });
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
+  const toggle = pluginAction(page, "Agent Activity");
   const disabled = page.waitForResponse(
     (response) =>
       response.url().endsWith("/stream-observer") &&
@@ -284,7 +284,9 @@ test("channel activity consumes telemetry, opens each agent's profile, and reset
 
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   // Capture keeps this wire alive while the display is disabled. Its existence
   // no longer proves that the plugin's new display generation reached the host.
   const enabled = page.waitForResponse(
@@ -1007,7 +1009,9 @@ test.describe("host archive durability", () => {
       .getByRole("button", { name: "Your profile", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Agents", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Local archive", exact: true })
+      .click();
     const archive = page.getByRole("region", { name: /Saved agent activity/ });
     await expect(archive.getByText(/not in this browser/)).toBeVisible();
     await archive

@@ -96,7 +96,7 @@ below are labelled separately. No product fixes are included in this documentati
 | Collection with detail | [InboxPage](../src/bundled/inbox/InboxPage.tsx): filters in the body and list/detail ownership; the Drafts header action is a gap below |
 | Solo chats | [ChannelsPage](../src/bundled/channels/ChannelsPage.tsx) Solo treatment ([SoloHeading](../src/bundled/channels/SoloHeading.tsx)): flat timeline/composer in the shared conversation page and panel workspace |
 | Immediate settings | [NotificationSettings](../src/app/NotificationSettings.tsx), [AppearanceSettings](../src/app/AppearanceSettings.tsx): shared preference rows, grouped controls, and contextual permission feedback |
-| Explicit-save settings | [ProfileSettings](../src/app/ProfileSettings.tsx): scoped description, labelled fields, preserved draft/save behavior, separate identity details |
+| Explicit-save settings | [ProfileSettings](../src/app/ProfileSettings.tsx): scoped description, labelled fields, preserved draft/save behavior. [IdentitySettings](../src/app/IdentitySettings.tsx) owns separate identity details |
 | Bounded modal | [ChannelMembersDialog](../src/bundled/channels/ChannelMembersDialog.tsx): stable shell, fixed search/filter area, bounded results; [RemindDialog](../src/bundled/reminders/RemindDialog.tsx) is the short-form source reference |
 | Anchored actions | [ChannelHeaderMenu](../src/bundled/channels/ChannelHeaderMenu.tsx): shared Menu parts, grouped actions, and focus handoff; account-menu composition is feature-specific |
 | Contributed detail | [ProfilePanel](../src/bundled/profiles/ProfilePanel.tsx) inside [PanelCard](../src/features/panels/PanelCard.tsx): body content and tabs within host-supplied framing |

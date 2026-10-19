@@ -232,6 +232,7 @@ async function fixture(
   if (!item) throw new Error("Missing addressed conversation");
   return {
     ...owner,
+    relay,
     live,
     root,
     reply,
@@ -1164,6 +1165,48 @@ it("restores a deleted edit's draft without taking focus from a recovered Inbox 
   } finally {
     publication.resolve();
   }
+});
+
+it("retires a selected ordinary preview when its room is classified as a Huddle", async () => {
+  const h = await fixture();
+  await opened(h);
+  const creator = keypair();
+  const editor = screen.getByRole("textbox");
+  await act(async () => {
+    h.live.receive([
+      metadata(h.relay, "room", "Huddle", 100, [
+        ["private"],
+        ["P", creator.pubkey],
+        [
+          "about",
+          "Buzz Huddle (buzz.huddles/v1)\nparent:11111111-1111-4111-8111-111111111111",
+        ],
+      ]),
+      signed(creator, {
+        kind: 9007,
+        created_at: 10,
+        content: "",
+        tags: [
+          ["h", "room"],
+          ["visibility", "private"],
+          ["channel_type", "stream"],
+          [
+            "about",
+            "Buzz Huddle (buzz.huddles/v1)\nparent:11111111-1111-4111-8111-111111111111",
+          ],
+        ],
+      }),
+    ]);
+  });
+  expect(editor).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Close detail" }),
+  ).not.toBeInTheDocument();
+  expect(h.session.unread.inbox().items).toEqual([]);
+  await act(async () => {
+    await h.session.inboxFeed.refresh();
+  });
+  expect(h.session.unread.inbox().items).toEqual([]);
 });
 
 it("uses the normal message link renderer in Inbox detail", async () => {

@@ -135,7 +135,14 @@ function Specimen({ example }: { example: Example }) {
               extensions={extensions}
               media={media}
               day={!!example.day && index === 0}
-              onOpenLink={() => {
+              onOpenLink={(url) => {
+                if (
+                  row.attachments.some(
+                    (attachment) =>
+                      attachment.kind === "image" && attachment.url === url,
+                  )
+                )
+                  return false;
                 setAction(
                   "Sample link selected. In the app, this opens its destination.",
                 );

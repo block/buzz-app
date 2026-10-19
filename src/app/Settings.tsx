@@ -1,3 +1,14 @@
+import type {
+  AdminAccessReader,
+  AdminAccessState,
+} from "../bundled/admin-access";
+import {
+  AnimatePresence,
+  motion,
+  useIsPresent,
+  useReducedMotion,
+  type HTMLMotionProps,
+} from "motion/react";
 import type { Agents } from "../features/agents/service";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
@@ -6,10 +17,17 @@ import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
+import { Tooltip } from "../shared/design-system/ui/Tooltip";
+import { SurfaceButton } from "../shared/design-system/ui/SurfaceButton";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { ChoiceRow } from "../shared/design-system/ui/ChoiceRow";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
+import { Tabs } from "../shared/design-system/ui/Tabs";
+import { SearchField } from "../shared/design-system/ui/SearchField";
+import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import {
+  type ReactNode,
+  forwardRef,
   type RefObject,
   useEffect,
   useLayoutEffect,
@@ -56,6 +74,39 @@ import { developerMode, settingsSections } from "./settings-sections";
 
 import { pluginCategoryDefinitions } from "./plugin-categories";
 
+// Exit animations retain DOM briefly; retired results must stop accepting focus.
+const PluginListEntry = forwardRef<HTMLDivElement, HTMLMotionProps<"div">>(
+  function PluginListEntry(props, ref) {
+    const present = useIsPresent();
+    return (
+      <motion.div
+        {...props}
+        ref={ref}
+        inert={!present}
+        aria-hidden={!present || undefined}
+      />
+    );
+  },
+);
+
+function CorePluginGroup({ children }: { children: ReactNode }) {
+  return (
+    <div className={styles.pluginCoreGrid}>
+      <SettingsGroup layout="cards">{children}</SettingsGroup>
+    </div>
+  );
+}
+
+function isCorePlugin(plugin: PluginInfo) {
+  return (
+    plugin.source === "bundled" &&
+    (plugin.manifest.discovery?.tags?.some(
+      (tag) => tag.trim().toLowerCase() === "core",
+    ) ??
+      false)
+  );
+}
+
 function isRequiredPlugin(plugin: PluginInfo) {
   return plugin.manifest.id === "buzz.channels";
 }
@@ -73,7 +124,8 @@ function isEssentialPlugin(plugin: PluginInfo) {
 function comparePlugins(a: PluginInfo, b: PluginInfo) {
   return (
     Number(isRequiredPlugin(b)) - Number(isRequiredPlugin(a)) ||
-    Number(isEssentialPlugin(b)) - Number(isEssentialPlugin(a))
+    Number(isEssentialPlugin(b)) - Number(isEssentialPlugin(a)) ||
+    a.manifest.name.localeCompare(b.manifest.name)
   );
 }
 
@@ -82,13 +134,26 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
     pluginCategoryDefinitions.map(({ id }) => [id, []]),
   );
   const other: PluginInfo[] = [];
+  const core: PluginInfo[] = [];
   for (const plugin of plugins) {
+    if (isCorePlugin(plugin)) {
+      core.push(plugin);
+      continue;
+    }
     const group = known.get(plugin.manifest.discovery?.category ?? "");
     (group ?? other).push(plugin);
   }
   for (const entries of known.values()) entries.sort(comparePlugins);
   other.sort(comparePlugins);
   return [
+    ...(core.length
+      ? [
+          {
+            id: "core",
+            plugins: core.sort(comparePlugins),
+          },
+        ]
+      : []),
     ...pluginCategoryDefinitions.flatMap(({ id, label }) => {
       const entries = known.get(id) ?? [];
       return entries.length ? [{ id, label, plugins: entries }] : [];
@@ -110,7 +175,12 @@ function PluginIcon({
       : undefined;
   const [failedUrl, setFailedUrl] = useState<string>();
   return (
-    <span className={styles.pluginIcon} aria-hidden="true">
+    <span
+      className={styles.pluginIcon}
+      data-branded={Boolean(url && url !== failedUrl) || undefined}
+      data-category={plugin.manifest.discovery?.category}
+      aria-hidden="true"
+    >
       {url && url !== failedUrl ? (
         <img src={url} alt="" onError={() => setFailedUrl(url)} />
       ) : (
@@ -137,6 +207,42 @@ function PluginProvenance({
   );
 }
 
+const noAccessSubscription = () => () => {};
+
+function restrictedPlugin(plugin: PluginInfo) {
+  return (
+    plugin.source === "bundled" &&
+    (plugin.manifest.id === "buzz.moderation" ||
+      plugin.manifest.id === "buzz.relay-staff")
+  );
+}
+
+function pluginActionLabel(plugin: PluginInfo, access: AdminAccessState) {
+  if (plugin.enabled) return "Disable";
+  if (restrictedPlugin(plugin) && access !== "allowed")
+    return access === "checking" ? "Enable" : "Unavailable";
+  return "Enable";
+}
+
+function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
+  switch (state) {
+    case "allowed":
+      return null;
+    case "checking":
+      return "Checking access…";
+    case "no-community":
+      return "Select a community to check access.";
+    case "error":
+      return "Could not check access. Open details to try again.";
+    case "unavailable":
+      return "Access is unavailable in this build or on this relay.";
+    case "denied":
+      return plugin.manifest.id === "buzz.moderation"
+        ? "Select a community where you’re an owner or admin."
+        : "Select a community on a relay where you have staff access.";
+  }
+}
+
 /** Narrow containers cover the catalog with details (Settings.module.css). */
 function covered(element: Element | null) {
   return !!element && getComputedStyle(element).visibility === "hidden";
@@ -147,16 +253,26 @@ function PluginDetails({
   failure,
   busy,
   plugins,
+  onToggle,
   close,
   onClose,
+  access,
+  onCheckAccess,
 }: {
   plugin: PluginInfo;
   failure: string | null;
   busy: boolean;
   plugins: PluginManager;
+  onToggle(): void;
   close: RefObject<HTMLButtonElement | null>;
   onClose(): void;
+  access: AdminAccessState;
+  onCheckAccess(): void;
 }) {
+  const accessReason = restrictedPlugin(plugin)
+    ? accessMessage(plugin, access)
+    : null;
+  const toggle = useRef<HTMLButtonElement>(null);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -184,7 +300,7 @@ function PluginDetails({
     >
       <div className={styles.pluginAsideHeader}>
         <div className={styles.pluginAsideIdentity}>
-          <PluginIcon plugin={plugin} size={48} />
+          <PluginIcon key={plugin.manifest.id} plugin={plugin} size={48} />
           <h2>{plugin.manifest.name}</h2>
           <div className={styles.pluginBadges}>
             {plugin.source === "bundled" ? (
@@ -199,10 +315,7 @@ function PluginDetails({
               />
             )}
             {isEssentialPlugin(plugin) && (
-              <span
-                className={`${styles.pluginInstallBadge} ${styles.pluginTag}`}
-                data-essential
-              >
+              <span className={styles.pluginInstallBadge}>
                 <SparklesIcon size={14} aria-hidden="true" />
                 Essentials
               </span>
@@ -229,29 +342,78 @@ function PluginDetails({
         </span>
       )}
       <div className={styles.pluginStatus}>
+        {plugin.enabled && accessReason && (
+          <span className="text-caption text-muted">
+            {access === "checking" ? "Checking…" : "Unavailable"}
+          </span>
+        )}
         {/* Channels is required and has no enable/disable control. */}
         {plugin.manifest.id === "buzz.channels" ? (
           <Button variant="outline" size="sm" disabled>
             Required
           </Button>
         ) : (
-          <Button
-            variant={plugin.enabled ? "subtle" : "prominent"}
-            size="sm"
-            disabled={busy}
-            focusableWhenDisabled
-            onClick={() => {
-              if (busy) return;
-              void plugins.change(
-                plugin.enabled ? "disable" : "enable",
-                plugin.manifest.id,
-              );
-            }}
+          <Tooltip
+            content={
+              access === "error"
+                ? "Could not check access. Try again."
+                : accessReason
+            }
+            {...(accessReason ? {} : { open: false })}
+            disableHoverablePopup
           >
-            {plugin.enabled ? "Disable" : "Enable"}
-          </Button>
+            <Button
+              variant={
+                plugin.enabled
+                  ? "subtle"
+                  : accessReason
+                    ? "outline"
+                    : "prominent"
+              }
+              size="sm"
+              disabled={
+                busy ||
+                (!plugin.enabled &&
+                  restrictedPlugin(plugin) &&
+                  access !== "allowed")
+              }
+              loading={
+                !plugin.enabled &&
+                restrictedPlugin(plugin) &&
+                access === "checking"
+              }
+              aria-describedby={
+                accessReason ? "plugin-detail-access" : undefined
+              }
+              focusableWhenDisabled
+              ref={toggle}
+              onClick={onToggle}
+            >
+              {pluginActionLabel(plugin, access)}
+            </Button>
+          </Tooltip>
         )}
       </div>
+      {accessReason && (
+        <p id="plugin-detail-access" className="sr-only">
+          {access === "error"
+            ? "Could not check access. Try again."
+            : accessReason}
+        </p>
+      )}
+      {accessReason && access === "error" && (
+        <div className={styles.pluginAccess}>
+          <Button
+            size="sm"
+            onClick={() => {
+              onCheckAccess();
+              toggle.current?.focus();
+            }}
+          >
+            Check access again
+          </Button>
+        </div>
+      )}
       {readme && (
         <section
           className={styles.pluginAsideSection}
@@ -311,11 +473,7 @@ function PluginDetails({
           </tbody>
         </table>
       </section>
-      {failure && (
-        <p role="alert" className="error text-body-sm">
-          {failure}
-        </p>
-      )}
+      {failure && <p className="error text-body-sm">{failure}</p>}
       <div className="actions items-center">
         {plugin.previous && (
           <Button
@@ -410,6 +568,7 @@ export function Settings({
   agents,
   cards,
   plugins,
+  adminAccess,
   communities,
   identity,
   appearance,
@@ -425,6 +584,7 @@ export function Settings({
   agents?: Agents | undefined;
   cards: SettingsCards;
   plugins: PluginManager;
+  adminAccess?: AdminAccessReader;
   communities: Communities;
   identity?: Identity | undefined;
   appearance: Appearance;
@@ -440,6 +600,19 @@ export function Settings({
   onDeparturePending?: (pending: boolean) => void;
 }) {
   useEffect(() => cards.retainVisibility(), [cards]);
+  useEffect(() => adminAccess?.ensure(), [adminAccess]);
+  const membershipAccess = useSyncExternalStore(
+    adminAccess?.subscribe ?? noAccessSubscription,
+    () => adminAccess?.status("buzz.moderation") ?? "unavailable",
+  );
+  const moderationAccess = useSyncExternalStore(
+    adminAccess?.subscribe ?? noAccessSubscription,
+    () => adminAccess?.status("buzz.relay-staff") ?? "unavailable",
+  );
+  const pluginAccess = (plugin: PluginInfo) =>
+    plugin.manifest.id === "buzz.moderation"
+      ? membershipAccess
+      : moderationAccess;
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -503,10 +676,81 @@ export function Settings({
   const ready = configuration.status === "ready" ? configuration : undefined;
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
-  const pluginGroups = useMemo(
-    () => groupPlugins(catalog?.plugins ?? []),
+  const [activationAttempt, setActivationAttempt] = useState<{
+    id: string;
+    revision: string;
+  }>();
+  const attemptedPlugin = catalog?.plugins.find(
+    (plugin) =>
+      plugin.manifest.id === activationAttempt?.id &&
+      plugin.revision === activationAttempt?.revision &&
+      plugin.enabled,
+  );
+  const attemptedRunning =
+    attemptedPlugin && activation[attemptedPlugin.manifest.id];
+  const activationFailure =
+    attemptedRunning?.revision === activationAttempt?.revision
+      ? attemptedRunning?.error
+      : null;
+  const togglePlugin = (plugin: PluginInfo) => {
+    if (
+      busy ||
+      (!plugin.enabled &&
+        restrictedPlugin(plugin) &&
+        adminAccess?.status(plugin.manifest.id) !== "allowed")
+    )
+      return;
+    setActivationAttempt(
+      plugin.enabled
+        ? undefined
+        : { id: plugin.manifest.id, revision: plugin.revision },
+    );
+    void plugins.change(
+      plugin.enabled ? "disable" : "enable",
+      plugin.manifest.id,
+    );
+  };
+  const [pluginFilter, setPluginFilter] = useState<"all" | "essentials">("all");
+  const [pluginQuery, setPluginQuery] = useState("");
+  const pluginSearch = useRef<HTMLElement>(null);
+  const pluginFiltersActive =
+    pluginFilter !== "all" || pluginQuery.trim() !== "";
+  const reducedMotion = useReducedMotion();
+  const listMotion = {
+    layout: reducedMotion ? (false as const) : ("position" as const),
+    initial: reducedMotion ? (false as const) : { opacity: 0, y: 8 },
+    animate: { opacity: 1, y: 0 },
+    ...(reducedMotion ? {} : { exit: { opacity: 0 } }),
+    transition: {
+      duration: reducedMotion ? 0 : 0.16,
+      layout: { type: "spring" as const, stiffness: 420, damping: 38 },
+    },
+  };
+  const layoutMotion = {
+    layout: listMotion.layout,
+    transition: listMotion.transition,
+  };
+  const coreGroup = useMemo(
+    () =>
+      groupPlugins(catalog?.plugins ?? []).find((group) => group.id === "core"),
     [catalog?.plugins],
   );
+  const pluginGroups = useMemo(() => {
+    const query = pluginQuery.trim().toLowerCase();
+    return groupPlugins(
+      (catalog?.plugins ?? []).filter(
+        (plugin) =>
+          !isCorePlugin(plugin) &&
+          (pluginFilter === "all" || isEssentialPlugin(plugin)) &&
+          [
+            plugin.manifest.name,
+            plugin.manifest.id,
+            plugin.manifest.description,
+            ...(plugin.manifest.discovery?.tags ?? []),
+          ].some((value) => value?.toLowerCase().includes(query)),
+      ),
+    );
+  }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
   const [updatingPluginId, setUpdatingPluginId] = useState<string>();
   const [pluginImportActions, setPluginImportActions] =
@@ -555,9 +799,15 @@ export function Settings({
   useLayoutEffect(() => {
     if (!selectedPlugin && restorePluginFocus.current) {
       restorePluginFocus.current = false;
-      pluginTrigger.current?.focus();
+      const visible = [coreGroup, ...pluginGroups].some((group) =>
+        group?.plugins.some(
+          (plugin) =>
+            plugin.manifest.id === pluginTrigger.current?.dataset.pluginId,
+        ),
+      );
+      (visible ? pluginTrigger.current : pluginSection.current)?.focus();
     }
-  }, [selectedPlugin]);
+  }, [selectedPlugin, coreGroup, pluginGroups]);
   const selectedRunning = selectedPlugin
     ? activation[selectedPlugin.manifest.id]
     : undefined;
@@ -567,6 +817,241 @@ export function Settings({
         ? selectedRunning.error
         : null))
     : null;
+  const renderPluginGroup = (
+    group: ReturnType<typeof groupPlugins>[number],
+  ) => {
+    const core = group.id === "core";
+    const Group = core ? CorePluginGroup : SettingsGroup;
+    const Target = core ? SurfaceButton : "button";
+    return (
+      <PluginListEntry
+        {...listMotion}
+        className={core ? styles.pluginCoreSection : undefined}
+        role="region"
+        aria-label={core ? "Core plugins" : undefined}
+        aria-labelledby={core ? undefined : `plugin-category-${group.id}`}
+        key={group.id}
+      >
+        {!core && (
+          <InlineHeader
+            id={`plugin-category-${group.id}`}
+            title={
+              <span className={styles.pluginCategoryTitle}>
+                <span>{group.label}</span>
+                <span className={styles.pluginCount}>
+                  {group.plugins.length}
+                  <span className="sr-only">
+                    {group.plugins.length === 1 ? " plugin" : " plugins"}
+                  </span>
+                </span>
+              </span>
+            }
+          />
+        )}
+        <Group>
+          <AnimatePresence initial={false} mode="popLayout" propagate>
+            {group.plugins.map((plugin) => {
+              const id = plugin.manifest.id;
+              const active = id === selectedPluginId;
+              const access = pluginAccess(plugin);
+              const accessReason = restrictedPlugin(plugin)
+                ? accessMessage(plugin, access)
+                : null;
+              const running = activation[id];
+              const failure =
+                plugin.error ??
+                (running?.revision === plugin.revision ? running.error : null);
+              const name = (
+                <span className={styles.pluginName}>
+                  <span>{plugin.manifest.name}</span>
+                  {plugin.source === "bundled" && (
+                    <CheckCircleIcon
+                      size={14}
+                      strokeWidth={2.5}
+                      aria-hidden="true"
+                    />
+                  )}
+                  {isEssentialPlugin(plugin) && (
+                    <SparklesIcon
+                      size={14}
+                      role="img"
+                      aria-label="Essential"
+                      aria-hidden={false}
+                      title="Essential"
+                    />
+                  )}
+                </span>
+              );
+              return (
+                <PluginListEntry key={id} {...listMotion}>
+                  <article
+                    className={styles.plugin}
+                    data-core={core || undefined}
+                  >
+                    <Target
+                      ref={
+                        active
+                          ? (target: HTMLButtonElement | null) => {
+                              if (target) pluginTrigger.current = target;
+                            }
+                          : undefined
+                      }
+                      type="button"
+                      data-plugin-id={id}
+                      data-access-state={
+                        plugin.enabled && accessReason ? "" : undefined
+                      }
+                      data-updatable={
+                        (plugin.source === "external" && !!plugins.imports) ||
+                        undefined
+                      }
+                      className={styles.pluginRow}
+                      data-enabled={plugin.enabled}
+                      aria-label={`View ${plugin.manifest.name} details`}
+                      aria-describedby={
+                        [
+                          plugin.manifest.description
+                            ? `plugin-description-${id}`
+                            : null,
+                          plugin.source === "external" && plugin.publisher
+                            ? `plugin-publisher-${id}`
+                            : null,
+                          isEssentialPlugin(plugin)
+                            ? `plugin-essential-${id}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" ") || undefined
+                      }
+                      aria-expanded={active}
+                      aria-controls={active ? "plugin-details" : undefined}
+                      onClick={(event) => {
+                        pluginTrigger.current = event.currentTarget;
+                        if (!active) setActivationAttempt(undefined);
+                        setSelectedPluginId(active ? undefined : id);
+                      }}
+                    >
+                      {isEssentialPlugin(plugin) && (
+                        <span id={`plugin-essential-${id}`} className="sr-only">
+                          Essential
+                        </span>
+                      )}
+                      {core ? (
+                        <>
+                          <PluginIcon plugin={plugin} />
+                          {name}
+                          <span
+                            id={`plugin-description-${id}`}
+                            className={styles.pluginCoreDescription}
+                          >
+                            {plugin.manifest.description}
+                          </span>
+                        </>
+                      ) : (
+                        <ChoiceRow
+                          leading={<PluginIcon plugin={plugin} />}
+                          label={name}
+                          description={
+                            plugin.manifest.description ? (
+                              <span id={`plugin-description-${id}`}>
+                                {plugin.manifest.description}
+                              </span>
+                            ) : undefined
+                          }
+                        />
+                      )}
+                      {plugin.source === "external" && (
+                        <span id={`plugin-publisher-${id}`}>
+                          <PluginProvenance
+                            source={plugin.source}
+                            publisher={plugin.publisher}
+                            className={styles.pluginRowAuthor}
+                          />
+                        </span>
+                      )}
+                    </Target>
+                    <div className={styles.pluginRowAction}>
+                      {plugin.enabled && accessReason && (
+                        <span className="text-caption text-muted self-center">
+                          {access === "checking" ? "Checking…" : "Unavailable"}
+                        </span>
+                      )}
+                      {plugin.source === "external" &&
+                        plugins.imports &&
+                        catalog && (
+                          <Button
+                            size="sm"
+                            aria-label={`Update ${plugin.manifest.name}`}
+                            data-plugin-update-id={id}
+                            disabled={busy}
+                            onClick={() => setUpdatingPluginId(id)}
+                          >
+                            Update
+                          </Button>
+                        )}
+                      {isRequiredPlugin(plugin) ? (
+                        <Button variant="outline" size="sm" disabled>
+                          Required
+                        </Button>
+                      ) : (
+                        <Tooltip
+                          content={accessReason}
+                          {...(accessReason ? {} : { open: false })}
+                          disableHoverablePopup
+                        >
+                          <Button
+                            variant={
+                              plugin.enabled
+                                ? "subtle"
+                                : accessReason
+                                  ? "outline"
+                                  : "prominent"
+                            }
+                            size="sm"
+                            aria-label={`${pluginActionLabel(plugin, access)} ${plugin.manifest.name}`}
+                            disabled={
+                              busy ||
+                              (!plugin.enabled &&
+                                restrictedPlugin(plugin) &&
+                                access !== "allowed")
+                            }
+                            loading={
+                              !plugin.enabled &&
+                              restrictedPlugin(plugin) &&
+                              access === "checking"
+                            }
+                            aria-describedby={
+                              accessReason ? `plugin-access-${id}` : undefined
+                            }
+                            focusableWhenDisabled
+                            onClick={() => togglePlugin(plugin)}
+                          >
+                            {pluginActionLabel(plugin, access)}
+                          </Button>
+                        </Tooltip>
+                      )}
+                    </div>
+                  </article>
+                  {accessReason && (
+                    <p id={`plugin-access-${id}`} className="sr-only">
+                      {accessReason}
+                    </p>
+                  )}
+                  {failure && (
+                    <p
+                      className={`${styles.pluginRowError} error text-body-sm`}
+                    >
+                      {failure}
+                    </p>
+                  )}
+                </PluginListEntry>
+              );
+            })}
+          </AnimatePresence>
+        </Group>
+      </PluginListEntry>
+    );
+  };
   const authorizePluginGit = async (repository: string) => {
     const connection = communities.relay.snapshot();
     return connection.status === "ready"
@@ -581,6 +1066,17 @@ export function Settings({
         aria-label={navigationPane ? "Settings" : undefined}
         aria-labelledby={navigationPane ? undefined : "settings-title"}
       >
+        {/* Keep announcements outside filtered rows and the covered narrow catalog. */}
+        <div
+          role={selected === "plugins" ? "alert" : undefined}
+          className="sr-only"
+        >
+          {selected === "plugins" && activationFailure && attemptedPlugin
+            ? `${attemptedPlugin.manifest.name}: ${activationFailure}`
+            : selected === "plugins" && selectedFailure && selectedPlugin
+              ? `${selectedPlugin.manifest.name}: ${selectedFailure}`
+              : null}
+        </div>
         <div
           ref={layout}
           className={styles.layout}
@@ -721,15 +1217,59 @@ export function Settings({
                 tabIndex={-1}
                 aria-labelledby="plugin-settings-title"
               >
-                <Header
-                  id="plugin-settings-title"
-                  title="Manage plugins"
-                  actions={
-                    plugins.imports && catalog ? (
-                      <span ref={setPluginImportActions} />
-                    ) : undefined
-                  }
-                />
+                <motion.div {...layoutMotion} className={styles.pluginHeading}>
+                  <Header
+                    id="plugin-settings-title"
+                    title="Manage plugins"
+                    actions={
+                      plugins.imports && catalog ? (
+                        <span ref={setPluginImportActions} />
+                      ) : undefined
+                    }
+                  />
+                </motion.div>
+                <AnimatePresence initial={false} mode="popLayout">
+                  {coreGroup && renderPluginGroup(coreGroup)}
+                </AnimatePresence>
+                {catalog && (
+                  <motion.div
+                    {...layoutMotion}
+                    className={styles.pluginToolbar}
+                  >
+                    <motion.div {...layoutMotion}>
+                      <Tabs
+                        variant="panel"
+                        label="Plugin filters"
+                        items={[
+                          {
+                            value: "all",
+                            label: "All plugins",
+                            panelId: "plugin-results-all",
+                          },
+                          {
+                            value: "essentials",
+                            label: "Essentials",
+                            panelId: "plugin-results-essentials",
+                          },
+                        ]}
+                        value={pluginFilter}
+                        onValueChange={setPluginFilter}
+                      />
+                    </motion.div>
+                    <motion.div
+                      {...layoutMotion}
+                      className={styles.pluginSearch}
+                    >
+                      <SearchField
+                        inputRef={pluginSearch}
+                        label="Search plugins"
+                        placeholder="Search plugins…"
+                        value={pluginQuery}
+                        onValueChange={setPluginQuery}
+                      />
+                    </motion.div>
+                  </motion.div>
+                )}
                 {catalog ? (
                   <PluginImport
                     actionTarget={pluginImportActions}
@@ -793,193 +1333,62 @@ export function Settings({
                       />
                     )}
                   </div>
-                  <div className={styles.pluginCategories}>
-                    {pluginGroups.map((group) => (
-                      <section
-                        aria-labelledby={`plugin-category-${group.id}`}
-                        key={group.id}
+                  {catalog &&
+                    (["all", "essentials"] as const).map((filter) => (
+                      <div
+                        key={filter}
+                        hidden={filter !== pluginFilter}
+                        className={
+                          filter === pluginFilter
+                            ? styles.pluginCategories
+                            : undefined
+                        }
+                        role="tabpanel"
+                        id={`plugin-results-${filter}`}
+                        aria-labelledby={`plugin-results-${filter}-tab`}
                       >
-                        <InlineHeader
-                          id={`plugin-category-${group.id}`}
-                          title={
-                            <span className={styles.pluginCategoryTitle}>
-                              <span>{group.label}</span>
-                              <span className={styles.pluginCount}>
-                                {group.plugins.length}
-                                <span className="sr-only">
-                                  {group.plugins.length === 1
-                                    ? " plugin"
-                                    : " plugins"}
-                                </span>
-                              </span>
-                            </span>
-                          }
-                        />
-                        <SettingsGroup>
-                          {group.plugins.map((plugin) => {
-                            const id = plugin.manifest.id;
-                            const active = id === selectedPluginId;
-                            const running = activation[id];
-                            const failure =
-                              plugin.error ??
-                              (running?.revision === plugin.revision
-                                ? running.error
-                                : null);
-                            return (
-                              <div key={id}>
-                                <article className={styles.plugin}>
-                                  <button
-                                    type="button"
-                                    className={styles.pluginRow}
-                                    data-enabled={plugin.enabled}
-                                    data-updatable={
-                                      (plugin.source === "external" &&
-                                        !!plugins.imports) ||
-                                      undefined
-                                    }
-                                    aria-label={`View ${plugin.manifest.name} details`}
-                                    aria-describedby={
-                                      [
-                                        plugin.manifest.description
-                                          ? `plugin-description-${id}`
-                                          : null,
-                                        plugin.source === "external" &&
-                                        plugin.publisher
-                                          ? `plugin-publisher-${id}`
-                                          : null,
-                                        isEssentialPlugin(plugin)
-                                          ? `plugin-essential-${id}`
-                                          : null,
-                                      ]
-                                        .filter(Boolean)
-                                        .join(" ") || undefined
-                                    }
-                                    aria-expanded={active}
-                                    aria-controls={
-                                      active ? "plugin-details" : undefined
-                                    }
-                                    onClick={(event) => {
-                                      pluginTrigger.current =
-                                        event.currentTarget;
-                                      setSelectedPluginId(
-                                        active ? undefined : id,
-                                      );
-                                    }}
-                                  >
-                                    {isEssentialPlugin(plugin) && (
-                                      <span
-                                        id={`plugin-essential-${id}`}
-                                        className="sr-only"
-                                      >
-                                        Essential
-                                      </span>
-                                    )}
-                                    <ChoiceRow
-                                      leading={<PluginIcon plugin={plugin} />}
-                                      label={
-                                        <span className={styles.pluginName}>
-                                          {plugin.manifest.name}
-                                          {plugin.source === "bundled" && (
-                                            <CheckCircleIcon
-                                              size={14}
-                                              strokeWidth={2.5}
-                                              aria-hidden="true"
-                                            />
-                                          )}
-                                          {isEssentialPlugin(plugin) && (
-                                            <SparklesIcon
-                                              size={14}
-                                              aria-hidden={false}
-                                              role="img"
-                                              aria-label="Essential"
-                                              data-essential
-                                            />
-                                          )}
-                                        </span>
-                                      }
-                                      description={
-                                        plugin.manifest.description ? (
-                                          <span id={`plugin-description-${id}`}>
-                                            {plugin.manifest.description}
-                                          </span>
-                                        ) : undefined
-                                      }
-                                    />
-                                    {plugin.source === "external" && (
-                                      <span id={`plugin-publisher-${id}`}>
-                                        <PluginProvenance
-                                          source={plugin.source}
-                                          publisher={plugin.publisher}
-                                          className={styles.pluginRowAuthor}
-                                        />
-                                      </span>
-                                    )}
-                                  </button>
-                                  <div className={styles.pluginRowAction}>
-                                    {plugin.source === "external" &&
-                                      plugins.imports &&
-                                      catalog && (
-                                        <Button
-                                          size="sm"
-                                          aria-label={`Update ${plugin.manifest.name}`}
-                                          data-plugin-update-id={id}
-                                          disabled={busy}
-                                          onClick={() =>
-                                            setUpdatingPluginId(id)
-                                          }
-                                        >
-                                          Update
-                                        </Button>
-                                      )}
-                                    {isRequiredPlugin(plugin) ? (
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        disabled
-                                      >
-                                        Required
-                                      </Button>
-                                    ) : (
-                                      <Button
-                                        variant={
-                                          plugin.enabled
-                                            ? "subtle"
-                                            : "prominent"
-                                        }
-                                        size="sm"
-                                        aria-label={`${plugin.enabled ? "Disable" : "Enable"} ${plugin.manifest.name}`}
-                                        disabled={busy}
-                                        focusableWhenDisabled
-                                        onClick={() => {
-                                          if (busy) return;
-                                          void plugins.change(
-                                            plugin.enabled
-                                              ? "disable"
-                                              : "enable",
-                                            id,
-                                          );
-                                        }}
-                                      >
-                                        {plugin.enabled ? "Disable" : "Enable"}
-                                      </Button>
-                                    )}
-                                  </div>
-                                </article>
-                                {failure && (
-                                  <p
-                                    role={active ? undefined : "alert"}
-                                    className={`${styles.pluginRowError} error text-body-sm`}
-                                  >
-                                    {failure}
-                                  </p>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </SettingsGroup>
-                      </section>
+                        {filter === pluginFilter && (
+                          <>
+                            {pluginGroups.length === 0 && (
+                              <EmptyState
+                                icon={<SquaresFourIcon size={24} />}
+                                title={
+                                  pluginFiltersActive
+                                    ? coreGroup
+                                      ? "No other plugins match"
+                                      : "No plugins match"
+                                    : coreGroup
+                                      ? "No other plugins"
+                                      : "No plugins yet"
+                                }
+                                description={
+                                  pluginFiltersActive
+                                    ? "Try another search or show all plugins."
+                                    : "Additional plugins will appear here."
+                                }
+                                action={
+                                  pluginFiltersActive ? (
+                                    <Button
+                                      variant="subtle"
+                                      onClick={() => {
+                                        setPluginQuery("");
+                                        setPluginFilter("all");
+                                        pluginSearch.current?.focus();
+                                      }}
+                                    >
+                                      Clear filters
+                                    </Button>
+                                  ) : undefined
+                                }
+                              />
+                            )}
+                            <AnimatePresence initial={false} mode="popLayout">
+                              {pluginGroups.map(renderPluginGroup)}
+                            </AnimatePresence>
+                          </>
+                        )}
+                      </div>
                     ))}
-                  </div>
                 </div>
               </section>
             </div>
@@ -990,7 +1399,12 @@ export function Settings({
               plugin={selectedPlugin}
               failure={selectedFailure}
               busy={busy}
+              access={pluginAccess(selectedPlugin)}
+              onCheckAccess={() =>
+                adminAccess?.retry(selectedPlugin.manifest.id)
+              }
               plugins={plugins}
+              onToggle={() => togglePlugin(selectedPlugin)}
               close={detailsClose}
               onClose={closePluginDetails}
             />

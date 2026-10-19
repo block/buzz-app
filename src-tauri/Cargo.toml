@@ -20,7 +20,7 @@ buzz-pairing = { path = "../crates/pairing" }
 nostr-pairing = { package = "nostr", version = "0.44", features = ["nip44"] }
 tokio-util = "0.7"
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
-futures-util = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "aws_lc_rs", "std", "tls12"] }
 webpki-roots = "1"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
@@ -32,6 +32,8 @@ buzz-credential-store = { path = "../crates/credential-store" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
+buzz-audio-client = { git = "https://github.com/block/buzz.git", rev = "9e7534b79d624d2dd2e50a81940fd449c8502d49" }
+rustls-native-certs = "0.8"
 tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util", "net"] }
 sha2 = "0.10"
 hmac = "0.12"

@@ -362,6 +362,37 @@ describe("GooseRuntime", () => {
     expect(goose?.configured).toEqual(["session-1 provider=openai"]);
   });
 
+  it.each(["", "openai"])(
+    "refreshes inherited defaults without replacing explicit provider %s",
+    async (provider) => {
+      const { agent, deliver, fake, runtime } = setup();
+      runtime.sync([
+        {
+          ...agent,
+          config: { ...DEFAULT_CONFIG, provider },
+        } as unknown as Agent,
+      ]);
+      const first = message("1", "@Gander first");
+      await deliver(first);
+      await flush(100);
+      runtime.defaultsChanged();
+      await deliver(
+        message("2", "@Gander next", {
+          tags: [
+            ["h", channel],
+            ["e", first.id, "", "reply"],
+            ["p", self],
+          ],
+        }),
+      );
+      await flush(100);
+      expect(fake.geese[0]?.turns.map((turn) => turn.sessionId)).toEqual([
+        "session-1",
+        provider ? "session-1" : "session-2",
+      ]);
+    },
+  );
+
   it("runs a mention on the agent's thinking level", async () => {
     const { deliver, fake } = setup();
     await deliver(message("1", "@Gander think"), {

@@ -5,6 +5,6 @@
   "description": "View member and agent profiles and recent activity.",
   "discovery": {
     "category": "people-and-communities",
-    "tags": ["Essentials", "people"]
+    "tags": ["Core", "Essentials", "people"]
   }
 }

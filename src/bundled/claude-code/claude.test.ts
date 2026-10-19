@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { ClaudeProcess, stepLabel } from "./claude";
-import { fakeSpawn, flush } from "./claude-testing";
+import {
+  backgroundTasks,
+  fakeSpawn,
+  flush,
+  sessionState,
+} from "./claude-testing";
 
 const launch = {
   cwd: "~/.buzz",
@@ -61,6 +66,31 @@ it("resolves a message once the session is idle, and keeps the process for the n
   await expect(claude.send("again")).resolves.toEqual({ ok: true });
   expect(processes).toHaveLength(1);
   expect(processes[0]?.prompts).toEqual(["hello", "again"]);
+});
+
+it("is active in a turn of its own or with background work, but not for ambient tasks", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  await claude.send("start a build");
+  const quiet = vi.fn();
+  claude.onQuiet = quiet;
+  const [fake] = processes;
+  expect(claude.active).toBe(false);
+  backgroundTasks(fake, { ambient: true });
+  expect(claude.active).toBe(false);
+  backgroundTasks(fake, { ambient: true }, {});
+  expect(claude.active).toBe(true);
+  backgroundTasks(fake);
+  expect(claude.active).toBe(false);
+  sessionState(fake, "running");
+  expect(claude.active).toBe(true);
+  expect(claude.busy).toBe(false);
+  sessionState(fake, "idle");
+  expect(claude.active).toBe(false);
+  expect(quiet).toHaveBeenCalledTimes(2);
 });
 
 it("answers both messages of a turn that took a second one mid-way", async () => {

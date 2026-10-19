@@ -746,7 +746,9 @@ description; Select shows it as a byline in the popup while the closed trigger
 retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
-menu presentation. Use its loading state while discovering options, and keep
+menu presentation. For a closed dropdown with search inside, use Combobox.Trigger
+and Combobox.Popup with search; opening focuses the popup search input.
+Use its loading state while discovering options, and keep
 retry/cancel actions with the feature. Do not style a native select as an Input
 or attach a separate round button to mimic a combobox.
 

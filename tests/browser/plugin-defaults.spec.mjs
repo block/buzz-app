@@ -53,7 +53,7 @@ test("Bestie opts in without changing the other bundled defaults and survives re
 
 // Real App -> shell -> rail Settings-registry wiring, including the scoped
 // destination. Role and contribution-removal permutations stay in jsdom.
-test("Community admin action removes and restores the working Invite destination", async ({
+test("Membership action removes and restores the working Invite destination", async ({
   page,
   app,
 }) => {
@@ -76,11 +76,23 @@ test("Community admin action removes and restores the working Invite destination
       page.getByRole("menu", { name: "Actions for Primary" }),
     ).toBeVisible();
   };
+  await plugins(page);
+  const admin = pluginAction(page, "Membership");
+  await expect(admin).toHaveAccessibleName(/^Disable /);
+  const moderation = pluginAction(page, "Moderation");
+  await expect(moderation).toHaveAccessibleName("Disable Moderation");
+  await expect(moderation).toHaveAccessibleDescription(
+    "Access is unavailable in this build or on this relay.",
+  );
+  await expect(moderation).not.toHaveAttribute("aria-disabled", "true");
+  await moderation.click();
+  await expect(moderation).toHaveAccessibleName("Unavailable Moderation");
+  await page.reload();
+  await expect(moderation).toHaveAccessibleName("Unavailable Moderation");
+  await expect(admin).toHaveAccessibleName(/^Disable /);
   await menu();
   await expect(invite).toBeVisible();
   await page.keyboard.press("Escape");
-  await plugins(page);
-  const admin = pluginAction(page, "Community admin");
   await admin.click();
   await expect(admin).toHaveAccessibleName(/^Enable /);
   await menu();

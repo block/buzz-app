@@ -428,7 +428,7 @@ function ActivityBubble({
         <IconButton
           size="xs"
           aria-label={`Stop ${targets.map((entry) => entry.name).join(", ")}`}
-          aria-disabled={pending || undefined}
+          loading={pending}
           icon={<XIcon />}
           onFocus={() => {
             stopFocused.current = true;
@@ -448,6 +448,18 @@ function ActivityBubble({
       </span>
     </span>
   ) : undefined;
+  const offered = targets.length > 0;
+  useLayoutEffect(() => {
+    if (offered || !stopFocused.current) return;
+    stopFocused.current = false;
+    // Stop went away while its activity stays: hand focus back like retirement.
+    const document = trigger.current?.ownerDocument;
+    if (interactive && document?.activeElement === document?.body)
+      queueMicrotask(() => {
+        if (document?.activeElement === document?.body)
+          props.onFocusedRemoval?.();
+      });
+  }, [offered, interactive, props.onFocusedRemoval]);
   const summarized = !!props.renderMessageSummary;
   const wrap = (button: ReactElement) => (
     <PopoverTrigger

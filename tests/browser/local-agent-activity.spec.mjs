@@ -256,6 +256,10 @@ test("Stop opens beside a message's thread summary and stops its work", async ({
   });
   await expect(summary).toBeVisible();
   await expect(stop).toBeHidden();
+  // Hidden, Stop takes no space beside the summary.
+  expect(
+    (await row.locator("[data-activity-stop]").boundingBox())?.width,
+  ).toBeLessThan(0.5);
   const at = await settledBox(summary);
   await summary.hover();
   await expect(stop).toBeVisible();

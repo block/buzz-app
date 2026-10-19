@@ -65,9 +65,11 @@
     opacity var(--duration-state),
     visibility 0s linear var(--duration-settle);
 }
+/* Its spacing opens with it: padding cannot collapse into a 0fr track. */
 .stopSlot {
   min-width: 0;
-  padding-inline: var(--space-1);
+  padding-inline: 0;
+  transition: padding-inline var(--duration-settle) var(--easing-settle);
 }
 :where(:hover, :focus-within, :has([data-popup-open])) > .stop,
 .stop[data-pending] {
@@ -76,8 +78,13 @@
   visibility: visible;
   transition-delay: 0s;
 }
+:where(:hover, :focus-within, :has([data-popup-open])) > .stop > .stopSlot,
+.stop[data-pending] > .stopSlot {
+  padding-inline: var(--space-1);
+}
 @media (prefers-reduced-motion: reduce) {
-  .stop {
+  .stop,
+  .stopSlot {
     transition: none;
   }
 }

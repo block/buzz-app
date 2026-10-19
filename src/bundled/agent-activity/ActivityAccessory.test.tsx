@@ -684,6 +684,40 @@ it("hands focus back to the host when a focused Stop retires with its work", asy
   }
 });
 
+it("hands focus back to the host when a focused Stop goes away while its activity stays", async () => {
+  const f = fixture();
+  const agents = hosted();
+  const onFocusedRemoval = vi.fn();
+  const view = render(
+    <ActivityAccessory
+      {...f.props}
+      agents={agents}
+      onFocusedRemoval={onFocusedRemoval}
+    />,
+  );
+  try {
+    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
+    act(() => (stopButton() as HTMLElement).focus());
+    agents.interruptible.mockReturnValue(false);
+    view.rerender(
+      <ActivityAccessory
+        {...f.props}
+        agents={agents}
+        onFocusedRemoval={onFocusedRemoval}
+      />,
+    );
+    expect(stopButton()).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /View agent activity/ }),
+    ).toBeInTheDocument();
+    await act(async () => vi.runAllTicks());
+    expect(onFocusedRemoval).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it("shows a local request as stopping until its harness has stopped it", async () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);

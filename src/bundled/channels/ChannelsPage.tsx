@@ -266,8 +266,13 @@ function ChannelWorkspace({
   const behindSettings = () =>
     navigator?.snapshot().entry.target.kind === "settings";
   // A Solo start that finishes behind Settings stays put; a fresh draft
-  // replaces the submitted one so its prompt cannot be started again.
-  const [soloDraftGeneration, setSoloDraftGeneration] = useState(0);
+  // replaces the submitted one so its prompt cannot be started again. The
+  // replacement never claims focus for the visit's original request, which
+  // would pull typing out of the modal into the hidden composer.
+  const [retiredSoloDraft, setRetiredSoloDraft] = useState<{
+    generation: number;
+    signal: AbortSignal | undefined;
+  }>({ generation: 0, signal: undefined });
   const select = useCallback(
     (id: string) => {
       navigate(id);
@@ -1535,10 +1540,14 @@ function ChannelWorkspace({
               key={JSON.stringify([
                 draft.project,
                 draft.agent,
-                soloDraftGeneration,
+                retiredSoloDraft.generation,
               ])}
               focusRequest={
-                navigation?.focus === "preserve" ? 0 : (navigation?.signal ?? 0)
+                navigation?.focus === "preserve" ||
+                (retiredSoloDraft.generation > 0 &&
+                  retiredSoloDraft.signal === navigation?.signal)
+                  ? 0
+                  : (navigation?.signal ?? 0)
               }
               agent={draft.agent}
               projectId={draft.project}
@@ -1547,7 +1556,11 @@ function ChannelWorkspace({
               extensions={extensions}
               onStarted={(channelId) => {
                 if (!behindSettings()) select(channelId);
-                else setSoloDraftGeneration((generation) => generation + 1);
+                else
+                  setRetiredSoloDraft(({ generation }) => ({
+                    generation: generation + 1,
+                    signal: navigation?.signal,
+                  }));
               }}
               onFailed={(channelId, message) => {
                 notify(message, "error");

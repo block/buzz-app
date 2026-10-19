@@ -453,24 +453,45 @@ it("a new Solo chat finishing behind Settings stays put and retires its draft", 
     text: "@Scout Started behind Settings",
     recipients: [{ pubkey: agent, name: "Scout", start: 0, end: 6 }],
   });
+  let deliver!: () => void;
+  f.session.channelWrites.delivered.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        deliver = resolve;
+      }),
+  );
   f.mount();
+  // Stands in for a field in the Settings modal that owns focus.
+  const settingsField = document.createElement("input");
+  document.body.append(settingsField);
   const region = await screen.findByRole("region", { name: "New chat" });
   const user = userEvent.setup();
-  await user.click(
-    within(region).getByRole("button", { name: "Send message" }),
-  );
-  await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
-  expect(f.open).not.toHaveBeenCalled();
-  // A fresh draft replaces the submitted one, so it cannot start again.
-  await waitFor(() =>
-    expect(
+  try {
+    await user.click(
+      within(region).getByRole("button", { name: "Send message" }),
+    );
+    await waitFor(() =>
+      expect(f.session.channelWrites.delivered).toHaveBeenCalledOnce(),
+    );
+    settingsField.focus();
+    deliver();
+    await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+    expect(f.open).not.toHaveBeenCalled();
+    // A fresh draft replaces the submitted one, so it cannot start again.
+    const composer = () =>
       within(screen.getByRole("region", { name: "New chat" })).getByRole(
         "textbox",
         { name: "Message your agents" },
-      ),
-    ).not.toHaveTextContent("Started behind Settings"),
-  );
-  expect(f.session.channelWrites.create).toHaveBeenCalledOnce();
+      );
+    await waitFor(() =>
+      expect(composer()).not.toHaveTextContent("Started behind Settings"),
+    );
+    // The replacement never pulls focus out of Settings.
+    expect(settingsField).toHaveFocus();
+    expect(f.session.channelWrites.create).toHaveBeenCalledOnce();
+  } finally {
+    settingsField.remove();
+  }
 });
 
 it("gives the owner's Solo chat its tag requirement and project", async () => {

@@ -82,6 +82,8 @@ export const test = base.extend({
   membershipActivity: [false, { option: true }],
   launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
+  // Rows sharing each history second; above the page size, pages split seconds.
+  historyRowsPerSecond: [1, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
@@ -140,6 +142,7 @@ export const test = base.extend({
       membershipActivity,
       launchAnimation,
       historyCounts,
+      historyRowsPerSecond,
       channelIds: channels,
       pluginFixtures,
       developmentReact,
@@ -441,7 +444,7 @@ export const test = base.extend({
               ],
               `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}${syntax ? `\n${syntax}` : ""}`,
               readState ? peerKey : userKey,
-              1700000100 + i,
+              1700000100 + Math.floor(i / historyRowsPerSecond),
             );
           }),
         );

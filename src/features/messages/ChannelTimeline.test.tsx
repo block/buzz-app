@@ -225,6 +225,7 @@ function setup({
     scrollSize: 3649.5,
     viewportSize: 668,
     cache: [],
+    findItemIndex: () => 0,
     scrollTo: vi.fn(),
     scrollToIndex: vi.fn(),
   };

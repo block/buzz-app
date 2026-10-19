@@ -1,6 +1,6 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open, settle } from "./timeline.mjs";
+import { anchor, expectAnchor, open, settle, wheel } from "./timeline.mjs";
 
 test.use({
   productionBroker: true,
@@ -185,6 +185,38 @@ test.describe("quota retry without threshold-driven continuation", () => {
     expect(cursors()).toHaveLength(count + 1);
     expect(browserCursors).toHaveLength(count + 1);
     expect(app.pending).toHaveLength(0);
+  });
+});
+
+test.describe("pages inside one second", () => {
+  // More rows share a second than a page holds, so the next page sorts below
+  // the loaded first row: relay pages break ties by id, rows by send time.
+  test.use({ historyRowsPerSecond: 30 });
+  test("an older page below the first row keeps the reading position", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await history(page).hover();
+    await wheel(page, -250);
+    await expect.poll(() => app.pending.length).toBe(1);
+    const pending = app.pending.shift();
+    expect(
+      pending.events.every(
+        (event) => event.created_at === pending.filter.until,
+      ),
+    ).toBe(true);
+    const before = await anchor(page);
+    const height = await history(page).evaluate((e) => e.scrollHeight);
+    pending.release();
+    await expect
+      .poll(() => history(page).evaluate((e) => e.scrollHeight))
+      .toBeGreaterThan(height);
+    await settle(page);
+    await expectAnchor(page, before);
+    await expect(
+      page.getByRole("button", { name: "Jump to latest", exact: true }),
+    ).toBeVisible();
   });
 });
 

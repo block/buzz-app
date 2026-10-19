@@ -325,10 +325,9 @@ function Timeline({
     undefined,
   );
   const edges = useRef<{
-    first?: string | undefined;
-    last?: string | undefined;
+    order: readonly string[];
     ids: ReadonlySet<string>;
-  }>({ ids: new Set() });
+  }>({ order: [], ids: new Set() });
   const intent = useRef(0);
   const upwardGesture = useRef<false | "candidate" | "moving">(false);
   const gestureFrame = useRef<number | undefined>(undefined);
@@ -529,10 +528,21 @@ function Timeline({
       .at(-1)?.id,
     enabled: marksRead,
   });
+  // Shift keeps the distance from the end. Relay pages break same-second ties
+  // by id, rows by send time, so a page can also land below the first row;
+  // it is still a prepend while the rows from the reader's view down are kept.
+  const previous = edges.current.order;
+  const reading = previous.slice(
+    handle.current?.findItemIndex(handle.current.scrollOffset) ?? 0,
+  );
   const prepend =
-    !!edges.current.first &&
-    edges.current.first !== rows[0]?.id &&
-    edges.current.last === rows.at(-1)?.id;
+    !!previous.length &&
+    previous.at(-1) === rows.at(-1)?.id &&
+    (previous[0] !== rows[0]?.id ||
+      (rows.length > previous.length &&
+        reading.every(
+          (id, index) => rows[rows.length - reading.length + index]?.id === id,
+        )));
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -625,8 +635,7 @@ function Timeline({
       ? 0
       : rows.filter((row) => !previousIds.has(row.id)).length;
     edges.current = {
-      first: rows[0]?.id,
-      last: rows.at(-1)?.id,
+      order: rows.map((row) => row.id),
       ids: new Set(rows.map((row) => row.id)),
     };
     if (

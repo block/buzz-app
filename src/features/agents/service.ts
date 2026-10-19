@@ -1504,7 +1504,7 @@ export class AgentsService extends Service implements Agents {
         return channelTemplates.snapshot().map((template) => ({
           name: template.name,
           canvas: template.canvas,
-          agents: templateAgents(template, this.teamList, here),
+          agents: templateAgents(template, this.state.teams, here),
         }));
       },
       tabs: (agent) => {
@@ -3800,8 +3800,11 @@ export class AgentsService extends Service implements Agents {
         info: (signal) => nativeRelayInfo(origin, signal),
         strip: (pubkey, side, accepted) =>
           this.stripLocal(pubkey, side, accepted),
-        retire: (id) =>
-          this.writeTeams(this.teamList.filter((team) => team.id !== id)),
+        retire: async (id, teamId) => {
+          // Saved templates follow the team before its old id goes.
+          channelTemplates.replaceTeam(id, teamId);
+          await this.writeTeams(this.teamList.filter((team) => team.id !== id));
+        },
         changed: () => {
           this.showTeams();
           this.update();

@@ -216,8 +216,9 @@ export type CommunityConfigInput = Readonly<{
   strip(pubkey: string, side: Side, accepted?: RelayEvent): void;
   /** Reports each binding change, so starts and the UI re-resolve. */
   changed(): void;
-  /** Removes a local team's row once its move onto the relay is done. */
-  retire(localTeamId: string): Promise<void>;
+  /** Hands a local team over to relay team `teamId` once its move onto the
+   * relay is done: its row goes, and references to it follow. */
+  retire(localTeamId: string, teamId: string): Promise<void>;
   enabled?: boolean;
 }>;
 
@@ -290,7 +291,7 @@ export function agentConfigs(
     communityId?: string | undefined;
     strip(pubkey: string, side: Side, accepted?: RelayEvent): void;
     changed(): void;
-    retire(localTeamId: string): Promise<void>;
+    retire(localTeamId: string, teamId: string): Promise<void>;
     dispose?(): void;
   }>,
 ) {
@@ -348,7 +349,7 @@ export function agentConfigs(
       // a relay team that may exist or appear later, so it is never
       // dismissed: the prompt never gets both copies, and the row is never
       // lost. The owner finishes it with Resubmit instead.
-      if (op.local && established(op)) await input.retire(op.local);
+      if (op.local && established(op)) await input.retire(op.local, op.teamId);
       else if (op.local)
         throw new Error(
           "This move never took over its relay team, so it can't be dismissed. Resubmit it to finish; if the team is archived, recover it first.",

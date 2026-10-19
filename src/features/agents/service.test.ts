@@ -9,7 +9,7 @@ import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
-import { channelTemplates } from "../channel-templates/local";
+import { channelTemplates, templateAgents } from "../channel-templates/local";
 import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
 import { keypair, message, signed } from "../relay/testing";
 import type { LiveBatch } from "../relay/incoming";
@@ -7012,6 +7012,10 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
 });
 
 describe("Delete as a recoverable archive", () => {
+  // Saved channel templates live in the app's localStorage.
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", memoryStorage());
+  });
   type Life = "active" | "archiving" | "archived" | "recovering";
   /** One community's config whose archive state lands in the service's own
    * lifecycle journal, as the real one's does. */
@@ -7057,6 +7061,7 @@ describe("Delete as a recoverable archive", () => {
   }
   afterEach(() => {
     communityFake.value = null;
+    vi.unstubAllGlobals();
   });
   const mention = (f: Awaited<ReturnType<typeof setup>>, id: string) =>
     f.emit({
@@ -8914,6 +8919,60 @@ describe("Delete as a recoverable archive", () => {
           h.content.includes("OTHER OWNER RULE"),
         ),
       ).toBe(false);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it("a saved template follows a local team moved onto the relay, across a restart", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const storage = memoryStorage();
+    const local = {
+      id: "local-templated",
+      name: "Templated",
+      instructions: "TEMPLATED RULE",
+      members: [alder],
+    };
+    writeTeams(storage, [local]);
+    const target = await importedTeamId({
+      owner: viewer,
+      community: COMMUNITY_UUID,
+      source: "local-team",
+      sourceId: local.id,
+    });
+    const template = channelTemplates.save({
+      name: "Launch",
+      teams: [local.id],
+      agents: [],
+      canvas: "",
+    });
+    const first = await setup({ storage, identities: [here(alder)] });
+    try {
+      await vi.waitFor(() => expect(readTeams(storage)).toEqual([]));
+    } finally {
+      await first.ctx.fiber.dispose();
+    }
+    const f = await setup({ storage, identities: [here(alder)] });
+    try {
+      await vi.waitFor(() =>
+        expect(f.service.snapshot().teams.map((t) => t.id)).toEqual([target]),
+      );
+      const saved = channelTemplates
+        .snapshot()
+        .find((t) => t.id === template.id);
+      expect(saved?.teams).toEqual([target]);
+      // The create dialog's expansion, from the teams Agents shows.
+      expect(
+        saved &&
+          templateAgents(saved, f.service.snapshot().teams, new Set([alder])),
+      ).toEqual([alder]);
+      // The agent-facing expansion.
+      mentionAlder(f, "templated");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
+      expect(f.run.mock.calls.at(-1)?.[0].agent.templates()).toContainEqual(
+        expect.objectContaining({ name: "Launch", agents: [alder] }),
+      );
     } finally {
       await f.ctx.fiber.dispose();
     }

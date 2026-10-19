@@ -274,6 +274,46 @@ creationSidebar(
   },
 );
 
+test("hovering a sidebar row inks only that row, not its siblings", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  // Buzzin' light is where hover ink differs from resting navigation ink.
+  await page.evaluate(() => {
+    document.documentElement.dataset.colorMode = "light";
+    document.documentElement.dataset.colorLevel = "full";
+  });
+  const pages = page.getByRole("navigation", { name: "Pages", exact: true });
+  const inbox = pages.getByRole("button", { name: "Inbox", exact: true });
+  // The fixture registers one sidebar page; real communities list several
+  // as siblings in this list. Add an inert sibling row with the same markup.
+  const sibling = pages.locator("[data-sibling-probe]");
+  const [hoverInk, restInk] = await inbox.evaluate((row) => {
+    const copy = row.cloneNode(true);
+    copy.setAttribute("data-sibling-probe", "");
+    copy.setAttribute("tabindex", "-1");
+    copy.setAttribute("aria-hidden", "true");
+    row.after(copy);
+    const probe = (color) => {
+      const span = document.createElement("span");
+      span.style.color = color;
+      row.append(span);
+      const value = getComputedStyle(span).color;
+      span.remove();
+      return value;
+    };
+    return [probe("var(--text-row)"), probe("var(--text-navigation)")];
+  });
+  expect(hoverInk).not.toBe(restInk);
+  // Rows transition into the new level's ink; settle before hovering.
+  await expect(inbox).toHaveCSS("color", restInk);
+  await expect(sibling).toHaveCSS("color", restInk);
+  await inbox.hover();
+  await expect(inbox).toHaveCSS("color", hoverInk);
+  await expect(sibling).toHaveCSS("color", restInk);
+});
+
 test("channel navigation preserves sidebar DOM and group state", async ({
   page,
   app,

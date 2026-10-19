@@ -306,6 +306,16 @@ test("Solo sidebar shares working activity, keyboard preview and local panel nav
   await expect(action).toHaveCSS("opacity", "1");
   // The selected row's fill is the action's state; the action adds none.
   await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  // Hovering a selected row's action keeps the selection's ink on the row.
+  const selectedInk = await alpha.evaluate((row) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--text-row-selected)";
+    row.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await expect(alpha).toHaveCSS("color", selectedInk);
   await page.mouse.click(x, y);
   await expect(
     page.getByRole("menu", { name: "Actions for Alpha", exact: true }),

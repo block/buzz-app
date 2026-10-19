@@ -702,6 +702,13 @@ function Timeline({
   const pendingReveal = useRef<{ id: string; intent: number } | undefined>(
     undefined,
   );
+  // A page lands in the commit that ends its load. Track loading apart from
+  // positioning, which must not rerun when a load starts.
+  const loadingOlder = useRef(false);
+  useLayoutEffect(() => {
+    loadingOlder.current = window.loadingOlder;
+    if (window.loadingOlder) edges.current.paging = true;
+  }, [window.loadingOlder]);
   useLayoutEffect(() => {
     if (
       pendingReveal.current &&
@@ -727,7 +734,7 @@ function Timeline({
     // returns rows of that second, which are new only when no page landed.
     // Rows landing above the kept rows the reader sees are history too.
     const { floor } = edges.current;
-    const paged = edges.current.paging && !window.loadingOlder;
+    const paged = edges.current.paging && !loadingOlder.current;
     const arrivals = prepend
       ? 0
       : rows.filter(
@@ -739,7 +746,7 @@ function Timeline({
       order: rows.map((row) => row.id),
       ids: new Set(rows.map((row) => row.id)),
       floor: rows[0]?.createdAt ?? 0,
-      paging: window.loadingOlder,
+      paging: loadingOlder.current,
     };
     if (
       arrivals > 0 &&
@@ -877,7 +884,6 @@ function Timeline({
     rows,
     size,
     prepend,
-    window.loadingOlder,
     recordPosition,
     targetId,
     targetSignal,

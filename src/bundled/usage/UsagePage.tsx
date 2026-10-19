@@ -2,6 +2,7 @@ import {
   type ReactNode,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -52,6 +53,9 @@ type Load = Readonly<{
   failed: readonly Agent[];
 }>;
 const keyOf = (agent: Agent) => `${agent.pubkey}:${agent.type}`;
+/** The agent as a read sees it: a rename or new configuration reads again. */
+const readKey = (agent: Agent) =>
+  JSON.stringify([keyOf(agent), agent.name, agent.config]);
 
 /** Reads each agent's sessions from its type, `READ_DAYS` back for every
  * period, again when the agents or `reload` change; earlier results stay shown
@@ -61,11 +65,11 @@ function useUsage(agents: Agents, keys: string, reload: number) {
   const [load, setLoad] = useState<Load>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh reads the same agents again.
   useEffect(() => {
-    const wanted = new Set(keys.split(","));
+    const wanted = new Set(keys.split("\n"));
     const types = agents.types();
     const targets = agents
       .snapshot()
-      .agents.filter((agent) => wanted.has(keyOf(agent)));
+      .agents.filter((agent) => wanted.has(readKey(agent)));
     const controller = new AbortController();
     const now = Date.now();
     setLoad((current) => current && { ...current, loading: true });
@@ -128,8 +132,8 @@ export function UsagePage({
     agents.types,
   );
   const [days, setDays] = useState(30);
-  const [agentFilter, setAgentFilter] = useState(ALL);
-  const [harnessFilter, setHarnessFilter] = useState(ALL);
+  const [chosenAgent, setAgentFilter] = useState(ALL);
+  const [chosenHarness, setHarnessFilter] = useState(ALL);
   const [reload, setReload] = useState(0);
   const harnesses = types.filter((type) => type.usage);
   // Only agents here run sessions on this computer.
@@ -138,7 +142,7 @@ export function UsagePage({
       agent.place === "here" &&
       harnesses.some((type) => type.key === agent.type),
   );
-  const keys = targets.map(keyOf).join();
+  const keys = targets.map(readKey).join("\n");
   const load = useUsage(
     agents,
     snapshot.status === "ready" ? keys : "",
@@ -147,6 +151,13 @@ export function UsagePage({
   const usedHarnesses = harnesses.filter((type) =>
     targets.some((agent) => agent.type === type.key),
   );
+  // A choice that is gone, with its menu perhaps, filters nothing.
+  const agentFilter = targets.some((agent) => agent.pubkey === chosenAgent)
+    ? chosenAgent
+    : ALL;
+  const harnessFilter = usedHarnesses.some((type) => type.key === chosenHarness)
+    ? chosenHarness
+    : ALL;
   // Colors follow the harness, not its rank or the filters; harnesses past
   // the chart's colors share the last as Other.
   const own =
@@ -177,19 +188,34 @@ export function UsagePage({
     `var(--chart-series-${SERIES})`;
   const titleOf = (harness: string) =>
     harnesses.find((type) => type.key === harness)?.title ?? harness;
-  const result = useMemo(() => {
+  const shown = useMemo(() => {
     if (!load) return undefined;
     const included = (agent: Agent) =>
       (agentFilter === ALL || agent.pubkey === agentFilter) &&
       (harnessFilter === ALL || agent.type === harnessFilter);
-    return stats(
-      load.usage.filter((entry) => included(entry.agent)),
-      load.now,
-      days,
-      new Set(load.failed.filter(included).map((agent) => agent.type)),
-    );
+    const failed = load.failed.filter(included);
+    return {
+      result: stats(
+        load.usage.filter((entry) => included(entry.agent)),
+        load.now,
+        days,
+        new Set(failed.map((agent) => agent.type)),
+      ),
+      unread: failed.length > 0,
+    };
   }, [load, agentFilter, harnessFilter, days]);
+  const result = shown?.result;
   const loading = !load || load.loading;
+  const refresh = useRef<HTMLButtonElement>(null);
+  const retrying = useRef(false);
+  // A retry that succeeds removes its button: focus moves to Refresh, unless
+  // it moved elsewhere.
+  useEffect(() => {
+    if (!retrying.current || loading) return;
+    retrying.current = false;
+    if (!load?.failed.length && document.activeElement === document.body)
+      refresh.current?.focus();
+  }, [load, loading]);
 
   let body: ReactNode;
   if (snapshot.status === "error" || snapshot.status === "unavailable")
@@ -217,6 +243,7 @@ export function UsagePage({
       <Dashboard
         days={days}
         result={result}
+        unread={shown?.unread ?? false}
         series={
           harnessFilter === ALL
             ? series
@@ -297,8 +324,11 @@ export function UsagePage({
               <Button
                 size="sm"
                 variant="ghost"
-                disabled={loading}
-                onClick={() => setReload((value) => value + 1)}
+                loading={loading}
+                onClick={() => {
+                  retrying.current = true;
+                  setReload((value) => value + 1);
+                }}
               >
                 Try again
               </Button>
@@ -322,12 +352,13 @@ export function UsagePage({
             actions={
               targets.length > 0 && (
                 <IconButton
+                  ref={refresh}
                   size="sm"
                   variant="ghost"
                   icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
                   aria-label="Refresh usage"
                   title="Refresh usage"
-                  disabled={loading}
+                  loading={loading}
                   onClick={() => setReload((value) => value + 1)}
                 />
               )
@@ -345,6 +376,7 @@ export function UsagePage({
 function Dashboard({
   days,
   result,
+  unread,
   series,
   colorOf,
   titleOf,
@@ -354,6 +386,8 @@ function Dashboard({
 }: {
   days: number;
   result: ReturnType<typeof stats>;
+  /** Whether a read of an agent shown failed. */
+  unread: boolean;
   series: readonly Series[];
   colorOf(harness: string): string;
   titleOf(harness: string): string;
@@ -380,7 +414,13 @@ function Dashboard({
     <div className={styles.body}>
       {filters}
       {notice}
-      {!result.sessions ? (
+      {!result.sessions && unread ? (
+        <EmptyState
+          icon={<ChartBarIcon size="1.5rem" />}
+          title="No sessions read"
+          description="The sessions that couldn’t be read may include some from this period. Try again to read them."
+        />
+      ) : !result.sessions ? (
         <EmptyState
           icon={<ChartBarIcon size="1.5rem" />}
           title="No sessions in this period"

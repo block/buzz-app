@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { EventData } from "../../features/relay/events";
 import { turnPrompt } from "../claude-code/prompt";
 import { type FakeSession, fakeSpawn } from "./goose-testing";
@@ -140,4 +140,37 @@ it("reads the agent's sessions in its workspace through goose, every page", asyn
     tokens: { input: 1, cacheRead: 2, cacheWrite: 3 },
     cost: { usd: 0.5 },
   });
+});
+
+it("stops goose when a read is cancelled while an export is pending", async () => {
+  const export_ = "_goose/unstable/session/export";
+  const goose = fakeSpawn({
+    home: "/home/test",
+    history: [
+      {
+        sessionId: "mine",
+        title: "Grok · #general · mine",
+        cwd: "/home/test/.buzz",
+        updatedAt: "2027-01-15T08:00:00Z",
+        conversation: [user(ask()), reply(start + 1, tokens(1, 2, 3, 0.5))],
+      },
+    ],
+    silent: [export_],
+  });
+  const controller = new AbortController();
+  const reading = readUsage(
+    new GooseHistory(goose.spawn),
+    agent,
+    "~/.buzz",
+    Date.parse("2026-06-01T00:00:00Z"),
+    controller.signal,
+  );
+  await vi.waitFor(() =>
+    expect(
+      goose.geese[0]?.received.some((message) => message.method === export_),
+    ).toBe(true),
+  );
+  controller.abort(new Error("left the page"));
+  await expect(reading).rejects.toThrow("left the page");
+  expect(goose.geese[0]?.killed).toBe(true);
 });

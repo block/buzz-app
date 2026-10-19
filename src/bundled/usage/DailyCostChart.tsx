@@ -1,5 +1,7 @@
 import { scaleBand, scaleLinear } from "d3-scale";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
+import { CaretDownIcon } from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import styles from "./Usage.module.css";
 import { costText } from "./format";
@@ -51,6 +53,8 @@ export function DailyCostChart({
   const frame = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hovered, setHovered] = useState<number>();
+  const [figures, setFigures] = useState(false);
+  const table = useId();
   useLayoutEffect(() => {
     const element = frame.current;
     if (!element) return;
@@ -227,8 +231,22 @@ export function DailyCostChart({
             </Tooltip>
           ))}
       </div>
-      <table className="sr-only">
-        <caption>Daily cost</caption>
+      <div className={styles.figuresToggle}>
+        <Button
+          variant="plain"
+          size="inline"
+          shape="control"
+          aria-expanded={figures}
+          aria-controls={table}
+          onClick={() => setFigures((shown) => !shown)}
+        >
+          {figures ? "Hide daily figures" : "Show daily figures"}
+          <CaretDownIcon aria-hidden="true" />
+        </Button>
+      </div>
+      {/* Screen readers have the table either way. */}
+      <table id={table} className={figures ? styles.figures : "sr-only"}>
+        <caption className="sr-only">Daily cost</caption>
         <thead>
           <tr>
             <th scope="col">Day</th>

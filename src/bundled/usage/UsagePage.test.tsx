@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
@@ -120,10 +120,12 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
     />,
   );
   expect(screen.getByText("Reading your agents’ sessions…")).toBeTruthy();
+  // Busy, yet it keeps its place for the keyboard.
   expect(
-    (screen.getByRole("button", { name: "Refresh usage" }) as HTMLButtonElement)
-      .disabled,
-  ).toBe(true);
+    screen
+      .getByRole("button", { name: "Refresh usage" })
+      .getAttribute("aria-busy"),
+  ).toBe("true");
   finish();
   expect(
     await screen.findByText(
@@ -160,9 +162,11 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
 
 it("names the agents it could not read and reads them again", async () => {
   let fail = true;
+  let reads = 0;
   render(
     <UsagePage
       agents={host([agent("Pixel")], async () => {
+        reads += 1;
         if (fail) throw new Error("no workspace");
         return [session("a", 250_000)];
       })}
@@ -172,17 +176,101 @@ it("names the agents it could not read and reads them again", async () => {
   expect((await screen.findByRole("status")).textContent).toContain(
     "Couldn’t read the sessions of Pixel.",
   );
-  // Filters stay reachable with no sessions to show.
-  expect(screen.getByText("No sessions in this period")).toBeTruthy();
+  // A failed read is no evidence of an empty period; filters stay reachable.
+  expect(screen.getByText("No sessions read")).toBeTruthy();
+  expect(screen.queryByText("No sessions in this period")).toBeNull();
   expect(screen.getByRole("combobox", { name: "Period" })).toBeTruthy();
+  // A retry that fails again keeps the keyboard on Try again.
+  const user = userEvent.setup();
+  const retry = screen.getByRole("button", { name: "Try again" });
+  retry.focus();
+  await user.keyboard("{Enter}");
+  await vi.waitFor(() => expect(reads).toBe(2));
+  await vi.waitFor(() => expect(retry.getAttribute("aria-busy")).toBeNull());
+  expect(document.activeElement).toBe(retry);
+  // One that succeeds removes it, and the keyboard moves to Refresh.
   fail = false;
-  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await user.keyboard("{Enter}");
   expect(
     await screen.findByText(
       summary("Pixel ran 1 session in the last 30 days."),
     ),
   ).toBeTruthy();
   expect(screen.queryByRole("status")).toBeNull();
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Refresh usage" }),
+  );
+});
+
+it("reads again when an agent is renamed or reconfigured", async () => {
+  const pixel = agent("Pixel");
+  const names: string[] = [];
+  let listeners: (() => void)[] = [];
+  const agents = host([pixel], async (target) => {
+    names.push(target.name);
+    return [];
+  });
+  let snapshot = agents.snapshot();
+  const live = {
+    ...agents,
+    snapshot: () => snapshot,
+    types: agents.types,
+    subscribe: (listener: () => void) => {
+      listeners.push(listener);
+      return () => {
+        listeners = listeners.filter((entry) => entry !== listener);
+      };
+    },
+  } as unknown as Agents;
+  render(<UsagePage agents={live} open={vi.fn()} />);
+  await vi.waitFor(() => expect(names).toEqual(["Pixel"]));
+  const renamed = { ...pixel, name: "Pix", config: { workspace: "~/pix" } };
+  snapshot = { ...snapshot, agents: [renamed], running: [renamed] };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  await vi.waitFor(() => expect(names).toEqual(["Pixel", "Pix"]));
+});
+
+it("drops a filter whose agent is gone", async () => {
+  const pixel = agent("Pixel");
+  const relay = agent("Relay");
+  let listeners: (() => void)[] = [];
+  const agents = host([pixel, relay], async (target) => [
+    session(target === pixel ? "a" : "b", target === pixel ? 750_000 : 250_000),
+  ]);
+  let snapshot = agents.snapshot();
+  const live = {
+    ...agents,
+    snapshot: () => snapshot,
+    types: agents.types,
+    subscribe: (listener: () => void) => {
+      listeners.push(listener);
+      return () => {
+        listeners = listeners.filter((entry) => entry !== listener);
+      };
+    },
+  } as unknown as Agents;
+  render(<UsagePage agents={live} open={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("combobox", { name: "Agent" }));
+  await user.click(await screen.findByRole("option", { name: "Relay" }));
+  expect(
+    await screen.findByText(
+      summary("Relay ran 1 session in the last 30 days."),
+    ),
+  ).toBeTruthy();
+  // Relay leaves, and the Agent menu with it: Pixel's usage shows.
+  snapshot = { ...snapshot, agents: [pixel], running: [pixel] };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  expect(
+    await screen.findByText(
+      summary("Pixel ran 1 session in the last 30 days."),
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "Agent" })).toBeNull();
 });
 
 it("switches periods without reading again, comparing only 7 days", async () => {
@@ -282,6 +370,15 @@ it("says what it could not count instead of counting it as zero", async () => {
   const today = within(screen.getByRole("table")).getAllByRole("row").at(-1);
   expect(today?.textContent).toContain("Unavailable");
   expect(today?.textContent).not.toContain("$0.00");
+  // The figures show for the keyboard too, not only to screen readers.
+  const table = screen.getByRole("table");
+  expect(table.className).toBe("sr-only");
+  const toggle = screen.getByRole("button", { name: "Show daily figures" });
+  toggle.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(toggle.textContent).toBe("Hide daily figures");
+  expect(table.className).not.toBe("sr-only");
 });
 
 it("keeps a day unknown when the only harness active then is unpriced", async () => {

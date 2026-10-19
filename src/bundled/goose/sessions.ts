@@ -545,7 +545,10 @@ export async function absolute(spawn: Spawn, workspace: string) {
 }
 
 /** `work`, or a rejection with `signal`'s reason once it aborts. */
-function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+export function abortable<T>(
+  work: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   if (!signal) return work;
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(signal.reason);

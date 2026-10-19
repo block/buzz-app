@@ -10,7 +10,7 @@ import {
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
 import type { GooseProcess, Spawn } from "./goose";
-import { absolute } from "./sessions";
+import { absolute, abortable } from "./sessions";
 import { briefly } from "./setup";
 
 /** The latest turns shown; goose keeps the rest. */
@@ -469,10 +469,8 @@ export class GooseHistory {
   ) {
     const { spawn } = this;
     if (!spawn) throw new Error("goose runs only in the desktop app");
-    signal.throwIfAborted();
-    const result = await briefly(spawn, (goose) => run(goose, spawn));
-    signal.throwIfAborted();
-    return result;
+    // Cancelling rejects at once, and `briefly` then stops goose.
+    return briefly(spawn, (goose) => abortable(run(goose, spawn), signal));
   }
 }
 

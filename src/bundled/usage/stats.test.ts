@@ -231,6 +231,30 @@ it("marks the totals of a session it could not fully read as partial", () => {
   ]);
 });
 
+it("marks the previous period partial when a gapped session began in it", () => {
+  const result = stats(
+    [
+      {
+        agent: agent("pixel"),
+        harness: "x/claude",
+        sessions: [
+          session("earlier", [seen(dayStart(now, 9), full(1e6))]),
+          session("gapped", [seen(today, full(1e6))], {
+            gaps: ["A subagent’s transcript is gone"],
+            startedAt: dayStart(now, 10),
+          }),
+        ],
+      },
+    ],
+    now,
+    7,
+  );
+  expect(result.previousCost).toEqual({
+    value: expect.closeTo(4),
+    partial: true,
+  });
+});
+
 it("marks every day of a harness whose read failed as partial", () => {
   const result = stats(
     [

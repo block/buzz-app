@@ -229,3 +229,31 @@
   margin-inline-start: auto;
   padding-inline-start: var(--space-4);
 }
+.figuresToggle [aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.figures {
+  inline-size: 100%;
+  border-collapse: collapse;
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-variant-numeric: tabular-nums;
+}
+.figures th,
+.figures td {
+  padding: var(--space-1) var(--space-2);
+  border-block-end: 1px solid var(--border-standard);
+  text-align: end;
+}
+.figures th:first-child {
+  text-align: start;
+}
+.figures thead th {
+  color: var(--text-metadata);
+  font-weight: var(--type-weight-medium);
+}
+.figures tbody th {
+  font-weight: inherit;
+}

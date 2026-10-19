@@ -185,8 +185,8 @@ export async function readUsage(
   const project = await workspaceProject(spawn, workspace, signal);
   if (!project) return [];
   const [named, sidechains] = await Promise.all([
-    searchProject(spawn, project, `Agent: ${agent}`),
-    searchProject(spawn, project, '"isSidechain":true'),
+    searchProject(spawn, project, `Agent: ${agent}`, true),
+    searchProject(spawn, project, '"isSidechain":true', true),
   ]);
   signal.throwIfAborted();
   const savedNames = new Set(

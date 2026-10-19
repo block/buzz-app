@@ -222,6 +222,9 @@ export function stats(
         read.add(cacheRead);
         prompt.add(input + cacheRead + cacheWrite);
       }
+      // Or in the period before, when the session began then.
+      if (gap && session.startedAt < start && session.lastAt >= previous)
+        previousCost.partial = true;
       if (!active) continue;
       if (gap) {
         incomplete += 1;

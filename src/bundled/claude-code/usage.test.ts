@@ -271,6 +271,25 @@ it("finds the agent's sessions with the manifest's processes", async () => {
 
 /** Runs the manifest's processes for real, `~` being `home`; the workspace
  * resolves to /Users/me/.buzz. */
+it("fails rather than undercount when a search fails partway", async () => {
+  const spawn = async (id: string, options: HostProcessOptions = {}) => {
+    if (id === "workspace") options.onStdout?.("/Users/me/.buzz\n");
+    if (id === "find") {
+      options.onStdout?.("s.jsonl\n");
+      options.onStderr?.("grep: ./t.jsonl: Permission denied\n");
+    }
+    return {
+      write: async () => undefined,
+      end: async () => undefined,
+      kill: async () => undefined,
+      exited: Promise.resolve(id === "find" ? 2 : 0),
+    };
+  };
+  await expect(
+    readUsage(spawn, "~/.buzz", agent, [], 0, new AbortController().signal),
+  ).rejects.toThrow("Permission denied");
+});
+
 function processes(home: string) {
   return async (id: string, options: HostProcessOptions = {}) => {
     const declared = manifest.host.processes.find(

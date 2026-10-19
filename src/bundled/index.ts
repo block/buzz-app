@@ -61,6 +61,8 @@ import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
 import * as relayStaff from "./relay-staff";
+import typesafeManifest from "./typesafe/manifest.json";
+import * as typesafe from "./typesafe";
 
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
@@ -224,6 +226,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...relayStaffManifest, apiVersion: 1 },
     module: relayStaff,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...typesafeManifest, apiVersion: 1 },
+    module: typesafe,
     enabledByDefault: true,
   },
 ];

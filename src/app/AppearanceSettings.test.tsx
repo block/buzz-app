@@ -253,20 +253,21 @@ it("selects and restores an accent color, including retry after a failed save", 
   );
   expect(
     screen.getAllByRole("button", { name: / accent color$/ }),
-  ).toHaveLength(7);
+  ).toHaveLength(8);
+
   expect(
-    screen.getByRole("button", { name: "Chartreuse accent color" }),
+    screen.getByRole("button", { name: "Lime accent color" }),
   ).toHaveAttribute("aria-pressed", "true");
   const save = vi
     .spyOn(Storage.prototype, "setItem")
     .mockImplementationOnce(() => {
       throw new Error("denied");
     });
-  fireEvent.click(screen.getByRole("button", { name: "Gray accent color" }));
+  fireEvent.click(screen.getByRole("button", { name: "Mono accent color" }));
   expect(
-    screen.getByRole("button", { name: "Gray accent color" }),
+    screen.getByRole("button", { name: "Mono accent color" }),
   ).toHaveAttribute("aria-pressed", "true");
-  expect(document.documentElement.dataset.accent).toBe("gray");
+  expect(document.documentElement.dataset.accent).toBe("mono");
   // Each swatch previews its own family in the current mode.
   expect(
     screen.getByRole("button", { name: "Magenta accent color" }),
@@ -274,34 +275,12 @@ it("selects and restores an accent color, including retry after a failed save", 
   fireEvent.click(
     await screen.findByRole("button", { name: "Retry saving accent color" }),
   );
-  expect(localStorage.getItem("buzz-accent.v1")).toBe("gray");
+  expect(localStorage.getItem("buzz-accent.v1")).toBe("mono");
   save.mockRestore();
   appearance.dispose();
   const restored = createAppearance();
-  expect(restored.snapshot().accent).toBe("gray");
+  expect(restored.snapshot().accent).toBe("mono");
   restored.dispose();
-});
-
-it("chooses how much of the app the accent colors with a named dropdown", async () => {
-  const appearance = createAppearance();
-  render(
-    <ToastProvider>
-      <AppearanceSettings appearance={appearance} />
-    </ToastProvider>,
-  );
-  const user = userEvent.setup();
-  const level = screen.getByRole("combobox", { name: "Accent level" });
-  expect(level).toHaveTextContent("Hummin’");
-  await user.click(level);
-  await user.click(await screen.findByRole("option", { name: "Buzzin’" }));
-  expect(level).toHaveTextContent("Buzzin’");
-  expect(document.documentElement.dataset.colorLevel).toBe("full");
-  expect(localStorage.getItem("buzz-color-level.v1")).toBe("full");
-  await user.click(level);
-  await user.click(await screen.findByRole("option", { name: "Swarmin’" }));
-  expect(level).toHaveTextContent("Swarmin’");
-  expect(appearance.snapshot().colorLevel).toBe("more");
-  appearance.dispose();
 });
 
 it("saves new-thread placement, restores it, and follows another window", async () => {
@@ -367,4 +346,24 @@ it("keeps unsaved thread placement and recovery through remount, then retries th
   );
   expect(localStorage.getItem("buzz-thread-placement.v1")).toBe("main");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("switches contrast through the shared select and restores it", async () => {
+  const appearance = createAppearance();
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Contrast" }));
+  await user.click(
+    await screen.findByRole("option", { name: "High contrast" }),
+  );
+  expect(appearance.snapshot().contrast).toBe("high");
+  expect(localStorage.getItem("buzz-contrast.v1")).toBe("high");
+  appearance.dispose();
+  const restored = createAppearance();
+  expect(restored.snapshot().contrast).toBe("high");
+  restored.dispose();
 });

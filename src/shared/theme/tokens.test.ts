@@ -1,10 +1,4 @@
-import {
-  ACCENTS,
-  COLOR_LEVELS,
-  DEFAULT_ACCENT,
-  type Accent,
-  type ColorLevel,
-} from "./accent";
+import { ACCENTS, DEFAULT_ACCENT, type Accent } from "./accent";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
@@ -23,7 +17,7 @@ const blocks = [...css.matchAll(/:root[^{}]*\{([^}]+)\}/g)].map((match) =>
 function resolvedPalette(
   mode: "light" | "dark",
   accent: Accent = DEFAULT_ACCENT,
-  level: ColorLevel | "neutral" = "neutral",
+  contrastMode: "low" | "high" = "low",
 ) {
   const source = (
     readFileSync("src/shared/design-system/styles/tokens.css", "utf8") +
@@ -42,7 +36,9 @@ function resolvedPalette(
       continue;
     if (
       selector.includes('data-color-level="') &&
-      !selector.includes(`data-color-level="${level}"`)
+      !selector.includes(
+        `data-color-level="${contrastMode === "high" ? "high" : "touch"}"`,
+      )
     )
       continue;
     const dark =
@@ -194,7 +190,7 @@ it.each(["light", "dark"] as const)(
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
-    // At the neutral level, own and received bubbles are authored grays.
+    // Own and received bubbles are authored grays.
     expect(palette["--surface-message"]).toBe(palette["--bubble-received"]);
     expect(palette["--surface-message-own"]).toBe(palette["--bubble-neutral"]);
     expect(palette["--text-message-own"]).toBe(palette["--text-standard"]);
@@ -202,12 +198,12 @@ it.each(["light", "dark"] as const)(
 );
 
 it.each(ACCENTS)(
-  "%s message fill keeps text and send icons readable at every level",
+  "%s message fill keeps text and send icons readable in both modes",
   (color) => {
-    for (const level of COLOR_LEVELS)
-      for (const mode of ["light", "dark"] as const) {
-        const palette = resolvedPalette(mode, color, level);
-        const where = `${color}/${level}/${mode}`;
+    for (const mode of ["light", "dark"] as const)
+      for (const contrastMode of ["low", "high"] as const) {
+        const palette = resolvedPalette(mode, color, contrastMode);
+        const where = `${color}/${mode}`;
         // Highlights come from the family's tint, never a mixed bubble color.
         expect(palette["--surface-message-highlight"], where).toBe(
           palette["--affordance-accent"],
@@ -216,6 +212,8 @@ it.each(ACCENTS)(
           ["--text-message-own", "--surface-message-own"],
           ["--text-message-link-own", "--surface-message-own"],
           ["--text-on-prominent", "--affordance-prominent"],
+          ["--text-navigation-selected", "--surface-navigation-selected"],
+          ["--text-navigation-selected", "--bg-chrome-selected"],
           // Supported legacy/plugin markup must keep the same paired ink.
           ["--on-primary", "--primary"],
           ["--text-standard", "--surface-message"],
@@ -228,20 +226,49 @@ it.each(ACCENTS)(
   },
 );
 
-it("the default brand fill takes its darkest olive as ink, and A touch keeps own bubbles pale", () => {
+it("the default Lime accent keeps its strong fill and paired black ink", () => {
   for (const mode of ["light", "dark"] as const) {
-    const touch = resolvedPalette(mode, "chartreuse", "touch");
-    // Strong controls take the brand fill with black ink; reading text on
-    // the fill (own messages at Buzzin') uses the darkest olive.
-    expect(touch["--affordance-prominent"]).toBe("#d7d72e");
-    expect(touch["--text-on-prominent"]).toBe("#000000");
-    // Hummin' keeps your own messages neutral; Swarmin' colors them.
-    expect(touch["--surface-message-own"]).toBe(touch["--bubble-neutral"]);
-    expect(
-      resolvedPalette(mode, "chartreuse", "more")["--surface-message-own"],
-    ).toBe(touch["--accent-4"]);
-    expect(
-      resolvedPalette(mode, "chartreuse", "full")["--surface-message-own"],
-    ).toBe("#d7d72e");
+    const palette = resolvedPalette(mode);
+    expect(palette["--affordance-prominent"]).toBe("#6bce00");
+    expect(palette["--text-on-prominent"]).toBe("#000000");
   }
 });
+
+it.each(["light", "dark"] as const)(
+  "%s reading surfaces stay neutral across accents",
+  (mode) => {
+    const baseline = resolvedPalette(mode);
+    for (const accent of ACCENTS) {
+      const palette = resolvedPalette(mode, accent, "high");
+      for (const role of [
+        "--bg-app",
+        "--surface-panel",
+        "--surface-popover",
+        "--surface-message",
+        "--text-standard",
+        "--text-subtle",
+        "--border-standard",
+      ]) {
+        expect(palette[role], `${accent}: ${role}`).toBe(baseline[role]);
+      }
+    }
+  },
+);
+
+it.each(ACCENTS)(
+  "%s high contrast uses solid accent on messages and selected navigation",
+  (accent) => {
+    for (const mode of ["light", "dark"] as const) {
+      const high = resolvedPalette(mode, accent, "high");
+      const low = resolvedPalette(mode, accent, "low");
+      for (const role of [
+        "--surface-message-own",
+        "--surface-navigation-selected",
+        "--bg-chrome-selected",
+      ]) {
+        expect(high[role]).toBe(high["--accent-9"]);
+        expect(low[role]).not.toBe(high[role]);
+      }
+    }
+  },
+);

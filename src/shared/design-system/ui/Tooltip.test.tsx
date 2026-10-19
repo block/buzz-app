@@ -64,3 +64,20 @@ it("shows controlled feedback without losing descriptions and dismisses with Esc
   );
   expect(action).toHaveAccessibleDescription("Original description");
 });
+
+it("preserves an explicit trigger palette across the tooltip portal", async () => {
+  const user = userEvent.setup();
+  render(
+    <div data-accent="bee" data-color-mode="light">
+      <Tooltip content="Flame">
+        <button type="button" data-accent="flame" data-color-mode="dark">
+          Flame swatch
+        </button>
+      </Tooltip>
+    </div>,
+  );
+  await user.hover(screen.getByRole("button", { name: "Flame swatch" }));
+  const hint = await screen.findByRole("tooltip");
+  expect(hint).toHaveAttribute("data-accent", "flame");
+  expect(hint).toHaveAttribute("data-color-mode", "dark");
+});

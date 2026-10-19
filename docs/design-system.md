@@ -343,8 +343,11 @@ plugin skipped-folder disclosure, and developer diagnostics.
 External plugin settings own their content.
 
 Use `ThemePicker` at the trailing edge of a PreferenceRow for color mode. The
-color mode, interface size, accent color and accent level rows share one Appearance
-group. Accent level uses the compact `Select`, with a chip previewing each level. The
+color mode, interface size, accent color, and contrast rows share one Appearance group.
+Accent applies to actions, links, and selections. High contrast also gives own
+messages and selected navigation solid accent fills; backgrounds stay neutral.
+Use the shared compact Select for Low contrast and High contrast. The
+
 System, Light, and Dark previews retain shared radio semantics, accessible names,
 and a persistent selection outline without visible captions. Their nested light/dark
 scopes use the system's surface, text, border, and accent roles. The row wraps these choices below the label

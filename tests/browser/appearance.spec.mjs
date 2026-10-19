@@ -61,7 +61,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await page.goto(app.origin);
   await expectMode(page, "light");
   await settings(page);
-  for (const label of ["Chartreuse accent color", "Cobalt accent color"]) {
+  for (const label of ["Lime accent color", "Cobalt accent color"]) {
     const swatch = button(page, label);
     await page.mouse.move(0, 0);
     const colors = await swatch.evaluate((node) => {
@@ -260,62 +260,29 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await expect(dark).toBeChecked();
 });
 
-// Browser-only: shared popup geometry, decorative chip opacity, and focus return
-// across themes and narrow layouts. Component tests own level persistence.
-test("accent dropdown shows intensity chips and supports pointer and keyboard selection", async ({
+// Browser-only boundary: the actual shared slider's painted track/thumb,
+// Real CSS cascade and pre-paint bootstrap cannot be established in jsdom.
+test("saved vibe levels cannot tint the shell after choosing an accent or reloading", async ({
   page,
   app,
-}, testInfo) => {
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-color-level.v1", "full"),
+  );
   await page.goto(app.origin);
   await settings(page);
-  const select = page.getByRole("combobox", { name: "Accent level" });
-  for (const [mode, width] of [
-    ["Light", 1280],
-    ["Dark", 390],
-  ]) {
-    await page.setViewportSize({ width, height: 844 });
+  for (const mode of ["Light", "Dark"]) {
     await chooseColorMode(page, mode);
-    await select.click();
-    for (const [name, opacity] of [
-      ["Snoozin’", "0.25"],
-      ["Hummin’", "0.5"],
-      ["Swarmin’", "0.75"],
-      ["Buzzin’", "1"],
-    ]) {
-      const option = page.getByRole("option", { name, exact: true });
-      await expect(option).toBeVisible();
-      const chip = option.locator(".buzz-select-leading > span");
-      await expect(chip).toHaveCSS("opacity", opacity);
-      await expect(chip).toHaveCSS("width", "20px");
-      await expect(chip).toHaveCSS("height", "16px");
-    }
-    const menu = page.getByRole("listbox");
-    const bounds = await menu.boundingBox();
-    expect(bounds.x).toBeGreaterThanOrEqual(0);
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-    await page
-      .getByRole("region", { name: "Appearance", exact: true })
-      .screenshot({
-        path: testInfo.outputPath(`accent-level-${mode}.png`),
-      });
-    await page.getByRole("option", { name: "Buzzin’", exact: true }).click();
-    await expect(select).toHaveText("Buzzin’");
-    await expect(select).toBeFocused();
-    await expect(select).toHaveCSS("padding-inline-start", "8px");
-    await select.press("ArrowDown");
-    await expect(
-      page.getByRole("option", { name: "Buzzin’", exact: true }),
-    ).toBeFocused();
-    await page.keyboard.press("Home");
-    await expect(
-      page.getByRole("option", { name: "Snoozin’", exact: true }),
-    ).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(select).toHaveText("Snoozin’");
-    await expect(select).toBeFocused();
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-color-level",
-      "neutral",
+    await button(page, "Cobalt accent color").click();
+    await expectMode(page, mode.toLowerCase(), true);
+    await page.reload();
+    await expect(button(page, "Cobalt accent color")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expectMode(page, mode.toLowerCase(), true);
+    await expect(page.getByRole("slider", { name: "Vibe level" })).toHaveCount(
+      0,
     );
   }
 });
@@ -552,7 +519,8 @@ test("compiled host preserves compatibility utility meanings", async ({
       "border-top-color",
       mode === "Light" ? "rgb(232, 232, 232)" : "rgb(35, 35, 35)",
     );
-    // The legacy fill keeps meaning "prominent", whatever the accent level.
+    // The legacy fill keeps meaning "prominent", with the chosen accent.
+
     await expect(page.locator("#old-primary")).toHaveCSS(
       "background-color",
       await page.evaluate(() => {

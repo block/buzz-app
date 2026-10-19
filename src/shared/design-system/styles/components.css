@@ -281,6 +281,15 @@
     border-radius: var(--radius-pill);
   }
 
+  .buzz-button[data-color-swatch] .buzz-button-label {
+    color: var(--text-swatch-selection);
+  }
+
+  .buzz-button[data-color-swatch] .buzz-button-label > svg {
+    width: var(--space-6);
+    height: var(--space-6);
+  }
+
   /* Avatar edit badges reuse the artwork curve. Mask only the fill so the
      interactive wrapper's keyboard focus indicator remains visible. */
   .buzz-button[data-icon-shape="squircle"][data-variant="prominent"],
@@ -774,7 +783,7 @@
   }
 
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-navigation-selected);
   }
 
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-indicator {
@@ -1080,10 +1089,11 @@
   }
 
   .navigation-item[data-selected] {
-    --text-subtle: var(--interaction-selected-text);
-    --text-metadata: var(--interaction-selected-metadata);
-    background: var(--interaction-selected);
-    color: var(--text-standard);
+    --text-row: var(--text-navigation-selected);
+    --text-subtle: var(--text-navigation-selected);
+    --text-metadata: var(--text-navigation-selected);
+    background: var(--surface-navigation-selected);
+    color: var(--text-navigation-selected);
   }
 
   /* Route navigation shares flat chrome, not Tabs' focus/tabpanel contract. */
@@ -1112,7 +1122,7 @@
   .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
   .buzz-button[data-icon-variant="chrome"][aria-current="page"] {
     background: var(--bg-chrome-selected);
-    color: var(--text-standard);
+    color: var(--text-navigation-selected);
     box-shadow: var(--shadow-xs);
   }
 

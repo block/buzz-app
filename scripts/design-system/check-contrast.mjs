@@ -250,7 +250,7 @@ const TINT_PAIRS = [
 ];
 
 const css = readFileSync(TOKENS, "utf8");
-const DEFAULT_ACCENT = "chartreuse";
+const DEFAULT_ACCENT = "lime";
 /** Exceptions are approved against the neutral role layer. */
 const BASELINE_LEVEL = "neutral";
 
@@ -429,6 +429,8 @@ const accentFamilies = [
   ),
 ];
 const ACCENT_PAIRS = [
+  ["--text-navigation-selected", "--surface-navigation-selected"],
+  ["--text-navigation-selected", "--bg-chrome-selected"],
   ...["", "-hover", "-pressed"].map((state) => [
     "--text-on-accent",
     `--affordance-accent-prominent${state}`,
@@ -518,6 +520,8 @@ const isGray = (hex) => {
 const on = (foregrounds, grounds) =>
   grounds.flatMap((ground) => foregrounds.map((fg) => [fg, ground]));
 const GROUNDED = [
+  ["--text-navigation-selected", "--surface-navigation-selected"],
+  ["--text-navigation-selected", "--bg-chrome-selected"],
   ...on(
     [
       "--text-standard",
@@ -563,11 +567,7 @@ const GROUNDED = [
   ),
   ...on(
     ["--text-standard", "--text-chrome-subtle"],
-    [
-      "--affordance-chrome",
-      "--affordance-chrome-hover",
-      "--bg-chrome-selected",
-    ],
+    ["--affordance-chrome", "--affordance-chrome-hover"],
   ),
   ...on(
     [

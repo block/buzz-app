@@ -13,16 +13,17 @@
     // Storage may be denied; the system palette still opens safely.
   }
   document.documentElement.dataset.colorMode = mode;
-  let accent = "chartreuse";
+  let accent = "lime";
   try {
     const accents = [
-      "gray",
-      "chartreuse",
+      "lime",
+      "bee",
       "flame",
       "magenta",
       "iris",
       "cobalt",
       "jade",
+      "mono",
     ];
     let value = localStorage.getItem("buzz-accent.v1");
     if (value === null) {
@@ -40,19 +41,20 @@
       };
       value = legacy[localStorage.getItem("buzz-bubble-color.v1")] ?? null;
     }
+    if (value === "gray") value = "mono";
     if (accents.includes(value)) accent = value;
   } catch {
     /* The default accent remains usable without storage. */
   }
   document.documentElement.dataset.accent = accent;
-  let level = "touch";
+  let contrast = "low";
   try {
-    const value = localStorage.getItem("buzz-color-level.v1");
-    if (["neutral", "touch", "more", "full"].includes(value)) level = value;
+    if (localStorage.getItem("buzz-contrast.v1") === "high") contrast = "high";
   } catch {
-    /* The default color amount remains usable without storage. */
+    /* Low contrast remains usable without storage. */
   }
-  document.documentElement.dataset.colorLevel = level;
+  document.documentElement.dataset.colorLevel =
+    contrast === "high" ? "high" : "touch";
   let scale = 1;
   try {
     const value = Number(localStorage.getItem("buzz-font-scale.v1"));

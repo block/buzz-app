@@ -289,6 +289,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "text-swatch-selection",
+        variable: "--text-swatch-selection",
+        pointsAt: "white in both modes",
+        use: "Inset selection ring on accent color swatches.",
+        status: "core",
+      },
+      {
         token: "bg-surface-message",
         variable: "--surface-message",
         pointsAt: "bubble-received in both modes",
@@ -298,7 +305,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-surface-message-own",
         variable: "--surface-message-own",
-        pointsAt: "accent step 4 at Hummin’; step 9 at Buzzin’",
+        pointsAt: "bubble-neutral at low contrast; accent 9 at high contrast",
         use: "Own message bubbles; pair with --text-message-own.",
         status: "core",
       },
@@ -447,16 +454,15 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-message-own",
         variable: "--text-message-own",
-        pointsAt:
-          "text-standard at Neutral; accent 12, or contrast ink at Buzzin’",
+        pointsAt: "text-standard at low contrast; accent ink at high contrast",
+
         use: "Prose on the selected outgoing message surface.",
         status: "core",
       },
       {
         token: "text-message-link-own",
         variable: "--text-message-link-own",
-        pointsAt:
-          "text-link at Neutral; accent link, 12, or contrast ink as the amount rises",
+        pointsAt: "text-link at low contrast; accent ink at high contrast",
         use: "Links and mentions on the selected outgoing message surface.",
         status: "core",
       },
@@ -649,9 +655,26 @@ export const ROLE_GROUPS: RoleGroup[] = [
     description: "Shared affordance roles, with values for both themes.",
     roles: [
       {
+        token: "--surface-navigation-selected",
+        variable: "--surface-navigation-selected",
+        pointsAt:
+          "affordance-selected at low contrast; accent 9 at high contrast",
+        use: "Selected navigation fill, paired with text-navigation-selected.",
+        status: "core",
+      },
+      {
+        token: "--text-navigation-selected",
+        variable: "--text-navigation-selected",
+        pointsAt:
+          "text-standard at low contrast; accent contrast at high contrast",
+        use: "Labels and icons on selected navigation.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-prominent",
         variable: "--affordance-prominent",
-        pointsAt: "accent step 9 at every accent level",
+        pointsAt: "accent step 9 in both modes",
+
         use: "The main action fill.",
         status: "core",
       },

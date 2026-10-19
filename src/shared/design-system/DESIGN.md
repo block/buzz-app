@@ -1257,76 +1257,40 @@ Received message bubbles use `bubble-received`, slightly stronger than quiet
 control fills. Reply connectors and thread spines use `border-message-thread`
 to remain visible on conversation surfaces in both modes.
 
-### Accent color and level
+### Accent color
 
-Two device-local choices decide color. **Accent color** picks a family:
-chartreuse (Buzz's brand color, #d7d72e, and the default), flame, magenta, iris,
-cobalt, jade, or gray (monochrome). **Accent level** decides how much of the app
-that family paints: Snoozin’ (neutral),
-Hummin’ (the default), Swarmin’ or Buzzin’ (full).
+One device-local accent choice colors actions, links, and selection states.
+The picker presents eight screenshot-derived families in one row: Lime, Honey,
+Flame, Magenta, Iris, Cobalt, Jade, and Mono. An inset white ring marks the selected
+swatch. Lime is the default; Mono stays last. Saved Chartreuse and Citron choices fall back to Lime.
+Honey uses golden yellow-green fills with black ink; Mono uses charcoal fills in light
+mode and pale gray fills in dark mode. Contrast offers two device-local choices:
+Low contrast (the default) keeps messages neutral and navigation selection subtle.
+High contrast fills your own message bubbles and selected navigation with accent
+step 9. Received messages, app backgrounds, panels, popovers, and reading text stay
+neutral. Previously saved vibe levels are ignored.
 
-The accent level uses the same `Select variant="compact"` in `PreferenceRow`
-as sound settings.
-`Select.leading` and option `leading` accept decorative icons, avatars, or custom
-UI in a 20px slot. Triggers with a leading accessory use 8px leading padding;
-text-only triggers retain their usual padding. Accent levels use a rounded
-rectangular accent chip at 25%, 50%, 75%, and
-100% opacity, as explicitly chosen for this decorative intensity preview.
-The level names and persisted values remain unchanged.
+Use `surface-navigation-selected` with `text-navigation-selected` for selected
+navigation. High contrast pairs solid fills with the family’s contrast ink;
+message prose uses the family’s reading ink. Hover stays subtle and distinct from
+selection. Keep status colors independent; never recolor the whole shell.
 
-A family is a twelve-step ramp per mode with the palette's step contract (1–2
-backgrounds, 3–5 tints, 6–8 lines, 9–10 strong fill, 11–12 text), plus the ink on
-its strong fill, a pressed fill and its link color. Roles stack on steps, never on
-literals, so every family works at every level. Each mode's ramp is authored
-for its own surfaces: the same step reads correctly in light and dark.
+Reuse the existing twelve-step ramps in each mode. Prominent controls use steps
+9–10 with their paired ink; links use the family’s link role. Row hover and
+selection use the authored tint steps and paired row text. Keep these foreground
+and background roles together. Send remains an ordinary prominent button.
+Lime’s strong fill takes black ink in both modes.
 
-Accent levels switch whole **color groups** onto the accent ramp, never single
-roles, so nothing stays gray on a background that turned accent.
 
-| Group | Roles |
-| --- | --- |
-| Moments | Own messages, links |
-| Strong | Prominent buttons (including send), checked controls, switches, badges, tooltips; `text-on-prominent` is their ink, `affordance-prominent-mark` their standalone dots, lines and slider track/thumb |
-| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row-subtle`, `text-row-metadata`) |
-| Controls | Resting quiet fills, their hover and pressed states, floating controls, control outlines |
-| Shell | `bg-app`, its dots, and the chrome on it (`affordance-chrome`, its hover, `text-chrome-subtle`, `bg-chrome-selected`) |
-| Lines | Separators, thread lines, scrollbars |
-| Secondary text | `text-subtle`, `text-metadata` |
-| Surfaces | Panes, popovers, recessed areas, received messages, chrome selection |
-| Text | Primary, navigation and unavailable text |
+Status colors, focus, categorical purple, shadows, and media-specific roles stay
+independent. Media pixels, the black viewing canvas, and white-on-dark media glass
+never follow the accent. Shared controls inside a nested dark scope use the dark
+ramp even when the app is light; gallery comments follow the app mode.
 
-| Accent level | Groups on the accent |
-| --- | --- |
-| Snoozin’ | None; accent tints, lines and accent text only |
-| Hummin’ | Links, strong, rows |
-| Swarmin’ | Adds your own messages and the shell |
-| Buzzin’ | Adds controls, lines, secondary text, surfaces and primary text |
+Do not mix colors or use opacity to invent lighter shades; choose a ramp step.
+Swatches carry `data-accent` and `data-color-mode`. ThemePicker previews use their
+`.light`/`.dark` scopes. The contrast check audits every family in both modes.
 
-Status colors, focus, categorical purple, shadows and media-specific roles stay
-fixed. Media pixels, the black viewing canvas and the white-on-dark media-glass
-material never follow the accent. Shared controls, menus and surrounding surfaces
-in a nested dark media scope do follow the selected accent level, using the dark
-ramp even when the app is light. The gallery comments pane follows the app mode.
-A new role belongs to the group of the ground it sits on; do not add a role for
-one component. Row hover is its own role because rows take color before
-resting controls do. The contrast check fails when a gray role sits on an accent
-ground.
-
-When the shell is colored (Swarmin’ and Buzzin’), its dots use an accent step two
-steps from the background, never a gray mix. Chartreuse keeps its brand value as the strong fill in both modes. Controls on it
-take black ink; reading text on it, such as own messages at Buzzin’, takes the
-family's darkest olive. Send is an ordinary prominent button, never a separately
-colored one. On light surfaces its text and lines step down to olive. Status
-colors, focus and categorical purple stay independent of the accent. Dark-mode primary text stays white at Buzzin’ to preserve readability on the
-full range of floating-control states.
-
-Do not mix the accent with other colors or apply opacity to make a lighter shade;
-choose a step. The decorative Accent level preview chips above are the explicit
-exception; they do not carry text or convey selection on their own. A swatch
-that previews a family carries `data-accent` with
-`data-color-mode`. ThemePicker previews follow the selected family and accent level
-through their `.light`/`.dark` scopes. The contrast check audits every family at
-every level in both modes.
 
 ## Density and rhythm
 

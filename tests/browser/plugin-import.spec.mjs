@@ -941,14 +941,36 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
       (node) =>
         Math.min(node.clientHeight, node.scrollHeight - node.clientHeight) / 2,
     );
-    await codeRegion.press("PageDown");
-    await expect
-      .poll(() => codeRegion.evaluate((node) => node.scrollTop))
-      .toBeGreaterThan(midpoint);
-    await codeRegion.press("PageUp");
-    await expect
-      .poll(() => codeRegion.evaluate((node) => node.scrollTop))
-      .toBeLessThan(midpoint);
+    for (const [key, direction] of [
+      ["PageDown", "down"],
+      ["PageUp", "up"],
+    ]) {
+      // Register before the key and finish native scrolling before reversing it.
+      const completion = await codeRegion.evaluateHandle(
+        (node, { midpoint, direction }) => ({
+          done: new Promise((resolve) => {
+            const settled = () => {
+              const reached =
+                direction === "down"
+                  ? node.scrollTop > midpoint
+                  : node.scrollTop < midpoint;
+              // Focus/layout may finish an earlier scroll before this key does.
+              if (!reached) return;
+              node.removeEventListener("scrollend", settled);
+              resolve();
+            };
+            node.addEventListener("scrollend", settled);
+          }),
+        }),
+        { midpoint, direction },
+      );
+      await codeRegion.press(key);
+      await completion.evaluate(({ done }) => done);
+      await completion.dispose();
+      const position = await codeRegion.evaluate((node) => node.scrollTop);
+      if (direction === "down") expect(position).toBeGreaterThan(midpoint);
+      else expect(position).toBeLessThan(midpoint);
+    }
     // Position the capture independently of keyboard-scroll alignment.
     await codeRegion.evaluate((node) => {
       node.scrollTop = 0;

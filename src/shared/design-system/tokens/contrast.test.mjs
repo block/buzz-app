@@ -180,20 +180,24 @@ describe("semantic contrast contract", () => {
     ["#262626", false],
     ["#404040", true],
   ])(
-    "distinguishes black unread ink %s from gray on accent rows",
+    "distinguishes black ink %s from gray on the brand-filled selection",
     (ink, gray) => {
-      const from = "--neutral-navigation-unread: #262626;";
+      const from = "--text-row-selected-subtle: var(--accent-contrast);";
       expect(tokens).toContain(from);
       const result = check(
-        tokens.replace(from, `--neutral-navigation-unread: ${ink};`),
+        tokens.replace(from, `--text-row-selected-subtle: ${ink};`),
       );
       if (gray) {
         expect(result.status, result.output).toBe(1);
         expect(result.output).toContain(
-          `chartreuse/touch/light: --text-navigation-unread ${ink} is gray on --affordance-selected`,
+          `chartreuse/touch/light: --text-row-selected-subtle ${ink} is gray on --affordance-navigation-selected`,
         );
       } else {
-        expect(result.status, result.output).toBe(0);
+        // A literal ink applies to every family, so saturated accents may fail
+        // contrast; only the gray verdict is under test here.
+        expect(result.output).not.toContain(
+          "is gray on --affordance-navigation-selected",
+        );
       }
     },
   );

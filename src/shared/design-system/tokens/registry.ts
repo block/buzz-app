@@ -354,8 +354,33 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-row-selected",
         variable: "--text-row-selected",
-        pointsAt: "text-row; accent step 11 in dark mode from Hummin’",
+        pointsAt:
+          "text-row; the accent's contrast ink in light and accent step 11 in dark from Hummin’",
         use: "Navigation label on the selected row. Dark rows keep neutral fills, so the selected label carries the accent.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-selected-subtle",
+        variable: "--text-row-selected-subtle",
+        pointsAt:
+          "text-row-subtle; the accent's contrast ink in light from Hummin’; text-subtle in dark",
+        use: "Icons and supporting text on the selected sidebar destination.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-selected-metadata",
+        variable: "--text-row-selected-metadata",
+        pointsAt:
+          "text-row-metadata; the accent's contrast ink in light from Hummin’; text-metadata in dark",
+        use: "Counts and metadata on the selected sidebar destination.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-navigation-selected",
+        variable: "--affordance-navigation-selected",
+        pointsAt:
+          "affordance-selected; accent 9 in light from Hummin’; neutral-5 in dark",
+        use: "The one selected sidebar destination. Only one is selected at a time, so light mode can spend the brand fill on it.",
         status: "proposed",
       },
       {

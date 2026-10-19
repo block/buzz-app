@@ -89,6 +89,7 @@ const META_ROLES = new Set([
   "--text-tertiary",
   "--text-metadata",
   "--text-row-metadata",
+  "--text-row-selected-metadata",
 ]);
 
 /**
@@ -179,11 +180,18 @@ const PAIRS = [
   ]),
   ...["--affordance-row-hover", "--affordance-selected"].flatMap((fill) => [
     ["--text-row", fill],
-    ["--text-row-selected", fill],
     ["--text-navigation-unread", fill],
     ["--text-row-subtle", fill],
     ["--text-row-metadata", fill],
   ]),
+  // The selected sidebar destination and every ink on it.
+  ...[
+    "--text-row-selected",
+    "--text-row-selected-subtle",
+    "--text-row-selected-metadata",
+  ].map((role) => [role, "--affordance-navigation-selected"]),
+  // Chips and dots on the selection invert its pair.
+  ["--affordance-navigation-selected", "--text-row-selected"],
   ["--text-subtle", "--affordance-popover-selected"],
   ...["control", "control-hover", "control-pressed", "selected"].map(
     (state) => ["--text-standard", `--affordance-floating-${state}`],
@@ -542,6 +550,14 @@ const GROUNDED = [
       "--affordance-navigation-quiet",
       "--affordance-selected",
     ],
+  ),
+  ...on(
+    [
+      "--text-row-selected",
+      "--text-row-selected-subtle",
+      "--text-row-selected-metadata",
+    ],
+    ["--affordance-navigation-selected"],
   ),
   ...on(
     ["--text-standard"],

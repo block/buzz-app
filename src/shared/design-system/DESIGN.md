@@ -659,6 +659,9 @@ use rounded rectangles. Icon actions retain their independent 10px radius.
 Floating unread cues and Jump to latest use Button's `shape="control"` with
 12px `--radius-control` corners in every state. Any backing surface uses the
 same radius so its painted edges align with the button.
+A sidebar unread cue is strong (`prominent`) only when a DM, a mention of you or
+a thread reply waits past its edge; ordinary unread uses the `subtle` Button,
+whose light gray fill holds up over the list where glass would disappear.
 
 The message hover toolbar uses the 12px rounded-container radius
 with a 2px inset. Its independent icon actions retain their shared 10px corners.
@@ -1287,7 +1290,7 @@ roles, so nothing stays gray on a background that turned accent.
 | --- | --- |
 | Moments | Own messages, the links and mentions on them |
 | Strong | Prominent buttons (including send), checked controls, switches, badges, tooltips; `text-on-prominent` is their ink, `affordance-prominent-mark` their standalone dots, lines and slider track/thumb |
-| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row`, `text-row-selected`, `text-row-subtle`, `text-row-metadata`). In dark mode the fills stay neutral, because dark chartreuse has no vivid form; the selected label carries the accent at its glowing step; unread labels retain Semibold `text-navigation-unread` on hover and selection (near-black in light mode below Buzzin’, paired accent ink at Buzzin’; white in dark mode). Black ink is allowed on accent fills. |
+| Rows | `affordance-row-hover`, panel hover, the sidebar's quiet row fill, selection, popover row states, and the ink on them (`text-row`, `text-row-selected`, `text-row-subtle`, `text-row-metadata`). The selected sidebar destination uses `affordance-navigation-selected` with `text-row-selected` and its subtle and metadata inks: in light mode the brand fill with its contrast ink, because only one row is ever selected and pale chartreuse reads as khaki. Hover stays neutral until Buzzin’. In dark mode fills stay neutral, because dark chartreuse has no vivid form, and the selected label carries the accent at its glowing step; unread labels retain Semibold `text-navigation-unread` on hover and selection (near-black in light mode below Buzzin’, paired accent ink at Buzzin’; white in dark mode). Black ink is allowed on accent fills. |
 | Controls | Resting quiet fills, their hover and pressed states, floating controls, control outlines |
 | Shell | `bg-app`, its dots, and the chrome on it (`affordance-chrome`, its hover, `text-chrome-subtle`, `bg-chrome-selected`) |
 | Lines | Separators, thread lines, scrollbars |

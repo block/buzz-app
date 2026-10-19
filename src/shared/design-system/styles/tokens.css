@@ -604,6 +604,9 @@
   /* Primary navigation text on a hovered or selected row. */
   --text-row: var(--text-navigation);
   --text-row-selected: var(--text-row);
+  --text-row-selected-subtle: var(--text-row-subtle);
+  --text-row-selected-metadata: var(--text-row-metadata);
+  --affordance-navigation-selected: var(--affordance-selected);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
   --affordance-chrome: var(--affordance-subtle);
@@ -713,6 +716,9 @@
   /* Primary navigation text on a hovered or selected row. */
   --text-row: var(--text-navigation);
   --text-row-selected: var(--text-row);
+  --text-row-selected-subtle: var(--text-row-subtle);
+  --text-row-selected-metadata: var(--text-row-metadata);
+  --affordance-navigation-selected: var(--affordance-selected);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
   --affordance-chrome: var(--affordance-subtle);
@@ -1289,14 +1295,16 @@
   --affordance-prominent-pressed: var(--accent-pressed);
   --text-on-prominent: var(--accent-contrast);
   --affordance-prominent-mark: var(--accent-11);
-  --affordance-navigation-quiet: var(--accent-2);
-  --affordance-selected: var(--accent-5);
   --affordance-floating-hover: var(--accent-3);
   --affordance-popover-selected: var(--accent-3);
   --affordance-floating-selected: var(--accent-4);
-  --text-row-subtle: var(--accent-11);
-  --text-row-metadata: var(--accent-11);
-  --text-row: var(--accent-12);
+  /* Only one destination is selected at a time, so it can take the brand fill
+     with its ink. Pale tints of chartreuse read as khaki, so other selection
+     and hover stay neutral until Buzzin’ tints every surface. */
+  --affordance-navigation-selected: var(--accent-9);
+  --text-row-selected: var(--accent-contrast);
+  --text-row-selected-subtle: var(--accent-contrast);
+  --text-row-selected-metadata: var(--accent-contrast);
 }
 
 /* Buzzin’: quiet controls, shell, lines and supporting text. Light. */
@@ -1308,15 +1316,6 @@
   --scrollbar-thumb: var(--accent-8);
   --text-subtle: var(--accent-11);
   --text-metadata: var(--accent-11);
-}
-
-/* Hummin’ and Swarmin’: quiet row hover. Light. */
-:root[data-color-level="touch"],
-[data-color-level="touch"] .light,
-:root[data-color-level="more"],
-[data-color-level="more"] .light {
-  --affordance-row-hover: var(--accent-2);
-  --affordance-panel-hover: var(--accent-2);
 }
 
 /* Swarmin’: your own messages take the accent too. Light. */
@@ -1353,6 +1352,11 @@
   --text-message-link-own: var(--accent-ink);
   --affordance-row-hover: var(--accent-3);
   --affordance-panel-hover: var(--accent-3);
+  --affordance-navigation-quiet: var(--accent-2);
+  --affordance-selected: var(--accent-5);
+  --text-row-subtle: var(--accent-11);
+  --text-row-metadata: var(--accent-11);
+  --text-row: var(--accent-12);
   --affordance-subtle: var(--accent-3);
   --affordance-subtle-hover: var(--accent-4);
   --affordance-subtle-pressed: var(--accent-6);
@@ -1401,7 +1405,10 @@
   --text-row-subtle: var(--text-subtle);
   --text-row-metadata: var(--text-metadata);
   --text-row: var(--text-navigation);
+  --affordance-navigation-selected: var(--neutral-5);
   --text-row-selected: var(--accent-11);
+  --text-row-selected-subtle: var(--text-subtle);
+  --text-row-selected-metadata: var(--text-metadata);
 }
 
 /* Buzzin’: quiet controls, shell, lines and supporting text. Dark. */
@@ -1519,10 +1526,13 @@
   --color-affordance-subtle-pressed: var(--affordance-subtle-pressed);
   --color-affordance-navigation-quiet: var(--affordance-navigation-quiet);
   --color-affordance-row-hover: var(--affordance-row-hover);
+  --color-affordance-navigation-selected: var(--affordance-navigation-selected);
   --text-color-row-subtle: var(--text-row-subtle);
   --text-color-row-metadata: var(--text-row-metadata);
   --text-color-row: var(--text-row);
   --text-color-row-selected: var(--text-row-selected);
+  --text-color-row-selected-subtle: var(--text-row-selected-subtle);
+  --text-color-row-selected-metadata: var(--text-row-selected-metadata);
   --color-affordance-chrome: var(--affordance-chrome);
   --color-affordance-chrome-hover: var(--affordance-chrome-hover);
   --text-color-chrome-subtle: var(--text-chrome-subtle);

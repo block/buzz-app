@@ -323,13 +323,58 @@ it.each(ACCENTS)(
         "--affordance-floating-hover",
         "--affordance-popover-selected",
         "--affordance-floating-selected",
+        "--affordance-navigation-selected",
       ])
         expect(palette[role], `${role} in ${where}`).toBe(neutral[role]);
+      // Supporting ink on the selected row follows the level's supporting text.
+      expect(palette["--text-row-selected-subtle"], where).toBe(
+        palette["--text-subtle"],
+      );
+      expect(palette["--text-row-selected-metadata"], where).toBe(
+        palette["--text-metadata"],
+      );
       // Hover ink is the level's navigation text (accent only at Buzzin’).
       expect(palette["--text-row"], where).toBe(palette["--text-navigation"]);
       expect(palette["--text-row-selected"], where).toBe(
         level === "neutral" ? neutral["--text-row"] : palette["--accent-11"],
       );
+    }
+  },
+);
+
+it.each(ACCENTS)(
+  "%s light sidebar selection takes the brand fill while other selection and hover stay neutral",
+  (color) => {
+    const neutral = resolvedPalette("light", color, "neutral");
+    for (const level of COLOR_LEVELS) {
+      const palette = resolvedPalette("light", color, level);
+      const where = `${color}/${level}/light`;
+      if (level === "neutral") continue;
+      expect(palette["--affordance-navigation-selected"], where).toBe(
+        palette["--accent-9"],
+      );
+      for (const role of [
+        "--text-row-selected",
+        "--text-row-selected-subtle",
+        "--text-row-selected-metadata",
+      ])
+        expect(palette[role], `${role} in ${where}`).toBe(
+          palette["--accent-contrast"],
+        );
+      if (level === "full")
+        expect(palette["--affordance-navigation-quiet"], where).toBe(
+          palette["--accent-2"],
+        );
+      // Hover is transient, so it stays neutral until Buzzin’ tints everything.
+      if (level !== "full")
+        for (const role of [
+          "--affordance-row-hover",
+          "--affordance-panel-hover",
+          "--affordance-navigation-quiet",
+          "--affordance-selected",
+          "--text-row",
+        ])
+          expect(palette[role], `${role} in ${where}`).toBe(neutral[role]);
     }
   },
 );

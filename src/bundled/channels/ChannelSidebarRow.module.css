@@ -113,6 +113,11 @@
   color: var(--text-navigation-unread);
   font-weight: var(--type-weight-semibold);
 }
+/* The selected destination carries its fill's ink, which may be white on a
+   saturated accent; the weight still marks it unread. */
+.row[data-selected][data-ordinary] .label {
+  color: var(--text-row-selected);
+}
 .menu {
   width: max-content;
   max-width: var(--available-width);

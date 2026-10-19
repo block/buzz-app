@@ -222,11 +222,11 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
   await expect(ordinary.locator("[data-channel-priority]")).toHaveCount(0);
   const ordinaryLabel = ordinary.getByText("Alpha", { exact: true });
   await expect(ordinaryLabel).toHaveCSS("font-weight", "600");
-  // The browser cascade must retain unread ink on a selected/hovered row,
-  // instead of replacing it with the regular row's accent ink.
+  // A selected unread row keeps its weight and takes the selection's ink, so
+  // the label stays readable on the selection fill, hovered or not.
   const unreadInk = await ordinaryLabel.evaluate((label) => {
     const probe = document.createElement("span");
-    probe.style.color = "var(--text-navigation-unread)";
+    probe.style.color = "var(--text-row-selected)";
     label.append(probe);
     const color = getComputedStyle(probe).color;
     probe.remove();
@@ -275,6 +275,9 @@ test("edge controls follow scroll and reveal the nearest unread without selectio
   );
   await expect(cue(page, "above")).toHaveAttribute("data-attention", "false");
   await expect(cue(page, "below")).toHaveAttribute("data-attention", "true");
+  // Only attention earns the strong fill; ordinary unread is the quiet cue.
+  await expect(cue(page, "above")).toHaveAttribute("data-variant", "subtle");
+  await expect(cue(page, "below")).toHaveAttribute("data-variant", "prominent");
   await scroll(page, 0);
   await expect(cue(page, "below")).toHaveAttribute("data-attention", "true");
   await scroll(page, 1800);

@@ -171,7 +171,7 @@ describe("semantic contrast contract", () => {
     );
     expect(result.status, result.output).toBe(1);
     expect(result.output).toContain(
-      "chartreuse/more/light: --text-chrome-subtle #525252 is gray on --affordance-chrome",
+      "chartreuse/full/light: --text-chrome-subtle #525252 is gray on --affordance-chrome",
     );
   });
 

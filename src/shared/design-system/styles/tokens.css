@@ -1281,8 +1281,8 @@
 
 /* Accent levels switch whole color groups onto the accent ramp. Snoozin’ is the
    neutral role layer. Hummin’ adds links, strong controls and rows. Swarmin’ adds your
-   own messages and the shell (background, dots and chrome on it). Buzzin’ also
-   colors quiet controls, lines, surfaces and text. Shared groups are
+   own messages. Buzzin’ also colors the shell (background, dots and chrome on
+   it), quiet controls, lines, surfaces and text. Shared groups are
    declared once; level-only blocks contain intentional differences. */
 /* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Light. */
 :root[data-color-level="touch"],
@@ -1316,6 +1316,12 @@
 /* Buzzin’: quiet controls, shell, lines and supporting text. Light. */
 :root[data-color-level="full"],
 [data-color-level="full"] .light {
+  --bg-app: var(--accent-4);
+  --texture-dots-color: var(--accent-6);
+  --affordance-chrome: var(--accent-3);
+  --affordance-chrome-hover: var(--accent-4);
+  --text-chrome-subtle: var(--accent-11);
+  --bg-chrome-selected: var(--accent-1);
   --border-prominent: var(--accent-11);
   --border-floating-control: var(--accent-11);
   --border-message-thread: var(--accent-6);
@@ -1324,28 +1330,10 @@
   --text-metadata: var(--accent-11);
 }
 
-/* Swarmin’: your own messages take the accent too. Light. */
-:root[data-color-level="more"],
-[data-color-level="more"] .light {
-  --surface-message-own: var(--accent-4);
-  --text-message-own: var(--accent-12);
-  --text-message-link-own: var(--accent-link);
-}
-
-/* Swarmin’ and Buzzin’: the app shell, its dots and the chrome on it. Light. */
+/* Swarmin’ and Buzzin’: your own messages take the brand fill. Pale and
+   dark tints of chartreuse read khaki or olive; it only works bright. Light. */
 :root[data-color-level="more"],
 [data-color-level="more"] .light,
-:root[data-color-level="full"],
-[data-color-level="full"] .light {
-  --bg-app: var(--accent-4);
-  --texture-dots-color: var(--accent-6);
-  --affordance-chrome: var(--accent-3);
-  --affordance-chrome-hover: var(--accent-4);
-  --text-chrome-subtle: var(--accent-11);
-  --bg-chrome-selected: var(--accent-1);
-}
-
-/* Full-only changes. Light. */
 :root[data-color-level="full"],
 [data-color-level="full"] .light {
   /* A highlight would vanish into the brand-filled bubble: invert the
@@ -1356,6 +1344,11 @@
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);
+}
+
+/* Full-only changes. Light. */
+:root[data-color-level="full"],
+[data-color-level="full"] .light {
   --affordance-row-hover: var(--accent-3);
   --affordance-panel-hover: var(--accent-3);
   --affordance-navigation-quiet: var(--accent-2);
@@ -1423,6 +1416,12 @@
 /* Buzzin’: quiet controls, shell, lines and supporting text. Dark. */
 :root[data-color-level="full"][data-color-mode="dark"],
 [data-color-level="full"] .dark {
+  --bg-app: var(--accent-2);
+  --texture-dots-color: var(--accent-4);
+  --affordance-chrome: var(--accent-3);
+  --affordance-chrome-hover: var(--accent-4);
+  --text-chrome-subtle: var(--accent-11);
+  --bg-chrome-selected: var(--accent-4);
   --affordance-subtle: var(--accent-3);
   --affordance-subtle-hover: var(--accent-4);
   --affordance-subtle-pressed: var(--accent-5);
@@ -1438,28 +1437,9 @@
   --text-metadata: var(--accent-11);
 }
 
-/* Swarmin’: your own messages take the accent too. Dark. */
-:root[data-color-level="more"][data-color-mode="dark"],
-[data-color-level="more"] .dark {
-  --surface-message-own: var(--accent-4);
-  --text-message-own: var(--accent-12);
-  --text-message-link-own: var(--accent-link);
-}
-
-/* Swarmin’ and Buzzin’: the app shell, its dots and the chrome on it. Dark. */
+/* Swarmin’ and Buzzin’: your own messages take the brand fill. Dark. */
 :root[data-color-level="more"][data-color-mode="dark"],
 [data-color-level="more"] .dark,
-:root[data-color-level="full"][data-color-mode="dark"],
-[data-color-level="full"] .dark {
-  --bg-app: var(--accent-2);
-  --texture-dots-color: var(--accent-4);
-  --affordance-chrome: var(--accent-3);
-  --affordance-chrome-hover: var(--accent-4);
-  --text-chrome-subtle: var(--accent-11);
-  --bg-chrome-selected: var(--accent-4);
-}
-
-/* Full-only changes. Dark. */
 :root[data-color-level="full"][data-color-mode="dark"],
 [data-color-level="full"] .dark {
   /* A highlight would vanish into the brand-filled bubble: invert the
@@ -1470,6 +1450,11 @@
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);
+}
+
+/* Full-only changes. Dark. */
+:root[data-color-level="full"][data-color-mode="dark"],
+[data-color-level="full"] .dark {
   --surface-base: var(--accent-1);
   --surface-panel: var(--accent-2);
   --surface-popover: var(--accent-3);

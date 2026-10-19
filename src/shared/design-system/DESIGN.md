@@ -1310,8 +1310,8 @@ roles, so nothing stays gray on a background that turned accent.
 | --- | --- |
 | Snoozin’ | None; accent tints, lines and accent text only |
 | Hummin’ | Links, strong, rows |
-| Swarmin’ | Adds your own messages and the shell |
-| Buzzin’ | Adds controls, lines, secondary text, surfaces and primary text |
+| Swarmin’ | Adds your own messages, on the brand fill |
+| Buzzin’ | Adds the shell, controls, lines, secondary text, surfaces and primary text |
 
 Status colors, focus, categorical purple, shadows and media-specific roles stay
 fixed. Media pixels, the black viewing canvas and the white-on-dark media-glass
@@ -1323,9 +1323,9 @@ one component. Row hover is its own role because rows take color before
 resting controls do. The contrast check fails when a gray role sits on an accent
 ground.
 
-When the shell is colored (Swarmin’ and Buzzin’), its dots use an accent step two
+When the shell is colored (Buzzin’), its dots use an accent step two
 steps from the background, never a gray mix. Chartreuse keeps its brand value as the strong fill in both modes. Controls on it
-take black ink; reading text on it, such as own messages at Buzzin’, takes the
+take black ink; reading text on it, such as own messages from Swarmin’, takes the
 family's darkest olive. Send is an ordinary prominent button, never a separately
 colored one. On light surfaces its text and lines step down to olive. Status
 colors, focus and categorical purple stay independent of the accent. Dark-mode primary text stays white at Buzzin’ to preserve readability on the
@@ -1486,7 +1486,7 @@ A mention of you asks for your attention and joins the strong group:
 `text-mention-self` on `affordance-mention-self`, the prominent fill and its ink
 in light mode, and a neutral chip with the prominent mark as ink in dark mode,
 where fills stay neutral. Inside your own bubble the `-own` pair wins; on the
-brand-filled Buzzin’ bubble it inverts the bubble's fill and ink. System notices
+brand-filled bubble (from Swarmin’) it inverts the bubble's fill and ink. System notices
 name people as quiet text, never as chips.
 
 Blue 11 is tuned for the supported surface stack: #0b5fa8 in light mode and

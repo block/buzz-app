@@ -233,19 +233,42 @@ it("the default brand fill takes its darkest olive as ink, and A touch keeps own
   for (const mode of ["light", "dark"] as const) {
     const touch = resolvedPalette(mode, "chartreuse", "touch");
     // Strong controls take the brand fill with black ink; reading text on
-    // the fill (own messages at Buzzin') uses the darkest olive.
+    // the fill (own messages from Swarmin') uses the darkest olive.
     expect(touch["--affordance-prominent"]).toBe("#d7d72e");
     expect(touch["--text-on-prominent"]).toBe("#000000");
     // Hummin' keeps your own messages neutral; Swarmin' colors them.
     expect(touch["--surface-message-own"]).toBe(touch["--bubble-neutral"]);
     expect(
       resolvedPalette(mode, "chartreuse", "more")["--surface-message-own"],
-    ).toBe(touch["--accent-4"]);
+    ).toBe("#d7d72e");
     expect(
       resolvedPalette(mode, "chartreuse", "full")["--surface-message-own"],
     ).toBe("#d7d72e");
   }
 });
+
+it.each(ACCENTS)(
+  "%s keeps the shell neutral until Buzzin’, so Swarmin’ adds only your messages",
+  (color) => {
+    const shell = [
+      "--bg-app",
+      "--texture-dots-color",
+      "--affordance-chrome",
+      "--affordance-chrome-hover",
+      "--text-chrome-subtle",
+      "--bg-chrome-selected",
+    ];
+    for (const mode of ["light", "dark"] as const) {
+      const neutral = resolvedPalette(mode, color, "neutral");
+      const more = resolvedPalette(mode, color, "more");
+      const full = resolvedPalette(mode, color, "full");
+      for (const role of shell) expect(more[role], role).toBe(neutral[role]);
+      expect(more["--surface-message-own"]).toBe(more["--accent-9"]);
+      expect(more["--text-message-own"]).toBe(more["--accent-ink"]);
+      expect(full["--bg-app"]).not.toBe(neutral["--bg-app"]);
+    }
+  },
+);
 
 it.each(ACCENTS)(
   "%s links are blue at Snoozin’ and take the family’s link partner from Hummin’",

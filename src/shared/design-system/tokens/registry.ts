@@ -504,7 +504,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-message-link-own",
         variable: "--text-message-link-own",
         pointsAt:
-          "text-link on neutral bubbles; accent link at Swarmin’; accent ink at Buzzin’",
+          "text-link on neutral bubbles; accent ink on the brand-filled bubble from Swarmin’",
         use: "Links on the selected outgoing message surface.",
         status: "core",
       },

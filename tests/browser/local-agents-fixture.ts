@@ -30,6 +30,11 @@ const controls = {
     row.handover();
     row.step("Read", "notes.txt");
   },
+  step(id: string, tool: string, target?: string) {
+    const row = pending.find((row) => row.id === id);
+    if (!row) throw new Error("No pending request");
+    row.step(tool, target);
+  },
   finish(id: string, ok: boolean) {
     const row = pending.find((row) => row.id === id);
     if (!row) throw new Error("No pending request");

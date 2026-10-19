@@ -7,7 +7,7 @@
   display: flex;
   flex-direction: column;
 }
-/* Error dismissal is a sibling action, never a button nested in NavigationItem. */
+/* Dismiss and Stop are sibling actions, never buttons nested in NavigationItem. */
 .row {
   display: flex;
   align-items: center;
@@ -17,8 +17,12 @@
   min-width: 0;
   flex: 1;
 }
+.row > :not(:first-child) {
+  flex-shrink: 0;
+}
 
-/* One glanceable line each; NavigationItem's label truncation applies per line. */
+/* One glanceable line each, ending in an ellipsis; the profile's Activity tab
+ * has the full text. NavigationItem's label truncation applies per line. */
 .preview {
   min-width: 0;
   display: flex;
@@ -31,10 +35,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.preview > :first-child {
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
 /* Errors explain what to do; keep their reason readable instead of clipped. */
 .preview[data-error] > * {
   overflow: visible;
@@ -44,49 +44,6 @@
 }
 .detail {
   color: var(--text-subtle);
-}
-
-/* The activity and the Stop that opens beside it. */
-.bubble {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-}
-/* Stop opens horizontally out of the activity while its row is hovered or
- * focused, its popup is open, or a stop is pending. Hidden, it takes no space
- * and no pointer or Tab stop; focusing the activity reveals it before Tab. */
-.stop {
-  display: inline-grid;
-  grid-template-columns: 0fr;
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    grid-template-columns var(--duration-settle) var(--easing-settle),
-    opacity var(--duration-state),
-    visibility 0s linear var(--duration-settle);
-}
-/* Its spacing opens with it: padding cannot collapse into a 0fr track. */
-.stopSlot {
-  min-width: 0;
-  padding-inline: 0;
-  transition: padding-inline var(--duration-settle) var(--easing-settle);
-}
-:where(:hover, :focus-within, :has([data-popup-open])) > .stop,
-.stop[data-pending] {
-  grid-template-columns: 1fr;
-  opacity: 1;
-  visibility: visible;
-  transition-delay: 0s;
-}
-:where(:hover, :focus-within, :has([data-popup-open])) > .stop > .stopSlot,
-.stop[data-pending] > .stopSlot {
-  padding-inline: var(--space-1);
-}
-@media (prefers-reduced-motion: reduce) {
-  .stop,
-  .stopSlot {
-    transition: none;
-  }
 }
 
 .summaryActivity {

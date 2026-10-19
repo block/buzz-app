@@ -183,27 +183,64 @@ test("Stop in a message's activity ends its local work quietly", async ({
     .locator(`[data-message-id="${event.id}"]`)
     .getByRole("button", { name: /^View agent activity:/ });
   await expect(activity).toHaveAccessibleName(/Local tester/);
-  const message = thread.locator(`[data-message-id="${event.id}"]`);
-  const stop = message.getByRole("button", {
-    name: "Stop Local tester",
-    exact: true,
-  });
-  // Stop opens out of the activity only while it is hovered.
-  await expect(stop).toBeHidden();
-  const at = await settledBox(activity);
+  // A long step stays on one line and ends in an ellipsis.
+  await page.evaluate(
+    (id) =>
+      window.localAgentFixture.step(
+        id,
+        "Read",
+        "src/features/agents/a-very-long-path/with-many-segments/notes-for-the-stop-button.txt",
+      ),
+    event.id,
+  );
   await activity.hover();
-  await expect(stop).toBeVisible();
-  await expectBeside(stop, activity);
-  // Opening Stop never moves the activity it opens from.
-  expect(await activity.boundingBox()).toEqual(at);
   const popup = page.getByRole("dialog", {
     name: "Agent activity",
     exact: true,
   });
+  const stop = popup.getByRole("button", {
+    name: "Stop Local tester",
+    exact: true,
+  });
+  await expect(stop).toBeVisible();
+  await expect(stop).toHaveText("Stop");
   await expect(popup).not.toHaveAttribute("data-starting-style", "");
-  await expect(popup.getByRole("button", { name: /^Stop/ })).toHaveCount(0);
-  await message.screenshot({
+  const preview = popup.getByText(/^Reading /);
+  await expect(preview).toBeVisible();
+  const line = await preview.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      height: element.getBoundingClientRect().height,
+      lineHeight: Number.parseFloat(style.lineHeight),
+      clipped: element.scrollWidth > element.clientWidth,
+      ellipsis: style.textOverflow,
+    };
+  });
+  expect(line.height).toBeLessThan(line.lineHeight * 1.5);
+  expect(line.clipped).toBe(true);
+  expect(line.ellipsis).toBe("ellipsis");
+  // Stop stays inside the popup, after its row's preview.
+  const [box, frame, text] = await Promise.all([
+    stop.boundingBox(),
+    popup.boundingBox(),
+    preview.boundingBox(),
+  ]);
+  expect(box.x).toBeGreaterThanOrEqual(text.x + text.width);
+  expect(box.x + box.width).toBeLessThanOrEqual(frame.x + frame.width);
+  const row = thread.locator(`[data-message-id="${event.id}"]`);
+  const around = await row.boundingBox();
+  const left = Math.min(frame.x, around.x) - 16;
+  const top = Math.min(frame.y, around.y) - 16;
+  await page.screenshot({
     path: testInfo.outputPath("local-activity-stop.png"),
+    clip: {
+      x: Math.max(0, left),
+      y: Math.max(0, top),
+      width:
+        Math.max(frame.x + frame.width, around.x + around.width) + 16 - left,
+      height:
+        Math.max(frame.y + frame.height, around.y + around.height) + 16 - top,
+    },
   });
   await stop.click();
   await expect
@@ -220,11 +257,11 @@ test("Stop in a message's activity ends its local work quietly", async ({
   ).toHaveCount(0);
 });
 
-// The channel's thread summary is host-owned: Stop must open beside it, not in it.
-test("Stop opens beside a message's thread summary and stops its work", async ({
+// The channel's thread summary is host-owned; its activity popup offers Stop.
+test("Stop in a thread summary's activity stops its work", async ({
   page,
   app,
-}, testInfo) => {
+}) => {
   await open(page, app);
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
@@ -250,26 +287,19 @@ test("Stop opens beside a message's thread summary and stops its work", async ({
     `[data-channel-timeline] [data-message-id="${request.id}"]`,
   );
   const summary = row.getByRole("button", { name: /^View thread:/ });
-  const stop = row.getByRole("button", {
+  await expect(summary).toBeVisible();
+  await expect(row.getByRole("button", { name: /^Stop/ })).toHaveCount(0);
+  await summary.hover();
+  const popup = page.getByRole("dialog", {
+    name: "Agent activity",
+    exact: true,
+  });
+  const stop = popup.getByRole("button", {
     name: "Stop Local tester",
     exact: true,
   });
-  await expect(summary).toBeVisible();
-  await expect(stop).toBeHidden();
-  // Hidden, Stop takes no space beside the summary.
-  expect(
-    (await row.locator("[data-activity-stop]").boundingBox())?.width,
-  ).toBeLessThan(0.5);
-  const at = await settledBox(summary);
-  await summary.hover();
   await expect(stop).toBeVisible();
-  await expectBeside(stop, summary);
-  // Opening Stop never moves the summary it opens from.
-  expect(await summary.boundingBox()).toEqual(at);
-  await expect(summary.getByRole("button")).toHaveCount(0);
-  await row.screenshot({
-    path: testInfo.outputPath("summary-activity-stop.png"),
-  });
+  await expect(popup).not.toHaveAttribute("data-starting-style", "");
   await stop.click();
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
@@ -279,39 +309,6 @@ test("Stop opens beside a message's thread summary and stops its work", async ({
     page.getByText("Stopped Local tester", { exact: true }),
   ).toBeVisible();
 });
-
-/** Where the control rests once its arrival has finished moving it. */
-async function settledBox(locator) {
-  await locator.evaluate((element) =>
-    Promise.all(
-      element.ownerDocument
-        .getAnimations()
-        .filter(
-          (animation) =>
-            animation.effect?.target instanceof Node &&
-            animation.effect.target.contains(element),
-        )
-        .map((animation) => animation.finished),
-    ),
-  );
-  return locator.boundingBox();
-}
-
-/** Side by side on one line, not wrapped below or overlapping. */
-async function expectBeside(control, anchor) {
-  await expect
-    .poll(async () => {
-      const [a, b] = await Promise.all([
-        control.boundingBox(),
-        anchor.boundingBox(),
-      ]);
-      if (!a || !b) return false;
-      const centre = a.y + a.height / 2;
-      const apart = a.x >= b.x + b.width - 1 || a.x + a.width <= b.x + 1;
-      return centre > b.y && centre < b.y + b.height && apart;
-    })
-    .toBe(true);
-}
 
 // Real host composition: one summary combines replies and exact-message work.
 test("one thread summary retains reply navigation and work on another reply", async ({

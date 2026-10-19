@@ -644,10 +644,7 @@ function MessageRowContent({
       )}
     </>
   );
-  const renderMessageSummary = (
-    activity?: MessageSummaryActivity,
-    wrap?: (button: ReactElement) => ReactElement,
-  ) => {
+  const renderMessageSummary = (activity?: MessageSummaryActivity) => {
     const remainingThreadAgents = threadAgents.filter(
       (agent) => !activity?.participants.includes(agent.pubkey),
     );
@@ -659,79 +656,74 @@ function MessageRowContent({
         (!row.threadRootId && threadAgents.length > 0) ||
         activity) &&
         onOpenThread && (
-          <div className={styles.threadSummaryRow}>
-            {(wrap ?? ((button: ReactElement) => button))(
-              <Button
-                ref={activity?.ref}
-                variant="ghost"
-                size="sm"
-                data-thread-summary=""
-                data-reply-connector={row.replyCount > 0 || undefined}
-                data-first-participant-shape={
-                  agentPubkeys?.has(row.participants[0] ?? "")
-                    ? "squircle"
-                    : "circle"
-                }
-                type="button"
-                aria-label={
-                  row.replyCount > 0
-                    ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}`
-                    : `View thread: ${activity ? [remainingWorkingLabel, activity.label].filter(Boolean).join(". ") : threadWorkingLabel}`
-                }
-                onClick={(event) => {
-                  event.currentTarget.focus();
-                  onOpenThread(row.id, row.threadRootId ?? row.id);
-                }}
-              >
-                <ReplySummary
-                  count={row.replyCount}
-                  participants={row.participants}
-                  profiles={participantProfiles}
-                  agentPubkeys={agentPubkeys}
-                  resolveName={resolveName}
-                  media={media}
-                  unreadLabel={unreadLabel}
-                  workingParticipants={[
-                    ...threadAgents.map((agent) => agent.pubkey),
-                    ...(activity?.participants ?? []),
-                  ]}
-                  activity={
-                    <>
-                      {remainingThreadAgents.length > 0 ? (
-                        <span
-                          className={`${styles.threadWorking} buzz-arrive`}
-                          data-thread-working=""
-                          aria-hidden="true"
-                        >
-                          {remainingThreadAgents.slice(0, 2).map((agent) => {
-                            const name = resolveName(agent.pubkey, agent.name);
-                            return (
-                              <Avatar
-                                key={agent.pubkey}
-                                src={avatarMedia(agent.avatar, media)}
-                                alt=""
-                                fallback={name}
-                                size="compact"
-                                shape="squircle"
-                              />
-                            );
-                          })}
-                          {remainingThreadAgents.length > 2 && (
-                            <span>+{remainingThreadAgents.length - 2}</span>
-                          )}
-                          <TypingDots
-                            state={threadWaiting ? "waiting" : "working"}
+          <Button
+            ref={activity?.ref}
+            variant="ghost"
+            size="sm"
+            data-thread-summary=""
+            data-reply-connector={row.replyCount > 0 || undefined}
+            data-first-participant-shape={
+              agentPubkeys?.has(row.participants[0] ?? "")
+                ? "squircle"
+                : "circle"
+            }
+            type="button"
+            aria-label={
+              row.replyCount > 0
+                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}`
+                : `View thread: ${activity ? [remainingWorkingLabel, activity.label].filter(Boolean).join(". ") : threadWorkingLabel}`
+            }
+            onClick={(event) => {
+              event.currentTarget.focus();
+              onOpenThread(row.id, row.threadRootId ?? row.id);
+            }}
+          >
+            <ReplySummary
+              count={row.replyCount}
+              participants={row.participants}
+              profiles={participantProfiles}
+              agentPubkeys={agentPubkeys}
+              resolveName={resolveName}
+              media={media}
+              unreadLabel={unreadLabel}
+              workingParticipants={[
+                ...threadAgents.map((agent) => agent.pubkey),
+                ...(activity?.participants ?? []),
+              ]}
+              activity={
+                <>
+                  {remainingThreadAgents.length > 0 ? (
+                    <span
+                      className={`${styles.threadWorking} buzz-arrive`}
+                      data-thread-working=""
+                      aria-hidden="true"
+                    >
+                      {remainingThreadAgents.slice(0, 2).map((agent) => {
+                        const name = resolveName(agent.pubkey, agent.name);
+                        return (
+                          <Avatar
+                            key={agent.pubkey}
+                            src={avatarMedia(agent.avatar, media)}
+                            alt=""
+                            fallback={name}
+                            size="compact"
+                            shape="squircle"
                           />
-                        </span>
-                      ) : null}
-                      {activity?.content}
-                    </>
-                  }
-                />
-              </Button>,
-            )}
-            {activity?.action}
-          </div>
+                        );
+                      })}
+                      {remainingThreadAgents.length > 2 && (
+                        <span>+{remainingThreadAgents.length - 2}</span>
+                      )}
+                      <TypingDots
+                        state={threadWaiting ? "waiting" : "working"}
+                      />
+                    </span>
+                  ) : null}
+                  {activity?.content}
+                </>
+              }
+            />
+          </Button>
         )) ||
       null
     );

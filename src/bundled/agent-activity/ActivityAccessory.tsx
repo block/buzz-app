@@ -1,5 +1,4 @@
 import {
-  type ReactElement,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -318,22 +317,14 @@ function ActivityBubble({
   }, [live]);
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
-  // Stop retires with the work it stops, so its focus is remembered past its
-  // removal: a removed element leaves focus on the body without a target.
-  const stopFocused = useRef(false);
   useLayoutEffect(() => {
     if (interactive) return;
     const source = popup.current;
     const button = trigger.current;
     const document = (source ?? button)?.ownerDocument;
     const active = document?.activeElement;
-    const stopped = stopFocused.current && active === document?.body;
-    stopFocused.current = false;
     setExpanded(false);
-    if (
-      active &&
-      (stopped || button?.contains(active) || source?.contains(active))
-    ) {
+    if (active && (button?.contains(active) || source?.contains(active))) {
       // Commit closure before handing off: its overlay currently hides the
       // host's target. DOM observers release that target at this checkpoint.
       // Keep the retired nodes so unmount does not erase focus ownership.
@@ -414,79 +405,6 @@ function ActivityBubble({
       )}
     </span>
   );
-  // One X stops every agent here that can be stopped. It opens beside the
-  // activity while it is hovered, focused, open, or stopping.
-  const targets = interactive ? entries.filter(stoppable) : [];
-  const pending = targets.every((entry) => stops.has(entry.agent));
-  const action = targets.length ? (
-    <span
-      className={styles.stop}
-      data-activity-stop=""
-      data-pending={pending ? "" : undefined}
-    >
-      <span className={styles.stopSlot}>
-        <IconButton
-          size="xs"
-          aria-label={`Stop ${targets.map((entry) => entry.name).join(", ")}`}
-          loading={pending}
-          icon={<XIcon />}
-          onFocus={() => {
-            stopFocused.current = true;
-          }}
-          onBlur={(event) => {
-            const button = event.currentTarget;
-            // Still connected: focus moved away rather than retiring with it.
-            queueMicrotask(() => {
-              if (button.isConnected) stopFocused.current = false;
-            });
-          }}
-          onClick={() => {
-            for (const entry of targets)
-              if (!stops.has(entry.agent)) stop(entry);
-          }}
-        />
-      </span>
-    </span>
-  ) : undefined;
-  const offered = targets.length > 0;
-  useLayoutEffect(() => {
-    if (offered || !stopFocused.current) return;
-    stopFocused.current = false;
-    // Stop went away while its activity stays: hand focus back like retirement.
-    const document = trigger.current?.ownerDocument;
-    if (interactive && document?.activeElement === document?.body)
-      queueMicrotask(() => {
-        if (document?.activeElement === document?.body)
-          props.onFocusedRemoval?.();
-      });
-  }, [offered, interactive, props.onFocusedRemoval]);
-  const summarized = !!props.renderMessageSummary;
-  const wrap = (button: ReactElement) => (
-    <PopoverTrigger
-      openOnHover={interactive}
-      {...(!interactive
-        ? {
-            "aria-haspopup": undefined,
-            "aria-expanded": undefined,
-            "aria-controls": undefined,
-          }
-        : {})}
-      onClick={(event) => {
-        if (!interactive) {
-          event.preventBaseUIHandler();
-          return;
-        }
-        if (summarized) {
-          event.preventBaseUIHandler();
-          setExpanded(false);
-        } else if (props.openThread?.()) {
-          event.preventBaseUIHandler();
-          setExpanded(false);
-        }
-      }}
-      render={button}
-    />
-  );
   const summary = props.renderMessageSummary?.(
     entries.length
       ? {
@@ -496,10 +414,8 @@ function ActivityBubble({
             .map((entry) => `${entry.name}, ${label(entry)}`)
             .join("; "),
           ref: trigger,
-          action,
         }
       : undefined,
-    wrap,
   );
   if (!entries.length && !summary) return null;
   return (
@@ -507,11 +423,30 @@ function ActivityBubble({
       open={expanded}
       onOpenChange={(open) => setExpanded(interactive && open)}
     >
-      {summary ?? (
-        // The host turns this row around for right-aligned messages, so Stop
-        // opens away from their edge.
-        <span className={styles.bubble} data-activity-row="">
-          {wrap(
+      <PopoverTrigger
+        openOnHover={interactive}
+        {...(!interactive
+          ? {
+              "aria-haspopup": undefined,
+              "aria-expanded": undefined,
+              "aria-controls": undefined,
+            }
+          : {})}
+        onClick={(event) => {
+          if (!interactive) {
+            event.preventBaseUIHandler();
+            return;
+          }
+          if (summary) {
+            event.preventBaseUIHandler();
+            setExpanded(false);
+          } else if (props.openThread?.()) {
+            event.preventBaseUIHandler();
+            setExpanded(false);
+          }
+        }}
+        render={
+          summary ?? (
             <Button
               ref={trigger}
               tabIndex={interactive ? undefined : -1}
@@ -521,17 +456,15 @@ function ActivityBubble({
               aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
             >
               {content}
-            </Button>,
-          )}
-          {action}
-        </span>
-      )}
+            </Button>
+          )
+        }
+      />
       <PopoverPopup
         ref={popup}
         finalFocus={interactive ? undefined : false}
         side="top"
         padding="list"
-        size="compact"
         aria-label="Agent activity"
       >
         {expanded && (
@@ -608,6 +541,20 @@ function ActivityBubble({
                           );
                       }}
                     />
+                  ) : stoppable(entry) ? (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      aria-label={`Stop ${entry.name}`}
+                      loading={stopping}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        stop(entry);
+                      }}
+                    >
+                      <XIcon size={16} aria-hidden="true" />
+                      <span>Stop</span>
+                    </Button>
                   ) : undefined}
                 </div>
               );

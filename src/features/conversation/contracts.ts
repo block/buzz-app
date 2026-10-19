@@ -118,8 +118,6 @@ export type MessageSummaryActivity = Readonly<{
   content: ReactNode;
   label: string;
   ref: Ref<HTMLButtonElement>;
-  /** A control the host lays out beside the summary, never inside its button. */
-  action?: ReactNode;
 }>;
 export type ComposerAccessoryProps = Readonly<{
   session: RelaySession;
@@ -129,14 +127,9 @@ export type ComposerAccessoryProps = Readonly<{
   /** Present only for message-placed accessories; the exact triggering row. */
   message?: ChannelMessage;
   /** A single selected decorator may wrap the host summary with its preview.
-   * Render without activity when idle; the host owns reply counts/navigation.
-   * `wrap` receives the host's summary button, idle or not, so the decorator
-   * keeps one trigger (and its focus) as work comes and goes. */
+   * Render without activity when idle; the host owns reply counts/navigation. */
   renderMessageSummary?:
-    | ((
-        activity?: MessageSummaryActivity,
-        wrap?: (button: ReactElement) => ReactElement,
-      ) => ReactElement | null)
+    | ((activity?: MessageSummaryActivity) => ReactElement | null)
     | undefined;
   /** Host-owned thread navigation from a timeline message, even before replies.
    * Absent inside the thread. False after this contribution or message retires. */

@@ -555,13 +555,11 @@ it("keeps an idle reply summary mounted without advertising an activity popup", 
   const view = render(
     <ActivityAccessory
       {...f.props}
-      renderMessageSummary={(activity, wrap = (button) => button) =>
-        wrap(
-          <button type="button" ref={activity?.ref} onClick={navigate}>
-            View thread{activity ? `: ${activity.label}` : ""}
-          </button>,
-        )
-      }
+      renderMessageSummary={(activity) => (
+        <button type="button" ref={activity?.ref} onClick={navigate}>
+          View thread{activity ? `: ${activity.label}` : ""}
+        </button>
+      )}
     />,
   );
   try {
@@ -588,8 +586,7 @@ const settle = () => act(async () => {});
 const openBubble = () =>
   fireEvent.click(screen.getByRole("button", { name: /View agent activity/ }));
 const stopButton = () => screen.queryByRole("button", { name: "Stop Blossom" });
-// Stop sits outside the popup, so pressing it dismisses the popup; reopen
-// it to read the agent's row.
+// Reopen the popup, if anything closed it, to read the agent's row.
 const look = () => {
   const activity = screen.queryByRole("button", {
     name: /View agent activity/,
@@ -671,45 +668,12 @@ it("hands focus back to the host when a focused Stop retires with its work", asy
         })
         .interruptible(async () => {});
     });
+    openBubble();
     const stop = stopButton() as HTMLElement;
     act(() => stop.focus());
     fireEvent.click(stop);
     await settle();
     expect(stop.isConnected).toBe(false);
-    await act(async () => vi.runAllTicks());
-    expect(onFocusedRemoval).toHaveBeenCalledOnce();
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("hands focus back to the host when a focused Stop goes away while its activity stays", async () => {
-  const f = fixture();
-  const agents = hosted();
-  const onFocusedRemoval = vi.fn();
-  const view = render(
-    <ActivityAccessory
-      {...f.props}
-      agents={agents}
-      onFocusedRemoval={onFocusedRemoval}
-    />,
-  );
-  try {
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    act(() => (stopButton() as HTMLElement).focus());
-    agents.interruptible.mockReturnValue(false);
-    view.rerender(
-      <ActivityAccessory
-        {...f.props}
-        agents={agents}
-        onFocusedRemoval={onFocusedRemoval}
-      />,
-    );
-    expect(stopButton()).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /View agent activity/ }),
-    ).toBeInTheDocument();
     await act(async () => vi.runAllTicks());
     expect(onFocusedRemoval).toHaveBeenCalledOnce();
   } finally {
@@ -846,76 +810,34 @@ it("stops a hosted agent in the thread its message replies to", () => {
   }
 });
 
-it("offers Stop beside the activity, outside its popup, and one Stop stops every agent here", async () => {
+it("offers each agent its own Stop in the activity popup", async () => {
   const f = fixture();
   const agents = hosted(true);
   const view = render(<ActivityAccessory {...f.props} agents={agents} />);
   try {
     f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
     f.send(B, "u", 1, "turn_started", { triggeringEventIds: [root] });
-    const stop = screen.getByRole("button", { name: "Stop Blossom, Bubbles" });
-    const activity = screen.getByRole("button", {
-      name: /View agent activity/,
-    });
-    expect(stop.closest("[data-activity-stop]")?.parentElement).toBe(
-      activity.parentElement,
-    );
+    expect(stopButton()).not.toBeInTheDocument();
     openBubble();
+    const popup = within(screen.getByRole("dialog"));
     expect(
-      within(screen.getByRole("dialog")).queryByRole("button", {
-        name: /^Stop/,
-      }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(stop);
-    expect(agents.interrupt).toHaveBeenCalledTimes(2);
-    expect(agents.interrupt).toHaveBeenCalledWith(A, {
-      channelId: "c",
-      threadRootId: root,
-    });
-    expect(agents.interrupt).toHaveBeenCalledWith(B, {
+      popup.getByRole("button", { name: "Stop Blossom" }),
+    ).toHaveTextContent("Stop");
+    fireEvent.click(popup.getByRole("button", { name: "Stop Bubbles" }));
+    expect(agents.interrupt).toHaveBeenCalledExactlyOnceWith(B, {
       channelId: "c",
       threadRootId: root,
     });
     await settle();
-    expect(notify).toHaveBeenCalledWith("Stopping Blossom", "success");
-    expect(notify).toHaveBeenCalledWith("Stopping Bubbles", "success");
-    expect(stop).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(stop);
-    expect(agents.interrupt).toHaveBeenCalledTimes(2);
-  } finally {
-    view.unmount();
-    f.dispose();
-  }
-});
-
-it("hands Stop to the host summary to lay out beside its button", () => {
-  const f = fixture();
-  const view = render(
-    <ActivityAccessory
-      {...f.props}
-      agents={hosted()}
-      renderMessageSummary={(activity, wrap = (button) => button) => (
-        <div data-testid="summary">
-          {wrap(
-            <button type="button" ref={activity?.ref}>
-              View thread{activity ? `: ${activity.label}` : ""}
-            </button>,
-          )}
-          {activity?.action}
-        </div>
-      )}
-    />,
-  );
-  try {
-    expect(stopButton()).not.toBeInTheDocument();
-    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
-    const summary = screen.getByTestId("summary");
-    expect(
-      within(summary).getByRole("button", { name: /View thread/ }),
-    ).toHaveAttribute("aria-haspopup", "dialog");
-    expect(within(summary).getByRole("button", { name: "Stop Blossom" })).toBe(
-      stopButton(),
+    expect(notify).toHaveBeenCalledExactlyOnceWith(
+      "Stopping Bubbles",
+      "success",
     );
+    expect(popup.getByRole("button", { name: "Stop Bubbles" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    stopReady();
   } finally {
     view.unmount();
     f.dispose();

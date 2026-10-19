@@ -1,4 +1,5 @@
 import {
+  type ReactElement,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -15,13 +16,10 @@ import { profileActivityViewTarget } from "../../features/profiles/target";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import {
-  StopIcon,
-  WarningCircleIcon,
-  XIcon,
-} from "../../shared/design-system/icons";
+import { WarningCircleIcon, XIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import {
   PopoverRoot,
@@ -227,12 +225,16 @@ function ActivityBubble({
   ...props
 }: ActivityProps & { entries: Entry[]; interactive: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  // Agents asked to stop, with why that failed when it did.
-  const [stops, setStops] = useState<ReadonlyMap<string, string | undefined>>(
-    new Map(),
-  );
+  // Agents asked to stop whose work has not stopped yet.
+  const [stops, setStops] = useState<ReadonlySet<string>>(new Set());
   // The latest stop asked of each agent, so a late timeout knows its own.
   const attempts = useRef(new Map<string, symbol>());
+  const notify = useToastNotification();
+  // A hosted stop still pending when its activity goes away needs no retry.
+  useEffect(() => {
+    const pending = attempts.current;
+    return () => pending.clear();
+  }, []);
   const message = props.message;
   const stoppable = (entry: Entry) =>
     !!message &&
@@ -240,13 +242,24 @@ function ActivityBubble({
       ? !!entry.stoppable &&
         (entry.state === "working" || entry.state === "waiting")
       : entry.working && !!agents?.interruptible(entry.agent));
+  const forget = (agent: string) => {
+    attempts.current.delete(agent);
+    setStops((prior) => {
+      if (!prior.has(agent)) return prior;
+      const next = new Set(prior);
+      next.delete(agent);
+      return next;
+    });
+  };
   const stop = (entry: Entry) => {
     if (!message) return;
-    const mark = (error?: string) =>
-      setStops((prior) => new Map(prior).set(entry.agent, error));
     const attempt = Symbol(entry.agent);
     attempts.current.set(entry.agent, attempt);
-    mark();
+    setStops((prior) => new Set(prior).add(entry.agent));
+    const newer = () => {
+      const latest = attempts.current.get(entry.agent);
+      return !!latest && latest !== attempt;
+    };
     // A local request settles as stopped; a hosted turn ends when its
     // provider reports it, so it shows as stopping until then.
     const asked = entry.lifecycle
@@ -261,24 +274,31 @@ function ActivityBubble({
         });
     void Promise.resolve(asked).then(
       (running) => {
-        if (entry.lifecycle || running === false)
-          setStops((prior) => {
-            const next = new Map(prior);
-            next.delete(entry.agent);
-            return next;
-          });
-        else
+        // A newer stop of this agent reports its own result.
+        if (newer()) return;
+        if (entry.lifecycle) {
+          forget(entry.agent);
+          notify(`Stopped ${entry.name}`, "success");
+        } else if (running === false) {
+          forget(entry.agent);
+          notify(`${entry.name} had nothing running to stop`, "info");
+        } else {
+          notify(`Stopping ${entry.name}`, "success");
           setTimeout(() => {
             if (attempts.current.get(entry.agent) !== attempt) return;
-            setStops((prior) =>
-              prior.has(entry.agent) && prior.get(entry.agent) === undefined
-                ? new Map(prior).set(entry.agent, "Not stopped yet. Try again.")
-                : prior,
-            );
+            forget(entry.agent);
+            notify(`${entry.name} hasn’t stopped yet. Try again.`, "error");
           }, HOSTED_STOP_MS);
+        }
       },
-      (error: unknown) =>
-        mark(error instanceof Error ? error.message : String(error)),
+      (error: unknown) => {
+        if (newer()) return;
+        forget(entry.agent);
+        notify(
+          `Couldn’t stop ${entry.name}. ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+      },
     );
   };
   // A stop is forgotten once its agent's work here has ended.
@@ -288,22 +308,32 @@ function ActivityBubble({
     .join(":");
   useEffect(() => {
     const agents = new Set(live.split(":"));
+    for (const agent of attempts.current.keys())
+      if (!agents.has(agent)) attempts.current.delete(agent);
     setStops((prior) =>
-      [...prior.keys()].every((agent) => agents.has(agent))
+      [...prior].every((agent) => agents.has(agent))
         ? prior
-        : new Map([...prior].filter(([agent]) => agents.has(agent))),
+        : new Set([...prior].filter((agent) => agents.has(agent))),
     );
   }, [live]);
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
+  // Stop retires with the work it stops, so its focus is remembered past its
+  // removal: a removed element leaves focus on the body without a target.
+  const stopFocused = useRef(false);
   useLayoutEffect(() => {
     if (interactive) return;
     const source = popup.current;
     const button = trigger.current;
     const document = (source ?? button)?.ownerDocument;
     const active = document?.activeElement;
+    const stopped = stopFocused.current && active === document?.body;
+    stopFocused.current = false;
     setExpanded(false);
-    if (active && (button?.contains(active) || source?.contains(active))) {
+    if (
+      active &&
+      (stopped || button?.contains(active) || source?.contains(active))
+    ) {
       // Commit closure before handing off: its overlay currently hides the
       // host's target. DOM observers release that target at this checkpoint.
       // Keep the retired nodes so unmount does not erase focus ownership.
@@ -384,6 +414,67 @@ function ActivityBubble({
       )}
     </span>
   );
+  // One X stops every agent here that can be stopped. It opens beside the
+  // activity while it is hovered, focused, open, or stopping.
+  const targets = interactive ? entries.filter(stoppable) : [];
+  const pending = targets.every((entry) => stops.has(entry.agent));
+  const action = targets.length ? (
+    <span
+      className={styles.stop}
+      data-activity-stop=""
+      data-pending={pending ? "" : undefined}
+    >
+      <span className={styles.stopSlot}>
+        <IconButton
+          size="xs"
+          aria-label={`Stop ${targets.map((entry) => entry.name).join(", ")}`}
+          aria-disabled={pending || undefined}
+          icon={<XIcon />}
+          onFocus={() => {
+            stopFocused.current = true;
+          }}
+          onBlur={(event) => {
+            const button = event.currentTarget;
+            // Still connected: focus moved away rather than retiring with it.
+            queueMicrotask(() => {
+              if (button.isConnected) stopFocused.current = false;
+            });
+          }}
+          onClick={() => {
+            for (const entry of targets)
+              if (!stops.has(entry.agent)) stop(entry);
+          }}
+        />
+      </span>
+    </span>
+  ) : undefined;
+  const summarized = !!props.renderMessageSummary;
+  const wrap = (button: ReactElement) => (
+    <PopoverTrigger
+      openOnHover={interactive}
+      {...(!interactive
+        ? {
+            "aria-haspopup": undefined,
+            "aria-expanded": undefined,
+            "aria-controls": undefined,
+          }
+        : {})}
+      onClick={(event) => {
+        if (!interactive) {
+          event.preventBaseUIHandler();
+          return;
+        }
+        if (summarized) {
+          event.preventBaseUIHandler();
+          setExpanded(false);
+        } else if (props.openThread?.()) {
+          event.preventBaseUIHandler();
+          setExpanded(false);
+        }
+      }}
+      render={button}
+    />
+  );
   const summary = props.renderMessageSummary?.(
     entries.length
       ? {
@@ -393,8 +484,10 @@ function ActivityBubble({
             .map((entry) => `${entry.name}, ${label(entry)}`)
             .join("; "),
           ref: trigger,
+          action,
         }
       : undefined,
+    wrap,
   );
   if (!entries.length && !summary) return null;
   return (
@@ -402,30 +495,11 @@ function ActivityBubble({
       open={expanded}
       onOpenChange={(open) => setExpanded(interactive && open)}
     >
-      <PopoverTrigger
-        openOnHover={interactive}
-        {...(!interactive
-          ? {
-              "aria-haspopup": undefined,
-              "aria-expanded": undefined,
-              "aria-controls": undefined,
-            }
-          : {})}
-        onClick={(event) => {
-          if (!interactive) {
-            event.preventBaseUIHandler();
-            return;
-          }
-          if (summary) {
-            event.preventBaseUIHandler();
-            setExpanded(false);
-          } else if (props.openThread?.()) {
-            event.preventBaseUIHandler();
-            setExpanded(false);
-          }
-        }}
-        render={
-          summary ?? (
+      {summary ?? (
+        // The host turns this row around for right-aligned messages, so Stop
+        // opens away from their edge.
+        <span className={styles.bubble} data-activity-row="">
+          {wrap(
             <Button
               ref={trigger}
               tabIndex={interactive ? undefined : -1}
@@ -435,10 +509,11 @@ function ActivityBubble({
               aria-label={`${props.openThread ? "Open thread" : "View agent activity"}: ${entries.map((entry) => `${entry.name}, ${label(entry)}`).join("; ")}`}
             >
               {content}
-            </Button>
-          )
-        }
-      />
+            </Button>,
+          )}
+          {action}
+        </span>
+      )}
       <PopoverPopup
         ref={popup}
         finalFocus={interactive ? undefined : false}
@@ -455,8 +530,7 @@ function ActivityBubble({
               const preview = entry.working
                 ? currentActivity(entry.records, entry.turns)
                 : undefined;
-              const asked = stops.has(entry.agent);
-              const stopError = stops.get(entry.agent);
+              const stopping = stops.has(entry.agent);
               return (
                 <div key={entry.agent} className={styles.row}>
                   <NavigationItem
@@ -477,22 +551,19 @@ function ActivityBubble({
                       <span
                         className={`text-body-sm ${styles.preview}`}
                         data-error={
-                          (entry.lifecycle && entry.state === "error") ||
-                          stopError
+                          entry.lifecycle && entry.state === "error"
                             ? ""
                             : undefined
                         }
                       >
                         <ShimmerText
                           active={
-                            !stopError &&
-                            (entry.lifecycle
+                            entry.lifecycle
                               ? entry.state === "working"
-                              : entry.working)
+                              : entry.working
                           }
                         >
-                          {stopError ??
-                            (asked ? "Stopping…" : undefined) ??
+                          {(stopping ? "Stopping…" : undefined) ??
                             (entry.lifecycle
                               ? label(entry)
                               : !entry.working
@@ -523,17 +594,6 @@ function ActivityBubble({
                             props.channelId,
                             props.message.id,
                           );
-                      }}
-                    />
-                  ) : stoppable(entry) ? (
-                    <IconButton
-                      size="xs"
-                      aria-label={`Stop ${entry.name}`}
-                      icon={<StopIcon />}
-                      disabled={asked && !stopError}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        stop(entry);
                       }}
                     />
                   ) : undefined}

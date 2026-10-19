@@ -46,6 +46,42 @@
   color: var(--text-subtle);
 }
 
+/* The activity and the Stop that opens beside it. */
+.bubble {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+/* Stop opens horizontally out of the activity while its row is hovered or
+ * focused, its popup is open, or a stop is pending. Hidden, it takes no space
+ * and no pointer or Tab stop; focusing the activity reveals it before Tab. */
+.stop {
+  display: inline-grid;
+  grid-template-columns: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-columns var(--duration-settle) var(--easing-settle),
+    opacity var(--duration-state),
+    visibility 0s linear var(--duration-settle);
+}
+.stopSlot {
+  min-width: 0;
+  padding-inline: var(--space-1);
+}
+:where(:hover, :focus-within, :has([data-popup-open])) > .stop,
+.stop[data-pending] {
+  grid-template-columns: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stop {
+    transition: none;
+  }
+}
+
 .summaryActivity {
   padding: var(--space-half) var(--space-1);
   padding-inline-end: var(--space-2);

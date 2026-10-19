@@ -23,8 +23,16 @@ import { createAgentActivity } from "../../features/agents/activity";
 import { createAgentLibrary } from "../../features/agents/library";
 import type { RelaySession } from "../../features/relay/session";
 
+// Stop's results are host toasts; the shared Toast owns how they show.
+const notify = vi.hoisted(() => vi.fn());
+vi.mock("../../shared/design-system/ui/Toast", async (original) => ({
+  ...(await original<typeof import("../../shared/design-system/ui/Toast")>()),
+  useToastNotification: () => notify,
+}));
+
 afterEach(() => {
   cleanup();
+  notify.mockReset();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -547,11 +555,13 @@ it("keeps an idle reply summary mounted without advertising an activity popup", 
   const view = render(
     <ActivityAccessory
       {...f.props}
-      renderMessageSummary={(activity) => (
-        <button type="button" ref={activity?.ref} onClick={navigate}>
-          View thread{activity ? `: ${activity.label}` : ""}
-        </button>
-      )}
+      renderMessageSummary={(activity, wrap = (button) => button) =>
+        wrap(
+          <button type="button" ref={activity?.ref} onClick={navigate}>
+            View thread{activity ? `: ${activity.label}` : ""}
+          </button>,
+        )
+      }
     />,
   );
   try {
@@ -578,6 +588,19 @@ const settle = () => act(async () => {});
 const openBubble = () =>
   fireEvent.click(screen.getByRole("button", { name: /View agent activity/ }));
 const stopButton = () => screen.queryByRole("button", { name: "Stop Blossom" });
+// Stop sits outside the popup, so pressing it dismisses the popup; reopen
+// it to read the agent's row.
+const look = () => {
+  const activity = screen.queryByRole("button", {
+    name: /View agent activity/,
+  });
+  if (activity && !screen.queryByRole("dialog")) fireEvent.click(activity);
+  return screen;
+};
+const stopPending = () =>
+  expect(stopButton()).toHaveAttribute("aria-disabled", "true");
+const stopReady = () =>
+  expect(stopButton()).not.toHaveAttribute("aria-disabled");
 function hosted(running: boolean | Promise<boolean> = true) {
   return {
     interruptible: vi.fn(() => true),
@@ -615,6 +638,10 @@ it.each(["waiting", "working"])(
       expect(interrupt).toHaveBeenCalledExactlyOnceWith(A, "c", root);
       await settle();
       expect(stop).toHaveBeenCalledOnce();
+      expect(notify).toHaveBeenCalledExactlyOnceWith(
+        "Stopped Blossom",
+        "success",
+      );
       expect(
         screen.queryByRole("button", { name: /View agent activity/ }),
       ).not.toBeInTheDocument();
@@ -624,6 +651,38 @@ it.each(["waiting", "working"])(
     }
   },
 );
+
+it("hands focus back to the host when a focused Stop retires with its work", async () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const onFocusedRemoval = vi.fn();
+  const view = render(
+    <ActivityAccessory {...f.props} onFocusedRemoval={onFocusedRemoval} />,
+  );
+  try {
+    act(() => {
+      local
+        .begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        })
+        .interruptible(async () => {});
+    });
+    const stop = stopButton() as HTMLElement;
+    act(() => stop.focus());
+    fireEvent.click(stop);
+    await settle();
+    expect(stop.isConnected).toBe(false);
+    await act(async () => vi.runAllTicks());
+    expect(onFocusedRemoval).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
 
 it("shows a local request as stopping until its harness has stopped it", async () => {
   const local = createLocalAgentActivity();
@@ -650,13 +709,18 @@ it("shows a local request as stopping until its harness has stopped it", async (
     });
     openBubble();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
-    expect(screen.getByText("Stopping…")).toBeInTheDocument();
-    expect(stopButton()).toBeDisabled();
+    expect(look().getByText("Stopping…")).toBeInTheDocument();
+    stopPending();
     fireEvent.click(stopButton() as HTMLElement);
     expect(stop).toHaveBeenCalledOnce();
+    expect(notify).not.toHaveBeenCalled();
     release();
     await settle();
-    expect(screen.queryByText("Stopping…")).not.toBeInTheDocument();
+    expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
+    expect(notify).toHaveBeenCalledExactlyOnceWith(
+      "Stopped Blossom",
+      "success",
+    );
   } finally {
     view.unmount();
     f.dispose();
@@ -711,8 +775,12 @@ it("stops a hosted agent's turn through its provider in this thread", async () =
     });
     // Its turn ends when the provider reports it, so it shows as stopping.
     await settle();
-    expect(screen.getByText("Stopping…")).toBeInTheDocument();
-    expect(stopButton()).toBeDisabled();
+    expect(look().getByText("Stopping…")).toBeInTheDocument();
+    stopPending();
+    expect(notify).toHaveBeenCalledExactlyOnceWith(
+      "Stopping Blossom",
+      "success",
+    );
     f.send(A, "t", 2, "turn_completed");
     expect(
       screen.queryByRole("button", { name: /View agent activity/ }),
@@ -744,6 +812,82 @@ it("stops a hosted agent in the thread its message replies to", () => {
   }
 });
 
+it("offers Stop beside the activity, outside its popup, and one Stop stops every agent here", async () => {
+  const f = fixture();
+  const agents = hosted(true);
+  const view = render(<ActivityAccessory {...f.props} agents={agents} />);
+  try {
+    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
+    f.send(B, "u", 1, "turn_started", { triggeringEventIds: [root] });
+    const stop = screen.getByRole("button", { name: "Stop Blossom, Bubbles" });
+    const activity = screen.getByRole("button", {
+      name: /View agent activity/,
+    });
+    expect(stop.closest("[data-activity-stop]")?.parentElement).toBe(
+      activity.parentElement,
+    );
+    openBubble();
+    expect(
+      within(screen.getByRole("dialog")).queryByRole("button", {
+        name: /^Stop/,
+      }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(stop);
+    expect(agents.interrupt).toHaveBeenCalledTimes(2);
+    expect(agents.interrupt).toHaveBeenCalledWith(A, {
+      channelId: "c",
+      threadRootId: root,
+    });
+    expect(agents.interrupt).toHaveBeenCalledWith(B, {
+      channelId: "c",
+      threadRootId: root,
+    });
+    await settle();
+    expect(notify).toHaveBeenCalledWith("Stopping Blossom", "success");
+    expect(notify).toHaveBeenCalledWith("Stopping Bubbles", "success");
+    expect(stop).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(stop);
+    expect(agents.interrupt).toHaveBeenCalledTimes(2);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("hands Stop to the host summary to lay out beside its button", () => {
+  const f = fixture();
+  const view = render(
+    <ActivityAccessory
+      {...f.props}
+      agents={hosted()}
+      renderMessageSummary={(activity, wrap = (button) => button) => (
+        <div data-testid="summary">
+          {wrap(
+            <button type="button" ref={activity?.ref}>
+              View thread{activity ? `: ${activity.label}` : ""}
+            </button>,
+          )}
+          {activity?.action}
+        </div>
+      )}
+    />,
+  );
+  try {
+    expect(stopButton()).not.toBeInTheDocument();
+    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
+    const summary = screen.getByTestId("summary");
+    expect(
+      within(summary).getByRole("button", { name: /View thread/ }),
+    ).toHaveAttribute("aria-haspopup", "dialog");
+    expect(within(summary).getByRole("button", { name: "Stop Blossom" })).toBe(
+      stopButton(),
+    );
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it("returns a hosted agent to its activity when its provider had nothing running to stop", async () => {
   const f = fixture();
   const view = render(
@@ -754,16 +898,22 @@ it("returns a hosted agent to its activity when its provider had nothing running
     openBubble();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     await settle();
-    expect(screen.queryByText("Stopping…")).not.toBeInTheDocument();
-    expect(screen.getByText("Waiting for activity details")).toBeVisible();
-    expect(stopButton()).toBeEnabled();
+    expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
+    expect(
+      look().getByText("Waiting for activity details"),
+    ).toBeInTheDocument();
+    stopReady();
+    expect(notify).toHaveBeenCalledExactlyOnceWith(
+      "Blossom had nothing running to stop",
+      "info",
+    );
   } finally {
     view.unmount();
     f.dispose();
   }
 });
 
-it("shows why a hosted agent could not be stopped and lets the owner try again", async () => {
+it("says why a hosted agent could not be stopped and lets the owner try again", async () => {
   const f = fixture();
   const agents = hosted();
   agents.interrupt.mockRejectedValueOnce(new Error("Provider is busy."));
@@ -772,17 +922,17 @@ it("shows why a hosted agent could not be stopped and lets the owner try again",
     f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
     openBubble();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
-    expect(screen.getByText("Stopping…")).toBeInTheDocument();
+    expect(look().getByText("Stopping…")).toBeInTheDocument();
     await settle();
-    expect(screen.getByText("Provider is busy.").parentElement).toHaveAttribute(
-      "data-error",
+    expect(notify).toHaveBeenCalledExactlyOnceWith(
+      "Couldn’t stop Blossom. Provider is busy.",
+      "error",
     );
-    expect(screen.queryByText("Stopping…")).not.toBeInTheDocument();
-    expect(stopButton()).toBeEnabled();
+    expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
+    stopReady();
     fireEvent.click(stopButton() as HTMLElement);
     expect(agents.interrupt).toHaveBeenCalledTimes(2);
-    expect(screen.queryByText("Provider is busy.")).not.toBeInTheDocument();
-    expect(screen.getByText("Stopping…")).toBeInTheDocument();
+    expect(look().getByText("Stopping…")).toBeInTheDocument();
   } finally {
     view.unmount();
     f.dispose();
@@ -801,8 +951,8 @@ it("forgets a stop once its agent's work here has ended", async () => {
     f.send(A, "t", 2, "turn_completed");
     f.send(A, "u", 1, "turn_started", { triggeringEventIds: [root] });
     openBubble();
-    expect(screen.queryByText("Stopping…")).not.toBeInTheDocument();
-    expect(stopButton()).toBeEnabled();
+    expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
+    stopReady();
   } finally {
     view.unmount();
     f.dispose();
@@ -861,7 +1011,9 @@ it("shows no activity, and so no Stop, without a message", () => {
   }
 });
 
-const NOT_STOPPED = "Not stopped yet. Try again.";
+const NOT_STOPPED = "Blossom hasn’t stopped yet. Try again.";
+const notStopped = () =>
+  notify.mock.calls.filter(([title]) => title === NOT_STOPPED).length;
 const elapse = (ms: number) => act(() => vi.advanceTimersByTime(ms));
 const alive = (f: ReturnType<typeof fixture>, turn: string, seq: number) =>
   f.send(A, turn, seq, "acp_read", {});
@@ -875,25 +1027,23 @@ it("lets the owner try Stop again when a hosted turn is still working 30 seconds
     openBubble();
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     await settle();
-    expect(screen.getByText("Stopping…")).toBeInTheDocument();
-    expect(stopButton()).toBeDisabled();
+    expect(look().getByText("Stopping…")).toBeInTheDocument();
+    stopPending();
     elapse(15_000);
     alive(f, "t", 2);
     elapse(14_999);
-    expect(screen.getByText("Stopping…")).toBeInTheDocument();
+    expect(look().getByText("Stopping…")).toBeInTheDocument();
+    expect(notStopped()).toBe(0);
     alive(f, "t", 3);
     elapse(1);
-    expect(screen.getByText(NOT_STOPPED).parentElement).toHaveAttribute(
-      "data-error",
-    );
-    expect(screen.queryByText("Stopping…")).not.toBeInTheDocument();
-    expect(stopButton()).toBeEnabled();
+    expect(notify).toHaveBeenLastCalledWith(NOT_STOPPED, "error");
+    expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
+    stopReady();
     fireEvent.click(stopButton() as HTMLElement);
     await settle();
     expect(agents.interrupt).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("Stopping…")).toBeInTheDocument();
-    expect(screen.queryByText(NOT_STOPPED)).not.toBeInTheDocument();
-    expect(stopButton()).toBeDisabled();
+    expect(look().getByText("Stopping…")).toBeInTheDocument();
+    stopPending();
   } finally {
     view.unmount();
     f.dispose();
@@ -914,7 +1064,7 @@ it("does not let an older stop's timeout overwrite a newer stop of the same agen
     f.send(A, "t", 2, "turn_completed");
     f.send(A, "u", 1, "turn_started", { triggeringEventIds: [root] });
     openBubble();
-    expect(screen.queryByText("Stopping…")).not.toBeInTheDocument();
+    expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
     fireEvent.click(stopButton() as HTMLElement);
     await settle();
     expect(agents.interrupt).toHaveBeenCalledTimes(2);
@@ -922,13 +1072,13 @@ it("does not let an older stop's timeout overwrite a newer stop of the same agen
     elapse(15_000);
     alive(f, "u", 2);
     elapse(5_000);
-    expect(screen.getByText("Stopping…")).toBeInTheDocument();
-    expect(screen.queryByText(NOT_STOPPED)).not.toBeInTheDocument();
-    expect(stopButton()).toBeDisabled();
+    expect(look().getByText("Stopping…")).toBeInTheDocument();
+    expect(notStopped()).toBe(0);
+    stopPending();
     alive(f, "u", 3);
     elapse(10_000);
-    expect(screen.getByText(NOT_STOPPED)).toBeInTheDocument();
-    expect(stopButton()).toBeEnabled();
+    expect(notStopped()).toBe(1);
+    stopReady();
   } finally {
     view.unmount();
     f.dispose();
@@ -946,8 +1096,8 @@ it("shows nothing later when a stopped hosted turn ends before its 30 seconds", 
     elapse(10_000);
     f.send(A, "t", 2, "turn_completed");
     elapse(60_000);
-    expect(screen.queryByText(NOT_STOPPED)).not.toBeInTheDocument();
-    expect(screen.queryByText("Stopping…")).not.toBeInTheDocument();
+    expect(notStopped()).toBe(0);
+    expect(look().queryByText("Stopping…")).not.toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   } finally {
     view.unmount();

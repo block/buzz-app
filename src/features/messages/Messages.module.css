@@ -744,6 +744,17 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   padding: var(--space-1);
   padding-right: var(--space-1h);
 }
+/* A decorator's action sits beside the summary, outside its button. */
+.threadSummaryRow {
+  max-width: 100%;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-1);
+}
+.threadSummaryRow > [data-thread-summary] {
+  margin-top: 0;
+}
 .messageBody [data-reply-connector] {
   margin-inline-start: calc(var(--space-4) + var(--space-3));
   max-width: calc(100% - var(--space-4) - var(--space-3));
@@ -2809,14 +2820,33 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .message[data-viewer-message] > .messageBody > [data-message-activity] {
   align-self: flex-end;
 }
-.message[data-viewer-message] > .messageBody > [data-thread-summary] {
+.message[data-viewer-message]
+  > .messageBody
+  > [data-message-activity]
+  [data-activity-row] {
+  flex-direction: row-reverse;
+}
+.message[data-viewer-message] > .messageBody > .threadSummaryRow {
   align-self: flex-end;
+  /* Actions grow away from the right-aligned summary, never moving it. */
+  flex-direction: row-reverse;
+}
+.message[data-viewer-message]
+  > .messageBody
+  > .threadSummaryRow
+  > [data-thread-summary] {
   margin-inline: 0 var(--space-3);
 }
-.message[data-viewer-message] > .messageBody > [data-reply-connector] {
+.message[data-viewer-message]
+  > .messageBody
+  > .threadSummaryRow
+  > [data-reply-connector] {
   margin-inline-end: calc(var(--space-4) + var(--space-3));
 }
-.message[data-viewer-message] > .messageBody > [data-reply-connector]::before {
+.message[data-viewer-message]
+  > .messageBody
+  > .threadSummaryRow
+  > [data-reply-connector]::before {
   inset-inline-start: auto;
   inset-inline-end: calc(0px - var(--space-3));
   border-inline-start: 0;

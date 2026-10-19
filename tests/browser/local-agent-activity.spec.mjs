@@ -183,30 +183,131 @@ test("Stop in a message's activity ends its local work quietly", async ({
     .locator(`[data-message-id="${event.id}"]`)
     .getByRole("button", { name: /^View agent activity:/ });
   await expect(activity).toHaveAccessibleName(/Local tester/);
+  const message = thread.locator(`[data-message-id="${event.id}"]`);
+  const stop = message.getByRole("button", {
+    name: "Stop Local tester",
+    exact: true,
+  });
+  // Stop opens out of the activity only while it is hovered.
+  await expect(stop).toBeHidden();
+  const at = await settledBox(activity);
   await activity.hover();
+  await expect(stop).toBeVisible();
+  await expectBeside(stop, activity);
+  // Opening Stop never moves the activity it opens from.
+  expect(await activity.boundingBox()).toEqual(at);
   const popup = page.getByRole("dialog", {
     name: "Agent activity",
     exact: true,
   });
-  const stop = popup.getByRole("button", {
-    name: "Stop Local tester",
-    exact: true,
-  });
-  await expect(stop).toBeVisible();
   await expect(popup).not.toHaveAttribute("data-starting-style", "");
-  await popup.screenshot({
+  await expect(popup.getByRole("button", { name: /^Stop/ })).toHaveCount(0);
+  await message.screenshot({
     path: testInfo.outputPath("local-activity-stop.png"),
   });
   await stop.click();
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
     .toEqual([event.id]);
-  // Stopped work is neither finished nor failed: its activity just goes.
+  // Stopped work is neither finished nor failed: its activity just goes, and a
+  // toast confirms the stop.
   await expect(activity).toHaveCount(0);
+  await expect(
+    page.getByText("Stopped Local tester", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.locator('[data-channel-id="alpha"] [data-channel-working]'),
   ).toHaveCount(0);
 });
+
+// The channel's thread summary is host-owned: Stop must open beside it, not in it.
+test("Stop opens beside a message's thread summary and stops its work", async ({
+  page,
+  app,
+}, testInfo) => {
+  await open(page, app);
+  await expect
+    .poll(() => page.evaluate(() => !!window.localAgentFixture))
+    .toBe(true);
+  const request = app.sign({
+    kind: 9,
+    content: "Stop this from the channel",
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["h", "alpha"],
+      ["p", localAgentKey],
+    ],
+  });
+  app.relay.publish("primary", request);
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.pending().length))
+    .toBe(1);
+  await page.evaluate(
+    (id) => window.localAgentFixture.handover(id),
+    request.id,
+  );
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${request.id}"]`,
+  );
+  const summary = row.getByRole("button", { name: /^View thread:/ });
+  const stop = row.getByRole("button", {
+    name: "Stop Local tester",
+    exact: true,
+  });
+  await expect(summary).toBeVisible();
+  await expect(stop).toBeHidden();
+  const at = await settledBox(summary);
+  await summary.hover();
+  await expect(stop).toBeVisible();
+  await expectBeside(stop, summary);
+  // Opening Stop never moves the summary it opens from.
+  expect(await summary.boundingBox()).toEqual(at);
+  await expect(summary.getByRole("button")).toHaveCount(0);
+  await row.screenshot({
+    path: testInfo.outputPath("summary-activity-stop.png"),
+  });
+  await stop.click();
+  await expect
+    .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
+    .toEqual([request.id]);
+  await expect(summary.locator("[data-thread-working]")).toHaveCount(0);
+  await expect(
+    page.getByText("Stopped Local tester", { exact: true }),
+  ).toBeVisible();
+});
+
+/** Where the control rests once its arrival has finished moving it. */
+async function settledBox(locator) {
+  await locator.evaluate((element) =>
+    Promise.all(
+      element.ownerDocument
+        .getAnimations()
+        .filter(
+          (animation) =>
+            animation.effect?.target instanceof Node &&
+            animation.effect.target.contains(element),
+        )
+        .map((animation) => animation.finished),
+    ),
+  );
+  return locator.boundingBox();
+}
+
+/** Side by side on one line, not wrapped below or overlapping. */
+async function expectBeside(control, anchor) {
+  await expect
+    .poll(async () => {
+      const [a, b] = await Promise.all([
+        control.boundingBox(),
+        anchor.boundingBox(),
+      ]);
+      if (!a || !b) return false;
+      const centre = a.y + a.height / 2;
+      const apart = a.x >= b.x + b.width - 1 || a.x + a.width <= b.x + 1;
+      return centre > b.y && centre < b.y + b.height && apart;
+    })
+    .toBe(true);
+}
 
 // Real host composition: one summary combines replies and exact-message work.
 test("one thread summary retains reply navigation and work on another reply", async ({

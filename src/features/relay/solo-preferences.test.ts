@@ -406,7 +406,7 @@ it("checks the exact project capacity before saving and reclaims a removed filin
   try {
     await f.session.soloPreferences.ensure();
     await expect(f.session.soloPreferences.assign(id, "work")).rejects.toThrow(
-      "Solo project storage is full",
+      "Solo workspace storage is full",
     );
     expect(f.publish).not.toHaveBeenCalled();
     const removed = Object.keys(value.assignments)[0];

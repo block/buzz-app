@@ -18,10 +18,10 @@ import styles from "./WorkspaceSettings.module.css";
 
 /**
  * Creates an empty Solo project with the same starting folders and Canvas that
- * Project settings edits. Retrying reuses the same project ID, so a failed
+ * Workspace settings edits. Retrying reuses the same project ID, so a failed
  * defaults save never creates a second project.
  */
-export function NewProject({
+export function NewWorkspace({
   session,
   create,
   close,
@@ -73,7 +73,7 @@ export function NewProject({
         await session.channelKit.refresh();
         const state = session.channelKit.snapshot();
         if (state.status !== "ready")
-          throw new Error(state.error ?? "Project defaults are unavailable.");
+          throw new Error(state.error ?? "Workspace defaults are unavailable.");
         const existing = state.entries.find(
           (entry) =>
             entry.record.value.type === "template" &&
@@ -86,7 +86,7 @@ export function NewProject({
         ) {
           setConflict(true);
           throw new Error(
-            "Project defaults changed. Close this dialog and review Project settings.",
+            "Workspace defaults changed. Close this dialog and review Workspace settings.",
           );
         }
         if (!existing)
@@ -104,7 +104,7 @@ export function NewProject({
       setError(
         reason instanceof Error
           ? reason.message
-          : "Project could not be created. Try again.",
+          : "Workspace could not be created. Try again.",
       );
     } finally {
       pending.current = false;
@@ -118,8 +118,8 @@ export function NewProject({
         if (!open) close();
       }}
       preventClose={busy}
-      title="New project"
-      description="The chats you start in this project begin with its folders and instructions."
+      title="New workspace"
+      description="The chats you start in this workspace begin with its folders and instructions."
       initialFocus={input}
       finalFocus={finalFocus}
       actions={

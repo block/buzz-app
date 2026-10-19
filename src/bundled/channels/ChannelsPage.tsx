@@ -17,7 +17,7 @@ import {
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
 import { ownSolo } from "../../features/solo/labels";
-import { ProjectControl } from "../../features/solo/ProjectControl";
+import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { SoloHeading } from "./SoloHeading";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
@@ -1418,7 +1418,7 @@ function ChannelWorkspace({
           }
           trailingTool={
             personal ? (
-              <ProjectControl
+              <WorkspaceControl
                 session={queries}
                 channelId={current.id}
                 disabled={!!current.archived}

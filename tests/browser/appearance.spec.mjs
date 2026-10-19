@@ -303,7 +303,13 @@ test("accent dropdown shows intensity chips and supports pointer and keyboard se
     await expect(select).toBeFocused();
     await expect(select).toHaveCSS("padding-inline-start", "8px");
     await select.press("ArrowDown");
+    await expect(
+      page.getByRole("option", { name: "Buzzin’", exact: true }),
+    ).toBeFocused();
     await page.keyboard.press("Home");
+    await expect(
+      page.getByRole("option", { name: "Snoozin’", exact: true }),
+    ).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(select).toHaveText("Snoozin’");
     await expect(select).toBeFocused();

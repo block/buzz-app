@@ -267,6 +267,7 @@ function mount(
     },
     media: (url: string) => url,
     outbox: {
+      observeDismiss: () => () => {},
       supports: () => true,
       snapshot: () => pending,
       subscribe(listener: () => void) {

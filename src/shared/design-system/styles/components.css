@@ -378,7 +378,7 @@
     color: var(--text-accent);
   }
   .buzz-button[data-muted]:not([data-disabled]) {
-    color: var(--text-quiet-control);
+    color: var(--text-subtle);
   }
   @media (hover: hover) and (pointer: fine) {
     .buzz-button[data-muted]:hover:not([data-disabled]) {

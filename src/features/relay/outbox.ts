@@ -63,6 +63,8 @@ export interface Outbox {
   acknowledge(id: string): Promise<void>;
   retry(id: string, active?: () => boolean): void;
   dismiss(id: string): Promise<void>;
+  /** Durable explicit dismissal, with delivery evidence at removal. */
+  observeDismiss(listener: (item: OutgoingEvent) => void): () => void;
 }
 type SendObserver = (
   event: EventData,
@@ -138,6 +140,7 @@ export function createOutbox(
   let pendingBytes = 0;
   const listeners = new Set<() => void>();
   const localListeners = new Set<() => void>();
+  const dismissListeners = new Set<(item: OutgoingEvent) => void>();
   /** One record per queued or active delivery. Its deadline starts at enqueue; a
    * controller exists only while the attempt is signing or publishing. */
   type Attempt = {
@@ -249,12 +252,16 @@ export function createOutbox(
           if (action === "dismiss") {
             // Commit removal inside the serialized write, before a later save
             // can capture state. Failed storage never exposes a temporary absence.
+            const dismissed = snapshot.find((item) => item.event.id === id);
             deliveryWork.delete(id);
             completed.delete(id);
             snapshot = Object.freeze(
               snapshot.filter((item) => item.event.id !== id),
             );
             notify();
+            if (dismissed)
+              for (const listener of dismissListeners)
+                notifyListener(() => listener(dismissed));
           }
           // Release recovery only after its removal is durable, before the next
           // queued save can run. Preserve delivery evidence received during I/O.
@@ -801,6 +808,12 @@ export function createOutbox(
         schedule(id, undefined, item.delivery);
       }
     },
+    observeDismiss(listener: (item: OutgoingEvent) => void) {
+      dismissListeners.add(listener);
+      return () => {
+        dismissListeners.delete(listener);
+      };
+    },
     dismiss(id: string) {
       const pending = dismissing.get(id);
       if (pending) return pending;
@@ -914,6 +927,7 @@ export function createOutbox(
       listeners.clear();
       localListeners.clear();
       sendListeners.clear();
+      dismissListeners.clear();
       deliveryWork.clear();
       void ready
         .then(() => durable)

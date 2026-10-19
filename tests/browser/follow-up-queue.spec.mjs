@@ -71,6 +71,31 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
       await page.setViewportSize({ width, height: 950 });
       const button = queue.getByRole("button", { name: "Send", exact: true });
       await expect(button).toBeVisible();
+      const contrast = await button.evaluate((element) => {
+        const luminance = (color) => {
+          const channels = color
+            .match(/[\d.]+/g)
+            .slice(0, 3)
+            .map(Number)
+            .map((channel) => {
+              const value = channel / 255;
+              return value <= 0.04045
+                ? value / 12.92
+                : ((value + 0.055) / 1.055) ** 2.4;
+            });
+          return (
+            channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+          );
+        };
+        const style = getComputedStyle(element);
+        const foreground = luminance(style.color),
+          background = luminance(style.backgroundColor);
+        return (
+          (Math.max(foreground, background) + 0.05) /
+          (Math.min(foreground, background) + 0.05)
+        );
+      });
+      expect(contrast).toBeGreaterThanOrEqual(4.5);
       const box = await button.boundingBox();
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
@@ -91,6 +116,17 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
       });
     }
   }
+  await page.setViewportSize({ width: 390, height: 950 });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "20px";
+  });
+  await expect(
+    queue.getByRole("button", { name: "Send", exact: true }),
+  ).toBeInViewport();
+  await page.screenshot({ path: testInfo.outputPath("queue-enlarged.png") });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "";
+  });
   await page.evaluate((id) => window.localAgentFixture.finish(id, true), first);
   await expect(queue).toHaveCount(0);
   await expect(editor).toContainText("Keep typing");
@@ -99,8 +135,17 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
     .toBe(2);
   await editor.press("Enter");
   await expect(queue).toContainText("Keep typing");
-  await queue.getByRole("button", { name: "Send", exact: true }).click();
+  await queue.getByRole("button", { name: "Send", exact: true }).focus();
+  await page.keyboard.press("Enter");
   await expect(queue).toHaveCount(0);
+  await expect(editor).toBeFocused();
+  await editor.pressSequentially("Remove this follow-up");
+  await editor.press("Enter");
+  await expect(queue).toContainText("Remove this follow-up");
+  await queue.getByRole("button", { name: "Remove queued message" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(queue).toHaveCount(0);
+  await expect(editor).toBeFocused();
   await expect
     .poll(
       () =>

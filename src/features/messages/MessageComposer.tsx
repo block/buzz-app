@@ -1669,6 +1669,7 @@ function Composer({
           session={host}
           channelId={channelId}
           disabled={disabled || !active}
+          focusComposer={() => input.current?.focus()}
         />
       )}
       <form

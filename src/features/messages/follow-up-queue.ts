@@ -29,7 +29,9 @@ function createQueue(session: RelaySession) {
   const waits = new Map<string, Wait[]>();
   const listeners = new Set<() => void>();
   let stop: (() => void) | undefined;
-  let publishing = false;
+  const publishing = new Set<string>();
+  const requested = new Set<string>();
+  let activating = false;
   const emit = () => {
     for (const listener of listeners) listener();
   };
@@ -71,11 +73,7 @@ function createQueue(session: RelaySession) {
           current.push({ agent: row.agent, message: row.messageId });
       }
       for (const turn of activity.turns) {
-        if (
-          turn.channelId === channelId &&
-          turn.state === "working" &&
-          !local.some((row) => row.agent === turn.agent)
-        )
+        if (turn.channelId === channelId && turn.state === "working")
           current.push({ agent: turn.agent, turn: turn.turnId });
       }
     }
@@ -84,19 +82,42 @@ function createQueue(session: RelaySession) {
     ];
     if (current.length) waits.set(channelId, current);
     else waits.delete(channelId);
-    return current.length > 0;
+    return (
+      current.length > 0 ||
+      (!!activity &&
+        activity.status !== "listening" &&
+        activity.status !== "unavailable")
+    );
   }
   function watch() {
-    if (!stop && session.agentActivity) {
-      const unsubscribe = session.agentActivity.subscribe(pump);
-      // Keep completion evidence available even when the composer is unmounted.
-      stop = unsubscribe;
-      const deactivate = session.agentActivity.activate();
-      stop = () => {
-        unsubscribe();
-        deactivate();
-      };
-    }
+    if (stop) return;
+    activating = true;
+    const unsubscribe = session.agentActivity.subscribe(pump);
+    const deactivate = session.agentActivity.activate();
+    const offDismiss = session.outbox?.observeDismiss((item) => {
+      if (item.delivery !== "failed") return;
+      for (const [channelId, current] of waits) {
+        const remaining = current.filter(
+          (wait) => wait.message !== item.event.id,
+        );
+        if (remaining.length) waits.set(channelId, remaining);
+        else waits.delete(channelId);
+      }
+      pump();
+    });
+    const offRemoval = session.channelLifecycle?.observeRemoval((channelId) => {
+      entries = entries.filter((entry) => entry.channelId !== channelId);
+      waits.delete(channelId);
+      emit();
+      pump();
+    });
+    stop = () => {
+      unsubscribe();
+      offDismiss?.();
+      offRemoval?.();
+      deactivate();
+    };
+    activating = false;
   }
   function sent(entry: Omit<Entry, "id">) {
     const id = entry.publish();
@@ -111,12 +132,13 @@ function createQueue(session: RelaySession) {
     return id;
   }
   async function release(entry: Entry) {
-    if (publishing) return;
-    publishing = true;
+    if (publishing.has(entry.id)) return;
+    publishing.add(entry.id);
     let id: string | undefined;
     try {
       if (entry.beforeRelease) await entry.beforeRelease();
       if (!entries.includes(entry)) return;
+      if (!requested.has(entry.id) && blockers(entry.channelId)) return;
       id = sent(entry);
       entries = entries.filter((item) => item !== entry);
     } catch (error) {
@@ -129,7 +151,8 @@ function createQueue(session: RelaySession) {
           : item,
       );
     } finally {
-      publishing = false;
+      publishing.delete(entry.id);
+      requested.delete(entry.id);
       emit();
       queueMicrotask(pump);
     }
@@ -137,18 +160,25 @@ function createQueue(session: RelaySession) {
     if (id) entry.onSend?.(id);
   }
   function pump() {
-    if (publishing) return;
+    if (activating) return;
     for (const channelId of new Set([
       ...waits.keys(),
       ...entries.map((entry) => entry.channelId),
     ])) {
+      if (
+        entries.some(
+          (entry) => entry.channelId === channelId && publishing.has(entry.id),
+        )
+      )
+        continue;
       if (blockers(channelId)) continue;
       const first = entries.find((entry) => entry.channelId === channelId);
       if (first && !first.error) release(first);
     }
     if (!entries.length && !waits.size) {
-      stop?.();
+      const dispose = stop;
       stop = undefined;
+      dispose?.();
     }
   }
   return {
@@ -160,7 +190,9 @@ function createQueue(session: RelaySession) {
       };
     },
     submit(entry: Omit<Entry, "id">) {
+      watch();
       if (
+        !entry.beforeRelease &&
         !blockers(entry.channelId) &&
         !entries.some((item) => item.channelId === entry.channelId)
       )
@@ -172,13 +204,18 @@ function createQueue(session: RelaySession) {
       entries = [...entries, { ...entry, id: crypto.randomUUID() }];
       watch();
       emit();
+      pump();
       return undefined;
     },
     sendNow(id: string) {
       const entry = entries.find((item) => item.id === id);
-      if (entry) release(entry);
+      if (entry) {
+        requested.add(id);
+        void release(entry);
+      }
     },
     remove(id: string) {
+      requested.delete(id);
       entries = entries.filter((entry) => entry.id !== id);
       emit();
       pump();

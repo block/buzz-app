@@ -22,7 +22,7 @@ export type Total = Readonly<{ value?: number; partial: boolean }>;
 export type Day = Readonly<{
   start: number;
   /** Known cost by harness. */
-  costs: ReadonlyMap<string, number>;
+  costs: ReadonlyMap<string, Total>;
 }>;
 export type Stats = Readonly<{
   cost: Total;
@@ -89,6 +89,13 @@ class Sum {
 }
 const known = (total: Total) => total.value ?? 0;
 
+/** The totals added up, unknown when none was known. */
+export function sum(totals: Iterable<Total>): Total {
+  const result = new Sum();
+  for (const total of totals) result.add(total.value, total.partial);
+  return result.total();
+}
+
 /** The request's cost as the harness recorded it, else as estimated. */
 const price = (observation: UsageObservation) =>
   observation.cost
@@ -131,17 +138,19 @@ export function merge(
   return [...sessions.values()];
 }
 
+/** `unread` when an agent's latest read failed, so its usage may be missing. */
 export function stats(
   usage: readonly AgentUsage[],
   now: number,
   days: number,
+  unread = false,
 ): Stats {
   const start = dayStart(now, days - 1);
   const previous = dayStart(now, 2 * days - 1);
   const dayStarts = Array.from({ length: days }, (_, index) =>
     dayStart(now, days - 1 - index),
   );
-  const dayCosts = dayStarts.map(() => new Map<string, number>());
+  const dayCosts = dayStarts.map(() => new Map<string, Sum>());
   const dayOf = (at: number) => {
     let index = dayStarts.length - 1;
     while (index > 0 && (dayStarts[index] ?? 0) > at) index -= 1;
@@ -175,13 +184,16 @@ export function stats(
         }
         sessionCost.add(spent?.usd, spent?.partial);
         if (!spent) unpriced.add(observation.model);
-        else {
+        else if (spent.usd !== undefined)
           models.set(
             observation.model,
             (models.get(observation.model) ?? 0) + spent.usd,
           );
-          const day = dayOf(observation.at);
-          day?.set(harness, (day.get(harness) ?? 0) + spent.usd);
+        const day = dayOf(observation.at);
+        if (day) {
+          const spentThatDay = day.get(harness) ?? new Sum();
+          spentThatDay.add(spent?.usd, spent?.partial);
+          day.set(harness, spentThatDay);
         }
         for (const kind of KINDS) {
           tokens.add(observation.tokens[kind]);
@@ -228,6 +240,9 @@ export function stats(
       sessions: agentSessions,
     });
   }
+  if (unread)
+    for (const sum of [cost, previousCost, tokens, output, read])
+      sum.partial = true;
   const hit = read.total();
   return {
     cost: cost.total(),
@@ -249,7 +264,12 @@ export function stats(
     incomplete,
     days: dayStarts.map((day, index) => ({
       start: day,
-      costs: dayCosts[index] ?? new Map<string, number>(),
+      costs: new Map(
+        [...(dayCosts[index] ?? [])].map(([key, spent]) => [
+          key,
+          spent.total(),
+        ]),
+      ),
     })),
     agents: agents.sort(
       (a, b) => known(b.cost) - known(a.cost) || b.sessions - a.sessions,

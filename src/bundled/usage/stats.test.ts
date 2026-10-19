@@ -66,6 +66,8 @@ it("prices cache writes by how long they are kept, and dated snapshots", () => {
     usd: expect.closeTo(4),
     partial: true,
   });
+  // With no count known there is nothing to price, not $0.
+  expect(estimateCost("claude-opus-5-5", {})).toEqual({ partial: true });
   expect(estimateCost("claude-opus-9-9", full(1e6))).toBeUndefined();
   expect(estimateCost("gpt-5", full(1e6))).toBeUndefined();
 });
@@ -143,8 +145,15 @@ it("totals the period, compares the previous one and ranks agents and sessions",
   expect(result.unpriced).toEqual(["gpt-5"]);
   expect(result.days).toHaveLength(7);
   expect(result.days.at(-1)).toMatchObject({ start: today });
-  expect(result.days.at(-1)?.costs.get("x/claude")).toBeCloseTo(6.1);
-  expect(result.days.at(-3)?.costs.get("x/codex")).toBeCloseTo(1.5);
+  expect(result.days.at(-1)?.costs.get("x/claude")).toEqual({
+    value: expect.closeTo(6.1),
+    partial: false,
+  });
+  // The day's unpriced GPT reply leaves its cost partial, not complete.
+  expect(result.days.at(-3)?.costs.get("x/codex")).toEqual({
+    value: 1.5,
+    partial: true,
+  });
   // Every period reads the same 30 days; only 7 days' previous period is in
   // them, so 30 days are not compared.
   expect(since(now)).toBe(dayStart(now, 29));
@@ -246,4 +255,30 @@ it("names Claude models", () => {
   expect(modelName("databricks-claude-sonnet-5-5")).toBe("Claude Sonnet 5.5");
   expect(modelName("global.anthropic.claude-opus-4-8")).toBe("Claude Opus 4.8");
   expect(modelName("gpt-5")).toBe("gpt-5");
+});
+
+it("keeps costs unknown when nothing priced was known, on each day too", () => {
+  const result = stats(
+    [
+      {
+        agent: agent("pixel"),
+        harness: "x/claude",
+        sessions: [session("counts unknown", [seen(today + HOUR, {})])],
+      },
+      {
+        agent: agent("relay"),
+        harness: "x/codex",
+        sessions: [
+          session("unpriced", [seen(dayStart(now, 1), full(10), "gpt-5")]),
+        ],
+      },
+    ],
+    now,
+    7,
+  );
+  expect(result.cost).toEqual({ partial: true });
+  expect(result.days.at(-1)?.costs.get("x/claude")).toEqual({ partial: true });
+  expect(result.days.at(-2)?.costs.get("x/codex")).toEqual({ partial: true });
+  // A day without sessions spent nothing.
+  expect(result.days.at(-3)?.costs.size).toBe(0);
 });

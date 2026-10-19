@@ -269,6 +269,44 @@ it("says what it could not count instead of counting it as zero", async () => {
       name: "Fix the build, Sol, cost unavailable. Open conversation",
     }),
   ).toBeTruthy();
+  // Nor does the chart: today's figure is unknown, not $0.
+  const today = within(screen.getByRole("table")).getAllByRole("row").at(-1);
+  expect(today?.textContent).toContain("Unavailable");
+  expect(today?.textContent).not.toContain("$0.00");
+});
+
+it("compares nothing while an agent it shows could not be read", async () => {
+  const pixel = agent("Pixel");
+  const week = Date.now() - 8 * 86_400_000;
+  render(
+    <UsagePage
+      agents={host([pixel, agent("Relay")], async (target) => {
+        if (target !== pixel) throw new Error("no workspace");
+        const now = session("now", 250_000);
+        return [
+          {
+            ...now,
+            observations: [
+              { ...now.observations[0], at: week },
+              ...now.observations,
+            ] as typeof now.observations,
+          },
+        ];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  expect((await screen.findByRole("status")).textContent).toContain(
+    "Couldn’t read the sessions of Relay.",
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Period" }));
+  await user.click(await screen.findByRole("option", { name: "Last 7 days" }));
+  const hero = screen.getByRole("region", { name: "Estimated cost" });
+  expect(within(hero).getByText("$1.00")).toBeTruthy();
+  // Relay's spend may be missing from either week.
+  expect(hero.textContent).not.toContain("previous 7 days");
+  expect(hero.textContent).toContain("Partial");
 });
 
 it("explains where usage comes from when no agent reports any", () => {

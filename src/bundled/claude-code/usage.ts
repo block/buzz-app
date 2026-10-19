@@ -110,13 +110,23 @@ function observations(entries: readonly Json[]) {
   return [...seen.values()];
 }
 
-/** A session file's usage, with its subagents' files (undefined when one is
- * gone), when Buzz started it for `agent`. A saved session also counts when
- * its prompt does not name an agent, as prompts did before agents were named. */
+/** The transcript names, `agent-<id>`, of the subagents the entries record
+ * spawning. */
+const spawned = (entries: readonly Json[]) =>
+  entries.flatMap((entry) => {
+    const agentId = str(object(entry.toolUseResult)?.agentId);
+    return /^[\w-]+$/.test(agentId) ? [`agent-${agentId}`] : [];
+  });
+
+/** A session file's usage, with its subagents' files by name (undefined when
+ * one is gone), when Buzz started it for `agent`. A subagent the session
+ * recorded spawning without a file is gone too. A saved session also counts
+ * when its prompt does not name an agent, as prompts did before agents were
+ * named. */
 export function sessionUsage(
   id: string,
   file: string,
-  subagents: readonly (string | undefined)[],
+  subagents: ReadonlyMap<string, string | undefined>,
   agent: string,
   saved: boolean,
 ): Omit<SessionUsage, "revision"> | undefined {
@@ -127,7 +137,7 @@ export function sessionUsage(
   const all = [...entries];
   const gaps: string[] = [];
   let skipped = unreadable;
-  for (const subagent of subagents) {
+  for (const subagent of subagents.values()) {
     if (subagent === undefined) {
       gaps.push("A subagent’s transcript is gone");
       continue;
@@ -136,6 +146,8 @@ export function sessionUsage(
     all.push(...read.entries);
     skipped += read.unreadable;
   }
+  for (const name of new Set(spawned(all)))
+    if (!subagents.has(name)) gaps.push("A subagent’s transcript is gone");
   if (skipped)
     gaps.push(
       `${skipped} transcript line${skipped === 1 ? "" : "s"} unreadable`,
@@ -217,7 +229,17 @@ export async function readUsage(
       const file = await read(name);
       if (file === undefined) continue;
       const id = name.slice(0, -".jsonl".length);
-      const files = await Promise.all((subagents.get(id) ?? []).map(read));
+      const files = new Map(
+        await Promise.all(
+          (subagents.get(id) ?? []).map(
+            async (path) =>
+              [
+                path.slice(path.lastIndexOf("/") + 1, -".jsonl".length),
+                await read(path),
+              ] as const,
+          ),
+        ),
+      );
       const session = sessionUsage(
         id,
         file,

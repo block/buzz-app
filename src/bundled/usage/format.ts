@@ -18,6 +18,11 @@ export function count(value: number, noun?: string) {
   const number = compact.format(value);
   return noun ? `${number} ${noun}${value === 1 ? "" : "s"}` : number;
 }
+/** A cost total as text: `Unavailable` when unknown, marked when partial. */
+export const costText = (total: Total) =>
+  total.value === undefined
+    ? "Unavailable"
+    : `${cost(total.value)}${total.partial ? " · partial" : ""}`;
 /** A total's known value in `format`; `Unavailable` when none was known. */
 export const amount = (total: Total, format: (value: number) => string) =>
   total.value === undefined ? "Unavailable" : format(total.value);

@@ -2,8 +2,8 @@ import { scaleBand, scaleLinear } from "d3-scale";
 import { useLayoutEffect, useRef, useState } from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import styles from "./Usage.module.css";
-import { cost } from "./format";
-import type { Day } from "./stats";
+import { costText } from "./format";
+import { type Day, sum, type Total } from "./stats";
 
 /** One stacked series: a harness, or Other for several. */
 export type Series = Readonly<{
@@ -24,6 +24,9 @@ const day = (start: number) =>
     month: "short",
     day: "numeric",
   });
+
+const text = (total: Total | undefined) =>
+  costText(total ?? { value: 0, partial: false });
 
 /** A bar segment, its top corners rounded when it ends the stack. */
 function segment(
@@ -57,15 +60,21 @@ export function DailyCostChart({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const values = days.map((entry) =>
+  // A harness with no entry spent nothing that day.
+  const cells = days.map((entry) =>
     series.map((line) =>
-      line.harnesses.reduce(
-        (total, key) => total + (entry.costs.get(key) ?? 0),
-        0,
+      sum(
+        line.harnesses.flatMap((key) => {
+          const spent = entry.costs.get(key);
+          return spent ? [spent] : [];
+        }),
       ),
     ),
   );
-  const totals = values.map((row) => row.reduce((a, b) => a + b, 0));
+  const dayTotals: Total[] = cells.map((row) => sum(row));
+  // Bars show what is known; the tooltip and table say what is not.
+  const values = cells.map((row) => row.map((total) => total.value ?? 0));
+  const totals = dayTotals.map((total) => total.value ?? 0);
   const y = scaleLinear()
     .domain([0, Math.max(...totals, 0) || 1])
     .range([HEIGHT - LABELS, 8])
@@ -194,12 +203,12 @@ export function DailyCostChart({
                           style={{ background: line.color }}
                         />
                         {line.label}
-                        <span>{cost(values[index]?.[position] ?? 0)}</span>
+                        <span>{text(cells[index]?.[position])}</span>
                       </span>
                     ))}
                   <span className={styles.tipRow}>
                     {stacked ? "Total" : "Cost"}
-                    <span>{cost(totals[index] ?? 0)}</span>
+                    <span>{text(dayTotals[index])}</span>
                   </span>
                 </span>
               }
@@ -237,9 +246,9 @@ export function DailyCostChart({
               <th scope="row">{day(entry.start)}</th>
               {stacked &&
                 series.map((line, position) => (
-                  <td key={line.key}>{cost(values[index]?.[position] ?? 0)}</td>
+                  <td key={line.key}>{text(cells[index]?.[position])}</td>
                 ))}
-              <td>{cost(totals[index] ?? 0)}</td>
+              <td>{text(dayTotals[index])}</td>
             </tr>
           ))}
         </tbody>

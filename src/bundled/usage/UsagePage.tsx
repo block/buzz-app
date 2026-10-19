@@ -177,19 +177,18 @@ export function UsagePage({
     `var(--chart-series-${SERIES})`;
   const titleOf = (harness: string) =>
     harnesses.find((type) => type.key === harness)?.title ?? harness;
-  const shown = useMemo(
-    () =>
-      (load?.usage ?? []).filter(
-        (entry) =>
-          (agentFilter === ALL || entry.agent.pubkey === agentFilter) &&
-          (harnessFilter === ALL || entry.harness === harnessFilter),
-      ),
-    [load, agentFilter, harnessFilter],
-  );
-  const result = useMemo(
-    () => load && stats(shown, load.now, days),
-    [load, shown, days],
-  );
+  const result = useMemo(() => {
+    if (!load) return undefined;
+    const included = (agent: Agent) =>
+      (agentFilter === ALL || agent.pubkey === agentFilter) &&
+      (harnessFilter === ALL || agent.type === harnessFilter);
+    return stats(
+      load.usage.filter((entry) => included(entry.agent)),
+      load.now,
+      days,
+      load.failed.some(included),
+    );
+  }, [load, agentFilter, harnessFilter, days]);
   const loading = !load || load.loading;
 
   let body: ReactNode;

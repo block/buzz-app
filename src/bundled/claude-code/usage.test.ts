@@ -75,7 +75,7 @@ it("observes each streamed request once, with its subagents, unknown counts left
   const session = sessionUsage(
     "s",
     `${file}\n{"partial`,
-    [subagent],
+    new Map([["agent-s", subagent]]),
     agent,
     false,
   );
@@ -130,7 +130,10 @@ it("reports what it could not read as the snapshot's gaps", () => {
   const session = sessionUsage(
     "s",
     [threadPrompt(), "{broken", work, ""].join("\n"),
-    [undefined, `{broken\n${work}`],
+    new Map([
+      ["agent-a", undefined],
+      ["agent-b", `{broken\n${work}`],
+    ]),
     agent,
     false,
   );
@@ -138,6 +141,33 @@ it("reports what it could not read as the snapshot's gaps", () => {
     "A subagent’s transcript is gone",
     "2 transcript lines unreadable",
   ]);
+});
+
+it("reports a subagent the session spawned whose transcript is gone", () => {
+  const work = reply(1000, "m1", usage(1, 1));
+  const spawn = (agentId: string) =>
+    JSON.stringify({
+      type: "user",
+      timestamp: at(500),
+      toolUseResult: { agentId },
+    });
+  const file = [threadPrompt(), spawn("kept"), spawn("gone"), work].join("\n");
+  expect(
+    sessionUsage("s", file, new Map([["agent-kept", work]]), agent, false)
+      ?.gaps,
+  ).toEqual(["A subagent’s transcript is gone"]);
+  expect(
+    sessionUsage(
+      "s",
+      file,
+      new Map([
+        ["agent-kept", work],
+        ["agent-gone", work],
+      ]),
+      agent,
+      false,
+    )?.gaps,
+  ).toEqual([]);
 });
 
 it("keeps only sessions Buzz started for this agent", () => {
@@ -148,29 +178,35 @@ it("keeps only sessions Buzz started for this agent", () => {
   ]);
   const work = reply(1000, "m1", usage(1, 1));
   expect(
-    sessionUsage("s", `${threadPrompt(other)}\n${work}`, [], agent, true),
+    sessionUsage(
+      "s",
+      `${threadPrompt(other)}\n${work}`,
+      new Map(),
+      agent,
+      true,
+    ),
   ).toBeUndefined();
   // Not a Buzz prompt: the person's own session in the same workspace.
   expect(
     sessionUsage(
       "s",
       `${JSON.stringify({ type: "user", timestamp: at(0), message: { content: "hi" } })}\n${work}`,
-      [],
+      new Map(),
       agent,
       true,
     ),
   ).toBeUndefined();
   // Prompts from before agents were named count only when saved for it.
   expect(
-    sessionUsage("s", `${channelPrompt}\n${work}`, [], agent, false),
+    sessionUsage("s", `${channelPrompt}\n${work}`, new Map(), agent, false),
   ).toBeUndefined();
   expect(
-    sessionUsage("s", `${channelPrompt}\n${work}`, [], agent, true),
+    sessionUsage("s", `${channelPrompt}\n${work}`, new Map(), agent, true),
   ).toMatchObject({
     channelId: "chan",
   });
   expect(
-    sessionUsage("s", `${channelPrompt}\n${work}`, [], agent, true),
+    sessionUsage("s", `${channelPrompt}\n${work}`, new Map(), agent, true),
   ).not.toHaveProperty("root");
 });
 

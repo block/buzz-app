@@ -532,7 +532,8 @@ export function createRelaySession(
       ? visible
       : events.filter(
           (event) =>
-            [39000, 39002].includes(event.kind) || visible.includes(event),
+            [39000, 39002, 9007].includes(event.kind) ||
+            visible.includes(event),
         );
   }
   /** The relay's verified answer only: no projection, discovery or inbox. */
@@ -779,12 +780,6 @@ export function createRelaySession(
     (generation) => traffic?.observe?.(generation),
     (channel) => canAccess(channel),
     notify,
-    transport?.activityArchive
-      ? {
-          host: transport.activityArchive,
-          canRestore: (id) => canAccess(id) && !!channels.queries.get?.(id),
-        }
-      : undefined,
     (id) => recent.peek(id)?.event ?? retainedEvent(id),
     options.localAgents && transport
       ? { source: options.localAgents, scope: transportPartition(transport) }
@@ -894,10 +889,15 @@ export function createRelaySession(
       channelActivityRevision = activityRevision;
       const projected = snapshot.channels.map((channel) => {
         const lastActivityAt = channelActivity.last(channel.id);
-        if (lastActivityAt === undefined) return channel;
+        if (!channelActivity.known(channel.id)) return channel;
         const previous = projectedChannels.get(channel);
-        if (previous?.lastActivityAt === lastActivityAt) return previous;
-        const next = Object.freeze({ ...channel, lastActivityAt });
+        if (previous && previous.lastActivityAt === lastActivityAt)
+          return previous;
+        const next = Object.freeze({
+          ...channel,
+          lastActivityAt,
+          activityKnown: true as const,
+        });
         projectedChannels.set(channel, next);
         return next;
       });
@@ -1397,6 +1397,23 @@ export function createRelaySession(
                 AbortSignal.timeout(20_000),
                 signal,
               ]),
+            )
+        : undefined;
+    })(),
+    writeFilter: (() => {
+      const write = transport?.writeSidebarFilter;
+      return write
+        ? (group, mode, sectionIds, signal, activeWindowSeconds) =>
+            write(
+              group,
+              mode,
+              sectionIds,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+              activeWindowSeconds,
             )
         : undefined;
     })(),
@@ -2558,7 +2575,6 @@ export function createRelaySession(
   }
   traffic = transport?.subscribe?.({
     observer: (frame, generation) => activity.receive(frame, generation),
-    captureState: (state) => activity.captureState(state),
     receive(events, provenance) {
       if (closed) return;
       reminders?.receive(events);
@@ -2807,10 +2823,10 @@ export function createRelaySession(
   let activityRosterKey: string | undefined;
   const refreshChannelActivity = () => {
     if (closed || !transport?.channelActivity) return;
+    const preferences = sidebarPreferences.queries.snapshot().data;
     if (
-      !Object.values(
-        sidebarPreferences.queries.snapshot().data?.sort ?? {},
-      ).includes("recent")
+      !Object.values(preferences?.sort ?? {}).includes("recent") &&
+      !Object.values(preferences?.filters ?? {}).includes("active")
     ) {
       channelActivity.cancel();
       activityRosterKey = undefined;
@@ -2829,10 +2845,9 @@ export function createRelaySession(
       if (activityRosterKey === key) activityRosterKey = undefined;
     });
   };
-  const stopActivityRoster = channels.queries.subscribeList(() => {
-    refreshChannelActivity();
-    activity.restoreHistory();
-  });
+  const stopActivityRoster = channels.queries.subscribeList(
+    refreshChannelActivity,
+  );
   const stopActivityPreferences = sidebarPreferences.queries.subscribe(
     refreshChannelActivity,
   );
@@ -2853,7 +2868,7 @@ export function createRelaySession(
         cancelUploads();
         cacheClearEpoch++;
         dropHintConfirmations();
-        const activityCleared = activity.queries.clearHistory();
+        activity.clear();
         memories.clear();
         presence.clear();
         channelActivity.clear();
@@ -2880,10 +2895,7 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.clear();
         workflows.clear();
-        const results = await Promise.allSettled([
-          channels.clearCache(),
-          activityCleared,
-        ]);
+        const results = await Promise.allSettled([channels.clearCache()]);
         updateInterests();
         const failed = results.find((result) => result.status === "rejected");
         if (failed?.status === "rejected") throw failed.reason;

@@ -27,7 +27,30 @@ test("launch opens Messages without exposing Home across responsive navigation, 
     }
     requestAnimationFrame(observe);
   });
+  // Hold the metadata read after roster discovery, reproducing a cold start.
+  let releaseMetadata;
+  const metadataGate = new Promise((resolve) => {
+    releaseMetadata = resolve;
+  });
+  let metadataHeld = false;
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.kinds?.includes(39000))
+    ) {
+      metadataHeld = true;
+      await metadataGate;
+    }
+    await route.continue();
+  });
   await page.goto(app.origin);
+  await expect.poll(() => metadataHeld).toBe(true);
+  expect(
+    await page.evaluate(() => window.fixtureNavigation.snapshot().status),
+  ).toBe("opening");
+  releaseMetadata();
   await expect(messages(page)).toBeVisible();
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: 950 });
@@ -61,9 +84,19 @@ test("launch opens Messages without exposing Home across responsive navigation, 
       )
       .toBe(true);
   }
+  await page
+    .getByRole("button", { name: "Channel members", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Channel members", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.screenshot({ path: testInfo.outputPath("launch-messages.png") });
   await page.getByRole("button", { name: "Search Buzz" }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
+  await expect(
+    dialog.getByRole("group", { name: "This conversation" }),
+  ).toBeVisible();
   await expect(
     dialog.getByRole("option", { name: "Messages", exact: true }),
   ).toBeVisible();
@@ -97,6 +130,70 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   await page.reload();
   await expect(messages(page)).toBeVisible();
   expect(await page.evaluate(() => window.homeFrames)).toEqual([]);
+});
+
+test("default navigation retries failed metadata and accepts a completed empty lookup", async ({
+  page,
+  app,
+}) => {
+  let releaseMetadata;
+  const gate = new Promise((resolve) => {
+    releaseMetadata = resolve;
+  });
+  let held = false;
+  let failMetadata = true;
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.kinds?.includes(39000))
+    ) {
+      held = true;
+      await gate;
+      await route.fulfill(
+        failMetadata
+          ? { json: { error: "Invalid metadata response" } }
+          : { json: [] },
+      );
+    } else await route.continue();
+  });
+  await page.goto(app.origin);
+  await expect.poll(() => held).toBe(true);
+  expect(
+    await page.evaluate(() => window.fixtureNavigation.snapshot().status),
+  ).toBe("opening");
+  releaseMetadata();
+  await expect(
+    page.getByRole("button", { name: "Retry navigation", exact: true }),
+  ).toBeVisible();
+  failMetadata = false;
+  await page
+    .getByRole("button", { name: "Retry navigation", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.fixtureNavigation.snapshot().entry.target),
+    )
+    .toMatchObject({ kind: "conversation" });
+  await expect(page.getByRole("textbox", { name: /^Message #/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "alpha", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Channel members", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Channel members", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Search Buzz" }).click();
+  await expect(
+    page.getByRole("group", { name: "This conversation" }),
+  ).toBeVisible();
 });
 
 test("Channels stays enabled despite saved disabled settings and has no disable action", async ({
@@ -181,3 +278,108 @@ test("launch retains plugin-configuration recovery without Home", async ({
     .click();
   await expect(messages(page)).toBeVisible();
 });
+
+for (const huddle of [false, true]) {
+  test(`exact destinations wait for classification (${huddle ? "unproven legacy Huddle" : "ordinary"})`, async ({
+    page,
+    app,
+  }) => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let held = false;
+    let failMetadata = !huddle;
+    const reads = [];
+    await page.route("**/api/relay/**/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      reads.push(
+        ...filters.filter(
+          (filter) =>
+            filter.kinds?.includes(9) &&
+            filter["#h"]?.includes("alpha") &&
+            filter.top_level === true,
+        ),
+      );
+      if (filters.some((filter) => filter.kinds?.includes(39000))) {
+        held = true;
+        await gate;
+        if (failMetadata) {
+          await route.fulfill({
+            json: { error: "Invalid metadata response" },
+          });
+          return;
+        }
+        const response = await route.fetch();
+        const events = await response.json();
+        await route.fulfill({
+          json: events.map((event) =>
+            huddle &&
+            event.kind === 39000 &&
+            event.tags.some(([key, value]) => key === "d" && value === "alpha")
+              ? app.channelMetadata("alpha", [
+                  ["name", "Alpha"],
+                  ["t", "stream"],
+                  ["private"],
+                  [
+                    "about",
+                    "Buzz Huddle (buzz.huddles/v1)\nparent:00000000-0000-4000-8000-000000000001",
+                  ],
+                ])
+              : event,
+          ),
+        });
+      } else await route.continue();
+    });
+    await page.goto(
+      address(app.origin, {
+        version: 1,
+        kind: "conversation",
+        channelId: "alpha",
+        scope: {
+          viewer: app.viewer,
+          communityOrigin: "https://primary.example",
+        },
+      }),
+    );
+    await expect.poll(() => held).toBe(true);
+    expect(
+      await page.evaluate(() => window.fixtureNavigation.snapshot().status),
+    ).toBe("opening");
+    await expect(page.getByRole("textbox", { name: /^Message #/ })).toHaveCount(
+      0,
+    );
+    expect(reads).toHaveLength(0);
+    release();
+    if (huddle) {
+      // Mutable metadata without a creation receipt remains an ordinary channel.
+      await expect(messages(page)).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureNavigation.snapshot().status),
+        )
+        .toBe("opened");
+    } else {
+      await expect(
+        page.getByRole("button", { name: "Retry navigation", exact: true }),
+      ).toBeVisible();
+      expect(
+        await page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      ).toBe("failed");
+      await expect(
+        page.getByRole("textbox", { name: /^Message #/ }),
+      ).toHaveCount(0);
+      expect(reads).toHaveLength(0);
+      failMetadata = false;
+      await page
+        .getByRole("button", { name: "Retry navigation", exact: true })
+        .click();
+      await expect(messages(page)).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureNavigation.snapshot().status),
+        )
+        .toBe("opened");
+    }
+  });
+}

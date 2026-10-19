@@ -230,6 +230,8 @@ function mount(
     channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
   };
   const rawSession = {
+    // Full-session fixture; the detached editor intentionally omits this capability.
+    unread: undefined,
     viewer,
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
@@ -317,25 +319,26 @@ function mount(
       },
     },
   ];
-  let props: MessageComposerProps = {
-    session,
-    onSend,
-    scope: "scope",
-    channelId: "channel",
-    channelName: "General",
-    extensions: {
-      tools: { snapshot: () => tools, subscribe: () => () => {} },
-      inline: { snapshot: () => inline, subscribe: () => () => {} },
-      completions: {
-        snapshot: () => completions,
-        subscribe(listener) {
-          completionListeners.add(listener);
-          return () => completionListeners.delete(listener);
+  let props: Omit<MessageComposerProps, "session"> & { session: RelaySession } =
+    {
+      session,
+      onSend,
+      scope: "scope",
+      channelId: "channel",
+      channelName: "General",
+      extensions: {
+        tools: { snapshot: () => tools, subscribe: () => () => {} },
+        inline: { snapshot: () => inline, subscribe: () => () => {} },
+        completions: {
+          snapshot: () => completions,
+          subscribe(listener) {
+            completionListeners.add(listener);
+            return () => completionListeners.delete(listener);
+          },
         },
       },
-    },
-    ...options,
-  };
+      ...options,
+    } as Omit<MessageComposerProps, "session"> & { session: RelaySession };
   const bindChoices = () => {
     const library = props.session.agentLibrary;
     props = {
@@ -418,7 +421,11 @@ function mount(
         for (const listener of completionListeners) listener();
       });
     },
-    retarget(next: Partial<MessageComposerProps>) {
+    retarget(
+      next: Partial<
+        Omit<MessageComposerProps, "session"> & { session: RelaySession }
+      >,
+    ) {
       const changedSession =
         (next.session !== undefined && next.session !== props.session) ||
         (next.scope !== undefined && next.scope !== props.scope);
@@ -532,6 +539,23 @@ it("shows a local draft in the cached composer without completion, typing or tra
     h.unmount();
     owner.dispose();
   }
+});
+
+it("an explicit focus request resumes after the draft's retained mention", () => {
+  writeView("scope", "draft:channel", {
+    text: "@Honey existing prose",
+    recipients: [{ ...first, start: 0, end: 6 }],
+  });
+  const h = mount({ autoFocus: false });
+  act(() => h.input().setSelectionRange(0, 0));
+  h.retarget({ focusRequest: 1 });
+  expect(h.input()).toHaveFocus();
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([21, 21]);
+  act(() => h.input().setSelectionRange(7, 7));
+  h.retarget({ channelName: "Renamed" });
+  expect(h.input().selectionStart).toBe(7);
+  h.retarget({ focusRequest: 2 });
+  expect(h.input().selectionStart).toBe(21);
 });
 
 it("autofocuses each selected conversation once without stealing focus on updates", () => {
@@ -7210,6 +7234,37 @@ it("keeps snapshot paste from taking the attachment slot reserved for a recordin
   expect(h.uploadCalls[0]?.file.name).toBe("draft-0.txt");
   expect(h.publish).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "retains a companion draft until owner admission settles (reject=%s)",
+  async (reject) => {
+    const h = mount();
+    const gate = deferred<string>();
+    Reflect.deleteProperty(h.session, "unread");
+    const send = vi.fn(() => gate.promise);
+    Object.assign(h.session.messages, { send });
+    h.fill("Keep until acknowledged");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(h.input()).toHaveValue("Keep until acknowledged");
+    expect(h.onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await act(async () => {
+      if (reject) gate.reject(new Error("Owner rejected this send"));
+      else gate.resolve("admitted");
+    });
+    if (reject) {
+      expect(h.input()).toHaveValue("Keep until acknowledged");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Owner rejected this send",
+      );
+      expect(h.onSend).not.toHaveBeenCalled();
+    } else {
+      expect(h.input()).toHaveValue("");
+      expect(h.onSend).toHaveBeenCalledWith("admitted");
+    }
+  },
+);
 
 it("drops the attachments mark while a row-requested edit holds pending items", async () => {
   // Arrow-up refuses to edit over pending items; the row's Edit action does not.

@@ -163,7 +163,7 @@ export function UnreadOptions({
           onClick={() => {
             const last = session.channels
               .window(channelId)
-              .rows.filter((row) => !row.membership)
+              .rows.filter((row) => !row.membership && !row.huddle)
               .at(-1);
             if (last)
               run(

@@ -289,7 +289,7 @@ expected relay, admin origin and signer before signing, and caps each response.
 When there is a selected identity and relay and the relay advertises a valid
 admin host, opening Settings sends one signed role check (`probe`, `GET
 /api/admin/v1/probe`, empty body) to that host without a further click, so the
-Relay admin entries show only to staff (a relay with admin auth off shows its
+Moderation entries show only to staff (a relay with admin auth off shows its
 read-only entries to everyone). Every member who opens Settings sends it, not
 only staff, because only the answer says who is staff. It goes to whatever
 admin host the relay advertises, which can differ from the community's

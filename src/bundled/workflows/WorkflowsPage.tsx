@@ -71,6 +71,9 @@ export function WorkflowCommunity({
 }) {
   const capability = session.workflows;
   const channels = useChannelList(session.channels);
+  const eligible = channels.channels.filter(
+    (item) => !item.huddle && !item.metadataPending,
+  );
   const [selected, setSelected] = useState("");
   const [selectedDefinition, setSelectedDefinition] = useState<
     WorkflowDefinition | "new" | undefined
@@ -82,18 +85,20 @@ export function WorkflowCommunity({
   const deleting = useRef(false);
   const [deleteError, setDeleteError] = useState<string>();
   const [createOpen, setCreateOpen] = useState(false);
-  const channel = channels.channels.find((item) => item.id === selected);
+  const channel = eligible.find((item) => item.id === selected);
   useEffect(() => {
     if (
       !selected ||
       channel ||
-      channels.status !== "ready" ||
-      channels.coverage === "partial"
+      (!channels.channels.some(
+        (item) => item.id === selected && (item.huddle || item.metadataPending),
+      ) &&
+        (channels.status !== "ready" || channels.coverage === "partial"))
     )
       return;
     setSelected("");
     setSelectedDefinition(undefined);
-  }, [channel, channels.coverage, channels.status, selected]);
+  }, [channel, channels, selected]);
   if (!capability) {
     return (
       <>
@@ -108,6 +113,7 @@ export function WorkflowCommunity({
     definition?: WorkflowDefinition | "new",
     action?: "run",
   ) => {
+    if (next && !eligible.some((item) => item.id === next)) return;
     setInitialAction(action);
     setSelectedDefinition(definition);
     setSelected(next);
@@ -166,7 +172,7 @@ export function WorkflowCommunity({
           )
         }
       />
-      {channels.status === "loading" && !channels.channels.length && (
+      {channels.status === "loading" && !eligible.length && (
         <p role="status">Reading channels…</p>
       )}
       {channels.status === "error" && (
@@ -179,7 +185,7 @@ export function WorkflowCommunity({
           </Button>
         </div>
       )}
-      {channels.channels.length > 0 && selectedDefinition === undefined && (
+      {eligible.length > 0 && selectedDefinition === undefined && (
         <div className="workflow-page-filter">
           <Select
             label="Channel"
@@ -189,7 +195,7 @@ export function WorkflowCommunity({
                 label: "Community channels",
                 options: [
                   { value: "", label: "All workflows" },
-                  ...channels.channels.map((item) => ({
+                  ...eligible.map((item) => ({
                     value: item.id,
                     label: item.name,
                   })),
@@ -200,7 +206,7 @@ export function WorkflowCommunity({
           />
         </div>
       )}
-      {channels.status === "ready" && !channels.channels.length && (
+      {channels.status === "ready" && !eligible.length && (
         <div className="workflow-page-state">
           <p>No channels are available in this community.</p>
         </div>
@@ -208,11 +214,11 @@ export function WorkflowCommunity({
       {channels.coverage === "partial" && (
         <p className="text-secondary">The channel list is partial.</p>
       )}
-      {channels.channels.length > 0 && (
+      {eligible.length > 0 && (
         <div hidden={!!channel && selectedDefinition === undefined}>
           <WorkflowLanding
             capability={capability}
-            channels={channels.channels}
+            channels={eligible}
             onCreate={beginCreate}
             onDelete={deleteWorkflow}
             onOpen={(definition, nextChannel, action) =>
@@ -265,7 +271,7 @@ export function WorkflowCommunity({
           onCancel={() => setCreateOpen(false)}
           scope={
             <WorkflowChannelPicker
-              channels={channels.channels}
+              channels={eligible}
               onSelect={(id) => {
                 setCreateOpen(false);
                 openChannel(id, "new");

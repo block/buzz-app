@@ -1465,7 +1465,10 @@
     :is(
       .buzz-choice-row-description,
       .buzz-choice-row-trailing,
-      .buzz-menu-icon
+      .buzz-menu-icon,
+      .buzz-menu-trailing,
+      .buzz-menu-item-indicator,
+      .buzz-menu-submenu-arrow
     ) {
     color: inherit;
   }

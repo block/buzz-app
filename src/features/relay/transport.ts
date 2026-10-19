@@ -1,7 +1,5 @@
 import { audienceAuthorityCommunity } from "../sessions/audience-authority";
 import type { ReminderHost } from "./reminders";
-import { archiveClient } from "../archive/client";
-import type { ArchiveHost } from "../archive/types";
 import {
   memoryResponseText,
   type MemoryReader,
@@ -40,6 +38,7 @@ import {
   type SidebarSectionRemovalMutator,
   type SidebarStarMutator,
   type SidebarSortMutator,
+  type SidebarFilterMutator,
   type SidebarDecoder,
   type SidebarMuteMutator,
   type SidebarPreferences,
@@ -114,13 +113,13 @@ export interface ReadTransport {
   readonly identityArchive?: RelayWriter;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
-  readonly activityArchive?: ArchiveHost;
   /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;
   /** Host-only decoder of the viewer's signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
   readonly writeSidebarSort?: SidebarSortMutator;
+  readonly writeSidebarFilter?: SidebarFilterMutator;
   readonly readState?: ReadStateHost;
   /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
   readonly reminders?: ReminderHost;
@@ -447,6 +446,7 @@ export async function connectBrokerTransport(
     presence?: boolean;
     sidebarPreferences?: boolean;
     sidebarSortWrites?: boolean;
+    sidebarFilterWrites?: boolean;
     channelActivity?: boolean;
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
@@ -556,26 +556,6 @@ export async function connectBrokerTransport(
         }
       : {}),
     agentActivity: session.agentActivity === true && session.live === true,
-    ...(session.agentActivity === true && session.live === true
-      ? {
-          activityArchive: archiveClient("broker", async (input, signal) => {
-            const response = await fetch(`${endpoint}/archive`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ viewer: session.viewer, ...input }),
-              signal: signal
-                ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
-                : AbortSignal.timeout(10000),
-            });
-            if (!response.ok)
-              throw new Error(
-                "Archive operation failed; retry without deleting stored data",
-              );
-            return response.json();
-          }).host,
-        }
-      : {}),
     ...(session.live
       ? {
           subscribe: (callbacks: LiveCallbacks) => {
@@ -929,6 +909,54 @@ export async function connectBrokerTransport(
                 sectionIds,
               ).sort ?? {}
             );
+          },
+        }
+      : {}),
+    ...(session.sidebarFilterWrites
+      ? {
+          async writeSidebarFilter(
+            group,
+            mode,
+            sectionIds,
+            signal,
+            activeWindowSeconds,
+          ) {
+            const result = await fetch(`${endpoint}/sidebar-filter`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                group,
+                mode,
+                sectionIds,
+                activeWindowSeconds,
+              }),
+              signal,
+            });
+            if (!result.ok) {
+              const failure = await readApiFailure(result);
+              throw new Error(failure.error);
+            }
+            const value = (await result.json()) as {
+              groups?: unknown;
+              activeWindowSeconds?: unknown;
+            };
+            const projected = projectSidebarPreferences(
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              sectionIds,
+              {
+                version: 1,
+                groups: value.groups,
+                activeWindowSeconds: value.activeWindowSeconds,
+              },
+            );
+            return {
+              filters: projected.filters ?? {},
+              activeWindowSeconds: projected.activeWindowSeconds ?? {},
+            };
           },
         }
       : {}),

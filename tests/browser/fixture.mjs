@@ -36,7 +36,6 @@ export const test = base.extend({
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
   liveSetupTimeoutMs: [undefined, { option: true }],
-  archiveOnDisk: [false, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
   profilePicture: ["", { option: true }],
@@ -98,7 +97,6 @@ export const test = base.extend({
       browser,
       productionBroker,
       liveSetupTimeoutMs,
-      archiveOnDisk,
       actionProfile,
       agentMessageDeletion,
       profilePicture,
@@ -924,6 +922,8 @@ export const test = base.extend({
         .map((entry) => entry.event);
     };
     const answer = (community, filter) => {
+      // These ordinary fixture channels have no Huddle creation receipt.
+      if (filter.kinds?.length === 1 && filter.kinds[0] === 9007) return [];
       // The real relay can return both current metadata and rosters in one query.
       if (filter.kinds?.includes(39000) && filter.kinds?.includes(39002))
         return [39000, 39002].flatMap((kind) =>
@@ -1785,6 +1785,7 @@ export const test = base.extend({
           "channel-sections",
           "channel-stars",
           "channel-sort",
+          "channel-filter",
         ].includes(sidebarCoordinate) ||
         (ownSoloChannels.length > 0 &&
           sidebarCoordinate?.startsWith("buzz-me-kit-v1:"))
@@ -2042,7 +2043,13 @@ export const test = base.extend({
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
         expect(body.length).toBeGreaterThan(0);
-        expect(body.length).toBeLessThanOrEqual(3);
+        expect(body.length).toBeLessThanOrEqual(
+          body.every(
+            (filter) => filter.kinds?.length === 1 && filter.kinds[0] === 9007,
+          )
+            ? 4
+            : 3,
+        );
         const filter = body[0];
         const result = [
           ...new Map(
@@ -2139,9 +2146,7 @@ export const test = base.extend({
                   next();
                 });
                 const broker = relayBrokerPlugin({
-                  archiveFile: archiveOnDisk
-                    ? testInfo.outputPath("archive.sqlite3")
-                    : ":memory:",
+                  archiveFile: ":memory:",
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
@@ -2257,10 +2262,8 @@ export const test = base.extend({
         { viewer, profilePicture, iconCongestion },
       );
       await use({
-        archiveFile: archiveOnDisk
-          ? testInfo.outputPath("archive.sqlite3")
-          : undefined,
         sign: (template) => finalizeEvent(template, userKey),
+        channelMetadata: (id, tags) => sign(39000, [["d", id], ...tags]),
         signRelay: (template) => finalizeEvent(template, relayKey),
         membershipSnapshot(role) {
           expect(["owner", "admin", "member"]).toContain(role);

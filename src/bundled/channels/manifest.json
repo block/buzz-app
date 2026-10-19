@@ -5,6 +5,6 @@
   "description": "Navigate channels and hold conversations in Buzz.",
   "discovery": {
     "category": "communication",
-    "tags": ["Essentials", "messaging"]
+    "tags": ["Core", "Essentials", "messaging"]
   }
 }

@@ -167,7 +167,10 @@ it("shows exact declared access and changes before an enabled update", async () 
                 args: ["status", "--json"],
               },
             ],
-            networkOrigins: ["https://api.example.com"],
+            networkOrigins: [
+              "https://api.example.com",
+              "https://second.example.com",
+            ],
             processes: [{ id: "worker", program: "example-worker" }],
             mcp: true,
           },
@@ -243,7 +246,7 @@ it("shows exact declared access and changes before an enabled update", async () 
   );
   expect(scopes.getByText("Run a program on your computer.")).toBeVisible();
   expect(scopes.getByText(/account’s full access/)).toBeVisible();
-  expect(scopes.getByText(/HTTPS requests to this address/)).toBeVisible();
+  expect(scopes.getAllByText(/HTTPS requests to this address/)).toHaveLength(2);
   expect(scopes.getByText(/Buzz’s local MCP server/)).toBeVisible();
   expect(screen.getByText(/beyond these declarations/)).toBeVisible();
   expect(
@@ -264,14 +267,31 @@ it("shows exact declared access and changes before an enabled update", async () 
     screen.getByRole("button", { name: /^Removed: Run example-cli/ }),
   );
   fireEvent.click(screen.getByRole("button", { name: /^Removed: Connect to/ }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: /^Connect to https:\/\/second.example.com/,
+    }),
+  );
+  expect(
+    screen.getByRole("region", {
+      name: "HTTPS origin https://second.example.com details",
+    }),
+  ).toHaveTextContent("https://second.example.com");
   const command = screen.getByRole("region", { name: "Command check details" });
   await waitFor(() => expect(command).toBeVisible());
   expect(command).toHaveTextContent(
     /new or changed.*example-cli.*status.*--json/,
   );
   expect(
-    screen.getByRole("region", { name: "HTTPS origin details" }),
+    screen.getByRole("region", {
+      name: "HTTPS origin https://api.example.com details",
+    }),
   ).toHaveTextContent(/new or changed.*https:\/\/api.example.com/);
+  expect(
+    screen.getByRole("region", {
+      name: "Removed HTTPS origin https://old.example.com details",
+    }),
+  ).toHaveTextContent("https://old.example.com");
   expect(
     screen.getByRole("region", { name: "Removed declarations" }),
   ).toHaveTextContent(/--brief.*https:\/\/old.example.com/);

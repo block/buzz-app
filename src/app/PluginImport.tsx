@@ -88,6 +88,7 @@ function hostDeclarations(manifest: PluginManifest) {
     ...(manifest.host?.networkOrigins ?? []).map((origin) => ({
       signature: `HTTPS origin: ${origin}`,
       title: "HTTPS origin:",
+      name: `HTTPS origin ${origin}`,
       label: `Connect to ${origin}`,
       hint: "Buzz can make HTTPS requests to this address for the plugin.",
       icon: GlobeIcon,
@@ -353,7 +354,7 @@ export function PluginImport({
       ),
       content: (
         <section
-          aria-label={`${removed ? "Removed " : ""}${grant.title.slice(0, -1)} details`}
+          aria-label={`${removed ? "Removed " : ""}${"name" in grant ? grant.name : grant.title.slice(0, -1)} details`}
           // biome-ignore lint/a11y/noNoninteractiveTabindex: Scroll owner supports keyboard access to long command details.
           tabIndex={0}
           className={styles.technicalDetails}

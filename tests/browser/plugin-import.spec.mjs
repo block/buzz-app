@@ -887,7 +887,7 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
     access.getByRole("button", { name: /^Connect to/ }),
   ).toHaveAttribute("aria-expanded", "false");
   await expect(
-    access.getByRole("region", { name: "HTTPS origin details" }),
+    access.getByRole("region", { name: /^HTTPS origin / }),
   ).toHaveCount(0);
   for (const [width, mode] of [
     [900, "light"],

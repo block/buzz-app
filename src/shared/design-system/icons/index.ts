@@ -263,6 +263,8 @@ import TablerSmileyPlusIcon from "@tabler/icons-react/dist/esm/icons/IconMoodPlu
 export const SmileyPlusIcon = defineIcon("tabler", TablerSmileyPlusIcon);
 import TablerSmileyStickerIcon from "@tabler/icons-react/dist/esm/icons/IconSticker2.mjs";
 export const SmileyStickerIcon = defineIcon("tabler", TablerSmileyStickerIcon);
+import TablerFilter2Icon from "@tabler/icons-react/dist/esm/icons/IconFilter2.mjs";
+export const Filter2Icon = defineIcon("tabler", TablerFilter2Icon);
 import TablerSlidersHorizontalIcon from "@tabler/icons-react/dist/esm/icons/IconAdjustmentsHorizontal.mjs";
 export const SlidersHorizontalIcon = defineIcon(
   "tabler",

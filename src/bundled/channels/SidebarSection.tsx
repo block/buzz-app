@@ -31,7 +31,7 @@ import {
   ChatUnreadIcon,
   DotsThreeIcon,
   PlusIcon,
-  SlidersHorizontalIcon,
+  Filter2Icon,
   TextAaIcon,
   TimerIcon,
   TrashIcon,
@@ -222,7 +222,7 @@ export function SidebarSection({
                 <MenuSubmenu>
                   <MenuSubmenuTrigger>
                     <MenuIcon>
-                      <SlidersHorizontalIcon size={14} />
+                      <Filter2Icon size={14} />
                     </MenuIcon>
                     Filter
                   </MenuSubmenuTrigger>

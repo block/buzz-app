@@ -1134,10 +1134,15 @@ it("keeps the model inherited when changing the default model's effort", async (
 });
 
 it("keeps keyboard focus through Claude defaults discovery retries", async () => {
+  const startup = vi.spyOn(ClaudeSetup.prototype, "update");
   const calls = vi.spyOn(ClaudeSetup.prototype, "loadModels");
   const catalog: { listed: boolean; ready?: Promise<void> } = { listed: false };
   const Control = installed({ catalog }).type.provider?.DefaultControl;
   if (!Control) throw new Error("Missing default control");
+  // Plugin activation checks/updates Claude before the recovery flow begins.
+  // Its final readiness check otherwise races the keyboard retry.
+  expect(startup).toHaveBeenCalledOnce();
+  await startup.mock.results[0]?.value;
   render(<Control onConfigure={vi.fn()} />);
   await screen.findByRole("alert");
   const retry = screen.getByRole("button", { name: "Try again" });

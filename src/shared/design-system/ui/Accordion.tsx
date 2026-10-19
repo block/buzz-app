@@ -36,10 +36,6 @@ export function Accordion({
   animate?: boolean;
 }) {
   const reducedMotion = useReducedMotion();
-  const instant =
-    reducedMotion ||
-    (typeof document !== "undefined" &&
-      document.documentElement.hasAttribute("data-keyboard-navigation"));
   return (
     <BaseAccordion.Root
       data-buzz-ui=""
@@ -80,20 +76,30 @@ export function Accordion({
             className="buzz-accordion-panel"
             render={
               animate
-                ? (props, state) => (
-                    <div {...props}>
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: state.open ? 1 : 0 }}
-                        transition={{
-                          duration: instant ? 0 : 0.22,
-                          ease: [0.645, 0.045, 0.355, 1],
-                        }}
-                      >
-                        {props.children}
-                      </motion.div>
-                    </div>
-                  )
+                ? (props, state) => {
+                    // Modality is a document attribute, not React state; read
+                    // it as each panel changes so keyboard toggles stay instant.
+                    const instant =
+                      reducedMotion ||
+                      (typeof document !== "undefined" &&
+                        document.documentElement.hasAttribute(
+                          "data-keyboard-navigation",
+                        ));
+                    return (
+                      <div {...props}>
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: state.open ? 1 : 0 }}
+                          transition={{
+                            duration: instant ? 0 : 0.22,
+                            ease: [0.645, 0.045, 0.355, 1],
+                          }}
+                        >
+                          {props.children}
+                        </motion.div>
+                      </div>
+                    );
+                  }
                 : undefined
             }
           >

@@ -383,6 +383,7 @@ export function SelectExamples() {
 <div style={{ maxWidth: 160 }}>
   <Select
     label="Row workspace"
+    leading={<CodeIcon size={20} />}
     variant="compact"
     align="end"
     value={inline}
@@ -444,6 +445,7 @@ export function SelectExamples() {
         <div style={{ maxWidth: 160 }}>
           <Select
             label="Row workspace"
+            leading={<CodeIcon size={20} />}
             variant="compact"
             align="end"
             value={inline}

@@ -196,7 +196,7 @@ export function useFloatingActionBar(
       bar.style.right = "";
       bar.style.maxWidth = "";
       bar.style.visibility = "";
-      delete bar.dataset.placement;
+      bar.style.clipPath = "";
     };
     // A narrow side pane covers, but does not unmount, the channel. Only a
     // second workspace can cover this one, so skip the hit test without it.
@@ -264,29 +264,12 @@ export function useFloatingActionBar(
       const width = bar.offsetWidth;
       // Layout height: an opening scale transition must not move the bar.
       const height = bar.offsetHeight;
-      const towardLeft = rtl !== row.hasAttribute("data-viewer-message");
-      const besideLeft = towardLeft
-        ? anchor.left - overlap - width
-        : anchor.right + overlap;
-      const center = anchor.top + anchor.height / 2;
-      const beside =
-        besideLeft >= start &&
-        besideLeft + width <= end &&
-        (!viewport ||
-          (center - height / 2 >= viewport.top &&
-            center + height / 2 <= viewport.bottom));
-      const placement = beside ? "beside" : "above";
-      if (bar.dataset.placement !== placement)
-        bar.dataset.placement = placement;
-      bar.style.transformOrigin = beside
-        ? towardLeft
-          ? "right center"
-          : "left center"
-        : rtl
-          ? "left bottom"
-          : "right bottom";
-      const top = beside ? center : anchor.top + overlap;
-      const paintedTop = top - height / (beside ? 2 : 1);
+      // Keep one location across short/long messages and wide/narrow panes.
+      // Scrolling may hide an offscreen anchor, but never relocates its actions
+      // to a different edge of the message.
+      bar.style.transformOrigin = rtl ? "left bottom" : "right bottom";
+      const top = anchor.top + overlap;
+      const paintedTop = top - height;
       if (
         viewport &&
         (anchor.top <= viewport.top || paintedTop >= viewport.bottom)
@@ -294,11 +277,13 @@ export function useFloatingActionBar(
         hide();
         return;
       }
-      const left = beside
-        ? besideLeft
-        : rtl
-          ? anchor.left - overlap
-          : anchor.right - width + overlap;
+      // The top layer would paint over the pane header and take its clicks.
+      // Clip at the scroller's top so the bar slides under the header like the
+      // message does; the other sides keep the shadow.
+      const hidden = viewport ? viewport.top - paintedTop : 0;
+      bar.style.clipPath =
+        hidden > 0 ? `inset(${hidden}px -100vmax -100vmax)` : "";
+      const left = rtl ? anchor.left - overlap : anchor.right - width + overlap;
       bar.style.top = `${top}px`;
       bar.style.left = `${Math.max(start, Math.min(left, end - width))}px`;
       bar.style.right = "auto";

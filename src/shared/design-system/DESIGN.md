@@ -1257,12 +1257,22 @@ Received message bubbles use `bubble-received`, slightly stronger than quiet
 control fills. Reply connectors and thread spines use `border-message-thread`
 to remain visible on conversation surfaces in both modes.
 
-### Accent and vibe level
+### Accent color and level
 
 Two device-local choices decide color. **Accent color** picks a family:
 chartreuse (Buzz's brand color, #d7d72e, and the default), flame, magenta, iris,
-cobalt or jade. **Vibe level** decides how much of the app that family paints: Snoozin’ (neutral),
+cobalt, jade, or gray (monochrome). **Accent level** decides how much of the app
+that family paints: Snoozin’ (neutral),
 Hummin’ (the default), Swarmin’ or Buzzin’ (full).
+
+The accent level uses the same `Select variant="compact"` in `PreferenceRow`
+as sound settings.
+`Select.leading` and option `leading` accept decorative icons, avatars, or custom
+UI in a 20px slot. Triggers with a leading accessory use 8px leading padding;
+text-only triggers retain their usual padding. Accent levels use a rounded
+rectangular accent chip at 25%, 50%, 75%, and
+100% opacity, as explicitly chosen for this decorative intensity preview.
+The level names and persisted values remain unchanged.
 
 A family is a twelve-step ramp per mode with the palette's step contract (1–2
 backgrounds, 3–5 tints, 6–8 lines, 9–10 strong fill, 11–12 text), plus the ink on
@@ -1270,7 +1280,7 @@ its strong fill, a pressed fill and its link color. Roles stack on steps, never 
 literals, so every family works at every level. Each mode's ramp is authored
 for its own surfaces: the same step reads correctly in light and dark.
 
-Vibe levels switch whole **color groups** onto the accent ramp, never single
+Accent levels switch whole **color groups** onto the accent ramp, never single
 roles, so nothing stays gray on a background that turned accent.
 
 | Group | Roles |
@@ -1285,7 +1295,7 @@ roles, so nothing stays gray on a background that turned accent.
 | Surfaces | Panes, popovers, recessed areas, received messages, chrome selection |
 | Text | Primary, navigation and unavailable text |
 
-| Vibe level | Groups on the accent |
+| Accent level | Groups on the accent |
 | --- | --- |
 | Snoozin’ | None; accent tints, lines and accent text only |
 | Hummin’ | Links, strong, rows |
@@ -1295,7 +1305,7 @@ roles, so nothing stays gray on a background that turned accent.
 Status colors, focus, categorical purple, shadows and media-specific roles stay
 fixed. Media pixels, the black viewing canvas and the white-on-dark media-glass
 material never follow the accent. Shared controls, menus and surrounding surfaces
-in a nested dark media scope do follow the selected vibe level, using the dark
+in a nested dark media scope do follow the selected accent level, using the dark
 ramp even when the app is light. The gallery comments pane follows the app mode.
 A new role belongs to the group of the ground it sits on; do not add a role for
 one component. Row hover is its own role because rows take color before
@@ -1311,8 +1321,10 @@ colors, focus and categorical purple stay independent of the accent. Dark-mode p
 full range of floating-control states.
 
 Do not mix the accent with other colors or apply opacity to make a lighter shade;
-choose a step. A swatch that previews a family carries `data-accent` with
-`data-color-mode`. ThemePicker previews follow the selected family and vibe level
+choose a step. The decorative Accent level preview chips above are the explicit
+exception; they do not carry text or convey selection on their own. A swatch
+that previews a family carries `data-accent` with
+`data-color-mode`. ThemePicker previews follow the selected family and accent level
 through their `.light`/`.dark` scopes. The contrast check audits every family at
 every level in both modes.
 

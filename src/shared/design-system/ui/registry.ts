@@ -422,21 +422,6 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: [],
   },
   {
-    slug: "step-slider",
-    name: "Step slider",
-    purpose:
-      "Choose one of a few ordered steps, such as how much of the app the accent colors.",
-    behavior:
-      "Base UI owns dragging, snapping and keyboard steps. Each step is a visible stop; the thumb announces the step's name, which also appears beneath it.",
-    variants: ["each step", "disabled"],
-    status: "proposed",
-    collection: "components",
-    owner: "desktop-new Design system",
-    source: "shared/design-system/ui/StepSlider.tsx",
-    baseUi: [BASE_UI_PARTS.slider],
-    composes: [],
-  },
-  {
     slug: "button",
     name: "Button",
     purpose:
@@ -847,7 +832,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "align: start | center | end",
       "compact subtle",
       "compact value suffix",
-      "leading icon",
+      "20px leading accessory: icon, avatar, or custom UI",
     ],
     status: "proposed",
     collection: "components",

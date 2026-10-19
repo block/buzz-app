@@ -48,6 +48,8 @@ export type SearchInputProps = {
   input: RefObject<HTMLElement | null>;
   label?: string;
   scope?: { label: string; onRemove: () => void } | undefined;
+  /** A control that refines the scoped results, beside the scope chip. */
+  scopeAction?: ReactNode;
   authorChip?:
     | { label: string; title: string; onRemove: () => void }
     | undefined;
@@ -65,6 +67,7 @@ export function SearchChoices({
   input,
   label = "Search Buzz",
   scope,
+  scopeAction,
   children,
   inlineSettings,
 }: SearchInputProps & {
@@ -145,15 +148,20 @@ export function SearchChoices({
       data-search-palette=""
       {...highlight.listProps}
     >
-      {scope && (
-        <button
-          type="button"
-          className="search-palette-scope"
-          aria-label={`Remove ${scope.label} search scope`}
-          onClick={scope.onRemove}
-        >
-          {scope.label} <span aria-hidden="true">×</span>
-        </button>
+      {(scope || scopeAction) && (
+        <div className="search-palette-scope-row">
+          {scope && (
+            <button
+              type="button"
+              className="search-palette-scope"
+              aria-label={`Remove ${scope.label} search scope`}
+              onClick={scope.onRemove}
+            >
+              {scope.label} <span aria-hidden="true">×</span>
+            </button>
+          )}
+          {scopeAction}
+        </div>
       )}
       <SearchField
         variant="palette"

@@ -175,19 +175,6 @@ describe("semantic contrast contract", () => {
     );
   });
 
-  it("rejects a slider mark that disappears into the unfilled track", () => {
-    const from = "--affordance-subtle-pressed: var(--neutral-4);";
-    expect(tokens).toContain(from);
-    // A gray middle step still contrasts on white, but not on this track.
-    const result = check(
-      tokens.replace(from, "--affordance-subtle-pressed: var(--neutral-12);"),
-    );
-    expect(result.status, result.output).toBe(1);
-    expect(result.output).toContain(
-      "step-slider --affordance-prominent-mark on --affordance-subtle-pressed",
-    );
-  });
-
   it("rejects a shell color that hides navigation text", () => {
     const result = check(
       tokens.replace(

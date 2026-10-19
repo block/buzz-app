@@ -482,10 +482,173 @@ it("scopes conversation search at the relay and discards out-of-scope hits", asy
     expect(
       screen.queryByRole("option", { name: /scope elsewhere/ }),
     ).toBeNull();
+    // A relay without `buzz-search-sort` would rank "Most recent" anyway.
+    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: /Remove .* search scope/ }),
     );
     expect(changeScope).toHaveBeenCalledExactlyOnceWith();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("sorts a conversation newest first across pages and restarts paging when the order changes", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const discovery = [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [viewer.pubkey]),
+    metadata(relay, "other", "other"),
+    roster(relay, "other", [viewer.pubkey]),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    searchSort: true,
+    query(filters, signal) {
+      if (filters.some((filter) => filter.kinds?.includes(9)))
+        return wire.transport.query(filters, signal);
+      return Promise.resolve(
+        discovery.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      );
+    },
+  });
+  const request = async () => {
+    await waitFor(() => expect(wire.pending).toHaveLength(1));
+    return wire.next();
+  };
+  const hits = (count: number, newest: number) =>
+    Array.from({ length: count }, (_, n) =>
+      message(viewer, "crew", `sortword ${newest - n}`, newest - n),
+    );
+  const rows = () =>
+    within(screen.getByRole("listbox", { name: "Search results" }))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+  const scoped = {
+    session: owner.session,
+    onQueryChange: () => {},
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    scopedChannelId: "crew",
+    onScopeChange: () => {},
+    openConversation: () => {},
+  };
+  const text = {
+    kinds: [40002, 40008, 9],
+    search: "sortword",
+    search_mode: "prefix",
+    limit: 20,
+    "#h": ["crew"],
+  };
+  try {
+    const mounted = render(<SearchResults {...scoped} query="sortword" />);
+    const relevance = await request();
+    expect(relevance.filters).toEqual([text]);
+    await act(async () => relevance.respond(hits(20, 1700000020)));
+    expect(screen.getByRole("group", { name: "Most relevant" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort messages" }));
+    expect(
+      await screen.findByRole("menuitemradio", { name: "Most relevant" }),
+    ).toBeChecked();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Most recent" }));
+    const first = await request();
+    expect(first.filters).toEqual([{ ...text, search_sort: "newest" }]);
+    const page1 = hits(20, 1700000100);
+    const tail = page1.pop();
+    assert(tail);
+    // Order two signed hits instead of searching random hashes for a lower id.
+    const [tie, last] = [
+      tail,
+      message(viewer, "crew", "sortword tie", tail.created_at),
+    ].sort((a, b) => (a.id < b.id ? -1 : 1));
+    assert(tie && last);
+    page1.push(last);
+    await act(async () => first.respond(page1));
+    expect(screen.getByRole("group", { name: "Most recent" })).toBeVisible();
+    expect(rows().at(-1)).toMatch(/Show more messages/);
+
+    fireEvent.click(screen.getByRole("option", { name: /Show more messages/ }));
+    const failed = await request();
+    expect(failed.filters).toEqual([
+      { ...text, search_sort: "newest", page: 2 },
+    ]);
+    await act(async () =>
+      failed.fail(new ReadError("unavailable", "Relay read timed out")),
+    );
+    expect(
+      screen.getByText("More messages couldn’t load: Relay read timed out"),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("option", { name: /Show more messages/ }));
+    const second = await request();
+    expect(second.filters).toEqual([
+      { ...text, search_sort: "newest", page: 2 },
+    ]);
+    // Offsets drift: a repeat, a backdated tie that sorts before it by id,
+    // and an out-of-scope hit.
+    const older = hits(2, last.created_at - 1);
+    await act(async () =>
+      second.respond([
+        last,
+        tie,
+        message(viewer, "other", "sortword elsewhere", 1700000200),
+        ...older,
+      ]),
+    );
+    expect(screen.queryByText(/More messages couldn’t load/)).toBeNull();
+    const ordered = [...page1, tie, ...older].sort(
+      (a, b) =>
+        b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
+    expect(rows()).toHaveLength(ordered.length);
+    for (const [index, row] of rows().entries())
+      expect(row).toContain(ordered[index]?.content);
+
+    // Without text the relay reads newest-first history; there is no choice.
+    mounted.rerender(<SearchResults {...scoped} query="before:2026-10-01" />);
+    const history = await request();
+    expect(history.filters).toEqual([
+      {
+        kinds: [40002, 40008, 9],
+        limit: 20,
+        "#h": ["crew"],
+        until: expect.any(Number),
+      },
+    ]);
+    await act(async () => history.respond(hits(1, 1700000001)));
+    expect(screen.getByRole("group", { name: "Most recent" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
+
+    mounted.rerender(<SearchResults {...scoped} query="sortword" />);
+    const resumed = await request();
+    expect(resumed.filters).toEqual([{ ...text, search_sort: "newest" }]);
+    await act(async () => resumed.respond(hits(20, 1700000100)));
+
+    // Global search has no sort control, so it keeps relevance.
+    const { scopedChannelId: _, ...unscoped } = scoped;
+    mounted.rerender(<SearchResults {...unscoped} query="sortword" />);
+    const global = await request();
+    const { "#h": __, ...unscopedText } = text;
+    expect(global.filters).toEqual([unscopedText]);
+    await act(async () => global.respond(hits(1, 1700000001)));
+    expect(screen.getByRole("group", { name: "Most relevant" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sort messages" })).toBeNull();
+
+    mounted.rerender(<SearchResults {...scoped} query="sortword" />);
+    const rescoped = await request();
+    expect(rescoped.filters).toEqual([{ ...text, search_sort: "newest" }]);
+    await act(async () => rescoped.respond(hits(20, 1700000100)));
+    fireEvent.click(screen.getByRole("button", { name: "Sort messages" }));
+    fireEvent.click(
+      await screen.findByRole("menuitemradio", { name: "Most relevant" }),
+    );
+    const reset = await request();
+    expect(reset.filters).toEqual([text]);
   } finally {
     cleanup();
     owner.dispose();

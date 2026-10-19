@@ -120,7 +120,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
       return color;
     }),
   );
-  // Selection follows the chosen accent at the default vibe level.
+  // Selection follows the chosen accent at the default accent level.
   await expect(button(page, "Appearance")).toHaveCSS(
     "background-color",
     await page.evaluate(() => {
@@ -260,109 +260,64 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await expect(dark).toBeChecked();
 });
 
-// Browser-only boundary: the actual shared slider's painted track/thumb,
-// pointer snapping and native keyboard steps inside Appearance. The token guard
-// owns the full accent/level matrix; these samples catch incorrect role wiring.
-test("Vibe level has visible marks without focus and snaps by pointer and keyboard", async ({
+// Browser-only: shared popup geometry, decorative chip opacity, and focus return
+// across themes and narrow layouts. Component tests own level persistence.
+test("accent dropdown shows intensity chips and supports pointer and keyboard selection", async ({
   page,
   app,
 }, testInfo) => {
   await page.goto(app.origin);
   await settings(page);
-  const slider = page.getByRole("slider", { name: "Vibe level" });
-  const root = page.locator(".buzz-step-slider");
-  const thumb = root.locator(".buzz-step-slider-thumb");
-  const control = root.locator(".buzz-step-slider-control");
-  const track = root.locator(".buzz-step-slider-track");
-  const palette = button(page, "Chartreuse accent color");
-  for (const [mode, width, level, name] of [
-    ["Light", 1280, "touch", "Hummin’"],
-    ["Dark", 390, "full", "Buzzin’"],
+  const select = page.getByRole("combobox", { name: "Accent level" });
+  for (const [mode, width] of [
+    ["Light", 1280],
+    ["Dark", 390],
   ]) {
     await page.setViewportSize({ width, height: 844 });
     await chooseColorMode(page, mode);
-    await slider.focus();
+    await select.click();
+    for (const [name, opacity] of [
+      ["Snoozin’", "0.25"],
+      ["Hummin’", "0.5"],
+      ["Swarmin’", "0.75"],
+      ["Buzzin’", "1"],
+    ]) {
+      const option = page.getByRole("option", { name, exact: true });
+      await expect(option).toBeVisible();
+      const chip = option.locator(".buzz-select-leading > span");
+      await expect(chip).toHaveCSS("opacity", opacity);
+      await expect(chip).toHaveCSS("width", "20px");
+      await expect(chip).toHaveCSS("height", "16px");
+    }
+    const menu = page.getByRole("listbox");
+    const bounds = await menu.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    await page
+      .getByRole("region", { name: "Appearance", exact: true })
+      .screenshot({
+        path: testInfo.outputPath(`accent-level-${mode}.png`),
+      });
+    await page.getByRole("option", { name: "Buzzin’", exact: true }).click();
+    await expect(select).toHaveText("Buzzin’");
+    await expect(select).toBeFocused();
+    await expect(select).toHaveCSS("padding-inline-start", "8px");
+    await select.press("ArrowDown");
+    await expect(
+      page.getByRole("option", { name: "Buzzin’", exact: true }),
+    ).toBeFocused();
     await page.keyboard.press("Home");
-    if (level === "full") await page.keyboard.press("End");
-    else await page.keyboard.press("ArrowRight");
-    await expect(slider).toHaveAttribute("aria-valuetext", name);
+    await expect(
+      page.getByRole("option", { name: "Snoozin’", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(select).toHaveText("Snoozin’");
+    await expect(select).toBeFocused();
     await expect(page.locator("html")).toHaveAttribute(
       "data-color-level",
-      level,
+      "neutral",
     );
-    // Move focus away: a keyboard ring must not hide an invisible resting mark.
-    await palette.click();
-    await page.mouse.move(0, 0);
-    await expect(slider).not.toBeFocused();
-    await expect(thumb).toHaveCSS("outline-style", "none");
-    const colors = await root.evaluate((node) => {
-      const rgb = (value) => {
-        const canvas = document.createElement("canvas");
-        canvas.width = canvas.height = 1;
-        const context = canvas.getContext("2d");
-        context.fillStyle = value;
-        context.fillRect(0, 0, 1, 1);
-        return (
-          "#" +
-          [...context.getImageData(0, 0, 1, 1).data]
-            .slice(0, 3)
-            .map((v) => v.toString(16).padStart(2, "0"))
-            .join("")
-        );
-      };
-      const paint = (selector) =>
-        rgb(getComputedStyle(node.querySelector(selector)).backgroundColor);
-      const probe = document.createElement("span");
-      probe.style.backgroundColor = "var(--surface-panel)";
-      node.append(probe);
-      const panel = rgb(getComputedStyle(probe).backgroundColor);
-      probe.remove();
-      return {
-        thumb: paint(".buzz-step-slider-thumb"),
-        selected: paint(".buzz-step-slider-indicator"),
-        track: paint(".buzz-step-slider-track"),
-        panel,
-      };
-    });
-    expect(
-      wcagRatio(colors.thumb, colors.panel),
-      `thumb on panel in ${mode}`,
-    ).toBeGreaterThanOrEqual(3);
-    expect(
-      wcagRatio(colors.selected, colors.track),
-      `selected track in ${mode}`,
-    ).toBeGreaterThanOrEqual(3);
-    await root.screenshot({
-      path: testInfo.outputPath(`vibe-marks-${mode}.png`),
-    });
-    // Click the first visible stop and drag to the last; real hit testing and
-    // pointer capture cannot be established in a DOM emulator.
-    const box = await track.boundingBox();
-    if (!box) throw new Error("Slider track is not visible");
-    await page.mouse.click(box.x, box.y + box.height / 2);
-    await expect(slider).toHaveAttribute("aria-valuetext", "Snoozin’");
-    const start = await thumb.boundingBox();
-    if (!start) throw new Error("Slider thumb is not visible");
-    await page.mouse.move(
-      start.x + start.width / 2,
-      start.y + start.height / 2,
-    );
-    await page.mouse.down();
-    try {
-      const destination = await control.boundingBox();
-      if (!destination) throw new Error("Slider control is not visible");
-      await page.mouse.move(
-        destination.x + destination.width - 8,
-        destination.y + destination.height / 2,
-      );
-      await expect(slider).toHaveAttribute("aria-valuetext", "Buzzin’");
-    } finally {
-      await page.mouse.up();
-    }
   }
-  expect(
-    await page.evaluate(() => localStorage.getItem("buzz-color-level.v1")),
-  ).toBe("full");
 });
 
 test("System appearance follows computer changes and keeps the selected choice after reload", async ({
@@ -597,7 +552,7 @@ test("compiled host preserves compatibility utility meanings", async ({
       "border-top-color",
       mode === "Light" ? "rgb(232, 232, 232)" : "rgb(35, 35, 35)",
     );
-    // The legacy fill keeps meaning "prominent", whatever the vibe level.
+    // The legacy fill keeps meaning "prominent", whatever the accent level.
     await expect(page.locator("#old-primary")).toHaveCSS(
       "background-color",
       await page.evaluate(() => {

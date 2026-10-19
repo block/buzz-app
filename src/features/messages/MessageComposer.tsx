@@ -500,7 +500,10 @@ function Composer({
     if (permitted.current) input.current?.focus();
   });
   useEffect(() => {
-    if (focusRequest) input.current?.focus();
+    const editor = input.current;
+    if (!focusRequest || !editor) return;
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
   }, [focusRequest]);
   const restoreSelection = useRef<{ start: number; end: number } | undefined>(
     undefined,

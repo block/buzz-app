@@ -17,6 +17,7 @@ import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
+import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { SurfaceButton } from "../shared/design-system/ui/SurfaceButton";
 import { IconButton } from "../shared/design-system/ui/IconButton";
 import { ChoiceRow } from "../shared/design-system/ui/ChoiceRow";
@@ -352,36 +353,45 @@ function PluginDetails({
             Required
           </Button>
         ) : (
-          <Button
-            variant={
-              plugin.enabled ? "subtle" : accessReason ? "outline" : "prominent"
+          <Tooltip
+            content={
+              access === "error"
+                ? "Could not check access. Try again."
+                : accessReason
             }
-            size="sm"
-            disabled={
-              busy ||
-              (!plugin.enabled &&
-                restrictedPlugin(plugin) &&
-                access !== "allowed")
-            }
-            title={
-              accessReason
-                ? access === "error"
-                  ? "Could not check access. Try again."
-                  : accessReason
-                : undefined
-            }
-            loading={
-              !plugin.enabled &&
-              restrictedPlugin(plugin) &&
-              access === "checking"
-            }
-            aria-describedby={accessReason ? "plugin-detail-access" : undefined}
-            focusableWhenDisabled
-            ref={toggle}
-            onClick={onToggle}
+            {...(accessReason ? {} : { open: false })}
+            disableHoverablePopup
           >
-            {pluginActionLabel(plugin, access)}
-          </Button>
+            <Button
+              variant={
+                plugin.enabled
+                  ? "subtle"
+                  : accessReason
+                    ? "outline"
+                    : "prominent"
+              }
+              size="sm"
+              disabled={
+                busy ||
+                (!plugin.enabled &&
+                  restrictedPlugin(plugin) &&
+                  access !== "allowed")
+              }
+              loading={
+                !plugin.enabled &&
+                restrictedPlugin(plugin) &&
+                access === "checking"
+              }
+              aria-describedby={
+                accessReason ? "plugin-detail-access" : undefined
+              }
+              focusableWhenDisabled
+              ref={toggle}
+              onClick={onToggle}
+            >
+              {pluginActionLabel(plugin, access)}
+            </Button>
+          </Tooltip>
         )}
       </div>
       {accessReason && (
@@ -984,36 +994,41 @@ export function Settings({
                           Required
                         </Button>
                       ) : (
-                        <Button
-                          variant={
-                            plugin.enabled
-                              ? "subtle"
-                              : accessReason
-                                ? "outline"
-                                : "prominent"
-                          }
-                          size="sm"
-                          aria-label={`${pluginActionLabel(plugin, access)} ${plugin.manifest.name}`}
-                          disabled={
-                            busy ||
-                            (!plugin.enabled &&
-                              restrictedPlugin(plugin) &&
-                              access !== "allowed")
-                          }
-                          title={accessReason ? accessReason : undefined}
-                          loading={
-                            !plugin.enabled &&
-                            restrictedPlugin(plugin) &&
-                            access === "checking"
-                          }
-                          aria-describedby={
-                            accessReason ? `plugin-access-${id}` : undefined
-                          }
-                          focusableWhenDisabled
-                          onClick={() => togglePlugin(plugin)}
+                        <Tooltip
+                          content={accessReason}
+                          {...(accessReason ? {} : { open: false })}
+                          disableHoverablePopup
                         >
-                          {pluginActionLabel(plugin, access)}
-                        </Button>
+                          <Button
+                            variant={
+                              plugin.enabled
+                                ? "subtle"
+                                : accessReason
+                                  ? "outline"
+                                  : "prominent"
+                            }
+                            size="sm"
+                            aria-label={`${pluginActionLabel(plugin, access)} ${plugin.manifest.name}`}
+                            disabled={
+                              busy ||
+                              (!plugin.enabled &&
+                                restrictedPlugin(plugin) &&
+                                access !== "allowed")
+                            }
+                            loading={
+                              !plugin.enabled &&
+                              restrictedPlugin(plugin) &&
+                              access === "checking"
+                            }
+                            aria-describedby={
+                              accessReason ? `plugin-access-${id}` : undefined
+                            }
+                            focusableWhenDisabled
+                            onClick={() => togglePlugin(plugin)}
+                          >
+                            {pluginActionLabel(plugin, access)}
+                          </Button>
+                        </Tooltip>
                       )}
                     </div>
                   </article>

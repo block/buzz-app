@@ -1785,7 +1785,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     const pane = screen.getByRole("complementary", {
       name: "Restricted plugin details",
     });
-    let enable = within(pane).getByRole("button", {
+    const enable = within(pane).getByRole("button", {
       name: "Enable",
     });
     expect(enable).toHaveAttribute("aria-disabled", "true");
@@ -1838,10 +1838,19 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     expect(retry).toHaveBeenCalledWith(id);
     expect(enable).toHaveFocus();
     act(() => {
+      state = "checking";
+      for (const listener of listeners) listener();
+    });
+    expect(enable).toHaveFocus();
+    act(() => {
       state = "allowed";
       for (const listener of listeners) listener();
     });
-    enable = within(pane).getByRole("button", { name: /^Enable$/ });
+    expect(within(pane).getByRole("button", { name: /^Enable$/ })).toBe(enable);
+    expect(enable).toHaveFocus();
+    expect(
+      screen.getByRole("button", { name: "Enable Restricted plugin" }),
+    ).toBe(action);
     expect(enable).not.toHaveAttribute("aria-disabled", "true");
     await user.click(enable);
     expect(f.manager.change).toHaveBeenCalledWith("enable", id);
@@ -1887,6 +1896,13 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     }
     await user.click(disable);
     expect(f.manager.change).toHaveBeenLastCalledWith("disable", id);
+    disable.focus();
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("complementary", {
+        name: "Restricted plugin details",
+      }),
+    ).not.toBeInTheDocument();
     cleanup();
     expect(release).toHaveBeenCalledTimes(1);
   },

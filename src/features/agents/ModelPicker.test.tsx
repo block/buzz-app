@@ -302,14 +302,19 @@ it("opens a family before selecting a model and strips only its display prefix",
   expect(trigger).not.toHaveTextContent("databricks-");
   await user.click(trigger);
   expect(screen.queryByRole("menuitemradio", { name: "kimi-k2" })).toBeNull();
-  expect(await screen.findByRole("menuitem", { name: "Codex" })).toBeVisible();
+  expect(await screen.findByRole("menuitem", { name: "OpenAI" })).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Codex" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "GPT" })).toBeNull();
   expect(screen.getByRole("menuitem", { name: "Other" })).toBeVisible();
-  screen.getByRole("menuitem", { name: "Kimi" }).focus();
+  screen.getByRole("menuitem", { name: "OpenAI" }).focus();
   await user.keyboard("{ArrowRight}");
+  expect(
+    await screen.findByRole("menuitemradio", { name: "gpt-6" }),
+  ).toBeVisible();
   await user.click(
-    await screen.findByRole("menuitemradio", { name: "kimi-k2" }),
+    await screen.findByRole("menuitemradio", { name: "gpt-6-codex" }),
   );
-  expect(onChange).toHaveBeenCalledExactlyOnceWith("databricks-kimi-k2");
+  expect(onChange).toHaveBeenCalledExactlyOnceWith("databricks-gpt-6-codex");
 });
 
 it("keeps custom entry and default selection in the family menu", async () => {

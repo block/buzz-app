@@ -257,14 +257,16 @@ export class GooseSetup {
     return this.listing;
   }
 
-  /** A provider's models: goose's catalog, or else what its API lists. */
+  /** Databricks catalogs can lag its endpoints and AI Gateway services;
+   * configured providers use live discovery for both Databricks versions. */
   async models(id: string): Promise<readonly ModelChoice[]> {
     const listed = (await this.providers()).providers.find(
       (item) => item.id === id,
     );
     const prefixes = PREFIXES[id];
     const models =
-      listed?.configured && (prefixes || !listed.models.length)
+      listed?.configured &&
+      (prefixes || id === "databricks_v2" || !listed.models.length)
         ? await this.supported(id)
         : (listed?.models ?? []);
     return prefixes

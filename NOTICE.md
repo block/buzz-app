@@ -90,16 +90,26 @@ Nous Research copyright notice.
 
 ## Plugin catalog artwork
 
-The remaining bundled plugin PNG artwork in `src/bundled/*/icon.png` was
-created by Taylor Ho using GPT Image 2.5 and supplied for Buzz.
+The other bundled plugin PNG artwork in `src/bundled/*/icon.png` was created
+by Taylor Ho using GPT Image 2.5 and supplied for Buzz.
 
 GitHub and Codex catalog tiles use Tabler's `brand-github` and `brand-openai`
-glyphs. Claude uses the generic `code` glyph; Goose uses `terminal-2`.
-These are flat white glyphs with unchanged paths and proportions; the category
-gradient belongs to the tile behind them. No effects are applied to the glyphs.
-The marks identify integrations and do not imply endorsement. Trademark rights
-remain with their respective owners; the icon license does not grant trademark
-rights. Tabler Icons 3.46.0: https://tabler.io/icons
+glyphs. Unchanged paths and proportions render flat white at half-tile size.
+No effects are applied to the glyphs; only the tile behind them has a gradient.
+Tabler Icons 3.46.0: https://tabler.io/icons. The MIT license below covers the
+icon files, not trademark rights or endorsement by their owners.
+
+`src/bundled/claude-code/icon.png` is the official Claude Spark in Clay
+(#D97757), supplied from Anthropic's press kit: https://www.anthropic.com/press-kit.
+`src/bundled/goose/icon.png` is the official Goose mark (#101010), supplied from
+https://github.com/aaif-goose/goose/tree/main/documentation/static/img.
+Both are rasterized proportionally onto transparent 376×376 canvases without
+recoloring or effects. Their category gradients are separate tile backgrounds.
+Trademark rights remain with their respective owners. Anthropic's written logo
+approval and the applicable LF Projects trademark permission remain outstanding;
+asset provenance and the Tabler license do not establish those permissions.
+See https://www.anthropic.com/legal/trademark-guidelines and
+https://lfprojects.org/policies/trademark-policy/.
 
 MIT License
 

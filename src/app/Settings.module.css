@@ -324,13 +324,13 @@
 }
 
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .pluginIcon[data-branded] img {
+  .pluginIcon[data-branded] img:not([data-official-mark]) {
     transition: transform calc(var(--duration-settle) * 2)
       linear(0, 0.24, 0.65, 0.95, 1.08, 1.09, 1.05, 1.01, 0.99, 0.99, 1);
   }
 
-  .pluginIcon[data-branded]:hover img,
-  .pluginRow:hover .pluginIcon[data-branded] img {
+  .pluginIcon[data-branded]:hover img:not([data-official-mark]),
+  .pluginRow:hover .pluginIcon[data-branded] img:not([data-official-mark]) {
     transform: scale(1.08);
     transition-duration: var(--duration-settle);
   }
@@ -341,7 +341,8 @@
   --plugin-icon-gradient: var(--art-plugin-communication-gradient);
 }
 
-.pluginIcon[data-branded][data-category="communication"] img {
+.pluginIcon[data-branded][data-category="communication"]
+  img:not([data-official-mark]) {
   filter: hue-rotate(-12deg) saturate(0.8);
 }
 
@@ -349,7 +350,8 @@
   --plugin-icon-gradient: var(--art-plugin-agents-gradient);
 }
 
-.pluginIcon[data-branded][data-category="agents"] img {
+.pluginIcon[data-branded][data-category="agents"]
+  img:not([data-official-mark]) {
   filter: hue-rotate(25deg) saturate(0.8);
 }
 
@@ -357,7 +359,8 @@
   --plugin-icon-gradient: var(--art-plugin-agent-tools-gradient);
 }
 
-.pluginIcon[data-branded][data-category="agent-tools"] img {
+.pluginIcon[data-branded][data-category="agent-tools"]
+  img:not([data-official-mark]) {
   filter: hue-rotate(75deg) saturate(0.8);
 }
 
@@ -368,7 +371,7 @@
 }
 
 .pluginIcon[data-branded][data-category="developer-tools-and-integrations"]
-  img {
+  img:not([data-official-mark]) {
   filter: hue-rotate(126deg) saturate(0.8);
 }
 
@@ -376,7 +379,8 @@
   --plugin-icon-gradient: var(--art-plugin-people-and-communities-gradient);
 }
 
-.pluginIcon[data-branded][data-category="people-and-communities"] img {
+.pluginIcon[data-branded][data-category="people-and-communities"]
+  img:not([data-official-mark]) {
   filter: hue-rotate(-196deg) saturate(0.8);
 }
 
@@ -384,7 +388,8 @@
   --plugin-icon-gradient: var(--art-plugin-productivity-gradient);
 }
 
-.pluginIcon[data-branded][data-category="productivity"] img {
+.pluginIcon[data-branded][data-category="productivity"]
+  img:not([data-official-mark]) {
   filter: hue-rotate(-169deg) saturate(0.8);
 }
 
@@ -516,7 +521,7 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .pluginAsideIdentity .pluginIcon[data-branded] img {
+  .pluginAsideIdentity .pluginIcon[data-branded] img:not([data-official-mark]) {
     animation: plugin-artwork-in calc(var(--duration-settle) * 3)
       var(--easing-enter);
   }

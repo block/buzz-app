@@ -41,8 +41,6 @@ import styles from "./Settings.module.css";
 import {
   GithubLogoIcon,
   OpenAILogoIcon,
-  CodeIcon,
-  TerminalWindowIcon,
   CheckCircleIcon,
   SparklesIcon,
   SquaresFourIcon,
@@ -169,8 +167,6 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
 const bundledGlyphs = new Map([
   ["buzz.github", GithubLogoIcon],
   ["buzz.codex", OpenAILogoIcon],
-  ["buzz.claude-code", CodeIcon],
-  ["buzz.goose", TerminalWindowIcon],
 ]);
 
 function PluginIcon({
@@ -200,7 +196,17 @@ function PluginIcon({
       {Glyph ? (
         <Glyph size="50%" />
       ) : url && url !== failedUrl ? (
-        <img src={url} alt="" onError={() => setFailedUrl(url)} />
+        <img
+          src={url}
+          alt=""
+          data-official-mark={
+            (plugin.source === "bundled" &&
+              (plugin.manifest.id === "buzz.claude-code" ||
+                plugin.manifest.id === "buzz.goose")) ||
+            undefined
+          }
+          onError={() => setFailedUrl(url)}
+        />
       ) : (
         <SquaresFourIcon size={size} />
       )}

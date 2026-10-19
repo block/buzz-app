@@ -1,6 +1,6 @@
 import { selectCommunity, openCommunityPicker } from "./navigation.mjs";
 import { checkDurationConsumer } from "./duration-layout.mjs";
-import { openPage } from "./navigation.mjs";
+import { openPage, pageChoice } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -635,9 +635,10 @@ test("Messages reselects the latest sidebar channel and keyboard page search foc
   const search = dialog.getByRole("combobox", { name: "Search Buzz" });
   await expect(search).toBeFocused();
   await search.pressSequentially("Messages");
-  await expect(
-    dialog.getByRole("option", { name: "Messages", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+  await expect(pageChoice(dialog, "Messages")).toHaveAttribute(
+    "data-highlighted",
+    "true",
+  );
   await search.press("Enter");
   await expect(composer).toBeVisible();
   await expect(page.locator('button[data-channel-id="beta"]')).toHaveAttribute(

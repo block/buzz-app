@@ -32,13 +32,6 @@ export async function newChat(page) {
 export async function selectPage(page, name, { connected = true } = {}) {
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const input = dialog.getByRole("combobox", { name: "Search Buzz" });
-  await input.fill(name);
-  const choice = pageChoice(
-    dialog.getByRole("group", { name: "Pages", exact: true }),
-    name,
-  );
-  // Registered page actions are visible only after the plugin catalog is ready.
-  await expect(choice).toBeVisible();
   // Until the community connects, the palette is a placeholder. The connected
   // palette replaces it, which resets selection and option ids, so select only
   // in the final palette. Pass `connected: false` when the test holds or fails
@@ -46,6 +39,13 @@ export async function selectPage(page, name, { connected = true } = {}) {
   await expect(
     dialog.getByText("Connecting to this community…", { exact: true }),
   ).toHaveCount(connected ? 0 : 1);
+  await input.fill(name);
+  const choice = pageChoice(
+    dialog.getByRole("group", { name: "Pages", exact: true }),
+    name,
+  );
+  // Registered page actions are visible only after the plugin catalog is ready.
+  await expect(choice).toBeVisible();
   // Conversation groups above Actions arrive with the channel list and move
   // every row below them, so a pointer click can land between rows. Keyboard
   // selection follows the choice itself, not its position.

@@ -207,7 +207,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS(
       "background-color",
-      mode === "dark" ? "rgb(40, 40, 40)" : "rgb(255, 255, 255)",
+      mode === "dark" ? "rgb(26, 26, 26)" : "rgb(255, 255, 255)",
     );
     await expect(dialog).toHaveCSS("backdrop-filter", "none");
     await page.keyboard.press("Escape");

@@ -4,7 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
-import { ProjectControl } from "./ProjectControl";
+import { WorkspaceControl } from "./WorkspaceControl";
 
 afterEach(cleanup);
 
@@ -33,10 +33,10 @@ function fixture() {
 it("moves a saved chat without changing project defaults", async () => {
   const { session, assign } = fixture();
   const user = userEvent.setup();
-  render(<ProjectControl session={session} channelId="chat" />);
-  await user.click(screen.getByRole("button", { name: "Project: Buzz App" }));
+  render(<WorkspaceControl session={session} channelId="chat" />);
+  await user.click(screen.getByRole("button", { name: "Workspace: Buzz App" }));
   await user.click(
-    await screen.findByRole("menuitemradio", { name: "No project" }),
+    await screen.findByRole("menuitemradio", { name: "No workspace" }),
   );
   expect(assign).toHaveBeenCalledWith("chat", undefined);
 });
@@ -45,8 +45,8 @@ it("changes a new-chat project locally instead of moving a saved channel", async
   const { session, assign } = fixture();
   const change = vi.fn();
   const user = userEvent.setup();
-  render(<ProjectControl session={session} value="" onChange={change} />);
-  await user.click(screen.getByRole("button", { name: "Add project" }));
+  render(<WorkspaceControl session={session} value="" onChange={change} />);
+  await user.click(screen.getByRole("button", { name: "Add workspace" }));
   await user.click(
     await screen.findByRole("menuitemradio", { name: "Buzz App" }),
   );
@@ -65,10 +65,10 @@ it("keeps project recovery reachable after preferences fail", async () => {
     },
   } as unknown as RelaySession;
   const user = userEvent.setup();
-  render(<ProjectControl session={session} channelId="chat" />);
-  await user.click(screen.getByRole("button", { name: "Add project" }));
+  render(<WorkspaceControl session={session} channelId="chat" />);
+  await user.click(screen.getByRole("button", { name: "Add workspace" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Retry projects" }),
+    await screen.findByRole("menuitem", { name: "Retry workspaces" }),
   );
   expect(refresh).toHaveBeenCalledOnce();
 });

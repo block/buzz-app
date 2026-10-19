@@ -756,7 +756,11 @@ it.each(["stream", "forum", "solo"] as const)(
           name: /Past project/,
         }),
       );
-      expect(screen.getByText("Archived channel")).toBeTruthy();
+      expect(
+        screen.getByText(
+          channelType === "solo" ? "Archived chat" : "Archived channel",
+        ),
+      ).toBeTruthy();
       expect(open).toHaveBeenCalledExactlyOnceWith("archive");
     } finally {
       cleanup();

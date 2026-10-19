@@ -26,6 +26,7 @@ import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
+import { IdentitySettings } from "./IdentitySettings";
 
 import type { Appearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
@@ -247,17 +248,7 @@ export function Settings({
               />
             </div>
             <div hidden={selected !== "agents"}>
-              <AgentSettings
-                agents={agents}
-                archive={
-                  <ArchiveSettings
-                    relay={communities.relay}
-                    community={selectedCommunity?.name}
-                    active={selected === "agents"}
-                  />
-                }
-                active={selected === "agents"}
-              />
+              <AgentSettings agents={agents} active={selected === "agents"} />
             </div>
             <div hidden={selected !== "updates"}>
               <UpdateSettings
@@ -312,10 +303,25 @@ export function Settings({
                 key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
                 communities={communities}
                 community={selectedCommunity}
-                identity={identity}
-                active={selected === "profile"}
               />
             </div>
+            {selected === "identity" && (
+              <IdentitySettings
+                key={client.viewer}
+                viewer={client.viewer}
+                identity={identity}
+              />
+            )}
+            {selectedCommunity && selected === "local-archive" && (
+              <section aria-labelledby="archive-settings-title">
+                <Header id="archive-settings-title" title="Local archive" />
+                <ArchiveSettings
+                  relay={communities.relay}
+                  community={selectedCommunity.name}
+                  active
+                />
+              </section>
+            )}
             {developerMode && (
               <div hidden={selected !== "developer"}>
                 <DeveloperSettings relay={communities.relay} />
@@ -325,7 +331,7 @@ export function Settings({
               <section aria-labelledby="plugin-settings-title">
                 <Header
                   id="plugin-settings-title"
-                  title="Plugins"
+                  title="Manage plugins"
                   subtitle={
                     !plugins.imports
                       ? "Open the desktop app to load plugins from a folder or Git repository."

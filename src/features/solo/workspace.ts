@@ -27,7 +27,7 @@ export function validateWorkspace(value: Workspace): Workspace {
     [...value].every((char) => char.charCodeAt(0) >= 32 && char !== "`");
   if (folders.length > 20 || folders.some((folder) => !path(folder)))
     throw new Error(
-      "Use up to 20 project folders, without control characters or backticks.",
+      "Use up to 20 workspace folders, without control characters or backticks.",
     );
   const worktree = value.worktree && {
     location: value.worktree.location.trim(),
@@ -42,7 +42,7 @@ export function validateWorkspace(value: Workspace): Workspace {
       !path(worktree.baseBranch))
   )
     throw new Error(
-      "Choose a project folder, worktree location, and base branch.",
+      "Choose a workspace folder, worktree location, and base branch.",
     );
   return { folders, ...(worktree ? { worktree } : {}), canvas: value.canvas };
 }
@@ -90,6 +90,30 @@ export function workspaceCanvas(input: Workspace): string {
 
 export function readWorkspace(content: string): Workspace {
   if (!content.startsWith(prefix)) return { folders: [], canvas: content };
+  const value = parseWorkspace(content);
+  // Never silently discard manually edited instructions inside the managed block.
+  if (workspaceCanvas(value) !== content)
+    throw new Error(
+      "Workspace instructions were edited in Canvas. Use the raw Canvas editor to preserve those changes.",
+    );
+  return value;
+}
+
+/** The folders a Canvas's workspace block lets an agent work in: its project
+ * folders, then its worktree location. Unlike `readWorkspace`, hand edits to
+ * the block's instructions are kept, so an agent still finds its folders; a
+ * missing or malformed block names none. */
+export function workspaceDirectories(content: string): string[] {
+  if (!content.startsWith(prefix)) return [];
+  try {
+    const { folders, worktree } = parseWorkspace(content);
+    return [...new Set([...folders, ...(worktree ? [worktree.location] : [])])];
+  } catch {
+    return [];
+  }
+}
+
+function parseWorkspace(content: string): Workspace {
   const lineEnd = content.indexOf(" -->\n");
   const blockEnd = content.indexOf(`\n${end}\n\n`, lineEnd);
   if (lineEnd < 0 || blockEnd < 0)
@@ -123,19 +147,13 @@ export function readWorkspace(content: string): Workspace {
       typeof worktree.baseBranch !== "string")
   )
     throw new Error("Invalid worktree settings.");
-  const value = validateWorkspace({
+  return validateWorkspace({
     folders: raw.folders,
     ...(worktree
       ? { worktree: worktree as { location: string; baseBranch: string } }
       : {}),
     canvas: content.slice(blockEnd + end.length + 3),
   });
-  // Never silently discard manually edited instructions inside the managed block.
-  if (workspaceCanvas(value) !== content)
-    throw new Error(
-      "Workspace instructions were edited in Canvas. Use the raw Canvas editor to preserve those changes.",
-    );
-  return value;
 }
 
 /** One existing encrypted template record per project. */
@@ -155,13 +173,14 @@ export function projectTemplate(
 ): Template {
   const community = splitPartition(scope)?.communityOrigin;
   if (!community)
-    throw new Error("Project defaults require a connected community.");
+    throw new Error("Workspace defaults require a connected community.");
   const template: Template = {
     ...lineup,
     type: "template",
     id,
     name: `${projectName.slice(0, 100)} chats`,
-    description: "Starting workspace and Canvas for new chats in this project.",
+    description:
+      "Starting workspace and Canvas for new chats in this workspace.",
   };
   // Validate the complete encrypted recipe budget, including the community
   // URL, before publication.
@@ -170,7 +189,7 @@ export function projectTemplate(
     community,
   );
   if (record.value.type !== "template")
-    throw new Error("Expected project defaults");
+    throw new Error("Expected workspace defaults");
   // Keep the exact parsed shape used on reread, including field order.
   return record.value;
 }
@@ -202,7 +221,7 @@ export function projectDefault(
     : undefined;
   if (requireDefault && defaultId && fallback?.type !== "template")
     throw new Error(
-      "This project’s default template is unavailable. Choose new project defaults before starting a chat.",
+      "This workspace’s default template is unavailable. Choose new workspace defaults before starting a chat.",
     );
   return fallback?.type === "template" ? fallback : undefined;
 }
@@ -221,7 +240,7 @@ export function parseChatSetup(raw: unknown): ChatSetup {
         !raw.projectId ||
         raw.projectId.length > 256))
   )
-    throw new Error("Invalid saved chat project.");
+    throw new Error("Invalid saved chat workspace.");
   const lineup = parseLineup({ ...raw, teamIds: [] });
   return {
     ...("projectId" in raw && typeof raw.projectId === "string"
@@ -243,14 +262,14 @@ export async function loadChatSetup(
     !preferences.data?.sections.some((project) => project.id === projectId)
   )
     throw new Error(
-      "This project is unavailable. Refresh projects before starting a chat.",
+      "This workspace is unavailable. Refresh workspaces before starting a chat.",
     );
   await session.channelKit.refresh();
   const kit = session.channelKit.snapshot();
   if (kit.status !== "ready")
     throw new Error(
       kit.error ??
-        "Project defaults couldn’t load. Retry before starting the chat.",
+        "Workspace defaults couldn’t load. Retry before starting the chat.",
     );
   const template = projectDefault(
     kit.entries,
@@ -301,7 +320,7 @@ export async function loadChatSetup(
 }
 
 export const removedProjectMessage =
-  "The project was removed. Continue without a project to retry.";
+  "The workspace was removed. Continue without a workspace to retry.";
 
 export async function applyChatSetup(
   session: RelaySession,
@@ -325,7 +344,9 @@ export async function applyChatSetup(
     if (!active()) return;
     const preferences = store.snapshot();
     if (preferences.status !== "ready" || !preferences.data)
-      throw new Error("Projects couldn’t load. Retry before continuing setup.");
+      throw new Error(
+        "Workspaces couldn’t load. Retry before continuing setup.",
+      );
     if (
       !preferences.data.sections.some(
         (project) => project.id === setup.projectId,

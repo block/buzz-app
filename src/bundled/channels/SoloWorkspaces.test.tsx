@@ -17,7 +17,7 @@ import {
   type RelaySession,
 } from "../../features/relay/session";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
-import { SoloProjects } from "./SoloProjects";
+import { SoloWorkspaces } from "./SoloWorkspaces";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
@@ -77,17 +77,25 @@ function fixture(projectName = "Work") {
       groupsOnly: true,
     });
   const onNew = vi.fn();
-  const channels = { status: "ready", channels: [] };
+  const channels = {
+    status: "ready",
+    channels: [
+      { id: "chat", name: "Planning", channelType: "solo" },
+      { id: "other", name: "Existing chat", channelType: "solo" },
+    ],
+  };
   const view = (
     preferences: ReturnType<typeof store>["queries"],
     scope = "viewer:community",
+    unread: unknown = owner.session.unread,
   ) => (
-    <SoloProjects
+    <SoloWorkspaces
       onNew={onNew}
       session={
         {
           ...owner.session,
           soloPreferences: preferences,
+          unread,
           canvas: { available: false },
           channels: { list: () => channels, subscribeList: () => () => {} },
         } as unknown as RelaySession
@@ -100,7 +108,14 @@ function fixture(projectName = "Work") {
       renderChat={(item) => <button type="button">{item.title}</button>}
     />
   );
-  return { store, view, write, remove, onNew, saved: () => saved };
+  return {
+    store,
+    view,
+    write,
+    remove,
+    onNew,
+    saved: () => saved,
+  };
 }
 
 it("creates and moves through the relay service, then restores in a fresh store", async () => {
@@ -122,10 +137,10 @@ it("creates and moves through the relay service, then restores in a fresh store"
   (await screen.findByRole("menuitem", { name: "Move to" })).focus();
   await user.keyboard("{ArrowRight}");
   await user.click(
-    await screen.findByRole("menuitem", { name: "New project…" }),
+    await screen.findByRole("menuitem", { name: "New workspace…" }),
   );
   await user.type(
-    screen.getByRole("textbox", { name: "Project name" }),
+    screen.getByRole("textbox", { name: "Workspace name" }),
     "Projects",
   );
   await user.click(screen.getByRole("button", { name: "Create and move" }));
@@ -138,7 +153,9 @@ it("creates and moves through the relay service, then restores in a fresh store"
       expect.objectContaining({ aborted: false }),
     ),
   );
-  await waitFor(() => expect(screen.queryByText("Saving project…")).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByText("Saving workspace…")).toBeNull(),
+  );
   expect(h.saved().assignments.chat).toBe(h.saved().sections[1]?.id);
   mounted.unmount();
   first.dispose();
@@ -194,7 +211,7 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   h.remove.mockRejectedValueOnce(new Error("Deletion unavailable"));
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Delete project" }),
+    await screen.findByRole("menuitem", { name: "Delete workspace" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Deletion unavailable",
@@ -202,7 +219,7 @@ it("keeps chats after project deletion and allows retry after a rejected deletio
   expect(screen.getByRole("button", { name: "Work" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Actions for Work" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Delete project" }),
+    await screen.findByRole("menuitem", { name: "Delete workspace" }),
   );
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Work" })).toBeNull(),
@@ -275,7 +292,7 @@ it("only offers Chats as a destination from a project", async () => {
     );
     (await screen.findByRole("menuitem", { name: "Move to" })).focus();
     await user.keyboard("{ArrowRight}");
-    await screen.findByRole("menuitem", { name: "New project…" });
+    await screen.findByRole("menuitem", { name: "New workspace…" });
   };
   await openProjectMenu();
   expect(screen.queryByRole("menuitem", { name: "Chats" })).toBeNull();
@@ -322,6 +339,56 @@ it("opens the exact project from an empty project's New chat row", async () => {
     row.focus();
     await user.keyboard("{Enter}");
     expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+  } finally {
+    store.dispose();
+  }
+});
+
+it("marks a chat read from its row menu and reports a failed save", async () => {
+  const h = fixture();
+  const store = h.store();
+  const user = userEvent.setup();
+  const markChannelRead = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Read state unavailable"))
+    .mockResolvedValue(undefined);
+  const snapshot = (channelId: string, observedCount: number) => ({
+    target: { kind: "channel", channelId },
+    observedCount,
+    attentionCount: 0,
+    manual: "none",
+    coverage: "observed",
+    freshness: "observed",
+  });
+  const unreadChat = snapshot("chat", 3);
+  const readChat = snapshot("other", 0);
+  const unread = {
+    sync: () => ({ capability: "frontier-sync" }),
+    snapshot: (target: { channelId: string }) =>
+      target.channelId === "chat" ? unreadChat : readChat,
+    subscribe: () => () => {},
+    markChannelRead,
+    markUnreadLocal: vi.fn(),
+  };
+  render(h.view(store.queries, "viewer:community", unread));
+  try {
+    const actions = screen.getByRole("button", {
+      name: "Actions for Planning",
+    });
+    await user.click(actions);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as Read" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Read state unavailable",
+    );
+    await user.click(actions);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Mark as Read" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(markChannelRead).toHaveBeenNthCalledWith(2, "chat");
   } finally {
     store.dispose();
   }

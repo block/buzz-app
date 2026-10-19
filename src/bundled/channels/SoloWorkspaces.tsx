@@ -1,18 +1,10 @@
-import {
-  conversionLabel,
-  useChatConversions,
-} from "../../features/solo/conversion";
-import {
-  soloShareAttempt,
-  useSoloShareAttempts,
-} from "../../features/solo/share-attempt";
-import {
-  ConvertToChannel,
-  canConvertToChannel,
-} from "../../features/solo/ConvertToChannel";
+import { useChatConversions } from "../../features/solo/conversion";
+import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { SoloShare, ChatAccessIndicator } from "./SoloShare";
-import { canEditLifetime } from "../../features/solo/Lifetime";
-import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
+import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useDroppable } from "@dnd-kit/core";
 import {
@@ -22,7 +14,6 @@ import {
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
 import {
   useEffect,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -33,8 +24,6 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { Input } from "../../shared/design-system/ui/Input";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   ContextMenuRoot,
@@ -43,29 +32,27 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
-  MenuIcon,
-  MenuSubmenu,
-  MenuSubmenuTrigger,
-  MenuSubmenuPopup,
 } from "../../shared/design-system/ui/Menu";
 import {
   CaretDownIcon,
   DotsThreeIcon,
-  FolderSimpleIcon,
   PlusIcon,
-  CopyIcon,
-  GearIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { Navigation } from "../../features/navigation/controller";
-import styles from "./SoloProjects.module.css";
+import {
+  NewWorkspaceDialog,
+  SoloChatMenuItems,
+  useChatCopy,
+} from "./SoloChatMenu";
+import styles from "./SoloWorkspaces.module.css";
 import channelStyles from "./Channels.module.css";
 
 /** Presentation only. The caller supplies authorized, saved chats. */
 export type ChatListItem = Readonly<{ id: string; title: string }>;
 
 /** The existing relay preference service owns delivery, rollback and retry. */
-export function SoloProjects({
+export function SoloWorkspaces({
   session,
   navigator: navigationController,
   scope,
@@ -85,28 +72,8 @@ export function SoloProjects({
   onNew?: (projectId?: string) => void;
 }) {
   useChatConversions(session);
-  const shareAttempts = useSoloShareAttempts(session);
-  const [copyNotice, setCopyNotice] = useState<{
-    text: string;
-    error: boolean;
-  }>();
-  const copying = useRef(false);
-  const copy = async (value: string, label: string) => {
-    if (copying.current) return;
-    copying.current = true;
-    setCopyNotice(undefined);
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopyNotice({ text: `${label} copied`, error: false });
-    } catch {
-      setCopyNotice({
-        text: "Couldn’t copy. Try again from the chat menu.",
-        error: true,
-      });
-    } finally {
-      copying.current = false;
-    }
-  };
+  const handoff = useChannelNavigation();
+  const [copy, copyNotice] = useChatCopy();
   const preferences = session.soloPreferences;
   const collapsedKey = "solo:collapsed-projects";
   const snapshot = useSyncExternalStore(
@@ -146,6 +113,7 @@ export function SoloProjects({
   }>();
   const [deleting, setDeleting] = useState<string>();
   const [projectError, setProjectError] = useState("");
+  const [readError, setReadError] = useState<{ id: string; message: string }>();
   const [animate, setAnimate] = useState(false);
   const [rowFocus, setRowFocus] = useState<string>();
   useLayoutEffect(() => {
@@ -188,6 +156,34 @@ export function SoloProjects({
       setRowFocus(id);
     });
   };
+  // Matches the open chat's own actions menu: leaving the open chat returns to
+  // a new Solo draft, unless the user has already moved on.
+  const chooseLifecycle = (
+    channel: ChannelSummary,
+    action: ChannelLifecycleAction,
+  ) => {
+    const trigger =
+      document.querySelector<HTMLElement>(
+        `[data-solo-menu-id="${CSS.escape(channel.id)}"] button`,
+      ) ?? undefined;
+    const current = navigationController?.snapshot();
+    const leavesOpenChat =
+      action !== "unarchive" &&
+      current?.entry.target.kind === "conversation" &&
+      current.entry.target.channelId === channel.id;
+    // Let the menu restore focus before opening confirmation.
+    requestAnimationFrame(() =>
+      handoff?.openLifecycle(channel, action, trigger, undefined, {
+        close() {
+          if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+        },
+        completed() {
+          if (leavesOpenChat && !current.attempt.signal.aborted)
+            void navigationController?.open(soloDraftTarget(scope));
+        },
+      }),
+    );
+  };
   const toggle = (id: string, open: boolean) => {
     const next = open
       ? collapsed.filter((key) => key !== id)
@@ -203,20 +199,25 @@ export function SoloProjects({
     <>
       {(snapshot.status === "idle" || snapshot.status === "loading") && (
         <p role="status" className={styles.listMessage}>
-          Loading projects…
+          Loading workspaces…
         </p>
       )}
       {snapshot.status === "error" && (
         <div role="alert" className={styles.listMessage}>
-          <p>{snapshot.error ?? "Projects couldn’t load."}</p>
+          <p>{snapshot.error ?? "Workspaces couldn’t load."}</p>
           <Button onClick={() => void preferences.refresh()}>
-            Retry projects
+            Retry workspaces
           </Button>
         </div>
       )}
       {projectError && (
         <p role="alert" className={styles.listMessage}>
           {projectError}
+        </p>
+      )}
+      {readError && (
+        <p role="alert" className={styles.listMessage}>
+          {readError.message}
         </p>
       )}
       <ChannelSidebarDnd
@@ -268,7 +269,7 @@ export function SoloProjects({
                 content={
                   <>
                     <MenuItem onClick={() => setSettingsFor(project)}>
-                      Project settings…
+                      Workspace settings…
                     </MenuItem>
                     <MenuItem
                       tone="danger"
@@ -285,13 +286,13 @@ export function SoloProjects({
                             setProjectError(
                               error instanceof Error
                                 ? error.message
-                                : "Project could not be deleted. Try again.",
+                                : "Workspace could not be deleted. Try again.",
                             );
                           })
                           .finally(() => setDeleting(undefined));
                       }}
                     >
-                      Delete project
+                      Delete workspace
                     </MenuItem>
                   </>
                 }
@@ -314,132 +315,62 @@ export function SoloProjects({
                 </Collapsible.Trigger>
               </ChatActionsMenu>
               <Collapsible.Panel className={styles.projectPanel}>
-                {project.rows.map((item) => (
-                  <ChatActionsMenu
-                    key={item.id}
-                    id={item.id}
-                    title={item.title}
-                    indicator={
-                      <ChatAccessIndicator
-                        session={session}
-                        channel={channels.channels.find(
-                          (channel) => channel.id === item.id,
-                        )}
-                        onClick={() => setSharing({ id: item.id, visit })}
-                      />
-                    }
-                    className={styles.organizedRow}
-                    content={
-                      <>
-                        <MenuItem
+                {project.rows.map((item) => {
+                  const channel = channels.channels.find(
+                    (channel) => channel.id === item.id,
+                  );
+                  return (
+                    <ChatActionsMenu
+                      key={item.id}
+                      id={item.id}
+                      title={item.title}
+                      indicator={
+                        <ChatAccessIndicator
+                          session={session}
+                          channel={channel}
                           onClick={() => setSharing({ id: item.id, visit })}
-                        >
-                          Share…
-                        </MenuItem>
-                        {canConvertToChannel(
-                          session,
-                          channels.channels.find(
-                            (channel) => channel.id === item.id,
-                          ),
-                        ) && (
-                          <MenuItem
-                            disabled={shareAttempts.has(item.id)}
-                            onClick={() => {
-                              if (!soloShareAttempt(session, item.id))
-                                setConverting({ id: item.id, visit });
-                            }}
-                          >
-                            {conversionLabel(session, item.id)}
-                          </MenuItem>
-                        )}
-                        <MenuSubmenu>
-                          <MenuSubmenuTrigger disabled={!preferences.writable}>
-                            <MenuIcon>
-                              <FolderSimpleIcon size={16} />
-                            </MenuIcon>
-                            Move to
-                          </MenuSubmenuTrigger>
-                          <MenuSubmenuPopup aria-label="Project">
-                            {project.id && (
-                              <MenuItem onClick={() => move(item.id)}>
-                                Chats
-                              </MenuItem>
-                            )}
-                            {groups.map((group) => (
-                              <MenuItem
-                                key={group.id}
-                                onClick={() => move(item.id, group.id)}
-                              >
-                                {group.name}
-                              </MenuItem>
-                            ))}
-                            <MenuItem onClick={() => setCreatingFor(item)}>
-                              New project…
-                            </MenuItem>
-                          </MenuSubmenuPopup>
-                        </MenuSubmenu>
-                        <MenuSubmenu>
-                          <MenuSubmenuTrigger>
-                            <MenuIcon>
-                              <CopyIcon size={16} />
-                            </MenuIcon>
-                            Copy
-                          </MenuSubmenuTrigger>
-                          <MenuSubmenuPopup aria-label="Copy chat">
-                            <MenuItem
-                              onClick={() => void copy(item.title, "Chat name")}
-                            >
-                              Copy chat name
-                            </MenuItem>
-                            <MenuItem
-                              onClick={() => void copy(item.id, "Chat ID")}
-                            >
-                              Copy chat ID
-                            </MenuItem>
-                            <MenuItem
-                              onClick={() =>
-                                void copy(
-                                  `buzz://channel/${encodeURIComponent(item.id)}`,
-                                  "Chat link",
-                                )
-                              }
-                            >
-                              Copy link to chat
-                            </MenuItem>
-                          </MenuSubmenuPopup>
-                        </MenuSubmenu>
-
-                        <MenuItem
-                          disabled={
-                            (!session.canvas.available &&
-                              !canEditLifetime(
-                                session,
-                                channels.channels.find(
-                                  (channel) => channel.id === item.id,
-                                ),
-                              )) ||
-                            !!channels.channels.find(
-                              (channel) => channel.id === item.id,
-                            )?.readOnly
-                          }
-                          onClick={() => setChatSettings({ item, visit })}
-                        >
-                          <MenuIcon>
-                            <GearIcon size={16} />
-                          </MenuIcon>
-                          Chat settings…
-                        </MenuItem>
-                      </>
-                    }
-                  >
-                    <DraggableChannel
-                      channelId={item.id}
-                      sectionKey={DROP + project.id}
+                        />
+                      }
+                      className={styles.organizedRow}
+                      content={
+                        channel && (
+                          <SoloChatMenuItems
+                            session={session}
+                            channel={channel}
+                            onShare={() => setSharing({ id: item.id, visit })}
+                            onConvert={() =>
+                              setConverting({ id: item.id, visit })
+                            }
+                            onMove={(projectId) => move(item.id, projectId)}
+                            onNewWorkspace={() => setCreatingFor(item)}
+                            onCopy={copy}
+                            onSettings={() => setChatSettings({ item, visit })}
+                            onLifecycle={
+                              handoff &&
+                              ((action) => chooseLifecycle(channel, action))
+                            }
+                            onReadResult={(error) =>
+                              setReadError((current) =>
+                                error
+                                  ? { id: item.id, message: error }
+                                  : current?.id === item.id
+                                    ? undefined
+                                    : current,
+                              )
+                            }
+                          />
+                        )
+                      }
                     >
-                      {renderChat(item)}
-                    </DraggableChannel>
-                  </ChatActionsMenu>
-                ))}
+                      <DraggableChannel
+                        channelId={item.id}
+                        sectionKey={DROP + project.id}
+                      >
+                        {renderChat(item)}
+                      </DraggableChannel>
+                    </ChatActionsMenu>
+                  );
+                })}
                 {!project.rows.length &&
                   project.id &&
                   (onNew ? (
@@ -458,7 +389,7 @@ export function SoloProjects({
                     />
                   ) : (
                     <p className={styles.listMessage}>
-                      No chats in this project.
+                      No chats in this workspace.
                     </p>
                   ))}
               </Collapsible.Panel>
@@ -519,7 +450,7 @@ export function SoloProjects({
       )}
       {moves.some((move) => move.pending) && (
         <p role="status" className={styles.listMessage}>
-          Saving project…
+          Saving workspace…
         </p>
       )}
       {moves
@@ -542,14 +473,7 @@ export function SoloProjects({
             </Button>
           </div>
         ))}
-      {copyNotice && (
-        <ToastNotice
-          title={copyNotice.text}
-          tone={copyNotice.error ? "error" : "success"}
-          timeout={copyNotice.error ? 0 : 4000}
-          onDismiss={() => setCopyNotice(undefined)}
-        />
-      )}
+      {copyNotice}
       {settingsFor && (
         <WorkspaceSettings
           key={settingsFor.id}
@@ -560,7 +484,7 @@ export function SoloProjects({
         />
       )}
       {creatingFor && (
-        <NewProjectDialog
+        <NewWorkspaceDialog
           key={creatingFor.id}
           name={creatingFor.title}
           close={() => setCreatingFor(undefined)}
@@ -596,68 +520,6 @@ function DropProject({
         (isOver && active?.data.current?.sectionKey !== projectKey) || undefined
       }
     />
-  );
-}
-
-function NewProjectDialog({
-  name,
-  create,
-  close,
-}: {
-  name: string;
-  create: (name: string) => boolean;
-  close: () => void;
-}) {
-  const [value, setValue] = useState("");
-  const [blocked, setBlocked] = useState(false);
-  const form = useId();
-  const input = useRef<HTMLInputElement>(null);
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) close();
-      }}
-      title="Create new project"
-      description={`Move ${name} into a personal project that syncs across Buzz.`}
-      initialFocus={input}
-      actions={
-        <>
-          <Button onClick={close}>Cancel</Button>
-          <Button
-            form={form}
-            type="submit"
-            variant="prominent"
-            disabled={!value.trim()}
-          >
-            Create and move
-          </Button>
-        </>
-      }
-    >
-      <form
-        id={form}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (value.trim()) setBlocked(!create(value.trim()));
-        }}
-      >
-        <Input
-          ref={input}
-          aria-label="Project name"
-          placeholder="Project name"
-          required
-          maxLength={80}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-        />
-      </form>
-      {blocked && (
-        <p role="alert">
-          Projects are unavailable. Close this dialog and retry.
-        </p>
-      )}
-    </Dialog>
   );
 }
 

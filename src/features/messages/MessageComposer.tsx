@@ -44,7 +44,11 @@ import {
 } from "../../shared/design-system/icons/index";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { ComposerAttachments } from "./ComposerAttachments";
-import { attachmentDraft, useAttachmentDraft } from "./attachment-draft";
+import {
+  attachmentDraft,
+  useAttachmentDraft,
+  type AttachmentDraft,
+} from "./attachment-draft";
 import {
   sendInBackground,
   useBackgroundSendPending,
@@ -235,7 +239,9 @@ export type MessageComposerProps = {
     recoveredDraft?: MentionDraft | undefined;
     locked: boolean;
     disabled: boolean;
-    submit: (draft: MentionDraft) => void;
+    /** Files upload before the conversation exists; submit sends them. */
+    attachments?: boolean;
+    submit: (draft: MentionDraft, attachments: AttachmentDraft) => void;
   };
 };
 
@@ -367,8 +373,8 @@ function Composer({
     };
   }, []);
   const mentionRoster = useContext(DraftMentionRoster);
-  const agentChoices =
-    inviteAgents || !!soloConversation || ownSoloConversation;
+  const solo = !!soloConversation || ownSoloConversation;
+  const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
   const sendPending = useBackgroundSendPending(session, recoveryKey);
   const [accepted, setAccepted] = useState(() => {
@@ -578,10 +584,13 @@ function Composer({
     session,
     `${scope}:${draftKey}`,
     channelId,
+    !!submission?.attachments,
   );
   const picker = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
-  const canAttach = !submission && !!session.attachments;
+  const canAttach = submission
+    ? !!submission.attachments && !!session.attachments?.uploadForNewChat
+    : !!session.attachments;
   const voice = useVoiceCapture(
     attachments.store,
     !active || editingDisabled || !!editing.target || !canAttach,
@@ -922,7 +931,36 @@ function Composer({
       !recipient.name.trim()
     )
       return false;
-    return insert(`@${recipient.name} `, recipient);
+    if (!solo || editing.target)
+      return insert(`@${recipient.name} `, recipient);
+    return keepProseCaret((at) =>
+      insert(`@${recipient.name} `, recipient, at, undefined, false),
+    );
+  }
+  /** Solo chats address agents up front: a picked tag joins the leading tags,
+   * wherever the caret is. The insertion maps the caret, so the caret and its
+   * Undo both stay in the prose it was in. */
+  function keepProseCaret(add: (at: CompletionQuery) => boolean) {
+    const before = valueRef.current;
+    let start = 0;
+    for (const tag of [...before.recipients].sort(
+      (a, b) => a.start - b.start,
+    )) {
+      if (tag.start !== start || !/[ \t]/.test(before.text[tag.end] ?? ""))
+        break;
+      start = tag.end;
+      while (/[ \t]/.test(before.text[start] ?? "")) start++;
+    }
+    const caret = input.current?.selectionStart ?? before.text.length;
+    if (!add({ start, end: start, query: "" })) return false;
+    // A caret among the leading tags has no prose to stay in.
+    if (caret < start)
+      input.current?.setSelectionRange(
+        valueRef.current.text.length,
+        valueRef.current.text.length,
+      );
+    input.current?.focus();
+    return true;
   }
   function insertMentions(
     recipients: readonly MentionRecipient[],
@@ -973,7 +1011,14 @@ function Composer({
       return false;
     }
     const text = unique.map((person) => `@${person.name} `).join("");
-    if (!input.current.insertText(text, unique, range)) {
+    if (
+      !(solo && !range
+        ? keepProseCaret(
+            (at) =>
+              !!input.current?.insertText(text, unique, at, undefined, false),
+          )
+        : input.current.insertText(text, unique, range))
+    ) {
       setError(
         "The team would exceed the message length or 32-recipient limit. Nothing was added.",
       );
@@ -1176,7 +1221,12 @@ function Composer({
       setError("Tag an agent to send");
       return;
     }
-    if (!draft.trim() && !sessionCards?.length && !attachments.items.length)
+    // A new conversation is named from its message, so files alone cannot start it.
+    if (
+      !draft.trim() &&
+      !sessionCards?.length &&
+      (!!submission || !attachments.items.length)
+    )
       return;
     const recovering = !submission && recoveryFor(session).get(recoveryKey);
     if (recovering) {
@@ -1215,7 +1265,7 @@ function Composer({
           "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
       if (submission) {
-        submission.submit(captured);
+        submission.submit(captured, attachments.store);
         return;
       }
       let references: readonly string[] = [];
@@ -1832,7 +1882,9 @@ function Composer({
                 {extensions ? (
                   <ComposerTools
                     registry={extensions.tools}
-                    capture={voice.begin}
+                    {...(canAttach && !editing.target
+                      ? { capture: voice.begin }
+                      : {})}
                     renderLeading={renderLeadingTools}
                     session={session}
                     scope={scope}
@@ -1893,7 +1945,7 @@ function Composer({
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&
                   !sessionCards?.length &&
-                  !attachments.items.length &&
+                  (!!submission || !attachments.items.length) &&
                   !(
                     editing.target &&
                     requestDeletion &&

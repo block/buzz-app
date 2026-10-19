@@ -5,7 +5,7 @@
 Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
-display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
+display, activity, names and inventory. The v1 Agents page, Profiles plugin,
 Channel templates plugin, agent snapshots, team bundles, community catalog and
 agent-management request popups are gone, as are the native `agent_control_*`,
 model-discovery and harness-install commands behind them.
@@ -95,7 +95,7 @@ rows show only ready, checking, attention, or a neutral unavailable state. The
 Agents host owns the submenu, modal framing, focus restoration and contribution
 error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
-dialog can close. Disabled or unloaded types remain in Settings → Plugins.
+dialog can close. Disabled or unloaded types remain in Settings → Plugins → Manage plugins.
 
 Workspace, instructions and session scope are always per-agent. Claude and Codex
 model/thinking choices may instead be blank, which means inherited rather than
@@ -320,7 +320,7 @@ or the shared agent-choice projection (library and local agents), not a new look
 permission grant. Human recipients and
 plain typed names are not carried forward. The prefill is an ordinary scoped draft:
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
-**Settings → Agents → Messages → Remember mentioned agents** defaults on and is saved on this
+**Settings → Buzz → Agent setup → Agent behavior → Remember mentioned agents** defaults on and is saved on this
 device. Turning it off stops future prefills without changing the current draft;
 turning it back on does not restore old recipients. Solo chat auto-recipient rules are
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
@@ -620,7 +620,7 @@ rewinding pagination. Unknown/capped/suspended membership hides history rather t
 erasing it; positive access can reveal it again. Agent removal and sign-out do not
 erase ciphertext; another account cannot open that partition.
 
-**Settings → Agents → Saved agent activity** has independent capture switches,
+**Settings → Local archive → Saved agent activity** has independent capture switches,
 activity retention and confirmed **Clear activity history** / **Clear turn metrics**
 actions for this account/community. Shortening retention requires confirmation.
 Turning capture off preserves saved rows. Clear advances a durable revision to
@@ -657,8 +657,8 @@ interrupted feed, not that an agent is idle.
 
 Select an active agent above the channel or thread composer, or its bubble under
 the triggering message: it opens the agent's profile on its Activity tab. In
-**Settings → Agents → Saved agent activity**, verify both capture switches and the
-host path. Disable the **Agent Activity** plugin in **Settings → Plugins**, give the
+**Settings → Local archive → Saved agent activity**, verify both capture switches and the
+host path. Disable the **Agent Activity** plugin in **Settings → Plugins → Manage plugins**, give the
 agent work, then re-enable: archive capture should continue independently, and
 restored rows must not claim the agent is working. Saved rows have no viewer in
 the app; inspect the archive file to confirm they remain.
@@ -733,36 +733,3 @@ or relay-directory startup scan.
 
 Discovery is not global coverage, verified membership, credentials, or execution
 status. No keys, config, memory, membership, or runtime state are changed by it.
-
-## Channel session usage
-
-The Usage tab reads saved kind-44200 metrics from the current account/community's
-host archive. Its strip and detail are **channel-associated session**
-usage, not thread attribution or context-window capacity. Each signed agent key
-and reported harness session remains separate; missing session IDs are individual
-unidentified records. The latest cumulative snapshot is selected by turn sequence;
-turn deltas are shown only when reliable. Unknown counters are not zero and cache
-counters are subsets of input. Cost is a publisher-supplied estimate, not a bill.
-
-The Usage tab's agent dropdown shows each agent's latest total or session count;
-selecting an agent reveals an aggregate of the latest trustworthy cumulative
-snapshot from each of its sessions. Counters missing in any session remain unknown
-rather than silently understating the total. The outlined Session dropdown then
-selects one session for provenance and turn detail without filling the pane with
-session buttons. The aggregate may cover other threads and is limited to loaded
-archive history.
-
-The channel's **Channel actions → View channel usage** item opens a dedicated
-**Usage** tab in the channel's side pane. It is available only while this
-account has positive access to the current channel and the default-on Channel Usage
-plugin is enabled under Settings → Plugins. Closing the tab unmounts its
-archive reader; disabling the plugin removes the tab and stops reads. It
-does not change metric capture or retention. Opening the Usage tab reads archive
-pages automatically until exhaustion or the 2,000-record limit; an early page
-without channel matches does not prove the archive has none. **Refresh** starts
-a new scan from the newest page; neither action fetches relay history. The client
-retains at most 2,000 decoded records while this tab lives and fences late reads
-on channel/access changes. Saved metrics remain
-subject to the independent 90-day/byte eviction policy above, so loaded history
-is never a completeness guarantee. Restored usage is display-only and cannot
-establish working, typing, or online status.

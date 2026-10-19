@@ -17,7 +17,7 @@ import {
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
 import { ownSolo } from "../../features/solo/labels";
-import { ProjectControl } from "../../features/solo/ProjectControl";
+import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { SoloHeading } from "./SoloHeading";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
@@ -29,6 +29,7 @@ import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import { ChannelJoinNotice } from "../../features/messages/ChannelJoinNotice";
 import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
+import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import {
@@ -1240,6 +1241,7 @@ function ChannelWorkspace({
             key={`${current.id}:${!!current.archived}`}
             channelId={current.id}
             lifecycle={queries.channelLifecycle}
+            noun={lifecycleNoun(current)}
             choose={(action, trigger) =>
               handoff.openLifecycle(current, action, trigger)
             }
@@ -1416,7 +1418,7 @@ function ChannelWorkspace({
           }
           trailingTool={
             personal ? (
-              <ProjectControl
+              <WorkspaceControl
                 session={queries}
                 channelId={current.id}
                 disabled={!!current.archived}

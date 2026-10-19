@@ -921,7 +921,7 @@ it("starts a new agent from a model and instructions, keeping the rest", async (
     model: "model-b",
     effort: "medium",
   });
-  fireEvent.change(screen.getByLabelText("Instructions"), {
+  fireEvent.change(screen.getByLabelText("Instructions Optional"), {
     target: { value: "Triage." },
   });
   expect(onChange).toHaveBeenLastCalledWith({

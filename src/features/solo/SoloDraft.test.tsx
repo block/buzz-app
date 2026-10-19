@@ -20,6 +20,7 @@ import { createChannelWrites } from "../relay/channel-writes";
 import { createOutbox } from "../relay/outbox";
 import { keypair, signed } from "../relay/testing";
 import { SOLO_LABEL } from "./labels";
+import { attachmentDraft } from "../messages/attachment-draft";
 
 composerDOMFixture();
 afterEach(cleanup);
@@ -564,10 +565,12 @@ it("re-entering a mounted project clears changed defaults", async () => {
       onStarted={started}
     />,
   );
-  expect(screen.getByRole("button", { name: "Project: Other" })).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Workspace: Other" }),
+  ).toBeVisible();
   act(() => resetNewChatProject(scope, "work"));
   expect(
-    await screen.findByRole("button", { name: "Project: Work" }),
+    await screen.findByRole("button", { name: "Workspace: Work" }),
   ).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Chat settings" }));
   expect(
@@ -607,13 +610,13 @@ it("keeps a locally chosen project when its persistence fails and other draft wr
         onStarted={started}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Project: Work" }));
+    await user.click(screen.getByRole("button", { name: "Workspace: Work" }));
     await user.click(
       await screen.findByRole("menuitemradio", { name: "Other" }),
     );
     await user.type(screen.getByRole("textbox"), "Keep this project");
     expect(
-      screen.getByRole("button", { name: "Project: Other" }),
+      screen.getByRole("button", { name: "Workspace: Other" }),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledOnce());
@@ -636,7 +639,9 @@ it("inherits the project's defaults for two consecutive new chats", async () => 
         onStarted={started}
       />,
     );
-    expect(screen.getByRole("button", { name: "Project: Work" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Workspace: Work" }),
+    ).toBeVisible();
     await user.type(screen.getByRole("textbox"), `Chat ${index}`);
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(started).toHaveBeenCalledTimes(index + 1));
@@ -691,7 +696,7 @@ it.each([
     }
     await user.click(
       screen.getByRole("button", {
-        name: fromProject ? "Project: Work" : "Add project",
+        name: fromProject ? "Workspace: Work" : "Add workspace",
       }),
     );
     await user.click(
@@ -1063,3 +1068,152 @@ it.each(["remember", "off", "storage-failure"])(
     }
   },
 );
+
+const notes = {
+  name: "notes.txt",
+  url: `https://relay.test/media/${"f".repeat(64)}.txt`,
+  type: "text/plain",
+  size: 5,
+  sha256: "f".repeat(64),
+};
+
+it("uploads files as soon as they are attached to a new chat, then sends them", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  const upload = vi.fn();
+  const uploadForNewChat = vi.fn(async () => notes);
+  Object.assign(test.session, { attachments: { upload, uploadForNewChat } });
+  writeView("test", "solo:new-draft", taggedDraft("See attached"));
+  render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  expect(test.channelWrites.create).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(uploadForNewChat).toHaveBeenCalledOnce();
+  expect(upload).not.toHaveBeenCalled();
+  const id = test.channelWrites.create.mock.calls[0]?.[0];
+  expect(test.messages.send).toHaveBeenCalledWith(
+    id,
+    expect.stringContaining("See attached"),
+    ["a".repeat(64)],
+    [notes],
+  );
+  if (!id) throw new Error("Expected a created chat");
+  expect(
+    attachmentDraft(test.session, `test:draft:${id}`, id).snapshot(),
+  ).toEqual([]);
+});
+
+it("a file dropped anywhere on the new chat page attaches to its composer", async () => {
+  const test = setup();
+  const uploadForNewChat = vi.fn(async () => notes);
+  Object.assign(test.session, {
+    attachments: { upload: vi.fn(), uploadForNewChat },
+  });
+  render(<SoloDraft session={test.session} scope="test" onStarted={vi.fn()} />);
+  const page = screen.getByRole("region", { name: "New chat" });
+  const dataTransfer = {
+    types: ["Files"],
+    files: [new File(["notes"], "notes.txt", { type: "text/plain" })],
+    dropEffect: "uninitialized",
+  };
+  fireEvent.dragEnter(page, { dataTransfer });
+  expect(
+    await screen.findByText("Drop files into this conversation"),
+  ).toBeInTheDocument();
+  fireEvent.drop(page, { dataTransfer });
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  expect(screen.queryByText("Drop files into this conversation")).toBeNull();
+});
+
+it("a failed upload blocks a new chat before anything is created", async () => {
+  const test = setup(),
+    user = userEvent.setup();
+  const uploadForNewChat = vi.fn(async () => {
+    throw new Error("Upload failed. Retry or remove this file.");
+  });
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  writeView("test", "solo:new-draft", taggedDraft("See attached"));
+  render(<SoloDraft session={test.session} scope="test" onStarted={vi.fn()} />);
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Retry notes.txt" }),
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  expect(test.channelWrites.create).not.toHaveBeenCalled();
+  expect(test.messages.send).not.toHaveBeenCalled();
+});
+
+it("an interrupted start leaves its uploaded files in the new chat's composer", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  Object.assign(test.session, {
+    attachments: { uploadForNewChat: vi.fn(async () => notes) },
+  });
+  test.channelWrites.addAgents.mockRejectedValueOnce(new Error("offline"));
+  writeView("test", "solo:new-draft", taggedDraft("See attached"));
+  render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(test.messages.send).not.toHaveBeenCalled();
+  const [id] = onStarted.mock.calls[0] ?? [];
+  expect(
+    attachmentDraft(test.session, `test:draft:${id}`, id)
+      .snapshot()
+      .map((item) => item.uploaded),
+  ).toEqual([notes]);
+});
+
+it("resumes a new chat's interrupted upload after navigating away and back", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  const uploadForNewChat = vi.fn(
+    (_file: File, signal: AbortSignal) =>
+      new Promise<typeof notes>((_resolve, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason)),
+      ),
+  );
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  writeView("test", "solo:new-draft", taggedDraft("See attached"));
+  const view = render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  view.unmount();
+
+  uploadForNewChat.mockImplementation(async () => notes);
+  render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledTimes(2));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(test.messages.send).toHaveBeenCalledWith(
+    test.channelWrites.create.mock.calls[0]?.[0],
+    expect.stringContaining("See attached"),
+    ["a".repeat(64)],
+    [notes],
+  );
+});

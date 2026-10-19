@@ -12,6 +12,7 @@ import type {
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
+import { readProject } from "../../features/agent-harness/project";
 import { MemoryReads } from "../../features/agent-harness/core-memory";
 import type { Context } from "../../buzz-mcp/client";
 import {
@@ -59,6 +60,8 @@ type Request = {
   toolRoot?: string;
   /** The agent's team sections, if it is on a team. */
   team: string;
+  /** The Solo chat's workspace Canvas section, if it has one. */
+  project?: string;
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
@@ -502,6 +505,12 @@ export class CodexRuntime {
       channelId,
       delivery.signal,
     );
+    // Only a Solo chat's Canvas is handed over.
+    const canvas = reads.canvas?.bind(reads);
+    const project = topLevel
+      ? (await readProject(canvas && (() => canvas(channelId, agent.owner))))
+          ?.section
+      : undefined;
     // A stop during the reads deleted this agent's entry; recreating it would
     // reopen the agent.
     delivery.signal.throwIfAborted();
@@ -533,6 +542,7 @@ export class CodexRuntime {
         ...(topLevel ? { topLevel } : {}),
       },
       team: delivery.team ?? "",
+      ...(project ? { project: `${project}\n` } : {}),
       answered,
       failActivity,
       ...(delivery.step ? { step: delivery.step } : {}),
@@ -596,7 +606,7 @@ export class CodexRuntime {
             threadId: active.threadId,
             expectedTurnId: active.turnId,
             input: input(
-              `${context}${turnInput(request.event, request.conversation, text, true, turnNote(request.agent))}`,
+              `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, turnNote(request.agent))}`,
             ),
           });
           active.reply = request;
@@ -1138,7 +1148,7 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${turnInput(request.event, request.conversation, text, false, turnNote(request.agent))}`,
+          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, turnNote(request.agent))}`,
         ),
         model,
         effort,

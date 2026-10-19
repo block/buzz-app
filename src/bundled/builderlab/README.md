@@ -1,6 +1,6 @@
 # Builderlab
 
-The bundled `block.builderlab` plugin adds Settings → Integrations → Builderlab.
+The bundled `block.builderlab` plugin adds Settings → Plugins → Builderlab agents.
 With a valid `BUZZ_BUILDERLAB_URL` build input, it also registers
 `block.builderlab/builderlab` in Agents' new-agent type picker.
 `adapter-type/` connects this hosted type to Beekeeper: provision registers the

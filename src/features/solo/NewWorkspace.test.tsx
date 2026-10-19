@@ -15,7 +15,7 @@ import {
   type KitEntry,
   type Template,
 } from "../channel-templates/model";
-import { NewProject } from "./NewProject";
+import { NewWorkspace } from "./NewWorkspace";
 
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 afterEach(() => {
@@ -48,7 +48,7 @@ it("keeps a partially saved project frozen and reconciles its saved defaults on 
   });
   const close = vi.fn();
   render(
-    <NewProject
+    <NewWorkspace
       create={create}
       close={close}
       onCreated={vi.fn()}
@@ -104,7 +104,7 @@ it("keeps a partially saved project frozen and reconciles its saved defaults on 
 it("rejects oversized defaults with their real community envelope before creating anything", async () => {
   const create = vi.fn(async () => {});
   render(
-    <NewProject
+    <NewWorkspace
       create={create}
       close={vi.fn()}
       onCreated={vi.fn()}
@@ -145,7 +145,7 @@ it("offers only Close when the saved project defaults were changed elsewhere", a
   });
   const close = vi.fn();
   render(
-    <NewProject
+    <NewWorkspace
       create={vi.fn(async () => {})}
       close={close}
       onCreated={vi.fn()}
@@ -174,7 +174,7 @@ it("offers only Close when the saved project defaults were changed elsewhere", a
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Project defaults changed",
+      "Workspace defaults changed",
     ),
   );
   expect(

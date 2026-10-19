@@ -39,7 +39,9 @@ test("a retired contributed Settings destination fails promptly on Back", async 
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   const sections = page.getByRole("navigation", { name: "Settings sections" });
-  await sections.getByRole("button", { name: "Plugins", exact: true }).click();
+  await sections
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   const pairingEnabled = page.getByRole("switch", {
     name: "Enable Pair mobile",
     exact: true,
@@ -52,7 +54,9 @@ test("a retired contributed Settings destination fails promptly on Back", async 
   await expect(pairing).toBeVisible();
   await pairing.click();
   await expect(pairing).toHaveAttribute("aria-current", "page");
-  await sections.getByRole("button", { name: "Plugins", exact: true }).click();
+  await sections
+    .getByRole("button", { name: "Manage plugins", exact: true })
+    .click();
   await pairingEnabled.click();
   await expect(pairing).toHaveCount(0);
   await button(page, "Go back").click();

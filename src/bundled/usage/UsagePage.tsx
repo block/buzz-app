@@ -38,7 +38,7 @@ import {
   type Total,
 } from "./stats";
 
-const RANGES = [7, 30, 90];
+const RANGES = [7, 30];
 /** The chart's series colors. */
 const SERIES = 4;
 const ALL = "all";
@@ -53,10 +53,11 @@ type Load = Readonly<{
 }>;
 const keyOf = (agent: Agent) => `${agent.pubkey}:${agent.type}`;
 
-/** Reads each agent's sessions from its type, again when the agents, range or
- * `reload` change; earlier results stay shown meanwhile. Each read is merged
+/** Reads each agent's sessions from its type, `READ_DAYS` back for every
+ * period, again when the agents or `reload` change; earlier results stay shown
+ * meanwhile. Each read is merged
  * over what earlier ones found, and an agent that cannot be read keeps it. */
-function useUsage(agents: Agents, keys: string, days: number, reload: number) {
+function useUsage(agents: Agents, keys: string, reload: number) {
   const [load, setLoad] = useState<Load>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh reads the same agents again.
   useEffect(() => {
@@ -76,7 +77,7 @@ function useUsage(agents: Agents, keys: string, days: number, reload: number) {
           agent,
           harness: agent.type,
           sessions: await read(agent, {
-            since: since(now, days),
+            since: since(now),
             signal: controller.signal,
           }),
         };
@@ -105,7 +106,7 @@ function useUsage(agents: Agents, keys: string, days: number, reload: number) {
       }));
     });
     return () => controller.abort();
-  }, [agents, keys, days, reload]);
+  }, [agents, keys, reload]);
   return load;
 }
 
@@ -141,7 +142,6 @@ export function UsagePage({
   const load = useUsage(
     agents,
     snapshot.status === "ready" ? keys : "",
-    days,
     reload,
   );
   const usedHarnesses = harnesses.filter((type) =>
@@ -365,10 +365,10 @@ function Dashboard({
   const period = `last ${days} days`;
   const top = result.agents[0];
   const spent = result.cost.value ?? 0;
-  const before = result.previousCost.value ?? 0;
-  // Compared only when both periods are fully counted.
+  const before = result.previousCost?.value ?? 0;
+  // Compared only when both periods were read and fully counted.
   const change =
-    before > 0 && !result.cost.partial && !result.previousCost.partial
+    before > 0 && !result.cost.partial && !result.previousCost?.partial
       ? (spent - before) / before
       : undefined;
   const maxAgent = Math.max(
@@ -582,7 +582,8 @@ function Dashboard({
 /** What the cost leaves out, and why. */
 function footnote(result: ReturnType<typeof stats>) {
   const notes = [
-    "At Anthropic API rates where the harness recorded no cost; your plan may bill differently.",
+    "Estimated from the session files on this computer, not your bill: at Anthropic API rates where the harness recorded no cost.",
+    "Covers the history each harness keeps; Claude Code keeps 30 days by default.",
   ];
   if (result.unpriced.length)
     notes.push(

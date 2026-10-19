@@ -124,8 +124,9 @@ it("summarises the agents' spend and opens a costly session's thread", async () 
     ),
   ).toBeTruthy();
   expect(reads).toHaveLength(2);
-  // Read far enough back to compare with the previous 30 days.
-  expect(Date.now() - (reads[0]?.since ?? 0)).toBeGreaterThan(59 * 86_400_000);
+  // 30 days back, what Claude Code keeps by default.
+  expect(Date.now() - (reads[0]?.since ?? 0)).toBeGreaterThan(29 * 86_400_000);
+  expect(Date.now() - (reads[0]?.since ?? 0)).toBeLessThan(30 * 86_400_000);
   const hero = screen.getByRole("region", { name: "Estimated cost" });
   expect(within(hero).getByText("$4.00")).toBeTruthy();
   // The daily figures are in a table for assistive technology.
@@ -173,6 +174,52 @@ it("names the agents it could not read and reads them again", async () => {
     ),
   ).toBeTruthy();
   expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("switches periods without reading again, comparing only 7 days", async () => {
+  const reads: unknown[] = [];
+  const earlier = session("old", 500_000);
+  const at = Date.now() - 10 * 86_400_000;
+  render(
+    <UsagePage
+      agents={host([agent("Pixel")], async (_, options) => {
+        reads.push(options);
+        const now = session("now", 250_000);
+        return [
+          // Active today, but begun before the 30 days read.
+          {
+            ...now,
+            observations: [
+              ...now.observations,
+              { ...now.observations[0], at: Date.now() - 40 * 86_400_000 },
+            ] as typeof now.observations,
+          },
+          {
+            ...earlier,
+            startedAt: at,
+            lastAt: at,
+            observations: earlier.observations.map((entry) => ({
+              ...entry,
+              at,
+            })),
+          },
+        ];
+      })}
+      open={vi.fn()}
+    />,
+  );
+  const hero = await screen.findByRole("region", { name: "Estimated cost" });
+  // Days 31–60 were not read, so 30 days are not compared.
+  expect(within(hero).getByText("$3.00")).toBeTruthy();
+  expect(hero.textContent).not.toContain("previous");
+  expect(hero.textContent).toContain("Claude Code keeps 30 days by default.");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Period" }));
+  await user.click(await screen.findByRole("option", { name: "Last 7 days" }));
+  const week = screen.getByRole("region", { name: "Estimated cost" });
+  expect(within(week).getByText("$1.00")).toBeTruthy();
+  expect(week.textContent).toContain("50% less than the previous 7 days");
+  expect(reads).toHaveLength(1);
 });
 
 it("keeps showing what it read before when a refresh fails", async () => {

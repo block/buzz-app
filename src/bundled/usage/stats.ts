@@ -26,7 +26,8 @@ export type Day = Readonly<{
 }>;
 export type Stats = Readonly<{
   cost: Total;
-  previousCost: Total;
+  /** The previous `days`' cost, when they were read. */
+  previousCost?: Total;
   /** Input, output and cache tokens together. */
   tokens: Total;
   output: Total;
@@ -102,9 +103,13 @@ export function dayStart(at: number, days = 0) {
   return date.getTime();
 }
 
-/** The `days` days ending today, `now` being in the last. Sessions should
- * reach back to `since(now, days)`, so the previous period can be compared. */
-export const since = (now: number, days: number) => dayStart(now, 2 * days - 1);
+/** The days of history read once for every period: Claude Code keeps 30
+ * days of transcripts by default, so older history undercounts. */
+export const READ_DAYS = 30;
+/** Where reads start: the `READ_DAYS` days ending today. */
+export const since = (now: number) => dayStart(now, READ_DAYS - 1);
+/** Whether the `days` before a period of `days` were read too. */
+export const comparable = (days: number) => 2 * days <= READ_DAYS;
 
 /** A new read's snapshots over those kept from earlier, as `SessionUsage`
  * says: a complete snapshot replaces the session's earlier one; an incomplete
@@ -226,7 +231,7 @@ export function stats(
   const hit = read.total();
   return {
     cost: cost.total(),
-    previousCost: previousCost.total(),
+    ...(comparable(days) ? { previousCost: previousCost.total() } : {}),
     tokens: tokens.total(),
     output: output.total(),
     // Every prompt token is uncached input, a cache read or a cache write.

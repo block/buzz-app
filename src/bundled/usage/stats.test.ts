@@ -145,8 +145,10 @@ it("totals the period, compares the previous one and ranks agents and sessions",
   expect(result.days.at(-1)).toMatchObject({ start: today });
   expect(result.days.at(-1)?.costs.get("x/claude")).toBeCloseTo(6.1);
   expect(result.days.at(-3)?.costs.get("x/codex")).toBeCloseTo(1.5);
-  // Sessions are read back far enough for the previous period.
-  expect(since(now, 7)).toBe(dayStart(now, 13));
+  // Every period reads the same 30 days; only 7 days' previous period is in
+  // them, so 30 days are not compared.
+  expect(since(now)).toBe(dayStart(now, 29));
+  expect(stats([], now, 30).previousCost).toBeUndefined();
 });
 
 it("keeps unknown usage unknown, and counts sessions without any", () => {

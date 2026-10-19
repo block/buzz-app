@@ -807,6 +807,13 @@ A consumer that keeps snapshots follows these rules:
 Until collected usage is persisted, Usage applies these rules to what it holds
 while the page is open. An agent whose read fails keeps what earlier reads found.
 
+Usage shows the last 7 or 30 days. It reads the last 30 days once for both, and
+again only on Refresh or when the agents change. Thirty days is what Claude Code
+keeps by default, and older history would undercount. Only the 7-day period is
+compared with the one before it, because a 30-day comparison would need days
+that were not read. The page says that costs are estimated from the session
+files on this computer, not a bill.
+
 Claude implements it from the transcripts Claude Code keeps for the agent's
 workspace: sessions whose first prompt names the agent, plus those this app saved
 for it (prompts from before agents were named), with their subagents' requests.

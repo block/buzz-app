@@ -452,7 +452,7 @@ export function teamRunner(deps: RunnerDeps) {
 
     // The gate: the head must be the one we started from or our own.
     if (head && head.id !== op.base && head.id !== op.confirmedHead)
-      return conflict(op, channel, save);
+      return conflict(op, channel, save, head);
     if (op.mode !== "may-send") return op;
     if (fenced(op.teamId, id)) return op;
 
@@ -515,9 +515,10 @@ export function teamRunner(deps: RunnerDeps) {
     op: TeamOp,
     channel: string,
     save: (next: TeamOp) => TeamOp,
+    head: RelayEvent,
   ) {
     // A record removed or replaced meanwhile ends here.
-    const now = await settleProof(op, channel, save);
+    const now = await settleProof(op, channel, save, head);
     if (!now) return undefined;
     return save({
       ...now,
@@ -528,21 +529,28 @@ export function teamRunner(deps: RunnerDeps) {
 
   /** Ends a held revision's uncertainty from proof it was stored, the
    * relay's acceptance or a by-id read, apart from whether the head can be
-   * read. Grants no currency: `accepted`, never `confirmedHead`. */
+   * read. Grants no currency: `accepted`, never `confirmedHead`. Given a
+   * `head` read before the lookup that isn't the revision's parent, a
+   * lookup proving it absent drops it too: the relay can no longer store
+   * it. */
   async function settleProof(
     op: TeamOp,
     channel: string,
     save: (next: TeamOp) => TeamOp,
+    head?: RelayEvent,
   ) {
     const held = op.candidate;
     if (!held) return op;
-    const proven =
+    const found =
       held.accepted ||
-      (await stored(held.event.id, channel).catch(() => false));
+      (await stored(held.event.id, channel).catch(() => undefined));
     const now = ops.get(op.id);
-    if (!proven || now?.candidate?.event.id !== held.event.id) return now;
+    if (now?.candidate?.event.id !== held.event.id) return now;
     const { candidate: _, ...rest } = now;
-    return save({ ...rest, accepted: held.event.id });
+    if (found) return save({ ...rest, accepted: held.event.id });
+    const parent = held.event.tags.find(([name]) => name === "prev")?.[1];
+    if (found === false && head && head.id !== parent) return save(rest);
+    return now;
   }
 
   /** A relay-only lookup of one revision by id. */

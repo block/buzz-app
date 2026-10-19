@@ -55,7 +55,9 @@ function world(options: { exists?: boolean; agents?: string[] } = {}) {
   const agents = new Set(options.agents ?? [a, b]);
   const hooks = {
     publish: undefined as ((event: RelayEvent) => Promise<void>) | undefined,
-    read: undefined as (() => Promise<void>) | undefined,
+    read: undefined as
+      | ((filters: readonly ReadFilter[]) => Promise<void>)
+      | undefined,
     add: undefined as ((pubkey: string) => Promise<unknown>) | undefined,
     archive: undefined as (() => Promise<void>) | undefined,
   };
@@ -69,7 +71,7 @@ function world(options: { exists?: boolean; agents?: string[] } = {}) {
     relay.stored.push(event);
   };
   const read = vi.fn(async (filters: readonly ReadFilter[]) => {
-    await hooks.read?.();
+    await hooks.read?.(filters);
     const [filter] = filters;
     if (filter?.ids)
       return relay.stored.filter((event) => filter.ids?.includes(event.id));
@@ -646,7 +648,7 @@ describe("team operations: corrections", () => {
     await expect(w.runner.dismiss(op.id)).resolves.toBeUndefined();
   });
 
-  it("a superseded head alone doesn't prove a held revision was stored", async () => {
+  it("a held revision proven absent after another device moved the head frees the team", async () => {
     const w = world();
     const teamId = await existing(w);
     w.hooks.publish = async () => {
@@ -655,6 +657,32 @@ describe("team operations: corrections", () => {
     const { op, done } = edit(w, teamId, { instructions: "H" });
     await done;
     w.hooks.publish = undefined;
+    w.accept(await revision(w, teamId, { ...team, instructions: "J" }));
+    const after = (await w.runner.run(op.id)) as TeamOp;
+    expect(after).toMatchObject({
+      stop: "conflict",
+      intent: { instructions: "H" },
+    });
+    expect(after.candidate).toBeUndefined();
+    expect(after.accepted).toBeUndefined();
+    // Resubmit from the current head publishes the kept draft.
+    const again = await w.runner.resubmit(op.id, w.relay.head?.id ?? null);
+    expect(await again.done).toBeUndefined();
+    expect(JSON.parse(w.relay.head?.content ?? "").instructions).toBe("H");
+  });
+
+  it("a superseded head alone doesn't prove a held revision was stored or absent", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    w.hooks.publish = async () => {
+      throw new Error("timeout");
+    };
+    const { op, done } = edit(w, teamId, { instructions: "H" });
+    await done;
+    w.hooks.publish = undefined;
+    w.hooks.read = async ([filter]) => {
+      if (filter?.ids) throw new Error("lookup failed");
+    };
     w.accept(await revision(w, teamId, { ...team, instructions: "J" }));
     const after = (await w.runner.run(op.id)) as TeamOp;
     expect(after.stop).toBe("conflict");

@@ -1138,33 +1138,66 @@ describe("code block renderers", () => {
     }
   });
 
-  it("copies a presented block in a selection as its fenced source", () => {
-    const codeBlocks = store([
-      diagram(() => (
-        <svg aria-hidden="true">
-          <text>A</text>
-          <text>B</text>
-        </svg>
-      )),
-    ]);
+  // A drawing whose text is not the source, as an SVG diagram's labels are.
+  const labels = diagram(() => (
+    <svg aria-hidden="true">
+      <text>A</text>
+      <text>B</text>
+    </svg>
+  ));
+  function copy(
+    source: string,
+    codeBlocks: ReturnType<typeof store>,
+    select: (container: HTMLElement, range: Range) => void,
+  ) {
     const view = renderDom(
       <MessageMarkdown
-        {...props(fenced, { extensions: { ...extensions, codeBlocks } })}
+        {...props(source, { extensions: { ...extensions, codeBlocks } })}
       />,
       { wrapper: ToastProvider },
     );
     const range = document.createRange();
-    range.setStartBefore(view.container.querySelector("p") as Node);
-    range.setEndAfter(view.container.querySelector("pre") as Node);
+    select(view.container, range);
     const selection = document.getSelection() as Selection;
     selection.removeAllRanges();
     selection.addRange(range);
-    expect(serializeSelection(selection, "markdown")).toBe(
-      "Before\n\n```Mermaid\nflowchart LR\n  A --> B\n```\n\n```ts\nconst x = 1\n```",
+    const copied = Object.fromEntries(
+      (["text", "markdown", "html"] as const).map((format) => [
+        format,
+        serializeSelection(selection, format),
+      ]),
     );
-    expect(serializeSelection(selection, "text")).toContain(
-      "Before\nflowchart LR\n  A --> B\nconst x = 1",
+    view.unmount();
+    return copied;
+  }
+
+  it("copies a presented block in a selection exactly as the plain block", () => {
+    // A blank line before the closing fence is source the paste must keep.
+    const source =
+      "Before\n\n```Mermaid\nflowchart LR\n  A --> B\n\n```\n\nAfter";
+    const all = (container: HTMLElement, range: Range) =>
+      range.selectNodeContents(container);
+    const presented = copy(source, store([labels]), all);
+    expect(presented).toEqual(copy(source, store([]), all));
+    expect(presented.markdown).toBe(
+      "Before\n\n```Mermaid\nflowchart LR\n  A --> B\n\n```\n\nAfter",
     );
+    expect(presented.text).toBe("Before\n\nflowchart LR\n  A --> B\n\nAfter");
+  });
+
+  it("leaves out a presented block that a paragraph selection only ends in", () => {
+    // A triple-click on the paragraph ends the range at the next block's first text.
+    const copied = copy(fenced, store([labels]), (container, range) => {
+      const paragraph = container.querySelector("p") as Node;
+      const label = container.querySelector("svg text")?.firstChild as Node;
+      range.setStart(paragraph, 0);
+      range.setEnd(label, 0);
+    });
+    expect(copied).toEqual({
+      text: "Before",
+      markdown: "Before",
+      html: "<p>Before</p>",
+    });
   });
 
   it("retries the renderer when an edit changes a block it failed on", () => {

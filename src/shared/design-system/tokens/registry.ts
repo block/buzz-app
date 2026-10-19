@@ -519,7 +519,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-mention-own",
         variable: "--text-mention-own",
         pointsAt:
-          "text-mention; the own bubble's fill at Buzzin’ (inverted chip)",
+          "text-mention; the own bubble's ink from Swarmin’ (tone-on-tone chip)",
         use: "Mention labels inside your own bubble, paired with bg-affordance-mention-own.",
         status: "core",
       },
@@ -1003,14 +1003,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-mention-own",
         variable: "--affordance-mention-own",
-        pointsAt: "affordance-mention; the own bubble's ink at Buzzin’",
+        pointsAt: "affordance-mention; accent 10 from Swarmin’",
         use: "Mention chip fill inside your own bubble, paired with text-mention-own.",
         status: "core",
       },
       {
         token: "bg-affordance-mention-own-hover",
         variable: "--affordance-mention-own-hover",
-        pointsAt: "affordance-mention-hover; the own bubble's ink at Buzzin’",
+        pointsAt: "affordance-mention-hover; accent pressed from Swarmin’",
         use: "Own-bubble mention chip under the pointer.",
         status: "core",
       },

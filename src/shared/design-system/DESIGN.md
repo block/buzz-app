@@ -1486,7 +1486,7 @@ A mention of you asks for your attention and joins the strong group:
 `text-mention-self` on `affordance-mention-self`, the prominent fill and its ink
 in light mode, and a neutral chip with the prominent mark as ink in dark mode,
 where fills stay neutral. Inside your own bubble the `-own` pair wins; on the
-brand-filled bubble (from Swarmin’) it inverts the bubble's fill and ink. System notices
+brand-filled bubble (from Swarmin’) it is tone-on-tone: a deeper step of the bubble's fill with the bubble's ink, deeper again on hover. System notices
 name people as quiet text, never as chips.
 
 Blue 11 is tuned for the supported surface stack: #0b5fa8 in light mode and

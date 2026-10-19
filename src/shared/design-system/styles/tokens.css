@@ -1336,11 +1336,11 @@
 [data-color-level="more"] .light,
 :root[data-color-level="full"],
 [data-color-level="full"] .light {
-  /* A highlight would vanish into the brand-filled bubble: invert the
-     bubble's own pair so the mention reads as a chip on it. */
-  --affordance-mention-own: var(--text-message-own);
-  --affordance-mention-own-hover: var(--text-message-own);
-  --text-mention-own: var(--surface-message-own);
+  /* Mentions stay tone-on-tone on the brand-filled bubble: a deeper step of
+     its fill with the bubble's ink, deepening again on hover. */
+  --affordance-mention-own: var(--accent-10);
+  --affordance-mention-own-hover: var(--accent-pressed);
+  --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);
@@ -1442,11 +1442,11 @@
 [data-color-level="more"] .dark,
 :root[data-color-level="full"][data-color-mode="dark"],
 [data-color-level="full"] .dark {
-  /* A highlight would vanish into the brand-filled bubble: invert the
-     bubble's own pair so the mention reads as a chip on it. */
-  --affordance-mention-own: var(--text-message-own);
-  --affordance-mention-own-hover: var(--text-message-own);
-  --text-mention-own: var(--surface-message-own);
+  /* Mentions stay tone-on-tone on the brand-filled bubble: a deeper step of
+     its fill with the bubble's ink, deepening again on hover. */
+  --affordance-mention-own: var(--accent-10);
+  --affordance-mention-own-hover: var(--accent-pressed);
+  --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);

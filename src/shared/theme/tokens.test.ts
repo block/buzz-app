@@ -314,6 +314,10 @@ it.each(ACCENTS)(
         expect(palette["--affordance-mention-own"], where).not.toBe(
           palette["--surface-message-own"],
         );
+        // Hovering a chip in your own bubble always shows a change.
+        expect(palette["--affordance-mention-own-hover"], where).not.toBe(
+          palette["--affordance-mention-own"],
+        );
         // Ordinary mentions stay neutral at every level; a mention of you
         // takes the strong group (a fill in light, the mark as ink in dark).
         expect(palette["--affordance-mention"], where).toBe(

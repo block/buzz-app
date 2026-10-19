@@ -263,6 +263,7 @@ function setup(
     },
     find: (pubkey: string) => snapshot.agents.find((a) => a.pubkey === pubkey),
     relay: () => undefined,
+    handle: () => undefined,
     register: vi.fn(),
     addTool: vi.fn(),
     tools: () => [],
@@ -495,10 +496,14 @@ it("checks providers in Agent setup and opens their host-owned dialogs", async (
     ).toBeNull();
     const defaults = render(<AgentSettings agents={agents} active={false} />);
     expect(echoProvider.check).not.toHaveBeenCalled();
-    expect(screen.queryByRole("heading", { name: "Providers" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Harness defaults" }),
+    ).toBeNull();
     defaults.rerender(<AgentSettings agents={agents} />);
     expect(screen.getByRole("heading", { name: "Agent setup" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Providers" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Harness defaults" }),
+    ).toBeVisible();
     expect(
       screen.getByRole("switch", { name: "Remember mentioned agents" }),
     ).toBeVisible();

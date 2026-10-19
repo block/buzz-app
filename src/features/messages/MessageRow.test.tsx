@@ -77,6 +77,43 @@ it.each([false, true])(
   },
 );
 
+it.each([
+  { recognized: undefined, handled: true },
+  { recognized: false, handled: true },
+  { recognized: true, handled: false },
+  { recognized: true, handled: true },
+])(
+  "opens images through an explicitly accepting host or the local viewer: %j",
+  ({ recognized, handled }) => {
+    const url = "https://relay.test/media/image.png";
+    const open = vi.fn(() => handled);
+    try {
+      renderDom(
+        <MessageRow
+          row={{ ...row, attachments: [{ url, kind: "image" }] }}
+          profile={undefined}
+          media={() => url}
+          onOpenLink={open}
+          canOpenLink={recognized === undefined ? undefined : () => recognized}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("link", { name: "Open image attachment" }),
+      );
+      if (recognized)
+        expect(open).toHaveBeenCalledWith(url, { rootId: row.id });
+      else expect(open).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog") !== null).toBe(
+        !recognized || !handled,
+      );
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it("tells link handlers the thread a reply was opened from", () => {
   const open = vi.fn(() => true);
   const authorId = "ab".repeat(32);
@@ -1799,12 +1836,15 @@ it("presents automation, links the owner and discloses the separate relay signer
         signerId: signer,
         workflowOwnerId: ownerId,
       },
+      viewer: ownerId,
       profile: { name: "Wes" },
       participantProfiles: new Map([[ownerId, { name: "Wes" }]]),
       onOpenLink: open,
       canOpenLink: () => true,
     });
     expect(screen.getByText("Workflow")).toBeTruthy();
+    expect(document.querySelector("[data-viewer-message]")).toBeNull();
+    expect(document.querySelector("[data-own]")).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "View workflow owner Wes profile" }),
     );

@@ -1,3 +1,4 @@
+import { useSearchSettings } from "./SearchSettings";
 import {
   useCallback,
   useEffect,
@@ -38,7 +39,13 @@ import { usageScope } from "../../features/search/usage";
 export type SearchServices = Pick<
   AppServices,
   "communities" | "shortcuts" | "shortcutBindings" | "navigation"
->;
+> &
+  Partial<
+    Pick<
+      AppServices,
+      "appearance" | "notifications" | "plugins" | "adminAccess"
+    >
+  >;
 const SEARCH_ID = "global-search";
 const SEARCH_BINDING: KeyBinding = { key: "k", mod: true };
 const CONVERSATION_SEARCH_ID = "conversation-search";
@@ -173,7 +180,7 @@ export function PageSearch({
         footerGap="none"
         motion="default"
         dismissOnOutsideClick
-        closeLabel="Close search"
+        presentation="search"
         initialFocus={input}
         finalFocus={() =>
           returnFocus.current?.id === "main-content"
@@ -253,6 +260,15 @@ function CommunitySearch({
   onScopeChange: (channelId?: string) => void;
   close: () => void;
 } & SearchInputProps) {
+  const inlineSettings = useSearchSettings({
+    query: scopedChannelId ? "" : query,
+    appearance: services.appearance,
+    notifications: services.notifications,
+    plugins: services.plugins,
+    adminAccess: services.adminAccess,
+    navigation: services.navigation,
+    close,
+  });
   const client = useSyncExternalStore(
     services.communities.subscribe,
     services.communities.snapshot,
@@ -266,11 +282,11 @@ function CommunitySearch({
   ) {
     return (
       <SearchChoices
+        inlineSettings={inlineSettings}
         query={query}
         onQueryChange={onQueryChange}
         input={input}
         label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
-        placeholder={scopedChannelId ? "Search messages…" : undefined}
         scope={
           scopedChannelId
             ? { label: "This conversation", onRemove: () => onScopeChange() }
@@ -303,7 +319,6 @@ function CommunitySearch({
                         ? "Choose a community to see recent conversations."
                         : "Connecting to this community…",
                   },
-                  { label: "Actions", destinations: pages },
                 ]
         }
       >
@@ -333,6 +348,7 @@ function CommunitySearch({
   };
   return (
     <SearchResults
+      inlineSettings={inlineSettings}
       key={`${client.selected}:${connection.scope}:${connection.generation}`}
       session={connection.session}
       query={query}

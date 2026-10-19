@@ -186,7 +186,7 @@ export function createAppearance(
       state = {
         ...state,
         colorLevelError:
-          "Vibe level could not be restored. Choose a level to try saving it again.",
+          "Accent level could not be restored. Choose a level to try saving it again.",
       };
     }
     notify();
@@ -300,7 +300,7 @@ export function createAppearance(
         host.localStorage.setItem(COLOR_LEVEL_KEY, colorLevel);
       } catch {
         colorLevelError =
-          "This vibe level is active, but could not be saved on this device. Try again.";
+          "This accent level is active, but could not be saved on this device. Try again.";
       }
       state = { ...state, colorLevel, colorLevelError };
       notify();

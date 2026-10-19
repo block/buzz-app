@@ -63,6 +63,22 @@ export function resetNewChatProject(scope: string, projectId: string) {
   writeView(scope, `${key}:new-project`, null);
 }
 
+/** New chats share one saved draft. When it holds only a tag for an agent
+ * other than the named one, it has no text of the person's to keep. */
+function dropOtherAgentTag(scope: string, key: string, agent?: string) {
+  if (!agent) return;
+  const saved = mentionDraft(readView<unknown>(scope, key, ""));
+  const [only, ...more] = saved.recipients;
+  if (
+    only &&
+    !more.length &&
+    only.pubkey !== agent &&
+    !saved.sessionCards?.length &&
+    saved.text.trim() === `@${only.name}`
+  )
+    writeView(scope, key, null);
+}
+
 export function SoloDraft({
   session,
   scope,
@@ -82,6 +98,9 @@ export function SoloDraft({
   projectId?: string | undefined;
 }) {
   const draftKey = projectId ? `solo:project:${projectId}` : "solo";
+  // Before the composer reads it: a named agent replaces a saved draft that
+  // only tags another agent, since that tag was the earlier default.
+  useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
   const [settingsOpen, setSettingsOpen] = useState(false);
   // New chats tag their agent in the draft: the one the route names, else the
   // default.

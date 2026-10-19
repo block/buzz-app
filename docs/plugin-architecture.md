@@ -98,7 +98,7 @@ source imports are not a versioned external SDK. See
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component })`. Panels register with
-`ctx.panels.register({ id, title, matches, order?, launcher?, component })`. IDs are local to the
+`ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
 navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`
@@ -128,6 +128,15 @@ gets the agent's Buzz client and where it is working, so the tool acts as the
 agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
+
+An agent type's `run` gets the agent's handle, which publishes, reads and
+uploads as the agent. For agents that act on something other than a message,
+such as a call, `ctx.agents.handle(pubkey)` returns the same handle outside any
+run. It does so only for agents of the calling plugin's own types, while this
+copy of the app runs them, their type is not changing and their community is
+live; otherwise it returns `undefined`. A handle kept from earlier fails each
+call while that no longer holds, and for good once the agent's type or its
+plugin is replaced, so ask for it when acting rather than keeping it. Like any type whose agents run here, the type needs `run`.
 
 ```ts
 ctx.pages.register({
@@ -248,20 +257,31 @@ contracts with their own layout and local navigation.
 **Channels is the only required bundled plugin.** Bestie,
 Todos and Usage are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
-Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities, and Community admin are
-on by default, but optional. Both browser and native catalogs declare that policy.
+Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
+Membership, and Moderation are on by default, but optional. Both browser and
+native catalogs declare that policy.
 
 Solo is part of Channels, not a plugin: Solo chats are channels opened in
 Messages, and Solo drafts are a Messages route. Channels requests topbar
 placement and the shell presents it as Messages, the startup destination.
 Saved `buzz.me` and `buzz.sessions` flags are ignored like any uninstalled owner.
 
-Saved enabled/disabled flags win over defaults (except required Channels). There
-is no migration or forced reset: a browser profile that previously saved its full
+Saved enabled/disabled flags win over defaults (except required Channels). Profiles
+without a saved flag use the current default, so changing a default also changes
+those existing profiles. There is no migration or forced reset: a browser profile that previously saved its full
 plugin snapshot can retain Bestie enabled. Native profiles store per-plugin
 overrides. Default-on does not promise platform support: Terminal contributes UI
 only on macOS/Linux desktop; Hosted communities needs either the desktop app or
-the live development broker. Disabling Community admin removes its Invite to community shortcut.
+the live development broker. Disabling Membership removes its Invite to community shortcut.
+
+Membership and Moderation share app-owned access controllers composed in
+`app/services.ts` (`bundled/admin-access.ts`). Their navigation entries and the
+Plugins catalog use the same verified roster or native staff probe, including
+while either plugin is disabled. The catalog leaves details readable, gates only
+Enable on current access, and always permits Disable. Access status remains
+visible while enabled; navigation and administrative actions require verified
+authority. Restoring default-on needs no migration; explicit Off remains saved.
+These UI checks do not grant permissions; relay and native enforcement still apply.
 
 Repositories is enabled by default and owns versioned, validated repository, PR
 and issue page routes. Its page is absent from primary navigation. It resolves
@@ -525,6 +545,8 @@ external JSX plugins declare `inject = ["react"]` to use the shared instance. Th
 constructs its module loader and execution adapter internally, observes configuration,
 and selects the desired plugins (including enabled flags and safe mode).
 
+### Discovery metadata
+
 Plugin manifests may include display-only discovery metadata:
 
 ```json
@@ -534,7 +556,7 @@ Plugin manifests may include display-only discovery metadata:
   "apiVersion": 1,
   "description": "Reconcile invoices without leaving Buzz.",
   "discovery": {
-    "category": "finance",
+    "category": "productivity",
     "tags": ["Accounting", "Invoice Management"]
   }
 }
@@ -559,6 +581,100 @@ security-bearing manifest fields remain strict.
 Hosts released before these metadata fields were introduced reject `description`
 and `discovery` as unknown manifest keys. Publishers targeting those hosts must
 omit both fields; using slug tags does not make them compatible.
+
+### Writing plugin discovery metadata
+
+Choose one primary category by the plugin's purpose. The current Settings
+categories are defined in [`src/app/plugin-categories.ts`](../src/app/plugin-categories.ts):
+
+| Category ID | Settings label | Use for |
+| --- | --- | --- |
+| `communication` | Communication | Composing, reading and navigating conversations. |
+| `agents` | Agents | Agent runtimes and configuration. |
+| `agent-tools` | Agent tools | Utilities for working with agents and their activity. |
+| `developer-tools-and-integrations` | Developer tools & integrations | Developer workflows and connections to other products. |
+| `people-and-communities` | People & communities | Profiles, membership and community or relay administration. |
+| `productivity` | Productivity | Tasks, reminders and personal work. |
+
+These are host-recognized choices, not a closed manifest enum. Omitted or
+unrecognized categories appear under Other. For bundled plugins, the catalog test
+requires a non-empty description and a recognized category. External authors can
+use other valid slugs, but should use a recognized one when it fits.
+
+Write the description around **what the plugin does**. For example, Voice Notes
+uses "Record voice notes and play them in conversations." Name an entry point
+only when it is not obvious, using the labels people see in Buzz. Leave the
+walkthrough to the README. Avoid feature inventories, implementation details and
+repeating an obvious page name just to fill the byte budget.
+
+Use tags for useful topics or search terms that the category and description do
+not already explain. Both plain-text terms and slugs are valid; the schema does
+not require one naming style. Categories describe purpose; they do not list every
+UI surface a plugin touches. Keep `Essentials` and `Core` for host-curated bundled
+metadata; external plugins should not use them. This is authoring guidance, not a
+manifest validation rule. Discovery tags must not claim permissions, signing,
+provenance or runtime health; the host owns those decisions and states.
+
+### Make bundled plugins distinct
+
+Each bundled plugin must be distinguishable from the others at a glance. Choose
+a name and description that make its job and scope clear, including who it is
+for when that matters. Similar plugins should explain their different jobs in
+the catalog itself; people should not need to open both READMEs to tell them
+apart. For example, community administration concerns one community's members,
+roles and invitations, while relay administration concerns reports, feedback and
+communities across a relay for authorized relay staff.
+
+Artwork should reinforce that distinction with a recognizable subject or
+silhouette while following Buzz's shared visual style. Avoid giving neighboring
+plugins near-identical imagery or relying on color alone to distinguish them.
+Before adding or changing a bundled plugin, authors and reviewers must compare
+its name, description and artwork with the existing catalog, especially plugins
+with similar names or purposes in the same category. Check whether someone new
+to Buzz can tell what each adds and which one they need. Revise ambiguous copy
+or imagery before considering the plugin ready.
+
+### Writing the plugin README
+
+Keep the user guide short and positive: `# <plugin name>`, a couple of sentences
+about what it adds, then one `## Getting started` heading with basic steps. Put
+entry points and any required setup in those steps. Focus on using the plugin;
+skip default-enabled status and descriptions of what turning it off removes.
+For bundled plugins, `src/bundled/readmes.test.ts` enforces this heading structure.
+Contributor specifications may follow a `---` separator after the user guide.
+Settings still displays that content below the guide; the separator only limits
+the heading check in the test.
+
+For example, the bundled Voice Notes guide uses:
+
+```markdown
+# Voice Notes
+
+Record a voice note when talking is easier than typing.
+
+## Getting started
+
+1. Choose **Record voice note** (the microphone) in the composer.
+2. Choose **Finish voice note** to attach it, then send.
+3. Play voice notes in conversations, and change their speed if you like.
+```
+
+README packaging and display are separate. Settings displays only READMEs shipped
+with Buzz for bundled plugins; it does not display packaged READMEs from external
+installations. External authors can still package a README, but should not promise
+that it will appear in Settings.
+
+For that bundled renderer, use ordinary Markdown and external HTTPS links.
+Credential-free HTTP links are also accepted; relative and in-page links render
+as text. Raw HTML is skipped and images render as alt text rather than loading
+remote media or data URLs. Put an external build's README beside `manifest.json`
+and `plugin.js`; a repository-level README is not automatically included.
+The [packaging rules below](#loading-from-folders-and-repositories) cover the
+README/icon size limits, reserved filenames and signature coverage.
+See the [example authoring walkthrough](../examples/plugins/README.md#add-discovery-metadata-and-a-readme)
+for a manifest with these optional fields.
+
+### Declaring host access
 
 Plugins can separately declare host access in `manifest.json`:
 
@@ -722,8 +838,9 @@ capability boundary as folder import.
 
 These files are publisher-supplied presentation content, not an endorsement or a
 runtime asset directory. Buzz-owned framing and fallback artwork remain
-authoritative. A future README renderer must keep raw HTML/scripts disabled and
-must not load embedded data URLs or passive remote media; the package API does not
+authoritative. Any surface that renders packaged READMEs must keep raw HTML and
+scripts disabled and must not load embedded data URLs or passive remote media; the
+bundled README renderer already follows these rules. The package API does not
 turn README links, images, or the icon into plugin runtime resources.
 
 A signed installation can only update from the same publisher; remove and
@@ -1019,14 +1136,21 @@ Exact message links still navigate to Channels rather than the page's route.
 
 `conversation.ui.Tabs({ id, session, scope, label, icon, children })` makes the
 page's content the first main tab of the host's conversation tab workspace.
-`children(open)` renders that tab; `open({ channelId, threadId? }, { keep? })`
+`children(open, close, isOpen)` renders that tab; `open({ channelId, threadId?, messageId? }, { keep? })`
 shows a joined conversation in a host tab and returns false for any other. A
+thread opened with `messageId` reveals that message and keeps it in view. A
 thread opens as a side-pane thread tab and a whole conversation as a side-pane
 conversation tab, each with the same reader and composer as Channels tabs, so
 the page stays in view; any thread can then move to the main pane. A plain open
 replaces the tab the previous one added, and `keep: true` adds a tab beside it;
-an already-open conversation's tab is selected wherever it is. `id` keys the page's tabs, which last for its community session as
-Channels tabs do; they keep no Back/Forward visits.
+an already-open conversation's tab is selected wherever it is. Each open moves
+keyboard focus to the opened tab's composer (a thread's reply box, keeping any
+reply target chosen in it) once it can take focus, unless the user clicks or
+types first; an open at a message reveals it instead, and a tab restored when
+the page remounts takes no focus. `close(target)` closes that conversation's tab, leaving focus to the page unless it opens a tab in the same update, and returns false when none is open; `isOpen(target)` says whether it has one, and a thread opened at a reply keeps its tab once its root resolves. `id` keys the page's tabs, which last for its community session as
+Channels tabs do; they keep no Back/Forward visits. Showing a tab enters its
+channel visit, as in Channels; `visits: false` leaves reading to the page, as
+Inbox does.
 The tab workspace belongs to Channels, which supplies it with
 `conversation.registerTabs(component)`; the conversation service only holds that
 slot. `ui.Tabs` is undefined while no enabled plugin provides it, so a page reads

@@ -365,6 +365,32 @@ export function policyRelay({
             filters.flatMap((filter) => answer(community, filter)),
           );
         }
+        if (
+          filters.every(
+            (filter) => filter.kinds?.length === 1 && filter.kinds[0] === 9007,
+          )
+        ) {
+          // Advisory creator receipts use bounded batches, independently of sidebar reads.
+          expect(filters.length).toBeGreaterThan(0);
+          expect(filters.length).toBeLessThanOrEqual(4);
+          for (const filter of filters) {
+            expect(filter).toEqual({
+              kinds: [9007],
+              authors: [expect.any(String)],
+              "#h": [expect.any(String)],
+              limit: 1,
+              ...(filter.consistency ? { consistency: "strong" } : {}),
+            });
+            report.queries.push({
+              community: communityOf(url),
+              filter,
+              at: performance.now(),
+            });
+          }
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
         if (filters.length !== 1) {
           // Sidebar preferences read only these five exact own-author coordinates.
           expect(filters).toHaveLength(5);

@@ -88,6 +88,7 @@ vi.mock("./MessageComposer", () => ({
     activityClickOpensPanel,
     disabled,
     placeholder,
+    focusRequest,
   }: MessageComposerProps) => (
     <section
       aria-label="Composer"
@@ -98,6 +99,7 @@ vi.mock("./MessageComposer", () => ({
       data-direct-activity={activityClickOpensPanel}
       data-disabled={disabled}
       data-placeholder={placeholder}
+      data-focus-request={focusRequest}
     >
       <button type="button" onClick={() => onSend?.("own-reply")}>
         Send fixture reply
@@ -458,6 +460,29 @@ it("keeps initial thread loading until available content has been positioned", (
   expect(within(section).getByText("root")).toBeVisible();
   expect(within(section).queryByText("Loading thread…")).toBeNull();
 });
+it.each([
+  ["waits", undefined, "1"],
+  ["clicks elsewhere first", "pointerDown", "0"],
+  ["types elsewhere first", "keyDown", "0"],
+] as const)(
+  "a focus request reaches the reply box once its root loads, unless the user %s",
+  (_, action, delivered) => {
+    const h = messagesHarness();
+    h.snapshot.status = "loading";
+    h.snapshot.root = undefined;
+    Object.assign(h.props, { focusRequest: 1 });
+    h.render();
+    expect(screen.queryByRole("region", { name: "Composer" })).toBeNull();
+    if (action) fireEvent[action](document.body, { key: "a" });
+    h.snapshot.root = row;
+    h.snapshot.status = "ready";
+    h.render();
+    expect(screen.getByRole("region", { name: "Composer" })).toHaveAttribute(
+      "data-focus-request",
+      delivered,
+    );
+  },
+);
 it("holds seeded rows behind the loader until the first page, and unread until the legacy walk settles", async () => {
   vi.useFakeTimers();
   const h = messagesHarness(ordinaryNavigation());

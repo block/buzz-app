@@ -123,6 +123,20 @@ export function createChannelActivity(
         publish();
       }
     },
+    /** Access loss fences reads and drops only channels no longer readable;
+     * the others keep their values, so Recent sections keep their order. */
+    retain(readable: (channelId: string) => boolean) {
+      if (closed) return;
+      generation++;
+      active?.abort();
+      active = undefined;
+      const next = new Map([...values].filter(([id]) => readable(id)));
+      const nextStatus = status === "loading" ? "idle" : status;
+      if (next.size === values.size && nextStatus === status) return;
+      values = next;
+      status = nextStatus;
+      publish();
+    },
     clear() {
       if (closed) return;
       generation++;

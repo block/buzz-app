@@ -63,9 +63,11 @@ export function useConversationTabs({
   eligible,
   threadId,
   onOpenDrawer,
+  openMembers,
   mainPane = false,
   anyMainThread = false,
   threadPane,
+  visits = true,
   routed,
   onCloseThread,
   onRetryNavigation,
@@ -88,12 +90,15 @@ export function useConversationTabs({
   eligible?(entry: PanelOpening): boolean;
   threadId?: string | undefined;
   onOpenDrawer?(): void;
+  openMembers?(): void;
   /** This page hosts thread tabs in its main pane too. */
   mainPane?: boolean | undefined;
   /** Any thread may use the main pane, not only the current conversation's. */
   anyMainThread?: boolean | undefined;
   /** Where new thread tabs open; by default, per the thread placement setting. */
   threadPane?: TabPane | undefined;
+  /** Showing a tab visits its conversation; a page may only reveal it. */
+  visits?: boolean | undefined;
   /** The route's thread request, handed only to the tab that matches it. */
   routed?:
     | { channelId: string; messageId: string; navigation: PageNavigation }
@@ -368,6 +373,7 @@ export function useConversationTabs({
         !!drawerContext &&
         openConversationLink(drawerContext.channelId, target),
     },
+    openMembers,
   );
   // The pane's page-local side panel, so a tab opened from outside the page
   // knows the pane is in use; it ends with this mount.
@@ -489,7 +495,7 @@ export function useConversationTabs({
     channelId: string,
     messageId: string,
     rootId: string,
-    intent?: "reply" | "reveal",
+    intent?: "reply" | "reveal" | "focus",
   ) => {
     if (!currentVisit()) return;
     // Flat sessions keep their side-only host; channels support both panes.
@@ -639,6 +645,7 @@ export function useConversationTabs({
           <ConversationTab
             focusOnMount={continuingVisit}
             active={tabState.paneOpen && selectedTab === tab.id}
+            visit={visits}
             tab={tab}
             channel={target}
             session={queries}
@@ -766,6 +773,7 @@ export function useConversationTabs({
             <ConversationTab
               focusOnMount={continuingVisit}
               active={active}
+              visit={visits}
               tab={tab}
               channel={target}
               session={queries}

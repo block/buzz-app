@@ -86,6 +86,7 @@ import {
   type AgentIdentity,
   type Carry,
   type AgentsNative,
+  type AgentMedia,
   type AgentUpload,
   type OldTeam,
   type PortableAgents,
@@ -271,7 +272,10 @@ export type SessionUsage = Readonly<{
   lastAt: number;
   observations: readonly UsageObservation[];
 }>;
-/** The agent as `run` holds it. It works for as long as the agent exists. */
+/** The agent as `run` holds it. A run's handle works for as long as the
+ * agent exists; one from `Agents.handle` fails each call while `handle`
+ * would not return it, and for good once the agent's type or its plugin is
+ * replaced, so ask for a new one then. */
 export type AgentHandle = Readonly<{
   pubkey: string;
   name: string;
@@ -289,11 +293,12 @@ export type AgentHandle = Readonly<{
     query: string,
     limit: number,
   ): Promise<RelayEvent[] | undefined>;
-  /** Uploads base64 `data`, an image or MP4 video, as the agent. */
+  /** Uploads base64 `data`, a file of any type its community accepts, as
+   * the agent. `mime` is a hint; the community decides the type. */
   upload(data: string, mime: string): Promise<AgentUpload>;
-  /** Downloads one of its community's media blobs, by URL or `sha256[.ext]`,
-   * as base64. */
-  media(url: string): Promise<string>;
+  /** Saves one of its community's media blobs, of any type, by URL or
+   * `sha256[.ext]`, to a local file for the agent. */
+  media(url: string): Promise<AgentMedia>;
   /** Writes memory entry `slug`, newer than the entry it replaces (`after`,
    * that entry's `createdAt`, or 0). The owner reads it back. */
   remember(slug: string, body: string, after: number): Promise<RelayEvent>;
@@ -694,6 +699,13 @@ export type Agents = {
   subscribe(listener: () => void): () => void;
   /** The agent of this pubkey in the selected community, if it is an agent. */
   find(pubkey: string): Agent | undefined;
+  /** The agent as `run` holds it, outside any run: for one of the calling
+   * plugin's types while this copy of the app runs it, its type is not
+   * changing and its community is live, else undefined. A type whose agents
+   * act on something other than a message, such as a call, publishes with
+   * it; like any type whose agents run here, it has `run`. A kept handle
+   * throws once this no longer holds, so ask again when acting. */
+  handle(pubkey: string): AgentHandle | undefined;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
   relay(pubkey: string): RelayData | undefined;
@@ -1253,6 +1265,10 @@ export class AgentsService extends Service implements Agents {
   };
   find = (pubkey: string) =>
     this.state.agents.find((agent) => agent.pubkey === pubkey);
+  handle(pubkey: string) {
+    const owner = this.ctx.pluginOwner;
+    return owner && this.runners.handle(pubkey, owner.id);
+  }
   relay = (pubkey: string) => {
     const origin = originOf(this.agent(pubkey)?.relay ?? "");
     return origin ? this.bound.get(origin)?.relay : undefined;

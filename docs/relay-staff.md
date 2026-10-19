@@ -1,7 +1,7 @@
 # Moderation
 
-`buzz.relay-staff` is an enabled-by-default bundled Settings plugin. Settings →
-Plugins can disable it. Through `ctx.settingsCards.register` it contributes
+`buzz.relay-staff` is an optional bundled Settings plugin, off by default.
+Settings → Manage plugins can enable or disable it. Through `ctx.settingsCards.register` it contributes
 four entries to a "Moderation" Settings group: `reports`, `feedback`,
 `communities` and `staff`. They act on the selected community's relay, which
 each entry's header names, and read the selected community and viewer from
@@ -9,9 +9,10 @@ each entry's header names, and read the selected community and viewer from
 id survive moving between entries.
 
 Membership (`buzz.moderation`) manages access and roles for the selected community.
-Moderation requires separate relay staff authorization across communities;
-being a community owner or admin does not grant that access. Managing staff is
-operator-only.
+Moderation requires separate relay staff authorization across communities,
+except for the read-only entries exposed when relay admin auth is disabled
+(see “Visibility and access,” item 5 below). Being a community owner or admin
+does not grant staff access. Managing staff is operator-only.
 
 The plugin owns the UI only. Every admin request goes through the native admin
 client in `src-tauri/src/relay_admin/` (contract in

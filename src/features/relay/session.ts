@@ -322,30 +322,23 @@ export function createRelaySession(
                 event.kind !== 9007 && event.kind !== 9000
                   ? event.tags.find(([name]) => name === "h")?.[1]
                   : undefined;
+              // A chat being set up holds its messages, and the agents that
+              // hear them, until its Canvas and workspace are in place.
+              const setup =
+                destination && event.kind === 9
+                  ? channelWrites.settling(destination)
+                  : undefined;
               const starting =
-                destination && channelWrites.starting(destination);
+                setup ?? (destination && channelWrites.starting(destination));
               if (destination && starting) {
-                if (event.kind === 9) hearStarting(event, destination);
+                if (event.kind === 9 && !setup)
+                  hearStarting(event, destination);
                 // Waiting counts against the event's delivery deadline; one
-                // that timed out meanwhile goes again once the chat exists.
-                void starting.then(
-                  () => {
-                    const outbox = writes?.outbox;
-                    if (
-                      outbox
-                        ?.snapshot()
-                        .some(
-                          (item) =>
-                            item.event.id === event.id &&
-                            item.delivery === "failed",
-                        )
-                    )
-                      outbox.retry(event.id);
-                  },
-                  () => {},
-                );
+                // that timed out meanwhile goes again once the chat can take
+                // it (see channelWrites.start).
                 await starting;
                 signal.throwIfAborted();
+                if (setup) hearStarting(event, destination);
               }
               if (event.kind === 40100) {
                 const id = event.tags.find((t) => t[0] === "h")?.[1];
@@ -468,6 +461,9 @@ export function createRelaySession(
       }
     }
   }
+  /** Solo chats this device is starting; set once channel writes exist. */
+  let startingChannel: (id: string) => Promise<void> | undefined = () =>
+    undefined;
   // Keep ordinary reads on their existing promise chain; page metadata is opt-in.
   function readVerified(
     filters: readonly ReadFilter[],
@@ -505,6 +501,32 @@ export function createRelaySession(
         "unavailable",
         "Reconnect to refresh conversation access.",
       );
+    // A chat this device is still starting has nothing to read until the
+    // relay has its create; reading sooner would be refused as a denial.
+    const starts = [
+      ...new Set(filters.flatMap((filter) => filter["#h"] ?? [])),
+    ].flatMap((id) => {
+      const start = startingChannel(id);
+      return start ? [start.catch(() => {})] : [];
+    });
+    if (starts.length) {
+      const aborted = settings?.signal;
+      aborted?.throwIfAborted();
+      let stop = () => {};
+      await Promise.race([
+        Promise.all(starts),
+        ...(aborted
+          ? [
+              new Promise<void>((resolve) => {
+                const done = () => resolve();
+                aborted.addEventListener("abort", done, { once: true });
+                stop = () => aborted.removeEventListener("abort", done);
+              }),
+            ]
+          : []),
+      ]).finally(() => stop());
+      aborted?.throwIfAborted();
+    }
     const epoch = accessEpoch;
     let events: readonly RelayEvent[];
     try {
@@ -1303,6 +1325,7 @@ export function createRelaySession(
     { read: (filters, settings) => readVerified(filters, settings, false) },
     transport?.channelIdentity === true,
   );
+  startingChannel = (id) => channelWrites.starting(id);
   // Roster authority invalidates in-flight reads, including account-owned
   // preferences. Retry those once at the current epoch, never channel content
   // or a read cancelled by its caller/session/cache clear.
@@ -1889,7 +1912,10 @@ export function createRelaySession(
       };
     },
     /** Verified, access-filtered live-phase events of any kind, after reconciliation.
-     * Never finite reads or local intent, and replay only with `replay`: the
+     * Never finite reads or local intent, except the viewer's own messages in
+     * a Solo chat this device is starting: those arrive here before the relay
+     * has them, and their echo follows (see `hearStarting`). Replay only with
+     * `replay`: the
      * recent history each subscription sends again before it goes live, as after
      * a reconnect, marked `replay` on its batch. Includes the viewer's own echoes.
      * Overlapping routes and replays can deliver one event more than once;

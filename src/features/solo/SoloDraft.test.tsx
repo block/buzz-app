@@ -16,7 +16,7 @@ import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import { SoloDraft, resetNewChatProject } from "./SoloDraft";
-import { createChannelWrites } from "../relay/channel-writes";
+import { ChatNotStarted, createChannelWrites } from "../relay/channel-writes";
 import { createOutbox } from "../relay/outbox";
 import { keypair, signed } from "../relay/testing";
 import { SOLO_LABEL } from "./labels";
@@ -77,10 +77,18 @@ function setup(available = true) {
         members: readonly string[],
         ttlSeconds?: number,
         named = false,
-      ) => ({
-        create: channelWrites.create(id, title, ttlSeconds, named, members),
-        ready: channelWrites.ready,
-      }),
+        setup?: () => Promise<void>,
+      ) => {
+        const create = channelWrites.create(
+          id,
+          title,
+          ttlSeconds,
+          named,
+          members,
+        );
+        void channelWrites.ready.then(() => setup?.()).catch(() => {});
+        return { create, ready: channelWrites.ready };
+      },
     ),
   };
   const messages = {
@@ -177,6 +185,7 @@ it("uses restored explicit mentions, not a separate picker", async () => {
     ["b".repeat(64)],
     undefined,
     false,
+    undefined,
   );
   expect(test.channelWrites.addAgents).not.toHaveBeenCalled();
   expect(test.messages.send).toHaveBeenCalledWith(id, "@Outside agent Help", [
@@ -190,9 +199,30 @@ it("a failed start puts the message back in the new-chat composer with the error
     user = userEvent.setup();
   test.channelWrites.failed = (id: string) => id === "c".repeat(64);
   test.channelWrites.ready = Promise.reject(
-    new Error("Channel creation rejected"),
+    new ChatNotStarted("Channel creation rejected"),
   );
   test.channelWrites.ready.catch(() => {});
+  // The first message and a follow-up were held in the outbox for the chat.
+  const held = (content: string, id: string) => ({
+    event: {
+      id,
+      kind: 9,
+      content,
+      tags: [["h", test.channelWrites.create.mock.calls[0]?.[0]]],
+    },
+    delivery: "queued",
+  });
+  let queue: unknown[] = [];
+  Object.assign(test.session.outbox as object, {
+    snapshot: () => {
+      if (!queue.length && test.channelWrites.create.mock.calls.length)
+        queue = [
+          held("Try again", "d".repeat(64)),
+          held("And this", "e".repeat(64)),
+        ];
+      return queue;
+    },
+  });
   const view = () => (
     <SoloDraft
       session={test.session}
@@ -209,11 +239,14 @@ it("a failed start puts the message back in the new-chat composer with the error
   expect(onStarted).toHaveBeenCalledWith(id);
   expect(onFailed).toHaveBeenCalledWith(id);
   expect(test.session.outbox?.dismiss).toHaveBeenCalledWith("d".repeat(64));
+  expect(test.session.outbox?.dismiss).toHaveBeenCalledWith("e".repeat(64));
   expect(test.channelWrites.discardFailed).toHaveBeenCalledWith("c".repeat(64));
-  // The page returns to the draft, which shows the text and the reason.
+  // The page returns to the draft, which shows the text, the follow-up and
+  // the reason.
   mounted.unmount();
   render(view());
   expect(screen.getByRole("textbox")).toHaveTextContent("Try again");
+  expect(screen.getByRole("textbox")).toHaveTextContent("And this");
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Channel creation rejected",
   );
@@ -222,6 +255,59 @@ it("a failed start puts the message back in the new-chat composer with the error
   await waitFor(() => expect(onStarted).toHaveBeenCalledTimes(2));
   expect(test.channelWrites.create.mock.calls[1]?.[0]).not.toBe(id);
 });
+it.each([
+  ["only its automatic tag", "", ["Try again", "Not sent yet"], 2],
+  [
+    "text of its own",
+    "Newer idea",
+    ["Newer idea", "Try again", "Not sent yet"],
+    3,
+  ],
+])(
+  "a failed start comes back to a new-chat draft holding %s",
+  async (_case, newer, expected, tags) => {
+    const test = setup(),
+      onStarted = vi.fn(),
+      onFailed = vi.fn(),
+      user = userEvent.setup();
+    let refuse = (_reason: unknown) => {};
+    test.channelWrites.ready = new Promise<void>((_resolve, reject) => {
+      refuse = reject;
+    });
+    test.channelWrites.ready.catch(() => {});
+    render(
+      <SoloDraft
+        session={test.session}
+        scope="test"
+        onStarted={onStarted}
+        onFailed={onFailed}
+      />,
+    );
+    await user.type(screen.getByRole("textbox"), "Try again");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+    // A follow-up was typed in the chat, and another new chat was opened.
+    const id = test.channelWrites.create.mock.calls[0]?.[0];
+    writeView("test", `draft:${id}`, taggedDraft("Not sent yet"));
+    writeView("test", "solo:new-draft", taggedDraft(newer));
+    await act(async () => {
+      refuse(new ChatNotStarted("Channel creation rejected"));
+      await test.channelWrites.ready.catch(() => {});
+    });
+    await waitFor(() => expect(onFailed).toHaveBeenCalledOnce());
+    const { text } = readView<{ text: string }>("test", "solo:new-draft", {
+      text: "",
+    });
+    let at = -1;
+    for (const part of expected) {
+      expect(text.indexOf(part)).toBeGreaterThan(at);
+      at = text.indexOf(part);
+    }
+    // An untouched draft is replaced, not kept beside the start.
+    expect(text.split("@Member agent").length - 1).toBe(tags);
+    expect(readView("test", `draft:${id}`, null)).toBeNull();
+  },
+);
 it("a start that is only unconfirmed keeps the chat and its message", async () => {
   const test = setup(),
     onStarted = vi.fn(),

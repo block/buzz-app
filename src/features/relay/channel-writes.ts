@@ -9,6 +9,22 @@ export const DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** A Solo start that made no chat: the relay refused its create, or the
+ * relay has no record of it once its delivery attempts ran out. */
+export class ChatNotStarted extends Error {}
+
+function pause(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
 /** Channel write commands use the same durable outbox and connection lifetime. */
 export function createChannelWrites(
   outbox: Outbox | undefined,
@@ -477,6 +493,58 @@ export function createChannelWrites(
   }
   /** Solo chats this device is starting, until they can take events. */
   const starts = new Map<string, Promise<void>>();
+  /** Started chats whose setup still runs once they exist; their messages
+   * wait for it. */
+  const setups = new Map<string, Promise<void>>();
+  /** Settles once the relay has the create, or rejects with ChatNotStarted
+   * once it is known to have none. A lost acknowledgment resends the same
+   * create, which the relay confirms; when the attempts run out, the relay is
+   * asked for the create until it answers. */
+  async function created(create: string) {
+    for (let tries = 1; tries <= 3; tries++) {
+      try {
+        return await delivered(create);
+      } catch (error) {
+        if (api.failed(create))
+          throw new ChatNotStarted(
+            String(error instanceof Error ? error.message : error),
+            { cause: error },
+          );
+        if (signal.aborted) throw error;
+      }
+      // A failed check is not an answer; give the connection time to recover.
+      await pause(500 * 2 ** tries, signal);
+    }
+    for (let wait = 1_000; ; wait = Math.min(wait * 2, 30_000)) {
+      if (signal.aborted) throw new Error("The community connection changed.");
+      try {
+        const events = await reader.read(
+          [{ ids: [create], limit: 1, consistency: "strong" }],
+          { signal },
+        );
+        if (events.some((event) => event.id === create)) return;
+      } catch {
+        await pause(wait, signal);
+        continue;
+      }
+      // An attempt still under way may yet land; ask again after it.
+      if (
+        outbox
+          ?.snapshot()
+          .some(
+            (item) => item.event.id === create && item.delivery === "sending",
+          )
+      ) {
+        await pause(wait, signal);
+        continue;
+      }
+      // The relay has no such create. Keep it from landing later.
+      await outbox?.dismiss(create).catch(() => {});
+      throw new ChatNotStarted(
+        "The chat couldn't be started. Your message is back in New chat.",
+      );
+    }
+  }
   const api = Object.freeze({
     available,
     addAgents,
@@ -579,6 +647,9 @@ export function createChannelWrites(
       members: readonly string[],
       ttlSeconds?: number,
       named = false,
+      /** Runs once the chat exists, before its messages go out or reach
+       * local agents; a failure leaves a working chat. */
+      setup?: () => Promise<void>,
     ) {
       const create = api.create(id, title, ttlSeconds, named, members);
       channels.start?.({
@@ -590,33 +661,54 @@ export function createChannelWrites(
       });
       // The relay adds the members in the create, so the chat takes events
       // once the create is OK.
-      const ready = (async () => {
-        // A lost acknowledgment resends the same create, which the relay
-        // confirms; only a refusal, or a third miss, ends the start.
-        for (let tries = 1; ; tries++) {
-          try {
-            return await delivered(create);
-          } catch (error) {
-            if (api.failed(create) || tries === 3 || signal.aborted)
-              throw error;
-          }
-        }
-      })();
+      const ready = created(create);
       starts.set(id, ready);
+      const settled = setup
+        ? ready.then(() =>
+            setup().catch((reason) => {
+              console.warn("Solo chat setup did not finish", reason);
+            }),
+          )
+        : ready;
+      if (setup) setups.set(id, settled);
       void ready.then(
         // Confirming the chat only ends its pending listing.
         () => refresh(id).catch(() => {}),
-        // A chat that may exist stays listed until discovery decides.
-        () => {
-          if (api.failed(create)) channels.abandon?.(id);
+        (error) => {
+          if (error instanceof ChatNotStarted) channels.abandon?.(id);
         },
       );
+      void settled.then(
+        () => {
+          // A message whose delivery deadline passed while it waited goes
+          // again now that the chat can take it.
+          for (const item of outbox?.snapshot() ?? [])
+            if (
+              item.delivery === "failed" &&
+              item.event.kind === 9 &&
+              item.event.tags.some(
+                ([name, value]) => name === "h" && value === id,
+              )
+            )
+              try {
+                outbox?.retry(item.event.id);
+              } catch {}
+        },
+        () => {},
+      );
       void ready.catch(() => {}).finally(() => starts.delete(id));
+      void settled.catch(() => {}).finally(() => setups.delete(id));
       return { create, ready };
     },
-    /** Settles when a chat this device is starting can take events. */
+    /** Settles when a chat this device is starting exists on the relay, so it
+     * can be read and take events. */
     starting(id: string): Promise<void> | undefined {
       return starts.get(id);
+    },
+    /** Settles when a started chat's setup has run too; its messages, and
+     * the local agents that hear them, wait for this. */
+    settling(id: string): Promise<void> | undefined {
+      return setups.get(id);
     },
     failed(id: string) {
       return (

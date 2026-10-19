@@ -4,6 +4,7 @@ import {
 } from "../relay/channel-details-protocol";
 import { startingChatTitle } from "./chat-title";
 import { withdraw } from "./withdraw";
+import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -50,15 +51,43 @@ function readDraftSettings(scope: string, draftKey: string) {
   };
 }
 
+/** Whether a saved draft holds nothing typed: the composer's automatic agent
+ * tag alone counts as empty. */
 function blankDraft(saved: unknown) {
-  if (!saved) return true;
-  if (typeof saved === "string") return !saved.trim();
-  return (
-    typeof saved === "object" &&
-    "text" in saved &&
-    typeof saved.text === "string" &&
-    !saved.text.trim()
-  );
+  const { text, recipients } = mentionDraft(saved);
+  let rest = text;
+  for (const { start, end } of [...recipients].sort(
+    (a, b) => b.start - a.start,
+  ))
+    rest = rest.slice(0, start) + rest.slice(end);
+  return !rest.trim();
+}
+
+/** One draft holding `drafts` in order, a blank line apart, tags kept. */
+function joinDrafts(...drafts: readonly MentionDraft[]): MentionDraft {
+  let text = "";
+  const recipients: MentionDraft["recipients"][number][] = [];
+  const sessionCards: string[] = [];
+  for (const draft of drafts) {
+    if (blankDraft(draft)) continue;
+    if (text) text = `${text.trimEnd()}\n\n`;
+    const offset = text.length;
+    text += draft.text;
+    for (const item of draft.recipients)
+      recipients.push({
+        ...item,
+        start: item.start + offset,
+        end: item.end + offset,
+      });
+    sessionCards.push(...(draft.sessionCards ?? []));
+  }
+  return {
+    text,
+    recipients,
+    ...(sessionCards.length
+      ? { sessionCards: [...new Set(sessionCards)] }
+      : {}),
+  };
 }
 
 export function resetNewChatProject(scope: string, projectId: string) {
@@ -216,6 +245,26 @@ export function SoloDraft({
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
       const kept = files.snapshot();
+      // A workspace's defaults load while the chat is created; its Canvas and
+      // placement go in once the chat exists, before the first turn reads them.
+      const setup =
+        project || canvas !== undefined
+          ? (async () => {
+              let setup = project
+                ? await loadChatSetup(session, project)
+                : undefined;
+              if (canvas !== undefined)
+                setup = parseChatSetup({
+                  ...(setup ?? {
+                    ...(project ? { projectId: project } : {}),
+                    agents: [],
+                  }),
+                  canvas,
+                });
+              return setup;
+            })()
+          : undefined;
+      setup?.catch(() => {});
       // The chat lists at once and its message goes out behind the create,
       // so the agents start on it without waiting for the relay.
       const { create, ready } = session.channelWrites.start(
@@ -224,6 +273,12 @@ export function SoloDraft({
         recipients,
         ttlSeconds,
         named,
+        setup &&
+          (async () => {
+            const loaded = await setup;
+            if (loaded)
+              await applyChatSetup(session, channelId, loaded, () => true);
+          }),
       );
       let message: string | undefined;
       try {
@@ -252,61 +307,66 @@ export function SoloDraft({
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-project`, null);
       onStarted(channelId);
-      void ready.then(
-        async () => {
-          if (!project && canvas === undefined) return;
-          try {
-            let setup = project
-              ? await loadChatSetup(session, project)
-              : undefined;
-            if (canvas !== undefined)
-              setup = parseChatSetup({
-                ...(setup ?? {
-                  ...(project ? { projectId: project } : {}),
-                  agents: [],
-                }),
-                canvas,
-              });
-            if (setup)
-              await applyChatSetup(session, channelId, setup, () => true);
-          } catch (reason) {
-            // Missing project setup leaves a working chat; never hold the message.
-            console.warn("Solo project setup did not finish", reason);
-          }
-        },
-        async (reason: unknown) => {
-          // Only a refused create made no chat; any other miss leaves it
-          // listed, with the message's own Retry.
-          if (!session.channelWrites.failed(create)) return;
-          await Promise.all([
-            message &&
-              session.outbox &&
-              withdraw(session.outbox, message).catch(() => {}),
+      void ready.catch(async (reason: unknown) => {
+        // Only a start that made no chat comes back here; any other miss
+        // leaves the chat listed, with its messages' own Retry.
+        if (!(reason instanceof ChatNotStarted)) return;
+        const outbox = session.outbox;
+        // Everything sent in the pending chat was held for it: withdraw it all
+        // and keep the text of what came after the first message.
+        const held = (outbox?.snapshot() ?? []).filter(
+          (item) =>
+            item.event.id !== create &&
+            item.event.tags.some(
+              ([tag, value]) => tag === "h" && value === channelId,
+            ),
+        );
+        await Promise.all([
+          ...held.map((item) =>
+            outbox
+              ? withdraw(outbox, item.event.id).catch(() => {})
+              : undefined,
+          ),
+          session.channelWrites.failed(create) &&
             session.channelWrites.discardFailed(create).catch(() => {}),
-          ]);
-          writeView(scope, `draft:${channelId}`, null);
-          // Put the start back in the new-chat composer, unless a newer
-          // draft is there by now.
-          if (
-            blankDraft(readView<unknown>(scope, `${draftKey}:new-draft`, ""))
-          ) {
-            writeView(scope, `${draftKey}:new-draft`, draft);
-            if (kept.length) files.adopt(kept);
-            writeView(scope, `${draftKey}:settings`, {
-              name: draftSettings.name,
-              canvas,
-              ttlSeconds,
-            });
-            writeView(scope, `${draftKey}:new-project`, project || null);
-          }
+        ]);
+        const followUps = held
+          .filter((item) => item.event.id !== message && item.event.kind === 9)
+          .map((item) => mentionDraft(item.event.content));
+        // So does anything typed there and not yet sent, files included.
+        const unsent = mentionDraft(
+          readView<unknown>(scope, `draft:${channelId}`, null),
+        );
+        writeView(scope, `draft:${channelId}`, null);
+        const chatFiles = attachmentDraft(
+          session,
+          `${scope}:draft:${channelId}`,
+          channelId,
+        );
+        const restored = joinDrafts(draft, ...followUps, unsent);
+        // Put the start back in the new-chat composer. A newer draft there
+        // keeps its settings and takes the start after its own text.
+        const current = readView<unknown>(scope, `${draftKey}:new-draft`, "");
+        if (blankDraft(current)) {
+          writeView(scope, `${draftKey}:new-draft`, restored);
+          writeView(scope, `${draftKey}:settings`, {
+            name: draftSettings.name,
+            canvas,
+            ttlSeconds,
+          });
+          writeView(scope, `${draftKey}:new-project`, project || null);
+        } else
           writeView(
             scope,
-            `${draftKey}:start-error`,
-            reason instanceof Error ? reason.message : String(reason),
+            `${draftKey}:new-draft`,
+            joinDrafts(mentionDraft(current), restored),
           );
-          onFailed?.(channelId);
-        },
-      );
+        const chatKept = chatFiles.snapshot();
+        if (files.adopt([...kept, ...chatKept]) && chatKept.length)
+          chatFiles.clear();
+        writeView(scope, `${draftKey}:start-error`, reason.message);
+        onFailed?.(channelId);
+      });
     } catch (reason) {
       if (mounted.current)
         setError(reason instanceof Error ? reason.message : String(reason));

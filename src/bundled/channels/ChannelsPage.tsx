@@ -592,11 +592,18 @@ function ChannelWorkspace({
       },
     });
   };
-  // A Solo start that fails returns to its draft only from its own chat.
+  // A Solo start that fails returns to its draft only from its own chat, in
+  // this workspace while it is still shown.
   const showing = useRef(requestedChannel);
   useLayoutEffect(() => {
     showing.current = requestedChannel;
   });
+  useLayoutEffect(
+    () => () => {
+      showing.current = undefined;
+    },
+    [],
+  );
   const chooseLatest = useRef(chooseLifecycle);
   useLayoutEffect(() => {
     chooseLatest.current = chooseLifecycle;

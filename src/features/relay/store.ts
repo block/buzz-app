@@ -530,6 +530,9 @@ export function createChannelStore(
     return signature;
   }
   function denyChannel(channelId: string, error: unknown) {
+    // A chat still starting is not there to deny yet; only a refused or
+    // missing create ends it (see channelWrites.start).
+    if (discovery?.isPending(channelId)) return;
     accessVersions.set(channelId, (accessVersions.get(channelId) ?? 0) + 1);
     discovery?.deny(channelId);
     allowed?.delete(channelId);

@@ -6,7 +6,9 @@ export async function pageChoices(page, query = "") {
   await dialog
     .getByRole("combobox", { name: "Search Buzz", exact: true })
     .fill(query);
-  return dialog.getByRole("group", { name: "Pages", exact: true });
+  return dialog.locator(
+    '[role="group"][aria-label="Pages"], [role="rowgroup"][aria-label="Pages"]',
+  );
 }
 
 export async function openPage(page, name, { connected = true } = {}) {
@@ -41,7 +43,9 @@ export async function selectPage(page, name, { connected = true } = {}) {
   ).toHaveCount(connected ? 0 : 1);
   await input.fill(name);
   const choice = pageChoice(
-    dialog.getByRole("group", { name: "Pages", exact: true }),
+    dialog.locator(
+      '[role="group"][aria-label="Pages"], [role="rowgroup"][aria-label="Pages"]',
+    ),
     name,
   );
   // Registered page actions are visible only after the plugin catalog is ready.
@@ -153,5 +157,5 @@ export async function selectCommunity(page, name) {
 export function pageChoice(group, name) {
   return group
     .getByRole("option", { name, exact: true })
-    .or(group.getByRole("button", { name, exact: true }));
+    .or(group.getByRole("row", { name, exact: true }));
 }

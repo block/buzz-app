@@ -297,7 +297,9 @@ test.describe("public preview recovery", () => {
       .click();
     await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
     await page
-      .getByRole("group", { name: "Channels" })
+      .locator(
+        '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
+      )
       .locator("[data-search-result]")
       .filter({ hasText: /^open/ })
       .click();
@@ -389,7 +391,9 @@ test.describe("public preview recovery", () => {
       .click();
     await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
     await page
-      .getByRole("group", { name: "Channels" })
+      .locator(
+        '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
+      )
       .locator("[data-search-result]")
       .filter({ hasText: /^open/ })
       .click();

@@ -954,7 +954,7 @@ export function SearchResults({
                   },
                 ]
                   .sort((a, b) => a.best - b.best)
-                  .map(({ best: _, ...group }) => group),
+                  .map(({ best, ...group }) => ({ ...group, rank: best })),
                 ...(scopeAction.length
                   ? [{ label: "This conversation", destinations: scopeAction }]
                   : []),

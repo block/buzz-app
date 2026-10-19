@@ -86,6 +86,7 @@ it("changes the trailing switch inline but opens and highlights the setting from
     await waitFor(() =>
       expect(target).toHaveClass("settings-search-highlight"),
     );
+    expect(target).toHaveFocus();
     fireEvent.animationEnd(target);
     expect(target).not.toHaveClass("settings-search-highlight");
   } finally {
@@ -170,7 +171,7 @@ it("keeps an exact category ahead of late conversation and message matches", () 
   );
   expect(
     screen
-      .getAllByRole("group")
+      .getAllByRole("rowgroup")
       .map((group) => group.getAttribute("aria-label")),
   ).toEqual(["Plugins", "Channels", "Most relevant"]);
 });
@@ -237,3 +238,37 @@ it.each(["Enter", "shortcut", "title"])(
     expect(change).toHaveBeenCalledWith("disable", "example");
   },
 );
+
+it("announces selected rows and lets arrows leave inline switches", () => {
+  const { Palette } = fixture();
+  render(
+    <Palette
+      groups={[
+        {
+          label: "Pages",
+          rank: 10,
+          destinations: [
+            { key: "page", label: "Sound page", icon: GearIcon, run: vi.fn() },
+          ],
+        },
+      ]}
+    />,
+  );
+  const grid = screen.getByRole("grid", { name: "Search results" });
+  expect(
+    [...grid.children].every(
+      (child) => child.getAttribute("role") === "rowgroup",
+    ),
+  ).toBe(true);
+  const row = screen.getByRole("row", { name: "Notifications — Sound" });
+  expect(row).toHaveAttribute("aria-selected", "true");
+  const input = screen.getByRole("combobox", { name: "Search Buzz" });
+  expect(input).toHaveAttribute("aria-activedescendant", row.id);
+  const toggle = screen.getByRole("switch", { name: "Sound" });
+  toggle.focus();
+  fireEvent.keyDown(toggle, { key: "ArrowDown" });
+  const page = screen.getByRole("row", { name: "Sound page" });
+  expect(page).toHaveFocus();
+  expect(page).toHaveAttribute("aria-selected", "true");
+  expect(input).toHaveAttribute("aria-activedescendant", page.id);
+});

@@ -33,10 +33,14 @@ test("search arrows traverse the conversation action and recent activity, Enter 
   await expect(input).toHaveAttribute("autocomplete", "off");
   await expect(input).toBeFocused();
   const first = dialog
-    .getByRole("group", { name: "This conversation" })
+    .locator(
+      '[role="group"][aria-label="This conversation"], [role="rowgroup"][aria-label="This conversation"]',
+    )
     .locator("[data-search-result]");
   const second = dialog
-    .getByRole("group", { name: "Recent activity" })
+    .locator(
+      '[role="group"][aria-label="Recent activity"], [role="rowgroup"][aria-label="Recent activity"]',
+    )
     .locator("[data-search-result]")
     .first();
   await expect(second).toBeVisible();
@@ -66,13 +70,15 @@ test("search arrows traverse the conversation action and recent activity, Enter 
   await expect(input).not.toHaveAttribute("aria-activedescendant");
   await input.fill("Alpha");
   const alpha = dialog
-    .getByRole("group", { name: "Channels" })
+    .locator(
+      '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
+    )
     .locator("[data-search-result]")
     .filter({ hasText: /Alpha/ });
   await expect(alpha).toBeVisible();
   // Typed text selects its best match, so Enter needs no arrow keys.
   await expect(input).toBeFocused();
-  await expect(alpha).toHaveAttribute("data-highlighted", "true");
+  await expect(alpha).toHaveAttribute("aria-selected", "true");
   await expect(input).toHaveAttribute(
     "aria-activedescendant",
     await alpha.getAttribute("id"),
@@ -92,7 +98,9 @@ test("changing search scope returns focus to the input without clearing the quer
   await button(page, "Search Buzz").click();
   const scopeAction = page
     .getByRole("dialog", { name: "Search Buzz" })
-    .getByRole("group", { name: "This conversation" })
+    .locator(
+      '[role="group"][aria-label="This conversation"], [role="rowgroup"][aria-label="This conversation"]',
+    )
     .locator("[data-search-result]");
   await scopeAction.click();
 
@@ -117,7 +125,7 @@ test("changing search scope returns focus to the input without clearing the quer
   const first = global
     .locator("[data-search-result], .search-control-row")
     .first();
-  await expect(first).toHaveAttribute("data-highlighted", "true");
+  await expect(first).toHaveAttribute("aria-selected", "true");
   await expect(input).toHaveAttribute(
     "aria-activedescendant",
     await first.getAttribute("id"),
@@ -242,7 +250,9 @@ test.describe("public search destination", () => {
     await button(page, "Search Buzz").click();
     await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
     const result = page
-      .getByRole("group", { name: "Channels" })
+      .locator(
+        '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
+      )
       .locator("[data-search-result]")
       .filter({ hasText: /^open/ });
     await expect(result).toContainText("Public channel · not joined");
@@ -333,7 +343,9 @@ test.describe("public search destination", () => {
     await button(page, "Search Buzz").click();
     await page.getByRole("combobox", { name: "Search Buzz" }).fill("ope");
     await page
-      .getByRole("group", { name: "Channels" })
+      .locator(
+        '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
+      )
       .locator("[data-search-result]")
       .filter({ hasText: /^open/ })
       .click();
@@ -388,10 +400,14 @@ test("keyboard selection follows its page while matching conversations arrive", 
     ).toHaveCount(0);
     await input.fill("a");
     const recent = dialog
-      .getByRole("group", { name: "Channels", exact: true })
+      .locator(
+        '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
+      )
       .locator("[data-search-result]");
     const projects = dialog
-      .getByRole("group", { name: "Pages", exact: true })
+      .locator(
+        '[role="group"][aria-label="Pages"], [role="rowgroup"][aria-label="Pages"]',
+      )
       .locator("[data-search-result]")
       .filter({ hasText: "Messages" });
     await expect(projects).toBeVisible();
@@ -440,7 +456,9 @@ test("a resting pointer does not steal the typed selection when results move und
   // Measure where the row stays: after the entrance and recent activity load.
   await expect(
     dialog
-      .getByRole("group", { name: "Recent activity" })
+      .locator(
+        '[role="group"][aria-label="Recent activity"], [role="rowgroup"][aria-label="Recent activity"]',
+      )
       .locator("[data-search-result]")
       .filter({ hasText: /Beta/ }),
   ).toBeVisible();
@@ -452,16 +470,18 @@ test("a resting pointer does not steal the typed selection when results move und
   const box = await row.boundingBox();
   const y = box.y + 10;
   await page.mouse.move(box.x + 30, y);
-  await expect(row).toHaveAttribute("data-highlighted", "true");
+  await expect(row).toHaveAttribute("aria-selected", "true");
   await input.fill("a");
   const alpha = dialog
-    .getByRole("group", { name: "Channels" })
+    .locator(
+      '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
+    )
     .locator("[data-search-result]")
     .filter({ hasText: /Alpha/ });
-  await expect(alpha).toHaveAttribute("data-highlighted", "true");
+  await expect(alpha).toHaveAttribute("aria-selected", "true");
   // WebKit replays the resting position when rows move; that is not a hover.
   await page.mouse.move(box.x + 30, y);
-  await expect(alpha).toHaveAttribute("data-highlighted", "true");
+  await expect(alpha).toHaveAttribute("aria-selected", "true");
   // A real move selects whichever result is now under the pointer.
   await page.mouse.move(box.x + 40, y);
   const hovered = await page.evaluate(
@@ -472,10 +492,10 @@ test("a resting pointer does not steal the typed selection when results move und
   expect(hovered).toBeTruthy();
   expect(hovered).not.toBe(await alpha.getAttribute("id"));
   await expect(dialog.locator(`[id="${hovered}"]`)).toHaveAttribute(
-    "data-highlighted",
+    "aria-selected",
     "true",
   );
-  await expect(alpha).not.toHaveAttribute("data-highlighted");
+  await expect(alpha).toHaveAttribute("aria-selected", "false");
 });
 
 // The real rendered palette and verified finite reader must carry operator constraints
@@ -528,4 +548,37 @@ test.describe("message search operators", () => {
       )
       .toBe(true);
   });
+});
+
+test("inline search exposes selected grid rows and hands focus to the destination setting", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await button(page, "Search Buzz").click();
+  const dialog = page.getByRole("dialog", { name: "Search Buzz" });
+  const input = dialog.getByRole("combobox", { name: "Search Buzz" });
+  await input.fill("color mode");
+  const grid = dialog.getByRole("grid", { name: "Search results" });
+  const row = grid.getByRole("row", {
+    name: "Appearance — Color mode",
+    exact: true,
+  });
+  await expect(row).toHaveAttribute("aria-selected", "true");
+  await expect(input).toHaveAttribute(
+    "aria-activedescendant",
+    await row.getAttribute("id"),
+  );
+  const snapshot = await grid.ariaSnapshot();
+  expect(snapshot).toContain('rowgroup "Settings"');
+  expect(snapshot).toContain('row "Appearance — Color mode" [selected]');
+  await input.press("Enter");
+  await expect(dialog).toBeHidden();
+  const target = page.locator("#setting-mode");
+  await expect(target).toBeVisible();
+  await expect
+    .poll(() =>
+      target.evaluate((node) => node.contains(document.activeElement)),
+    )
+    .toBe(true);
 });

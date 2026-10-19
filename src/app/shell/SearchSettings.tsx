@@ -126,6 +126,11 @@ export function useSearchSettings({
                 )
                   return;
                 row.scrollIntoView({ block: "center", behavior: "instant" });
+                const control = row.querySelector<HTMLElement>(
+                  '[role="switch"]:not([aria-disabled="true"]), [role="combobox"]:not([aria-disabled="true"]), button:not(:disabled), input:not(:disabled)',
+                );
+                if (!control) row.tabIndex = -1;
+                (control ?? row).focus({ preventScroll: true });
                 row.classList.remove("settings-search-highlight");
                 void row.offsetWidth;
                 row.classList.add("settings-search-highlight");

@@ -3383,3 +3383,63 @@ it.each([true, false])(
     }
   },
 );
+
+it("preserves remembered page ranking when inline settings match", async () => {
+  localStorage.clear();
+  recordChoice(usage, "sound", "Ultrasound");
+  const owner = usageSession(["sound-chat"]);
+  const open = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="sound"
+        onQueryChange={() => {}}
+        input={createRef()}
+        usageScope={usage}
+        openConversation={() => {}}
+        pages={[
+          {
+            key: "Ultrasound",
+            label: "Ultrasound",
+            icon: ChatCircleIcon,
+            run: open,
+          },
+        ]}
+        inlineSettings={[
+          {
+            label: "Settings",
+            destinations: [
+              {
+                key: "sound-setting",
+                label: "Notifications",
+                detail: "Sound",
+                rank: 0,
+                icon: ChatCircleIcon,
+                content: <button type="button">Sound</button>,
+                run: vi.fn(),
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+    await screen.findByRole("row", { name: /^sound-chat/ });
+    const names = screen
+      .getAllByRole("rowgroup")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(names.indexOf("Pages")).toBeLessThan(names.indexOf("Channels"));
+    expect(screen.getByRole("row", { name: "Ultrasound" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
+      key: "Enter",
+    });
+    expect(open).toHaveBeenCalledOnce();
+  } finally {
+    cleanup();
+    owner.dispose();
+    localStorage.clear();
+  }
+});

@@ -22,6 +22,26 @@ test("adoption guard catches utilities, CSS and renderer string reads", () => {
   ).toEqual([]);
 });
 
+test("adoption guard covers every Appearance family and explicit mode owner", () => {
+  for (const family of [
+    "gray",
+    "chartreuse",
+    "flame",
+    "magenta",
+    "iris",
+    "cobalt",
+    "jade",
+  ]) {
+    for (const source of [
+      `color: var(--${family}-9)`,
+      `color: var(--${family}-11-light)`,
+      `color: var(--${family}-12-dark)`,
+      `className="text-${family}-9"`,
+    ])
+      expect(adoptionFindings("src/example.tsx", source)).toHaveLength(1);
+  }
+});
+
 test("feature layout remains local but cannot repaint shared controls", () => {
   expect(
     adoptionFindings(

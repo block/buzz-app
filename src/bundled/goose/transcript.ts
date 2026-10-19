@@ -9,7 +9,7 @@ import {
   type TranscriptItem,
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
-import type { GooseProcess, Spawn } from "./goose";
+import { type GooseProcess, REQUEST_TIMEOUT_MS, type Spawn } from "./goose";
 import { absolute, abortable } from "./sessions";
 import { briefly } from "./setup";
 
@@ -293,11 +293,15 @@ async function page(
   query?: string,
   cursor?: string,
 ) {
-  const { sessions, nextCursor } = (await goose.request("session/list", {
-    cwd,
-    ...(cursor ? { cursor } : {}),
-    _meta: { types: ["acp"], ...(query ? { query } : {}) },
-  })) as { sessions: Listed[]; nextCursor?: string | null };
+  const { sessions, nextCursor } = (await goose.request(
+    "session/list",
+    {
+      cwd,
+      ...(cursor ? { cursor } : {}),
+      _meta: { types: ["acp"], ...(query ? { query } : {}) },
+    },
+    REQUEST_TIMEOUT_MS,
+  )) as { sessions: Listed[]; nextCursor?: string | null };
   return {
     rows: sessions.map(
       (session): GooseSessionRow => ({
@@ -331,10 +335,11 @@ async function all(goose: GooseProcess, cwd: string) {
 }
 
 async function messages(goose: GooseProcess, sessionId: string) {
-  const { data } = (await goose.request("_goose/unstable/session/export", {
-    sessionId,
-    format: "json",
-  })) as { data: string };
+  const { data } = (await goose.request(
+    "_goose/unstable/session/export",
+    { sessionId, format: "json" },
+    REQUEST_TIMEOUT_MS,
+  )) as { data: string };
   const session = object(JSON.parse(data));
   return (
     Array.isArray(session?.conversation) ? session.conversation : []

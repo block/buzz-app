@@ -1,6 +1,7 @@
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { EventData } from "../../features/relay/events";
 import { turnPrompt } from "../claude-code/prompt";
+import { REQUEST_TIMEOUT_MS } from "./goose";
 import { type FakeSession, fakeSpawn } from "./goose-testing";
 import { GooseHistory } from "./transcript";
 import { readUsage, sessionUsage } from "./usage";
@@ -174,3 +175,45 @@ it("stops goose when a read is cancelled while an export is pending", async () =
   await expect(reading).rejects.toThrow("left the page");
   expect(goose.geese[0]?.killed).toBe(true);
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+it.each(["session/list", "_goose/unstable/session/export"])(
+  "stops a goose that does not answer %s, and fails the read",
+  async (method) => {
+    vi.useFakeTimers();
+    const goose = fakeSpawn({
+      home: "/home/test",
+      history: [
+        {
+          sessionId: "mine",
+          title: "Grok · #general · mine",
+          cwd: "/home/test/.buzz",
+          updatedAt: "2027-01-15T08:00:00Z",
+          conversation: [user(ask()), reply(start + 1, tokens(1, 2, 3, 0.5))],
+        },
+      ],
+      silent: [method],
+    });
+    const reading = readUsage(
+      new GooseHistory(goose.spawn),
+      agent,
+      "~/.buzz",
+      Date.parse("2026-06-01T00:00:00Z"),
+      new AbortController().signal,
+    );
+    const failed = expect(reading).rejects.toThrow(
+      `goose did not answer ${method} in 60s`,
+    );
+    await vi.waitFor(() =>
+      expect(
+        goose.geese[0]?.received.some((message) => message.method === method),
+      ).toBe(true),
+    );
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    await failed;
+    expect(goose.geese[0]?.killed).toBe(true);
+  },
+);

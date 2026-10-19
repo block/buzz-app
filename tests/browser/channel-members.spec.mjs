@@ -198,7 +198,8 @@ test("Members has a reloadable history visit without replacing channel tabs or d
   await expect(composer).toBeVisible();
   await page.goBack();
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("Alpha");
+  await expect(dialog.getByRole("searchbox")).toBeFocused();
+  expect((await entry()).target).toEqual(members.target);
   expect((await entry()).id).toBe(members.id);
 });
 

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   ArrowDownIcon,
   CalendarIcon,
@@ -65,7 +65,6 @@ export function WorkflowForm({
   onChange,
   disabled,
   issue,
-  scope,
   selection,
   onSelect,
 }: {
@@ -73,7 +72,6 @@ export function WorkflowForm({
   onChange: (next: WorkflowFormState) => void;
   disabled: boolean;
   issue?: WorkflowDraftIssue | null | undefined;
-  scope?: ReactNode;
   selection: WorkflowSelection;
   onSelect: (selection: WorkflowSelection) => void;
 }) {
@@ -104,7 +102,7 @@ export function WorkflowForm({
       if (entry)
         setNarrow(
           entry.contentRect.width <=
-            58 *
+            44 *
               parseFloat(getComputedStyle(document.documentElement).fontSize),
         );
     });
@@ -353,7 +351,6 @@ export function WorkflowForm({
       data-inspector={(inspectorOpen && !narrow) || undefined}
     >
       <div className="workflow-canvas">
-        {scope && <div className="workflow-scope">{scope}</div>}
         <ol className="workflow-flow" aria-label="Workflow sequence">
           <li className="workflow-flow-item">
             <NavigationItem

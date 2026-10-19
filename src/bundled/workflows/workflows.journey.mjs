@@ -22,6 +22,9 @@ test.afterAll(async () => {
   await server?.close();
 });
 
+// The landing status is empty only after every visible channel read settles.
+const landingStatus = (page) => page.locator(".workflow-page-status");
+
 // The editor is a modal Dialog. Its focused inspector is an aside in wide
 // containers and a nested sheet in narrow ones (including the 1000px default),
 // so helpers use only controls reachable from the current layer.
@@ -80,18 +83,20 @@ function editorControls(page) {
       // Otherwise the next assertion can target the previous, closing popup.
       await expect(page.getByRole("menu")).toHaveCount(0);
     },
-    async expectAction(name, enabled) {
-      await button("Workflow actions").click();
-      await expect(button("Workflow actions")).toHaveAttribute(
-        "aria-expanded",
-        "true",
-      );
-      const item = page.getByRole("menuitem", { name, exact: true });
-      if (enabled)
-        await expect(item).not.toHaveAttribute("aria-disabled", "true");
-      else await expect(item).toHaveAttribute("aria-disabled", "true");
-      await page.keyboard.press("Escape");
-      await expect(item).toHaveCount(0);
+    // Run now is a header button; one click publishes without confirmation.
+    run: page
+      .getByRole("dialog", { name: /^(Edit|View) workflow$/ })
+      .getByRole("button", { name: "Run now", exact: true }),
+    // Landing cards select on Open; the card overflow opens the editor.
+    async open(name) {
+      await page
+        .getByRole("article")
+        .getByRole("button", { name: `Actions for ${name}`, exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: /^(Edit|View) workflow$/ })
+        .click();
+      await expect(page.getByRole("menu")).toHaveCount(0);
     },
   };
 }
@@ -110,8 +115,7 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
       page.evaluate(() => window.workflowFixture.definitions.active()),
     )
     .toBe(1);
-  await button("Refresh configurations").click();
-  await button("Message helper").click();
+  await editor.open("Message helper");
   await tab("YAML").click();
   await expect
     .poll(() => yaml.inputValue())
@@ -171,13 +175,14 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
       data: { items: [], partial: false },
     }),
   );
+  const empty = page.locator(".buzz-empty-state");
   await expect(
-    page.getByText(/Create a disabled draft to start/),
+    empty.getByText("Automations that keep your community moving."),
   ).toBeVisible();
   await expect(
     page.getByText(/Creating and saving workflows is unavailable/),
   ).toHaveCount(0);
-  await button("New workflow").click();
+  await empty.getByRole("button", { name: "New workflow" }).click();
   // Creation opens on the trigger; dismiss it to reach the editor header.
   await editor.closeInspector();
   expect(
@@ -241,38 +246,37 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
 });
 
 // Real layout and native menu focus cannot be established by jsdom.
-test("existing workflow enablement stays in the header overflow", async ({
+test("existing workflow enablement uses the footer switch beside header actions", async ({
   page,
 }, testInfo) => {
   await page.goto(url);
-  await page
-    .getByRole("button", { name: "Message helper", exact: true })
-    .click();
+  await editorControls(page).open("Message helper");
   const dialog = page.getByRole("dialog", {
     name: "Edit workflow",
     exact: true,
   });
+  const run = dialog.getByRole("button", { name: "Run now", exact: true });
   const actions = dialog.getByRole("button", { name: "Workflow actions" });
   const close = dialog.getByRole("button", { name: "Close editor" });
-  await expect(
-    dialog.getByRole("switch", {
-      name: "Enabled in configuration",
-      exact: true,
-    }),
-  ).toHaveCount(0);
+  const enable = dialog.getByRole("contentinfo").getByRole("switch", {
+    name: "Enabled in configuration",
+    exact: true,
+  });
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
+    const runBox = await run.boundingBox();
     const actionBox = await actions.boundingBox();
     const closeBox = await close.boundingBox();
+    expect(runBox.x + runBox.width).toBeLessThanOrEqual(actionBox.x);
     expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(closeBox.x);
     expect(Math.abs(actionBox.y - closeBox.y)).toBeLessThan(10);
+    expect(
+      Math.abs(
+        runBox.y + runBox.height / 2 - (closeBox.y + closeBox.height / 2),
+      ),
+    ).toBeLessThan(10);
     await actions.focus();
     await page.keyboard.press("Enter");
-    const enable = page.getByRole("menuitemcheckbox", {
-      name: "Enable",
-      exact: true,
-    });
-    await expect(enable).not.toBeChecked();
     const readRuns = page.getByRole("menuitem", {
       name: "Read runs",
       exact: true,
@@ -283,25 +287,38 @@ test("existing workflow enablement stays in the header overflow", async ({
     await expect(readRuns).toBeFocused();
     await page.keyboard.press("ArrowDown");
     await expect(
-      page.getByRole("menuitem", { name: "Run now", exact: true }),
+      page.getByRole("menuitem", { name: "Delete workflow", exact: true }),
     ).toBeFocused();
-    await page.keyboard.press("ArrowDown");
-    await expect(enable).toBeFocused();
+    const menuBox = await page.getByRole("menu").boundingBox();
+    expect(menuBox.x).toBeGreaterThanOrEqual(0);
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: testInfo.outputPath(`header-${width}.png`) });
+    await page.keyboard.press("Escape");
+    await expect(actions).toBeFocused();
+    await expect(dialog).toBeVisible();
+    await enable.focus();
+    await expect(enable).not.toBeChecked();
     await page.keyboard.press("Space");
     await expect(enable).toBeChecked();
     expect(await page.evaluate(() => window.workflowFixture.calls.save)).toBe(
       0,
     );
-    const menuBox = await page.getByRole("menu").boundingBox();
-    expect(menuBox.x).toBeGreaterThanOrEqual(0);
-    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: testInfo.outputPath(`header-${width}.png`) });
     await page.keyboard.press("Space");
     await expect(enable).not.toBeChecked();
-    await page.keyboard.press("Escape");
-    await expect(actions).toBeFocused();
     await expect(dialog).toBeVisible();
   }
+  // Enlarged text wraps the title instead of running under header actions.
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "150%";
+  });
+  const titleRight = await dialog
+    .getByRole("heading", { name: "Edit workflow", exact: true })
+    .evaluate((node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return Math.max(...[...range.getClientRects()].map((rect) => rect.right));
+    });
+  expect(titleRight).toBeLessThanOrEqual((await run.boundingBox()).x);
 });
 
 test("keyboard switches feed enabled-save confirmation and disabled readback", async ({
@@ -319,7 +336,7 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await page.goto(url);
   const editor = editorControls(page);
   const { button } = editor;
-  let enabled = page.getByRole("switch", {
+  const enabled = page.getByRole("switch", {
     name: /^Enabled in configuration$/,
   });
   const reply = page.getByRole("switch", {
@@ -337,17 +354,8 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
     }
     await expect(control).toBeFocused();
   };
-  const focusEnabled = async () => {
-    if (await button("Workflow actions").count()) {
-      await button("Workflow actions").focus();
-      await page.keyboard.press("Enter");
-      await enabled.focus();
-    } else {
-      await button("Edit workflow name").focus();
-      await page.keyboard.press(tab);
-    }
-    await expect(enabled).toBeFocused();
-  };
+  // Create and edit both keep enablement in the footer.
+  const focusEnabled = () => focusByTab(enabled);
   // Reply lives in step 1's Run controls disclosure.
   const openReply = async () => {
     await editor.openStep(1);
@@ -408,10 +416,8 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   // The offline capability supplies the exact asynchronous receipt/readback.
   await page.evaluate(() => window.workflowFixture.finish("succeeded"));
   await expect(button("Save changes")).toBeEnabled();
-  enabled = page.getByRole("menuitemcheckbox", { name: "Enable", exact: true });
   await focusEnabled();
   await expect(enabled).toBeChecked();
-  await page.keyboard.press("Escape");
   await openReply();
   await expect(reply).toBeChecked();
   await editor.message.fill("Ordinary enabled edit");
@@ -423,7 +429,6 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await focusEnabled();
   await page.keyboard.press("Enter");
   await expect(enabled).not.toBeChecked();
-  await page.keyboard.press("Escape");
   await openReply();
   await focusByTab(reply);
   await page.keyboard.press("Space");
@@ -439,12 +444,10 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await expect(enabled).toBeEnabled();
   await expect(enabled).not.toBeChecked();
   await page.keyboard.press("Escape");
-  await page.keyboard.press("Escape");
   await openReply();
   await expect(reply).not.toBeChecked();
   await focusEnabled();
   await enabled.click();
-  await page.keyboard.press("Escape");
   await button("Save changes").click();
   await expect(dialog).toContainText("It will run for every new message");
   expect(await saves()).toBe(3);
@@ -458,7 +461,7 @@ test("history stays lazy and paged; acknowledging an unknown run never repeats i
   await page.goto(url);
   const editor = editorControls(page);
   const { button } = editor;
-  await button("Message helper").click();
+  await editor.open("Message helper");
   expect(await page.evaluate(() => window.workflowFixture.calls.runs)).toBe(0);
   await editor.action("Read runs");
   await expect(page.getByText("Current step: 1")).toBeVisible();
@@ -483,18 +486,22 @@ test("history stays lazy and paged; acknowledging an unknown run never repeats i
       window.workflowFixture.runViews.every((view) => view.disposed()),
     ),
   ).toBe(true);
-  await editor.action("Run now");
+  await editor.run.click();
+  // No confirmation: one click is exactly one trigger.
+  expect(await page.evaluate(() => window.workflowFixture.calls.trigger)).toBe(
+    1,
+  );
   await page.evaluate(() => window.workflowFixture.finish("unknown"));
   // Like base Buzz, a lost run receipt informs but never locks the workflow.
-  await editor.expectAction("Run now", true);
+  await expect(editor.run).toBeEnabled();
   await expect(page.getByText(/The run may have started/)).toBeVisible();
   const id = await page.evaluate(
     () =>
       window.workflowFixture.capability.operations.snapshot().at(-1).eventId,
   );
   await button("Close editor").click();
-  await button("Message helper").click();
-  await editor.expectAction("Run now", true);
+  await editor.open("Message helper");
+  await expect(editor.run).toBeEnabled();
   await expect(button("Save changes")).toBeEnabled();
   expect(await page.evaluate(() => window.workflowFixture.calls.trigger)).toBe(
     1,
@@ -504,7 +511,7 @@ test("history stays lazy and paged; acknowledging an unknown run never repeats i
     "does not undo, cancel, or repeat",
   );
   await button("Dismiss notice and continue").click();
-  await editor.expectAction("Run now", true);
+  await expect(editor.run).toBeEnabled();
   await expect(button("Save changes")).toBeEnabled();
   expect(
     await page.evaluate(() => window.workflowFixture.calls.dismiss),
@@ -529,9 +536,7 @@ test("real session page under StrictMode fences community changes, warns before 
   const fixture = (name) =>
     page.evaluate((name) => window.workflowSessionFixture[name](), name);
   await expect(
-    page.getByText("Automations that keep your community moving.", {
-      exact: true,
-    }),
+    page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
   await expect(button("New workflow")).toBeDisabled();
   await expect(button("Open Fixture A helper")).toBeVisible();
@@ -541,16 +546,18 @@ test("real session page under StrictMode fences community changes, warns before 
       exact: true,
     }),
   ).toBeDisabled();
-  await button("Open Fixture A helper").click();
+  await editor.open("Fixture A helper");
   await expect(editor.region).toBeVisible();
   await button("Close editor").click();
   await expect(button("Open Fixture A helper")).toBeVisible();
   await choose("First channel");
   await expect(button("New workflow")).toBeDisabled();
+  await editor.open("Fixture A helper");
   await expect(
-    page.getByText(/Creating and saving workflows is unavailable/),
+    page
+      .getByRole("dialog", { name: "Edit workflow" })
+      .getByText("Saving is unavailable from this host.", { exact: true }),
   ).toBeVisible();
-  await button("Fixture A helper").click();
   await expect(button("Save changes")).toBeDisabled();
   await editor.rename("Unsaved private text");
   await button("Close editor").click();
@@ -563,27 +570,21 @@ test("real session page under StrictMode fences community changes, warns before 
   await expect(editor.region).toHaveCount(0);
   await choose("Second channel");
   await expect(
-    page.getByText("No saved configurations returned for this channel.", {
-      exact: true,
-    }),
+    page.getByText("No workflows in this channel yet.", { exact: true }),
   ).toBeVisible();
   await expect(button("New workflow")).toBeDisabled();
-  await expect(
-    page.getByText(/Creating and saving workflows is unavailable/),
-  ).toBeVisible();
-  await expect(page.getByText(/Create a disabled draft to start/)).toHaveCount(
-    0,
-  );
+  // Without save, the empty state offers no create action beside the header's.
+  await expect(button("New workflow")).toHaveCount(1);
   await expect(editor.region).toHaveCount(0);
   await choose("First channel");
-  await button("Fixture A helper").click();
+  await editor.open("Fixture A helper");
   await fixture("switchCommunity");
   await expect(editor.region).toHaveCount(0);
   await choose("First channel");
-  await button("Fixture B helper").click();
+  await editor.open("Fixture B helper");
   await fixture("switchCommunity");
   await choose("First channel");
-  await button("Fixture A helper").click();
+  await editor.open("Fixture A helper");
   await editor.rename("Revoked private text");
   await fixture("revokeSelectedChannel");
   await expect(editor.region).toHaveCount(0);
@@ -642,12 +643,10 @@ test("landing scan survives channel presentation churn without restarting", asyn
       await page.evaluate(() =>
         window.workflowSessionFixture.renameFirstChannel(),
       );
-      await expect(
-        page.getByText(
-          `#${index % 2 ? "Z-last" : "A-first"} channel ${index}`,
-          { exact: true },
-        ),
-      ).toBeVisible();
+      // The card's channel label also holds its hidden control reason.
+      await expect(page.getByRole("article")).toContainText(
+        `#${index % 2 ? "Z-last" : "A-first"} channel ${index}`,
+      );
     }
     expect(
       await page.evaluate(() =>
@@ -661,7 +660,7 @@ test("landing scan survives channel presentation churn without restarting", asyn
       window.workflowSessionFixture.releaseDefinitionRead(),
     );
   }
-  await expect(page.getByRole("status")).toHaveText("Workflows loaded.");
+  await expect(landingStatus(page)).toHaveText("");
   expect(
     await page.evaluate(() =>
       window.workflowSessionFixture.definitionChannelCount(),
@@ -698,7 +697,7 @@ test("a failed landing scan shows one recovery action instead of an error-card g
   );
   const retry = page.getByRole("button", { name: "Retry", exact: true });
   await expect(retry).toHaveCount(1);
-  await expect(page.locator(".workflow-card-grid > *")).toHaveCount(2);
+  await expect(page.locator(".workflow-collection > *")).toHaveCount(1);
   // Browser-only acceptance: the real card stays onscreen, not buried beneath
   // per-channel failure tiles. Recovery uses the real session/reader boundary.
   await expect(open).toBeInViewport();
@@ -709,7 +708,7 @@ test("a failed landing scan shows one recovery action instead of an error-card g
     ),
   ).toBe(2);
   await retry.click();
-  await expect(page.getByRole("status")).toHaveText("Workflows loaded.");
+  await expect(landingStatus(page)).toHaveText("");
   await expect(retry).toHaveCount(0);
   expect(
     await page.evaluate(() =>
@@ -722,6 +721,31 @@ test("a failed landing scan shows one recovery action instead of an error-card g
     ),
   ).toBe(129);
   await expect(open).toBeInViewport();
+});
+
+// Breakpoint focus fixup happens only in a real layout engine.
+test("keyboard focus follows an open detail into the narrow layout and back", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html"));
+  const open = page.getByRole("button", {
+    name: "Open Fixture A helper",
+    exact: true,
+  });
+  const tab = page
+    .getByRole("complementary")
+    .getByRole("tab", { name: "Fixture A helper", exact: true });
+  await open.focus();
+  await page.keyboard.press("Enter");
+  await expect(tab).toBeVisible();
+  await expect(open).toBeFocused();
+  await page.setViewportSize({ width: 760, height: 900 });
+  await expect(open).toBeHidden();
+  await expect(tab).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("complementary")).toHaveCount(0);
+  await expect(open).toBeFocused();
 });
 
 test("clearing the session cache purges landing workflow definitions", async ({
@@ -748,7 +772,7 @@ test("landing discards an opened definition when channel access is revoked", asy
   await page.goto(url.replace("/fixture.html", "/session-fixture.html"));
   const editor = editorControls(page);
   const { button } = editor;
-  await button("Open Fixture A helper").click();
+  await editor.open("Fixture A helper");
   await editor.rename("Revoked landing draft");
   await page.evaluate(() =>
     window.workflowSessionFixture.revokeSelectedChannel(),
@@ -759,7 +783,7 @@ test("landing discards an opened definition when channel access is revoked", asy
   );
   await page.evaluate(() => window.workflowSessionFixture.restoreAccess());
   await expect(button("Open Fixture A helper")).toBeVisible();
-  await button("Open Fixture A helper").click();
+  await editor.open("Fixture A helper");
   await expect(editor.named("Fixture A helper")).toBeVisible();
 });
 
@@ -836,7 +860,12 @@ test("restricted cards and read-only editors keep keyboard controls without disc
   await actions.click();
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
+  // Open selects the card; at this width its detail replaces the grid.
   await open.click();
+  await page
+    .getByRole("region", { name: "Fixture A helper", exact: true })
+    .getByRole("button", { name: "Edit workflow", exact: true })
+    .click();
   await expect(
     page.getByRole("dialog", { name: "Edit workflow" }),
   ).toBeVisible();
@@ -860,9 +889,7 @@ test("restricted cards and read-only editors keep keyboard controls without disc
       },
     });
   });
-  await page
-    .getByRole("button", { name: "Message helper", exact: true })
-    .click();
+  await editorControls(page).open("Message helper");
   const dialog = page.getByRole("dialog", { name: "View workflow" });
   await expect(dialog.getByText("Read-only", { exact: true })).toHaveCount(0);
   await expect(
@@ -874,8 +901,8 @@ test("restricted cards and read-only editors keep keyboard controls without disc
   await editorActions.focus();
   await page.keyboard.press("Enter");
   await expect(
-    page.getByRole("menuitemcheckbox", { name: "Enable", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("menuitem", { name: "Read runs", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(editorActions).toBeFocused();
   await expect(
@@ -899,10 +926,16 @@ test("restricted cards and read-only editors keep keyboard controls without disc
   await expect(footer.getByRole("button")).toHaveCount(0);
   await expect(footer.locator(":scope > *")).toHaveCount(1);
   await expect(
-    footer.getByRole("tab", { name: "Form", exact: true }),
+    footer.getByRole("switch", {
+      name: "Enabled in configuration",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await expect(
+    dialog.getByRole("tab", { name: "Form", exact: true }),
   ).toBeVisible();
   await expect(
-    footer.getByRole("tab", { name: "YAML", exact: true }),
+    dialog.getByRole("tab", { name: "YAML", exact: true }),
   ).toBeVisible();
   const bounds = await footer.boundingBox();
   expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
@@ -913,11 +946,16 @@ test("restricted cards and read-only editors keep keyboard controls without disc
     .getByRole("button", { name: "Close editor", exact: true })
     .click();
   await expect(dialog).toHaveCount(0);
+  // Closing returns focus to the card menu that opened the editor.
   const reopen = page.getByRole("button", {
-    name: "Message helper",
+    name: "Actions for Message helper",
     exact: true,
   });
   await expect(reopen).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("menuitem", { name: "View workflow", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
@@ -968,11 +1006,11 @@ for (const from of ["grid", "detail"]) {
     const { button } = editor;
     let editorMounted = false;
     if (from === "detail") {
-      await expect(page.getByRole("status")).toHaveText("Workflows loaded.");
+      await expect(landingStatus(page)).toHaveText("");
       await page.evaluate(() =>
         window.workflowSessionFixture.holdNextEditorRead(),
       );
-      await button("Open Fixture A helper").click();
+      await editor.open("Fixture A helper");
       await expect
         .poll(() =>
           page.evaluate(() =>
@@ -1056,7 +1094,7 @@ for (const from of ["grid", "detail"]) {
       )
       .toBe("succeeded");
     await expect(button("Open Fixture A helper")).toHaveCount(0);
-    await expect(page.getByRole("status")).toHaveText("Workflows loaded.");
+    await expect(landingStatus(page)).toHaveText("");
     await expect(page.getByText(/^Couldn't confirm deletion/)).toHaveCount(0);
     if (from === "grid")
       editorMounted = await page.evaluate(() => {
@@ -1064,7 +1102,8 @@ for (const from of ["grid", "detail"]) {
         return window.deletionEditorMounted;
       });
     expect(editorMounted).toBe(false);
-    await button("New workflow").click();
+    // The header action; the settled empty state repeats it.
+    await button("New workflow").first().click();
     await expect(
       page.getByRole("dialog", { name: "Create workflow" }),
     ).toBeVisible();
@@ -1143,14 +1182,18 @@ test("a lost save response can be checked and adopted without resubmitting", asy
   await page.goto(url);
   const editor = editorControls(page);
   const { button } = editor;
-  await button("Message helper").click();
+  await editor.open("Message helper");
   await editor.rename("Saved without response");
   await button("Save changes").click();
-  await page.evaluate(() => {
-    window.workflowFixture.saveOnServer();
-    window.workflowFixture.finish("unknown");
-  });
+  const reads = () =>
+    page.evaluate(() => window.workflowFixture.definitions.created());
+  const before = await reads();
+  await page.evaluate(() => window.workflowFixture.finish("unknown"));
+  // The landing rereads after an unknown save; the relay has no copy yet,
+  // so only the later manual check can find the saved revision.
+  await expect.poll(reads).toBeGreaterThan(before);
   await expect(button("Save changes")).toBeDisabled();
+  await page.evaluate(() => window.workflowFixture.saveOnServer());
   await button("Check saved configuration").click();
   await expect(button("Save changes")).toBeEnabled();
   await expect(editor.named("Saved without response")).toBeVisible();
@@ -1170,7 +1213,7 @@ test("different-head recovery needs explicit review; failed dismissal keeps the 
   await page.goto(url);
   const editor = editorControls(page);
   const { button } = editor;
-  await button("Message helper").click();
+  await editor.open("Message helper");
   await editor.rename("Retained local draft");
   await button("Save changes").click();
   await page.evaluate(() => {
@@ -1212,7 +1255,7 @@ test("durable dismissal keeps confirmation mounted until persistence settles", a
   await page.goto(url);
   const editor = editorControls(page);
   const { button } = editor;
-  await button("Message helper").click();
+  await editor.open("Message helper");
   await editor.rename("Kept draft");
   await button("Save changes").click();
   await page.evaluate(() => window.workflowFixture.finish("unknown"));
@@ -1335,7 +1378,7 @@ test("invalid timeout text stays in the draft and blocks saves in both editor mo
   await page.goto(url);
   const editor = editorControls(page);
   const { button, yaml, tab } = editor;
-  await button("Message helper").click();
+  await editor.open("Message helper");
   await editor.openStep(1);
   await editor.disclose("Run controls");
   const timeout = page.getByLabel("Step timeout (optional)", { exact: true });
@@ -1659,7 +1702,7 @@ test("late webhook receipt survives navigation and exact readback on the landing
     /Turning off does not confirm runs have stopped/,
   );
   await expect(caveat).toBeVisible();
-  await button("Open Fixture A helper").click();
+  await editor.open("Fixture A helper");
   // In the editor the caveat lives in the collapsed settings section.
   await editor.disclose("Workflow settings & activity");
   await expect(
@@ -1722,8 +1765,8 @@ test("both Add actions allocate unused IDs after a very large parsed ID", async 
 }) => {
   await page.goto(url);
   const editor = editorControls(page);
-  const { button, yaml, tab } = editor;
-  await button("Message helper").click();
+  const { yaml, tab } = editor;
+  await editor.open("Message helper");
   await tab("YAML").click();
   const definition = parseYaml(await yaml.inputValue());
   definition.steps[0].id = "step_9007199254740992";
@@ -1747,14 +1790,14 @@ test("real session reconnect retains unsaved YAML and an in-flight returned run 
 }) => {
   await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
   const editor = editorControls(page);
-  const { button, yaml } = editor;
+  const { yaml } = editor;
   // Scope notices to the modal: the page behind it is inert.
   const dialog = page.getByRole("dialog", { name: "Edit workflow" });
   await page.getByRole("combobox", { name: "Channel", exact: true }).click();
   await page
     .getByRole("option", { name: "First channel", exact: true })
     .click();
-  await button("Fixture A helper").click();
+  await editor.open("Fixture A helper");
   await editor.tab("YAML").click();
   const original = await yaml.inputValue();
   const edited = original.replace(
@@ -1771,7 +1814,7 @@ test("real session reconnect retains unsaved YAML and an in-flight returned run 
   await expect(dialog.getByText(/Connection interrupted/)).toHaveCount(0);
   await expect(yaml).toHaveValue(edited);
   await yaml.fill(original);
-  await editor.action("Run now");
+  await editor.run.click();
   try {
     await expect
       .poll(() =>
@@ -1815,8 +1858,8 @@ test("generic Outbox offers message retry but no workflow replay", async ({
   await page
     .getByRole("option", { name: "First channel", exact: true })
     .click();
-  await button("Fixture A helper").click();
-  await editorControls(page).action("Run now");
+  await editorControls(page).open("Fixture A helper");
+  await editorControls(page).run.click();
   await expect
     .poll(() =>
       page.evaluate(() => window.workflowSessionFixture.publications()),
@@ -1926,7 +1969,7 @@ test("a created workflow saves, reads back exactly and reopens unchanged", async
   ).toHaveCount(0);
   await expect(editor.region).toHaveCount(0);
 
-  await button("Readback helper").click();
+  await editor.open("Readback helper");
   await expect(editor.named("Readback helper")).toBeVisible();
   await expect(button("Edit step 1: Send Message")).toContainText(
     "Created in the browser",
@@ -1946,7 +1989,7 @@ test("narrow inspector traps focus and dismisses above its editor", async ({
   await page.setViewportSize({ width: 768, height: 900 });
   await page.goto(url);
   const editor = editorControls(page);
-  await editor.button("Message helper").click();
+  await editor.open("Message helper");
   await editor.openStep(1);
   const sheet = page.getByRole("dialog", { name: "Step 1 settings" });
   await expect(sheet).toBeVisible();
@@ -1981,7 +2024,8 @@ test("narrow inspector traps focus and dismisses above its editor", async ({
   await expect(page.getByRole("dialog", { name: "Edit workflow" })).toHaveCount(
     0,
   );
-  await expect(editor.button("Message helper")).toBeFocused();
+  // The dialog returns focus to the card control that opened it.
+  await expect(editor.button("Actions for Message helper")).toBeFocused();
 });
 
 // Real session → save outcome → both modal and landing readback owners. The
@@ -2068,9 +2112,7 @@ for (const lateReadback of [false, true]) {
       await expect(
         page.getByText("Reading configurations…", { exact: true }),
       ).toHaveCount(0);
-      await expect(
-        page.getByText("Workflows loaded.", { exact: true }),
-      ).toHaveCount(1);
+      await expect(landingStatus(page)).toHaveText("");
       await expect(
         page.getByText(/Configuration saved; waiting for a readback/),
       ).toBeVisible();
@@ -2086,7 +2128,7 @@ for (const lateReadback of [false, true]) {
     await button("Close editor").click();
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
     // No manual Refresh. A successful save must update the retained landing.
-    await button("Open Session readback helper").click();
+    await editor.open("Session readback helper");
     await editor.tab("YAML").click();
     await expect(editor.yaml).toHaveValue(submitted);
     expect(

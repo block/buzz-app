@@ -65,16 +65,14 @@ test("keeps naming compact and applies header changes only on save", async () =>
     "Edit workflow name",
   );
   await user.unhover(rename);
-  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
-  const toggle = await screen.findByRole("menuitemcheckbox", {
-    name: "Enable",
+  const toggle = screen.getByRole("switch", {
+    name: "Enabled in configuration",
   });
   expect(toggle).not.toBeChecked();
   await user.click(toggle);
   expect(toggle).toBeChecked();
   await user.click(toggle);
   expect(toggle).not.toBeChecked();
-  await user.keyboard("{Escape}");
   await user.click(rename);
   const name = screen.getByRole("textbox", { name: "Workflow name" });
   await user.clear(name);
@@ -103,17 +101,19 @@ test.each([
       {...props}
     />,
   );
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
-  const toggle = await screen.findByRole("menuitemcheckbox", {
-    name: "Enable",
-  });
   const rename = screen.getByRole("button", { name: "Edit workflow name" });
-  expect(toggle).toHaveAttribute("aria-disabled", "true");
   expect(rename).toBeDisabled();
-  expect(toggle).toHaveAccessibleDescription(reason);
   expect(rename).toHaveAccessibleDescription(expect.stringContaining(reason));
-  await user.keyboard("{Escape}");
+  if ("chooseChannel" in props) {
+    // Choosing a channel precedes configuration; the enable switch waits.
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  } else {
+    const toggle = screen.getByRole("switch", {
+      name: "Enabled in configuration",
+    });
+    expect(toggle).toHaveAttribute("aria-disabled", "true");
+    expect(toggle).toHaveAccessibleDescription(reason);
+  }
   if ("readOnly" in props) {
     expect(screen.getByText(reason)).not.toBeVisible();
     expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
@@ -124,9 +124,8 @@ test.each([
   rerender(
     <WorkflowEditor yaml={fixtureYaml} onChange={change} onSave={vi.fn()} />,
   );
-  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
   expect(
-    await screen.findByRole("menuitemcheckbox", { name: "Enable" }),
+    screen.getByRole("switch", { name: "Enabled in configuration" }),
   ).not.toHaveAttribute("aria-disabled", "true");
   expect(rename).toBeEnabled();
   expect(screen.queryByText(reason)).not.toBeInTheDocument();
@@ -184,13 +183,8 @@ test("form errors follow the editable field and clear when corrected", async () 
 test("YAML errors replace help, retain the draft and restore help after recovery", async () => {
   const user = userEvent.setup();
   render(<Example initial="name: [" />);
-  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
-  const enable = await screen.findByRole("menuitemcheckbox", {
-    name: "Enable",
-  });
-  expect(enable).not.toBeChecked();
-  expect(enable).toHaveAttribute("aria-disabled", "true");
-  await user.keyboard("{Escape}");
+  // Unreadable YAML has no enabled state to show or change.
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   expect(screen.getByText("Unreadable configuration")).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Edit workflow name" }),
@@ -210,24 +204,19 @@ test("YAML errors replace help, retain the draft and restore help after recovery
   await user.paste(fixtureYaml);
   expect(yaml).not.toHaveAttribute("aria-invalid", "true");
   expect(yaml).toHaveAccessibleDescription(/Original text is kept/);
-  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
   expect(
-    await screen.findByRole("menuitemcheckbox", { name: "Enable" }),
+    screen.getByRole("switch", { name: "Enabled in configuration" }),
   ).not.toBeChecked();
-  await user.keyboard("{Escape}");
   expect(
     screen.queryByText("Unreadable configuration"),
   ).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
 });
 
-test("a readable definition without enabled retains its default on state", async () => {
+test("a readable definition without enabled retains its default on state", () => {
   render(<Example initial={fixtureYaml.replace("enabled: false\n", "")} />);
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Workflow actions" }));
   expect(
-    await screen.findByRole("menuitemcheckbox", { name: "Enable" }),
+    screen.getByRole("switch", { name: "Enabled in configuration" }),
   ).toBeChecked();
 });
 

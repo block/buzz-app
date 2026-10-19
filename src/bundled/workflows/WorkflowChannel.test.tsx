@@ -30,6 +30,7 @@ it("hands confirmed deletion to the page and discards draft navigation risk", as
       channelName="Fixture channel"
       viewer={fixtureViewer}
       initialSelection={fixtureDefinition}
+      onClose={() => {}}
       onDelete={remove}
     />,
   );
@@ -62,7 +63,7 @@ it("hands confirmed deletion to the page and discards draft navigation risk", as
   expect(fixture.calls.delete).toBe(0);
 });
 
-it("keeps loaded configurations visible without a refresh banner", async () => {
+it("keeps the open workflow visible without a refresh banner", async () => {
   const fixture = createWorkflowFixture();
   render(
     <WorkflowChannel
@@ -70,18 +71,28 @@ it("keeps loaded configurations visible without a refresh banner", async () => {
       channelId={fixtureChannel}
       channelName="Fixture channel"
       viewer={fixtureViewer}
+      initialSelection={fixtureDefinition}
+      onClose={() => {}}
       onDelete={() => {}}
     />,
   );
-  await screen.findByText("Message helper");
+  const editor = await screen.findByRole("dialog", { name: "Edit workflow" });
+  expect(within(editor).getByText("Message helper")).toBeVisible();
   act(() =>
     fixture.definitions.update({
       status: "loading",
       data: { items: [fixtureDefinition], partial: false },
     }),
   );
-  expect(screen.getByText("Message helper")).toBeVisible();
-  expect(screen.queryByText("Reading configurations…")).toBeNull();
+  expect(within(editor).getByText("Message helper")).toBeVisible();
+  // Only the editor reports the reread; loaded items suppress the page banner.
+  expect(screen.getAllByText("Reading configurations…")).toEqual([
+    within(editor).getByText("Reading configurations…"),
+  ]);
+  const refresh = within(editor).getByRole("button", {
+    name: "Refresh configurations",
+  });
+  expect(refresh).toBeDisabled();
   act(() =>
     fixture.definitions.update({
       status: "error",
@@ -89,10 +100,9 @@ it("keeps loaded configurations visible without a refresh banner", async () => {
       data: { items: [fixtureDefinition], partial: false },
     }),
   );
-  expect(screen.getByRole("alert")).toHaveTextContent("Read failed");
-  expect(
-    screen.getByRole("button", { name: "Refresh configurations" }),
-  ).toBeEnabled();
+  expect(within(editor).getByRole("alert")).toHaveTextContent("Read failed");
+  expect(refresh).toBeEnabled();
+  expect(screen.getByRole("dialog", { name: "Edit workflow" })).toBe(editor);
 });
 
 it("releases a mounted run latch after unknown delivery without replaying it", async () => {
@@ -105,6 +115,7 @@ it("releases a mounted run latch after unknown delivery without replaying it", a
       channelName="Fixture channel"
       viewer={fixtureViewer}
       initialSelection={fixtureDefinition}
+      onClose={() => {}}
       onDelete={remove}
     />,
   );
@@ -113,26 +124,16 @@ it("releases a mounted run latch after unknown delivery without replaying it", a
     await user.click(screen.getByRole("button", { name: "Workflow actions" }));
     await user.click(await screen.findByRole("menuitem", { name }));
   };
-  await action("Run now");
-  const confirm = screen.queryByRole("alertdialog");
-  if (confirm)
-    await user.click(within(confirm).getByRole("button", { name: "Run now" }));
+  const runNow = () => screen.getByRole("button", { name: "Run now" });
+  await user.click(runNow());
   expect(fixture.calls.trigger).toBe(1);
-  await user.click(screen.getByRole("button", { name: "Workflow actions" }));
-  expect(
-    await screen.findByRole("menuitem", { name: "Run now" }),
-  ).toHaveAttribute("aria-disabled", "true");
-  await user.keyboard("{Escape}");
+  expect(runNow()).toBeDisabled();
+  await user.click(runNow());
   expect(fixture.calls.trigger).toBe(1);
   act(() => fixture.finish("unknown"));
   expect(fixture.calls.trigger).toBe(1);
   expect(screen.getByText(/The run may have started/)).toBeVisible();
-  await action("Run now");
-  const retryConfirm = screen.queryByRole("alertdialog");
-  if (retryConfirm)
-    await user.click(
-      within(retryConfirm).getByRole("button", { name: "Run now" }),
-    );
+  await user.click(runNow());
   expect(fixture.calls.trigger).toBe(2);
   act(() => fixture.finish("unknown"));
   await action("Delete workflow");
@@ -158,20 +159,15 @@ it("runs despite a lost earlier run receipt, opens history on success and report
       channelName="Fixture channel"
       viewer={fixtureViewer}
       initialSelection={fixtureDefinition}
+      onClose={() => {}}
       onDelete={() => {}}
     />,
   );
   const user = userEvent.setup();
   const run = async () => {
-    await user.click(screen.getByRole("button", { name: "Workflow actions" }));
-    const item = await screen.findByRole("menuitem", { name: "Run now" });
-    expect(item).not.toHaveAttribute("aria-disabled", "true");
-    await user.click(item);
-    const confirm = screen.queryByRole("alertdialog");
-    if (confirm)
-      await user.click(
-        within(confirm).getByRole("button", { name: "Run now" }),
-      );
+    const button = screen.getByRole("button", { name: "Run now" });
+    expect(button).toBeEnabled();
+    await user.click(button);
   };
   await run();
   expect(fixture.calls.trigger).toBe(2);
@@ -212,15 +208,13 @@ it("runs once a newer head supersedes a save whose receipt was lost", async () =
       channelName="Fixture channel"
       viewer={fixtureViewer}
       initialSelection={head}
-      initialAction="run"
+      onClose={() => {}}
       onDelete={() => {}}
     />,
   );
   const user = userEvent.setup();
-  await user.click(
-    within(await screen.findByRole("alertdialog")).getByRole("button", {
-      name: "Run now",
-    }),
-  );
+  const run = await screen.findByRole("button", { name: "Run now" });
+  expect(run).toBeEnabled();
+  await user.click(run);
   expect(fixture.calls.trigger).toBe(1);
 });

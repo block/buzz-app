@@ -22,6 +22,7 @@ import {
   MenuSeparator,
 } from "../../shared/design-system/ui/Menu";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowEditor } from "./WorkflowEditor";
 import { WorkflowOperations } from "./WorkflowOperations";
@@ -29,7 +30,6 @@ import { WorkflowRuns } from "./WorkflowRuns";
 import { saveAwaitsReadback } from "./WorkflowLanding";
 import { exactSaveReadback } from "./editor-model";
 import { DEFAULT_FORM_STATE, formStateToYaml } from "./workflowFormTypes";
-import { readWorkflowDocumentFields } from "./workflowYamlDocument";
 import { useWorkflowView } from "./useWorkflowView";
 
 type Draft = {
@@ -58,7 +58,6 @@ export function WorkflowChannel({
   channelId,
   channelName,
   initialSelection,
-  initialAction,
   viewer,
   onDraftRiskChange,
   onSaveReadback,
@@ -68,14 +67,13 @@ export function WorkflowChannel({
   capability: WorkflowCapability;
   channelId: string;
   channelName: string;
-  initialSelection?: WorkflowDefinition | "new" | undefined;
-  initialAction?: "run" | undefined;
+  initialSelection: WorkflowDefinition | "new";
   viewer: string;
   onDraftRiskChange?: (atRisk: boolean) => void;
   onSaveReadback?: (
     saved: Pick<WorkflowDefinition, "channelId" | "revision">,
   ) => void;
-  onClose?: () => void;
+  onClose: () => void;
   onDelete: (definition: WorkflowDefinition) => void;
 }) {
   const { snapshot, refresh } = useWorkflowView(
@@ -91,15 +89,13 @@ export function WorkflowChannel({
   );
   const submission = useRef<string | null>(null);
   const editorGeneration = useRef(0);
-  const detailOnly = initialSelection !== undefined;
   const [draft, setDraft] = useState<Draft | null>(() =>
-    initialSelection === undefined ? null : draftFor(initialSelection, 0),
+    draftFor(initialSelection, 0),
   );
   const [pendingSelection, setPendingSelection] = useState<
     WorkflowDefinition | "new" | "close" | null
   >(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmRun, setConfirmRun] = useState(initialAction === "run");
   const [error, setError] = useState<string | null>(null);
   const [readRuns, setReadRuns] = useState(false);
   const [createdRun, setCreatedRun] = useState<string>();
@@ -149,15 +145,13 @@ export function WorkflowChannel({
     return () => window.removeEventListener("beforeunload", warn);
   }, [atRisk]);
   const open = (next: WorkflowDefinition | "new" | "close") => {
-    if (next === "close" && onClose) {
+    if (next === "close") {
       onClose();
       return;
     }
     setLocalDraftAtRisk(false);
     // Explicit replacement discards local form state even for the same revision.
-    setDraft(
-      next === "close" ? null : draftFor(next, ++editorGeneration.current),
-    );
+    setDraft(draftFor(next, ++editorGeneration.current));
     submission.current = null;
     setError(null);
     setReadRuns(false);
@@ -316,33 +310,6 @@ export function WorkflowChannel({
   if (!snapshot) return <p role="status">Reading configurations…</p>;
   return (
     <section aria-label={`Workflows in ${channelName}`}>
-      {!detailOnly && (
-        <div className="workflow-toolbar">
-          <h2 className="text-heading">Saved configurations</h2>
-          <Button
-            disabled={snapshot.status === "loading"}
-            onClick={() => void refresh()}
-          >
-            Refresh configurations
-          </Button>
-          <Button
-            disabled={
-              !capability.availability.save ||
-              snapshot.status === "unavailable" ||
-              snapshot.status === "idle"
-            }
-            onClick={() => select("new")}
-          >
-            New workflow
-          </Button>
-        </div>
-      )}
-      {!detailOnly && (
-        <p className="text-body-sm text-secondary">
-          Saved configuration only. Turning off does not confirm runs have
-          stopped or cancel active runs.
-        </p>
-      )}
       {snapshot.status === "loading" && !snapshot.data.items.length && (
         <p role="status">Reading configurations…</p>
       )}
@@ -367,37 +334,6 @@ export function WorkflowChannel({
           browse saved configurations, but cannot save changes here yet.
         </p>
       )}
-      {!detailOnly &&
-        snapshot.status === "ready" &&
-        !snapshot.data.items.length && (
-          <p>
-            No saved configurations returned for this channel.
-            {capability.availability.save &&
-              " Create a disabled draft to start."}
-          </p>
-        )}
-      {!detailOnly && (
-        <ul className="workflow-list">
-          {snapshot.data.items.map((definition) => {
-            const header = readWorkflowDocumentFields(definition.yaml);
-            return (
-              <li key={`${definition.owner}:${definition.id}`}>
-                <Button variant="ghost" onClick={() => select(definition)}>
-                  {header.name || "Unnamed or malformed workflow"}
-                </Button>
-                <span className="text-body-sm text-secondary">
-                  {header.editable
-                    ? header.enabled === false
-                      ? "Configured disabled"
-                      : "Configured enabled"
-                    : "Unreadable configuration"}
-                  {definition.owner !== viewer ? " · Read-only" : ""}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
       {draft &&
         snapshot.status !== "unavailable" &&
         snapshot.status !== "idle" && (
@@ -420,7 +356,23 @@ export function WorkflowChannel({
                 {channelName}
               </span>
             }
-            actions={(enable) => (
+            run={
+              !readonly && (
+                <IconButton
+                  aria-label="Run now"
+                  title="Run now"
+                  disabled={
+                    dirty ||
+                    !!draft.operationId ||
+                    unresolvedWrite ||
+                    !capability.availability.trigger
+                  }
+                  icon={<PlayIcon size={20} aria-hidden="true" />}
+                  onClick={trigger}
+                />
+              )
+            }
+            actions={
               <>
                 <MenuItem
                   disabled={!capability.availability.history}
@@ -437,21 +389,6 @@ export function WorkflowChannel({
                 </MenuItem>
                 {!readonly && (
                   <>
-                    <MenuItem
-                      disabled={
-                        dirty ||
-                        !!draft.operationId ||
-                        unresolvedWrite ||
-                        !capability.availability.trigger
-                      }
-                      onClick={trigger}
-                    >
-                      <MenuIcon>
-                        <PlayIcon size={14} />
-                      </MenuIcon>
-                      Run now
-                    </MenuItem>
-                    {enable}
                     <MenuSeparator />
                     <MenuItem
                       tone="danger"
@@ -469,9 +406,8 @@ export function WorkflowChannel({
                     </MenuItem>
                   </>
                 )}
-                {readonly && enable}
               </>
-            )}
+            }
             status={
               <>
                 {(snapshot.status === "error" ||
@@ -563,18 +499,6 @@ export function WorkflowChannel({
                 action="Leave draft"
                 onConfirm={() => open(pendingSelection)}
                 onCancel={() => setPendingSelection(null)}
-              />
-            )}
-            {confirmRun && (
-              <ConfirmAction
-                title="Run this workflow now?"
-                description="This submits a manual run of the saved configuration, not unsaved edits."
-                action="Run now"
-                onCancel={() => setConfirmRun(false)}
-                onConfirm={() => {
-                  setConfirmRun(false);
-                  trigger();
-                }}
               />
             )}
             {confirmDelete && (

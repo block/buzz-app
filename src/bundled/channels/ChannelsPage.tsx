@@ -265,6 +265,9 @@ function ChannelWorkspace({
   // away from Settings, which would discard its unsaved edits.
   const behindSettings = () =>
     navigator?.snapshot().entry.target.kind === "settings";
+  // A Solo start that finishes behind Settings stays put; a fresh draft
+  // replaces the submitted one so its prompt cannot be started again.
+  const [soloDraftGeneration, setSoloDraftGeneration] = useState(0);
   const select = useCallback(
     (id: string) => {
       navigate(id);
@@ -1529,7 +1532,11 @@ function ChannelWorkspace({
             />
           ) : draft ? (
             <SoloDraft
-              key={JSON.stringify([draft.project, draft.agent])}
+              key={JSON.stringify([
+                draft.project,
+                draft.agent,
+                soloDraftGeneration,
+              ])}
               focusRequest={
                 navigation?.focus === "preserve" ? 0 : (navigation?.signal ?? 0)
               }
@@ -1538,10 +1545,18 @@ function ChannelWorkspace({
               session={queries}
               scope={scope}
               extensions={extensions}
-              onStarted={select}
+              onStarted={(channelId) => {
+                if (!behindSettings()) select(channelId);
+                else setSoloDraftGeneration((generation) => generation + 1);
+              }}
               onFailed={(channelId, message) => {
                 notify(message, "error");
-                if (showing.current === channelId && navigator)
+                // A failure behind Settings must not navigate away from it.
+                if (
+                  showing.current === channelId &&
+                  navigator &&
+                  !behindSettings()
+                )
                   void navigator.open(soloDraftTarget(scope, draft));
               }}
             />

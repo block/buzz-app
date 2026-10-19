@@ -1164,10 +1164,7 @@ it("shares discovered community artwork with an already-open Settings address wi
     );
     await act(async () => finish(Response.json({ icon: artwork })));
     await waitFor(() =>
-      expect(switcher().querySelector("img")).toHaveAttribute(
-        "src",
-        artwork,
-      ),
+      expect(switcher().querySelector("img")).toHaveAttribute("src", artwork),
     );
     expect(
       screen

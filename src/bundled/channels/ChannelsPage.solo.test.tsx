@@ -47,11 +47,14 @@ function fixture({
   placed = true,
   type = "solo",
   target,
+  behindSettings = false,
 }: {
   /** Whether the viewer created the chat, rather than joining it as a guest. */
   placed?: boolean;
   type?: "solo" | "stream";
   target?: (scope: string) => OpenTarget;
+  /** Settings is open over this retained page. */
+  behindSettings?: boolean;
 } = {}) {
   vi.stubGlobal(
     "ResizeObserver",
@@ -194,6 +197,19 @@ function fixture({
     messages: { ...owner.session.messages, send },
     channelWrites: {
       ...owner.session.channelWrites,
+      available: true,
+      // A new chat joins the owner's list once its creation is requested.
+      create: vi.fn((chat: string) => {
+        list = {
+          ...list,
+          channels: [...list.channels, { ...channel, id: chat, name: "" }],
+        };
+        emitList();
+        return "c".repeat(64);
+      }),
+      delivered: vi.fn(async () => {}),
+      refresh: vi.fn(async () => {}),
+      addAgents: vi.fn(async () => {}),
       refreshMembership: vi.fn(async () => channel),
     },
   };
@@ -226,7 +242,12 @@ function fixture({
     open,
     retry() {},
     snapshot: () => ({
-      entry: { id: navigation.entryId, target: navigation.target },
+      entry: {
+        id: navigation.entryId,
+        target: behindSettings
+          ? { version: 1, kind: "settings", scope: null }
+          : navigation.target,
+      },
       attempt: { signal: abort.signal },
     }),
   } as unknown as Navigation;
@@ -424,6 +445,32 @@ it("tags a Solo draft route's agent in the new chat", async () => {
   expect(
     within(region).getByRole("button", { name: "Add workspace" }),
   ).toBeVisible();
+});
+
+it("a new Solo chat finishing behind Settings stays put and retires its draft", async () => {
+  const f = fixture({ behindSettings: true, target: soloDraftTarget });
+  writeView(f.scope, "solo:new-draft", {
+    text: "@Scout Started behind Settings",
+    recipients: [{ pubkey: agent, name: "Scout", start: 0, end: 6 }],
+  });
+  f.mount();
+  const region = await screen.findByRole("region", { name: "New chat" });
+  const user = userEvent.setup();
+  await user.click(
+    within(region).getByRole("button", { name: "Send message" }),
+  );
+  await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+  expect(f.open).not.toHaveBeenCalled();
+  // A fresh draft replaces the submitted one, so it cannot start again.
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole("region", { name: "New chat" })).getByRole(
+        "textbox",
+        { name: "Message your agents" },
+      ),
+    ).not.toHaveTextContent("Started behind Settings"),
+  );
+  expect(f.session.channelWrites.create).toHaveBeenCalledOnce();
 });
 
 it("gives the owner's Solo chat its tag requirement and project", async () => {

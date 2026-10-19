@@ -228,7 +228,7 @@ function auditLayers() {
   for (const match of css.matchAll(/(--art-[a-z0-9-]+):\s*([^;]+);/g)) {
     const [declaration, name, value] = match;
     const alias =
-      /^var\(--(?:amber|blue|cyan|green|orange|purple|red)-(?:[1-9]|1[0-2])\)$/.test(
+      /^var\(--(?:(?:amber|blue|cyan|green|orange|purple|red)-(?:[1-9]|1[0-2])|(?:chartreuse|flame|magenta|iris|cobalt|jade)-9)\)$/.test(
         value.trim(),
       );
     const category = /^--art-plugin-(.+)-gradient$/.exec(name)?.[1];
@@ -321,6 +321,26 @@ function auditLayers() {
           });
         }
       }
+    }
+  }
+
+  // Existing Appearance solid fills are shared palette owners, not new ramps.
+  for (const family of [
+    "chartreuse",
+    "flame",
+    "magenta",
+    "iris",
+    "cobalt",
+    "jade",
+  ]) {
+    for (const [mode, block] of Object.entries(modes)) {
+      const value = read(block, `--${family}-9`);
+      if (!value || !/^#[0-9a-f]{6}$/i.test(value))
+        failures.push({
+          at: `${rel} (${mode})`,
+          found: `--${family}-9`,
+          why: "Shared Appearance solid fills must have authored palette values in both modes.",
+        });
     }
   }
 

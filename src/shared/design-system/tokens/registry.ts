@@ -1,4 +1,4 @@
-import { BRAND_GRADIENTS } from "./brand";
+import { ACCENTS, BRAND_GRADIENTS } from "./brand";
 
 /**
  * Documentation metadata for the shared tokens: names, purposes, sources,
@@ -126,6 +126,17 @@ export const PALETTE: PaletteHue[] = [
     job: STEP_JOBS[i] ?? "Palette step",
   })),
 }));
+
+// Only the existing solid-fill step is shared; no invented shade ranges.
+PALETTE.push(
+  ...ACCENTS.map((id) => ({
+    id,
+    usedBy: "Appearance and artwork",
+    steps: [
+      { step: 9, variable: `--${id}-9`, job: "existing Appearance solid fill" },
+    ],
+  })),
+);
 
 export const BACKDROP_TREATMENTS: BackdropTreatment[] = [
   {

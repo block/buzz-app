@@ -16,47 +16,47 @@ export const BRAND_GRADIENTS = [
     name: "Communication",
     category: "communication",
     start: "cyan-9",
-    end: "blue-9",
+    end: "jade-9",
     compromise:
-      "Cyan to blue uses existing solid-color steps for a visible cool hue transition.",
+      "Cyan to jade gives Communication a teal/green identity distinct from Agents.",
   },
   {
     name: "Agents",
     category: "agents",
     start: "blue-9",
-    end: "purple-9",
+    end: "iris-9",
     compromise:
-      "Blue 9 is lighter at the top; purple 9 approximates violet at the bottom in both themes.",
+      "Existing Iris supplies violet beneath lighter blue in both themes.",
   },
   {
     name: "Agent tools",
     category: "agent-tools",
-    start: "red-9",
-    end: "purple-9",
+    start: "purple-9",
+    end: "magenta-9",
     compromise:
-      "Red approximates the missing fuchsia endpoint while preserving a distinct transition into purple.",
+      "Purple to the existing Magenta fill gives agent tools a violet-to-rose identity.",
   },
   {
     name: "Developer tools & integrations",
     category: "developer-tools-and-integrations",
     start: "orange-9",
-    end: "purple-9",
+    end: "flame-9",
     compromise:
-      "Orange approximates coral and purple approximates pink; the broader sweep preserves visible color variation.",
+      "Orange to the existing Flame fill gives developer tools a warm ember identity.",
   },
   {
     name: "People & communities",
     category: "people-and-communities",
     start: "red-9",
-    end: "orange-9",
-    compromise: "Red approximates scarlet and transitions into orange.",
+    end: "magenta-9",
+    compromise:
+      "Red to existing Magenta gives people a scarlet-to-rose identity.",
   },
   {
     name: "Productivity",
     category: "productivity",
     start: "amber-9",
     end: "green-9",
-    compromise:
-      "Amber to green preserves the original warm-to-yellow-green intent using existing families.",
+    compromise: "Preserves the approved yellow-to-green transition.",
   },
 ] as const;

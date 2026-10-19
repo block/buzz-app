@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { BRAND_GRADIENTS } from "./brand";
-import { ROLE_GROUPS } from "./registry";
+import { ACCENTS, BRAND_GRADIENTS } from "./brand";
+import { PALETTE, ROLE_GROUPS } from "./registry";
 
 const css = readFileSync(
   new URL("../styles/tokens.css", import.meta.url),
@@ -21,7 +21,7 @@ it("maps all artwork endpoints to existing family steps in both themes", () => {
       ["end", gradient.end],
     ]) {
       expect(`--${palette}`).toMatch(
-        /^--(amber|blue|cyan|green|orange|purple|red)-(?:[1-9]|1[0-2])$/,
+        /^--(amber|blue|cyan|green|orange|purple|red|chartreuse|flame|magenta|iris|cobalt|jade)-(?:[1-9]|1[0-2])$/,
       );
       expect(css).toContain(
         `--art-plugin-${gradient.category}-${part}: var(--${palette});`,
@@ -61,7 +61,7 @@ it("registers all public artwork with palette ownership and distinct hue familie
 it("keeps Agents blue above violet with a lighter top in both themes", () => {
   expect(
     BRAND_GRADIENTS.find(({ category }) => category === "agents"),
-  ).toMatchObject({ start: "blue-9", end: "purple-9" });
+  ).toMatchObject({ start: "blue-9", end: "iris-9" });
   const luminance = (hex: string) => {
     const channels = [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)]
       .map((part) => parseInt(part, 16) / 255)
@@ -79,7 +79,32 @@ it("keeps Agents blue above violet with a lighter top in both themes", () => {
       return match[1];
     };
     expect(luminance(value("blue-9"))).toBeGreaterThan(
-      luminance(value("purple-9")),
+      luminance(value("iris-9")),
     );
+  }
+});
+
+it("preserves existing Appearance solid colors and shares their palette owners", () => {
+  const expected = [
+    "#d7d72e",
+    "#d93a0c",
+    "#cc1f7a",
+    "#6c4ef0",
+    "#2b4fe0",
+    "#0b8467",
+  ];
+  for (const [index, family] of ACCENTS.entries()) {
+    for (const mode of [light, dark])
+      expect(mode).toContain(`--${family}-9: ${expected[index]};`);
+    expect(PALETTE.find(({ id }) => id === family)?.steps).toContainEqual({
+      step: 9,
+      variable: `--${family}-9`,
+      job: "existing Appearance solid fill",
+    });
+    const block = css.match(
+      new RegExp(String.raw`\[data-accent="${family}"\][^{]*\{([^}]+)`),
+    )?.[1];
+    expect(block).toContain(`--accent-9-light: var(--${family}-9);`);
+    expect(block).toContain(`--accent-9-dark: var(--${family}-9);`);
   }
 });

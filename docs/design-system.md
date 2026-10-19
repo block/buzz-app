@@ -427,20 +427,21 @@ existing minimum heights. The extra-small capsule keeps its caption role.
 
 ## Colorways and plugin gradients
 
-Plugin artwork endpoints reference existing palette steps. No new hue families
-or literal artwork colors are introduced. Each category pairs two distinct
-families at their solid-color step 9, prioritizing visible color variation over
-independently rounding each endpoint to its nearest color. The same references
-are used in both themes. Agents keeps lighter blue above deeper violet/purple.
+Plugin artwork uses existing palette colors, including the six Appearance solid
+fills now exposed as named step-9 tokens: Chartreuse, Flame, Magenta, Iris,
+Cobalt and Jade. Their existing light/dark values are unchanged; Appearance
+references these owners instead of repeating the values. Only the solid fill
+has current shared callers, so no extra shade ranges are invented or exposed.
+The palette registry and Color viewer include these six solid steps.
 
-| Category | Top → bottom | Compromise |
+| Category | Top → bottom | Identity |
 | --- | --- | --- |
-| Communication | cyan 9 → blue 9 | Existing cool hues. |
-| Agents | blue 9 → purple 9 | Purple approximates violet. |
-| Agent tools | red 9 → purple 9 | Red approximates fuchsia; avoids a flat purple fill. |
-| Developer tools & integrations | orange 9 → purple 9 | Coral/pink approximated with a broader warm-to-purple sweep. |
-| People & communities | red 9 → orange 9 | Red approximates scarlet. |
-| Productivity | amber 9 → green 9 | Existing families approximate warm-to-yellow-green intent. |
+| Communication | cyan 9 → jade 9 | Teal/green, separate from Agents. |
+| Agents | blue 9 → iris 9 | Lighter blue over existing violet. |
+| Agent tools | purple 9 → magenta 9 | Violet to rose. |
+| Developer tools & integrations | orange 9 → flame 9 | Warm ember. |
+| People & communities | red 9 → magenta 9 | Scarlet to rose. |
+| Productivity | amber 9 → green 9 | Approved yellow-to-green direction retained. |
 
 The proposed registry entries are owned by Settings plugin catalog; their
 complete gradients compose palette-backed endpoints. There is no artwork-literal

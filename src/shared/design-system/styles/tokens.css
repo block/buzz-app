@@ -56,6 +56,14 @@
 
 .light,
 :root {
+  /* Existing Appearance solid fills, now shared palette owners.
+     Step 9 already has the same authored value in both themes. */
+  --chartreuse-9: #d7d72e;
+  --flame-9: #d93a0c;
+  --magenta-9: #cc1f7a;
+  --iris-9: #6c4ef0;
+  --cobalt-9: #2b4fe0;
+  --jade-9: #0b8467;
   /* gray */
 
   /* purple */
@@ -159,6 +167,14 @@
 
 :root[data-color-mode="dark"],
 .dark {
+  /* Existing Appearance solid fills, now shared palette owners.
+     Step 9 already has the same authored value in both themes. */
+  --chartreuse-9: #d7d72e;
+  --flame-9: #d93a0c;
+  --magenta-9: #cc1f7a;
+  --iris-9: #6c4ef0;
+  --cobalt-9: #2b4fe0;
+  --jade-9: #0b8467;
   /* gray */
 
   /* purple */
@@ -504,35 +520,35 @@
    No fixed-luminance or 35-degree hue-sweep guarantee remains. */
 :root {
   --art-plugin-communication-start: var(--cyan-9);
-  --art-plugin-communication-end: var(--blue-9);
+  --art-plugin-communication-end: var(--jade-9);
   --art-plugin-communication-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-communication-start),
     var(--art-plugin-communication-end)
   );
   --art-plugin-agents-start: var(--blue-9);
-  --art-plugin-agents-end: var(--purple-9);
+  --art-plugin-agents-end: var(--iris-9);
   --art-plugin-agents-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-agents-start),
     var(--art-plugin-agents-end)
   );
-  --art-plugin-agent-tools-start: var(--red-9);
-  --art-plugin-agent-tools-end: var(--purple-9);
+  --art-plugin-agent-tools-start: var(--purple-9);
+  --art-plugin-agent-tools-end: var(--magenta-9);
   --art-plugin-agent-tools-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-agent-tools-start),
     var(--art-plugin-agent-tools-end)
   );
   --art-plugin-developer-tools-and-integrations-start: var(--orange-9);
-  --art-plugin-developer-tools-and-integrations-end: var(--purple-9);
+  --art-plugin-developer-tools-and-integrations-end: var(--flame-9);
   --art-plugin-developer-tools-and-integrations-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-developer-tools-and-integrations-start),
     var(--art-plugin-developer-tools-and-integrations-end)
   );
   --art-plugin-people-and-communities-start: var(--red-9);
-  --art-plugin-people-and-communities-end: var(--orange-9);
+  --art-plugin-people-and-communities-end: var(--magenta-9);
   --art-plugin-people-and-communities-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-people-and-communities-start),
@@ -958,7 +974,7 @@
   --accent-6-light: #e0dd9f;
   --accent-7-light: #d4d086;
   --accent-8-light: #c4bf68;
-  --accent-9-light: #d7d72e;
+  --accent-9-light: var(--chartreuse-9);
   --accent-10-light: #cccc1e;
   --accent-11-light: #575602;
   --accent-12-light: #303005;
@@ -975,7 +991,7 @@
   --accent-6-dark: #464601;
   --accent-7-dark: #575602;
   --accent-8-dark: #6e6e01;
-  --accent-9-dark: #d7d72e;
+  --accent-9-dark: var(--chartreuse-9);
   --accent-10-dark: #cccc1e;
   --accent-11-dark: #e6e76a;
   --accent-12-dark: #f4f7c0;
@@ -995,7 +1011,7 @@
   --accent-6-light: #ffccbf;
   --accent-7-light: #feb9a7;
   --accent-8-light: #fe9d85;
-  --accent-9-light: #d93a0c;
+  --accent-9-light: var(--flame-9);
   --accent-10-light: #c93202;
   --accent-11-light: #a4351a;
   --accent-12-light: #4f1b0f;
@@ -1012,7 +1028,7 @@
   --accent-6-dark: #633327;
   --accent-7-dark: #7c3f30;
   --accent-8-dark: #9f4e3a;
-  --accent-9-dark: #d93a0c;
+  --accent-9-dark: var(--flame-9);
   --accent-10-dark: #c93202;
   --accent-11-dark: #ffaf9a;
   --accent-12-dark: #ffebe6;
@@ -1032,7 +1048,7 @@
   --accent-6-light: #ffc7db;
   --accent-7-light: #ffb2cf;
   --accent-8-light: #fe94be;
-  --accent-9-light: #cc1f7a;
+  --accent-9-light: var(--magenta-9);
   --accent-10-light: #bf0570;
   --accent-11-light: #a32e65;
   --accent-12-light: #4d172f;
@@ -1049,7 +1065,7 @@
   --accent-6-dark: #622f44;
   --accent-7-dark: #7a3a55;
   --accent-8-dark: #9d486c;
-  --accent-9-dark: #cc1f7a;
+  --accent-9-dark: var(--magenta-9);
   --accent-10-dark: #bf0570;
   --accent-11-dark: #ffaaca;
   --accent-12-dark: #feeaf1;
@@ -1069,7 +1085,7 @@
   --accent-6-light: #d4d5fe;
   --accent-7-light: #c6c6ff;
   --accent-8-light: #b2b1ff;
-  --accent-9-light: #6c4ef0;
+  --accent-9-light: var(--iris-9);
   --accent-10-light: #6342e4;
   --accent-11-light: #5b4bbe;
   --accent-12-light: #2a2459;
@@ -1086,7 +1102,7 @@
   --accent-6-dark: #3e3b6c;
   --accent-7-dark: #4d4988;
   --accent-8-dark: #625caf;
-  --accent-9-dark: #6c4ef0;
+  --accent-9-dark: var(--iris-9);
   --accent-10-dark: #6342e4;
   --accent-11-dark: #bdbcff;
   --accent-12-dark: #eeeffe;
@@ -1106,7 +1122,7 @@
   --accent-6-light: #c9d9fe;
   --accent-7-light: #b6ccfe;
   --accent-8-light: #9cb9fe;
-  --accent-9-light: #2b4fe0;
+  --accent-9-light: var(--cobalt-9);
   --accent-10-light: #2343d4;
   --accent-11-light: #3556be;
   --accent-12-light: #192a5a;
@@ -1123,7 +1139,7 @@
   --accent-6-dark: #2f406d;
   --accent-7-dark: #3a4f89;
   --accent-8-dark: #4864b0;
-  --accent-9-dark: #2b4fe0;
+  --accent-9-dark: var(--cobalt-9);
   --accent-10-dark: #2343d4;
   --accent-11-dark: #aac3fe;
   --accent-12-dark: #eaf0ff;
@@ -1143,7 +1159,7 @@
   --accent-6-light: #b4e6d3;
   --accent-7-light: #9edbc5;
   --accent-8-light: #81cdb2;
-  --accent-9-light: #0b8467;
+  --accent-9-light: var(--jade-9);
   --accent-10-light: #06795e;
   --accent-11-light: #226a55;
   --accent-12-light: #15352a;
@@ -1160,7 +1176,7 @@
   --accent-6-dark: #2d493f;
   --accent-7-dark: #375b4f;
   --accent-8-dark: #447464;
-  --accent-9-dark: #0b8467;
+  --accent-9-dark: var(--jade-9);
   --accent-10-dark: #06795e;
   --accent-11-dark: #90d1ba;
   --accent-12-dark: #e2f6ee;

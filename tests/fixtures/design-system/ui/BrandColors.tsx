@@ -34,7 +34,7 @@ export function BrandColors() {
   return (
     <Section
       title="Colorways and plugin gradients"
-      description="Plugin artwork now uses existing palette steps. Each endpoint follows its family in light and dark mode. Hue substitutions and collapsed transitions are called out below; the Appearance ramps remain references."
+      description="Plugin artwork now uses existing palette steps. Each endpoint follows its family in light and dark mode. Existing Appearance solid fills give categories distinct identities; their complete ramps remain references."
     >
       <div className="brand-gradient-grid">
         {BRAND_GRADIENTS.map((gradient) => (

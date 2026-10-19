@@ -88,7 +88,7 @@ export function ColorPage() {
 
       <Section
         title="Layer 0 — the palette"
-        description="Each hue has twelve steps with separate light and dark values. Define raw color values here, then use semantic roles in components. Choose the appropriate step in a shared mapping instead of changing opacity locally."
+        description="Base hues have twelve steps; Appearance families expose their existing solid-fill step. Values are authored for light and dark modes. Define raw color values here, then use semantic roles in components. Choose the appropriate step in a shared mapping instead of changing opacity locally."
       >
         <div className="flex flex-col gap-6">
           {PALETTE.map((hue) => (

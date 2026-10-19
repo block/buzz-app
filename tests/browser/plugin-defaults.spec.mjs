@@ -1,3 +1,4 @@
+import { openCommunityPicker } from "./navigation.mjs";
 import { openPage, selectSettingsSection } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
@@ -6,7 +7,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function plugins(page) {
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await selectSettingsSection(page, "Plugins");
+  await selectSettingsSection(page, "Manage plugins");
 }
 
 // Representative app wiring: real catalogs -> Settings switches -> sidebar page,
@@ -73,6 +74,7 @@ test("Community admin toggle removes and restores the working Invite destination
     exact: true,
   });
   const menu = async () => {
+    await openCommunityPicker(page);
     await button(page, "Switch to Primary").click({ button: "right" });
     await expect(
       page.getByRole("menu", { name: "Actions for Primary" }),

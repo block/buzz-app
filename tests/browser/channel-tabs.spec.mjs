@@ -7,7 +7,7 @@ test.use({
   productionBroker: true,
   companionFixture: true,
   readState: true,
-  sessionChannels: ["beta"],
+  soloChannels: ["beta"],
   historyCounts: { alpha: 2, beta: 1 },
 });
 
@@ -96,7 +96,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     exact: true,
   });
   const composer = beta.getByRole("textbox", {
-    name: "Message this session",
+    name: "Message your agents",
     exact: true,
   });
   await expect(composer).toBeVisible();
@@ -253,12 +253,12 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
 });
 
 // Overflow and native keyboard reveal need actual tab-strip geometry. Six
-// linked sessions supply real content tabs rather than removed blank tabs.
+// linked Solo chats supply real content tabs rather than removed blank tabs.
 test.describe("crowded content tabs", () => {
   const ids = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"];
   test.use({
     channelIds: ids,
-    sessionChannels: ids.slice(1),
+    soloChannels: ids.slice(1),
     historyCounts: Object.fromEntries(ids.map((id) => [id, 1])),
   });
   test("tab overflow stays horizontal and keyboard navigation reveals its destination", async ({

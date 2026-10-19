@@ -7,7 +7,8 @@
 import type { Memory } from "../../buzz-mcp/client";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
-import { meChat } from "./me-chat";
+import { ownerCanvas } from "../agent-harness/project";
+import { soloChat } from "./solo-chat";
 
 /** The agent's memory entries, and whether some may be missing. */
 export type MemoryListing = Readonly<{
@@ -52,9 +53,13 @@ export type AgentReads = Readonly<{
   /** The agent's memory, or only entry `slug` when given; `partial` when the
    * entries may be incomplete. `signal` stops the read. */
   memoryListing(signal: AbortSignal, slug?: string): Promise<MemoryListing>;
-  /** Whether a mention in this channel continues `owner`'s Me chat. Only the
+  /** The channel's current Canvas text when `owner`, or an agent they
+   * attest, wrote it; undefined when it has none, someone else wrote it, or
+   * the reader cannot read Canvas. */
+  canvas?(channelId: string, owner: string): Promise<string | undefined>;
+  /** Whether a mention in this channel continues `owner`'s Solo chat. Only the
    * owner's own connection can tell; other readers answer false. */
-  meChat(
+  soloChat(
     owner: string,
     channelId: string,
     signal: AbortSignal,
@@ -101,8 +106,10 @@ export function ownerReads(
     workflowAuthority: () => session.workflowAuthority,
     relayAuthor: () => session.relayAuthor,
     audienceAuthorityCommunity: () => session.audienceAuthorityCommunity,
-    meChat: (owner: string, channelId: string, signal: AbortSignal) =>
-      meChat(() => relay, owner, channelId, signal),
+    soloChat: (owner: string, channelId: string, signal: AbortSignal) =>
+      soloChat(() => relay, owner, channelId, signal),
+    canvas: (channelId: string, owner: string) =>
+      ownerCanvas(session.canvas, owner, channelId),
     memoryListing: (signal: AbortSignal, slug?: string) =>
       session.agentMemories.read(pubkey, signal, slug),
   });

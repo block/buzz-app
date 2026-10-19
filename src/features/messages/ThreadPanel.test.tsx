@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { StrictMode } from "react";
@@ -83,7 +84,7 @@ vi.mock("./MessageComposer", () => ({
     channelId,
     scope,
     onSend,
-    personalConversation,
+    ownSoloConversation,
     activityClickOpensPanel,
     disabled,
     placeholder,
@@ -93,7 +94,7 @@ vi.mock("./MessageComposer", () => ({
       data-root={threadRootId}
       data-channel={channelId}
       data-scope={scope}
-      data-personal={personalConversation}
+      data-own-solo={ownSoloConversation}
       data-direct-activity={activityClickOpensPanel}
       data-disabled={disabled}
       data-placeholder={placeholder}
@@ -1304,31 +1305,31 @@ it("inline Inbox reveal opts into exact reader and composes origin action withou
   ).not.toHaveAttribute("data-positioning");
 });
 
-it("passes the Me recipient, readiness and direct Activity contract through to thread composition", () => {
+it("passes the Solo recipient, readiness and direct Activity contract through to thread composition", () => {
   const h = messagesHarness();
   const view = render(
     <ThreadPanel
       {...h.props}
-      personalConversation
+      ownSoloConversation
       activityClickOpensPanel
       disabled
     />,
   );
   const composer = screen.getByRole("region", { name: "Composer" });
-  expect(composer).toHaveAttribute("data-personal", "true");
+  expect(composer).toHaveAttribute("data-own-solo", "true");
   expect(composer).toHaveAttribute("data-direct-activity", "true");
   expect(composer).toHaveAttribute("data-disabled", "true");
   view.rerender(
     <ThreadPanel
       {...h.props}
-      personalConversation
+      ownSoloConversation
       activityClickOpensPanel
       disabled={false}
     />,
   );
   expect(composer).toHaveAttribute("data-disabled", "false");
   view.rerender(<ThreadPanel {...h.props} />);
-  expect(composer).not.toHaveAttribute("data-personal");
+  expect(composer).not.toHaveAttribute("data-own-solo");
   expect(composer).not.toHaveAttribute("data-direct-activity");
 });
 
@@ -1336,7 +1337,7 @@ it.each([
   { channelType: "stream" as const, joinable: true },
   { channelType: "forum" as const, joinable: true },
   { channelType: "stream" as const, archived: true as const, joinable: false },
-  { channelType: "session" as const, joinable: false },
+  { channelType: "solo" as const, joinable: false },
 ])(
   "replaces the reply composer for a $channelType preview (joinable: $joinable)",
   ({ joinable, ...metadata }) => {
@@ -1582,6 +1583,47 @@ it("a workspace diverts a wrong-root link without replacing its confirmed reader
   expect(h.thread).toHaveBeenCalledOnce();
   expect(screen.getByRole("region", { name: "Composer" })).toBe(editor);
   expect(next.complete).not.toHaveBeenCalled();
+});
+
+it("a retained reader reveals its exact selected message, again for each new request", async () => {
+  const h = messagesHarness();
+  const reply = { ...row, id: "d".repeat(64), content: "the reply" };
+  h.snapshot.replies = [reply];
+  h.snapshot.target = reply;
+  h.snapshot.targetStatus = "ready";
+  const props = h.props as ThreadPanelProps;
+  Object.assign(props, {
+    messageId: reply.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  expect(h.thread).toHaveBeenCalledWith("channel", reply.id, { exact: true });
+  const revealedReply = () =>
+    vi
+      .mocked(HTMLElement.prototype.scrollIntoView)
+      .mock.contexts.some(
+        (context) => (context as HTMLElement).dataset.messageId === reply.id,
+      );
+  await waitFor(() => expect(revealedReply()).toBe(true));
+  vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+  // The same message again: the retained reader selects it and reveals anew.
+  props.revealRequest = 2;
+  h.rerenderProps();
+  await waitFor(() =>
+    expect(h.view.retarget).toHaveBeenCalledWith(
+      reply.id,
+      expect.any(AbortSignal),
+    ),
+  );
+  await waitFor(() => expect(revealedReply()).toBe(true));
+  expect(h.thread).toHaveBeenCalledOnce();
+  // A rerender without a new request does not reveal again.
+  vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+  h.rerenderProps();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(revealedReply()).toBe(false);
 });
 
 it("an unrouted retained opening retries allocation locally", () => {

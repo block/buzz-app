@@ -22,6 +22,7 @@ import { ownerReads } from "./reads";
 // records with its type as the `runtime` tag, so every device of the owner's
 // can show it: as here, hosted, or on another device.
 import { migrateAgentStorage } from "./migrate-storage";
+import { migrateWatchFilters } from "./migrate-filter";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
@@ -105,10 +106,10 @@ import {
   type Team,
   type Unfinished,
 } from "./store";
-import { meChat } from "./me-chat";
+import { soloChat } from "./solo-chat";
 import { readCheckpoints, writeCheckpoints } from "./catch-up";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
-import { nameMeChat } from "./me-chat-name";
+import { nameSoloChat } from "./solo-chat-name";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -205,7 +206,7 @@ export type AgentTab<Config = unknown> = Readonly<{
   component: ComponentType<AgentViewProps<Config>>;
 }>;
 /** One of an agent's conversation sessions on this device. Without `root` it
- * is the channel's one session: a channel-scoped agent's, a DM's or a Me
+ * is the channel's one session: a channel-scoped agent's, a DM's or a Solo
  * chat's; with it, the thread's. `at` is when it last took in a message
  * or ended a turn, in milliseconds. `status` is the type's latest
  * observation of it while running here, such as "Working", "Idle" or a
@@ -429,7 +430,7 @@ export type Delivery<Config = unknown> = Readonly<{
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
   /** The harness's own title for this mention's conversation. The host may
-   * name a Me chat with it once; the type need not know whether it did. */
+   * name a Solo chat with it once; the type need not know whether it did. */
   named?(title: string): void;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
@@ -1014,6 +1015,7 @@ export class AgentsService extends Service implements Agents {
     this.contributions = createContributions<AgentType>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     migrateAgentStorage(storage);
+    migrateWatchFilters(storage);
     this.records = readRecords(storage);
     this.unfinished = Object.freeze(readUnfinished(storage));
     this.unarchiving = readArchiveUnchecked(storage);
@@ -1119,19 +1121,19 @@ export class AgentsService extends Service implements Agents {
       displayName: (agent, pubkey) => this.displayName(agent, pubkey),
       custody: native,
       activity: localActivity,
-      meChat: (agent, channel, signal) =>
-        meChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
+      soloChat: (agent, channel, signal) =>
+        soloChat(() => this.relay(agent.pubkey), agent.owner, channel, signal),
       remembered: (pubkey, slug, body) =>
         this.coreMemory.wrote(pubkey, slug, body),
       finished: (pubkey) => void this.coreMemory.refresh(pubkey),
       named: (agent, event, title) =>
-        void nameMeChat(
+        void nameSoloChat(
           this.relay(agent.pubkey),
           agent.owner,
           agent.pubkey,
           event,
           title,
-        ).catch((error) => console.warn("Couldn't name the Me chat", error)),
+        ).catch((error) => console.warn("Couldn't name the Solo chat", error)),
     });
     ctx.effect(() => {
       const stops = [

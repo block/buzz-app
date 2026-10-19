@@ -95,7 +95,7 @@ rows show only ready, checking, attention, or a neutral unavailable state. The
 Agents host owns the submenu, modal framing, focus restoration and contribution
 error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
-dialog can close. Disabled or unloaded types remain in Settings → Plugins.
+dialog can close. Disabled or unloaded types remain in Settings → Plugins → Manage plugins.
 
 Workspace, instructions and session scope are always per-agent. Claude and Codex
 model/thinking choices may instead be blank, which means inherited rather than
@@ -152,7 +152,7 @@ process status, so a stopped agent is as selectable as a running one.
 ## Shared agent selection
 
 `session.agentChoices` is the canonical read-only selection projection. Mention
-pickers, New message, the session agent chooser, channel member invitations and
+pickers, New message, Solo chat agent tagging, channel member invitations and
 their admission checks use it, not `agentLibrary` directly. It combines two
 sources, deduplicated by public key:
 
@@ -176,7 +176,7 @@ on demand. Ordinary mentions subscribe without loading the library
 adds no runner, polling, directory scan or signing authority, and session
 retirement revokes its candidates.
 
-`templates` serves saved channel-kit templates and section defaults (session setup
+`templates` serves saved channel-kit templates and project defaults (Solo chat setup
 resolves lineups through it with `templateAgentChoices`). Its identities are the
 local agents once Agents is bound, and the library only while the local source is
 `unavailable`. It never falls back to the library after a local error.
@@ -188,13 +188,13 @@ Archive visibility has one owner. The projection reads `session.archives` and
 exposes `identities` (every known agent, including archived ones, for facts about
 existing content) and `selectable` (known-archived agents removed; unknown state
 fails open; the viewer is never hidden). Every forward-looking agent chooser uses
-`selectable`, including the session agent picker. Session admission in
-`workSessions.addAgents` rejects every known-archived key, including parent-channel
-members; unknown archive state keeps the library and parent-member rules. Selectors
+`selectable`, including Solo chat agent tagging. Admission in
+`channelWrites.addAgents` rejects every known-archived key it would add; unknown archive
+state keeps the library rule. Selectors
 demand the lazy archive read through `useAgentChoices(session, includeLegacy, true)`,
-and the session picker shows an archive read failure with Retry. The same base rule,
+and the agent picker shows an archive read failure with Retry. The same base rule,
 `archiveHides` (`features/relay/identity-archives.ts`), filters mention recipients,
-channel member invitations and member addition, session sharing and search. Do not
+channel member invitations and member addition, Solo chat sharing and search. Do not
 reimplement the rule per surface.
 
 Agent artwork also has one owner: `createAgentLibrary` publishes snapshots where
@@ -208,12 +208,12 @@ In streams and forums, nonmember mentions also offer people from the selected
 community directory and, when the viewer can add members, the viewer's own agents
 (`managed` or not) that are not in the channel. Send asks before adding them; selection grants
 no access. A pasted mention of a known profile is offered the same way. A DM can
-name outsiders but never notifies them. Session invitations keep their existing
+name outsiders but never notifies them. Solo chat invitations keep their existing
 rules, including library choices. Shared choice visibility is not permission to
 grant access.
 
 Regression source: `features/agents/choices.test.ts`, plus the chooser, composer
-and session-admission tests. They exercise shared selection and session admission,
+and Solo chat admission tests. They exercise shared selection and Solo chat admission,
 not native execution.
 
 ## Exact channel-member mentions
@@ -250,7 +250,7 @@ The composer accepts these people:
 | --- | --- |
 | Channel or forum | Anyone. Before sending, the app asks what to do about people who are not in the channel. |
 | DM | Anyone. People outside the DM are named but not notified. |
-| Session | Session members, plus your agents when the session invites agents. |
+| Solo chat | Chat members, plus your agents (a send adds the tagged ones). |
 | New DM, before it is created | Only the people you chose for the DM. |
 | Archived or read-only channel | Nobody. |
 
@@ -320,9 +320,9 @@ or the shared agent-choice projection (library and local agents), not a new look
 permission grant. Human recipients and
 plain typed names are not carried forward. The prefill is an ordinary scoped draft:
 channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
-**Settings → Agents → Messages → Remember mentioned agents** defaults on and is saved on this
+**Settings → Buzz → Agent setup → Agent behavior → Remember mentioned agents** defaults on and is saved on this
 device. Turning it off stops future prefills without changing the current draft;
-turning it back on does not restore old recipients. Session auto-recipient rules are
+turning it back on does not restore old recipients. Solo chat auto-recipient rules are
 unchanged. An outbox rejection preserves the original draft; acceptance is not proof
 of relay delivery or agent execution.
 
@@ -339,7 +339,7 @@ with up to four cached avatar thumbnails and a remainder count. Empty, oversized
 is no partial expansion. Reopen or change the query to refresh changed team
 choices. The resulting draft must fit the existing 32-mention and message-length
 limits. Selection never adds members: ordinary channels retain invite-on-send
-consent, DMs retain reference-only outsiders, and session admission remains
+consent, DMs retain reference-only outsiders, and Solo chat admission remains
 unchanged.
 
 The picker supports Up/Down navigation, Enter selection and Escape dismissal.
@@ -352,7 +352,7 @@ anyway** without add permission) sends those identities as separate `mention`
 reference tags, without adding or notifying them. Close or Escape keeps the draft. Existing member mentions still notify in a
 mixed send. Reference keys are validated and bounded to 32. Selection itself never
 invites or starts anyone; whether an agent answers a notification is up to its
-own runtime. DM and session admission paths remain separate. Current notification-recipient membership is checked at
+own runtime. DM and Solo chat admission paths remain separate. Current notification-recipient membership is checked at
 intent, before signing, and after signing before entering the transport publisher;
 retry/restored signed intent uses the same publisher check. Before **each**
 mention publication the session performs a bounded foreground finite read of this
@@ -477,9 +477,9 @@ full paths; the transcript retains the detail.
 
 While an agent this app runs works on a mention, the app publishes kind-20002
 typing signed by the agent every three seconds through its HTTP event route, in
-the mention's thread (in the channel itself for a chat in the owner's Me), so
+the mention's thread (in the channel itself for the owner's Solo chat), so
 the owner's other devices and everyone else in the channel see it working. It
-waits for the same Me-chat read as the turn, and shows nothing if the turn
+waits for the same Solo chat read as the turn, and shows nothing if the turn
 cannot tell where to answer. It stops with the turn, after three refused pulses
 in a row, or after 30 minutes; clients drop it when the agent replies or eight
 seconds after the last pulse. On the device running the agent, activity replaces that typing.
@@ -620,7 +620,7 @@ rewinding pagination. Unknown/capped/suspended membership hides history rather t
 erasing it; positive access can reveal it again. Agent removal and sign-out do not
 erase ciphertext; another account cannot open that partition.
 
-**Settings → Agents → Saved agent activity** has independent capture switches,
+**Settings → Local archive → Saved agent activity** has independent capture switches,
 activity retention and confirmed **Clear activity history** / **Clear turn metrics**
 actions for this account/community. Shortening retention requires confirmation.
 Turning capture off preserves saved rows. Clear advances a durable revision to
@@ -657,8 +657,8 @@ interrupted feed, not that an agent is idle.
 
 Select an active agent above the channel or thread composer, or its bubble under
 the triggering message: it opens the agent's profile on its Activity tab. In
-**Settings → Agents → Saved agent activity**, verify both capture switches and the
-host path. Disable the **Agent Activity** plugin in **Settings → Plugins**, give the
+**Settings → Local archive → Saved agent activity**, verify both capture switches and the
+host path. Disable the **Agent Activity** plugin in **Settings → Plugins → Manage plugins**, give the
 agent work, then re-enable: archive capture should continue independently, and
 restored rows must not claim the agent is working. Saved rows have no viewer in
 the app; inspect the archive file to confirm they remain.
@@ -755,7 +755,7 @@ archive history.
 The channel's **Channel actions → View channel usage** item opens a dedicated
 **Usage** tab in the channel's side pane. It is available only while this
 account has positive access to the current channel and the default-on Channel Usage
-plugin is enabled under Settings → Plugins. Closing the tab unmounts its
+plugin is enabled under Settings → Plugins → Manage plugins. Closing the tab unmounts its
 archive reader; disabling the plugin removes the tab and stops reads. It
 does not change metric capture or retention. Opening the Usage tab reads archive
 pages automatically until exhaustion or the 2,000-record limit; an early page

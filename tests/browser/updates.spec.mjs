@@ -26,17 +26,15 @@ async function nativeUpdater(
       window.isTauri = true;
       window.updaterCalls = [];
       window.checkResults = checkResults;
-      const plugins = ["channels", "github", "bestie", "projects"].map(
-        (name) => ({
-          manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
-          source: "bundled",
-          enabled: true,
-          revision: "bundled",
-          previous: null,
-          reloadable: false,
-          error: null,
-        }),
-      );
+      const plugins = ["channels", "github", "bestie", "repos"].map((name) => ({
+        manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
+        source: "bundled",
+        enabled: true,
+        revision: "bundled",
+        previous: null,
+        reloadable: false,
+        error: null,
+      }));
       let nextCallback = 0;
       let nextResource = 100;
       window.__TAURI_INTERNALS__ = {
@@ -106,7 +104,7 @@ async function openUpdates(page, app) {
   await page.goto(app.origin);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Updates").click();
+  await button(page, "Software updates").click();
   return page
     .getByRole("region", { name: "Software updates", exact: true })
     .getByRole("status");
@@ -273,7 +271,7 @@ test("the ready toast yields to Settings → Updates, which offers the same acti
 
   await button(page, "Appearance").click();
   await expect(toast).toBeVisible();
-  await button(page, "Updates").click();
+  await button(page, "Software updates").click();
   await expect(toast).toHaveCount(0);
 
   await button(page, "Update now").click();

@@ -262,8 +262,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         .expect("channel usage manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/github/manifest.json"))
             .expect("github manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/me/manifest.json"))
-            .expect("Me manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/inbox/manifest.json"))
             .expect("valid Inbox manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/reminders/manifest.json"))
@@ -272,7 +270,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("bestie manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/usage/manifest.json"))
             .expect("usage manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/projects/manifest.json"))
+        serde_json::from_str(include_str!("../../../src/bundled/repos/manifest.json"))
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
@@ -288,8 +286,6 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/feedback/manifest.json"))
             .expect("feedback manifest"),
-        serde_json::from_str(include_str!("../../../src/bundled/sessions/manifest.json"))
-            .expect("sessions manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/hosted-communities/manifest.json"
         ))
@@ -322,16 +318,14 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.emoji"
             | "buzz.github"
             | "buzz.pairing"
-            | "buzz.me"
             | "buzz.inbox"
             | "buzz.reminders"
-            | "buzz.projects"
+            | "buzz.repos"
             | "buzz.agents"
             | "buzz.claude-code"
             | "buzz.codex"
             | "buzz.goose"
             | "buzz.workflows"
-            | "buzz.sessions"
             | "block.hosted-communities"
             | "block.builderlab"
             | "buzz.moderation"

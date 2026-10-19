@@ -26,7 +26,6 @@ import type { RelaySession } from "../relay/session";
 import {
   addressedTo,
   CHAT_KINDS,
-  compileFilter,
   tagsAgent,
   watchMatches,
   type AttentionObject,
@@ -200,9 +199,7 @@ const classifications = (trigger: Trigger) =>
       ? trigger.events.length
       : 0;
 const sizeOf = (event: RelayEvent) => JSON.stringify(event).length;
-type CompiledWatch = Omit<WatchTrigger, "type" | "event"> & {
-  filter?: ReturnType<typeof compileFilter>;
-};
+type CompiledWatch = Omit<WatchTrigger, "type" | "event">;
 /** One agent's runtime, for as long as its identity exists. Edits do not
  * replace it: each job reads the agent as it is when the job starts, and the
  * watches are recompiled only when its attention changes. */
@@ -381,14 +378,18 @@ export type RunnerHost = {
     | undefined;
   /** This device's view of each agent's work. */
   activity: LocalAgentActivity;
-  /** Whether a mention in `channel` continues the agent's owner's Me chat,
+  /** Whether a mention in `channel` continues the agent's owner's Solo chat,
    * so its turn answers, and shows typing, at channel top level. */
-  meChat(agent: Agent, channel: string, signal: AbortSignal): Promise<boolean>;
+  soloChat(
+    agent: Agent,
+    channel: string,
+    signal: AbortSignal,
+  ): Promise<boolean>;
   /** The agent wrote this memory through its handle. */
   remembered(pubkey: string, slug: string, body: string): void;
   /** A run of the agent ended, with everything it handed to `workingUntil`. */
   finished(pubkey: string): void;
-  /** A harness's title for the conversation a mention started; may name a Me chat. */
+  /** A harness's title for the conversation a mention started; may name a Solo chat. */
   named(agent: Agent, event: RelayEvent, title: string): void;
 };
 
@@ -572,7 +573,6 @@ export class AgentRunners {
         slug: object.slug,
         watch,
         ...(interest?.type === "interest" ? { interest } : {}),
-        ...(watch.filter ? { filter: compileFilter(watch.filter) } : {}),
       });
     }
     runner.compiled = { attention: agent.attention, watches };
@@ -1431,14 +1431,14 @@ export class AgentRunners {
         ? [{ type: "mention", event }]
         : [];
     if (!agent.attentionEnabled) return [];
-    const matches = this.watches(runner, agent).filter(({ watch, filter }) =>
-      watchMatches(watch, event, filter),
+    const matches = this.watches(runner, agent).filter(({ watch }) =>
+      watchMatches(watch, event),
     );
     if (!matches.length) return [];
     const member = this.host.member(agent, event);
     if (member === undefined) return "held";
     return member
-      ? matches.map(({ filter: _, ...match }) => ({
+      ? matches.map((match) => ({
           type: "watch",
           event,
           ...match,
@@ -1464,7 +1464,7 @@ export class AgentRunners {
         ({ slug }) => slug === trigger.slug,
       );
       const events = trigger.events.filter(
-        ({ event }) => match && watchMatches(match.watch, event, match.filter),
+        ({ event }) => match && watchMatches(match.watch, event),
       );
       if (!match || !events.length) return undefined;
       return {
@@ -1480,17 +1480,16 @@ export class AgentRunners {
       };
     }
     const match = this.watches(runner, agent).find(
-      ({ slug, watch, filter }) =>
-        slug === trigger.slug && watchMatches(watch, trigger.event, filter),
+      ({ slug, watch }) =>
+        slug === trigger.slug && watchMatches(watch, trigger.event),
     );
     if (!match) return undefined;
-    const { filter: _, ...rest } = match;
     return {
       ...job,
       trigger: {
         type: "watch",
         event: trigger.event,
-        ...rest,
+        ...match,
         ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
       },
     };
@@ -1890,7 +1889,7 @@ export class AgentRunners {
         // Straight to custody, so pulses stay out of what it wrote.
         async (pulse) => this.require().publish(runner.pubkey, pulse),
         // Where its turn answers, read the same way.
-        this.host.meChat(agent, channel, runner.controller.signal),
+        this.host.soloChat(agent, channel, runner.controller.signal),
         event,
         channel,
         runner.typing,

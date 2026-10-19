@@ -510,8 +510,8 @@
     var(--art-plugin-communication-start),
     var(--art-plugin-communication-end)
   );
-  --art-plugin-agents-start: var(--purple-9);
-  --art-plugin-agents-end: var(--blue-11);
+  --art-plugin-agents-start: var(--blue-9);
+  --art-plugin-agents-end: var(--purple-9);
   --art-plugin-agents-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-agents-start),

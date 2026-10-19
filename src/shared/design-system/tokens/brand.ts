@@ -23,10 +23,10 @@ export const BRAND_GRADIENTS = [
   {
     name: "Agents",
     category: "agents",
-    start: "purple-9",
-    end: "blue-11",
+    start: "blue-9",
+    end: "purple-9",
     compromise:
-      "Violet maps to purple; indigo maps to blue. Exact source hues are unavailable.",
+      "Blue 9 is lighter at the top; purple 9 approximates violet at the bottom in both themes.",
   },
   {
     name: "Agent tools",

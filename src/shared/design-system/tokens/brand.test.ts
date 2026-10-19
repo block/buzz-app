@@ -54,3 +54,29 @@ it("registers all public artwork with palette ownership and flags the flat compr
   expect(tools?.compromise).toContain("flat");
   expect(css).not.toContain("PLUGIN ARTWORK PALETTE");
 });
+
+it("keeps Agents blue above violet with a lighter top in both themes", () => {
+  expect(
+    BRAND_GRADIENTS.find(({ category }) => category === "agents"),
+  ).toMatchObject({ start: "blue-9", end: "purple-9" });
+  const luminance = (hex: string) => {
+    const channels = [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)]
+      .map((part) => parseInt(part, 16) / 255)
+      .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return channels.reduce(
+      (sum, channel, index) =>
+        sum + channel * ([0.2126, 0.7152, 0.0722][index] ?? 0),
+      0,
+    );
+  };
+  for (const mode of [light, dark]) {
+    const value = (token: string) => {
+      const match = mode.match(new RegExp(`--${token}: #([a-f0-9]{6});`));
+      if (!match?.[1]) throw new Error(`Missing palette token ${token}`);
+      return match[1];
+    };
+    expect(luminance(value("blue-9"))).toBeGreaterThan(
+      luminance(value("purple-9")),
+    );
+  }
+});

@@ -432,11 +432,13 @@ or literal artwork colors are introduced. Selection first minimizes circular hue
 distance to each light-mode family's step 9, then minimizes Euclidean OKLab
 distance to the old endpoint among that family's twelve light steps. The same
 step references are used in dark mode, preserving the palette's theme behavior.
+Agents deliberately uses blue 9 instead of the nearest blue 11 so the top stays
+lighter than the violet/purple bottom in both themes.
 
 | Category | Start → end | Compromise |
 | --- | --- | --- |
 | Communication | cyan 11 → blue 11 | Theme-dependent brightness replaces the old matched luminance. |
-| Agents | purple 9 → blue 11 | Violet/indigo are approximated. |
+| Agents | blue 9 → purple 9 | Lighter blue at the top, violet approximated by purple at the bottom. |
 | Agent tools | purple 9 → purple 9 | Fuchsia has no family; the gradient becomes flat. |
 | Developer tools & integrations | red 10 → purple 9 | Coral/pink are approximated. |
 | People & communities | red 10 → orange 11 | Scarlet is approximated. |

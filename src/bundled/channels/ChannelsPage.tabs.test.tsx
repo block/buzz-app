@@ -368,13 +368,16 @@ it("opens another conversation's tab in its channel, but not the current channel
   await h.user.click(
     (await menu("Beta")).getByRole("menuitem", { name: "Open in channel" }),
   );
-  expect(open).toHaveBeenLastCalledWith({
-    version: 1,
-    kind: "conversation",
-    scope: {
-      viewer: h.viewer,
-      communityOrigin: h.scope.slice(0, -(h.viewer.length + 1)),
-    },
-    channelId: "beta",
-  });
+  const scope = {
+    viewer: h.viewer,
+    communityOrigin: h.scope.slice(0, -(h.viewer.length + 1)),
+  };
+  await vi.waitFor(() =>
+    expect(open).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "beta",
+    }),
+  );
 });

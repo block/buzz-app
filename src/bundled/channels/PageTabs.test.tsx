@@ -299,13 +299,18 @@ it("opens a tab's conversation in its channel from the tab's menu", async () => 
   const page = fixture();
   page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
   const scope = { viewer: "viewer", communityOrigin: "origin" };
-  await user.pointer({
-    keys: "[MouseRight]",
-    target: screen.getByRole("tab", { name: /Root text/ }),
+  // The menu has handed focus back to the tab, so the destination can take it.
+  let focused: Element | null = null;
+  vi.mocked(page.navigation.open).mockImplementation(async () => {
+    focused = document.activeElement;
+    return { status: "opened" };
   });
+  const thread = screen.getByRole("tab", { name: /Root text/ });
+  await user.pointer({ keys: "[MouseRight]", target: thread });
   await user.click(
     await screen.findByRole("menuitem", { name: "Open in channel" }),
   );
+  await vi.waitFor(() => expect(focused).toBe(thread));
   expect(page.navigation.open).toHaveBeenLastCalledWith({
     version: 1,
     kind: "conversation",
@@ -322,10 +327,12 @@ it("opens a tab's conversation in its channel from the tab's menu", async () => 
   await user.click(
     await screen.findByRole("menuitem", { name: "Open in channel" }),
   );
-  expect(page.navigation.open).toHaveBeenLastCalledWith({
-    version: 1,
-    kind: "conversation",
-    scope,
-    channelId: "beta",
-  });
+  await vi.waitFor(() =>
+    expect(page.navigation.open).toHaveBeenLastCalledWith({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: "beta",
+    }),
+  );
 });

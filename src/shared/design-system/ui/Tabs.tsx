@@ -281,6 +281,9 @@ function TabMenu({
   const trigger = useRef<HTMLElement>(null);
   const [anchor, setAnchor] = useState<HTMLElement>();
   const closingAll = useRef(false);
+  // A host action runs once the menu has closed, from its tab, so a
+  // destination it opens can take focus from there.
+  const afterClose = useRef<() => void>(undefined);
   // Middle-click closes a closable tab, without the browser's own default.
   const item = {
     className: "buzz-tabs-item",
@@ -302,6 +305,14 @@ function TabMenu({
       onOpenChange={(next) => {
         if (next) closingAll.current = false;
         setOpen(next);
+      }}
+      onOpenChangeComplete={(next) => {
+        if (next) return;
+        const action = afterClose.current;
+        afterClose.current = undefined;
+        if (!action) return;
+        trigger.current?.querySelector<HTMLElement>('[role="tab"]')?.focus();
+        action();
       }}
     >
       <ContextMenuTrigger
@@ -337,7 +348,12 @@ function TabMenu({
         }
       >
         {actions?.map((action) => (
-          <MenuItem key={action.label} onClick={action.run}>
+          <MenuItem
+            key={action.label}
+            onClick={() => {
+              afterClose.current = action.run;
+            }}
+          >
             {action.label}
           </MenuItem>
         ))}

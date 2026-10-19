@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { selectCommunity } from "./navigation.mjs";
 test.use({ pairingFixture: true });
 async function settings(page, app) {
   await open(page, app);
@@ -270,9 +271,7 @@ test("Personal space pairs with a manually entered community address", async ({
   app,
 }) => {
   await open(page, app);
-  await page
-    .getByRole("button", { name: "Personal space", exact: true })
-    .click();
+  await selectCommunity(page, "Personal space");
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   const pairing = page

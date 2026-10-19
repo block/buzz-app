@@ -170,9 +170,9 @@ test("settings share a centered, bounded column and keep controls contained acro
             const bounds = root.getBoundingClientRect();
             return [...root.querySelectorAll("*")]
               .filter((node) => {
-                // Message colors intentionally scroll horizontally at large text sizes.
+                // Accent colors intentionally scroll horizontally at large text sizes.
                 // Check the scrollport here; exercise each clipped swatch below.
-                if (node.parentElement?.closest("[data-message-colors]"))
+                if (node.parentElement?.closest("[data-accent-colors]"))
                   return false;
                 if (
                   !node.checkVisibility() ||
@@ -196,16 +196,16 @@ test("settings share a centered, bounded column and keep controls contained acro
       )
       .toEqual([]);
     if (name === "Appearance") {
-      for (const swatch of await agents
-        .getByRole("button", { name: / message color$/ })
-        .all()) {
+      const swatches = agents.getByRole("button", { name: / accent color$/ });
+      await expect(swatches.first()).toBeVisible();
+      for (const swatch of await swatches.all()) {
         await swatch.focus();
         await expect(swatch).toBeFocused();
         await expect
           .poll(() =>
             swatch.evaluate((node) => {
               const bounds = node
-                .closest("[data-message-colors]")
+                .closest("[data-accent-colors]")
                 .getBoundingClientRect();
               const box = node.getBoundingClientRect();
               return box.left >= bounds.left && box.right <= bounds.right;

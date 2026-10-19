@@ -136,11 +136,6 @@ export function AppearanceSettings({
               </fieldset>
             }
           />
-        </SettingsGroup>
-      </div>
-      <div className="mt-section-gap">
-        <InlineHeader title="Conversations" />
-        <SettingsGroup>
           <PreferenceRow
             title="Accent color"
             trailing={(label) => (
@@ -201,6 +196,11 @@ export function AppearanceSettings({
               />
             )}
           />
+        </SettingsGroup>
+      </div>
+      <div className="mt-section-gap">
+        <InlineHeader title="Conversations" />
+        <SettingsGroup>
           <PreferenceRow
             title="Open threads in"
             subtitle="New threads open here. Already-open threads stay where you placed them."

@@ -204,3 +204,12 @@ it("retargets an already-open community and ignores the prior session after swit
   stop();
   expect(h.project).toHaveBeenCalledTimes(calls);
 });
+it("stays off for coordination between agents and lights for the next message to everyone", () => {
+  const h = setup();
+  h.bind();
+  h.grant();
+  h.emit([message(h.peer, "room", "Progress", 11, [["audience", "agents"]])]);
+  expect(h.project.mock.calls).toEqual([[false]]);
+  h.emit([message(h.peer, "room", "Done", 12)]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+});

@@ -55,6 +55,12 @@ it("chooses a filter with the keyboard and appends hidden channels below its opt
   await user.click(trigger);
   await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
   const quiet = await screen.findByRole("menuitem", { name: "Quiet channel" });
+  expect(
+    within(screen.getByRole("group", { name: "Hidden by filter" })).getByRole(
+      "menuitem",
+      { name: "Quiet channel" },
+    ),
+  ).toBe(quiet);
   const popup = quiet.closest('[role="menu"]');
   expect(popup?.querySelectorAll('[role^="menuitem"]')).toHaveLength(4);
   expect(popup?.querySelector('[role="separator"]')).toBeInTheDocument();

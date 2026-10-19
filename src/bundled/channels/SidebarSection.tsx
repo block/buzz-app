@@ -9,6 +9,8 @@ import {
   type Ref,
 } from "react";
 import {
+  MenuGroup,
+  MenuGroupLabel,
   MenuIcon,
   MenuItem,
   MenuPopup,
@@ -285,34 +287,39 @@ export function SidebarSection({
                       channels.rows.length > 0 && (
                         <>
                           <MenuSeparator />
-                          {channels.rows.map((channel) => {
-                            const select = () => {
-                              onToggle(true);
-                              channels.select(channel.id);
-                              setMenuOpen(false);
-                            };
-                            return session ? (
-                              <ChannelSidebarMenuItem
-                                key={channel.id}
-                                channel={channel}
-                                session={session}
-                                selected={channels.selected === channel.id}
-                                onSelect={select}
-                              />
-                            ) : (
-                              <MenuItem
-                                key={channel.id}
-                                aria-current={
-                                  channels.selected === channel.id
-                                    ? "page"
-                                    : undefined
-                                }
-                                onClick={select}
-                              >
-                                {channel.name}
-                              </MenuItem>
-                            );
-                          })}
+                          <MenuGroup>
+                            <MenuGroupLabel emphasis="quiet">
+                              Hidden by filter
+                            </MenuGroupLabel>
+                            {channels.rows.map((channel) => {
+                              const select = () => {
+                                onToggle(true);
+                                channels.select(channel.id);
+                                setMenuOpen(false);
+                              };
+                              return session ? (
+                                <ChannelSidebarMenuItem
+                                  key={channel.id}
+                                  channel={channel}
+                                  session={session}
+                                  selected={channels.selected === channel.id}
+                                  onSelect={select}
+                                />
+                              ) : (
+                                <MenuItem
+                                  key={channel.id}
+                                  aria-current={
+                                    channels.selected === channel.id
+                                      ? "page"
+                                      : undefined
+                                  }
+                                  onClick={select}
+                                >
+                                  {channel.name}
+                                </MenuItem>
+                              );
+                            })}
+                          </MenuGroup>
                         </>
                       )}
                   </MenuSubmenuPopup>

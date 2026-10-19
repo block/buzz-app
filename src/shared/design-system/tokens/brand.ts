@@ -15,10 +15,10 @@ export const BRAND_GRADIENTS = [
   {
     name: "Communication",
     category: "communication",
-    start: "cyan-11",
-    end: "blue-11",
+    start: "cyan-9",
+    end: "blue-9",
     compromise:
-      "Cyan and blue use existing families; their different step-11 theme values change the balance.",
+      "Cyan to blue uses existing solid-color steps for a visible cool hue transition.",
   },
   {
     name: "Agents",
@@ -31,32 +31,32 @@ export const BRAND_GRADIENTS = [
   {
     name: "Agent tools",
     category: "agent-tools",
-    start: "purple-9",
+    start: "red-9",
     end: "purple-9",
     compromise:
-      "Fuchsia and purple both map to purple 9: this category becomes a flat fill.",
+      "Red approximates the missing fuchsia endpoint while preserving a distinct transition into purple.",
   },
   {
     name: "Developer tools & integrations",
     category: "developer-tools-and-integrations",
-    start: "red-10",
+    start: "orange-9",
     end: "purple-9",
     compromise:
-      "Coral maps to red; pink maps to purple. The transition is red to purple.",
+      "Orange approximates coral and purple approximates pink; the broader sweep preserves visible color variation.",
   },
   {
     name: "People & communities",
     category: "people-and-communities",
-    start: "red-10",
-    end: "orange-11",
-    compromise: "Scarlet maps to red; orange uses the existing orange family.",
+    start: "red-9",
+    end: "orange-9",
+    compromise: "Red approximates scarlet and transitions into orange.",
   },
   {
     name: "Productivity",
     category: "productivity",
-    start: "orange-11",
-    end: "amber-11",
+    start: "amber-9",
+    end: "green-9",
     compromise:
-      "Both original warm hues use existing orange and amber; no new yellow-green family.",
+      "Amber to green preserves the original warm-to-yellow-green intent using existing families.",
   },
 ] as const;

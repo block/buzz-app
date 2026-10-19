@@ -500,11 +500,11 @@
 }
 
 /* Plugin artwork aliases: existing palette steps own values in each theme.
-   Mapped by nearest light-mode hue family, then nearest OKLab step within it.
+   Distinct solid-color family pairs preserve visible hue variation.
    No fixed-luminance or 35-degree hue-sweep guarantee remains. */
 :root {
-  --art-plugin-communication-start: var(--cyan-11);
-  --art-plugin-communication-end: var(--blue-11);
+  --art-plugin-communication-start: var(--cyan-9);
+  --art-plugin-communication-end: var(--blue-9);
   --art-plugin-communication-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-communication-start),
@@ -517,29 +517,29 @@
     var(--art-plugin-agents-start),
     var(--art-plugin-agents-end)
   );
-  --art-plugin-agent-tools-start: var(--purple-9);
+  --art-plugin-agent-tools-start: var(--red-9);
   --art-plugin-agent-tools-end: var(--purple-9);
   --art-plugin-agent-tools-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-agent-tools-start),
     var(--art-plugin-agent-tools-end)
   );
-  --art-plugin-developer-tools-and-integrations-start: var(--red-10);
+  --art-plugin-developer-tools-and-integrations-start: var(--orange-9);
   --art-plugin-developer-tools-and-integrations-end: var(--purple-9);
   --art-plugin-developer-tools-and-integrations-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-developer-tools-and-integrations-start),
     var(--art-plugin-developer-tools-and-integrations-end)
   );
-  --art-plugin-people-and-communities-start: var(--red-10);
-  --art-plugin-people-and-communities-end: var(--orange-11);
+  --art-plugin-people-and-communities-start: var(--red-9);
+  --art-plugin-people-and-communities-end: var(--orange-9);
   --art-plugin-people-and-communities-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-people-and-communities-start),
     var(--art-plugin-people-and-communities-end)
   );
-  --art-plugin-productivity-start: var(--orange-11);
-  --art-plugin-productivity-end: var(--amber-11);
+  --art-plugin-productivity-start: var(--amber-9);
+  --art-plugin-productivity-end: var(--green-9);
   --art-plugin-productivity-gradient: linear-gradient(
     to bottom in oklch,
     var(--art-plugin-productivity-start),

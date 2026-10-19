@@ -428,21 +428,19 @@ existing minimum heights. The extra-small capsule keeps its caption role.
 ## Colorways and plugin gradients
 
 Plugin artwork endpoints reference existing palette steps. No new hue families
-or literal artwork colors are introduced. Selection first minimizes circular hue
-distance to each light-mode family's step 9, then minimizes Euclidean OKLab
-distance to the old endpoint among that family's twelve light steps. The same
-step references are used in dark mode, preserving the palette's theme behavior.
-Agents deliberately uses blue 9 instead of the nearest blue 11 so the top stays
-lighter than the violet/purple bottom in both themes.
+or literal artwork colors are introduced. Each category pairs two distinct
+families at their solid-color step 9, prioritizing visible color variation over
+independently rounding each endpoint to its nearest color. The same references
+are used in both themes. Agents keeps lighter blue above deeper violet/purple.
 
-| Category | Start → end | Compromise |
+| Category | Top → bottom | Compromise |
 | --- | --- | --- |
-| Communication | cyan 11 → blue 11 | Theme-dependent brightness replaces the old matched luminance. |
-| Agents | blue 9 → purple 9 | Lighter blue at the top, violet approximated by purple at the bottom. |
-| Agent tools | purple 9 → purple 9 | Fuchsia has no family; the gradient becomes flat. |
-| Developer tools & integrations | red 10 → purple 9 | Coral/pink are approximated. |
-| People & communities | red 10 → orange 11 | Scarlet is approximated. |
-| Productivity | orange 11 → amber 11 | Warm endpoint hues are approximated. |
+| Communication | cyan 9 → blue 9 | Existing cool hues. |
+| Agents | blue 9 → purple 9 | Purple approximates violet. |
+| Agent tools | red 9 → purple 9 | Red approximates fuchsia; avoids a flat purple fill. |
+| Developer tools & integrations | orange 9 → purple 9 | Coral/pink approximated with a broader warm-to-purple sweep. |
+| People & communities | red 9 → orange 9 | Red approximates scarlet. |
+| Productivity | amber 9 → green 9 | Existing families approximate warm-to-yellow-green intent. |
 
 The proposed registry entries are owned by Settings plugin catalog; their
 complete gradients compose palette-backed endpoints. There is no artwork-literal

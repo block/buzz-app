@@ -36,7 +36,7 @@ it("maps all artwork endpoints to existing family steps in both themes", () => {
   }
 });
 
-it("registers all public artwork with palette ownership and flags the flat compromise", () => {
+it("registers all public artwork with palette ownership and distinct hue families", () => {
   const roles = ROLE_GROUPS.flatMap(({ roles }) => roles);
   for (const gradient of BRAND_GRADIENTS)
     for (const part of ["start", "end", "gradient"]) {
@@ -47,11 +47,14 @@ it("registers all public artwork with palette ownership and flags the flat compr
         ),
       ).toMatchObject({ status: "proposed", owner: "Settings plugin catalog" });
     }
-  const tools = BRAND_GRADIENTS.find(
-    ({ category }) => category === "agent-tools",
-  );
-  expect(tools?.start).toBe(tools?.end);
-  expect(tools?.compromise).toContain("flat");
+  const pairs = new Set<string>();
+  for (const gradient of BRAND_GRADIENTS) {
+    const family = (step: string) => step.split("-")[0];
+    expect(family(gradient.start)).not.toBe(family(gradient.end));
+    const pair = `${gradient.start}/${gradient.end}`;
+    expect(pairs.has(pair)).toBe(false);
+    pairs.add(pair);
+  }
   expect(css).not.toContain("PLUGIN ARTWORK PALETTE");
 });
 

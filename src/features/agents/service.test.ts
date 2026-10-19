@@ -7842,6 +7842,39 @@ describe("Delete as a recoverable archive", () => {
     }
   });
 
+  it("blocks a proved member while another member's ownership can't be read, until the team is readable", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    relay.owns.mockImplementation(async (pubkey: string) => {
+      if (pubkey === birch) throw new Error("relay down");
+      return true;
+    });
+    const f = await setup({ identities: [here(alder), here(birch)] });
+    try {
+      await relay.remoteTeam("9d1e2f3a-4b5c-4d6e-8f7a-0b1c2d3e4f5a", [
+        alder,
+        birch,
+      ]);
+      const refresh = () =>
+        Promise.all(
+          relay.opens.mock.results.map((r) => r.value?.refreshTeams()),
+        );
+      await refresh();
+      mentionAlder(f, "unknown");
+      await settle();
+      expect(f.run).not.toHaveBeenCalled();
+      relay.owns.mockImplementation(async () => true);
+      await refresh();
+      mentionAlder(f, "readable");
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(f.run.mock.calls[0]?.[0].attempt.settings.team).toContain(
+        "TEAM RULE",
+      );
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
   it("refuses a Save from a synced team's form opened while it was unreadable", async () => {
     const relay = configRelay();
     communityFake.value = relay.opens;

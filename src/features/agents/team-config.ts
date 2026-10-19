@@ -219,7 +219,11 @@ export async function discoverTeams(
       unreadable: !proven || unknown,
       subject: teamArtifact(deps, id, channel.id),
       ...(proven && head ? { head: head.id } : {}),
-      members: channel.members && !unknown ? members : (prior?.members ?? []),
+      // An unknown lookup keeps every member already proved, here or before.
+      members:
+        channel.members && !unknown
+          ? members
+          : [...new Set([...(prior?.members ?? []), ...members])],
     });
   }
   return found;

@@ -18,6 +18,8 @@ export type ConversationTab =
       revealRequest?: number | undefined;
       /** False: seeing messages here marks none read; the opener decides. */
       markRead?: false | undefined;
+      /** Each new value focuses the composer. */
+      focusRequest?: number | undefined;
     }
   | {
       id: string;

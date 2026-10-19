@@ -63,7 +63,9 @@ vi.mock("./ChannelBody", () => ({
   ),
 }));
 vi.mock("../../features/messages/MessageComposer", () => ({
-  MessageComposer: () => <div>Composer content</div>,
+  MessageComposer: ({ focusRequest }: { focusRequest?: number }) => (
+    <div data-focus-request={focusRequest}>Composer content</div>
+  ),
 }));
 const owners: ReturnType<typeof createOutbox>[] = [];
 afterEach(() => {
@@ -268,6 +270,44 @@ it.each([false, true])(
     // A non-Reply opening resets the sequence; a later Reply may reuse number 1.
     mounted.rerender(<ConversationTab {...props} tab={{ ...tab }} />);
     expect(thread).toHaveAttribute("data-reply-request", "1");
+  },
+);
+
+it.each([false, true])(
+  "restored composer focus is not replayed but fresh requests are delivered (focusOnMount=%s)",
+  (focusOnMount) => {
+    const channel = { id: "beta", name: "Beta" };
+    const snapshot = { status: "ready", channels: [channel] };
+    const session = {
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+    } as unknown as RelaySession;
+    const tab = {
+      id: "beta-tab",
+      kind: "conversation" as const,
+      channelId: "beta",
+      focusRequest: 1,
+    };
+    const props = {
+      tab,
+      channel,
+      session,
+      scope: "composer-focus-test",
+      active: true,
+      focusOnMount,
+      openLink: () => false,
+      canOpenLink: () => false,
+      openThread: () => {},
+      close: () => {},
+    };
+    const mounted = render(<ConversationTab {...props} />);
+    const composer = screen.getByText("Composer content");
+    if (focusOnMount)
+      expect(composer).toHaveAttribute("data-focus-request", "1");
+    else expect(composer).not.toHaveAttribute("data-focus-request");
+    mounted.rerender(
+      <ConversationTab {...props} tab={{ ...tab, focusRequest: 2 }} />,
+    );
+    expect(composer).toHaveAttribute("data-focus-request", "2");
   },
 );
 

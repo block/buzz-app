@@ -29,6 +29,9 @@ vi.mock("./ConversationTab", () => ({
       data-message={tab.messageId}
       data-reveal={tab.revealRequest}
       data-mark-read={tab.kind === "conversation" ? tab.markRead : undefined}
+      data-focus={
+        tab.kind === "conversation" ? tab.focusRequest : tab.replyRequest
+      }
     >
       {tab.kind} in {channel.name}
     </p>
@@ -200,4 +203,20 @@ it("opens a thread at one of its messages", () => {
   page.open({ channelId: "alpha", threadId: "root" });
   expect(thread()).toHaveAttribute("data-message", "root");
   expect(thread()).toHaveAttribute("data-reveal", "2");
+});
+
+it("focuses the composer of each tab it opens, except at a message", () => {
+  const page = fixture();
+  const tab = () => screen.getByText("conversation in beta");
+  const thread = () => screen.getByText("thread in alpha");
+  page.open({ channelId: "beta" });
+  expect(tab()).toHaveAttribute("data-focus", "1");
+  page.open({ channelId: "beta" });
+  expect(tab()).toHaveAttribute("data-focus", "2");
+  page.open({ channelId: "beta", messageId: "post" });
+  expect(tab()).toHaveAttribute("data-focus", "2");
+  page.open({ channelId: "alpha", threadId: "root" }, { keep: true });
+  expect(thread()).toHaveAttribute("data-focus", "1");
+  page.open({ channelId: "alpha", threadId: "root", messageId: "reply" });
+  expect(thread()).toHaveAttribute("data-focus", "1");
 });

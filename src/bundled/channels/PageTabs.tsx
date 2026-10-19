@@ -116,27 +116,28 @@ export function PageTabs({
       // An open thread keeps its tab in whichever pane it was moved to.
       const existing =
         threadId && threadTab(tabState.tabs, channelId, threadId)?.id;
+      // Each open at a message asks the reader to show it again; any other
+      // open focuses the composer.
       if (threadId)
-        // Each open at a message asks the thread reader to show it again.
         secondary.openConversationThread(
           channelId,
           messageId ?? threadId,
           threadId,
-          messageId ? "reveal" : undefined,
+          messageId ? "reveal" : "reply",
         );
       else {
         const tab = `conversation:${channelId}`;
         tabState.setTabs((tabs) => {
           const previous = tabs.find((item) => item.id === tab);
-          // Each open at a message asks again, even for the same message.
-          const asked =
-            previous?.kind === "conversation" ? previous.revealRequest : 0;
+          const prior =
+            previous?.kind === "conversation" ? previous : undefined;
           const next: ConversationTab = {
             id: tab,
             kind: "conversation",
             channelId,
             ...(messageId && { messageId }),
-            revealRequest: (asked ?? 0) + (messageId ? 1 : 0),
+            revealRequest: (prior?.revealRequest ?? 0) + (messageId ? 1 : 0),
+            focusRequest: (prior?.focusRequest ?? 0) + (messageId ? 0 : 1),
             ...(markRead === false && { markRead: false }),
           };
           return previous

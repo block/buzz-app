@@ -68,6 +68,11 @@ export function ConversationTab({
       ? tab.revealRequest
       : undefined;
   const opening = tab.kind === "conversation" ? tab : undefined;
+  // Likewise a saved focus request.
+  const focus = opening?.focusRequest;
+  const restoredFocus = useRef(focusOnMount ? undefined : focus);
+  if (focus !== restoredFocus.current) restoredFocus.current = undefined;
+  const focusRequest = focus === restoredFocus.current ? undefined : focus;
   const target = opening?.messageId && asked ? opening.messageId : undefined;
   const revealRequest = target ? asked : undefined;
   const threadReveal = tab.kind === "thread" ? asked : undefined;
@@ -157,7 +162,10 @@ export function ConversationTab({
               }
               marksRead={opening?.markRead !== false}
             />
-            <ConversationComposer onSend={setSent} />
+            <ConversationComposer
+              onSend={setSent}
+              {...(focusRequest ? { focusRequest } : {})}
+            />
           </SoloColumn>
         )}
       </section>

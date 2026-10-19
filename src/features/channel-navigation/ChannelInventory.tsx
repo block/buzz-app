@@ -11,6 +11,7 @@ import {
   type ComponentProps,
 } from "react";
 import { ChannelLifecycleMenu } from "../../bundled/channels/ChannelLifecycleMenu";
+import { lifecycleNoun } from "../../bundled/channels/ChannelLifecycleDialog";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 import { ownSolo } from "../solo/labels";
 import type { RelayData } from "../relay/service";
@@ -64,6 +65,7 @@ import { useChannelLabels } from "../../bundled/channels/useChannelLabels";
 import { useHiddenDms } from "../../bundled/channels/useHiddenDms";
 import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
+import { useSidebarFilters } from "../../bundled/channels/useSidebarFilters";
 import {
   sidebarSections,
   isChannelSectionKey,
@@ -432,18 +434,55 @@ export function ChannelInventory({
         new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
       )
     : [];
+  const filteredSections = useSidebarFilters(
+    sections,
+    Object.fromEntries(
+      Object.entries(preferences.data?.filters ?? {}).map(([key, mode]) => [
+        key.startsWith("section:") ? `group:${key.slice(8)}` : key,
+        mode,
+      ]),
+    ),
+    current?.id,
+    queries.unread,
+    Object.fromEntries(
+      Object.entries(preferences.data?.activeWindowSeconds ?? {}).map(
+        ([key, seconds]) => [
+          key.startsWith("section:") ? `group:${key.slice(8)}` : key,
+          seconds,
+        ],
+      ),
+    ),
+    list.activityStatus === "ready",
+  );
+  // Menu dismissal may run before a moved row mounts at its new placement.
+  // Only an actual filter exclusion should return focus to a section summary.
+  const hiddenRowSections = useRef(new Map<string, string>());
+  useLayoutEffect(() => {
+    hiddenRowSections.current = new Map(
+      filteredSections.flatMap((section) =>
+        section.hiddenRows.map(({ id }) => [id, section.key] as const),
+      ),
+    );
+  }, [filteredSections]);
+  const channelSectionKey = useCallback(
+    (channelId: string) => {
+      const data = queries.sidebarPreferences.snapshot().data;
+      const sectionId = data?.assignments[channelId];
+      const channel = queries.channels
+        .list()
+        .channels.find((row) => row.id === channelId);
+      return data?.starred.includes(channelId)
+        ? "starred"
+        : sectionId
+          ? `group:${sectionId}`
+          : channel?.channelType === "dm"
+            ? "dms"
+            : "channels";
+    },
+    [queries],
+  );
   const focusChannelPlacement = (channelId: string) => {
-    const data = queries.sidebarPreferences.snapshot().data;
-    const sectionId = data?.assignments[channelId];
-    const channel = sidebarChannels.find((row) => row.id === channelId);
-    const sectionKey = data?.starred.includes(channelId)
-      ? "starred"
-      : sectionId
-        ? `group:${sectionId}`
-        : channel?.channelType === "dm"
-          ? "dms"
-          : "channels";
-    sidebar.toggle(sectionKey, true);
+    sidebar.toggle(channelSectionKey(channelId), true);
     setRowFocus(channelId);
   };
   const moveChannel = (
@@ -508,6 +547,19 @@ export function ChannelInventory({
         preferences.data?.sections.map((section) => section.id) ?? [],
       )
       .catch(() => {});
+  };
+  const setSectionFilter = (
+    key: string,
+    mode: "all" | "unreads" | "active",
+    activeWindowSeconds?: number | null,
+  ) => {
+    return preferences.setFilter(
+      key.startsWith("group:") ? `section:${key.slice(6)}` : key,
+      mode,
+      preferences.data?.sections.map((section) => section.id) ?? [],
+      undefined,
+      activeWindowSeconds,
+    );
   };
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
@@ -678,6 +730,7 @@ export function ChannelInventory({
         <ChannelLifecycleMenu
           key="lifecycle"
           separator={false}
+          noun={lifecycleNoun(channel)}
           channelId={channel.id}
           lifecycle={lifecycle}
           disabled={!!lifecycleDialog}
@@ -732,7 +785,7 @@ export function ChannelInventory({
     rowMenu,
     open: openMenu,
     close: closeMenu,
-  } = useChannelRowMenu(sections, rowActions);
+  } = useChannelRowMenu(filteredSections, rowActions);
   const openRowMenu = useCallback(
     (channel: ChannelSummary, sectionKey: string, anchor?: HTMLElement) => {
       readAction.reset();
@@ -751,23 +804,35 @@ export function ChannelInventory({
       pendingCreate.current = undefined;
     }
   }, []);
+  const rowFocusTarget = useCallback(
+    (channelId: string) => {
+      const list = sidebar.list.current;
+      const row = list?.querySelector<HTMLElement>(
+        `[data-channel-id="${CSS.escape(channelId)}"]`,
+      );
+      if (row) return row;
+      const sectionKey = hiddenRowSections.current.get(channelId);
+      return sectionKey
+        ? list?.querySelector<HTMLElement>(
+            `[data-sidebar-section="${CSS.escape(sectionKey)}"] details > summary`,
+          )
+        : undefined;
+    },
+    [sidebar.list],
+  );
   const rowMenuFinalFocus = useCallback(
     (channelId: string) =>
       pendingCreate.current
         ? false
         : removedDmFocus.current?.channelId === channelId
           ? removedDmFocus.current.target
-          : (sidebar.list.current?.querySelector<HTMLButtonElement>(
-              `[data-channel-id="${CSS.escape(channelId)}"]`,
-            ) ?? false),
-    [sidebar.list],
+          : (rowFocusTarget(channelId) ?? false),
+    [rowFocusTarget],
   );
   useLayoutEffect(() => {
     if (!rowFocus) return;
     (
-      sidebar.list.current?.querySelector<HTMLButtonElement>(
-        `[data-channel-id="${CSS.escape(rowFocus)}"]`,
-      ) ??
+      rowFocusTarget(rowFocus) ??
       [
         ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
           "[data-channel-id]",
@@ -778,7 +843,7 @@ export function ChannelInventory({
         ?.querySelector<HTMLButtonElement>("button")
     )?.focus({ preventScroll: true });
     setRowFocus(undefined);
-  }, [rowFocus, sidebar.list]);
+  }, [rowFocus, rowFocusTarget, sidebar.list]);
   const [groupFocus, setGroupFocus] = useState<string>();
   // Group recovery removes its focused notice; return focus to the group header.
   useLayoutEffect(() => {
@@ -980,7 +1045,7 @@ export function ChannelInventory({
             );
           }}
         >
-          {sections.map((section) => (
+          {filteredSections.map((section) => (
             <DroppableSidebarSection
               key={section.key}
               groupIndex={groupIds.indexOf(section.key.slice("group:".length))}
@@ -1012,7 +1077,39 @@ export function ChannelInventory({
               session={queries}
               open={!sidebar.collapsed.includes(section.key)}
               onToggle={(open) => sidebar.toggle(section.key, open)}
-              channelCount={section.rows.length}
+              channelCount={section.allRows.length}
+              filter={
+                preferences.data
+                  ? {
+                      value:
+                        preferences.data.filters?.[
+                          section.key.startsWith("group:")
+                            ? `section:${section.key.slice(6)}`
+                            : section.key
+                        ] ?? "all",
+                      disabled: !preferences.filterWritable,
+                      activeWindowSeconds:
+                        preferences.data.activeWindowSeconds?.[
+                          section.key.startsWith("group:")
+                            ? `section:${section.key.slice(6)}`
+                            : section.key
+                        ],
+                      change: (mode, seconds) =>
+                        setSectionFilter(section.key, mode, seconds),
+                      dismissError: () =>
+                        preferences.dismissFilterError(
+                          section.key.startsWith("group:")
+                            ? `section:${section.key.slice(6)}`
+                            : section.key,
+                        ),
+                    }
+                  : undefined
+              }
+              channels={{
+                rows: section.hiddenRows,
+                selected: current?.id,
+                select,
+              }}
               onRemove={
                 preferences.removeSectionWritable &&
                 section.key.startsWith("group:")
@@ -1183,6 +1280,39 @@ export function ChannelInventory({
             </button>
           </div>
         ))}
+        {preferences.filterErrors?.map(
+          ({ group, mode, activeWindowSeconds, error }) => (
+            <div key={group} className={styles.preferenceNotice} role="alert">
+              <p>
+                Couldn’t save the filter for{" "}
+                {sections.find(
+                  ({ key }) =>
+                    key ===
+                    (group.startsWith("section:")
+                      ? `group:${group.slice(8)}`
+                      : group),
+                )?.title ?? "this section"}
+                . {error}
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  void setSectionFilter(group, mode, activeWindowSeconds).catch(
+                    () => {},
+                  )
+                }
+              >
+                Retry filter
+              </button>
+              <button
+                type="button"
+                onClick={() => preferences.dismissFilterError(group)}
+              >
+                Dismiss
+              </button>
+            </div>
+          ),
+        )}
         {[...mute.intents.values()]
           .filter((intent) => !intent.pending)
           .map((intent) => (
@@ -1320,7 +1450,7 @@ export function ChannelInventory({
         {list.activityStatus === "error" && !activityErrorDismissed && (
           <ToastNotice
             title="Couldn’t refresh recent activity"
-            description="Sections sorted by Recent may be out of date."
+            description="Activity filters and Recent sorting may be out of date."
             tone="warning"
             onDismiss={() => setActivityErrorDismissed(true)}
           >

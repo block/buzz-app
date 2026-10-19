@@ -440,9 +440,8 @@ Icon lighting changes composite pixels and needs separate visual acceptance.
 Appearance preferences and existing semantic colors retain their values.
 
 Plugin artwork tokens are proposed and registered under the Settings plugin
-catalog owner. Keep this PR in draft and merge it only with/after the #1246
-consumer migration, including its agent-tools category. The standalone viewer
-is an exploration, not a shipped plugin-category contract.
+catalog owner. The plugin catalog on main consumes these tokens, including the agent-tools
+category. The viewer exposes those shipped values without redefining them.
 
 The approved treatment deliberately uses C 0.10 for every endpoint, so all six
 gradients share chroma as well as reference luminance. Per-pair gamut limits

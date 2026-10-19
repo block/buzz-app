@@ -5,7 +5,7 @@ import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPo
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
-import { SoloProjects } from "../../bundled/channels/SoloProjects";
+import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import { useRecoveryShown } from "../relay/RecoveryNotice";
@@ -17,7 +17,7 @@ import { resetNewChatProject } from "../solo/SoloDraft";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import channelStyles from "../../bundled/channels/Channels.module.css";
-import styles from "../../bundled/channels/SoloProjects.module.css";
+import styles from "../../bundled/channels/SoloWorkspaces.module.css";
 
 /** Solo projects and conversations: the owner's private filing of ordinary channels. */
 export function SoloInventory({
@@ -82,7 +82,7 @@ export function SoloInventory({
     );
   return (
     <nav className={styles.sidebarContents} aria-label="Solo conversations">
-      <SoloProjects
+      <SoloWorkspaces
         navigator={navigator}
         visit={navigator.snapshot().attempt.signal}
         session={session}
@@ -191,7 +191,12 @@ function SoloConversationRow({
           }
           label={
             <span className={styles.chatRow}>
-              <UnreadBadge session={session} channelId={id} label={title} />
+              <UnreadBadge
+                session={session}
+                channelId={id}
+                label={title}
+                labelUnread="all"
+              />
             </span>
           }
           trailing={

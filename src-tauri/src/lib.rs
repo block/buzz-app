@@ -30,6 +30,14 @@ mod host_mcp;
 mod host_process;
 mod host_request;
 mod identity;
+mod nsec_backup;
+mod nsec_backup_choice;
+mod nsec_backup_config;
+use nsec_backup::{
+    nsec_backup_available, nsec_backup_retry, nsec_backup_session, nsec_restore_begin,
+    nsec_restore_cancel, nsec_restore_install, nsec_restore_wait, NsecBackupHost,
+};
+use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod image_clipboard;
 mod jev;
 
@@ -60,7 +68,7 @@ mod terminal;
 #[cfg(all(test, unix))]
 mod test_executable;
 use buzzodz_plugins::{
-    imports::{prepare_folder, prepare_git, PreparedImport, Preview},
+    imports::{prepare_folder, prepare_git, prepare_upload, FolderUpload, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
 };
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
@@ -289,8 +297,12 @@ async fn workspace_pick_folder<R: tauri::Runtime>(
 async fn plugin_import_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     imports: tauri::State<'_, Imports>,
+    upload: Option<FolderUpload>,
 ) -> Result<Option<Preview>, String> {
     prepare_import(imports.inner().clone(), move || {
+        if let Some(upload) = upload {
+            return prepare_upload(upload).map(Some);
+        }
         app.dialog()
             .file()
             .set_title("Choose a plugin folder")
@@ -433,6 +445,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_import,
         identity_create,
         identity_export,
+        nsec_backup_choice,
+        nsec_backup_set_choice,
         identity_prepare_remote_agent_authorization,
         identity_sign_builderlab_binding,
         enterprise_login_gate,
@@ -494,6 +508,13 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,
+        nsec_backup_available,
+        nsec_backup_session,
+        nsec_backup_retry,
+        nsec_restore_begin,
+        nsec_restore_wait,
+        nsec_restore_install,
+        nsec_restore_cancel,
         app_agents::app_agent_list,
         app_agents::app_agent_create,
         app_agents::app_agent_portable,
@@ -695,6 +716,7 @@ pub fn run() {
         .manage(HostProcesses::default())
         .manage(HostMcpServers::default())
         .manage(OAuthCallbackHost::default())
+        .manage(NsecBackupHost::default())
         .manage(Notifications::default())
         .manage(DeepLinks::default())
         .manage(PluginManager(Manager::from_env()))
@@ -726,6 +748,7 @@ pub fn run() {
             }
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<pairing::Pairing>().cancel_all();
+                webview.state::<NsecBackupHost>().document_load();
                 webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
                 // Processes belong to the page that started them.
                 webview.state::<HostProcesses>().stop_all();
@@ -764,6 +787,7 @@ pub fn run() {
 
 /// Best-effort native teardown when Buzz exits, from Quit or a fenced sign-out.
 pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    app.state::<NsecBackupHost>().close();
     app.state::<relay::Spools>()
         .cancel_all(&app.state::<relay::Uploads>());
     app.state::<image_clipboard::ImageClipboard>().release();

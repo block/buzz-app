@@ -1,3 +1,4 @@
+import { setPluginEnabled } from "./plugin-settings.mjs";
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, virtuaIdle } from "./timeline.mjs";
@@ -644,10 +645,8 @@ test("unavailable messages fail honestly and legacy links still open when Links 
   ).toBeVisible();
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Plugins").click();
-  await page
-    .getByRole("switch", { name: "Enable Links", exact: true })
-    .uncheck();
+  await button(page, "Manage plugins").click();
+  await setPluginEnabled(page, "Links", false);
   await openPage(page, "Messages");
   await row.locator("a").first().click();
   const targetRow = page.locator(`[data-message-id="${target.id}"]`);

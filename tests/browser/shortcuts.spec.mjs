@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { openPage, pageChoices } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open, edge, settle } from "./timeline.mjs";
@@ -407,8 +408,8 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
   ).toHaveCount(0);
   await expect(button(page, "Search Buzz")).toBeFocused();
   await page.keyboard.press(`${modifier}+,`);
-  await button(page, "Plugins").click();
-  const toggle = page.getByRole("switch", { name: "Enable Shortcut counter" });
+  await button(page, "Manage plugins").click();
+  const toggle = pluginAction(page, "Shortcut counter");
   await toggle.click();
   const choices = await pageChoices(page);
   await expect(

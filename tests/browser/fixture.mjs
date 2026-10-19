@@ -75,6 +75,11 @@ export const test = base.extend({
   inboxThreadWindow: [false, { option: true }],
   inboxSoloAgent: [false, { option: true }],
   tallMessages: [false, { option: true }],
+  // Opt-in perf workload: chat-like Markdown (code, links, lists, mentions)
+  // in most corpus rows instead of inert prose.
+  markdownMessages: [false, { option: true }],
+  // Opt-in perf workload: let modeled HTTP pages arrive during wheel input.
+  olderPageDelayMs: [null, { option: true }],
   membershipActivity: [false, { option: true }],
   launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
@@ -132,6 +137,8 @@ export const test = base.extend({
       inboxThreadWindow,
       inboxSoloAgent,
       tallMessages,
+      markdownMessages,
+      olderPageDelayMs,
       membershipActivity,
       launchAnimation,
       historyCounts,
@@ -174,7 +181,11 @@ export const test = base.extend({
         time,
       );
     const peerKeys =
-      dmLabels || readState || exactMessages || actionProfile
+      dmLabels ||
+      readState ||
+      exactMessages ||
+      actionProfile ||
+      markdownMessages
         ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
         : [];
     const peerKey = peerKeys[0];
@@ -396,19 +407,45 @@ export const test = base.extend({
     // with the compact message type and an extra upward resize-test gesture.
     const histories = new Map();
     const historyStarted = performance.now();
+    // One row in eight stays inert prose. The others end with common chat
+    // content: colon or multi-paragraph prose, links, a bound mention, a list,
+    // code and a quote. Bullet lists only: browser helpers address the
+    // timeline through its single ordered list.
+    const markdown = [
+      () => "",
+      (i) =>
+        `Update: deploy ${i} finished at 14:${String(i % 60).padStart(2, "0")}, then the relay restarted.`,
+      () => "\nA second paragraph follows the blank line.",
+      (i) =>
+        `Notes: https://example.com/notes/${i} and [the design doc](https://example.com/design/${i % 5}#history).`,
+      (i) => `@Alice Fixture can you check item ${i}? Thanks!`,
+      () =>
+        "Follow-ups:\n- update the fixture\n- rerun `bin/pnpm perf`\n  - compare **medians**",
+      (i) =>
+        `Repro:\n\`\`\`js\nconst page = await reader.read({ limit: ${20 + (i % 5)} });\nconsole.log(page.length);\n\`\`\``,
+      () =>
+        "> Can we ship _this_ today?\n\n**Yes**, after ~~one more~~ review.",
+    ];
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
         histories.set(
           `${community}/${channel}`,
-          Array.from({ length: historyCounts[channel] }, (_, i) =>
-            sign(
+          Array.from({ length: historyCounts[channel] }, (_, i) => {
+            const syntax = markdownMessages ? markdown[i % 8](i) : "";
+            return sign(
               9,
-              [["h", channel]],
-              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}`,
+              [
+                ["h", channel],
+                // Mentions bind a known profile name through a p tag.
+                ...(syntax.startsWith("@")
+                  ? [["p", getPublicKey(peerKey)]]
+                  : []),
+              ],
+              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}${syntax ? `\n${syntax}` : ""}`,
               readState ? peerKey : userKey,
               1700000100 + i,
-            ),
-          ),
+            );
+          }),
         );
     const ownerAgentMessage = agentMessageDeletion
       ? sign(
@@ -795,6 +832,8 @@ export const test = base.extend({
         dmLabels,
         agentPeers,
         tallMessages,
+        markdownMessages,
+        olderPageDelayMs,
         browserVersion: browser.version(),
         node: process.version,
         platform: platform(),
@@ -816,6 +855,7 @@ export const test = base.extend({
       measurements: [],
     };
     const pending = [];
+    const olderPageTimers = new Set();
     const retiredStreams = new Set();
     const observerFailures = [];
     const consoleLocations = new Map();
@@ -1745,6 +1785,7 @@ export const test = base.extend({
           "channel-sections",
           "channel-stars",
           "channel-sort",
+          "channel-filter",
         ].includes(sidebarCoordinate) ||
         (ownSoloChannels.length > 0 &&
           sidebarCoordinate?.startsWith("buzz-me-kit-v1:"))
@@ -2019,13 +2060,26 @@ export const test = base.extend({
           filter.until !== undefined &&
           filter["#h"]?.length
         ) {
-          pending.push({
+          const queuedAt = performance.now();
+          const receipt = {
             community,
             channel: filter["#h"][0],
             filter,
             events: result.filter((event) => event.kind === 9),
-            release: () => send(response, result),
-          });
+            release: () => {
+              if (response.destroyed || response.writableEnded) return;
+              receipt.releaseDelayMs = performance.now() - queuedAt;
+              send(response, result);
+            },
+          };
+          pending.push(receipt);
+          if (olderPageDelayMs !== null) {
+            const timer = setTimeout(() => {
+              olderPageTimers.delete(timer);
+              receipt.release();
+            }, olderPageDelayMs);
+            olderPageTimers.add(timer);
+          }
         } else send(response, result);
       } catch (error) {
         report.unexpected.push(String(error));
@@ -2604,6 +2658,7 @@ export const test = base.extend({
       // All page errors stay in the evidence; only known engine reports pass.
       expect(unexplainedPageErrors()).toEqual([]);
     } finally {
+      for (const timer of olderPageTimers) clearTimeout(timer);
       if (iconCongestion)
         for (const response of heldIcons)
           if (!response.writableEnded) send(response, {});

@@ -63,6 +63,8 @@ function setup(
     scope?: "thread" | "channel";
     /** The agent's `core` memory as the host keeps it. */
     core?: string | null;
+    /** The channel's Canvas. */
+    canvas?: string;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -100,6 +102,20 @@ function setup(
     profiles: {
       ensure: vi.fn(async () => {}),
       snapshot: () => new Map(),
+    },
+    canvas: {
+      available: options.canvas !== undefined,
+      read: vi.fn(async () =>
+        options.canvas === undefined
+          ? null
+          : {
+              pubkey: alice,
+              kind: 40100,
+              created_at: 1,
+              tags: [],
+              content: options.canvas,
+            },
+      ),
     },
   };
   const relay = {
@@ -346,6 +362,37 @@ describe("GooseRuntime", () => {
     expect(goose?.configured).toEqual(["session-1 provider=openai"]);
   });
 
+  it.each(["", "openai"])(
+    "refreshes inherited defaults without replacing explicit provider %s",
+    async (provider) => {
+      const { agent, deliver, fake, runtime } = setup();
+      runtime.sync([
+        {
+          ...agent,
+          config: { ...DEFAULT_CONFIG, provider },
+        } as unknown as Agent,
+      ]);
+      const first = message("1", "@Gander first");
+      await deliver(first);
+      await flush(100);
+      runtime.defaultsChanged();
+      await deliver(
+        message("2", "@Gander next", {
+          tags: [
+            ["h", channel],
+            ["e", first.id, "", "reply"],
+            ["p", self],
+          ],
+        }),
+      );
+      await flush(100);
+      expect(fake.geese[0]?.turns.map((turn) => turn.sessionId)).toEqual([
+        "session-1",
+        provider ? "session-1" : "session-2",
+      ]);
+    },
+  );
+
   it("runs a mention on the agent's thinking level", async () => {
     const { deliver, fake } = setup();
     await deliver(message("1", "@Gander think"), {
@@ -500,3 +547,24 @@ function slowMemories(viewer: string) {
     () => true,
   ).capability;
 }
+
+it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
+  const solo = setup({ solo: new Set([channel]), canvas: "Use tokens." });
+  await solo.deliver(message("1", "@Gander hi"));
+  await flush(100);
+  expect(solo.goose()?.turns[0]?.text).toContain(
+    "<workspace-canvas>\nThis Solo chat's Canvas",
+  );
+  expect(solo.goose()?.turns[0]?.text).toContain("Use tokens.");
+  // A cleared Canvas replaces it with an explicit "none".
+  const cleared = setup({ solo: new Set([channel]), canvas: "" });
+  await cleared.deliver(message("1", "@Gander hi"));
+  await flush(100);
+  expect(cleared.goose()?.turns[0]?.text).toContain(
+    "Disregard any earlier workspace Canvas",
+  );
+  const shared = setup({ canvas: "Steer me" });
+  await shared.deliver(message("1", "@Gander hi"));
+  await flush(100);
+  expect(shared.goose()?.turns[0]?.text).not.toContain("workspace-canvas");
+});

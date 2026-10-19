@@ -1,3 +1,4 @@
+import { pluginAction } from "./plugin-settings.mjs";
 import { selectCommunity, openCommunityPicker } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import {
@@ -484,12 +485,9 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toHaveValue("Fixture Reader");
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await selectSettingsSection(page, "Plugins");
-  // Channels has no off switch; use another page to exercise UI activation.
-  const projects = page.getByRole("switch", {
-    name: "Enable Workflows",
-    exact: true,
-  });
+  await selectSettingsSection(page, "Manage plugins");
+  // Channels is required; use another page to exercise UI activation.
+  const projects = pluginAction(page, "Workflows");
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const expectWorkflowsChoice = async (count) => {
     const choices = await pageChoices(page);
@@ -504,10 +502,10 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     await expect(search).toHaveCount(0);
   };
   await projects.click();
-  await expect(projects).toHaveAttribute("aria-checked", "false");
+  await expect(projects).toHaveAccessibleName(/^Enable /);
   await expectWorkflowsChoice(0);
   await projects.click();
-  await expect(projects).toHaveAttribute("aria-checked", "true");
+  await expect(projects).toHaveAccessibleName(/^Disable /);
   await expectWorkflowsChoice(1);
 });
 
@@ -818,12 +816,9 @@ companionTest(
     await launch.click();
     await button(page, "Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await selectSettingsSection(page, "Plugins");
+    await selectSettingsSection(page, "Manage plugins");
     await expect(companion).toHaveCount(1);
-    const enabled = page.getByRole("switch", {
-      name: "Enable Companion fixture",
-      exact: true,
-    });
+    const enabled = pluginAction(page, "Companion fixture");
     await enabled.click();
     await expect(launch).toHaveCount(0);
     await expect(companion).toHaveCount(0);
@@ -909,7 +904,7 @@ companionTest(
     await expect(companion).toHaveCount(1);
     await button(page, "Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await selectSettingsSection(page, "Plugins");
+    await selectSettingsSection(page, "Manage plugins");
     await expect(companion).toHaveCount(1);
     for (const [width, height] of [
       [800, 600],
@@ -933,7 +928,7 @@ companionTest(
     // Settings details own scrolling independently of the sidebar.
     const settingsPage = page
       .getByRole("region", { name: "Settings", exact: true })
-      .locator(":scope > div");
+      .locator(".buzz-settings-page");
     await expect(enabled).not.toBeInViewport();
     const viewport = await box(settingsPage);
     await page.mouse.move(
@@ -968,7 +963,7 @@ companionTest(
     }
     await expect(enabled).toBeInViewport({ ratio: 1 });
     await enabled.click();
-    await expect(enabled).toHaveAttribute("aria-checked", "false");
+    await expect(enabled).toHaveAccessibleName(/^Enable /);
     await expect(enabled).toBeFocused();
     await expect(launch).toHaveCount(0);
   },
@@ -986,10 +981,8 @@ todosOverlapTest(
     await open(page, app);
     await button(page, "Your profile").click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await selectSettingsSection(page, "Plugins");
-    await page
-      .getByRole("switch", { name: "Enable Todos", exact: true })
-      .click();
+    await selectSettingsSection(page, "Manage plugins");
+    await pluginAction(page, "Todos").click();
     await openPage(page, "Messages");
     const todos = page.getByRole("region", {
       name: "Todos panel",

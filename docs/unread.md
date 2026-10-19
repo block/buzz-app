@@ -131,6 +131,8 @@ backlog and the thread being read, without reading unopened threads' replies.
 The sidebar separates ordinary unread from directed attention. Ordinary backlog
 or local manual intent strengthens the channel label; protected attention alone
 retains its dot without bolding a caught-up channel. DMs retain unread bolding.
+Solo chat labels strengthen for any observed unread message, including mentions,
+broadcasts and relevant replies; their attention dots remain independent.
 Ordinary unread renders no row marker. DMs, mentions, broadcasts, and
 relevant thread replies add one accent dot; non-DM row numerals are omitted and DM
 avatars are reserved for promoted offscreen cues. Thread activity reuses that dot:

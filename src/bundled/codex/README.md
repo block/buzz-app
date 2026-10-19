@@ -1,3 +1,15 @@
+# Codex
+
+Create agents that run Codex on your computer and answer you in Buzz. Each agent works in its own **Workspace** folder and can run commands and edit files on its own.
+
+## Getting started
+
+1. Go to **Agents** → **More agent actions** → **Provider settings** → **Codex** to install Codex and sign in.
+2. Choose **New agent** → **Create a new agent**, and pick **Codex** as the **Harness**.
+3. Mention your agent in a conversation to give it work.
+
+---
+
 # Codex for Agents
 
 A bundled desktop plugin, on by default on macOS and Linux, using the native process host introduced in #731.
@@ -16,13 +28,13 @@ source bin/activate-hermit
 BUZZODZ_PROFILE=codex-agents BUZZ_DEV_VIEWER= bin/just desktop
 ```
 
-1. Codex is on by default; **Settings → Plugins** turns it off or on. An older
+1. Codex is on by default; **Settings → Plugins → Manage plugins** turns it off or on. An older
    profile that installed Codex from a folder gets the bundled copy instead, and
    keeps it off if the installed copy was off.
 2. Open **Agents → New agent**, choose **Codex** in the card's top corner, and
    optionally pick a model beside it and add instructions. Name the agent and
    click **Create agent**.
-3. **Settings → Agents → AI defaults → Codex** checks Buzz's copy of Codex and
+3. **Settings → Buzz → Agent setup → Providers → Codex** checks Buzz's copy of Codex and
    its account. If it says Codex is not installed, click **Install Codex**; if
    it needs you to sign in, click **Sign in** and finish in the browser. It also
    manages explicit-save model/thinking defaults. A blank agent choice inherits

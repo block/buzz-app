@@ -546,7 +546,8 @@ the reserved 1px border, so state changes do not shift the layout. Keyboard
 focus and reduced motion change immediately. Composite fields own one stroke
 around the input and actions; error strokes retain priority. Borderless title and
 heading inputs keep their perimeter transparent on pointer/autofocus entry and
-show the focus border during keyboard navigation. Placeholders use
+when invalid, where the connected error carries validation, and show the focus
+border during keyboard navigation. Placeholders use
 text-metadata, one step quieter than supporting text, in both themes. This supersedes
 the older keyboard-only
 and no-container-ring recipes for these fields.
@@ -745,7 +746,9 @@ description; Select shows it as a byline in the popup while the closed trigger
 retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
-menu presentation. Use its loading state while discovering options, and keep
+menu presentation. For a closed dropdown with search inside, use Combobox.Trigger
+and Combobox.Popup with search; opening focuses the popup search input.
+Use its loading state while discovering options, and keep
 retry/cancel actions with the feature. Do not style a native select as an Input
 or attach a separate round button to mimic a combobox.
 
@@ -774,7 +777,10 @@ Use Field once per input/textarea, with an 8px internal gap. Select's field
 variant, SearchField, and Combobox.Control already own their label and supporting
 text; do not add a second Field around them. Use description/error for connected
 help and validation. An error replaces the secondary description until it clears;
-keep the accessible description synchronized with the visible message. Validation
+keep the accessible description synchronized with the visible message. Field's
+error opens its space in place of the field gap while fading in, with
+`--duration-settle` and `--easing-settle`, so content below moves instead of
+jumping; reduced motion shows it immediately. Errors outside Field stay static. Validation
 strokes belong to the outer field, never its auxiliary buttons. Keep feature-owned
 asynchronous status connected through
 aria-describedby. Forms own 16px between adjacent fields and the 32px section
@@ -1027,7 +1033,11 @@ to a content-sized confirmation without collapsing its scrollport. Expanded and
 side-sheet compositions are unchanged.
 
 
-Use Accordion for collapsible sections. Form sections pass `keepMounted` so
+Use Accordion for collapsible sections. Plugin access declarations opt into `animate`:
+Base UI owns height-transition presence with the shared settle tokens, while
+`motion/react` fades the panel between states. Keyboard activation and reduced
+motion switch immediately. Other accordions retain their existing behavior.
+Form sections pass `keepMounted` so
 collapsing them preserves local input state; leave the default for static content.
 Use `variant="form"` when the surrounding form owns spacing. It removes outer
 margins while keeping the shared row and panel padding. Adjacent disclosure rows

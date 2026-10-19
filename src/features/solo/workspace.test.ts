@@ -7,6 +7,7 @@ import {
   readWorkspace,
   projectTemplateId,
   workspaceCanvas,
+  workspaceDirectories,
 } from "./workspace";
 
 it("round trips folders, worktrees and Canvas through existing template records", async () => {
@@ -41,6 +42,22 @@ it("round trips folders, worktrees and Canvas through existing template records"
     "https://relay.test",
   );
   expect(record.value).toHaveProperty("canvas", canvas);
+});
+it("reads folder-only Canvas saved by earlier versions without treating it as edited", () => {
+  // Literal saved format: the managed block is persisted, not display copy.
+  const saved = [
+    '<!-- buzz-session-workspace:v1 {"folders":["/repo"]} -->',
+    "## Project folders",
+    "",
+    "- `/repo`",
+    "<!-- /buzz-session-workspace -->",
+    "",
+    "Instructions",
+  ].join("\n");
+  expect(readWorkspace(saved)).toEqual({
+    folders: ["/repo"],
+    canvas: "Instructions",
+  });
 });
 it("preserves ordinary Canvas and refuses malformed or manually changed workspace blocks", () => {
   expect(readWorkspace("# Existing\nKeep me")).toEqual({
@@ -291,6 +308,22 @@ it("does not offer deleted-project recovery when project refresh fails", async (
       { projectId: "work", canvas: "", agents: [] },
       () => true,
     ),
-  ).rejects.toThrow("Projects couldn’t load");
+  ).rejects.toThrow("Workspaces couldn’t load");
   expect(f.calls).toEqual([]);
+});
+
+it("finds an agent's folders even in a hand-edited workspace block", () => {
+  const canvas = workspaceCanvas({
+    folders: ["/repo", "~/two"],
+    worktree: { location: "~/trees", baseBranch: "main" },
+    canvas: "Notes",
+  });
+  expect(workspaceDirectories(canvas)).toEqual(["/repo", "~/two", "~/trees"]);
+  expect(
+    workspaceDirectories(canvas.replace("for review only", "freely")),
+  ).toEqual(["/repo", "~/two", "~/trees"]);
+  expect(workspaceDirectories("# Plain Canvas")).toEqual([]);
+  expect(workspaceDirectories("<!-- buzz-session-workspace:v1 broken")).toEqual(
+    [],
+  );
 });

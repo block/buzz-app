@@ -40,7 +40,6 @@ import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import {
   GithubLogoIcon,
-  OpenAILogoIcon,
   CheckCircleIcon,
   SparklesIcon,
   SquaresFourIcon,
@@ -164,10 +163,7 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
   ];
 }
 
-const bundledGlyphs = new Map([
-  ["buzz.github", GithubLogoIcon],
-  ["buzz.codex", OpenAILogoIcon],
-]);
+const bundledGlyphs = new Map([["buzz.github", GithubLogoIcon]]);
 
 function PluginIcon({
   plugin,
@@ -196,17 +192,7 @@ function PluginIcon({
       {Glyph ? (
         <Glyph size="50%" />
       ) : url && url !== failedUrl ? (
-        <img
-          src={url}
-          alt=""
-          data-official-mark={
-            (plugin.source === "bundled" &&
-              (plugin.manifest.id === "buzz.claude-code" ||
-                plugin.manifest.id === "buzz.goose")) ||
-            undefined
-          }
-          onError={() => setFailedUrl(url)}
-        />
+        <img src={url} alt="" onError={() => setFailedUrl(url)} />
       ) : (
         <SquaresFourIcon size={size} />
       )}

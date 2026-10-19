@@ -90,26 +90,15 @@ Nous Research copyright notice.
 
 ## Plugin catalog artwork
 
-The other bundled plugin PNG artwork in `src/bundled/*/icon.png` was created
-by Taylor Ho using GPT Image 2.5 and supplied for Buzz.
+The bundled plugin PNG artwork in `src/bundled/*/icon.png` was created by
+Taylor Ho using GPT Image 2.5 and supplied for Buzz. Claude, Codex and Goose
+reuse the Agents artwork; their catalog tiles contain no third-party agent marks.
 
-GitHub and Codex catalog tiles use Tabler's `brand-github` and `brand-openai`
-glyphs. Unchanged paths and proportions render flat white at half-tile size.
-No effects are applied to the glyphs; only the tile behind them has a gradient.
-Tabler Icons 3.46.0: https://tabler.io/icons. The MIT license below covers the
-icon files, not trademark rights or endorsement by their owners.
-
-`src/bundled/claude-code/icon.png` is the official Claude Spark in Clay
-(#D97757), supplied from Anthropic's press kit: https://www.anthropic.com/press-kit.
-`src/bundled/goose/icon.png` is the official Goose mark (#101010), supplied from
-https://github.com/aaif-goose/goose/tree/main/documentation/static/img.
-Both are rasterized proportionally onto transparent 376×376 canvases without
-recoloring or effects. Their category gradients are separate tile backgrounds.
-Trademark rights remain with their respective owners. Anthropic's written logo
-approval and the applicable LF Projects trademark permission remain outstanding;
-asset provenance and the Tabler license do not establish those permissions.
-See https://www.anthropic.com/legal/trademark-guidelines and
-https://lfprojects.org/policies/trademark-policy/.
+The GitHub catalog tile uses Tabler's `brand-github` glyph with unchanged paths
+and proportions, flat white at half-tile size and without glyph effects. Only
+the tile behind it has a gradient. Tabler Icons 3.46.0: https://tabler.io/icons.
+The MIT license below covers the icon file, not trademark rights or endorsement.
+GitHub is a trademark of GitHub, Inc.
 
 MIT License
 

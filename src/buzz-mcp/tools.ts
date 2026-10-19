@@ -90,7 +90,7 @@ export const TOOLS: readonly Tool[] = [
       before: { type: "integer", description: "Unix seconds, at or before." },
       before_id: {
         type: "string",
-        description: "With before, from a continue line: the page after it.",
+        description: "For paginating: with before, from a continue line.",
       },
       limit: {
         type: "integer",

@@ -258,7 +258,9 @@ export type ComposerCompletion = Readonly<{
 
 /** A conversation a page opens in a tab beside its own. `messageId` opens at
  * that message: in its thread when `threadId` is given, or else in the
- * conversation, or its thread if it is a reply or too old to find. */
+ * conversation, or its thread if it is a reply or too old to find. Without
+ * `messageId`, keyboard focus moves to the tab's composer once it is ready,
+ * unless the user clicks or types first. */
 export type PageTabTarget = {
   channelId: string;
   threadId?: string;

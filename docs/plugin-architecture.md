@@ -1028,7 +1028,11 @@ thread opens as a side-pane thread tab and a whole conversation as a side-pane
 conversation tab, each with the same reader and composer as Channels tabs, so
 the page stays in view; any thread can then move to the main pane. A plain open
 replaces the tab the previous one added, and `keep: true` adds a tab beside it;
-an already-open conversation's tab is selected wherever it is. `id` keys the page's tabs, which last for its community session as
+an already-open conversation's tab is selected wherever it is. Each open moves
+keyboard focus to the opened tab's composer (a thread's reply box, keeping any
+reply target chosen in it) once it can take focus, unless the user clicks or
+types first; an open at a message reveals it instead, and a tab restored when
+the page remounts takes no focus. `id` keys the page's tabs, which last for its community session as
 Channels tabs do; they keep no Back/Forward visits.
 The tab workspace belongs to Channels, which supplies it with
 `conversation.registerTabs(component)`; the conversation service only holds that

@@ -37,6 +37,7 @@ import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
+import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -812,6 +813,7 @@ function ThreadMessages({
   useEffect(() => {
     if (focusRequest) setReplyFocus((value) => value + 1);
   }, [focusRequest]);
+  const pendingReplyFocus = usePendingRequest(replyFocus);
   const [mediaSeek, setMediaSeek] = useState<{
     seconds: number;
     request: number;
@@ -1561,7 +1563,7 @@ function ThreadMessages({
             )
           }
           editMessages={rows}
-          focusRequest={replyFocus}
+          focusRequest={pendingReplyFocus ?? 0}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           onDraftSaved={onDraftSaved}

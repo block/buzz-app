@@ -326,6 +326,47 @@ it.each([
   },
 );
 
+it.each(["pointerDown", "keyDown"] as const)(
+  "a focus request expires once the user acts first (%s)",
+  (event) => {
+    const channel = { id: "beta", name: "Beta" };
+    const snapshot = { status: "ready", channels: [channel] };
+    const session = {
+      channels: { list: () => snapshot, subscribeList: () => () => {} },
+    } as unknown as RelaySession;
+    const tab: Tab = {
+      id: "thread",
+      kind: "thread",
+      channelId: "beta",
+      messageId: "a".repeat(64),
+      focusRequest: 1,
+    };
+    const props = {
+      tab,
+      channel,
+      session,
+      scope: "focus-expiry-test",
+      active: true,
+      openLink: () => false,
+      canOpenLink: () => false,
+      openThread: () => {},
+      close: () => {},
+    };
+    const mounted = render(<ConversationTab {...props} />);
+    const thread = screen.getByText("Thread content");
+    expect(thread).toHaveAttribute("data-focus-request", "1");
+    // Acting elsewhere before the reply box loads keeps the user's focus.
+    act(() => {
+      fireEvent[event](document.body, { key: "a" });
+    });
+    expect(thread).not.toHaveAttribute("data-focus-request");
+    mounted.rerender(
+      <ConversationTab {...props} tab={{ ...tab, focusRequest: 2 }} />,
+    );
+    expect(thread).toHaveAttribute("data-focus-request", "2");
+  },
+);
+
 it.each([false, true])(
   "conversation tabs reserve the jump button's activity lane only for a live channel (cached=%s)",
   (cached) => {

@@ -761,6 +761,17 @@ SIGKILL three seconds later; the group is always killed once the process exits,
 so descendants do not outlive it. At most 64 processes run at once. Processes
 run with the user's full access and no sandbox; the import preview says so.
 
+A plugin that declares `"files": true` under `host` reads files and resolves
+directories natively, the same on every platform, rather than starting a
+program such as `base64` or `pwd` that Windows lacks.
+`ctx.host.readFile(path, { cwd })` returns the bytes of a file of at most 50 MB;
+`path` is absolute, `~/…`, or relative to `cwd`, which is absolute or `~/…`. A
+missing file rejects with an error whose message contains "No such file".
+`ctx.host.resolveDirectory(path)` returns an absolute or `~/…` directory as an
+absolute path without symbolic links, in the platform's ordinary form, and
+creates it if missing, as a process's `cwd` is. Both act with the user's full
+access; the import preview says so.
+
 Bundled host grants use the effective compiled manifest at revision `bundled` and
 require the plugin to be enabled in the native catalog. External grants require the
 enabled current artifact and its integrity checks; safe mode pauses external

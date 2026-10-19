@@ -12,7 +12,7 @@ import type {
   TurnResult,
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
-import { appClient } from "../../buzz-mcp/app-client";
+import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { readProject } from "../../features/agent-harness/project";
 import { MemoryReads } from "../../features/agent-harness/core-memory";
 import type { Context } from "../../buzz-mcp/client";
@@ -928,8 +928,7 @@ export class CodexRuntime {
         agent.pubkey,
       )?.audienceAuthorityCommunity?.(),
       signingAuthority: this.reads(agent.pubkey)?.workflowAuthority(),
-      spawn: this.spawn,
-      cwd: turn.workspace,
+      read: (path) => readFile(this.spawn, turn.workspace, path, turn.signal),
       check,
       signal: turn.signal,
       memories: async (slug) => {

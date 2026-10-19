@@ -32,6 +32,7 @@ mod enterprise_auth_build;
 mod enterprise_login_gate;
 mod enterprise_relay_url;
 mod host_command;
+mod host_files;
 mod host_mcp;
 mod host_process;
 mod host_request;
@@ -83,6 +84,7 @@ use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use enterprise_login_gate::enterprise_login_gate;
 use host_command::plugin_host_run_command;
+use host_files::{plugin_host_read_file, plugin_host_resolve_directory};
 use host_mcp::{
     plugin_host_mcp_close, plugin_host_mcp_reply, plugin_host_mcp_serve, HostMcpServers,
 };
@@ -524,6 +526,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_mcp_serve,
         plugin_host_mcp_reply,
         plugin_host_mcp_close,
+        plugin_host_read_file,
+        plugin_host_resolve_directory,
         oauth_callback_begin,
         oauth_callback_wait,
         oauth_callback_cancel,

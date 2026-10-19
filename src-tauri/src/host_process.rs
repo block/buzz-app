@@ -427,7 +427,7 @@ fn program_path(
     Ok(resources.join("bin").join(&declared.program))
 }
 
-fn expand_home(directory: &str) -> Result<PathBuf, String> {
+pub(crate) fn expand_home(directory: &str) -> Result<PathBuf, String> {
     let path = if directory == "~" {
         home()?
     } else if let Some(rest) = directory.strip_prefix("~/") {

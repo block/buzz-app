@@ -6,9 +6,8 @@ import type { BuzzClient, Context } from "./client";
 import {
   type AddedTool,
   callSessionTool,
-  sessionGroups,
+  sessionHint,
   sessionTools,
-  type ToolGroup,
 } from "./session-tools";
 import type { Reply } from "./tools";
 
@@ -19,43 +18,38 @@ type Message = Readonly<{
 }>;
 
 /** Answers `input`, listing the session's Buzz tools and the `added` ones
- * plugins add: all of them, or as the server of one `group` of them. Without
- * a client, tools are listed but cannot be called. */
+ * plugins add. Without a client, tools are listed but cannot be called. For a
+ * harness that loads tools on `search` (Claude), it marks the tools that load
+ * up front and says what the rest are. */
 export async function respond(
   client: BuzzClient | undefined,
   context: Context,
   input: unknown,
   added: readonly AddedTool[] = [],
-  group?: string,
+  search = false,
 ) {
   const { id, method, params = {} } = (input ?? {}) as Message;
   // A notification needs no answer, but the pipe expects one.
   if (id === undefined || id === null)
     return { jsonrpc: "2.0", id: 0, result: {} };
   const result = (value: unknown) => ({ jsonrpc: "2.0", id, result: value });
-  const served: ToolGroup | undefined =
-    group === undefined
-      ? undefined
-      : sessionGroups(added).find((each) => each.name === group);
-  if (group !== undefined && !served)
-    return {
-      jsonrpc: "2.0",
-      id,
-      error: { code: -32602, message: `No tool server ${group}` },
-    };
   switch (method) {
     case "initialize":
       return result({
         protocolVersion: params.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
-        serverInfo: { name: served?.name ?? "buzz", version: "1" },
-        ...(served ? { instructions: served.hint } : {}),
+        serverInfo: { name: "buzz", version: "1" },
+        ...(search ? { instructions: sessionHint(added) } : {}),
       });
     case "ping":
       return result({});
     case "tools/list":
       return result({
-        tools: served?.tools ?? sessionTools(added),
+        tools: sessionTools(added).map(({ load, ...tool }) =>
+          search && load === "always"
+            ? { ...tool, _meta: { "anthropic/alwaysLoad": true } }
+            : tool,
+        ),
       });
     case "tools/call":
       try {

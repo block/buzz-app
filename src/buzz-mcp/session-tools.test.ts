@@ -1,7 +1,12 @@
 import { expect, it } from "vitest";
 import { ATTENTION_TOOLS } from "./attention";
 import { respond } from "./rpc";
-import { type AddedTool, addedKey, sessionGroups } from "./session-tools";
+import {
+  type AddedTool,
+  addedKey,
+  sessionHint,
+  sessionTools,
+} from "./session-tools";
 import { TOOLS } from "./tools";
 
 const tool = (name: string, description = "Does it."): AddedTool => ({
@@ -21,65 +26,45 @@ it("keys the added tools whatever order plugins started in", () => {
   ).not.toBe(key);
 });
 
-it("groups the Buzz tools up front, and attention and each plugin's tools on search", async () => {
-  const groups = sessionGroups([
-    { ...tool("apps_create"), pluginId: "block.builderlab" },
-    { ...tool("apps_open"), pluginId: "block.builderlab" },
-    { ...tool("notes_add"), pluginId: "acme.notes" },
-  ]);
-  expect(
-    groups.map(({ name, load, tools }) => [
-      name,
-      load,
-      tools.map((each) => each.name).join(),
-    ]),
-  ).toEqual([
-    ["buzz", "always", TOOLS.map((each) => each.name).join()],
-    [
-      "buzz_attention",
-      "search",
-      ATTENTION_TOOLS.map((each) => each.name).join(),
-    ],
-    ["block_builderlab", "search", "apps_create,apps_open"],
-    ["acme_notes", "search", "notes_add"],
-  ]);
-  expect(groups[2]?.hint).toContain(
-    "block.builderlab plugin adds: apps_create, apps_open",
+it("loads the Buzz tools up front, and attention and plugins' tools on search", () => {
+  const tools = sessionTools([tool("notes_add")]);
+  const load = (name: string) => tools.find((each) => each.name === name)?.load;
+  expect(TOOLS.every((each) => load(each.name) === "always")).toBe(true);
+  expect(ATTENTION_TOOLS.every((each) => load(each.name) === "search")).toBe(
+    true,
   );
-  // A server of one group says what it holds, and lists only its tools.
-  const added = [{ ...tool("notes_add"), pluginId: "acme.notes" }];
-  const answer = (method: string, group: string) =>
-    respond(undefined, {}, { id: 1, method }, added, group) as Promise<{
-      result?: { tools?: { name: string }[]; instructions?: string };
-      error?: unknown;
-    }>;
-  expect((await answer("initialize", "acme_notes")).result?.instructions).toBe(
-    sessionGroups(added)[2]?.hint,
+  expect(load("notes_add")).toBe("search");
+  expect(sessionHint([tool("notes_add"), tool("tasks_create")])).toContain(
+    "tools plugins add (notes_add, tasks_create)",
   );
-  expect(
-    (await answer("tools/list", "acme_notes")).result?.tools?.map(
-      (each) => each.name,
-    ),
-  ).toEqual(["notes_add"]);
-  expect((await answer("tools/list", "gone")).error).toBeDefined();
 });
 
-it("gives a plugin whose name another group has its own", () => {
-  expect(
-    sessionGroups([
-      { ...tool("a_one"), pluginId: "buzz.attention" },
-      { ...tool("b_one"), pluginId: "foo.bar" },
-      { ...tool("c_one"), pluginId: "foo_bar" },
-    ]).map((group) => group.name),
-  ).toEqual([
-    "buzz",
-    "buzz_attention",
-    "buzz_attention_2",
-    "foo_bar",
-    "foo_bar_2",
-  ]);
-  // Moving a tool to another plugin's group replaces the sessions that list it.
-  expect(addedKey([{ ...tool("a_one"), pluginId: "x.y" }])).not.toBe(
-    addedKey([{ ...tool("a_one"), pluginId: "x.z" }]),
+it("marks only the tools that load up front for a harness with search", async () => {
+  const added = [tool("notes_add")];
+  const answer = (method: string, search: boolean) =>
+    respond(undefined, {}, { id: 1, method }, added, search) as Promise<{
+      result: {
+        instructions?: string;
+        tools?: { name: string; load?: unknown; _meta?: unknown }[];
+      };
+    }>;
+  const marked = async (search: boolean) =>
+    (await answer("tools/list", search)).result.tools
+      ?.filter((each) => each._meta)
+      .map((each) => each.name);
+  // Claude loads the rest on search, and the server says what they are.
+  expect(await marked(true)).toEqual(TOOLS.map((each) => each.name));
+  expect((await answer("initialize", true)).result.instructions).toBe(
+    sessionHint(added),
   );
+  // goose loads every tool, so nothing is marked or said.
+  expect(await marked(false)).toEqual([]);
+  expect((await answer("initialize", false)).result.instructions).toBe(
+    undefined,
+  );
+  const listed = (await answer("tools/list", true)).result.tools ?? [];
+  expect(listed.some((each) => "load" in each)).toBe(false);
+  expect(listed.find((each) => each.name === "send")?._meta).toEqual({
+    "anthropic/alwaysLoad": true,
+  });
 });

@@ -446,9 +446,8 @@ export class Spare {
 
   constructor(
     private readonly spawn: Spawn,
-    /** Answers the tool servers before any agent has them: they list the
-     * tools. Read when a spare starts, for the servers plugins' tools need. */
-    private readonly tools: () => ToolServer,
+    /** Answers the tool server before any agent has it: it lists the tools. */
+    private readonly tools: ToolServer,
     private readonly newId: () => string = () => crypto.randomUUID(),
     /** Changes when the tools it lists would; a spare listing others is not
      * handed over. */
@@ -503,7 +502,7 @@ export class Spare {
       process: ClaudeProcess.spawn(this.spawn, {
         ...first,
         sessionId: this.newId(),
-        tools: this.tools(),
+        tools: this.tools,
       }).catch((error) => {
         console.warn("Claude could not start a spare session", error);
         return undefined;

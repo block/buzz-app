@@ -37,24 +37,17 @@ export type ClaudeLaunch = Readonly<{
   resume?: string;
   /** The id a new session takes, so it is known before its first turn. */
   sessionId?: string;
-  /** The in-process MCP servers' tools. */
+  /** The in-process MCP server's tools. */
   tools?: ToolServer;
 }>;
 
-/** The in-process MCP servers, and what answers their JSON-RPC for the
- * conversation a process serves. A server's tools are `mcp__<name>__<tool>`;
- * Claude lists the tools of an `alwaysLoad` server up front, and the others'
- * only by name until the model searches for them. A call of `send` with
- * `final: true` ends the turn when it succeeds. */
-export type ToolServer = Readonly<{
-  servers: readonly Readonly<{ name: string; alwaysLoad: boolean }>[];
-  answer(
-    conversation: string | undefined,
-    server: string,
-    message: unknown,
-  ): Promise<unknown>;
-}>;
-/** The server with `send`. */
+/** Answers the in-process server's JSON-RPC for the conversation a process
+ * serves. A call of `send` with `final: true` ends the turn when it succeeds. */
+export type ToolServer = (
+  conversation: string | undefined,
+  message: unknown,
+) => Promise<unknown>;
+/** Its tools are `mcp__buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
 const FINAL_TOOL = `mcp__${TOOL_SERVER}__send`;
 
@@ -209,16 +202,11 @@ export class ClaudeProcess {
           ? [
               "--mcp-config",
               JSON.stringify({
-                mcpServers: Object.fromEntries(
-                  launch.tools.servers.map(({ name, alwaysLoad }) => [
-                    name,
-                    {
-                      type: "sdk",
-                      name,
-                      ...(alwaysLoad ? { alwaysLoad } : {}),
-                    },
-                  ]),
-                ),
+                mcpServers: {
+                  // Its tools load on search, but for those it marks with
+                  // `_meta["anthropic/alwaysLoad"]`.
+                  [TOOL_SERVER]: { type: "sdk", name: TOOL_SERVER },
+                },
               }),
             ]
           : []),
@@ -249,7 +237,7 @@ export class ClaudeProcess {
       appendSystemPrompt: launch.systemPrompt,
       ...(launch.tools
         ? {
-            sdkMcpServers: launch.tools.servers.map(({ name }) => name),
+            sdkMcpServers: [TOOL_SERVER],
             hooks: {
               PostToolUse: [
                 { matcher: FINAL_TOOL, hookCallbackIds: ["final"] },
@@ -566,17 +554,14 @@ export class ClaudeProcess {
     let response: Message;
     if (request.subtype === "mcp_message" && this.tools)
       response = success({
-        mcp_response: await this.tools
-          .answer(
-            this.conversation,
-            String(request.server_name),
-            request.message,
-          )
-          .catch((error) => ({
-            jsonrpc: "2.0",
-            id: (request.message as Message | undefined)?.id ?? 0,
-            error: { code: -32603, message: String(error?.message ?? error) },
-          })),
+        mcp_response: await this.tools(
+          this.conversation,
+          request.message,
+        ).catch((error) => ({
+          jsonrpc: "2.0",
+          id: (request.message as Message | undefined)?.id ?? 0,
+          error: { code: -32603, message: String(error?.message ?? error) },
+        })),
       });
     else if (request.subtype === "can_use_tool")
       response = success({

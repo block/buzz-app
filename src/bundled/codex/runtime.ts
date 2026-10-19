@@ -20,7 +20,8 @@ import {
   type AddedTool,
   addedKey,
   callSessionTool,
-  sessionGroups,
+  sessionHint,
+  sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
 import {
@@ -899,15 +900,10 @@ export class CodexRuntime {
       ? undefined
       : entries.flatMap((entry) => [...entry.onces]).find(matches);
     const turn = active ?? once;
-    // A thread keeps the tools it started with, and one started before the
-    // groups lists them all under buzz.
-    const groups = sessionGroups(this.added());
     if (
       !turn ||
-      !groups.some((group) => group.name === call.namespace) ||
-      !groups.some((group) =>
-        group.tools.some((tool) => tool.name === call.tool),
-      )
+      call.namespace !== "buzz" ||
+      !sessionTools(this.added()).some((tool) => tool.name === call.tool)
     )
       throw new Error("No active Buzz tool for this thread and turn");
     const check = () => {
@@ -1363,21 +1359,22 @@ function follow(
     },
   };
 }
-/** The Buzz tools, with those plugins add, that a new thread gets: one
- * namespace for each group. Codex keeps a deferred tool from the model until
- * its tool search finds it. Every model in Codex's catalog has tool search
- * (supports_search_tool); one without it would not see deferred tools. */
-const dynamicTools = (added: readonly AddedTool[]) =>
-  sessionGroups(added).map((group) => ({
+/** The Buzz tools, with those plugins add, that a new thread gets. Codex
+ * keeps a deferred tool from the model until its tool search finds it. Every
+ * model in Codex's catalog has tool search (supports_search_tool); one
+ * without it would not see deferred tools. */
+const dynamicTools = (added: readonly AddedTool[]) => [
+  {
     type: "namespace",
-    name: group.name,
-    description: group.hint,
-    tools: group.tools.map((tool) => ({
+    name: "buzz",
+    description: sessionHint(added),
+    tools: sessionTools(added).map(({ load, ...tool }) => ({
       type: "function",
       ...tool,
-      ...(group.load === "search" ? { deferLoading: true } : {}),
+      ...(load === "search" ? { deferLoading: true } : {}),
     })),
-  }));
+  },
+];
 const EMPTY: readonly SessionView[] = Object.freeze([]);
 
 /** A started Codex item as a step, named in the shared step vocabulary.

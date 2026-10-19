@@ -97,13 +97,7 @@ function withSpare(
       if (!parts) throw new Error("not ready");
       return parts.spawn(id, spawnOptions);
     },
-    () => ({
-      servers: [{ name: "buzz", alwaysLoad: true }],
-      answer: async (_conversation, _server, message) => ({
-        from: "spare",
-        message,
-      }),
-    }),
+    async (_conversation, message) => ({ from: "spare", message }),
     () => `spare-${++ids}`,
     toolsKey,
   );
@@ -154,10 +148,7 @@ it("starts a new conversation on the shared spare and warms another", async () =
 });
 
 it("hands the spare's tools to the agent that takes it", async () => {
-  const agentTools = {
-    servers: [{ name: "buzz", alwaysLoad: true }],
-    answer: vi.fn(async () => ({ from: "agent" })),
-  };
+  const agentTools = vi.fn(async () => ({ from: "agent" }));
   const { pool, spare, claudes } = withSpare({ tools: agentTools });
   spare.warm({ cwd: "/work", model: "opus" });
   await flush();
@@ -235,7 +226,7 @@ it("does not wait for a spare started elsewhere", async () => {
   // The spare for another folder never finishes starting.
   const spare = new Spare(
     () => new Promise(() => undefined),
-    () => ({ servers: [], answer: async () => ({}) }),
+    async () => ({}),
   );
   const { pool, claudes } = sessions({ spare });
   spare.warm({ cwd: "/other", model: "opus" });

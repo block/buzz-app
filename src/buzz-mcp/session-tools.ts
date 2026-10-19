@@ -1,8 +1,8 @@
 // What one agent session gets of the Buzz tools, whatever harness runs it:
-// the tools to list, in groups, a note for the end of each turn, and the
-// handler for every call. The attention tools are among them, and so are any
-// tools plugins add. A harness passes all of this on without knowing what is
-// in it.
+// the tools to list, each loaded up front or on search, a note for the end of
+// each turn, and the handler for every call. The attention tools are among
+// them, and so are any tools plugins add. A harness passes all of this on
+// without knowing what is in it.
 import {
   ATTENTION_NONE,
   ATTENTION_OFF,
@@ -16,8 +16,9 @@ import {
 import type { BuzzClient, Context } from "./client";
 import { callTool, type Reply, TOOLS, type Tool } from "./tools";
 
-/** A tool a plugin adds to every agent session in the app, listed in a
- * group of the tools its plugin adds. */
+/** A tool a plugin adds to every agent session in the app, listed after
+ * the Buzz tools under the same server and loaded on search. Its name should
+ * start with its plugin's, as `notes_get` does; no two tools share one. */
 export type AddedTool = Readonly<{
   name: string;
   description: string;
@@ -48,76 +49,39 @@ const listed = ({ name, description, inputSchema }: AddedTool): Listed => ({
   inputSchema,
 });
 
-/** Tools that one server (Claude) or namespace (Codex) lists. A harness that
- * can load tools on demand lists a `search` group's tools by name only, and
- * the model loads one when it needs it; `hint` is what it sees up front. */
-export type ToolGroup = Readonly<{
-  name: string;
-  hint: string;
-  load: "always" | "search";
-  tools: readonly Listed[];
-}>;
-/** The groups a session lists: the Buzz tools, always loaded, then the
- * attention tools and each plugin's tools, loaded on search. `added` may name
- * the plugin that adds each, as `agents.tools()` does. */
-export function sessionGroups(
-  added: readonly (AddedTool & { pluginId?: string })[] = [],
-): readonly ToolGroup[] {
-  const plugins = new Map<string, Listed[]>();
-  for (const tool of added) {
-    const plugin = tool.pluginId ?? "plugin";
-    plugins.set(plugin, [...(plugins.get(plugin) ?? []), listed(tool)]);
-  }
-  // Letters, digits and _ name a server or namespace in every harness; a
-  // plugin whose name another group has gets a numbered one.
-  const names = new Set(["buzz", "buzz_attention"]);
-  const named = (plugin: string) => {
-    const base = plugin.replace(/[^a-zA-Z0-9]/g, "_");
-    let name = base;
-    for (let n = 2; names.has(name); n++) name = `${base}_${n}`;
-    names.add(name);
-    return name;
-  };
-  return [
-    {
-      name: "buzz",
-      hint: "Read and act in Buzz as this agent.",
-      load: "always",
-      tools: TOOLS,
-    },
-    {
-      name: "buzz_attention",
-      hint: "Your attention: Interests (what you are responsible for), event watches that wake you when a matching event arrives, and timers that wake you on a schedule. Search for these tools when you need to set up, review or change them; interest_set and watch_add say how they work.",
-      load: "search",
-      tools: ATTENTION_TOOLS,
-    },
-    ...[...plugins].map(([plugin, tools]) => ({
-      name: named(plugin),
-      hint: `Tools the ${plugin} plugin adds: ${tools.map((tool) => tool.name).join(", ")}. Search for one when you need it.`,
-      load: "search" as const,
-      tools,
-    })),
-  ];
-}
+/** A tool as a session lists it. `search` means a harness that can load
+ * tools on demand lists it by name only, and the model loads it when it
+ * needs it; `always` means it is listed in full up front. Only the Buzz tools
+ * choose: those plugins add always load on search, so installing plugins
+ * never grows what every turn carries. */
+export type SessionTool = Listed & Readonly<{ load: "always" | "search" }>;
 
-/** The tools a session lists, in one list: the Buzz tools, then those
- * plugins add. */
+/** The tools a session lists: the Buzz tools, then those plugins add. */
 export const sessionTools = (
   added: readonly AddedTool[] = [],
-): readonly Listed[] => [...BUZZ_SESSION.tools, ...added.map(listed)];
+): readonly SessionTool[] => [
+  ...TOOLS.map((tool) => ({ ...tool, load: "always" as const })),
+  ...ATTENTION_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
+];
 
-/** Changes when the added tools or their groups change, so a session that
- * keeps the list it started with can be replaced; empty while plugins add
- * none. A short hash, since Codex saves it with each binding. Sorted by name,
- * so the order plugins start in does not change it. */
-export function addedKey(
-  added: readonly (AddedTool & { pluginId?: string })[],
-) {
+/** What the server (Claude) or namespace (Codex) with the tools says up
+ * front, so the model knows what it can search for. */
+export function sessionHint(added: readonly AddedTool[] = []) {
+  const plugins = added.length
+    ? ` and tools plugins add (${added.map((tool) => tool.name).join(", ")})`
+    : "";
+  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work)${plugins}.`;
+}
+
+/** Changes when the added tools change, so a session that keeps the list it
+ * started with can be replaced; empty while plugins add none. A short hash,
+ * since Codex saves it with each binding. Sorted by name, so the order
+ * plugins start in does not change it. */
+export function addedKey(added: readonly AddedTool[]) {
   if (!added.length) return "";
   const text = JSON.stringify(
-    added
-      .map((tool) => [tool.pluginId ?? "", listed(tool)] as const)
-      .sort(([, a], [, b]) => (a.name < b.name ? -1 : 1)),
+    added.map(listed).sort((a, b) => (a.name < b.name ? -1 : 1)),
   );
   // FNV-1a.
   let hash = 0x811c9dc5;

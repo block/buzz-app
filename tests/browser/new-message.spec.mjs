@@ -1,9 +1,4 @@
-import {
-  closeSettings,
-  openPage,
-  openSettings,
-  settingsDialog,
-} from "./navigation.mjs";
+import { openPage, openSettings, settingsDialog } from "./navigation.mjs";
 import { upper, settle } from "./timeline.mjs";
 import { test as base, expect } from "./playwright-test.mjs";
 import { preview } from "./vite-server.mjs";
@@ -801,7 +796,15 @@ test("a send finishing behind Settings keeps Settings and its unsaved edit", asy
   );
   await expect(settingsDialog(page)).toBeVisible();
   await expect(name).toHaveValue("Unsaved name");
-  await closeSettings(page);
+  // The edit is still unsaved, so closing asks before discarding it.
+  await settingsDialog(page)
+    .getByRole("button", { name: "Close Settings", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Discard changes?" })
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(settingsDialog(page)).toHaveCount(0);
   await expect(
     page
       .getByRole("complementary", { name: "Sidebar", exact: true })

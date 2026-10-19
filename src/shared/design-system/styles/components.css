@@ -799,7 +799,7 @@
     gap: var(--space-1);
   }
   .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-width: 0;
     min-height: var(--space-8);
     padding: var(--space-1) var(--space-2);
@@ -1096,6 +1096,12 @@
     padding: var(--space-1);
     border-radius: var(--radius-pill);
     height: 2.5rem;
+  }
+  /* A shell action group supplies the single outer track around its tabs. */
+  .chrome-navigation .buzz-tabs[data-variant="chrome"] {
+    background: transparent;
+    padding: 0;
+    height: auto;
   }
   .chrome-navigation .navigation-item[data-variant="pill"] {
     width: auto;

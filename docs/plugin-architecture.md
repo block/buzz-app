@@ -129,6 +129,13 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+An agent type's `run` gets the agent's handle, which publishes, reads and
+uploads as the agent. For agents that act on something other than a message,
+such as a call, `ctx.agents.handle(pubkey)` returns the same handle outside any
+run. It does so only for agents of the calling plugin's own types, while this
+copy of the app runs them and their community is live; otherwise it returns
+`undefined`, so ask for it when acting rather than keeping it.
+
 ```ts
 ctx.pages.register({
   id: "dashboard",

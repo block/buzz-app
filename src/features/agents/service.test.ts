@@ -1464,6 +1464,31 @@ it("claims an agent as it comes into view, and releases it as it leaves, without
   await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
 });
 
+it("hands a plugin its own agents outside any run, while this copy runs them", async () => {
+  const { service, plugin, ctx, native, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  expect(handle?.pubkey).toBe(bot);
+  await handle?.publish({ kind: 9, content: "hi", tags: [["h", channel]] });
+  expect(await published(native, 9)).toMatchObject([{ content: "hi" }]);
+  // Not to another plugin, nor to code that is no plugin's.
+  const other = ctx.extend({
+    pluginOwner: Object.freeze({ id: "other", revision: "one" }),
+  });
+  expect(other.agents.handle(bot)).toBeUndefined();
+  expect(ctx.agents.handle(bot)).toBeUndefined();
+  // Nor while its community is offline, or another copy of the app holds it.
+  connect(false);
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeUndefined());
+  native.claim.mockClear();
+  native.claim.mockResolvedValue(false);
+  connect(true);
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  await settle();
+  expect(plugin.agents.handle(bot)).toBeUndefined();
+});
+
 it("keeps running an agent while another community is selected, and gives it only its community's events", async () => {
   const { service, run, emit, second, select } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

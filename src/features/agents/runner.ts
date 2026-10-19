@@ -471,6 +471,15 @@ export class AgentRunners {
     const runner = this.runners.get(pubkey);
     return !!runner?.type?.run && !!runner.asked && runner.mayHold;
   }
+  /** The agent's handle outside any run, while this copy runs it with a
+   * type of `pluginId` and its community is live. */
+  handle(pubkey: string, pluginId: string) {
+    const runner = this.runners.get(pubkey);
+    const agent = this.host.ready(pubkey);
+    return runner?.type?.pluginId === pluginId && agent && this.runs(pubkey)
+      ? this.handleFor(runner, agent, runner.controller.signal)
+      : undefined;
+  }
   /** Whether another copy of the app runs an agent this one could. */
   yielded(pubkey: string) {
     const runner = this.runners.get(pubkey);
@@ -1737,50 +1746,7 @@ export class AgentRunners {
       lifetime,
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
-    const handle: AgentHandle = Object.freeze({
-      pubkey: agent.pubkey,
-      name: agent.name,
-      owner: agent.owner,
-      publish: (event: AgentEventTemplate) => this.publish(runner, event),
-      query: (filters: readonly object[]) =>
-        this.require().query(agent.pubkey, filters),
-      audienceAuthority: async (
-        destination: string,
-        sources: readonly string[],
-      ) => {
-        signal.throwIfAborted();
-        const native = this.require();
-        if (!native.audienceAuthority)
-          throw new Error(
-            "Current audience authority is unsupported by this host.",
-          );
-        const response = await native.audienceAuthority(
-          agent.pubkey,
-          destination,
-          sources,
-        );
-        signal.throwIfAborted();
-        return response;
-      },
-      searchProfiles: (query: string, limit: number) =>
-        this.require().searchProfiles(agent.pubkey, query, limit),
-      upload: (data: string, mime: string) =>
-        this.require().upload(agent.pubkey, data, mime),
-      media: (url: string) => this.require().media(agent.pubkey, url),
-      remember: async (slug: string, body: string, after: number) => {
-        const event = await this.require().remember(
-          agent.pubkey,
-          slug,
-          body,
-          after,
-        );
-        this.host.remembered(agent.pubkey, slug, body);
-        return event;
-      },
-      templates: () => this.host.templates(agent),
-      tabs: () => this.host.tabs(agent),
-      attention: this.attention(agent.pubkey),
-    });
+    const handle = this.handleFor(runner, agent, signal);
     const working = this.working(runner, job, agent);
     const trigger = job.trigger;
     const named =
@@ -1865,6 +1831,58 @@ export class AgentRunners {
     void held.then(() => {
       runner.busy.delete(lane);
       void this.drain(runner);
+    });
+  }
+
+  /** The agent as `run` holds it; `signal` bounds its audience checks. */
+  private handleFor(
+    runner: Runner,
+    agent: Agent,
+    signal: AbortSignal,
+  ): AgentHandle {
+    return Object.freeze({
+      pubkey: agent.pubkey,
+      name: agent.name,
+      owner: agent.owner,
+      publish: (event: AgentEventTemplate) => this.publish(runner, event),
+      query: (filters: readonly object[]) =>
+        this.require().query(agent.pubkey, filters),
+      audienceAuthority: async (
+        destination: string,
+        sources: readonly string[],
+      ) => {
+        signal.throwIfAborted();
+        const native = this.require();
+        if (!native.audienceAuthority)
+          throw new Error(
+            "Current audience authority is unsupported by this host.",
+          );
+        const response = await native.audienceAuthority(
+          agent.pubkey,
+          destination,
+          sources,
+        );
+        signal.throwIfAborted();
+        return response;
+      },
+      searchProfiles: (query: string, limit: number) =>
+        this.require().searchProfiles(agent.pubkey, query, limit),
+      upload: (data: string, mime: string) =>
+        this.require().upload(agent.pubkey, data, mime),
+      media: (url: string) => this.require().media(agent.pubkey, url),
+      remember: async (slug: string, body: string, after: number) => {
+        const event = await this.require().remember(
+          agent.pubkey,
+          slug,
+          body,
+          after,
+        );
+        this.host.remembered(agent.pubkey, slug, body);
+        return event;
+      },
+      templates: () => this.host.templates(agent),
+      tabs: () => this.host.tabs(agent),
+      attention: this.attention(agent.pubkey),
     });
   }
 

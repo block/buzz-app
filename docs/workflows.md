@@ -18,10 +18,10 @@ See the [capability contract](../src/features/workflows/types.ts).
   Form mode uses a selectable flow and contextual inspector, with insertion
   menus and removal. On narrow screens the inspector is a nested side dialog.
   Escape closes a menu, then inspector, then editor with a dirty-draft warning.
-  Trigger and step-action choices use labelled field selectors. Pencil name
-  editing commits on Enter/blur and reverts on Escape; invalid names remain
-  explained outside edit mode. Settings and
-  run history are disclosed separately; operation recovery stays visible.
+  Trigger and step-action choices use labelled field selectors. With nothing
+  selected, the inspector shows the workflow's name, description, channel and
+  enabled state; draft errors stay visible while their field is hidden. Form,
+  YAML and Runs tabs switch views; save recovery stays visible.
 - Form editing for message/reaction/diff/schedule/webhook triggers and Send
   Message/Delay/Call Webhook actions. Basic conditions cover text, author,
   reaction and message-ID comparisons; unrepresentable expressions stay Advanced.

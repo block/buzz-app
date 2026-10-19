@@ -313,33 +313,24 @@ export function createRelaySession(
             },
             needsReceipt: isWorkflowOperation,
             onReceipt: (event, message) => workflows.receipt(event, message),
+            // A chat this device is starting takes its events once the relay
+            // has its create; its local agents hear its owner's messages now.
+            // A chat being set up holds its messages, and the agents that hear
+            // them, until its Canvas and workspace are in place. The start's
+            // own create and member adds never wait.
+            holdPublish: (event) => {
+              if (event.kind === 9007 || event.kind === 9000) return;
+              const id = event.tags.find(([name]) => name === "h")?.[1];
+              if (!id) return;
+              const setup =
+                event.kind === 9 ? channelWrites.settling(id) : undefined;
+              if (setup) return setup.then(() => hearStarting(event, id));
+              const ready = channelWrites.starting(id);
+              if (ready && event.kind === 9) hearStarting(event, id);
+              return ready;
+            },
             preparePublish: async (event, signal) => {
               workflows.validate(event);
-              // A chat this device is starting takes its events once the relay
-              // confirms it; its local agents hear its owner's messages now.
-              // The start's own create and member adds never wait on it.
-              const destination =
-                event.kind !== 9007 && event.kind !== 9000
-                  ? event.tags.find(([name]) => name === "h")?.[1]
-                  : undefined;
-              // A chat being set up holds its messages, and the agents that
-              // hear them, until its Canvas and workspace are in place.
-              const setup =
-                destination && event.kind === 9
-                  ? channelWrites.settling(destination)
-                  : undefined;
-              const starting =
-                setup ?? (destination && channelWrites.starting(destination));
-              if (destination && starting) {
-                if (event.kind === 9 && !setup)
-                  hearStarting(event, destination);
-                // Waiting counts against the event's delivery deadline; one
-                // that timed out meanwhile goes again once the chat can take
-                // it (see channelWrites.start).
-                await starting;
-                signal.throwIfAborted();
-                if (setup) hearStarting(event, destination);
-              }
               if (event.kind === 40100) {
                 const id = event.tags.find((t) => t[0] === "h")?.[1];
                 if (!id) throw new Error("Canvas has no channel");
@@ -507,7 +498,15 @@ export function createRelaySession(
       ...new Set(filters.flatMap((filter) => filter["#h"] ?? [])),
     ].flatMap((id) => {
       const start = startingChannel(id);
-      return start ? [start.catch(() => {})] : [];
+      // A start that made no chat has nothing to read; asking the relay
+      // would only be refused as lost access.
+      return start
+        ? [
+            start.catch(() => {
+              throw new ReadError("unavailable", "This chat isn't available.");
+            }),
+          ]
+        : [];
     });
     if (starts.length) {
       const aborted = settings?.signal;

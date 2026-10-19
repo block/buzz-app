@@ -678,24 +678,6 @@ export function createChannelWrites(
           if (error instanceof ChatNotStarted) channels.abandon?.(id);
         },
       );
-      void settled.then(
-        () => {
-          // A message whose delivery deadline passed while it waited goes
-          // again now that the chat can take it.
-          for (const item of outbox?.snapshot() ?? [])
-            if (
-              item.delivery === "failed" &&
-              item.event.kind === 9 &&
-              item.event.tags.some(
-                ([name, value]) => name === "h" && value === id,
-              )
-            )
-              try {
-                outbox?.retry(item.event.id);
-              } catch {}
-        },
-        () => {},
-      );
       void ready.catch(() => {}).finally(() => starts.delete(id));
       void settled.catch(() => {}).finally(() => setups.delete(id));
       return { create, ready };

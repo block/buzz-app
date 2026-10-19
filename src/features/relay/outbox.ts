@@ -101,6 +101,7 @@ export function createOutbox(
     profiling = createRelayProfiler(),
     notifyListener = (listener: () => void) => listener(),
     preparePublish,
+    holdPublish,
     needsReceipt = () => false,
     onReceipt = (_event: EventData, _message: string | undefined) => {},
     clock = new MessageClock(),
@@ -120,6 +121,10 @@ export function createOutbox(
       event: RelayEvent,
       signal: AbortSignal,
     ) => Promise<(() => void) | undefined>;
+    /** Work a signed event waits for before it publishes, such as its
+     * channel's creation. A held event takes no delivery slot, and its
+     * deadline starts when the hold ends; a rejected hold fails it. */
+    holdPublish?: (event: RelayEvent) => Promise<void> | undefined;
   } = {},
 ) {
   const awaitsReceipt = needsReceipt;
@@ -147,6 +152,8 @@ export function createOutbox(
     timer: ReturnType<typeof setTimeout>;
     intent?: Promise<void>;
     controller?: AbortController;
+    /** Waiting on `holdPublish`, or for a slot after it, without using one. */
+    held?: true;
   };
   const attempts = new Map<string, Attempt>();
   const dismissing = new Map<string, Promise<void>>();
@@ -185,7 +192,28 @@ export function createOutbox(
     }
   };
   const inflight = () =>
-    [...attempts.values()].filter((attempt) => attempt.controller).length;
+    [...attempts.values()].filter(
+      (attempt) => attempt.controller && !attempt.held,
+    ).length;
+  /** Attempts whose hold ended, waiting for a free slot. */
+  const slotWaiters = new Set<() => void>();
+  function nextSlot() {
+    return new Promise<void>((resolve) => slotWaiters.add(resolve));
+  }
+  /** Offers free slots to released holds before queued deliveries; each
+   * released hold pumps again when it ends. */
+  function pumpDeliveries() {
+    if (closed) return;
+    if (slotWaiters.size) {
+      for (const resolve of [...slotWaiters]) {
+        slotWaiters.delete(resolve);
+        resolve();
+      }
+      return;
+    }
+    for (const queued of snapshot)
+      if (queued.delivery === "sending") void deliver(queued.event.id);
+  }
   let closed = false;
   let confirmedInvalidated = false;
   let confirmedKeep: ((event: EventData) => boolean) | undefined;
@@ -476,6 +504,18 @@ export function createOutbox(
       replace({ ...current, signed });
       await Promise.race([persist(id), aborted]);
       if (closed || signal.aborted || !find(id)) return;
+      const hold = holdPublish?.(signed);
+      if (hold) {
+        attempt.held = true;
+        clearTimeout(attempt.timer);
+        pumpDeliveries();
+        await Promise.race([hold, aborted]);
+        attempt.expiresAt = Date.now() + timeoutMs;
+        attempt.timer = setTimeout(() => expire(id), timeoutMs);
+        while (inflight() >= 3) await Promise.race([nextSlot(), aborted]);
+        delete attempt.held;
+        if (closed || signal.aborted || !find(id)) return;
+      }
       const check = preparePublish
         ? await profiling.measureAsync("send.prepare", id, () =>
             Promise.race([preparePublish(signed, signal), aborted]),
@@ -566,9 +606,7 @@ export function createOutbox(
         notify();
         void persist(id).catch(() => {});
       }
-      if (!closed)
-        for (const queued of snapshot)
-          if (queued.delivery === "sending") void deliver(queued.event.id);
+      pumpDeliveries();
     }
   }
   const subscribe = (set: Set<() => void>, listener: () => void) => {

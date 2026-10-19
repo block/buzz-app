@@ -105,7 +105,7 @@ function setup(id: string, deliveryTimeoutMs?: number) {
       media: (url) => url,
       query,
       writer: {
-        kinds: [9, 9000, 9007],
+        kinds: [9, 9000, 9007, 40100],
         sign: async (template: EventTemplate) => signed(viewer, template),
         publish,
       },
@@ -304,7 +304,7 @@ it("a lost create acknowledgment resends the same create, and the chat starts", 
   ).toBeUndefined();
 });
 
-it("messages that time out while their chat starts go once the chat exists", async () => {
+it("messages held while their chat starts keep their whole deadline for after it exists", async () => {
   const id = "88888888-8888-4888-8888-888888888888";
   const h = setup(id, 2_000);
   await h.established();
@@ -312,7 +312,7 @@ it("messages that time out while their chat starts go once the chat exists", asy
     h.agent.pubkey,
   ]);
   ready.catch(() => {});
-  // More than the outbox delivers at once, so some wait for a slot.
+  // More than the outbox delivers at once.
   const messages = ["one", "two", "three", "four"].map((text) =>
     h.session.messages.send(id, `@Agent ${text}`, [h.agent.pubkey]),
   );
@@ -321,12 +321,62 @@ it("messages that time out while their chat starts go once the chat exists", asy
     expect(
       h.session.outbox?.snapshot().find((item) => item.event.id === message)
         ?.delivery,
-    ).toBe("failed");
+    ).toBe("sending");
   h.release();
   await settle(ready);
-  for (let step = 0; step < 20; step++) await vi.advanceTimersByTimeAsync(100);
+  await vi.advanceTimersByTimeAsync(100);
   const sent = h.publish.mock.calls.map(([event]) => event.id);
   for (const message of messages) expect(sent).toContain(message);
+});
+
+it("a chat's setup writes go while more messages than delivery slots wait for setup", async () => {
+  const id = "8888aaaa-8888-4888-8888-888888888888";
+  const h = setup(id);
+  await h.established();
+  const { ready } = h.session.channelWrites.start(
+    id,
+    "Start",
+    [h.agent.pubkey],
+    undefined,
+    false,
+    async () => {
+      await h.session.canvas.save(id, "# Brief", undefined);
+    },
+  );
+  const messages = ["one", "two", "three", "four"].map((text) =>
+    h.session.messages.send(id, `@Agent ${text}`, [h.agent.pubkey]),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  h.release();
+  await settle(ready);
+  await vi.advanceTimersByTimeAsync(100);
+  const kinds = h.publish.mock.calls.map(([event]) => event.kind);
+  expect(kinds).toContain(40100);
+  const sent = h.publish.mock.calls.map(([event]) => event.id);
+  for (const message of messages) expect(sent).toContain(message);
+  // The Canvas went before any message it holds.
+  expect(kinds.indexOf(40100)).toBeLessThan(kinds.indexOf(9));
+});
+
+it("a read waiting on a start the relay refuses fails here, without asking the relay", async () => {
+  const id = "8888bbbb-8888-4888-8888-888888888888";
+  const h = setup(id);
+  await h.established();
+  h.refuse();
+  const { ready } = h.session.channelWrites.start(id, "Start", [
+    h.agent.pubkey,
+  ]);
+  ready.catch(() => {});
+  const canvas = h.session.canvas.read(id);
+  canvas.catch(() => {});
+  h.release();
+  await settle(ready);
+  await expect(canvas).rejects.toMatchObject({ kind: "unavailable" });
+  expect(
+    h.query.mock.calls.some(([filters]) =>
+      filters.some((filter) => filter["#h"]?.includes(id)),
+    ),
+  ).toBe(false);
 });
 
 it("a read of a chat that is still starting waits for the create instead of losing access", async () => {

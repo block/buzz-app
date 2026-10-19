@@ -103,6 +103,13 @@ import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
+import {
+  notifyRecovered,
+  subscribeRecovery,
+  takeMissedRecovery,
+  peekMissedRecovery,
+  type RecoveredSend,
+} from "./composer-recovery";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
@@ -128,69 +135,12 @@ const acceptedDrafts = new WeakMap<
   ComposerSession,
   Map<string, AcceptedDraft>
 >();
-type RecoveredSend = {
-  draft: MentionDraft;
-  picks?: MentionPicks;
-  preparationError?: unknown;
-};
-const recoveryListeners = new WeakMap<
-  ComposerSession,
-  Map<string, Set<(recovered: RecoveredSend) => void>>
->();
-// A recovery that no mounted composer consumed replays on remount. Only the
-// unpersisted parts need it: the pick snapshot and a preparation failure. The
-// saved draft and attachment store remain the owners of the recovered content.
-const missedRecovery = new WeakMap<
-  ComposerSession,
-  Map<string, RecoveredSend>
->();
-function takeMissedRecovery(session: ComposerSession, key: string) {
-  const byKey = missedRecovery.get(session);
-  const recovered = byKey?.get(key);
-  byKey?.delete(key);
-  return recovered;
-}
-function notifyRecovered(
-  session: ComposerSession,
-  key: string,
-  recovered: RecoveredSend,
-) {
-  let byKey = missedRecovery.get(session);
-  if (!byKey) {
-    byKey = new Map();
-    missedRecovery.set(session, byKey);
-  }
-  byKey.set(key, recovered);
-  for (const listener of recoveryListeners.get(session)?.get(key) ?? [])
-    listener(recovered);
-}
 function errorForRecovery(reason: unknown) {
   return reason instanceof Error
     ? reason.message
     : reason !== undefined
       ? String(reason)
       : undefined;
-}
-function subscribeRecovery(
-  session: ComposerSession,
-  key: string,
-  listener: (recovered: RecoveredSend) => void,
-) {
-  let byKey = recoveryListeners.get(session);
-  if (!byKey) {
-    byKey = new Map();
-    recoveryListeners.set(session, byKey);
-  }
-  let listeners = byKey.get(key);
-  if (!listeners) {
-    listeners = new Set();
-    byKey.set(key, listeners);
-  }
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-    if (!listeners.size) byKey.delete(key);
-  };
 }
 function recoveryFor(session: ComposerSession) {
   let recovery = acceptedDrafts.get(session);
@@ -688,7 +638,19 @@ function Composer({
   // composer holds it unedited, never to a later edit that keeps a conflict.
   const reconcileDraft = useEffectEvent(
     (restored?: MentionDraft, recoveredPicks?: MentionPicks) => {
-      if (submission || editing.target || writing.current) return;
+      if (editing.target || writing.current) return;
+      if (submission) {
+        // A new conversation saves every edit, so an explicit recovery merged
+        // into its saved draft loses nothing by loading it.
+        if (!restored) return;
+        const current = viewRevision(scope, draftKey);
+        if (
+          current !== undefined &&
+          current !== JSON.stringify(valueRef.current)
+        )
+          loadSaved(current);
+        return;
+      }
       if (accepted) {
         // The recovered revision can precede attachment adoption. The explicit
         // recovery notification below reconciles the mounted owner afterward.
@@ -761,7 +723,7 @@ function Composer({
     // Recovery may have completed between unmount and this subscription. Replay
     // only if its saved caption still owns the draft; never attach an old error
     // to a replacement written while the composer was away.
-    const missed = missedRecovery.get(session)?.get(recoveryKey);
+    const missed = peekMissedRecovery(session, recoveryKey);
     if (missed) {
       if (viewRevision(scope, draftKey) === JSON.stringify(missed.draft))
         receiveRecovery(missed);

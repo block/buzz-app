@@ -3,7 +3,7 @@ import {
   detailsDraftErrors,
 } from "../relay/channel-details-protocol";
 import { startingChatTitle } from "./chat-title";
-import { withdraw } from "./withdraw";
+import { restoreStart, startFilesKey } from "./restore-start";
 import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
@@ -27,6 +27,7 @@ import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ComposerInputElement } from "../messages/composer-dom";
 import {
   attachmentDraft,
+  clearAttachmentDraft,
   transferAttachmentDraft,
   type AttachmentDraft,
 } from "../messages/attachment-draft";
@@ -48,45 +49,6 @@ function readDraftSettings(scope: string, draftKey: string) {
     ttlSeconds: ("ttlSeconds" in settings ? settings.ttlSeconds : undefined) as
       | number
       | undefined,
-  };
-}
-
-/** Whether a saved draft holds nothing typed: the composer's automatic agent
- * tag alone counts as empty. */
-function blankDraft(saved: unknown) {
-  const { text, recipients } = mentionDraft(saved);
-  let rest = text;
-  for (const { start, end } of [...recipients].sort(
-    (a, b) => b.start - a.start,
-  ))
-    rest = rest.slice(0, start) + rest.slice(end);
-  return !rest.trim();
-}
-
-/** One draft holding `drafts` in order, a blank line apart, tags kept. */
-function joinDrafts(...drafts: readonly MentionDraft[]): MentionDraft {
-  let text = "";
-  const recipients: MentionDraft["recipients"][number][] = [];
-  const sessionCards: string[] = [];
-  for (const draft of drafts) {
-    if (blankDraft(draft)) continue;
-    if (text) text = `${text.trimEnd()}\n\n`;
-    const offset = text.length;
-    text += draft.text;
-    for (const item of draft.recipients)
-      recipients.push({
-        ...item,
-        start: item.start + offset,
-        end: item.end + offset,
-      });
-    sessionCards.push(...(draft.sessionCards ?? []));
-  }
-  return {
-    text,
-    recipients,
-    ...(sessionCards.length
-      ? { sessionCards: [...new Set(sessionCards)] }
-      : {}),
   };
 }
 
@@ -178,14 +140,7 @@ export function SoloDraft({
   const available = session.channelWrites.available;
   const [channelId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
-  // A start that failed after leaving this view comes back with its reason.
-  const [error, setError] = useState<string | undefined>(() => {
-    const saved = readView<unknown>(scope, `${draftKey}:start-error`, null);
-    return typeof saved === "string" ? saved : undefined;
-  });
-  useEffect(() => {
-    writeView(scope, `${draftKey}:start-error`, null);
-  }, [scope, draftKey]);
+  const [error, setError] = useState<string>();
   const submitting = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
@@ -244,7 +199,6 @@ export function SoloDraft({
       // the start instead of leaving an empty chat behind.
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
-      const kept = files.snapshot();
       // A workspace's defaults load while the chat is created; its Canvas and
       // placement go in once the chat exists, before the first turn reads them.
       const setup =
@@ -288,6 +242,17 @@ export function SoloDraft({
           recipients,
           ...(uploaded.length ? [uploaded] : []),
         );
+        // The start keeps the message's files until the relay confirms the
+        // chat, in case they have to come back.
+        if (uploaded.length)
+          transferAttachmentDraft(
+            files,
+            attachmentDraft(
+              session,
+              startFilesKey(scope, channelId),
+              channelId,
+            ),
+          );
         files.clear();
         writeView(
           scope,
@@ -307,66 +272,33 @@ export function SoloDraft({
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-project`, null);
       onStarted(channelId);
-      void ready.catch(async (reason: unknown) => {
-        // Only a start that made no chat comes back here; any other miss
-        // leaves the chat listed, with its messages' own Retry.
-        if (!(reason instanceof ChatNotStarted)) return;
-        const outbox = session.outbox;
-        // Everything sent in the pending chat was held for it: withdraw it all
-        // and keep the text of what came after the first message.
-        const held = (outbox?.snapshot() ?? []).filter(
-          (item) =>
-            item.event.id !== create &&
-            item.event.tags.some(
-              ([tag, value]) => tag === "h" && value === channelId,
-            ),
-        );
-        await Promise.all([
-          ...held.map((item) =>
-            outbox
-              ? withdraw(outbox, item.event.id).catch(() => {})
-              : undefined,
-          ),
-          session.channelWrites.failed(create) &&
-            session.channelWrites.discardFailed(create).catch(() => {}),
-        ]);
-        const followUps = held
-          .filter((item) => item.event.id !== message && item.event.kind === 9)
-          .map((item) => mentionDraft(item.event.content));
-        // So does anything typed there and not yet sent, files included.
-        const unsent = mentionDraft(
-          readView<unknown>(scope, `draft:${channelId}`, null),
-        );
-        writeView(scope, `draft:${channelId}`, null);
-        const chatFiles = attachmentDraft(
-          session,
-          `${scope}:draft:${channelId}`,
-          channelId,
-        );
-        const restored = joinDrafts(draft, ...followUps, unsent);
-        // Put the start back in the new-chat composer. A newer draft there
-        // keeps its settings and takes the start after its own text.
-        const current = readView<unknown>(scope, `${draftKey}:new-draft`, "");
-        if (blankDraft(current)) {
-          writeView(scope, `${draftKey}:new-draft`, restored);
-          writeView(scope, `${draftKey}:settings`, {
-            name: draftSettings.name,
-            canvas,
-            ttlSeconds,
-          });
-          writeView(scope, `${draftKey}:new-project`, project || null);
-        } else
-          writeView(
-            scope,
-            `${draftKey}:new-draft`,
-            joinDrafts(mentionDraft(current), restored),
-          );
-        const chatKept = chatFiles.snapshot();
-        if (files.adopt([...kept, ...chatKept]) && chatKept.length)
-          chatFiles.clear();
-        writeView(scope, `${draftKey}:start-error`, reason.message);
-        onFailed?.(channelId);
-      });
+      void ready.then(
+        () => clearAttachmentDraft(session, startFilesKey(scope, channelId)),
+        async (reason: unknown) => {
+          // Only a start that made no chat comes back here; any other miss
+          // leaves the chat listed, with its messages' own Retry.
+          if (!(reason instanceof ChatNotStarted)) {
+            clearAttachmentDraft(session, startFilesKey(scope, channelId));
+            return;
+          }
+          try {
+            await restoreStart(session, {
+              scope,
+              draftKey,
+              channelId,
+              create,
+              first: message ? { id: message, draft } : undefined,
+              settings: { name: draftSettings.name, canvas, ttlSeconds },
+              project,
+              reason,
+            });
+          } catch (error) {
+            console.error("Solo start could not come back", error);
+          } finally {
+            onFailed?.(channelId);
+          }
+        },
+      );
     } catch (reason) {
       if (mounted.current)
         setError(reason instanceof Error ? reason.message : String(reason));

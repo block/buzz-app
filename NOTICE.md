@@ -94,9 +94,10 @@ The bundled plugin PNG artwork in `src/bundled/*/icon.png` was created by
 Taylor Ho using GPT Image 2.5 and supplied for Buzz. Claude, Codex and Goose
 reuse the Agents artwork; their catalog tiles contain no third-party agent marks.
 
-The GitHub catalog tile uses Tabler's `brand-github` glyph with unchanged paths
-and proportions, flat white at half-tile size and without glyph effects. Only
-the tile behind it has a gradient. Tabler Icons 3.46.0: https://tabler.io/icons.
+The GitHub catalog PNG rasterizes Tabler's `brand-github` glyph with unchanged
+paths and proportions, flat white at half-canvas size on a transparent 376×376
+RGBA canvas. It uses the same bundled image rendering as the other plugins;
+the category gradient belongs to the separate tile background. Tabler Icons 3.46.0: https://tabler.io/icons.
 The MIT license below covers the icon file, not trademark rights or endorsement.
 GitHub is a trademark of GitHub, Inc.
 

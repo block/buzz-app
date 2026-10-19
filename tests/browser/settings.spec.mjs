@@ -840,7 +840,15 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(name).toBeFocused();
   await expect(name).toHaveValue("Fixture Reader");
   await name.fill("Discard when leaving Settings");
-  await closeSettings(page);
+  await settingsDialog(page)
+    .getByRole("button", { name: "Close Settings", exact: true })
+    .click();
+  // Unsaved profile edits ask before Settings closes.
+  await page
+    .getByRole("dialog", { name: "Discard changes?" })
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(settingsDialog(page)).toHaveCount(0);
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
@@ -1037,16 +1045,8 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
 }, info) => {
   await page.setViewportSize({ width: 480, height: 650 });
   await page.goto(app.origin);
-  await button(page, "Your profile").click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await button(page, "Show navigation").click();
-  const sidebar = page.getByRole("complementary", {
-    name: "Settings sidebar",
-    includeHidden: true,
-  });
-  await sidebar
-    .getByRole("button", { name: "Manage plugins", exact: true })
-    .click();
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);

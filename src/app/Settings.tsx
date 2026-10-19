@@ -778,13 +778,16 @@ export function Settings({
     const element = layout.current;
     if (!showingDetails || !element) return;
     // Resizing can hide the focused catalog control; keep focus in details.
+    // A hidden control's focus falls back to a container: the page, or the
+    // Settings modal that hosts this layout.
     const observer = new ResizeObserver(() => {
       const active = document.activeElement;
       const details = detailsClose.current?.closest("aside");
       if (
         covered(pluginSection.current) &&
-        (active === document.body ||
-          (!!active && element.contains(active) && !details?.contains(active)))
+        active &&
+        (active.contains(element) ||
+          (element.contains(active) && !details?.contains(active)))
       )
         detailsClose.current?.focus();
     });

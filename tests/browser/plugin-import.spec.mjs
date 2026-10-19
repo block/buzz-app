@@ -14,6 +14,11 @@ import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
+// A closed plugin dialog returns to Settings, the only remaining modal.
+async function expectOnlySettings(page) {
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(settingsDialog(page)).toBeVisible();
+}
 async function openPlugins(page, origin) {
   await page.goto(origin);
   await openSettings(page);
@@ -565,7 +570,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   ).toBeChecked();
   await page.getByRole("switch", { name: "Enable plugin" }).uncheck();
   await button(page, "Install plugin").click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expectOnlySettings(page);
   await expect(
     page.getByRole("heading", { name: "Example two", level: 3 }),
   ).toHaveCount(0);
@@ -640,7 +645,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
     .getByRole("dialog")
     .screenshot({ path: info.outputPath("plugin-update-review.png") });
   await button(page, "Update plugin").click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expectOnlySettings(page);
   await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Update Example two")).toBeFocused();
   await button(page, "View Example two details").click();
@@ -730,7 +735,7 @@ test("resizing over the catalog keeps focus in visible plugin details", async ({
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expectOnlySettings(page);
   await expect(close).toBeFocused();
 });
 
@@ -814,7 +819,7 @@ test("checked-in local examples activate and work independently", async ({
       .check();
     await button(page, "Continue").click();
     await button(page, "Install plugin").click();
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expectOnlySettings(page);
     await expect(pluginAction(page, sample.manifest.name)).toHaveAccessibleName(
       `Disable ${sample.manifest.name}`,
     );
@@ -1106,7 +1111,7 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   await dialog
     .getByRole("button", { name: "Install plugin", exact: true })
     .press("Enter");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expectOnlySettings(page);
   await expect(pluginAction(page, "Retry plugin")).toHaveAccessibleName(
     "Disable Retry plugin",
   );

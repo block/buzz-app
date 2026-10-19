@@ -97,9 +97,11 @@ test("Membership action removes and restores the working Invite destination", as
   await page.reload();
   await expect(moderation).toHaveAccessibleName("Unavailable Moderation");
   await expect(admin).toHaveAccessibleName(/^Disable /);
+  await closeSettings(page);
   await menu();
   await expect(invite).toBeVisible();
   await page.keyboard.press("Escape");
+  await plugins(page);
   await admin.click();
   await expect(admin).toHaveAccessibleName(/^Enable /);
   await closeSettings(page);

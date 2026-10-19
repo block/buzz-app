@@ -265,7 +265,7 @@ export function ConversationTimeline(
 
 export function ConversationComposer(props: Own<MessageComposerProps>) {
   const { onOpenMediaReview: _, ...shared } = useConversation();
-  // Solo chats are flat agent conversations; the owner's also start tagged.
+  // Solo chats address agents; the owner's also start tagged.
   return (
     <MessageComposer
       {...shared}

@@ -573,7 +573,7 @@ function Composer({
     (threadRootId
       ? []
       : (session.channels.window?.(channelId).rows ?? [])
-    ).filter((row) => soloConversation || !row.threadRootId);
+    ).filter((row) => !row.threadRootId);
   const editDisabled =
     disabled ||
     !!list.channels.find((channel) => channel.id === channelId)?.archived ||

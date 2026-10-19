@@ -586,6 +586,7 @@ function ChatActionsMenu({
               <IconButton
                 {...props}
                 data-solo-row-action=""
+                variant="bare"
                 size="compact"
                 data-solo-overflow-action=""
                 aria-label={`Actions for ${title}`}

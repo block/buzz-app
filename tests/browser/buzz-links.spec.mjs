@@ -49,7 +49,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await expect(row).not.toContainText("<buzz:");
   const link = row.getByRole("link", { name: "Alpha", exact: true });
   await expect(link).toHaveCSS("text-decoration-line", "underline");
-  // Links follow the accent at the default vibe level.
+  // Links follow the accent at the default accent level.
   await expect(link).toHaveCSS(
     "color",
     await link.evaluate((node) => {

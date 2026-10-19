@@ -1182,3 +1182,16 @@ it("keeps one channel Larry plain despite global namesakes and follows membershi
   names.dispose();
   owned.dispose();
 });
+
+it("marks only a mention of the viewer as a mention of you", () => {
+  const session = { ...createRelaySession(null).session, viewer: smith };
+  const view = renderDom(
+    <MessageMarkdown {...props("@Mic Smith and @Mic", { session })} />,
+  );
+  expect(
+    view.getByRole("button", { name: "View Mic Smith profile" }),
+  ).toHaveAttribute("data-mention-self", "");
+  expect(
+    view.getByRole("button", { name: "View Mic profile" }),
+  ).not.toHaveAttribute("data-mention-self");
+});

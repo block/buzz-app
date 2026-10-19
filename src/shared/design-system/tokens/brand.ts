@@ -2,6 +2,7 @@
 export const BRAND_SHADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 /** Canonical Appearance order; re-exported by shared/theme/accent.ts. */
 export const ACCENTS = [
+  "gray",
   "chartreuse",
   "flame",
   "magenta",

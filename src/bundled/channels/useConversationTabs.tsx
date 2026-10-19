@@ -63,6 +63,7 @@ export function useConversationTabs({
   eligible,
   threadId,
   onOpenDrawer,
+  openMembers,
   mainPane = false,
   anyMainThread = false,
   threadPane,
@@ -88,6 +89,7 @@ export function useConversationTabs({
   eligible?(entry: PanelOpening): boolean;
   threadId?: string | undefined;
   onOpenDrawer?(): void;
+  openMembers?(): void;
   /** This page hosts thread tabs in its main pane too. */
   mainPane?: boolean | undefined;
   /** Any thread may use the main pane, not only the current conversation's. */
@@ -368,6 +370,7 @@ export function useConversationTabs({
         !!drawerContext &&
         openConversationLink(drawerContext.channelId, target),
     },
+    openMembers,
   );
   // The pane's page-local side panel, so a tab opened from outside the page
   // knows the pane is in use; it ends with this mount.
@@ -489,7 +492,7 @@ export function useConversationTabs({
     channelId: string,
     messageId: string,
     rootId: string,
-    intent?: "reply" | "reveal",
+    intent?: "reply" | "reveal" | "focus",
   ) => {
     if (!currentVisit()) return;
     // Flat sessions keep their side-only host; channels support both panes.

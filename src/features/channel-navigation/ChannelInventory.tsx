@@ -207,6 +207,8 @@ export function ChannelInventory({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
+      !channel.huddle &&
+      !channel.metadataPending &&
       // Solo lists the viewer's own Solo chats.
       !ownSolo(channel, queries.viewer) &&
       (!preparingDm ||
@@ -893,8 +895,35 @@ export function ChannelInventory({
   });
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
   const lifecycleCallbacks = handoff?.lifecycleCallbacks;
+  // The shown rows nearest the confirmed channel: its own section's, then the
+  // nearest expanded sections'. Captured while it is still listed: completion
+  // can arrive after the roster has dropped it.
+  const lifecycleNeighbors = useRef<{ id: string; ids: string[] }>(undefined);
   useLayoutEffect(() => {
     if (!lifecycleCallbacks) return;
+    const dialogId = lifecycleDialog?.channel.id;
+    if (!dialogId) lifecycleNeighbors.current = undefined;
+    const at = sections.findIndex((section) =>
+      section.rows.some((row) => row.id === dialogId),
+    );
+    const placement = sections[at];
+    if (dialogId && placement) {
+      const shown = (section: typeof placement) =>
+        sidebar.collapsed.includes(section.key)
+          ? []
+          : section.rows.map((row) => row.id);
+      const own = shown(placement);
+      const index = Math.max(own.indexOf(dialogId), 0);
+      lifecycleNeighbors.current = {
+        id: dialogId,
+        ids: [
+          ...own.slice(index + 1),
+          ...own.slice(0, index).reverse(),
+          ...sections.slice(at + 1).flatMap(shown),
+          ...sections.slice(0, at).flatMap(shown).reverse(),
+        ],
+      };
+    }
     lifecycleCallbacks.current = lifecycleDialog
       ? {
           close: () => {
@@ -916,16 +945,22 @@ export function ChannelInventory({
                 : lifecycleDialog.focusFallback;
               return;
             }
+            // Its neighbor takes its place, so the sidebar stays where it is.
+            const listed = sections.flatMap((section) => section.rows);
+            const next =
+              (lifecycleNeighbors.current?.id === id
+                ? lifecycleNeighbors.current.ids
+                : []
+              ).find((neighbor) => listed.some((row) => row.id === neighbor)) ??
+              listed.find((channel) => channel.id !== id)?.id;
+            if (next) lifecycleFocus.current = next;
             // Confirmed access loss can already have removed current from the roster.
             if (
               (target.kind === "conversation"
                 ? target.channelId
                 : undefined) === id
             ) {
-              const next = sections
-                .flatMap((section) => section.rows)
-                .find((channel) => channel.id !== id);
-              if (next) select(next.id);
+              if (next) select(next);
               else {
                 writeView(scope, "selected-channel", undefined);
                 void navigator.open({

@@ -343,9 +343,8 @@ plugin skipped-folder disclosure, and developer diagnostics.
 External plugin settings own their content.
 
 Use `ThemePicker` at the trailing edge of a PreferenceRow for color mode. The
-color mode, interface size, accent color and vibe level rows share one Appearance
-group. Vibe level uses `StepSlider`, the shared control for a few ordered steps:
-each step is a visible stop and its name follows the thumb. The
+color mode, interface size, accent color and accent level rows share one Appearance
+group. Accent level uses the compact `Select`, with a chip previewing each level. The
 System, Light, and Dark previews retain shared radio semantics, accessible names,
 and a persistent selection outline without visible captions. Their nested light/dark
 scopes use the system's surface, text, border, and accent roles. The row wraps these choices below the label
@@ -428,7 +427,7 @@ existing minimum heights. The extra-small capsule keeps its caption role.
 ## Colorways and plugin gradients
 
 Plugin artwork uses existing palette colors, including the complete Appearance
-ramps: Chartreuse, Flame, Magenta, Iris, Cobalt and Jade. All twelve steps and
+ramps: Gray, Chartreuse, Flame, Magenta, Iris, Cobalt and Jade. All twelve steps and
 existing ink, pressed and link mappings reference explicit palette owners.
 Values are extracted unchanged. Mode-specific owners (for example
 `--jade-3-light`) remain available independently of the page mode; the resolved

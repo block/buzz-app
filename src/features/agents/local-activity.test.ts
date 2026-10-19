@@ -23,7 +23,6 @@ it("projects one local source into channel, exact thread and message without nee
     (channel) => allowed && channel === "channel",
     undefined,
     undefined,
-    undefined,
     { source: local.reader, scope },
   );
   const snapshot = activity.queries.snapshot;

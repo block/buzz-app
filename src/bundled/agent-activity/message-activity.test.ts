@@ -8,12 +8,6 @@ function fixture(): Snapshot {
   return {
     status: "listening",
     trimmed: 0,
-    history: "unavailable",
-    hasOlder: false,
-    historyOlder: false,
-    historySkipped: 0,
-    historyAgents: [],
-    capture: "off",
 
     typing: [],
     records: ["agent", "peer"].map((agent) => ({
@@ -22,7 +16,6 @@ function fixture(): Snapshot {
       kind: "turn_started",
       channelIds: ["channel"],
       receivedAt: 1000,
-      historical: false,
       createdAt: 1,
       plaintext: JSON.stringify({
         kind: "turn_started",
@@ -114,21 +107,4 @@ it("never uses typing as message association or resurrects an ended request", ()
       (e) => e.agent,
     ),
   ).toEqual(["agent"]);
-});
-
-it("keeps restored starts out of live message bubbles even if a heartbeat has the same turn ID", () => {
-  const source = fixture();
-  expect(
-    messageActivity(
-      {
-        ...source,
-        records: source.records.map((record) => ({
-          ...record,
-          historical: true,
-        })),
-      },
-      "channel",
-      request,
-    ),
-  ).toEqual([]);
 });

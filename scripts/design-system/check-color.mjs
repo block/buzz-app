@@ -326,6 +326,7 @@ function auditLayers() {
 
   // Appearance palettes retain explicit mode owners and scoped ramp bindings.
   for (const family of [
+    "gray",
     "chartreuse",
     "flame",
     "magenta",

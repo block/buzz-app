@@ -77,7 +77,14 @@ function fake(events: readonly BuzzEvent[] = []) {
     })),
     remember: vi.fn(async () => undefined),
     media: vi.fn(async (url: string) =>
-      btoa(String.fromCharCode(...(url.endsWith(".png") ? PNG : [1, 2, 3]))),
+      url.endsWith(".png")
+        ? {
+            path: `/cache/${url}`,
+            type: "image/png",
+            size: PNG.length,
+            data: btoa(String.fromCharCode(...PNG)),
+          }
+        : { path: `/cache/${url}`, type: "video/mp4", size: 3 },
     ),
   };
   return { client, published };
@@ -166,17 +173,18 @@ it("refuses to post a name it cannot resolve unless told who it means", async ()
   expect(published[0]?.tags).toContainEqual(["p", bob]);
 });
 
-it("replies to a message inside a thread at the thread's root, and posts a file's text and images", async () => {
+it("replies to a message inside a thread at the thread's root, and posts a file's text and attachments", async () => {
   const { client, published } = fake(community);
   await callTool(client, { channel: "chan", root }, "send", {
     audience: "everyone",
     reply: nested,
     path: "notes.md",
-    files: ["shot.png"],
+    files: ["shot.png", "docs/plan.pdf"],
   });
   expect(published[0]).toEqual({
     kind: 9,
-    content: "# notes.md\n![image](https://relay/media/x.png)",
+    content:
+      "# notes.md\n![shot.png](<https://relay/media/x.png>)\n[plan.pdf](<https://relay/media/x.png>)",
     tags: [
       ["h", "chan"],
       ["e", root, "", "reply"],
@@ -187,6 +195,16 @@ it("replies to a message inside a thread at the thread's root, and posts a file'
         "x ab",
         "size 7",
         "dim 1x1",
+        "filename shot.png",
+      ],
+      [
+        "imeta",
+        "url https://relay/media/x.png",
+        "m application/octet-stream",
+        "x ab",
+        "size 7",
+        "dim 1x1",
+        "filename plan.pdf",
       ],
     ],
   });
@@ -422,7 +440,7 @@ it("lists its tools before it can call them", async () => {
   ).resolves.toMatchObject({ result: { isError: true } });
 });
 
-it("shows a media image to the agent, and nothing else", async () => {
+it("shows a media image to the agent, and gives any media's saved path", async () => {
   const { client } = fake();
   const png = btoa(String.fromCharCode(...PNG));
   await expect(
@@ -439,12 +457,22 @@ it("shows a media image to the agent, and nothing else", async () => {
   ).resolves.toEqual({
     jsonrpc: "2.0",
     id: 3,
-    result: { content: [{ type: "image", data: png, mimeType: "image/png" }] },
+    result: {
+      content: [
+        { type: "image", data: png, mimeType: "image/png" },
+        {
+          type: "text",
+          text: `Saved /cache/abc.png (image/png, ${PNG.length} bytes).`,
+        },
+      ],
+    },
   });
   expect(client.media).toHaveBeenCalledWith("abc.png");
   await expect(
-    callTool(client, {}, "media_get", { url: "abc.txt" }),
-  ).rejects.toThrow("Only JPEG, PNG, GIF and WebP");
+    callTool(client, {}, "media_get", { url: "abc.mp4" }),
+  ).resolves.toBe(
+    "Saved /cache/abc.mp4 (video/mp4, 3 bytes). Open it with your own tools.",
+  );
 });
 
 const room = "0e4c2f1a-8b3d-4c5e-9f60-718293a4b5c6";

@@ -320,9 +320,9 @@
   }
 }
 
-/* Category identities share the six design-system accent families. */
+/* Shared category gradients preserve their original cross-color transitions. */
 .pluginIcon[data-branded][data-category="communication"] {
-  --plugin-icon-gradient: var(--art-cobalt-gradient);
+  --plugin-icon-gradient: var(--art-plugin-communication-gradient);
 }
 
 .pluginIcon[data-branded][data-category="communication"] img {
@@ -330,7 +330,7 @@
 }
 
 .pluginIcon[data-branded][data-category="agents"] {
-  --plugin-icon-gradient: var(--art-iris-gradient);
+  --plugin-icon-gradient: var(--art-plugin-agents-gradient);
 }
 
 .pluginIcon[data-branded][data-category="agents"] img {
@@ -338,7 +338,7 @@
 }
 
 .pluginIcon[data-branded][data-category="agent-tools"] {
-  --plugin-icon-gradient: var(--art-magenta-gradient);
+  --plugin-icon-gradient: var(--art-plugin-agent-tools-gradient);
 }
 
 .pluginIcon[data-branded][data-category="agent-tools"] img {
@@ -346,7 +346,9 @@
 }
 
 .pluginIcon[data-branded][data-category="developer-tools-and-integrations"] {
-  --plugin-icon-gradient: var(--art-flame-gradient);
+  --plugin-icon-gradient: var(
+    --art-plugin-developer-tools-and-integrations-gradient
+  );
 }
 
 .pluginIcon[data-branded][data-category="developer-tools-and-integrations"]
@@ -355,7 +357,7 @@
 }
 
 .pluginIcon[data-branded][data-category="people-and-communities"] {
-  --plugin-icon-gradient: var(--art-jade-gradient);
+  --plugin-icon-gradient: var(--art-plugin-people-and-communities-gradient);
 }
 
 .pluginIcon[data-branded][data-category="people-and-communities"] img {
@@ -363,7 +365,7 @@
 }
 
 .pluginIcon[data-branded][data-category="productivity"] {
-  --plugin-icon-gradient: var(--art-chartreuse-gradient);
+  --plugin-icon-gradient: var(--art-plugin-productivity-gradient);
 }
 
 .pluginIcon[data-branded][data-category="productivity"] img {

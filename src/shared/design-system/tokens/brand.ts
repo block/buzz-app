@@ -8,19 +8,55 @@ export const BRAND_FAMILIES = [
   { id: "jade", hue: 169.9836 },
   { id: "chartreuse", hue: 109.5919 },
 ] as const;
+/** Cross-color pairs preserve the plugin artwork direction; accent ramps above
+ * remain the existing Appearance choices, not replacements for these endpoints. */
 export const BRAND_GRADIENTS = [
-  { name: "Communication", category: "communication", family: "cobalt" },
-  { name: "Agents", category: "agents", family: "iris" },
-  { name: "Agent tools", category: "agent-tools", family: "magenta" },
+  {
+    name: "Communication",
+    category: "communication",
+    from: "cyan",
+    to: "blue",
+    fromHue: 220,
+    toHue: 255,
+  },
+  {
+    name: "Agents",
+    category: "agents",
+    from: "violet",
+    to: "indigo",
+    fromHue: 295,
+    toHue: 260,
+  },
+  {
+    name: "Agent tools",
+    category: "agent-tools",
+    from: "fuchsia",
+    to: "purple",
+    fromHue: 335,
+    toHue: 300,
+  },
   {
     name: "Developer tools & integrations",
     category: "developer-tools-and-integrations",
-    family: "flame",
+    from: "coral",
+    to: "pink",
+    fromHue: 375,
+    toHue: 340,
   },
   {
     name: "People & communities",
     category: "people-and-communities",
-    family: "jade",
+    from: "scarlet",
+    to: "orange",
+    fromHue: 380,
+    toHue: 415,
   },
-  { name: "Productivity", category: "productivity", family: "chartreuse" },
+  {
+    name: "Productivity",
+    category: "productivity",
+    from: "gold",
+    to: "lime",
+    fromHue: 420,
+    toHue: 455,
+  },
 ] as const;

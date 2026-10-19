@@ -6,6 +6,8 @@ import { createWriteStream } from "node:fs";
 import { mkdir, readFile, realpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { decode } from "nostr-tools/nip19";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
@@ -220,22 +222,25 @@ export function nodeClient(
       const dir = options.media ?? join(tmpdir(), "buzz-agent-media");
       await mkdir(dir, { recursive: true });
       const partial = join(dir, `.${file}.${randomUUID()}`);
-      const out = createWriteStream(partial);
       const hash = createHash("sha256");
       const image: Uint8Array[] = [];
       let size = 0;
       try {
-        for await (const chunk of response.body ?? []) {
-          size += chunk.length;
-          if (size > MEDIA_FILE_LIMIT)
-            throw new Error("Media over 500 MiB cannot be saved");
-          hash.update(chunk);
-          if (shown && size <= MEDIA_LIMIT) image.push(chunk);
-          if (!out.write(chunk))
-            await new Promise<void>((done) => out.once("drain", () => done()));
-        }
-        await new Promise<void>((done, fail) =>
-          out.end((error?: Error | null) => (error ? fail(error) : done())),
+        // pipeline owns the file stream's errors (open, write, close), so a
+        // full disk or denied folder becomes a tool error, not a crash.
+        await pipeline(
+          Readable.from(response.body ?? []),
+          async function* (source: AsyncIterable<Uint8Array>) {
+            for await (const chunk of source) {
+              size += chunk.length;
+              if (size > MEDIA_FILE_LIMIT)
+                throw new Error("Media over 500 MiB cannot be saved");
+              hash.update(chunk);
+              if (shown && size <= MEDIA_LIMIT) image.push(chunk);
+              yield chunk;
+            }
+          },
+          createWriteStream(partial),
         );
         if (
           !name.endsWith(".thumb.jpg") &&
@@ -253,7 +258,6 @@ export function nodeClient(
             : {}),
         } satisfies Media;
       } catch (error) {
-        out.destroy();
         await rm(partial, { force: true });
         throw error;
       }

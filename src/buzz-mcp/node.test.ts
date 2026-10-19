@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bytesToHex } from "nostr-tools/utils";
@@ -167,6 +167,27 @@ it("saves only its community's media, signed for a get, and shows images", async
     type: "image/jpeg",
     data: btoa("\x01\x02\x03"),
   });
+  await rm(dir, { recursive: true });
+});
+
+it("reports a media folder it cannot write as a tool error", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "buzz-media-"));
+  await chmod(dir, 0o500);
+  const buzz = nodeClient({
+    relay: "wss://relay.test",
+    key: bytesToHex(agent.secret),
+    root: "/",
+    media: dir,
+  });
+  const bytes = new Uint8Array([1, 2, 3]);
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+    new Response(bytes, { headers: { "content-type": "video/mp4" } }),
+  );
+  // An unhandled stream error would end the MCP server instead.
+  await expect(buzz.media(sha)).rejects.toThrow(/EACCES/);
+  await chmod(dir, 0o700);
+  expect(await readdir(dir)).toEqual([]);
   await rm(dir, { recursive: true });
 });
 

@@ -522,6 +522,9 @@ export function Settings({
   const visibleReturn = (target: HTMLElement | null) =>
     covered(pluginSection.current) ? (detailsClose.current ?? target) : target;
   useEffect(() => {
+    if (selected !== "plugins") setSelectedPluginId(undefined);
+  }, [selected]);
+  useEffect(() => {
     const element = layout.current;
     if (!showingDetails || !element) return;
     // Resizing can hide the focused catalog control; keep focus in details.

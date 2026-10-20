@@ -12,6 +12,7 @@ import { ChannelActivityPopover } from "../../bundled/channels/ChannelActivityPo
 import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
+import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
 import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
 import { soloSharedMarkId } from "../../bundled/channels/SoloShare";
 import { useChannelList } from "../relay/react";
@@ -108,6 +109,11 @@ export function SoloInventory({
         (b.lastActivityAt ?? b.updatedAt ?? 0) -
           (a.lastActivityAt ?? a.updatedAt ?? 0) || a.id.localeCompare(b.id),
     );
+  // Capped workspaces never hide the open chat or one that needs the viewer.
+  const unreadChats = useUnreadChannelIds(
+    session.unread,
+    JSON.stringify(conversations.map((item) => item.id)),
+  );
   const empty =
     list.status === "ready" &&
     preferences.status === "ready" &&
@@ -195,6 +201,10 @@ export function SoloInventory({
         chats={conversations.map((item) => ({
           id: item.id,
           title: item.name,
+          pinned:
+            selected === item.id ||
+            workingChannels.has(item.id) ||
+            unreadChats.has(item.id),
         }))}
         onNew={newChat}
         renderChat={(item, rename) => (

@@ -51,7 +51,16 @@ import styles from "./SoloWorkspaces.module.css";
 import channelStyles from "./Channels.module.css";
 
 /** Presentation only. The caller supplies authorized, saved chats. */
-export type ChatListItem = Readonly<{ id: string; title: string }>;
+export type ChatListItem = Readonly<{
+  id: string;
+  title: string;
+  /** Stays listed past a workspace's cap, like the open or an unread chat. */
+  pinned?: boolean;
+}>;
+
+/** Each workspace lists its most recent chats; Show more adds a step. */
+export const SOLO_CHAT_CAP = 7;
+export const SOLO_CHAT_STEP = 10;
 
 /** The existing relay preference service owns delivery, rollback and retry. */
 export function SoloWorkspaces({
@@ -81,6 +90,7 @@ export function SoloWorkspaces({
   const [copy, copyNotice] = useChatCopy();
   const preferences = session.soloPreferences;
   const collapsedKey = "solo:collapsed-projects";
+  const expandedKey = "solo:expanded-projects";
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
     preferences.snapshot,
@@ -99,6 +109,20 @@ export function SoloWorkspaces({
       ? saved.filter((id): id is string => typeof id === "string")
       : [];
   });
+  // Extra chats each workspace shows past the cap, remembered like collapse.
+  const [expanded, setExpanded] = useState<Record<string, number>>(() => {
+    const saved = readView<unknown>(scope, expandedKey, {});
+    return saved && typeof saved === "object" && !Array.isArray(saved)
+      ? Object.fromEntries(
+          Object.entries(saved).filter(
+            (entry): entry is [string, number] =>
+              typeof entry[1] === "number" && entry[1] > 0,
+          ),
+        )
+      : {};
+  });
+  // A chat just moved into a workspace stays listed so focus can follow it.
+  const [revealed, setRevealed] = useState<string>();
   const [sharing, setSharing] = useState<{
     id: string;
     visit: AbortSignal | undefined;
@@ -168,6 +192,7 @@ export function SoloWorkspaces({
   const move = (id: string, projectId?: string) => {
     const saving = preferences.assign(id, projectId);
     toggle(projectId ?? "", true);
+    setRevealed(id);
     setRowFocus(id);
     void saving.catch(() => {
       // A rollback remounts the original row. Do not steal focus if the user moved on.
@@ -212,6 +237,14 @@ export function SoloWorkspaces({
     if (!open) next.push(id);
     setCollapsed(next);
     writeView(scope, collapsedKey, next);
+  };
+  const expand = (id: string, extra: number) => {
+    const rest = Object.fromEntries(
+      Object.entries(expanded).filter(([key]) => key !== id),
+    );
+    const next = extra > 0 ? { ...rest, [id]: extra } : rest;
+    setExpanded(next);
+    writeView(scope, expandedKey, next);
   };
   const moves =
     snapshot.moves?.filter((move) =>
@@ -260,6 +293,25 @@ export function SoloWorkspaces({
       >
         {projects
           .filter((project) => project.id || project.rows.length)
+          .map((project) => {
+            // A list that shrank back under the cap has nothing to fold.
+            const extra =
+              project.rows.length > SOLO_CHAT_CAP
+                ? (expanded[project.id] ?? 0)
+                : 0;
+            const limit = SOLO_CHAT_CAP + extra;
+            // Rows arrive newest first; pinned chats past the cap keep that order.
+            const listed = project.rows.filter(
+              (item, index) =>
+                index < limit || item.pinned || item.id === revealed,
+            );
+            return {
+              ...project,
+              listed,
+              extra,
+              hidden: project.rows.length - listed.length,
+            };
+          })
           .map((project) => (
             <DropProject
               projectKey={DROP + project.id}
@@ -352,7 +404,7 @@ export function SoloWorkspaces({
                 </Collapsible.Trigger>
               </ChatActionsMenu>
               <Collapsible.Panel className={styles.projectPanel}>
-                {project.rows.map((item) => {
+                {project.listed.map((item) => {
                   const channel = channels.channels.find(
                     (channel) => channel.id === item.id,
                   );
@@ -436,6 +488,38 @@ export function SoloWorkspaces({
                     </ChatActionsMenu>
                   );
                 })}
+                {(project.hidden > 0 || project.extra > 0) && (
+                  <div className={styles.showMore} data-solo-show-more="">
+                    {project.hidden > 0 && (
+                      <NavigationItem
+                        variant="row"
+                        label="Show more"
+                        aria-label={`Show more chats in ${project.name}`}
+                        icon={
+                          <span
+                            className={styles.conversationIcon}
+                            aria-hidden="true"
+                          >
+                            <CaretDownIcon size={16} />
+                          </span>
+                        }
+                        onClick={() =>
+                          expand(project.id, project.extra + SOLO_CHAT_STEP)
+                        }
+                      />
+                    )}
+                    {project.extra > 0 && (
+                      <Button
+                        variant="plain"
+                        size="inline"
+                        aria-label={`Show fewer chats in ${project.name}`}
+                        onClick={() => expand(project.id, 0)}
+                      >
+                        Show less
+                      </Button>
+                    )}
+                  </div>
+                )}
                 {!project.rows.length &&
                   project.id &&
                   (onNew ? (

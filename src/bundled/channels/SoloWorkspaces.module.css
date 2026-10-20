@@ -78,6 +78,22 @@
   flex: 1;
   min-width: 0;
 }
+/* Show more keeps the row's geometry; Show less sits at its trailing edge. */
+.showMore {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  /* Ends on the row inset inside the gutter fill, like the overflow glyph. */
+  padding-inline-end: calc(
+    var(--session-row-inset) +
+    var(--channel-row-fill-end, 0%)
+  );
+}
+.showMore > [data-variant="row"] {
+  flex: 1;
+  min-width: 0;
+}
 .sidebarContents .organizedRow > div > [data-variant="row"] {
   /* Status paints in the row-owned action slot outside the select button.
      Only the label clips text; clipping the button would hide that status. */

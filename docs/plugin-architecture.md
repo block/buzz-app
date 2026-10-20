@@ -775,7 +775,8 @@ New-install review lists declarations. Update review compares against the instal
 revision and leads with added, changed and removed declarations; changed commands and
 processes include previous and replacement details. Equivalent default limits and
 reordered declarations do not count as changes. Unchanged updates say so explicitly,
-and unchanged declarations remain below the summary as individually expandable rows.
+and View unchanged declarations opens a separate view inside the same dialog. Back
+returns to the summary without acquiring or discarding the prepared update.
 Update review names the plugin, keeps the trust warning visible, and avoids nesting
 declarations inside an additional disclosure.
 The install/update action accepts that displayed version; an enabled update may run
@@ -853,8 +854,7 @@ folders. Choose one and explicitly install/update. Add opens update review direc
 when the plugin is already installed. New plugins enable by default, with an opt-out
 in the review footer; successful installation closes the dialog. Updates match
 **manifest ID**, even across repositories, and preserve the saved enabled state:
-an enabled update may activate immediately except in safe mode. The UI warns before
-that action and shows declared host access, including changes. Installed artifacts do
+an enabled update may activate immediately except in safe mode. Review shows declared host access, including changes. Installed artifacts do
 not watch/pull the source. Plugins installed from a folder keep the selected folder
 path for Settings → Plugins → Manage plugins → Reload while disabled;
 reloading reads the recorded candidate folder and requires the manifest ID to stay the

@@ -450,7 +450,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
   }
 });
 
-test("folder/Git preview selects the exact subfolder, installs disabled and warns on enabled updates", async ({
+test("folder/Git preview selects the exact subfolder and preserves enabled state through updates", async ({
   page,
   app,
 }, info) => {
@@ -464,6 +464,9 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
         description:
           "Review repository activity and share detailed project updates with your community and collaborators.",
         apiVersion: 1,
+        host: {
+          commands: [{ id: "check", program: "example-cli", args: ["status"] }],
+        },
       },
       revision: name,
     })),
@@ -644,9 +647,23 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await button(page, "Browse plugin folder").click();
   await expect(page.getByRole("radio")).toHaveCount(0);
   await expect(
-    page.getByText(/Stays on; the update may run immediately/),
-  ).toBeVisible();
+    page.getByText(/may run immediately|earlier revision to roll back/),
+  ).toHaveCount(0);
   await expect(button(page, "Update plugin")).toBeEnabled();
+  await button(page, "View unchanged declarations").click();
+  await expect(page.getByRole("dialog")).toHaveAccessibleName(
+    "Unchanged declarations",
+  );
+  await expect(button(page, "Back")).toBeFocused();
+  await expect(button(page, "Update plugin")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /^Run example-cli/ }),
+  ).toBeVisible();
+  await button(page, "Back").click();
+  await expect(page.getByRole("dialog")).toHaveAccessibleName(
+    "Update Example two",
+  );
+  await expect(button(page, "View unchanged declarations")).toBeFocused();
   await page
     .getByRole("dialog")
     .screenshot({ path: info.outputPath("plugin-update-review.png") });

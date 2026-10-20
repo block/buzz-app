@@ -234,7 +234,7 @@ it("shows exact declared access and changes before an enabled update", async () 
   expect(screen.getByText(/^Provide tools to local agents/)).toBeVisible();
   expect(screen.queryByRole("button", { name: /^Computer access/ })).toBeNull();
   expect(screen.getByRole("note")).toHaveTextContent(
-    "Plugins aren’t sandboxed",
+    "beyond these declarations",
   );
   const scopes = within(
     screen.getByRole("region", { name: "Declared access changes" }),
@@ -289,10 +289,8 @@ it("shows exact declared access and changes before an enabled update", async () 
   ).toHaveTextContent("https://old.example.com");
   expect(screen.queryByRole("region", { name: "Package content" })).toBeNull();
   expect(
-    screen.getByText(
-      /Stays on; the update may run immediately unless this launch is in safe mode/,
-    ),
-  ).toBeVisible();
+    screen.queryByText(/may run immediately|earlier revision to roll back/),
+  ).toBeNull();
   expect(manager.installImport).not.toHaveBeenCalled();
 });
 
@@ -579,12 +577,12 @@ it.each([
     );
     if (!changed) {
       expect(screen.getByText("No declared access changes")).toBeVisible();
-      expect(
-        access.queryByRole("button", { name: "All access declarations" }),
-      ).toBeNull();
+      fireEvent.click(
+        screen.getByRole("button", { name: "View unchanged declarations" }),
+      );
     }
-    fireEvent.click(access.getByRole("button", { name: /^Run agent-tools/ }));
-    const grant = access.getByRole("region", { name: "Command tools details" });
+    fireEvent.click(screen.getByRole("button", { name: /^Run agent-tools/ }));
+    const grant = screen.getByRole("region", { name: "Command tools details" });
     expect(
       screen.queryByRole("region", { name: "Package content" }),
     ).not.toBeInTheDocument();
@@ -1176,7 +1174,9 @@ it.each([
       await user.click(
         screen.getByRole("button", { name: "Check this repository" }),
       );
-    expect(await screen.findByText(/Stays off after updating/)).toBeVisible();
+    expect(
+      await screen.findByText(/This plugin will stay disabled/),
+    ).toBeVisible();
     expect(screen.queryByRole("radio")).toBeNull();
     expect(manager.installImport).not.toHaveBeenCalled();
     if ("root" in updateSource)
@@ -1288,7 +1288,8 @@ it("keeps wrong-plugin sources out of a remembered-source update", async () => {
   expect(screen.queryByRole("button", { name: "Update plugin" })).toBeNull();
 });
 
-it("shows no net access change for reordered declarations and equivalent defaults", async () => {
+it("shows unchanged declarations in a separate dialog view and returns without reacquisition", async () => {
+  const user = userEvent.setup();
   const host = {
     commands: [{ id: "check", program: "example-cli", args: ["status"] }],
     networkOrigins: ["https://one.example.com", "https://two.example.com"],
@@ -1346,13 +1347,30 @@ it("shows no net access change for reordered declarations and equivalent default
   expect(
     screen.queryByRole("button", { name: "All access declarations" }),
   ).toBeNull();
-  expect(
-    screen.getByRole("region", { name: "Declared scopes" }),
-  ).toHaveTextContent("Unchanged declarations");
+  expect(screen.queryByRole("region", { name: "Declared scopes" })).toBeNull();
+  const view = screen.getByRole("button", {
+    name: "View unchanged declarations",
+  });
+  await user.click(view);
+  expect(screen.getByRole("dialog")).toHaveAccessibleName(
+    "Unchanged declarations",
+  );
+  expect(screen.getByRole("button", { name: "Back" })).toHaveFocus();
+  expect(screen.queryByRole("button", { name: "Update plugin" })).toBeNull();
+  expect(screen.queryByText("No declared access changes")).not.toBeVisible();
   expect(
     screen.getByRole("button", { name: /^Run example-cli/ }),
   ).toHaveAttribute("aria-expanded", "false");
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(screen.getByRole("dialog")).toHaveAccessibleName("Update Remembered");
+  expect(view).toHaveFocus();
   expect(screen.getByRole("note")).toHaveTextContent(
     "Only update code you trust",
   );
+  expect(manager.imports?.folder).toHaveBeenCalledTimes(1);
+  expect(manager.imports?.discard).not.toHaveBeenCalled();
+  await user.click(view);
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("dialog")).toHaveAccessibleName("Update Remembered");
+  expect(view).toHaveFocus();
 });

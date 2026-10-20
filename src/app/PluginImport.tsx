@@ -185,6 +185,12 @@ export function PluginImport({
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [selected, setSelected] = useState("");
   const [reviewing, setReviewing] = useState(false);
+  const [showUnchanged, setShowUnchanged] = useState(false);
+  const unchangedTrigger = useRef<HTMLButtonElement>(null);
+  const unchangedBack = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    (showUnchanged ? unchangedBack.current : unchangedTrigger.current)?.focus();
+  }, [showUnchanged]);
   const previewRegion = useRef<HTMLElement>(null);
   const [error, setError] = useState<string | null>(null);
   const browse = useRef<HTMLButtonElement>(null);
@@ -271,6 +277,7 @@ export function PluginImport({
     setLoading(true);
     setError(null);
     setPreview(null);
+    setShowUnchanged(false);
     setEnableOnInstall(true);
     try {
       const result = await operation();
@@ -340,6 +347,7 @@ export function PluginImport({
       await imports?.discard(preview.token);
       lifetime.current.token = "";
       setPreview(null);
+      setShowUnchanged(false);
       if (savedSource && "root" in savedSource) setChooseSource(true);
     } catch (reason) {
       showError(reason, previewBack.current);
@@ -361,6 +369,7 @@ export function PluginImport({
       errorTrigger.current = null;
       setError(null);
       setDragging(false);
+      setShowUnchanged(false);
       setOpen(false);
       onClosed?.();
     } catch (reason) {
@@ -372,15 +381,13 @@ export function PluginImport({
   }
   const candidate = preview?.candidates.find((p) => p.path === selected);
   const updating = !!existing;
-  const rollbackNotice =
+  const rollbackWarning =
     candidate?.publisher && existing && !existing.hasSignature
       ? "You cannot roll back to the unsigned revision after this update."
       : candidate?.revision === existing?.revision &&
           existing?.rollbackBlockedReason
         ? `${existing.rollbackBlockedReason}.`
-        : existing?.previous || existing?.revision !== candidate?.revision
-          ? "You can still roll back."
-          : "There is no earlier revision to roll back to.";
+        : null;
   const declaredDetails = candidate ? hostDeclarations(candidate.manifest) : [];
   const previousDetails = existing ? hostDeclarations(existing.manifest) : [];
   const previousGrants = previousDetails.map((grant) => grant.signature);
@@ -456,9 +463,6 @@ export function PluginImport({
   }
   const allDeclarations = (
     <section aria-label="Declared scopes">
-      {updating && unchangedDetails.length > 0 && (
-        <p className="mt-0 mb-2 text-label">Unchanged declarations</p>
-      )}
       {(updating ? unchangedDetails : declaredDetails).length ? (
         <Accordion
           animate
@@ -497,17 +501,19 @@ export function PluginImport({
           if (!next) void close();
         }}
         title={
-          error || !preview
-            ? updateId
-              ? "Update plugin"
-              : "Add a plugin"
-            : reviewing
-              ? existing
-                ? `Update ${existing.manifest.name}`
-                : "Review plugin access"
-              : preview.candidates.length
-                ? "Choose a plugin"
-                : "No plugins found"
+          showUnchanged
+            ? "Unchanged declarations"
+            : error || !preview
+              ? updateId
+                ? "Update plugin"
+                : "Add a plugin"
+              : reviewing
+                ? existing
+                  ? `Update ${existing.manifest.name}`
+                  : "Review plugin access"
+                : preview.candidates.length
+                  ? "Choose a plugin"
+                  : "No plugins found"
         }
         description={
           error
@@ -549,6 +555,10 @@ export function PluginImport({
                 setError(null);
               }}
             >
+              Back
+            </Button>
+          ) : showUnchanged ? (
+            <Button ref={unchangedBack} onClick={() => setShowUnchanged(false)}>
               Back
             </Button>
           ) : preview ? (
@@ -635,6 +645,11 @@ export function PluginImport({
             </>
           ) : undefined
         }
+        onEscape={() => {
+          if (!showUnchanged) return false;
+          setShowUnchanged(false);
+          return true;
+        }}
         dismissOnOutsideClick
         preventClose={blocked}
         finalFocus={() => returnFocus?.() ?? trigger.current}
@@ -644,7 +659,8 @@ export function PluginImport({
             {error}
           </p>
         )}
-        <div hidden={!!error}>
+        {showUnchanged && allDeclarations}
+        <div hidden={!!error || showUnchanged}>
           <div
             hidden={
               !!preview ||
@@ -921,12 +937,6 @@ export function PluginImport({
                               ? "Declared access changes"
                               : "No declared access changes"}
                           </p>
-                          {!hasAccessChanges && (
-                            <p className="m-0 text-muted">
-                              Plugin behavior can change even when its
-                              declarations stay the same.
-                            </p>
-                          )}
                           {(
                             [
                               ["Added", addedDetails],
@@ -961,9 +971,8 @@ export function PluginImport({
                           className="mt-0 mb-4 text-body-sm text-muted"
                           role="note"
                         >
-                          Plugins aren’t sandboxed. They can access files and
-                          run programs beyond these declarations. Only update
-                          code you trust.
+                          Plugins can access your computer beyond these
+                          declarations. Only update code you trust.
                         </p>
                       ) : (
                         <Accordion
@@ -1015,8 +1024,17 @@ export function PluginImport({
                           ]}
                         />
                       )}
-                      {(!updating || unchangedDetails.length > 0) &&
-                        allDeclarations}
+                      {updating
+                        ? unchangedDetails.length > 0 && (
+                            <Button
+                              ref={unchangedTrigger}
+                              size="sm"
+                              onClick={() => setShowUnchanged(true)}
+                            >
+                              View unchanged declarations
+                            </Button>
+                          )
+                        : allDeclarations}
                     </section>
                   )}
                 {reviewing && existing?.source === "bundled" && !loading && (
@@ -1026,9 +1044,16 @@ export function PluginImport({
                   </p>
                 )}
                 {reviewing && candidate && existing?.source === "external" && (
-                  <p className="m-0 text-body-sm text-muted">
-                    {`${existing.enabled ? "Stays on; the update may run immediately unless this launch is in safe mode." : "Stays off after updating."} ${rollbackNotice}`}
-                  </p>
+                  <>
+                    {!existing.enabled && (
+                      <p className="m-0 text-body-sm text-muted">
+                        This plugin will stay disabled.
+                      </p>
+                    )}
+                    {rollbackWarning && (
+                      <p className="m-0 text-body-sm">{rollbackWarning}</p>
+                    )}
+                  </>
                 )}
               </div>
             </section>

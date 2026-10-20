@@ -1017,7 +1017,7 @@ it("returns focus to the Plugins section when the selected plugin is deleted", a
     name: "Zebra external details",
   });
   const remove = screen.getByRole("button", { name: "Delete" });
-  expect(details).not.toContainElement(remove);
+  expect(details).toContainElement(remove);
   remove.focus();
   fireEvent.click(remove);
   expect(fixture.manager.change).not.toHaveBeenCalledWith(
@@ -1837,18 +1837,18 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       screen.getByRole("button", { name: "Check access again" }),
     );
     expect(retry).toHaveBeenCalledWith(id);
-    expect(action).toHaveFocus();
+    expect(enable).toHaveFocus();
     act(() => {
       state = "checking";
       for (const listener of listeners) listener();
     });
-    expect(action).toHaveFocus();
+    expect(enable).toHaveFocus();
     act(() => {
       state = "allowed";
       for (const listener of listeners) listener();
     });
     expect(within(pane).getByRole("button", { name: /^Enable$/ })).toBe(enable);
-    expect(action).toHaveFocus();
+    expect(enable).toHaveFocus();
     expect(
       screen.getByRole("button", { name: "Enable Restricted plugin" }),
     ).toBe(action);
@@ -1969,9 +1969,12 @@ it("checks updates only in the open detail pane and keeps matching status off th
   const check = screen.getByRole("button", { name: "Check for updates" });
   expect(
     screen.getByRole("complementary", { name: "Zebra external details" }),
-  ).not.toContainElement(check);
-  expect(check.closest("article")).toContainElement(
-    screen.getByRole("button", { name: "Disable Zebra external" }),
+  ).toContainElement(check);
+  expect(check.closest("article")).toBeNull();
+  expect(check.parentElement?.parentElement).toContainElement(
+    within(
+      screen.getByRole("complementary", { name: "Zebra external details" }),
+    ).getByRole("button", { name: /^Disable$/ }),
   );
   await act(async () =>
     finish({

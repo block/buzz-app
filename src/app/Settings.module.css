@@ -572,7 +572,8 @@
 }
 
 .pluginStatus {
-  display: none;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
 }
@@ -728,23 +729,9 @@
 }
 
 .pluginExtraActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
+  display: contents;
 }
 
 .pluginBadges > span:empty {
   display: none;
-}
-
-@container (max-width: 36rem) {
-  .pluginStatus {
-    display: grid;
-  }
-}
-
-.plugin:has(.pluginExtraActions) .pluginRowAction {
-  grid-area: auto;
-  padding-top: 0;
 }

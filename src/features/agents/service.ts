@@ -1398,13 +1398,17 @@ export class AgentsService extends Service implements Agents {
     };
   };
   resumeInterrupted = () => {
-    this.runners.resumeInterrupted();
+    this.runners.resumeInterrupted(this.interruptedKeys());
     this.update();
   };
   dismissInterrupted = () => {
-    this.runners.dismissInterrupted();
+    this.runners.dismissInterrupted(this.interruptedKeys());
     this.update();
   };
+  /** The agents the notice names, and only they, are resumed or forgotten. */
+  private interruptedKeys() {
+    return this.state.interrupted.map((agent) => agent.pubkey);
+  }
   find = (pubkey: string) =>
     this.state.agents.find((agent) => agent.pubkey === pubkey);
   handle(pubkey: string) {

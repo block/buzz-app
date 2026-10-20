@@ -431,29 +431,37 @@ export class AgentRunners {
   /** The turns the app left working last time, by agent, until the owner
    * forgets them, or resumes them and each agent's are read again. */
   private left: Interrupted;
-  /** The owner chose to resume `left`. */
-  private resuming = false;
+  /** The turns the app left working last time, as this page started: only
+   * Resume gives them again, never a replay or live delivery. */
+  private readonly stopped: Interrupted;
+  /** The agents whose `left` the owner chose to resume. */
+  private resuming = new Set<string>();
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
-    this.turns = this.left = host.interrupted.read();
+    this.turns = this.left = this.stopped = host.interrupted.read();
   }
 
   /** Agents with turns the app left working last time, until the owner
    * resumes or forgets them. */
   interrupted(): ReadonlySet<string> {
-    return new Set(this.resuming ? [] : Object.keys(this.left));
+    return new Set(
+      Object.keys(this.left).filter((pubkey) => !this.resuming.has(pubkey)),
+    );
   }
-  /** Gives each agent again the turns it was left working on, once its
-   * community is connected. */
-  resumeInterrupted() {
-    this.resuming = true;
+  /** Gives each of `pubkeys` again the turns it was left working on, once
+   * its community is connected. */
+  resumeInterrupted(pubkeys: readonly string[]) {
+    for (const pubkey of pubkeys) this.resuming.add(pubkey);
     for (const runner of this.runners.values()) this.resumeTurns(runner);
   }
-  /** Forgets the turns the app left working last time. */
-  dismissInterrupted() {
-    for (const [pubkey, turns] of Object.entries(this.left))
+  /** Forgets the turns the app left `pubkeys` working on last time. */
+  dismissInterrupted(pubkeys: readonly string[]) {
+    for (const pubkey of pubkeys) {
+      const { [pubkey]: turns, ...rest } = this.left;
+      if (!turns) continue;
       this.unmark(pubkey, Object.keys(turns));
-    this.left = {};
+      this.left = rest;
+    }
   }
 
   /** Keeps one runner for each saved agent: a deleted one's is retired, and a
@@ -948,7 +956,7 @@ export class AgentRunners {
     const agent = this.host.ready(runner.pubkey);
     const community = agent && this.host.community(agent);
     if (
-      !this.resuming ||
+      !this.resuming.has(runner.pubkey) ||
       !left ||
       !agent ||
       !runner.type ||
@@ -967,16 +975,13 @@ export class AgentRunners {
       })
       .then(
         (events) => {
-          // Given meanwhile, a turn's own run forgets it when it settles.
+          // A turn's own run forgets it when it settles.
           const kept = new Set<string>();
           for (const event of events.filter(hasEventProof) as RelayEvent[]) {
             const channel = left[event.id];
             if (channel === undefined) continue;
-            if (this.hasSeen(runner, event.id, channelOf(event))) {
-              kept.add(event.id);
-              continue;
-            }
-            this.markSeen(runner, event.id, channelOf(event));
+            if (!this.hasSeen(runner, event.id, channelOf(event)))
+              this.markSeen(runner, event.id, channelOf(event));
             const queued = this.enqueue(runner, {
               trigger: { type: "mention", event, resumed: true },
               ...(channel ? { channelId: channel } : {}),
@@ -1568,6 +1573,7 @@ export class AgentRunners {
     agent: Agent,
     event: RelayEvent,
   ): Trigger[] | "held" {
+    if (this.stopped[runner.pubkey]?.[event.id] !== undefined) return [];
     const wrote = (id: string) => runner.wrote.has(id);
     // Another of the owner's agents wakes it only by naming it, wherever: were a
     // watch enough, two agents replying to each other would never stop. The

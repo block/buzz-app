@@ -27,7 +27,7 @@ import {
 import type { ClassifierNative } from "./classifier";
 import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileStore, type AgentStore } from "./state";
-import { readInterrupted } from "./interrupted";
+import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, writeTeams } from "./store";
@@ -4378,6 +4378,77 @@ describe("a turn closing or reloading the app stopped", () => {
     second.service.resumeInterrupted();
     await settle();
     expect(second.run).not.toHaveBeenCalled();
+  });
+
+  it("is given only by Resume, never by a replay or live delivery", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+      answer: ({ workingUntil }) => workingUntil(working()),
+    });
+    await settle();
+    second.emit({ replay: true, events: [asked], channelId: channel });
+    second.emit({ events: [asked], channelId: channel });
+    await settle();
+    expect(second.run).not.toHaveBeenCalled();
+    second.service.resumeInterrupted();
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+    expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+
+    const dismissed = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    dismissed.service.dismissInterrupted();
+    dismissed.emit({ replay: true, events: [asked], channelId: channel });
+    dismissed.emit({ events: [asked], channelId: channel });
+    await settle();
+    expect(dismissed.run).not.toHaveBeenCalled();
+  });
+
+  it("resumes or forgets only the agents the notice names", async () => {
+    const asked = mention();
+    const other = eventDto(
+      message(author, channel, "Birch, go on", nowSeconds(), [["p", sibling]]),
+    );
+    const storage = memoryStorage() as AgentStore;
+    await writeInterrupted(storage, {
+      [bot]: { [asked.id]: channel },
+      [sibling]: { [other.id]: channel },
+    });
+    const birch = {
+      ...echo,
+      pubkey: sibling,
+      relay: "wss://other.example.test",
+      name: "Birch",
+    };
+    const app = await setup({
+      storage,
+      identities: [echo, birch],
+      resumes: true,
+      history: [asked],
+      answer: ({ workingUntil }) => workingUntil(working()),
+    });
+    app.second.history.push(other);
+    app.second.connect(false);
+    await settle();
+    expect(names(app.service.snapshot().interrupted)).toEqual(["Echo"]);
+    app.service.resumeInterrupted();
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+    app.second.connect(true);
+    await settle();
+    expect(resumedOf(app.run)).toEqual(["Echo, go on (resumed)"]);
+    expect(names(app.service.snapshot().interrupted)).toEqual(["Birch"]);
+    app.service.dismissInterrupted();
+    expect(readInterrupted(app.storage)).toEqual({
+      [bot]: { [asked.id]: channel },
+    });
   });
 
   it("stays saved when it cannot be read again, and is given on the next try", async () => {

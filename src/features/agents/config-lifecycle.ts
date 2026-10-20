@@ -44,7 +44,11 @@ export class LifecycleJournal {
     );
   }
   get = (community: string, subject: string): Lifecycle =>
-    this.state.current[`${community}\n${subject}`]?.state ?? "active";
+    this.entry(community, subject)?.state ?? "active";
+  /** The saved entry itself: each saved intent is its own object, so it
+   * names that one request even against a newer one in the same state. */
+  entry = (community: string, subject: string): Entry | undefined =>
+    this.state.current[`${community}\n${subject}`];
   pending = (community: string) =>
     Object.entries(this.state.current).flatMap(([key, entry]) => {
       const [at, subject] = key.split("\n");
@@ -98,11 +102,13 @@ export async function begin(
   subject: string,
   channel: string,
   action: "archive" | "recover",
+  saved?: () => void,
 ) {
   await deps.journal.put(deps.community, subject, {
     state: action === "archive" ? "archiving" : "recovering",
     channel,
   });
+  saved?.();
   return drive(deps, subject, channel);
 }
 
@@ -113,7 +119,8 @@ export async function drive(
   channel: string,
 ): Promise<Lifecycle> {
   const { journal, community, channels, signal } = deps;
-  const state = journal.get(community, subject);
+  const intent = journal.entry(community, subject);
+  const state = intent?.state ?? "active";
   if (state !== "archiving" && state !== "recovering") return state;
   const archiving = state === "archiving";
   let refused = false;
@@ -130,22 +137,23 @@ export async function drive(
   } catch {
     return state;
   }
-  return settle(deps, subject, channel, archived, refused);
+  return settle(deps, subject, intent, archived, refused);
 }
 
-/** Applies strong (or live-discovered) metadata to a pending intent, if it
- * is still the one saved when its turn to save comes: a newer intent stays. */
-export async function settle(
+/** Applies strong (or live-discovered) metadata to the pending `intent` it
+ * answers, only while that very intent is saved: a newer one, even in the
+ * same state, stays, and never takes this request's refusal. */
+async function settle(
   deps: LifecycleDeps,
   subject: string,
-  channel: string,
+  intent: Entry | undefined,
   archived: boolean,
   refused = false,
 ): Promise<Lifecycle> {
   const { journal, community } = deps;
-  const state = journal.get(community, subject);
   await journal.change(community, subject, (entry) => {
-    if (entry?.state !== state || entry.channel !== channel) return entry;
+    if (!intent || entry !== intent) return entry;
+    const { state, channel } = intent;
     if (state === "archiving") {
       if (archived) return { state: "archived", channel };
       return refused ? undefined : entry;
@@ -169,9 +177,11 @@ export async function observe(
   archived: boolean,
 ): Promise<Lifecycle> {
   const { journal, community } = deps;
-  const state = journal.get(community, subject);
-  if (state === "archiving" || state === "recovering")
-    return settle(deps, subject, channel, archived);
+  const intent = journal.entry(community, subject);
+  if (intent?.state === "archiving" || intent?.state === "recovering")
+    return intent.channel === channel
+      ? settle(deps, subject, intent, archived)
+      : intent.state;
   await journal.change(community, subject, (entry) => {
     // An intent begun meanwhile is newer than this observation.
     if (entry?.state === "archiving" || entry?.state === "recovering")

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { PublishRejected } from "../relay/outbox";
-import { begin, LifecycleJournal, resumeAll, settle } from "./config-lifecycle";
+import {
+  begin,
+  LifecycleJournal,
+  observe,
+  resumeAll,
+} from "./config-lifecycle";
 import { gatedStore, memoryStorage, sharedFiles } from "./test-fakes";
 
 const channel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
@@ -101,7 +106,7 @@ describe("archive and recover", () => {
     await vi.waitFor(() => expect(disk.writes).toHaveLength(1));
     disk.writes[0]?.land();
     await saved;
-    const recovered = settle(deps, subject, channel, false);
+    const recovered = observe(deps, subject, channel, false);
     const archiving = begin(deps, subject, channel, "archive");
     await vi.waitFor(() => expect(disk.writes).toHaveLength(2));
     disk.writes[1]?.fail();
@@ -166,6 +171,44 @@ describe("archive and recover", () => {
   it("settles a pending archive from live discovery", async () => {
     const f = setup();
     await f.deps.journal.put("c", subject, { state: "archiving", channel });
-    expect(await settle(f.deps, subject, channel, true)).toBe("archived");
+    expect(await observe(f.deps, subject, channel, true)).toBe("archived");
+  });
+
+  it("never applies an archive's refusal to a recovery saved while its metadata was held", async () => {
+    const f = setup();
+    f.channels.archive.mockRejectedValueOnce(
+      new PublishRejected("refused", "restricted: not allowed"),
+    );
+    let answer = (_: boolean) => {};
+    f.channels.archived.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (answer = resolve)),
+    );
+    const archiving = begin(f.deps, subject, channel, "archive");
+    await vi.waitFor(() => expect(f.channels.archived).toHaveBeenCalled());
+    await f.deps.journal.put("c", subject, { state: "recovering", channel });
+    answer(true);
+    expect(await archiving).toBe("recovering");
+    expect(f.deps.journal.pending("c")).toEqual([
+      { subject, state: "recovering", channel },
+    ]);
+    f.relay.archived = true;
+    expect(await resumeAll(f.deps)).toEqual(["active"]);
+    expect(f.channels.unarchive).toHaveBeenCalledOnce();
+  });
+
+  it("never applies an old request's answer to a newer one in the same state", async () => {
+    const f = setup();
+    f.channels.archive.mockRejectedValueOnce(
+      new PublishRejected("refused", "restricted: not allowed"),
+    );
+    let answer = (_: boolean) => {};
+    f.channels.archived.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (answer = resolve)),
+    );
+    const first = begin(f.deps, subject, channel, "archive");
+    await vi.waitFor(() => expect(f.channels.archived).toHaveBeenCalled());
+    await f.deps.journal.put("c", subject, { state: "archiving", channel });
+    answer(false);
+    expect(await first).toBe("archiving");
   });
 });

@@ -644,7 +644,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await button(page, "Browse plugin folder").click();
   await expect(page.getByRole("radio")).toHaveCount(0);
   await expect(
-    page.getByText(/It stays on and may run immediately/),
+    page.getByText(/Stays on; the update may run immediately/),
   ).toBeVisible();
   await expect(button(page, "Update plugin")).toBeEnabled();
   await page

@@ -232,16 +232,10 @@ it("shows exact declared access and changes before an enabled update", async () 
   expect(screen.getByText(/^Run example-cli/)).toBeVisible();
   expect(screen.getByText(/^Start example-worker/)).toBeVisible();
   expect(screen.getByText(/^Provide tools to local agents/)).toBeVisible();
-  const computer = screen.getByRole("button", { name: /^Computer access/ });
-  expect(computer).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByRole("region", { name: "Plugin safety" })).toBeNull();
-  fireEvent.click(computer);
-  await waitFor(() =>
-    expect(screen.getByRole("region", { name: "Plugin safety" })).toBeVisible(),
+  expect(screen.queryByRole("button", { name: /^Computer access/ })).toBeNull();
+  expect(screen.getByRole("note")).toHaveTextContent(
+    "Plugins aren’t sandboxed",
   );
-  expect(
-    screen.getByRole("region", { name: "Plugin safety" }),
-  ).toHaveTextContent("Plugins aren’t sandboxed");
   const scopes = within(
     screen.getByRole("region", { name: "Declared access changes" }),
   );
@@ -296,7 +290,7 @@ it("shows exact declared access and changes before an enabled update", async () 
   expect(screen.queryByRole("region", { name: "Package content" })).toBeNull();
   expect(
     screen.getByText(
-      /stays on and may run immediately unless this launch is in safe mode/,
+      /Stays on; the update may run immediately unless this launch is in safe mode/,
     ),
   ).toBeVisible();
   expect(manager.installImport).not.toHaveBeenCalled();
@@ -585,9 +579,9 @@ it.each([
     );
     if (!changed) {
       expect(screen.getByText("No declared access changes")).toBeVisible();
-      fireEvent.click(
-        access.getByRole("button", { name: "All access declarations" }),
-      );
+      expect(
+        access.queryByRole("button", { name: "All access declarations" }),
+      ).toBeNull();
     }
     fireEvent.click(access.getByRole("button", { name: /^Run agent-tools/ }));
     const grant = access.getByRole("region", { name: "Command tools details" });
@@ -1033,7 +1027,7 @@ it("reviews duplicate Add candidates as updates without reacquiring the package"
   fireEvent.click(screen.getByRole("button", { name: "Browse plugin folder" }));
   const update = await screen.findByRole("button", { name: "Update plugin" });
   expect(update).toBeEnabled();
-  expect(screen.getByText(/This replaces Duplicate/)).toBeVisible();
+  expect(screen.getByRole("dialog")).toHaveAccessibleName("Update Duplicate");
   expect(screen.getByRole("region", { name: "Computer access" })).toBeVisible();
   expect(screen.queryByRole("switch", { name: "Enable plugin" })).toBeNull();
   fireEvent.click(update);
@@ -1182,7 +1176,7 @@ it.each([
       await user.click(
         screen.getByRole("button", { name: "Check this repository" }),
       );
-    expect(await screen.findByText(/It stays off/)).toBeVisible();
+    expect(await screen.findByText(/Stays off after updating/)).toBeVisible();
     expect(screen.queryByRole("radio")).toBeNull();
     expect(manager.installImport).not.toHaveBeenCalled();
     if ("root" in updateSource)
@@ -1295,7 +1289,6 @@ it("keeps wrong-plugin sources out of a remembered-source update", async () => {
 });
 
 it("shows no net access change for reordered declarations and equivalent defaults", async () => {
-  const user = userEvent.setup();
   const host = {
     commands: [{ id: "check", program: "example-cli", args: ["status"] }],
     networkOrigins: ["https://one.example.com", "https://two.example.com"],
@@ -1340,9 +1333,7 @@ it("shows no net access change for reordered declarations and equivalent default
     />,
   );
   expect(await screen.findByText("No declared access changes")).toBeVisible();
-  expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
-    "Compare this update with the installed version.",
-  );
+  expect(screen.getByRole("dialog")).toHaveAccessibleName("Update Remembered");
   expect(
     screen.queryByRole("region", { name: "Added declarations" }),
   ).toBeNull();
@@ -1352,11 +1343,16 @@ it("shows no net access change for reordered declarations and equivalent default
   expect(
     screen.queryByRole("region", { name: "Removed declarations" }),
   ).toBeNull();
-  expect(screen.queryByRole("region", { name: "Declared scopes" })).toBeNull();
-  await user.click(
-    screen.getByRole("button", { name: "All access declarations" }),
-  );
   expect(
-    await screen.findByRole("region", { name: "Declared scopes" }),
-  ).toHaveTextContent("Run example-cli");
+    screen.queryByRole("button", { name: "All access declarations" }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("region", { name: "Declared scopes" }),
+  ).toHaveTextContent("Unchanged declarations");
+  expect(
+    screen.getByRole("button", { name: /^Run example-cli/ }),
+  ).toHaveAttribute("aria-expanded", "false");
+  expect(screen.getByRole("note")).toHaveTextContent(
+    "Only update code you trust",
+  );
 });

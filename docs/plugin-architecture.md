@@ -775,7 +775,9 @@ New-install review lists declarations. Update review compares against the instal
 revision and leads with added, changed and removed declarations; changed commands and
 processes include previous and replacement details. Equivalent default limits and
 reordered declarations do not count as changes. Unchanged updates say so explicitly,
-and the complete current declarations remain available in a collapsed detail.
+and unchanged declarations remain below the summary as individually expandable rows.
+Update review names the plugin, keeps the trust warning visible, and avoids nesting
+declarations inside an additional disclosure.
 The install/update action accepts that displayed version; an enabled update may run
 immediately. These declarations help review and catch mistakes. Plugins share the
 main WebView and can invoke app commands directly, so the declarations do not

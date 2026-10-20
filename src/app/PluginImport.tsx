@@ -396,6 +396,9 @@ export function PluginImport({
         previous.key === grant.key && previous.signature !== grant.signature,
     ),
   );
+  const unchangedDetails = declaredDetails.filter((grant) =>
+    previousGrants.includes(grant.signature),
+  );
   const hasAccessChanges =
     addedDetails.length + changedDetails.length + removedDetails.length > 0;
   function scopeItem(
@@ -453,11 +456,16 @@ export function PluginImport({
   }
   const allDeclarations = (
     <section aria-label="Declared scopes">
-      {declaredDetails.length ? (
+      {updating && unchangedDetails.length > 0 && (
+        <p className="mt-0 mb-2 text-label">Unchanged declarations</p>
+      )}
+      {(updating ? unchangedDetails : declaredDetails).length ? (
         <Accordion
           animate
           key={selected}
-          items={declaredDetails.map((grant) => scopeItem(grant, false, false))}
+          items={(updating ? unchangedDetails : declaredDetails).map((grant) =>
+            scopeItem(grant, false, false),
+          )}
         />
       ) : (
         <p className="m-0">No additional capabilities declared.</p>
@@ -494,7 +502,9 @@ export function PluginImport({
               ? "Update plugin"
               : "Add a plugin"
             : reviewing
-              ? "Review plugin access"
+              ? existing
+                ? `Update ${existing.manifest.name}`
+                : "Review plugin access"
               : preview.candidates.length
                 ? "Choose a plugin"
                 : "No plugins found"
@@ -505,14 +515,14 @@ export function PluginImport({
             : preview
               ? reviewing
                 ? updating
-                  ? "Compare this update with the installed version."
+                  ? undefined
                   : "Only install code you trust."
                 : preview.candidates.length
                   ? "Select a plugin to review before installing."
                   : "Try another folder or repository."
               : "Choose a built plugin to load."
         }
-        size={error ? "default" : "wide"}
+        size={error || (reviewing && updating) ? "default" : "wide"}
         leadingActions={
           reviewing &&
           candidate &&
@@ -913,8 +923,8 @@ export function PluginImport({
                           </p>
                           {!hasAccessChanges && (
                             <p className="m-0 text-muted">
-                              This update requests the same access through Buzz
-                              as the installed version.
+                              Plugin behavior can change even when its
+                              declarations stay the same.
                             </p>
                           )}
                           {(
@@ -946,68 +956,67 @@ export function PluginImport({
                           )}
                         </section>
                       )}
-                      <Accordion
-                        animate
-                        key={`computer-${selected}`}
-                        items={[
-                          {
-                            value: "computer-access",
-                            title: (
-                              <span className="flex items-start gap-3 text-left text-body-sm">
-                                <MonitorIcon
-                                  size={20}
-                                  className="shrink-0 text-muted"
-                                  aria-hidden="true"
-                                />
-                                <span>
-                                  <span className="block font-medium">
-                                    Computer access
-                                  </span>
-                                  <span className="block text-muted">
-                                    Can access files and run programs on your
-                                    computer.
-                                  </span>
-                                </span>
-                              </span>
-                            ),
-                            content: (
-                              <section
-                                aria-label="Plugin safety"
-                                className="max-w-prose pl-8 text-body"
-                              >
-                                <h4 className="mb-2 mt-0 text-label">
-                                  Access beyond this list
-                                </h4>
-                                <p className="m-0">
-                                  Plugins aren’t sandboxed. They can access your
-                                  computer beyond these declarations, even when
-                                  no additional capabilities are listed.
-                                </p>
-                                <p className="mb-0 mt-3 text-muted">
-                                  These declarations describe what the plugin
-                                  asks Buzz to do. They don’t limit what its
-                                  code can do.
-                                </p>
-                              </section>
-                            ),
-                          },
-                        ]}
-                      />
                       {updating ? (
+                        <p
+                          className="mt-0 mb-4 text-body-sm text-muted"
+                          role="note"
+                        >
+                          Plugins aren’t sandboxed. They can access files and
+                          run programs beyond these declarations. Only update
+                          code you trust.
+                        </p>
+                      ) : (
                         <Accordion
                           animate
-                          key={`all-${selected}`}
+                          key={`computer-${selected}`}
                           items={[
                             {
-                              value: "all-declarations",
-                              title: "All access declarations",
-                              content: allDeclarations,
+                              value: "computer-access",
+                              title: (
+                                <span className="flex items-start gap-3 text-left text-body-sm">
+                                  <MonitorIcon
+                                    size={20}
+                                    className="shrink-0 text-muted"
+                                    aria-hidden="true"
+                                  />
+                                  <span>
+                                    <span className="block font-medium">
+                                      Computer access
+                                    </span>
+                                    <span className="block text-muted">
+                                      Can access files and run programs on your
+                                      computer.
+                                    </span>
+                                  </span>
+                                </span>
+                              ),
+                              content: (
+                                <section
+                                  aria-label="Plugin safety"
+                                  className="max-w-prose pl-8 text-body"
+                                >
+                                  <h4 className="mb-2 mt-0 text-label">
+                                    Access beyond this list
+                                  </h4>
+                                  <p className="m-0">
+                                    Plugins aren’t sandboxed. They can access
+                                    your computer beyond these declarations,
+                                    even when no additional capabilities are
+                                    listed.
+                                  </p>
+                                  <p className="mb-0 mt-3 text-muted">
+                                    These declarations describe what the plugin
+                                    asks Buzz to do. They don’t limit what its
+                                    code can do.
+                                  </p>
+                                </section>
+                              ),
                             },
                           ]}
                         />
-                      ) : (
-                        allDeclarations
                       )}
+                      {(!updating || unchangedDetails.length > 0) &&
+                        allDeclarations}
                     </section>
                   )}
                 {reviewing && existing?.source === "bundled" && !loading && (
@@ -1017,8 +1026,8 @@ export function PluginImport({
                   </p>
                 )}
                 {reviewing && candidate && existing?.source === "external" && (
-                  <p className="m-0 text-body-sm">
-                    {`This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} ${rollbackNotice}`}
+                  <p className="m-0 text-body-sm text-muted">
+                    {`${existing.enabled ? "Stays on; the update may run immediately unless this launch is in safe mode." : "Stays off after updating."} ${rollbackNotice}`}
                   </p>
                 )}
               </div>

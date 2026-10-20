@@ -49,9 +49,22 @@ export function HuddleRequestView({
                 alt={caller.name}
                 fallback={caller.name}
                 fallbackContent={
-                  <span className={styles.requestInitial}>
-                    {Array.from(caller.name.trim())[0]?.toUpperCase() || "?"}
-                  </span>
+                  <svg
+                    className={styles.requestInitial}
+                    viewBox="0 0 100 100"
+                    aria-hidden="true"
+                  >
+                    <text
+                      x="50"
+                      y="50"
+                      dy=".35em"
+                      textAnchor="middle"
+                      fontSize="40"
+                      fill="currentColor"
+                    >
+                      {Array.from(caller.name.trim())[0]?.toUpperCase() || "?"}
+                    </text>
+                  </svg>
                 }
               />
             </HuddleAvatarMotion>

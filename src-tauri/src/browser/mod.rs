@@ -162,6 +162,19 @@ pub(crate) fn shutdown() {
     BROWSERS.with(|browsers| browsers.borrow_mut().clear());
 }
 
+/// Native shortcuts run on the UI thread even when WebKit's internal content
+/// view owns focus rather than an element in the trusted host document.
+#[cfg(target_os = "macos")]
+pub(crate) fn focused_session() -> Option<String> {
+    BROWSERS.with(|browsers| {
+        browsers
+            .borrow()
+            .iter()
+            .find(|browser| platform::focused(&browser.guest))
+            .map(|browser| browser.instance.clone())
+    })
+}
+
 pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     if window.label() != "main" {
         return;

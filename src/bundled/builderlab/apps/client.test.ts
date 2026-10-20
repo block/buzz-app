@@ -23,6 +23,89 @@ const contract = (profiles = ["static", "fetch-js"], minimum = "0.2.0") =>
     },
   });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it.each(["create", "share"] as const)(
+  "stops %s after the owner changes during its first request",
+  async (operation) => {
+    let owner = "A";
+    const session = createOAuthSession(async () => ({
+      value: owner,
+      account: { subject: owner, email: "", canUseRemoteAgents: true },
+    }));
+    await session.signIn();
+    const held = deferred<HostResponse>();
+    const request = vi.fn(() => held.promise);
+    const client = createAppsClient(
+      { request } as unknown as Host,
+      session,
+      BASE,
+    );
+    const pending =
+      operation === "create"
+        ? client.create("Demo")
+        : client.share("demo", "team");
+    const rejected = expect(pending).rejects.toThrow(/sign-in changed/);
+    session.signOut();
+    owner = "B";
+    await session.signIn();
+    held.resolve(
+      operation === "create"
+        ? contract()
+        : json(200, {
+            visibility: "restricted",
+            lifecycle_id: "life",
+            workspace_grant_revision: 1,
+          }),
+    );
+    await rejected;
+    expect(request).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("preserves the reserved app ID when sign-out interrupts initialization", async () => {
+  const session = createOAuthSession(async () => ({
+    value: "A",
+    account: { subject: "A", email: "", canUseRemoteAgents: true },
+  }));
+  await session.signIn();
+  const held = deferred<HostResponse>();
+  const started = deferred<void>();
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce(contract())
+    .mockResolvedValueOnce(
+      json(200, {
+        app_id: "demo",
+        initialize: { required: true, recommended: true },
+      }),
+    )
+    .mockImplementationOnce(() => {
+      started.resolve();
+      return held.promise;
+    });
+  const client = createAppsClient(
+    { request } as unknown as Host,
+    session,
+    BASE,
+  );
+  const pending = client.create("Demo");
+  const rejected = expect(pending).rejects.toThrow(
+    /app_id=demo.*not signed in/,
+  );
+  await started.promise;
+  session.signOut();
+  held.resolve(json(201, { app_id: "demo" }));
+  await rejected;
+  expect(request).toHaveBeenCalledTimes(3);
+});
+
 async function setup(responses: HostResponse[], signedIn = true) {
   const session = createOAuthSession(async () => ({
     value: "secret-session",
@@ -215,7 +298,7 @@ it("uploads the artifact to the app's deploy endpoint", async () => {
 it("points the agent at Settings when signed out or refused", async () => {
   const signedOut = await setup([], false);
   await expect(signedOut.client.list()).rejects.toThrow(
-    /not signed in.*Settings → Integrations → Builderlab/,
+    /not signed in.*Settings → Plugins → Builderlab agents/,
   );
   expect(signedOut.requests).toEqual([]);
   const refused = await setup([json(401, {})]);

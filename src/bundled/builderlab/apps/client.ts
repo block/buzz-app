@@ -9,7 +9,7 @@ import type { OAuthSession } from "../oauth/session";
 const PROTOCOL = "0.2.0";
 export type RuntimeProfile = "static" | "fetch-js";
 export const SIGN_IN =
-  "Ask your owner to sign in to Builderlab at Settings → Integrations → Builderlab, then try again.";
+  "Ask your owner to sign in at Settings → Plugins → Builderlab agents, then try again.";
 
 type Json = Record<string, unknown>;
 const object = (value: unknown): Json =>
@@ -26,10 +26,16 @@ export function createAppsClient(
   session: OAuthSession,
   base: string,
 ) {
+  // One client belongs to one tool operation, including all its HTTP steps.
+  let owner: ReturnType<OAuthSession["credential"]> | undefined;
   const credential = () => {
     if (session.snapshot().status !== "signed-in")
       throw new Error(`Builderlab is not signed in. ${SIGN_IN}`);
-    return session.credential().value;
+    const current = session.credential();
+    if (owner && current !== owner)
+      throw new Error("Builderlab sign-in changed. Start a new Apps request.");
+    owner = current;
+    return current.value;
   };
   const headers = (secret: string) => ({
     Accept: "application/json",
@@ -84,6 +90,7 @@ export function createAppsClient(
       ...(body ? { body: JSON.stringify(body) } : {}),
       ...(path.endsWith("/initialize") ? { timeoutMs: 180_000 } : {}),
     });
+    credential();
     return answer(secret, response, what);
   };
   const app = (id: string, resource = "") =>
@@ -197,6 +204,8 @@ export function createAppsClient(
           contentType: "application/gzip",
         },
       });
+      // An accepted upload still returns its IDs after sign-out/account switch.
+      // The next readiness request checks the operation's original sign-in.
       return answer(secret, response, "Deploying") as Json;
     },
     ready: (

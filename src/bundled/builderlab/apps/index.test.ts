@@ -61,8 +61,45 @@ async function setup(
     if (!tool) throw new Error(`No tool ${name}`);
     return tool.call({} as BuzzClient, context, args);
   };
-  return { ctx, tools, responses, respond, call };
+  return { ctx, tools, responses, respond, call, session };
 }
+
+it("preserves an accepted upload after sign-in changes and starts later tools with the new session", async () => {
+  const { ctx, call, session, responses, respond } = await setup();
+  let accept!: (value: HostResponse) => void;
+  const held = new Promise<HostResponse>((done) => {
+    accept = done;
+  });
+  let started!: () => void;
+  const uploading = new Promise<void>((done) => {
+    started = done;
+  });
+  ctx.host.upload = vi.fn(() => {
+    started();
+    return held;
+  });
+  const pending = call("apps_deploy", {
+    app_id: "demo",
+    artifact: "/Users/me/artifact.tar.gz",
+  });
+  await uploading;
+  session.signOut();
+  await session.signIn();
+  accept(json({ version_id: "v1", deployment_id: "d1", external_url: APP }));
+  const result = JSON.parse(String(await pending));
+  expect(result).toMatchObject({
+    app_id: "demo",
+    version_id: "v1",
+    deployment_id: "d1",
+    ready: false,
+    readiness_error: expect.stringMatching(/sign-in changed/),
+  });
+  expect(respond).toHaveBeenCalledTimes(1);
+  responses.push(json({ apps: [] }));
+  await expect(call("apps_list", {})).resolves.toBe(
+    JSON.stringify({ apps: [] }, null, 2),
+  );
+});
 
 it("adds the app tools only for a tenant with an Apps control plane", async () => {
   expect([...(await setup()).tools.keys()]).toEqual([

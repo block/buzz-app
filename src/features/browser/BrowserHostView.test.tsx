@@ -86,7 +86,12 @@ it("attaches hidden-first guest bounds and detaches on close", async () => {
       true,
     ),
   );
+  const viewport = view.container.querySelector(
+    '[data-browser-session="session-1"]',
+  );
+  expect(viewport).not.toBeNull();
   view.unmount();
+  expect(viewport).not.toHaveAttribute("data-browser-session");
   await waitFor(() =>
     expect(platform.detach).toHaveBeenCalledWith("session-1"),
   );
@@ -120,6 +125,11 @@ it("detaches a late attach result and serializes its replacement", async () => {
     expect(platform.detach).toHaveBeenCalledWith("session-1"),
   );
   await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(
+      view.container.querySelector('[data-browser-session="session-2"]'),
+    ).not.toBeNull(),
+  );
   expect(
     vi.mocked(platform.detach).mock.invocationCallOrder[0] ?? 0,
   ).toBeLessThan(vi.mocked(platform.attach).mock.invocationCallOrder[1] ?? 0);

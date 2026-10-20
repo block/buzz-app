@@ -151,6 +151,7 @@ export function BrowserHostView({
         if (!nextVisible) return;
         setLocalError(null);
         session.current = undefined;
+        delete element.dataset.browserSession;
         attachStarted = false;
         lastRequested = undefined;
         if (pollTimer) clearTimeout(pollTimer);
@@ -239,6 +240,7 @@ export function BrowserHostView({
         .then((sessionId) => {
           if (!sessionId || disposed) return;
           session.current = sessionId;
+          element.dataset.browserSession = sessionId;
           syncBounds(true);
           void poll();
         })
@@ -317,6 +319,7 @@ export function BrowserHostView({
       document.removeEventListener("transitionend", updatePresentation, true);
       const sessionId = session.current;
       session.current = undefined;
+      delete element.dataset.browserSession;
       // A guest with kept storage waits a while for this page to come back,
       // say from another channel, so work in progress there survives.
       if (sessionId) void sessions.detach(sessionId, park);

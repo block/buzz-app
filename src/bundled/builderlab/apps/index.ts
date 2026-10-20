@@ -52,7 +52,7 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
   });
   const base = controlPlane();
   if (!base) return;
-  const apps = createAppsClient(ctx.host, session, base);
+  const apps = () => createAppsClient(ctx.host, session, base);
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
     name: "apps_contract",
@@ -63,7 +63,7 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
       properties: {},
       additionalProperties: false,
     },
-    call: async () => reply(await apps.contract()),
+    call: async () => reply(await apps().contract()),
   });
   ctx.agents.addTool({
     name: "apps_create",
@@ -87,7 +87,7 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
       const profile = (args.runtime_profile ?? "static") as RuntimeProfile;
       if (profile !== "static" && profile !== "fetch-js")
         throw new Error("runtime_profile must be static or fetch-js");
-      const created = await apps.create(string(args, "name"), profile);
+      const created = await apps().create(string(args, "name"), profile);
       return reply({
         ...created,
         manifest: {
@@ -146,9 +146,10 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
     },
     async call(_client, _context, args) {
       const id = string(args, "app_id");
-      const contract = await apps.contract();
+      const operation = apps();
+      const contract = await operation.contract();
       const policy = contract.readiness as Record<string, unknown> | undefined;
-      const deployed = await apps.deploy(id, string(args, "artifact"));
+      const deployed = await operation.deploy(id, string(args, "artifact"));
       const version =
         typeof deployed.version_id === "string" ? deployed.version_id : "";
       const result = {
@@ -164,7 +165,7 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
       for (;;) {
         let ready: Record<string, unknown>;
         try {
-          ready = await apps.ready(
+          ready = await operation.ready(
             id,
             version,
             typeof result.deployment_id === "string"
@@ -224,7 +225,7 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
     },
     call: async (_client, _context, args) =>
       reply(
-        await apps.ready(
+        await apps().ready(
           string(args, "app_id"),
           string(args, "version_id"),
           typeof args.deployment_id === "string"
@@ -242,7 +243,7 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
       properties: {},
       additionalProperties: false,
     },
-    call: async () => reply(await apps.list()),
+    call: async () => reply(await apps().list()),
   });
   ctx.agents.addTool({
     name: "apps_share",
@@ -262,7 +263,10 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
     },
     call: async (_client, _context, args) =>
       reply(
-        await apps.share(string(args, "app_id"), string(args, "workspace_id")),
+        await apps().share(
+          string(args, "app_id"),
+          string(args, "workspace_id"),
+        ),
       ),
   });
   ctx.agents.addTool({

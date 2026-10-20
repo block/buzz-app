@@ -85,20 +85,23 @@ test("Back restores each thread visit before the previous channel", async ({
   const selectedTab = page.locator(
     `[role="tab"][data-tab-value="thread:alpha:${roots[1].id}"]`,
   );
+  // Hold the cue when it renders, before any frame. WebKit can dispatch
+  // animationstart after the cue has finished and the tab has removed it.
   const feedback = await selectedTab.evaluateHandle((tab) => {
-    const state = { cue: null };
-    tab.addEventListener(
-      "animationstart",
-      (event) => {
-        if (!event.target.classList.contains("buzz-tabs-attention")) return;
-        state.cue = event.target;
-        for (const animation of state.cue.getAnimations()) {
-          animation.pause();
-          animation.currentTime = 0;
-        }
-      },
-      { once: true },
-    );
+    const state = { cue: null, tab };
+    const observer = new MutationObserver(() => {
+      const cue = tab.querySelector(".buzz-tabs-attention");
+      // getAnimations() flushes style, so the cue animation exists.
+      const animations = cue?.getAnimations() ?? [];
+      if (!animations.length) return;
+      observer.disconnect();
+      for (const animation of animations) {
+        animation.pause();
+        animation.currentTime = 0;
+      }
+      state.cue = cue;
+    });
+    observer.observe(tab, { childList: true, subtree: true });
     return state;
   });
   await activate(threadButton(roots[1]));
@@ -106,11 +109,13 @@ test("Back restores each thread visit before the previous channel", async ({
     await expect
       .poll(() => feedback.evaluate((state) => !!state.cue))
       .toBe(true);
-    const paint = await feedback.evaluate(({ cue }) => ({
+    const paint = await feedback.evaluate(({ cue, tab }) => ({
+      connected: cue.isConnected,
       tint: getComputedStyle(cue).backgroundColor,
-      resting: getComputedStyle(cue.parentElement).backgroundColor,
+      resting: getComputedStyle(tab).backgroundColor,
       opacity: Number(getComputedStyle(cue).opacity),
     }));
+    expect(paint.connected).toBe(true);
     expect(paint.tint).not.toBe(paint.resting);
     expect(paint.opacity).toBeGreaterThan(0);
   } finally {

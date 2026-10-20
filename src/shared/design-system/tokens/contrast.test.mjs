@@ -158,7 +158,9 @@ describe("semantic contrast contract", () => {
     );
     expect(result.status, result.output).toBe(1);
     for (const level of ["touch", "high"])
-      expect(result.output).toContain(`lime/${level}/light --text-row-subtle`);
+      expect(result.output).toContain(
+        `citrus/${level}/light --text-row-subtle`,
+      );
   });
 
   it("rejects a gray role left on an accent ground", () => {
@@ -169,7 +171,7 @@ describe("semantic contrast contract", () => {
     );
     expect(result.status, result.output).toBe(1);
     expect(result.output).toContain(
-      "lime/touch/light: --text-row-subtle #525252 is gray on --affordance-selected",
+      "citrus/touch/light: --text-row-subtle #525252 is gray on --affordance-selected",
     );
   });
 
@@ -189,7 +191,7 @@ describe("semantic contrast contract", () => {
       if (gray) {
         expect(result.status, result.output).toBe(1);
         expect(result.output).toContain(
-          `lime/high/light: --text-row-selected-subtle ${ink} is gray on --affordance-navigation-selected`,
+          `citrus/high/light: --text-row-selected-subtle ${ink} is gray on --affordance-navigation-selected`,
         );
       } else {
         // A literal ink applies to every family, so saturated accents may fail

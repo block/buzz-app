@@ -7,17 +7,18 @@ export const ACCENTS = [
   "magenta",
   "iris",
   "cobalt",
-  "lime",
+  "citrus",
+  "chartreuse",
   "mono",
 ] as const;
 export type Accent = (typeof ACCENTS)[number];
-export const DEFAULT_ACCENT: Accent = "lime";
+export const DEFAULT_ACCENT: Accent = "citrus";
 export const ACCENT_KEY = "buzz-accent.v1";
 /** The former message-bubble preference; read once when no accent is saved. */
 export const LEGACY_BUBBLE_KEY = "buzz-bubble-color.v1";
 
 export function parseAccent(value: unknown): Accent {
-  if (value === "pear" || value === "jade") return "lime";
+  if (value === "lime" || value === "pear" || value === "jade") return "citrus";
   if (value === "flame") return "bee";
   if (value === "gray") return "mono";
   return ACCENTS.includes(value as Accent) ? (value as Accent) : DEFAULT_ACCENT;
@@ -28,7 +29,7 @@ const LEGACY_BUBBLE_ACCENTS: Readonly<Record<string, Accent>> = {
   blue: "cobalt",
   cyan: "cobalt",
   indigo: "cobalt",
-  green: "lime",
+  green: "citrus",
   orange: "bee",
   pink: "magenta",
   red: "magenta",

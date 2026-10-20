@@ -272,7 +272,7 @@ const TINT_PAIRS = [
 ];
 
 const css = readFileSync(TOKENS, "utf8");
-const DEFAULT_ACCENT = "lime";
+const DEFAULT_ACCENT = "citrus";
 /** Exceptions are approved against the neutral role layer. */
 const BASELINE_LEVEL = "neutral";
 

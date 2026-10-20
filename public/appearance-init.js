@@ -13,9 +13,17 @@
     // Storage may be denied; the system palette still opens safely.
   }
   document.documentElement.dataset.colorMode = mode;
-  let accent = "lime";
+  let accent = "citrus";
   try {
-    const accents = ["bee", "magenta", "iris", "cobalt", "lime", "mono"];
+    const accents = [
+      "bee",
+      "magenta",
+      "iris",
+      "cobalt",
+      "citrus",
+      "chartreuse",
+      "mono",
+    ];
     let value = localStorage.getItem("buzz-accent.v1");
     if (value === null) {
       // The former bubble color carries over; its old "Default" does not.
@@ -23,7 +31,7 @@
         blue: "cobalt",
         cyan: "cobalt",
         indigo: "cobalt",
-        green: "lime",
+        green: "citrus",
         orange: "bee",
         pink: "magenta",
         red: "magenta",
@@ -32,7 +40,8 @@
       };
       value = legacy[localStorage.getItem("buzz-bubble-color.v1")] ?? null;
     }
-    if (value === "pear" || value === "jade") value = "lime";
+    if (value === "lime" || value === "pear" || value === "jade")
+      value = "citrus";
     if (value === "flame") value = "bee";
     if (value === "gray") value = "mono";
     if (accents.includes(value)) accent = value;

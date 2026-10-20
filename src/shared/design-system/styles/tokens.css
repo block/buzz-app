@@ -971,7 +971,7 @@
    then stack on those steps. Swatches that preview a family carry
    data-color-mode, never borrow an already-resolved role.
 
-   Lime is the default accent and uses black ink on its strong fills.
+   Citrus is the default accent and uses black ink on its strong fills.
    ============================================================ */
 
 /* Mode owners bind the ramp, then the accent roles every level uses. */
@@ -1036,44 +1036,6 @@
   --text-on-accent: var(--accent-contrast);
 }
 
-:root[data-accent="lime"],
-[data-accent="lime"],
-:root {
-  --accent-1-light: #fbfdf9;
-  --accent-2-light: #f7fbf3;
-  --accent-3-light: #edf8e2;
-  --accent-4-light: #e2f1d3;
-  --accent-5-light: #d8ecc4;
-  --accent-6-light: #cce3b6;
-  --accent-7-light: #bed6a3;
-  --accent-8-light: #aac688;
-  --accent-9-light: #a1dc45;
-  --accent-10-light: #a9e44f;
-  --accent-11-light: #3a501b;
-  --accent-12-light: #273219;
-  --accent-contrast-light: #000000;
-  --accent-ink-light: #000000;
-  --accent-pressed-light: #b1ed5a;
-  --accent-link-light: #365101;
-  --accent-link-hover-light: #edf8e2;
-  --accent-1-dark: #0e100d;
-  --accent-2-dark: #141612;
-  --accent-3-dark: #1f241a;
-  --accent-4-dark: #272f1f;
-  --accent-5-dark: #313a25;
-  --accent-6-dark: #3b472f;
-  --accent-7-dark: #4b583a;
-  --accent-8-dark: #5e704a;
-  --accent-9-dark: #a1dc45;
-  --accent-10-dark: #a9e44f;
-  --accent-11-dark: #bed9a2;
-  --accent-12-dark: #ebf5e2;
-  --accent-contrast-dark: #000000;
-  --accent-ink-dark: #000000;
-  --accent-pressed-dark: #b1ed5a;
-  --accent-link-dark: #a4e72b;
-  --accent-link-hover-dark: #1f241a;
-}
 :root[data-accent="magenta"],
 [data-accent="magenta"] {
   --accent-1-light: #fffbfc;
@@ -1221,6 +1183,81 @@
   --accent-pressed-dark: #ffd763;
   --accent-link-dark: #f2c94e;
   --accent-link-hover-dark: #252118;
+}
+:root[data-accent="citrus"],
+[data-accent="citrus"],
+:root {
+  --accent-1-light: #fcfdf7;
+  --accent-2-light: #f8fbef;
+  --accent-3-light: #f1f6de;
+  --accent-4-light: #e8f0cd;
+  --accent-5-light: #e0e9bc;
+  --accent-6-light: #d5e1aa;
+  --accent-7-light: #c8d495;
+  --accent-8-light: #b6c378;
+  --accent-9-light: #beda36;
+  --accent-10-light: #bdd836;
+  --accent-11-light: #485311;
+  --accent-12-light: #2b3110;
+  --accent-contrast-light: #000000;
+  --accent-ink-light: #000000;
+  --accent-pressed-light: #bcd83a;
+  --accent-link-light: #485400;
+  --accent-link-hover-light: #f1f6de;
+  --accent-1-dark: #0f100c;
+  --accent-2-dark: #15170f;
+  --accent-3-dark: #202413;
+  --accent-4-dark: #292e16;
+  --accent-5-dark: #333a18;
+  --accent-6-dark: #3e471f;
+  --accent-7-dark: #4f5827;
+  --accent-8-dark: #637033;
+  --accent-9-dark: #beda36;
+  --accent-10-dark: #bdd836;
+  --accent-11-dark: #cee28b;
+  --accent-12-dark: #edf7d2;
+  --accent-contrast-dark: #000000;
+  --accent-ink-dark: #000000;
+  --accent-pressed-dark: #bcd83a;
+  --accent-link-dark: #cbe648;
+  --accent-link-hover-dark: #202413;
+}
+:root[data-accent="chartreuse"],
+[data-accent="chartreuse"] {
+  --accent-1-light: #fefdf4;
+  --accent-2-light: #fbfbeb;
+  --accent-3-light: #f5f4da;
+  --accent-4-light: #efeec8;
+  --accent-5-light: #e8e6b4;
+  --accent-6-light: #e0dd9f;
+  --accent-7-light: #d4d086;
+  --accent-8-light: #c4bf68;
+  --accent-9-light: #d7d72e;
+  --accent-10-light: #cccc1e;
+  --accent-11-light: #575602;
+  --accent-12-light: #303005;
+  --accent-contrast-light: #000000;
+  --accent-ink-light: #303005;
+  --accent-pressed-light: #c3c315;
+  --accent-link-light: #575602;
+  --accent-link-hover-light: #f5f4da;
+  --accent-1-dark: #10100a;
+  --accent-2-dark: #17170c;
+  --accent-3-dark: #23230b;
+  --accent-4-dark: #2d2d08;
+  --accent-5-dark: #383802;
+  --accent-6-dark: #464601;
+  --accent-7-dark: #575602;
+  --accent-8-dark: #6e6e01;
+  --accent-9-dark: #d7d72e;
+  --accent-10-dark: #cccc1e;
+  --accent-11-dark: #e6e76a;
+  --accent-12-dark: #f4f7c0;
+  --accent-contrast-dark: #000000;
+  --accent-ink-dark: #303005;
+  --accent-pressed-dark: #c3c315;
+  --accent-link-dark: #e6e76a;
+  --accent-link-hover-dark: #23230b;
 }
 :root[data-accent="mono"],
 [data-accent="mono"] {

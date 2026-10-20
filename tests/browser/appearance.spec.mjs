@@ -68,7 +68,7 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await page.goto(app.origin);
   await expectMode(page, "light");
   await settings(page);
-  for (const label of ["Lime accent color", "Cobalt accent color"]) {
+  for (const label of ["Citrus accent color", "Cobalt accent color"]) {
     const swatch = button(page, label);
     await page.mouse.move(0, 0);
     const colors = await swatch.evaluate((node) => {

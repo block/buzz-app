@@ -106,7 +106,7 @@ it.each([
       error: null,
       fontScale: 1,
       fontError: null,
-      accent: "lime",
+      accent: "citrus",
       accentError: null,
       contrast: "low",
       contrastError: null,
@@ -287,15 +287,15 @@ it("font writes clamp, round, recover from failure, sync and preserve color stor
 
 it.each<[string, string | null, string]>([
   ...ACCENTS.map((color): [string, null, string] => [color, null, color]),
-  ["invalid", null, "lime"],
-  ["chartreuse", null, "lime"],
-  ["citron", null, "lime"],
+  ["lime", null, "citrus"],
+  ["invalid", null, "citrus"],
+  ["citron", null, "citrus"],
   ["gray", null, "mono"],
-  ["pear", null, "lime"],
-  ["jade", null, "lime"],
+  ["pear", null, "citrus"],
+  ["jade", null, "citrus"],
   ["flame", null, "bee"],
-  ["purple", null, "lime"],
-  ["neutral", null, "lime"],
+  ["purple", null, "citrus"],
+  ["neutral", null, "citrus"],
   // The saved accent wins over the former bubble color.
   ["iris", "blue", "iris"],
 ])(
@@ -318,19 +318,19 @@ it.each<[string, string | null, string]>([
   },
 );
 it.each<[string | null, string]>([
-  [null, "lime"],
+  [null, "citrus"],
   ["blue", "cobalt"],
   ["cyan", "cobalt"],
   ["indigo", "cobalt"],
-  ["green", "lime"],
+  ["green", "citrus"],
   ["orange", "bee"],
   ["pink", "magenta"],
   ["red", "magenta"],
   ["lilac", "iris"],
   ["purple", "iris"],
   // The former "Default" bubble now means the new default accent.
-  ["neutral", "lime"],
-  ["#ffffff", "lime"],
+  ["neutral", "citrus"],
+  ["#ffffff", "citrus"],
 ])("carries a former bubble color %s over as accent %s", (bubble, expected) => {
   const b = browser();
   if (bubble) b.values.set(LEGACY_BUBBLE_KEY, bubble);
@@ -362,10 +362,10 @@ it("saves the accent, recovers from denied storage, synchronizes reset, and disp
   expect(app.snapshot().accent).toBe("iris");
   b.values.delete(ACCENT_KEY);
   b.change(null);
-  expect(app.snapshot().accent).toBe("lime");
+  expect(app.snapshot().accent).toBe("citrus");
   app.dispose();
   app.setAccent("magenta");
-  expect(b.root.dataset.accent).toBe("lime");
+  expect(b.root.dataset.accent).toBe("citrus");
 });
 
 it.each(["neutral", "touch", "more", "full"])(

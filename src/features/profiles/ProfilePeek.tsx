@@ -126,13 +126,19 @@ export function ProfilePeek({
             shape="round"
             variant="subtle"
             aria-label="View profile"
-            title="Profile"
             onClick={() => {
               document.getElementById(triggerId)?.focus();
               setOpen(false);
               onOpen(target);
             }}
-            icon={agent ? <RobotIcon /> : <UserIcon />}
+            icon={
+              <span className={styles.actionContent}>
+                {agent ? <RobotIcon size={16} /> : <UserIcon size={16} />}
+                <span className={styles.actionText} aria-hidden="true">
+                  Profile
+                </span>
+              </span>
+            }
           />
           {message.available && (
             <IconButton
@@ -140,10 +146,16 @@ export function ProfilePeek({
               shape="round"
               variant="subtle"
               aria-label="Message"
-              title="Message"
               loading={message.opening}
               onClick={() => void message.open()}
-              icon={<ChatCircleIcon />}
+              icon={
+                <span className={styles.actionContent}>
+                  <ChatCircleIcon size={16} />
+                  <span className={styles.actionText} aria-hidden="true">
+                    Message
+                  </span>
+                </span>
+              }
             />
           )}
         </div>

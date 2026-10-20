@@ -56,7 +56,7 @@
 }
 
 .actions > button {
-  flex: 1 1 0;
+  flex: 1 1 var(--size-control-sm);
   min-width: 0;
 }
 
@@ -81,4 +81,63 @@
 /* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules must reference the host theme class. */
 :global(.dark) .lockup[data-no-picture] {
   background: var(--surface-panel);
+}
+
+.actionContent {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+.actionContent > svg {
+  flex: none;
+}
+.actionText {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  white-space: nowrap;
+}
+.actions:has(> button:focus-visible) > button:not(:focus-visible) {
+  flex-grow: 0;
+}
+.actions > button:focus-visible {
+  flex-grow: 1;
+}
+.actions > button:focus-visible .actionText {
+  max-width: 6rem;
+  margin-inline-start: var(--space-2);
+  opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .actions:not(:has(> button:focus-visible)) > button {
+    transition:
+      flex-grow var(--duration-state) var(--easing-enter),
+      background-color var(--duration-state) var(--easing-state),
+      color var(--duration-state) var(--easing-state);
+  }
+  .actions:not(:has(> button:focus-visible)) .actionText {
+    transition:
+      max-width var(--duration-state) var(--easing-enter),
+      margin-inline-start var(--duration-state) var(--easing-enter),
+      opacity var(--duration-fast) var(--easing-state);
+  }
+  .actions:not(:has(> button:focus-visible)):has(> button:hover)
+    > button:not(:hover) {
+    flex-grow: 0;
+  }
+  .actions:not(:has(> button:focus-visible)) > button:hover {
+    flex-grow: 1;
+  }
+  .actions:not(:has(> button:focus-visible)) > button:hover .actionText {
+    max-width: 6rem;
+    margin-inline-start: var(--space-2);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .actions:not(:has(> button:focus-visible)) > button,
+  .actions:not(:has(> button:focus-visible)) .actionText {
+    transition: none;
+  }
 }

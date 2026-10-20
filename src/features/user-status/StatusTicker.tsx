@@ -24,7 +24,8 @@ export function StatusTicker({
     if (!slot || !label) return;
     const measure = () => {
       const width =
-        label.getBoundingClientRect().width -
+        label.offsetWidth -
+        (Number.parseFloat(getComputedStyle(label).paddingInlineStart) || 0) -
         (Number.parseFloat(getComputedStyle(label).paddingInlineEnd) || 0);
       // Start scrolling before text enters the 24px safe area on either side.
       setDistance(width > slot.clientWidth - 48 + 1 ? width : 0);
@@ -44,7 +45,7 @@ export function StatusTicker({
       title={text}
       style={
         {
-          "--status-ticker-duration": `${(distance + 32) / 24}s`,
+          "--status-ticker-duration": `${(distance + 48) / 24}s`,
         } as CSSProperties
       }
     >

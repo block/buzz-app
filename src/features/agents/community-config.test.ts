@@ -419,7 +419,7 @@ describe("agent config wiring", () => {
     const channel = "6f1c2a3b-4d5e-4f60-8a71-b2c3d4e5f607";
     const teamId = "0b7d4e2a-9c31-5f84-a6d2-3e1f0c9b8a75";
     // A move in progress names the channel before its head is readable.
-    new TeamOps(storage).write({
+    await new TeamOps(storage).write({
       move: {
         id: "move",
         owner: owner.pubkey,

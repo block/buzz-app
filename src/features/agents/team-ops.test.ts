@@ -319,7 +319,7 @@ describe("team operations: witnesses", () => {
       pubkey: b,
       state: "planned",
     });
-    w.runner.revise(op.id, { ...team, members: [a] });
+    await w.runner.revise(op.id, { ...team, members: [a] });
     expect(await w.runner.run(op.id)).toBeUndefined();
     expect(w.channels.removeMember).not.toHaveBeenCalled();
     expect(w.log).not.toContain(`add ${b}`);
@@ -333,8 +333,8 @@ describe("team operations: witnesses", () => {
     };
     const { op, done } = edit(w, teamId, { name: "Renamed" });
     const held = ((await done) as TeamOp).candidate?.event;
-    w.runner.revise(op.id, { ...team, name: "Other" });
-    w.runner.revise(op.id, { ...team, name: "Renamed" });
+    await w.runner.revise(op.id, { ...team, name: "Other" });
+    await w.runner.revise(op.id, { ...team, name: "Renamed" });
     w.hooks.publish = undefined;
     expect(await w.runner.run(op.id)).toBeUndefined();
     expect(w.writer.sign).toHaveBeenCalledTimes(1);
@@ -349,7 +349,7 @@ describe("team operations: witnesses", () => {
     };
     const { op, done } = edit(w, teamId, { name: "Renamed" });
     await done;
-    w.runner.discard(op.id);
+    await w.runner.discard(op.id);
     expect(record(w, op.id)).toMatchObject({
       mode: "reconcile-only",
       stop: "discarded",
@@ -368,7 +368,7 @@ describe("team operations: witnesses", () => {
     const first = edit(w, teamId, { name: "One" });
     const second = edit(w, teamId, { name: "Two" });
     await expect(first.done).rejects.toThrow("signer gone");
-    w.runner.discard(first.op.id);
+    await w.runner.discard(first.op.id);
     expect(await second.done).toBeUndefined();
     expect(JSON.parse(w.relay.head?.content ?? "").name).toBe("Two");
   });
@@ -489,19 +489,21 @@ describe("team operations: witnesses", () => {
     expect(w.channels.addMember).toHaveBeenCalledTimes(1);
   });
 
-  it("14: two owners and two communities don't affect each other's allowance", () => {
+  it("14: two owners and two communities don't affect each other's allowance", async () => {
     const storage = memoryStorage();
     const ops = new TeamOps(storage);
-    const fill = (who: string, where: string, n: number) => {
+    const fill = async (who: string, where: string, n: number) => {
       for (let i = 0; i < n; i++) {
         const op = base(who, where);
-        ops.write({ [op.id]: op });
+        await ops.write({ [op.id]: op });
       }
     };
-    fill("alice", community, OPS_RECORD_LIMIT);
-    expect(() => fill("alice", community, 1)).toThrow(STORAGE_FULL);
-    expect(() => fill("bob", community, 1)).not.toThrow();
-    expect(() => fill("alice", "wss://other.example", 1)).not.toThrow();
+    await fill("alice", community, OPS_RECORD_LIMIT);
+    await expect(fill("alice", community, 1)).rejects.toThrow(STORAGE_FULL);
+    await expect(fill("bob", community, 1)).resolves.toBeUndefined();
+    await expect(
+      fill("alice", "wss://other.example", 1),
+    ).resolves.toBeUndefined();
   });
 
   it("15: a full budget or a throwing setItem sends nothing", async () => {
@@ -509,7 +511,7 @@ describe("team operations: witnesses", () => {
     const teamId = await existing(w);
     for (let i = 0; i < OPS_RECORD_LIMIT; i++) {
       const op = base(owner.pubkey, community);
-      w.ops.write({ [op.id]: op });
+      await w.ops.write({ [op.id]: op });
     }
     expect(() => edit(w, teamId)).toThrow(STORAGE_FULL);
     const v = world();
@@ -532,8 +534,8 @@ describe("team operations: witnesses", () => {
     w.hooks.publish = async () => {
       throw new PublishRejected("slow down", "rate-limited: slow down");
     };
-    const { op } = edit(w, teamId, { name: "Renamed" });
-    await w.runner.run(op.id);
+    const { op, done } = edit(w, teamId, { name: "Renamed" });
+    await done;
     // A refused first attempt frees its bytes; the change keeps sending.
     expect(record(w, op.id)).toMatchObject({
       mode: "may-send",
@@ -852,6 +854,155 @@ describe("team operations: failures before sending", () => {
   });
 });
 
+describe("team operations: saved before sending", () => {
+  /** Holds or rejects the next save of team records that `match` selects. */
+  const hold = (
+    w: ReturnType<typeof world>,
+    match: (value: string) => boolean,
+    reject = false,
+  ) => {
+    const held = gate();
+    const reached = gate();
+    const set = w.storage.set;
+    const spy = vi
+      .spyOn(w.storage, "set")
+      .mockImplementation(async (key, value) => {
+        if (key === TEAM_OPS_KEY && value && match(value)) {
+          spy.mockRestore();
+          reached.open();
+          await held.promise;
+          if (reject) throw new Error("disk full");
+        }
+        return set(key, value);
+      });
+    // Reached, and everything that could run meanwhile has run.
+    const settled = reached.promise.then(
+      () => new Promise((resolve) => setTimeout(resolve, 10)),
+    );
+    return { reached: settled, release: held.open };
+  };
+
+  it("sends a revision only once its held bytes are saved", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const save = hold(w, (value) => value.includes('"candidate"'));
+    const { op, done } = edit(w, teamId, { name: "Renamed" });
+    await save.reached;
+    expect(w.writer.publish).not.toHaveBeenCalled();
+    // Not saved yet, so a restart knows of no held bytes.
+    expect(new TeamOps(w.storage).get(op.id)?.candidate).toBeUndefined();
+    save.release();
+    expect(await done).toBeUndefined();
+    expect(w.writer.publish).toHaveBeenCalledOnce();
+    expect(JSON.parse(w.relay.head?.content ?? "").name).toBe("Renamed");
+  });
+
+  it("sends nothing when a revision's held bytes can't be saved", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const save = hold(w, (value) => value.includes('"candidate"'), true);
+    const { op, done } = edit(w, teamId, { name: "Renamed" });
+    await save.reached;
+    save.release();
+    await expect(done).rejects.toThrow(STORAGE_FULL);
+    expect(w.writer.publish).not.toHaveBeenCalled();
+    expect(w.ops.get(op.id)?.candidate).toBeUndefined();
+    expect(new TeamOps(w.storage).get(op.id)?.candidate).toBeUndefined();
+  });
+
+  it("adds a member only once its command is saved as maybe sent, and not when that save fails", async () => {
+    const w = world();
+    const teamId = await existing(w, []);
+    const save = hold(w, (value) => value.includes('"maybe-sent"'));
+    const { done } = edit(w, teamId, { members: [a] });
+    await save.reached;
+    expect(w.channels.addMember).not.toHaveBeenCalled();
+    save.release();
+    expect(await done).toBeUndefined();
+    expect(w.relay.roster.has(a)).toBe(true);
+
+    const v = world();
+    const id = await existing(v, []);
+    const failed = hold(v, (value) => value.includes('"maybe-sent"'), true);
+    const change = edit(v, id, { members: [a] });
+    await failed.reached;
+    failed.release();
+    await expect(change.done).rejects.toThrow(STORAGE_FULL);
+    expect(v.channels.addMember).not.toHaveBeenCalled();
+    expect(v.ops.get(change.op.id)?.commands[0]?.state).toBe("planned");
+  });
+
+  it("archives only once a Delete's command is saved as maybe sent, and not when that save fails", async () => {
+    const start = (w: ReturnType<typeof world>, teamId: string) =>
+      w.runner.start({
+        kind: "delete",
+        teamId,
+        channel: CH,
+        intent: { name: "", instructions: "", members: [] },
+      });
+    const w = world();
+    const save = hold(w, (value) => value.includes('"maybe-sent"'));
+    const del = start(w, await existing(w, []));
+    await save.reached;
+    expect(w.channels.archive).not.toHaveBeenCalled();
+    save.release();
+    expect(await del.done).toBeUndefined();
+    expect(w.relay.archived).toBe(true);
+
+    const v = world();
+    const failed = hold(v, (value) => value.includes('"maybe-sent"'), true);
+    const again = start(v, await existing(v, []));
+    await failed.reached;
+    failed.release();
+    await expect(again.done).rejects.toThrow(STORAGE_FULL);
+    expect(v.channels.archive).not.toHaveBeenCalled();
+    expect(v.relay.archived).toBe(false);
+  });
+
+  it("keeps a revision's held bytes and a newer submission saved while they were", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const save = hold(w, (value) => value.includes('"candidate"'));
+    const { op, done } = edit(w, teamId, { name: "Renamed" });
+    await save.reached;
+    const revised = w.runner.revise(op.id, { ...team, name: "Later" });
+    save.release();
+    expect(await revised).toBe(true);
+    await done;
+    // The held bytes went as signed, then the later name as its own
+    // revision: neither save lost the other's change.
+    const sent = w.writer.publish.mock.calls.map(
+      ([event]) => JSON.parse((event as RelayEvent).content).name,
+    );
+    expect(sent).toEqual(["Renamed", "Later"]);
+    expect(JSON.parse(w.relay.head?.content ?? "").name).toBe("Later");
+  });
+
+  it("saves records in the order they were written", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const first = hold(w, () => true);
+    const one = w.runner.submit({
+      kind: "edit",
+      teamId,
+      base: w.relay.head?.id ?? null,
+      intent: team,
+    });
+    await first.reached;
+    const two = w.runner.submit({
+      kind: "edit",
+      teamId,
+      base: w.relay.head?.id ?? null,
+      intent: team,
+    });
+    first.release();
+    await Promise.all([one.saved, two.saved]);
+    const reloaded = new TeamOps(w.storage);
+    expect(reloaded.get(one.op.id)).toBeDefined();
+    expect(reloaded.get(two.op.id)).toBeDefined();
+  });
+});
+
 describe("team operations: member ownership", () => {
   it("an Edit whose ownership read fails keeps the removal pending and retries it", async () => {
     const w = world();
@@ -920,12 +1071,12 @@ describe("team operations: transitions", () => {
     };
     const old = edit(w, teamId, { members: [a] });
     await entered.promise;
-    w.runner.submit({
+    await w.runner.submit({
       kind: "delete",
       teamId,
       channel: CH,
       intent: { name: "", instructions: "", members: [] },
-    });
+    }).saved;
     expect(record(w, old.op.id).mode).toBe("reconcile-only");
     release.open();
     await old.done;
@@ -941,10 +1092,10 @@ describe("team operations: transitions", () => {
     const old = edit(w, teamId, { members: [a, b] });
     await old.done;
     expect(w.relay.roster.has(a)).toBe(true);
-    w.runner.revise(old.op.id, { ...team, members: [b] });
+    await w.runner.revise(old.op.id, { ...team, members: [b] });
     await w.runner.run(old.op.id);
     expect(w.relay.roster.has(a)).toBe(false);
-    w.runner.revise(old.op.id, { ...team, members: [a, b] });
+    await w.runner.revise(old.op.id, { ...team, members: [a, b] });
     w.agents.add(b);
     await w.runner.run(old.op.id);
     expect(w.relay.roster.has(a)).toBe(true);
@@ -955,10 +1106,10 @@ describe("team operations: transitions", () => {
     const old = edit(w, teamId, { members: [b] });
     await old.done;
     expect(w.relay.roster.has(a)).toBe(false);
-    w.runner.revise(old.op.id, { ...team, members: [a, b] });
+    await w.runner.revise(old.op.id, { ...team, members: [a, b] });
     await w.runner.run(old.op.id);
     expect(w.relay.roster.has(a)).toBe(true);
-    w.runner.revise(old.op.id, { ...team, members: [b] });
+    await w.runner.revise(old.op.id, { ...team, members: [b] });
     w.agents.add(b);
     await w.runner.run(old.op.id);
     expect(w.relay.roster.has(a)).toBe(false);
@@ -980,7 +1131,7 @@ describe("team operations: transitions", () => {
     expect(w.relay.roster.has(a)).toBe(true);
     // Another device adds a same-owner member meanwhile.
     w.relay.roster.add(c);
-    w.runner.revise(old.op.id, { ...team, members: [b] });
+    await w.runner.revise(old.op.id, { ...team, members: [b] });
     w.agents.add(b);
     expect(await w.runner.run(old.op.id)).toBeUndefined();
     expect(w.relay.roster.has(a)).toBe(true);
@@ -999,7 +1150,9 @@ describe("team operations: transitions", () => {
       intent: { ...team, members: [a, b] },
     });
     await old.done;
-    expect(w.runner.revise(old.op.id, { ...team, members: [a] })).toBe(true);
+    expect(await w.runner.revise(old.op.id, { ...team, members: [a] })).toBe(
+      true,
+    );
     w.agents.add(b);
     expect(await w.runner.run(old.op.id)).toBeUndefined();
     expect(w.relay.roster.has(a)).toBe(true);
@@ -1031,7 +1184,7 @@ describe("team operations: transitions", () => {
     };
     const old = edit(w, teamId, { instructions: "H" });
     await old.done;
-    w.runner.discard(old.op.id);
+    await w.runner.discard(old.op.id);
     // A by-id read can still return H, but the head lookup is redacted.
     w.read.mockImplementation(async (filters) =>
       filters[0]?.ids
@@ -1229,7 +1382,7 @@ describe("team operations: overlapping steps", () => {
     });
     const first = edit(w, teamId, { members: [] });
     await lookup.promise;
-    w.runner.revise(first.op.id, { ...team, members: [a, b] });
+    await w.runner.revise(first.op.id, { ...team, members: [a, b] });
     const next = w.runner.run(first.op.id);
     release.open();
     expect(await first.done).toBeDefined();
@@ -1252,7 +1405,7 @@ describe("team operations: overlapping steps", () => {
     const first = edit(w, teamId, { instructions: "new" });
     await first.done;
     w.accept(await revision(w, teamId, { ...team, instructions: "other" }));
-    w.runner.discard(first.op.id);
+    await w.runner.discard(first.op.id);
     const lookup = gate();
     const release = gate();
     let byId = 0;
@@ -1267,7 +1420,7 @@ describe("team operations: overlapping steps", () => {
     const paused = w.runner.run(first.op.id);
     await lookup.promise;
     await w.make(w.ops).run(first.op.id);
-    w.runner.dismiss(first.op.id);
+    await w.runner.dismiss(first.op.id);
     release.open();
     await paused;
     expect(w.ops.get(first.op.id)).toBeUndefined();
@@ -1354,14 +1507,14 @@ describe("team operations: revisions during member work", () => {
       };
       if (scenario === "instructions-away-and-back") {
         expect(
-          w.runner.revise(first.op.id, {
+          await w.runner.revise(first.op.id, {
             ...initial,
             instructions: "TEMP RULE",
           }),
         ).toBe(true);
         void w.runner.run(first.op.id);
       }
-      expect(w.runner.revise(first.op.id, latest)).toBe(true);
+      expect(await w.runner.revise(first.op.id, latest)).toBe(true);
       const next = w.runner.run(first.op.id);
       release.open();
       await Promise.all([first.done, next]);
@@ -1390,7 +1543,7 @@ describe("team operations: revisions during member work", () => {
     const first = edit(w, teamId, { members: [a] });
     await entered.promise;
     expect(
-      w.runner.revise(first.op.id, {
+      await w.runner.revise(first.op.id, {
         ...team,
         members: [a],
         instructions: "LATEST SUBMITTED RULE",

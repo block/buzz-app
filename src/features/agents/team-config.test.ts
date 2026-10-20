@@ -99,7 +99,7 @@ describe("synced teams", () => {
   it("names an unreadable channel by the team change that made it", async () => {
     const f = await setup();
     f.state.head = undefined;
-    f.ops.write({
+    await f.ops.write({
       op1: {
         id: "op1",
         owner: owner.pubkey,

@@ -370,7 +370,7 @@ export function agentConfigs(
   }
   /** A submission from form `form`: a newer intent for its change, or a new
    * change. */
-  function submitted(
+  async function submitted(
     form: string,
     intent: TeamIntent,
     input: Parameters<typeof runner.start>[0],
@@ -380,12 +380,12 @@ export function agentConfigs(
     // one, even after a restart; a stopped one waits for Resubmit or Dismiss.
     if (operation) {
       forms.set(form, operation);
-      if (runner.revise(operation, intent)) return runner.run(operation);
+      if (await runner.revise(operation, intent)) return runner.run(operation);
       if (runner.records().some((op) => op.id === operation))
         throw new Error("This change stopped. Resubmit or dismiss it.");
     }
     const prior = forms.get(form);
-    if (prior && runner.revise(prior, intent)) return runner.run(prior);
+    if (prior && (await runner.revise(prior, intent))) return runner.run(prior);
     const { op, done } = runner.start(input);
     forms.set(form, op.id);
     return done;
@@ -767,7 +767,7 @@ export function agentConfigs(
           members: team.members,
         };
         // The row as it stands now: edits made to it meanwhile move too.
-        if (prior) runner.revise(prior.id, intent);
+        if (prior) await runner.revise(prior.id, intent);
         await (prior
           ? runner.run(prior.id)
           : runner.start({
@@ -800,7 +800,7 @@ export function agentConfigs(
         ],
       };
       const done =
-        prior && runner.revise(prior.id, intent)
+        prior && (await runner.revise(prior.id, intent))
           ? runner.run(prior.id)
           : runner.start({
               kind: "import",

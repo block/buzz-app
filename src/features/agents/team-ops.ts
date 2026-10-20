@@ -25,7 +25,9 @@ import {
 } from "./config-channels";
 import type { AgentConfigStore } from "./agent-config";
 import type { ConfigSync } from "./config-sync";
-import { carried, edited } from "./config-writes";
+import { carried, edited, type JournalStore } from "./config-writes";
+import { SavedState } from "./saved-state";
+import { localStore } from "./store";
 import { teamBody } from "./team-config";
 
 export const TEAM_OPS_KEY = "buzz.agents.teams.ops.v1";
@@ -98,13 +100,64 @@ const size = (op: TeamOp) => encoder.encode(JSON.stringify(op)).length;
 const scopeOf = (op: Pick<TeamOp, "owner" | "community">) =>
   `${op.owner}\n${op.community}`;
 
-/** Every unfinished team change on this device. A write that fails leaves
- * memory as storage has it. */
+/** A record's change as written from `base`, applied to `latest`: only the
+ * fields the writer changed, so a change saved meanwhile keeps its own. A
+ * record removed meanwhile stays removed. */
+function rebase(
+  base: TeamOp | undefined,
+  next: TeamOp | undefined,
+  latest: TeamOp | undefined,
+): TeamOp | undefined {
+  if (latest === base || !next) return next;
+  if (!latest) return undefined;
+  const merged: Record<string, unknown> = { ...latest };
+  const was = (base ?? {}) as Record<string, unknown>;
+  const now = next as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(was), ...Object.keys(now)]))
+    if (was[key] !== now[key]) {
+      if (key in now) merged[key] = now[key];
+      else delete merged[key];
+    }
+  return merged as TeamOp;
+}
+
+/** Whether `next` grows a scope `changed` touches past its ceilings. */
+function overflows(
+  records: Readonly<Record<string, TeamOp>>,
+  next: Readonly<Record<string, TeamOp>>,
+  changed: readonly string[],
+) {
+  const measure = (all: Readonly<Record<string, TeamOp>>, scope: string) => {
+    const mine = Object.values(all).filter((op) => scopeOf(op) === scope);
+    return {
+      count: mine.length,
+      bytes: mine.reduce((n, op) => n + size(op), 0),
+    };
+  };
+  const scopes = new Set(
+    changed.flatMap((id) => {
+      const op = next[id] ?? records[id];
+      return op ? [scopeOf(op)] : [];
+    }),
+  );
+  return [...scopes].some((scope) => {
+    const before = measure(records, scope);
+    const after = measure(next, scope);
+    return (
+      (after.count > OPS_RECORD_LIMIT && after.count > before.count) ||
+      (after.bytes > OPS_BYTE_LIMIT && after.bytes > before.bytes)
+    );
+  });
+}
+
+/** Every unfinished team change on this device, as last saved: a write is
+ * seen only once it is saved, so nothing that needs it goes ahead first. */
 export class TeamOps {
-  private records: Record<string, TeamOp> = {};
-  constructor(private readonly storage: Storage = localStorage) {
+  private readonly state: SavedState<Readonly<Record<string, TeamOp>>>;
+  constructor(storage: JournalStore = localStore()) {
+    let records: Record<string, TeamOp> = {};
     try {
-      const value = JSON.parse(storage.getItem(TEAM_OPS_KEY) ?? "null") as {
+      const value = JSON.parse(storage.get(TEAM_OPS_KEY) ?? "null") as {
         version?: unknown;
         records?: unknown;
       } | null;
@@ -113,10 +166,16 @@ export class TeamOps {
         value.records &&
         typeof value.records === "object"
       )
-        this.records = value.records as Record<string, TeamOp>;
+        records = value.records as Record<string, TeamOp>;
     } catch {
       /* Start fresh after malformed local data. */
     }
+    this.state = new SavedState(records, (next) =>
+      storage.set(TEAM_OPS_KEY, JSON.stringify({ version: 1, records: next })),
+    );
+  }
+  private get records() {
+    return this.state.current;
   }
   get = (id: string): TeamOp | undefined => this.records[id];
   all = (owner: string, community: string) =>
@@ -126,45 +185,32 @@ export class TeamOps {
   every = () => Object.values(this.records);
   nextSeq = () =>
     Math.max(0, ...Object.values(this.records).map((op) => op.seq)) + 1;
-  /** Stores `changes` (undefined removes) in one write. A scope may not grow
-   * past its ceilings; shrinking or settling a record always fits. Throws
-   * `STORAGE_FULL` and changes nothing when it doesn't fit. */
-  write(changes: Readonly<Record<string, TeamOp | undefined>>) {
-    const next = { ...this.records };
-    for (const [id, op] of Object.entries(changes))
-      if (op) next[id] = op;
-      else delete next[id];
-    const measure = (records: Record<string, TeamOp>, scope: string) => {
-      const mine = Object.values(records).filter((op) => scopeOf(op) === scope);
-      return {
-        count: mine.length,
-        bytes: mine.reduce((n, op) => n + size(op), 0),
-      };
-    };
-    const scopes = new Set(
-      [...Object.keys(changes)].flatMap((id) => {
-        const op = next[id] ?? this.records[id];
-        return op ? [scopeOf(op)] : [];
-      }),
-    );
-    for (const scope of scopes) {
-      const before = measure(this.records, scope);
-      const after = measure(next, scope);
-      if (
-        (after.count > OPS_RECORD_LIMIT && after.count > before.count) ||
-        (after.bytes > OPS_BYTE_LIMIT && after.bytes > before.bytes)
-      )
+  /** Settles once every write made so far has. */
+  settled = () => this.state.settled();
+  /** Stores `changes` (undefined removes) in one write, each made from the
+   * record as read now and applied to the record as saved when its turn
+   * comes. A scope may not grow past its ceilings; shrinking or settling a
+   * record always fits. Throws `STORAGE_FULL` when it doesn't fit now, and
+   * rejects with it, changing nothing, when it doesn't fit then or isn't
+   * saved. */
+  write(changes: Readonly<Record<string, TeamOp | undefined>>): Promise<void> {
+    const bases = { ...this.records };
+    const apply = (records: Readonly<Record<string, TeamOp>>) => {
+      const next = { ...records };
+      for (const [id, op] of Object.entries(changes)) {
+        const merged = rebase(bases[id], op, records[id]);
+        if (merged) next[id] = merged;
+        else delete next[id];
+      }
+      if (overflows(records, next, Object.keys(changes)))
         throw new Error(STORAGE_FULL);
-    }
-    try {
-      this.storage.setItem(
-        TEAM_OPS_KEY,
-        JSON.stringify({ version: 1, records: next }),
-      );
-    } catch (cause) {
+      return next;
+    };
+    apply(this.records);
+    return this.state.change(apply).catch((cause: unknown) => {
+      if (cause instanceof Error && cause.message === STORAGE_FULL) throw cause;
       throw new Error(STORAGE_FULL, { cause });
-    }
-    this.records = next;
+    });
   }
 }
 
@@ -255,19 +301,23 @@ export function teamRunner(deps: RunnerDeps) {
     });
     return run;
   }
-
-  /** Persists `changes` and reports them. */
+  /** Stores `changes` and reports them; resolves once they are saved. */
+  /** Stores `changes` and reports them once saved. Throws when they can't
+   * fit now. */
   function put(changes: Readonly<Record<string, TeamOp | undefined>>) {
-    ops.write(changes);
-    deps.changed();
+    return ops.write(changes).then(() => deps.changed());
   }
   /** Stops automatic sending on records `which` selects, in one write. */
-  function stopAll(teamId: string, stop: Stop, which: (op: TeamOp) => boolean) {
+  async function stopAll(
+    teamId: string,
+    stop: Stop,
+    which: (op: TeamOp) => boolean,
+  ) {
     const changes: Record<string, TeamOp> = {};
     for (const op of onTeam(teamId))
       if (op.mode === "may-send" && which(op))
         changes[op.id] = { ...op, mode: "reconcile-only", stop };
-    if (Object.keys(changes).length) put(changes);
+    if (Object.keys(changes).length) await put(changes);
   }
   /** Seeing an archive stops save and member intent only. A lifecycle record
    * is never auto-stopped: Recover exists to act on an archived team, and
@@ -300,8 +350,7 @@ export function teamRunner(deps: RunnerDeps) {
             mode: "reconcile-only",
             stop: "deleted",
           };
-    put(changes);
-    return op;
+    return { op, saved: put(changes) };
   }
 
   /** One step of record `id`, queued on its team. Resolves with the record
@@ -322,10 +371,11 @@ export function teamRunner(deps: RunnerDeps) {
       op = ops.get(id) as TeamOp | undefined;
       return op;
     };
-    const save = (next: TeamOp) => {
-      put({ [id]: next });
-      op = next;
-      return next;
+    const save = async (next: TeamOp) => {
+      await put({ [id]: next });
+      // As saved: a change saved meanwhile keeps its own fields.
+      op = ops.get(id) ?? next;
+      return op;
     };
     /** The durable record, if it may still send: re-read before every
      * dispatch, so a Delete submitted meanwhile stops the next command. */
@@ -337,7 +387,7 @@ export function teamRunner(deps: RunnerDeps) {
       const last = ops.get(id);
       if (!last) return undefined;
       await deps.done(last);
-      put({ [id]: undefined });
+      await put({ [id]: undefined });
       return undefined;
     };
 
@@ -353,10 +403,10 @@ export function teamRunner(deps: RunnerDeps) {
     if (op.channel && found?.id !== op.channel) {
       // Discovery selects another channel now (or none): never send here.
       if (op.mode === "may-send")
-        save({ ...op, mode: "reconcile-only", stop: "scope" });
+        await save({ ...op, mode: "reconcile-only", stop: "scope" });
       return op;
     }
-    if (found?.archived) stopAll(op.teamId, "archived", intentKinds);
+    if (found?.archived) await stopAll(op.teamId, "archived", intentKinds);
     op = ops.get(id) as TeamOp;
 
     if (LIFECYCLE[op.kind]) return lifecycle(op, found?.id, save, live, finish);
@@ -371,12 +421,12 @@ export function teamRunner(deps: RunnerDeps) {
           signal,
         );
       } catch (error) {
-        return fresh() && save({ ...op, error: message(error) });
+        return fresh() && (await save({ ...op, error: message(error) }));
       }
       if (!fresh() || found.archived) return op;
     }
     const channel = found.id;
-    if (op.channel !== channel) save({ ...op, channel });
+    if (op.channel !== channel) await save({ ...op, channel });
     if (!found.archived)
       await deps.sync
         .bind([{ family: "team-config", subject: op.teamId, channel }])
@@ -395,7 +445,7 @@ export function teamRunner(deps: RunnerDeps) {
           : c,
       );
       if (commands.some((c, i) => c !== op?.commands[i]))
-        save({ ...op, commands });
+        await save({ ...op, commands });
     }
 
     const expected: Expected = {
@@ -430,12 +480,12 @@ export function teamRunner(deps: RunnerDeps) {
     // Our own save is current: confirmed, held bytes dropped, one write.
     if (head && op.candidate?.event.id === head.id) {
       const { candidate: _, error: __, ...rest } = op;
-      save({ ...rest, confirmedHead: head.id });
+      await save({ ...rest, confirmedHead: head.id });
     }
     // A revision proven stored earlier is current now: the same.
     if (head && op.accepted === head.id) {
       const { accepted: _, error: __, ...rest } = op;
-      save({ ...rest, confirmedHead: head.id });
+      await save({ ...rest, confirmedHead: head.id });
     }
     // Import and move adopt a team that already exists, pinning its head:
     // only while they may still send, never an archived team's, so a
@@ -447,8 +497,8 @@ export function teamRunner(deps: RunnerDeps) {
       op.mode === "may-send" &&
       !found.archived
     )
-      save({ ...op, base: head.id, confirmedHead: head.id });
-    if (op.base === undefined && !head) save({ ...op, base: null });
+      await save({ ...op, base: head.id, confirmedHead: head.id });
+    if (op.base === undefined && !head) await save({ ...op, base: null });
 
     // The gate: the head must be the one we started from or our own.
     if (head && head.id !== op.base && head.id !== op.confirmedHead)
@@ -501,11 +551,11 @@ export function teamRunner(deps: RunnerDeps) {
       const now = live();
       if (!now || now.candidate) return ops.get(id);
       // Persisted, within budget, before it is sent; else nothing is sent.
-      save({ ...now, candidate: { event, sends: 0 } });
+      await save({ ...now, candidate: { event, sends: 0 } });
       return send(op, save, live, event.id);
     }
     if (head && op.confirmedHead !== head.id)
-      save({ ...op, confirmedHead: head.id });
+      await save({ ...op, confirmedHead: head.id });
     return members(op, roster, save, live, finish);
   }
 
@@ -514,13 +564,13 @@ export function teamRunner(deps: RunnerDeps) {
   async function conflict(
     op: TeamOp,
     channel: string,
-    save: (next: TeamOp) => TeamOp,
+    save: (next: TeamOp) => Promise<TeamOp>,
     head: RelayEvent,
   ) {
     // A record removed or replaced meanwhile ends here.
     const now = await settleProof(op, channel, save, head);
     if (!now) return undefined;
-    return save({
+    return await save({
       ...now,
       mode: "reconcile-only",
       stop: now.stop ?? "conflict",
@@ -536,7 +586,7 @@ export function teamRunner(deps: RunnerDeps) {
   async function settleProof(
     op: TeamOp,
     channel: string,
-    save: (next: TeamOp) => TeamOp,
+    save: (next: TeamOp) => Promise<TeamOp>,
     head?: RelayEvent,
   ) {
     const held = op.candidate;
@@ -547,9 +597,9 @@ export function teamRunner(deps: RunnerDeps) {
     const now = ops.get(op.id);
     if (now?.candidate?.event.id !== held.event.id) return now;
     const { candidate: _, ...rest } = now;
-    if (found) return save({ ...rest, accepted: held.event.id });
+    if (found) return await save({ ...rest, accepted: held.event.id });
     const parent = held.event.tags.find(([name]) => name === "prev")?.[1];
-    if (found === false && head && head.id !== parent) return save(rest);
+    if (found === false && head && head.id !== parent) return await save(rest);
     return now;
   }
 
@@ -574,7 +624,7 @@ export function teamRunner(deps: RunnerDeps) {
    * unknown result ends the step. */
   async function send(
     op: TeamOp,
-    save: (next: TeamOp) => TeamOp,
+    save: (next: TeamOp) => Promise<TeamOp>,
     live: () => TeamOp | undefined,
     eventId: string,
   ): Promise<TeamOp | undefined> {
@@ -584,7 +634,7 @@ export function teamRunner(deps: RunnerDeps) {
     if (!now || held?.event.id !== eventId || fenced(now.teamId, now.id))
       return ops.get(op.id);
     const sends = held.sends + 1;
-    save({ ...now, candidate: { ...held, sends } });
+    await save({ ...now, candidate: { ...held, sends } });
     const sent = await deliver(
       deps.writer,
       held.event,
@@ -596,15 +646,15 @@ export function teamRunner(deps: RunnerDeps) {
     if (after?.candidate?.event.id !== eventId) return after;
     if (sent.status === "accepted") {
       // Proof it was stored, kept before any read can fail.
-      save({ ...after, candidate: { ...held, sends, accepted: true } });
+      await save({ ...after, candidate: { ...held, sends, accepted: true } });
       return step(op.id);
     }
     if (sent.status === "uncertain" || sends > 1)
-      return save({ ...after, error: sent.message });
+      return await save({ ...after, error: sent.message });
     // A definite refusal of a known first attempt is final for these bytes.
     const { candidate: _, ...rest } = after;
     if (sent.refusal === "rate-limited")
-      return save({ ...rest, error: sent.message });
+      return await save({ ...rest, error: sent.message });
     // An Import or move whose create collided adopts the team that won on
     // its next step, before any member work.
     if (
@@ -612,9 +662,9 @@ export function teamRunner(deps: RunnerDeps) {
       (rest.kind === "import" || rest.kind === "move")
     ) {
       const { base: __, ...open } = rest;
-      return save({ ...open, error: sent.message });
+      return await save({ ...open, error: sent.message });
     }
-    return save({
+    return await save({
       ...rest,
       mode: "reconcile-only",
       ...(sent.refusal === "conflict" ? { stop: "conflict" as const } : {}),
@@ -626,7 +676,7 @@ export function teamRunner(deps: RunnerDeps) {
   async function members(
     start: TeamOp,
     roster: ReadonlySet<string> | undefined,
-    save: (next: TeamOp) => TeamOp,
+    save: (next: TeamOp) => Promise<TeamOp>,
     live: () => TeamOp | undefined,
     finish: () => Promise<undefined>,
   ): Promise<TeamOp | undefined> {
@@ -649,7 +699,7 @@ export function teamRunner(deps: RunnerDeps) {
           // Unknown ownership plans nothing: the change stays, to retry.
           const now = live();
           return now
-            ? save({ ...now, error: message(error) })
+            ? await save({ ...now, error: message(error) })
             : ops.get(start.id);
         }
         if (owned) wanted.push({ action: "remove", pubkey, state: "planned" });
@@ -674,7 +724,7 @@ export function teamRunner(deps: RunnerDeps) {
         return [was?.state === "refused" ? was : c];
       }),
     ];
-    const plan = save({ ...now, commands });
+    const plan = await save({ ...now, commands });
     if (plan.commands.some((c) => c.state === "maybe-sent")) return plan;
     for (const command of plan.commands) {
       if (command.state === "confirmed" || !command.pubkey) continue;
@@ -698,10 +748,10 @@ export function teamRunner(deps: RunnerDeps) {
         fenced(now.teamId, now.id)
       )
         return ops.get(start.id);
-      const at = (state: CommandState, error?: string) => {
+      const at = async (state: CommandState, error?: string) => {
         const base = ops.get(start.id);
         if (!base) return undefined;
-        return save({
+        return await save({
           ...base,
           commands: base.commands.map((c) =>
             same(command)(c)
@@ -710,7 +760,7 @@ export function teamRunner(deps: RunnerDeps) {
           ),
         });
       };
-      at("maybe-sent");
+      await at("maybe-sent");
       const result = await (command.action === "add"
         ? channels.addMember(channel, pubkey, signal)
         : channels.removeMember(channel, pubkey)
@@ -722,7 +772,10 @@ export function teamRunner(deps: RunnerDeps) {
       }));
       if (result.status === "unsent") return at("planned", result.error);
       if (result.status === "uncertain") return at("maybe-sent", result.error);
-      at(result.status === "confirmed" ? "confirmed" : "refused", result.error);
+      await at(
+        result.status === "confirmed" ? "confirmed" : "refused",
+        result.error,
+      );
     }
     const last = current();
     return last?.commands.every((c) => c.state === "confirmed")
@@ -735,17 +788,17 @@ export function teamRunner(deps: RunnerDeps) {
   async function lifecycle(
     op: TeamOp,
     channel: string | undefined,
-    save: (next: TeamOp) => TeamOp,
+    save: (next: TeamOp) => Promise<TeamOp>,
     live: () => TeamOp | undefined,
     finish: () => Promise<undefined>,
   ): Promise<TeamOp | undefined> {
     if (!channel) return op;
-    if (op.channel !== channel) op = save({ ...op, channel });
+    if (op.channel !== channel) op = await save({ ...op, channel });
     const archive = op.kind === "delete";
     const settled = async () => {
       const archived = await channels.archived(channel, signal);
       // Seeing an archive stops older save and member intent.
-      if (archived) stopAll(op.teamId, "archived", intentKinds);
+      if (archived) await stopAll(op.teamId, "archived", intentKinds);
       return archived === archive;
     };
     let reached: boolean;
@@ -763,10 +816,10 @@ export function teamRunner(deps: RunnerDeps) {
     const [command] = now?.commands ?? [];
     if (!now || !command || command.state === "maybe-sent")
       return ops.get(op.id);
-    const state = (s: CommandState, error?: string) => {
+    const state = async (s: CommandState, error?: string) => {
       const base = ops.get(op.id);
       if (!base) return undefined;
-      return save({
+      return await save({
         ...base,
         commands: [
           { action: command.action, state: s, ...(error ? { error } : {}) },
@@ -774,7 +827,7 @@ export function teamRunner(deps: RunnerDeps) {
         ...(error ? { error } : {}),
       });
     };
-    state("maybe-sent");
+    await state("maybe-sent");
     try {
       await channels[archive ? "archive" : "unarchive"](channel, signal);
     } catch (error) {
@@ -800,8 +853,8 @@ export function teamRunner(deps: RunnerDeps) {
     run,
     /** Stores and runs a change. */
     start(input: Parameters<typeof submit>[0]) {
-      const op = submit(input);
-      return { op, done: run(op.id) };
+      const { op, saved } = submit(input);
+      return { op, done: saved.then(() => run(op.id)) };
     },
     /** Runs every record of this scope, oldest first: sending ones and the
      * read-only reconciliation of stopped ones. */
@@ -814,17 +867,19 @@ export function teamRunner(deps: RunnerDeps) {
       queue(teamId, work),
     /** A newer submission to a record that may still send: it waits behind
      * any held revision, never replacing its bytes. */
-    revise(id: string, intent: TeamIntent) {
+    async revise(id: string, intent: TeamIntent) {
       const op = ops.get(id);
       if (op?.mode !== "may-send") return false;
-      put({ [id]: { ...op, intent } });
+      await put({ [id]: { ...op, intent } });
       return true;
     },
     /** Stops automatic sending; the evidence stays for reconciliation. */
-    discard(id: string) {
+    async discard(id: string) {
       const op = ops.get(id);
       if (op && op.mode === "may-send")
-        put({ [id]: { ...op, mode: "reconcile-only", stop: "discarded" } });
+        await put({
+          [id]: { ...op, mode: "reconcile-only", stop: "discarded" },
+        });
     },
     /** Removes a stopped record; only once nothing in it is unresolved. */
     async dismiss(id: string) {
@@ -833,7 +888,7 @@ export function teamRunner(deps: RunnerDeps) {
       if (op.mode === "may-send" || unresolved(op))
         throw new Error("This change still has unconfirmed steps");
       await deps.done(op);
-      put({ [id]: undefined });
+      await put({ [id]: undefined });
     },
     /** A stopped change submitted again from the current head; it waits
      * while anything on the team is unresolved. */
@@ -869,7 +924,7 @@ export function teamRunner(deps: RunnerDeps) {
         ...(old.channel ? { channel: old.channel } : {}),
       };
       if (!move) await deps.done(old);
-      put({ [old.id]: undefined, [op.id]: op });
+      await put({ [old.id]: undefined, [op.id]: op });
       return { op, done: run(op.id) };
     },
   };

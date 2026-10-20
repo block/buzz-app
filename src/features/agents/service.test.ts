@@ -61,11 +61,7 @@ import { readTeams, recordKey, TEAMS_KEY, writeTeams } from "./store";
 import { importedTeamId, teamSubject } from "./config-channels";
 const COMMUNITY_UUID = "5b0c2f9e-3d1a-4c7b-9e8f-1a2b3c4d5e6f";
 const teamJournal = (store: AgentStore) => new TeamJournal(store);
-const teamOps = (store: AgentStore) =>
-  new TeamOps({
-    getItem: (key) => store.get(key),
-    setItem: (key, value) => void store.set(key, value),
-  } as Storage);
+const teamOps = (store: AgentStore) => new TeamOps(store);
 import {
   bot,
   channel,
@@ -7582,7 +7578,7 @@ describe("Delete as a recoverable archive", () => {
   it("with config sync on, blocks a member's start while its team can't be read, and shows the team safely", async () => {
     const storage = memoryStorage();
     // Only an unfinished change of this device's names the channel's team.
-    new TeamOps(storage).write({
+    await new TeamOps(storage).write({
       edit: {
         id: "edit",
         owner: viewer,
@@ -7771,7 +7767,7 @@ describe("Delete as a recoverable archive", () => {
       mode: "may-send",
       seq,
     });
-    new TeamOps(storage).write({
+    await new TeamOps(storage).write({
       // Its channel was made and one member added; the other never was.
       [joined]: {
         ...record(joined, 1),
@@ -9255,7 +9251,7 @@ describe("Delete as a recoverable archive", () => {
       const storage = memoryStorage(),
         operation = crypto.randomUUID(),
         teamId = crypto.randomUUID();
-      new TeamOps(storage).write({
+      await new TeamOps(storage).write({
         [operation]: {
           id: operation,
           teamId,
@@ -9332,7 +9328,7 @@ describe("Delete as a recoverable archive", () => {
     const storage = memoryStorage(),
       operation = crypto.randomUUID(),
       teamId = crypto.randomUUID();
-    new TeamOps(storage).write({
+    await new TeamOps(storage).write({
       [operation]: {
         id: operation,
         teamId,
@@ -9387,7 +9383,7 @@ describe("Delete as a recoverable archive", () => {
     const storage = memoryStorage(),
       operation = crypto.randomUUID(),
       teamId = crypto.randomUUID();
-    new TeamOps(storage).write({
+    await new TeamOps(storage).write({
       [operation]: {
         id: operation,
         teamId,
@@ -9453,7 +9449,7 @@ describe("Delete as a recoverable archive", () => {
     const storage = memoryStorage();
     const operation = crypto.randomUUID(),
       teamId = crypto.randomUUID();
-    new TeamOps(storage).write({
+    await new TeamOps(storage).write({
       [operation]: {
         id: operation,
         teamId,
@@ -9518,7 +9514,7 @@ describe("Delete as a recoverable archive", () => {
     const storage = memoryStorage(),
       operation = crypto.randomUUID(),
       teamId = crypto.randomUUID();
-    new TeamOps(storage).write({
+    await new TeamOps(storage).write({
       [operation]: {
         id: operation,
         teamId,
@@ -9596,7 +9592,7 @@ describe("Delete as a recoverable archive", () => {
     const storage = memoryStorage(),
       id = crypto.randomUUID(),
       teamId = crypto.randomUUID();
-    new TeamOps(storage).write({
+    await new TeamOps(storage).write({
       [id]: {
         id,
         teamId,
@@ -9752,7 +9748,7 @@ describe("Delete as a recoverable archive", () => {
         members: [alder],
       },
     ]);
-    new TeamOps(storage).write({
+    await new TeamOps(storage).write({
       [id]: {
         id,
         teamId,
@@ -9796,7 +9792,7 @@ describe("Delete as a recoverable archive", () => {
     const storage = memoryStorage();
     const id = crypto.randomUUID(),
       teamId = crypto.randomUUID();
-    new TeamOps(storage).write({
+    await new TeamOps(storage).write({
       [id]: {
         id,
         teamId,

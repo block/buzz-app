@@ -1425,10 +1425,7 @@ export class AgentsService extends Service implements Agents {
       migration: new MigrationJournal(storage),
       teams: new TeamJournal(storage),
       lifecycle: new LifecycleJournal(storage),
-      ops: new TeamOps({
-        getItem: (key) => storage.get(key),
-        setItem: (key, value) => void storage.set(key, value),
-      } as Storage),
+      ops: new TeamOps(storage),
     };
     this.coreMemory = new CoreMemoryCache((pubkey) =>
       ownerReads(this.relay(pubkey), pubkey),
@@ -2752,7 +2749,7 @@ export class AgentsService extends Service implements Agents {
     if (action === "check") await config.checkTeamOp(id);
     else if (action === "resubmit") await config.resubmitTeamOp(id);
     else if (action === "dismiss") await config.dismissTeamOp(id);
-    else config.discardTeamOp(id);
+    else await config.discardTeamOp(id);
     this.showTeams();
   }
 

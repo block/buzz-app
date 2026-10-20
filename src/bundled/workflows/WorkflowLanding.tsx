@@ -765,7 +765,7 @@ function WorkflowCard({
                 {presentation.description}
               </span>
               <span className="workflow-card-meta text-caption text-subtle">
-                <span className="workflow-card-name text-label-sm" title={name}>
+                <span className="workflow-card-name" title={name}>
                   {name}
                 </span>
                 <span aria-hidden="true">·</span>

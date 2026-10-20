@@ -296,19 +296,23 @@ function setup(
       return created;
     }),
     finish: vi.fn(async (_: string) => created),
-    portable: vi.fn(async (): Promise<FoundAgents> => ({
-      agents: found,
-      teams: [],
-      warnings: [],
-      here: [],
-    })),
+    portable: vi.fn(
+      async (): Promise<FoundAgents> => ({
+        agents: found,
+        teams: [],
+        warnings: [],
+        here: [],
+      }),
+    ),
     port: vi.fn(async () => ({ agent: created, notes: [] })),
-    portTeam: vi.fn(async (): Promise<TeamPort> => ({
-      imported: [],
-      failed: [],
-      elsewhere: [],
-      foreign: [],
-    })),
+    portTeam: vi.fn(
+      async (): Promise<TeamPort> => ({
+        imported: [],
+        failed: [],
+        elsewhere: [],
+        foreign: [],
+      }),
+    ),
     save: vi.fn(async () => {}),
     previewRetype: vi.fn(
       () =>

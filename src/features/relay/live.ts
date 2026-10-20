@@ -276,7 +276,8 @@ export function subscribeRelayTraffic(
   let configChannels: readonly string[] | null = null;
   let presenceAuthors: readonly string[] = [];
   let presenceReceipt:
-    { id: string; finish(accepted: boolean): void } | undefined;
+    | { id: string; finish(accepted: boolean): void }
+    | undefined;
   const routes = new Map<string, Route>();
   const wires = new Map<string, Route>();
   const notify = () => {

@@ -8137,6 +8137,7 @@ describe("Delete as a recoverable archive", () => {
             ? ({ status: "refused", error: "Try later" } as never)
             : add(id, pubkey),
         );
+        const digest = vi.spyOn(crypto.subtle, "digest");
         // Check again queues behind the held Save, or, without serialization,
         // adds B and (on the second run) replans B's confirmed command away.
         let checking = Promise.resolve();
@@ -8144,7 +8145,15 @@ describe("Delete as a recoverable archive", () => {
           checking = checking
             .then(() => f.service.teamChange(op.id, "check"))
             .catch(() => {});
-        await Promise.race([checking, new Promise((r) => setTimeout(r, 200))]);
+        // A run's first act, before any I/O, is hashing its team's channel
+        // label: none may start while the Save holds the team.
+        await settle();
+        const started = digest.mock.calls.filter(
+          ([, data]) =>
+            new TextDecoder().decode(data as Uint8Array) === op.teamId,
+        );
+        digest.mockRestore();
+        expect(started).toEqual([]);
         relay.addMember.mockImplementation(add);
         release();
         const result = await outcome;

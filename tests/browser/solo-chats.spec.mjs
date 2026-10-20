@@ -402,8 +402,12 @@ test("Share grants access and posts a link without promoting or moving the Solo 
   await page.getByRole("menuitem", { name: "Share", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Share chat" });
   const search = dialog.getByRole("combobox", { name: "People or channel" });
-  // Click waits for the opening dialog to settle before WebKit inserts text.
-  // fill alone does not wait for a stable target during the focus handoff.
+  // Text entry starts after the menu-to-dialog transition and focus handoff.
+  await dialog.evaluate(async (element) => {
+    await Promise.all(
+      element.getAnimations().map((animation) => animation.finished),
+    );
+  });
   await search.click();
   await expect(search).toBeFocused();
   await search.fill("Aria");

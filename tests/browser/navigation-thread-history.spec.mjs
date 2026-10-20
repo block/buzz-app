@@ -86,7 +86,7 @@ test("Back restores each thread visit before the previous channel", async ({
     `[role="tab"][data-tab-value="thread:alpha:${roots[1].id}"]`,
   );
   const feedback = await selectedTab.evaluateHandle((tab) => {
-    const state = { cue: null };
+    const state = { cue: null, paint: null };
     tab.addEventListener(
       "animationstart",
       (event) => {
@@ -96,6 +96,13 @@ test("Back restores each thread visit before the previous channel", async ({
           animation.pause();
           animation.currentTime = 0;
         }
+        // Capture while the cue is attached: WebKit may already have queued
+        // animationend before this handler pauses a delayed animation.
+        state.paint = {
+          tint: getComputedStyle(state.cue).backgroundColor,
+          resting: getComputedStyle(tab).backgroundColor,
+          opacity: Number(getComputedStyle(state.cue).opacity),
+        };
       },
       { once: true },
     );
@@ -104,13 +111,9 @@ test("Back restores each thread visit before the previous channel", async ({
   await activate(threadButton(roots[1]));
   try {
     await expect
-      .poll(() => feedback.evaluate((state) => !!state.cue))
+      .poll(() => feedback.evaluate((state) => !!state.paint))
       .toBe(true);
-    const paint = await feedback.evaluate(({ cue }) => ({
-      tint: getComputedStyle(cue).backgroundColor,
-      resting: getComputedStyle(cue.parentElement).backgroundColor,
-      opacity: Number(getComputedStyle(cue).opacity),
-    }));
+    const paint = await feedback.evaluate((state) => state.paint);
     expect(paint.tint).not.toBe(paint.resting);
     expect(paint.opacity).toBeGreaterThan(0);
   } finally {

@@ -1,6 +1,7 @@
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
   Agent,
   AgentHandle,
@@ -19,6 +20,7 @@ import {
   type AddedTool,
   addedKey,
   callSessionTool,
+  sessionHint,
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
@@ -185,7 +187,7 @@ export class CodexRuntime {
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
-    private readonly storage: Storage = localStorage,
+    private readonly storage: AgentStore = localStore(),
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every thread now. */
     private readonly added: () => readonly AddedTool[] = () => [],
@@ -385,9 +387,7 @@ export class CodexRuntime {
   }
   private load(storageKey: string) {
     try {
-      const stored: unknown = JSON.parse(
-        this.storage.getItem(storageKey) ?? "{}",
-      );
+      const stored: unknown = JSON.parse(this.storage.get(storageKey) ?? "{}");
       if (stored && typeof stored === "object" && !Array.isArray(stored))
         return Object.fromEntries(
           Object.entries(stored).filter(
@@ -471,16 +471,16 @@ export class CodexRuntime {
     entry.saved[key] = saved;
     // Retain a bounded set of bindings; this never deletes Codex's own history.
     entry.saved = Object.fromEntries(Object.entries(entry.saved).slice(-200));
-    try {
-      this.storage.setItem(entry.storageKey, JSON.stringify(entry.saved));
-    } catch (error) {
-      this.status(
-        request.agent.pubkey,
-        key,
-        "Session could not be saved",
-        message(error),
+    void this.storage
+      .set(entry.storageKey, JSON.stringify(entry.saved))
+      .catch((error: unknown) =>
+        this.status(
+          request.agent.pubkey,
+          key,
+          "Session could not be saved",
+          message(error),
+        ),
       );
-    }
   }
   /** Dates the binding now, when it takes in a message or ends a turn. */
   private touch(request: Request, entry: Entry, key: string) {
@@ -863,8 +863,14 @@ export class CodexRuntime {
     const reads = this.reads(request.agent.pubkey);
     if (reads?.scope !== request.scope)
       throw new Error("The community changed");
-    return conversationHistory(request.event, request.conversation, (filters) =>
-      reads.read(filters, signal),
+    // A chat its owner is still creating has nothing earlier to read.
+    const starting = (await reads.channel(request.conversation.channelId))
+      ?.starting;
+    return conversationHistory(
+      request.event,
+      request.conversation,
+      (filters) =>
+        starting ? Promise.resolve([]) : reads.read(filters, signal),
     );
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
@@ -1353,15 +1359,19 @@ function follow(
     },
   };
 }
-/** The Buzz tools, with those plugins add, that a new thread gets. */
+/** The Buzz tools, with those plugins add, that a new thread gets. Codex
+ * keeps a deferred tool from the model until its tool search finds it. Every
+ * model in Codex's catalog has tool search (supports_search_tool); one
+ * without it would not see deferred tools. */
 const dynamicTools = (added: readonly AddedTool[]) => [
   {
     type: "namespace",
     name: "buzz",
-    description: "Read and act in Buzz as this agent.",
-    tools: sessionTools(added).map((tool) => ({
+    description: sessionHint(added),
+    tools: sessionTools(added).map(({ load, ...tool }) => ({
       type: "function",
       ...tool,
+      ...(load === "search" ? { deferLoading: true } : {}),
     })),
   },
 ];

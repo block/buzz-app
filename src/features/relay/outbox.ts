@@ -40,6 +40,9 @@ export type OutgoingEvent = Readonly<{
   guarded?: boolean;
   delivery: Delivery;
   error?: string | undefined;
+  /** The relay refused the last attempt, rather than it failing on this
+   * device or going unanswered. */
+  refused?: true | undefined;
 }>;
 export interface Outbox {
   /** Outstanding operations only. Confirmed events live in the session's retained data. */
@@ -553,17 +556,23 @@ export function createOutbox(
       if (closed) return;
       if (latest && awaitsReceipt(latest.event))
         onReceipt(latest.signed ?? latest.event, undefined);
-      if (latest)
+      const delivery: Delivery | undefined =
+        latest &&
+        (latest.delivery === "seen" || attempt.previousDelivery === "seen"
+          ? "seen"
+          : attempt.previousDelivery === "accepted"
+            ? "accepted"
+            : publishing && !(error instanceof PublishRejected)
+              ? "unknown"
+              : failedDelivery(attempt));
+      if (latest && delivery)
         saveStatus({
           ...latest,
-          delivery:
-            latest.delivery === "seen" || attempt.previousDelivery === "seen"
-              ? "seen"
-              : attempt.previousDelivery === "accepted"
-                ? "accepted"
-                : publishing && !(error instanceof PublishRejected)
-                  ? "unknown"
-                  : failedDelivery(attempt),
+          delivery,
+          refused:
+            delivery === "failed" && error instanceof PublishRejected
+              ? true
+              : undefined,
           error: awaitsReceipt(latest.event)
             ? publishing && !(error instanceof PublishRejected)
               ? "Workflow delivery could not be confirmed; inspect recent activity before submitting another command."
@@ -835,6 +844,7 @@ export function createOutbox(
           ...(active ? { guarded: true } : {}),
           delivery: "sending",
           error: undefined,
+          refused: undefined,
         });
         schedule(id, undefined, item.delivery);
       }

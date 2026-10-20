@@ -187,8 +187,10 @@ it("failed sends remain retryable, and retry republishes exactly the same signed
     delivery: "failed",
     deliveryError: "Not allowed",
   });
+  expect(h.outbox.snapshot()[0]?.refused).toBe(true);
   h.outbox.retry(id);
   h.outbox.retry(id);
+  expect(h.outbox.snapshot()[0]?.refused).toBeUndefined();
   await flush();
   expect(h.sign).toHaveBeenCalledTimes(1);
   expect(h.publications).toHaveLength(1);

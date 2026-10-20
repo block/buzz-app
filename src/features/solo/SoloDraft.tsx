@@ -143,13 +143,23 @@ export function SoloDraft({
   const submitting = useRef(false);
   // A workspace's defaults load as soon as it is picked, so starting a chat
   // in it does not wait for them. A start uses them up, or loads them again
-  // if that load failed; the next start loads anew.
-  const workspace = useRef<{ id: string; setup: Promise<ChatSetup> }>(
-    undefined,
-  );
+  // if that load failed or the saved defaults have changed since.
+  const revision = () => {
+    const kit = session.channelKit.snapshot();
+    return kit.status === "ready"
+      ? kit.entries.map((entry) => entry.eventId).join()
+      : "";
+  };
+  const workspace = useRef<{
+    id: string;
+    setup: Promise<{ setup: ChatSetup; revision: string }>;
+  }>(undefined);
   useEffect(() => {
     if (!selectedProject || workspace.current?.id === selectedProject) return;
-    const setup = loadChatSetup(session, selectedProject);
+    const setup = loadChatSetup(session, selectedProject).then((setup) => ({
+      setup,
+      revision: revision(),
+    }));
     setup.catch(() => {});
     workspace.current = { id: selectedProject, setup };
   });
@@ -191,12 +201,15 @@ export function SoloDraft({
       if (errors.name) throw new Error(errors.name);
       if (errors.lifetime) throw new Error(errors.lifetime);
       const loaded =
-        workspace.current?.id === project ? workspace.current.setup : undefined;
+        workspace.current?.id === project
+          ? await workspace.current.setup.catch(() => undefined)
+          : undefined;
       workspace.current = undefined;
-      let setup = project
-        ? await (loaded?.catch(() => loadChatSetup(session, project)) ??
-            loadChatSetup(session, project))
-        : undefined;
+      let setup = !project
+        ? undefined
+        : loaded?.revision === revision()
+          ? loaded.setup
+          : await loadChatSetup(session, project);
       if (!mounted.current) return;
       if (canvas !== undefined)
         setup = parseChatSetup({

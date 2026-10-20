@@ -309,6 +309,8 @@ export function createChannelWrites(
     if (signal.aborted || (!outbox?.supports(9007) && !outbox?.supports(9000)))
       throw new Error("Channel membership is unavailable.");
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
+    // A chat this device is starting has no roster until its create lands.
+    await starts.get(id);
     const events = await reader.read(
       [
         {
@@ -506,7 +508,13 @@ export function createChannelWrites(
       try {
         return await delivered(create);
       } catch (error) {
-        if (api.failed(create))
+        // Only the relay's refusal ends the start; a failure on this device,
+        // before the create was sent, retries it.
+        if (
+          (receipts ?? outbox)
+            ?.snapshot()
+            .some((item) => item.event.id === create && item.refused)
+        )
           throw new ChatNotStarted(
             String(error instanceof Error ? error.message : error),
             { cause: error },

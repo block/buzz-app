@@ -624,8 +624,46 @@ async function projectSetup() {
     },
     canvas: { read: async () => undefined, save: saveCanvas },
   });
-  return { ...f, saveCanvas, assign };
+  return { ...f, saveCanvas, assign, entries };
 }
+
+it("a workspace's defaults changed while New chat is open start the chat", async () => {
+  const f = await projectSetup();
+  const refresh = vi.fn(async () => {});
+  Object.assign(f.session.channelKit, { refresh });
+  const user = userEvent.setup();
+  const started = vi.fn();
+  render(
+    <SoloDraft
+      session={f.session}
+      scope="changed-defaults"
+      projectId="work"
+      onStarted={started}
+    />,
+  );
+  // The defaults load once the workspace is picked; then they are saved anew.
+  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  await act(async () => {});
+  const [work] = f.entries;
+  if (!work) throw new Error("missing work defaults");
+  f.entries[0] = {
+    ...work,
+    eventId: "work-2",
+    record: {
+      value: { ...work.record.value, canvas: "new work instructions" },
+    },
+  };
+  await user.type(screen.getByRole("textbox"), "Go");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(f.saveCanvas).toHaveBeenCalledWith(
+      expect.any(String),
+      "new work instructions",
+      undefined,
+    ),
+  );
+});
 
 it("re-entering a mounted project clears changed defaults", async () => {
   const f = await projectSetup();

@@ -1892,12 +1892,35 @@ describe("starting a Solo chat", () => {
     expect(test.channels.abandon).not.toHaveBeenCalled();
   });
 
-  it("drops the pending chat when the create cannot be confirmed", async () => {
+  it("reads a starting chat's roster only once the relay has its create", async () => {
+    const test = setup(true, undefined, undefined, "b".repeat(64));
+    test.setItems([{ event, delivery: "sending" }]);
+    const roster = () =>
+      (
+        test.reader.read.mock.calls as unknown as [{ kinds?: number[] }[]][]
+      ).filter(([filters]) =>
+        filters.some((filter) => filter.kinds?.includes(39002)),
+      ).length;
+    const { ready } = test.service.start(id, "Work", [agent]);
+    const membership = test.service.refreshMembership(id);
+    membership.catch(() => {});
+    await flush();
+    expect(roster()).toBe(0);
+    test.setItems([{ event, delivery: "accepted" }]);
+    for (const fn of test.listeners) fn();
+    await ready;
+    await membership.catch(() => {});
+    expect(roster()).toBe(1);
+  });
+
+  it("drops the pending chat when the relay refuses the create", async () => {
     const test = setup();
     test.setItems([{ event, delivery: "failed" }]);
     test.reader.read.mockResolvedValue([]);
     vi.mocked(test.outbox.retry).mockImplementation(() => {
-      test.setItems([{ event, delivery: "failed", error: "rejected" }]);
+      test.setItems([
+        { event, delivery: "failed", error: "rejected", refused: true },
+      ]);
       for (const fn of test.listeners) fn();
     });
     const { ready } = test.service.start(id, "Work", [agent]);
@@ -1905,5 +1928,31 @@ describe("starting a Solo chat", () => {
     await flush();
     expect(test.channels.abandon).toHaveBeenCalledExactlyOnceWith(id);
     expect(test.service.starting(id)).toBeUndefined();
+  });
+
+  it("retries a create that failed on this device before the relay saw it", async () => {
+    vi.useFakeTimers();
+    try {
+      const test = setup();
+      test.setItems([{ event, delivery: "failed" }]);
+      test.reader.read.mockResolvedValue([]);
+      let tries = 0;
+      vi.mocked(test.outbox.retry).mockImplementation(() => {
+        tries++;
+        test.setItems([
+          tries === 1
+            ? { event, delivery: "failed", error: "Signing timed out" }
+            : { event, delivery: "accepted" },
+        ]);
+        for (const fn of test.listeners) fn();
+      });
+      const { ready } = test.service.start(id, "Work", [agent]);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(ready).resolves.toBeUndefined();
+      expect(tries).toBe(2);
+      expect(test.channels.abandon).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

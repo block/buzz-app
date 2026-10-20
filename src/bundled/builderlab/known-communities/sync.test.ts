@@ -39,6 +39,8 @@ afterEach(() => {
 /** Settles pending promise chains without moving the fake clock. */
 const until = (check: () => void) =>
   vi.waitFor(check, { interval: 0, timeout: 2000 });
+/** The pass has failed and its retry is scheduled. */
+const retrying = () => until(() => expect(vi.getTimerCount()).toBe(1));
 const queued = (...urls: string[]) =>
   urls.reduce((state, url) => enqueue(state, url, false), emptySync());
 /** The account service: a set of destinations with idempotent edits. */
@@ -76,7 +78,6 @@ function store(initial: Partial<ClientSnapshot> = {}) {
   const notify = () => {
     for (const listener of listeners) listener();
   };
-  const status = vi.fn<KnownCommunities["status"]>();
   const apply = vi.fn(async (next: SyncState, _add?: string[]) => {
     snapshot = { ...snapshot, sync: next };
     notify();
@@ -91,12 +92,10 @@ function store(initial: Partial<ClientSnapshot> = {}) {
     },
     pending: () => snapshot.sync.outbox,
     apply,
-    status,
   };
   return {
     knownCommunities,
     apply,
-    status,
     set(change: Partial<ClientSnapshot>) {
       snapshot = { ...snapshot, ...change };
       notify();
@@ -165,7 +164,6 @@ async function fixture({
       });
   return { ...s, account, client, session, dispose, sent };
 }
-const synced = (pending = 0) => ({ phase: "synced", pending });
 
 it("waits for sign-in and a ready identity, then lists, merges and drains", async () => {
   const h = await fixture({
@@ -176,13 +174,11 @@ it("waits for sign-in and a ready identity, then lists, merges and drains", asyn
       sync: queued(primary),
     },
   });
-  expect(h.status).toHaveBeenLastCalledWith({
-    phase: "signed-out",
-    pending: 1,
-  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.client.list).not.toHaveBeenCalled();
   await h.session.signIn();
   // Signed in, but the device record is still loading: nothing to send yet.
-  expect(h.status).toHaveBeenLastCalledWith({ phase: "pending", pending: 1 });
+  await vi.advanceTimersByTimeAsync(0);
   expect(h.client.list).not.toHaveBeenCalled();
   h.client.list.mockResolvedValueOnce({
     kind: "listed",
@@ -190,7 +186,7 @@ it("waits for sign-in and a ready identity, then lists, merges and drains", asyn
   });
   const op = h.outbox()[0];
   h.set({ status: "ready" });
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.outbox()).toEqual([]));
   expect(h.client.list).toHaveBeenCalledWith(expect.any(AbortSignal));
   // The complete list replaces what is known; the destination saved elsewhere
   // is handed to the service to add, and the queued add keeps its place.
@@ -207,23 +203,21 @@ it("waits for sign-in and a ready identity, then lists, merges and drains", asyn
     outbox: [],
     account: "user",
   });
-  expect(h.status.mock.calls.map(([s]) => s?.phase)).toContain("syncing");
   h.dispose();
 });
 
 it("merges nothing more than once per sign-in, and sends a newly queued intent at once", async () => {
   const h = await fixture();
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.apply).toHaveBeenCalledTimes(1));
   h.enqueue(primary);
   await until(() => expect(h.client.add).toHaveBeenCalledTimes(1));
   expect(h.client.add.mock.calls[0]?.[0]).toBe(primary);
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.known()).toEqual([primary]));
   expect(h.outbox()).toEqual([]);
-  expect(h.known()).toEqual([primary]);
   h.enqueue(primary, true);
   await until(() => expect(h.client.remove).toHaveBeenCalledTimes(1));
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
-  expect(h.known()).toEqual([]);
+  await until(() => expect(h.known()).toEqual([]));
+  expect(h.outbox()).toEqual([]);
   expect(h.client.list).toHaveBeenCalledTimes(1);
   h.dispose();
 });
@@ -233,80 +227,65 @@ it.each([
     name: "the list route refuses the account",
     arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
       h.client.list.mockResolvedValue({ kind: "forbidden" }),
-    status: {
-      phase: "error",
-      pending: 1,
-      error: "This Builderlab account can’t sync communities.",
-    },
+    requests: 1,
   },
   {
     name: "the list route rejects the request as sent",
     arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
       h.client.list.mockResolvedValue({ kind: "rejected", status: 405 }),
-    status: {
-      phase: "error",
-      pending: 1,
-      error: "Builderlab refused this request (HTTP 405).",
-    },
+    requests: 1,
   },
   {
     name: "the list cannot be read",
     arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
       h.client.list.mockResolvedValue({ kind: "invalid_response" }),
-    status: {
-      phase: "error",
-      pending: 1,
-      error: "Builderlab returned an invalid response.",
-    },
+    requests: 1,
   },
   {
-    // Routes not yet deployed: quiet, with no reason to report.
+    // Routes not yet deployed.
     name: "the service has no known-communities routes",
     arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
       h.client.list.mockResolvedValue({ kind: "rejected", status: 404 }),
-    status: { phase: "unavailable", pending: 1 },
+    requests: 1,
   },
   {
     name: "an upload is forbidden",
     arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
       h.client.add.mockResolvedValue({ kind: "forbidden" }),
-    status: {
-      phase: "error",
-      pending: 1,
-      error: "This Builderlab account can’t sync communities.",
-    },
+    requests: 2,
   },
   {
-    // A partly routed service is as quiet as one without any route.
+    // A partly routed service halts like one without any route.
     name: "an upload meets no route",
     arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
       h.client.add.mockResolvedValue({ kind: "rejected", status: 404 }),
-    status: { phase: "unavailable", pending: 1 },
+    requests: 2,
   },
-])("halts until the next sign-in when $name", async ({ arrange, status }) => {
+])("halts until the next sign-in when $name", async ({ arrange, requests }) => {
   const h = await fixture({
     signedIn: false,
     snapshot: { sync: queued(primary) },
   });
   arrange(h);
   await h.session.signIn();
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(status));
   const calls = () =>
     h.client.list.mock.calls.length +
     h.client.add.mock.calls.length +
     h.client.remove.mock.calls.length;
-  const before = calls();
+  await until(() => expect(calls()).toBe(requests));
+  await vi.advanceTimersByTimeAsync(0);
+  // Halted, not failed: no retry is scheduled.
+  expect(vi.getTimerCount()).toBe(0);
   window.dispatchEvent(new Event("online"));
   h.enqueue(secondary);
   await vi.advanceTimersByTimeAsync(120_000);
-  expect(calls()).toBe(before);
+  expect(calls()).toBe(requests);
   expect(h.outbox()).toHaveLength(2);
   h.session.signOut();
   h.client.list.mockResolvedValue({ kind: "listed", communities: [] });
   h.client.add.mockResolvedValue(accepted);
   await h.session.signIn();
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
-  expect(h.outbox()).toEqual([]);
+  await until(() => expect(h.outbox()).toEqual([]));
   h.dispose();
 });
 
@@ -335,13 +314,8 @@ it("halts on a 200 list the real client cannot read, forgetting no membership", 
     knownCommunities: s.knownCommunities,
   });
   await session.signIn();
-  await until(() =>
-    expect(s.status).toHaveBeenLastCalledWith({
-      phase: "error",
-      pending: 0,
-      error: "Builderlab returned an invalid response.",
-    }),
-  );
+  await until(() => expect(host.request).toHaveBeenCalledTimes(1));
+  await vi.advanceTimersByTimeAsync(0);
   // Nothing merged: the account was not taken to hold nothing.
   expect(s.apply).not.toHaveBeenCalled();
   expect(s.known()).toEqual([primary]);
@@ -351,27 +325,19 @@ it("halts on a 200 list the real client cannot read, forgetting no membership", 
   dispose();
 });
 
-it("runs no pass and reports nothing on a trigger once synced with an empty queue, and never repeats a report", async () => {
+it("neither lists again nor resends on a trigger once synced, and still sends a new intent", async () => {
   const h = await fixture({ snapshot: { sync: queued(primary) } });
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
-  const reports = h.status.mock.calls.length;
+  await until(() => expect(h.outbox()).toEqual([]));
   window.dispatchEvent(new Event("online"));
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   document.dispatchEvent(new Event("visibilitychange"));
   await vi.advanceTimersByTimeAsync(120_000);
-  expect(h.status).toHaveBeenCalledTimes(reports);
   expect(h.client.list).toHaveBeenCalledTimes(1);
   expect(h.client.add).toHaveBeenCalledTimes(1);
-  // A new intent still runs; the store's own notice of it, and the queue
-  // shrinking under the acknowledgement, add no report that says the same.
   h.enqueue(secondary);
+  await until(() => expect(h.client.add).toHaveBeenCalledTimes(2));
+  expect(h.client.add.mock.calls[1]?.[0]).toBe(secondary);
   await until(() => expect(h.outbox()).toEqual([]));
-  const phases = h.status.mock.calls.slice(reports).map(([s]) => s);
-  expect(phases).toEqual([
-    { phase: "syncing", pending: 1 },
-    { phase: "syncing", pending: 0 },
-    synced(),
-  ]);
   h.dispose();
 });
 
@@ -385,7 +351,7 @@ it("keeps syncing when the list left out addresses this device cannot save, and 
         dropped: 2,
       }),
   });
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.apply).toHaveBeenCalledTimes(1));
   expect(h.apply).toHaveBeenCalledWith(
     { known: [secondary], outbox: [], account: "user" },
     [secondary],
@@ -403,13 +369,12 @@ it("uploads one intent at a time, in queue order", async () => {
   });
   await until(() => expect(h.client.add).toHaveBeenCalledTimes(1));
   expect(h.client.add.mock.calls[0]?.[0]).toBe(primary);
-  expect(h.status).toHaveBeenLastCalledWith({ phase: "syncing", pending: 2 });
   await vi.advanceTimersByTimeAsync(5000);
   expect(h.client.add).toHaveBeenCalledTimes(1);
   first.resolve(accepted);
   await until(() => expect(h.client.add).toHaveBeenCalledTimes(2));
   expect(h.client.add.mock.calls[1]?.[0]).toBe(secondary);
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.outbox()).toEqual([]));
   h.dispose();
 });
 
@@ -418,36 +383,25 @@ it("retries a failed upload with the identical request at doubling delays, cappe
     snapshot: { sync: queued(primary) },
     arrange: (client) => client.add.mockRejectedValue(reachError()),
   });
-  await until(() =>
-    expect(h.status).toHaveBeenLastCalledWith({
-      phase: "error",
-      pending: 1,
-      error: "Couldn’t reach Builderlab.",
-    }),
-  );
+  await retrying();
   let attempts = 1;
-  // Each failed run reports twice: syncing, then the error.
-  let reports = h.status.mock.calls.length;
   for (const delay of [1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000]) {
     await vi.advanceTimersByTimeAsync(delay - 1);
     expect(h.client.add).toHaveBeenCalledTimes(attempts);
     await vi.advanceTimersByTimeAsync(1);
     expect(h.client.add).toHaveBeenCalledTimes(++attempts);
     expect(h.client.add.mock.calls.at(-1)?.[0]).toBe(primary);
-    reports += 2;
-    await until(() => expect(h.status).toHaveBeenCalledTimes(reports));
+    await retrying();
   }
   // A success resets the backoff for the next failure.
   h.client.add.mockResolvedValueOnce(accepted);
   await vi.advanceTimersByTimeAsync(60000);
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
-  expect(h.outbox()).toEqual([]);
+  await until(() => expect(h.outbox()).toEqual([]));
   h.enqueue(secondary);
   await until(() =>
-    expect(h.status).toHaveBeenLastCalledWith(
-      expect.objectContaining({ phase: "error" }),
-    ),
+    expect(h.client.add.mock.calls.at(-1)?.[0]).toBe(secondary),
   );
+  await retrying();
   const count = h.client.add.mock.calls.length;
   await vi.advanceTimersByTimeAsync(999);
   expect(h.client.add).toHaveBeenCalledTimes(count);
@@ -461,24 +415,17 @@ it("runs again at once when the window comes online or becomes visible, resettin
     snapshot: { sync: queued(primary) },
     arrange: (client) => client.add.mockRejectedValue(reachError()),
   });
-  await until(() =>
-    expect(h.status).toHaveBeenLastCalledWith(
-      expect.objectContaining({ phase: "error" }),
-    ),
-  );
+  await retrying();
   expect(h.client.add).toHaveBeenCalledTimes(1);
-  let reports = h.status.mock.calls.length;
   window.dispatchEvent(new Event("online"));
   await until(() => expect(h.client.add).toHaveBeenCalledTimes(2));
   // The trigger's own failure starts the backoff over at one second.
-  reports += 2;
-  await until(() => expect(h.status).toHaveBeenCalledTimes(reports));
+  await retrying();
   await vi.advanceTimersByTimeAsync(999);
   expect(h.client.add).toHaveBeenCalledTimes(2);
   await vi.advanceTimersByTimeAsync(1);
   expect(h.client.add).toHaveBeenCalledTimes(3);
-  reports += 2;
-  await until(() => expect(h.status).toHaveBeenCalledTimes(reports));
+  await retrying();
   let visibility = "hidden";
   vi.spyOn(document, "visibilityState", "get").mockImplementation(
     () => visibility as DocumentVisibilityState,
@@ -493,21 +440,12 @@ it("runs again at once when the window comes online or becomes visible, resettin
 });
 
 it.each([
-  {
-    refusal: { kind: "invalid_request" } as const,
-    reason: "Builderlab refused one of your community addresses.",
-  },
-  {
-    refusal: { kind: "limit_reached" } as const,
-    reason: "Builderlab can’t save more communities for this account.",
-  },
-  {
-    refusal: { kind: "rejected", status: 415 } as const,
-    reason: "Builderlab refused this request (HTTP 415).",
-  },
+  { kind: "invalid_request" } as const,
+  { kind: "limit_reached" } as const,
+  { kind: "rejected", status: 415 } as const,
 ])(
-  "parks an add the service answers $refusal.kind, keeps sending others, and sends the intent that replaces it",
-  async ({ refusal, reason }) => {
+  "parks an add the service answers $kind, keeps sending others, and sends the intent that replaces it",
+  async (refusal) => {
     const h = await fixture({
       snapshot: { sync: queued(primary, secondary) },
       arrange: (client) =>
@@ -516,43 +454,28 @@ it.each([
         ),
     });
     await until(() =>
-      expect(h.status).toHaveBeenLastCalledWith({
-        phase: "error",
-        pending: 1,
-        error: reason,
-      }),
+      expect(h.outbox()).toEqual([{ url: primary, removed: false }]),
     );
     expect(h.client.add).toHaveBeenCalledTimes(2);
-    expect(h.outbox()).toEqual([{ url: primary, removed: false }]);
     // Triggers and time pass it over, and the same intent queued again is
     // the same request: still parked.
     window.dispatchEvent(new Event("online"));
     h.enqueue(primary);
     await vi.advanceTimersByTimeAsync(120_000);
     expect(h.client.add).toHaveBeenCalledTimes(2);
-    expect(h.status).toHaveBeenLastCalledWith({
-      phase: "error",
-      pending: 1,
-      error: reason,
-    });
     // A fresh intent for another destination still goes.
     h.enqueue(secondary, true);
     await until(() => expect(h.client.remove).toHaveBeenCalledTimes(1));
     expect(h.client.remove.mock.calls[0]?.[0]).toBe(secondary);
     await until(() =>
-      expect(h.status).toHaveBeenLastCalledWith({
-        phase: "error",
-        pending: 1,
-        error: reason,
-      }),
+      expect(h.outbox()).toEqual([{ url: primary, removed: false }]),
     );
     // Leaving the refused community replaces the parked add with a removal,
     // which is a different request and goes out; nothing then remains parked.
     h.enqueue(primary, true);
     await until(() => expect(h.client.remove).toHaveBeenCalledTimes(2));
     expect(h.client.remove.mock.calls[1]?.[0]).toBe(primary);
-    await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
-    expect(h.outbox()).toEqual([]);
+    await until(() => expect(h.outbox()).toEqual([]));
     h.dispose();
   },
 );
@@ -563,78 +486,36 @@ it("sends a parked intent again on the next sign-in", async () => {
     arrange: (client) =>
       client.add.mockResolvedValueOnce({ kind: "limit_reached" }),
   });
-  await until(() =>
-    expect(h.status).toHaveBeenLastCalledWith({
-      phase: "error",
-      pending: 1,
-      error: "Builderlab can’t save more communities for this account.",
-    }),
-  );
+  await until(() => expect(h.client.add).toHaveBeenCalledTimes(1));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.outbox()).toHaveLength(1);
   h.session.signOut();
   await h.session.signIn();
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.outbox()).toEqual([]));
   expect(h.client.add).toHaveBeenCalledTimes(2);
-  expect(h.outbox()).toEqual([]);
   h.dispose();
 });
 
-it("reports a parked intent's refusal again once a failed upload beside it goes through", async () => {
-  const full = "Builderlab can’t save more communities for this account.";
+it("sends a withdrawn parked intent again when it is queued anew", async () => {
   const h = await fixture({
-    snapshot: { sync: queued(primary, secondary) },
+    snapshot: { sync: queued(primary) },
     arrange: (client) =>
-      client.add
-        .mockResolvedValueOnce({ kind: "limit_reached" })
-        .mockRejectedValueOnce(reachError()),
+      client.add.mockResolvedValueOnce({ kind: "limit_reached" }),
   });
-  await until(() =>
-    expect(h.status).toHaveBeenLastCalledWith({
-      phase: "error",
-      pending: 2,
-      error: "Couldn’t reach Builderlab.",
-    }),
-  );
-  // The retry sends only the failed upload; the parked one is what remains.
-  await vi.advanceTimersByTimeAsync(1000);
-  await until(() =>
-    expect(h.status).toHaveBeenLastCalledWith({
-      phase: "error",
-      pending: 1,
-      error: full,
-    }),
-  );
+  await until(() => expect(h.client.add).toHaveBeenCalledTimes(1));
+  // Leaving withdraws the parked add; rejoining queues the same add again,
+  // which is no longer parked and goes out.
+  h.enqueue(primary, true);
+  await until(() => expect(h.client.remove).toHaveBeenCalledTimes(1));
+  await until(() => expect(h.outbox()).toEqual([]));
+  h.enqueue(primary);
+  await until(() => expect(h.client.add).toHaveBeenCalledTimes(2));
+  await until(() => expect(h.outbox()).toEqual([]));
   expect(h.sent()).toEqual([
     { url: primary, removed: false },
-    { url: secondary, removed: false },
-    { url: secondary, removed: false },
+    { url: primary, removed: true },
+    { url: primary, removed: false },
   ]);
-  h.dispose();
-});
-
-it("reports the refusal of the intent still parked once another parked intent is withdrawn", async () => {
-  const h = await fixture({
-    snapshot: { sync: queued(primary, secondary) },
-    arrange: (client) =>
-      client.add.mockImplementation(async (url) =>
-        url === primary
-          ? { kind: "invalid_request" }
-          : { kind: "limit_reached" },
-      ),
-  });
-  await until(() =>
-    expect(h.status).toHaveBeenLastCalledWith(
-      expect.objectContaining({ phase: "error", pending: 2 }),
-    ),
-  );
-  h.enqueue(secondary, true);
-  await until(() => expect(h.client.remove).toHaveBeenCalledTimes(1));
-  await until(() =>
-    expect(h.status).toHaveBeenLastCalledWith({
-      phase: "error",
-      pending: 1,
-      error: "Builderlab refused one of your community addresses.",
-    }),
-  );
   h.dispose();
 });
 
@@ -668,18 +549,14 @@ it.each([
     h.client.add.mockImplementation(edit((url) => service.add(url)));
     h.client.remove.mockImplementation(edit((url) => service.remove(url)));
     await h.session.signIn();
-    await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+    await until(() => expect(h.apply).toHaveBeenCalledTimes(1));
     h.enqueue(primary, first);
-    await until(() =>
-      expect(h.status).toHaveBeenLastCalledWith(
-        expect.objectContaining({ phase: "error" }),
-      ),
-    );
+    await retrying();
     expect(service.rows.has(primary)).toBe(!first);
     // The user changes their mind during the backoff: the newer intent
     // replaces the one whose answer was lost, and is what the retry sends.
     h.enqueue(primary, !first);
-    await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+    await until(() => expect(h.outbox()).toEqual([]));
     expect(h.sent()).toEqual([
       { url: primary, removed: first },
       { url: primary, removed: !first },
@@ -696,19 +573,12 @@ it.each([
 
 it("backs off when the device record will not save, then replays the identical request", async () => {
   const h = await fixture();
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
-  const failure = new Error(
-    "Could not save this community on this device. Try again.",
+  await until(() => expect(h.apply).toHaveBeenCalledTimes(1));
+  h.apply.mockRejectedValueOnce(
+    new Error("Could not save this community on this device. Try again."),
   );
-  h.apply.mockRejectedValueOnce(failure);
   h.enqueue(primary);
-  await until(() =>
-    expect(h.status).toHaveBeenLastCalledWith({
-      phase: "error",
-      pending: 1,
-      error: failure.message,
-    }),
-  );
+  await retrying();
   expect(h.client.add).toHaveBeenCalledTimes(1);
   // The service accepted it; only the record did not take the answer. The
   // intent stays, and the idempotent request goes again.
@@ -718,8 +588,7 @@ it("backs off when the device record will not save, then replays the identical r
   await vi.advanceTimersByTimeAsync(1);
   expect(h.client.add).toHaveBeenCalledTimes(2);
   expect(h.client.add.mock.calls[1]?.[0]).toBe(primary);
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
-  expect(h.outbox()).toEqual([]);
+  await until(() => expect(h.outbox()).toEqual([]));
   expect(h.known()).toEqual([primary]);
   h.dispose();
 });
@@ -733,7 +602,7 @@ it("keeps an intent queued while the list is in flight: the merge reads the reco
   h.enqueue(primary);
   const op = h.outbox()[0];
   list.resolve({ kind: "listed", communities: [] });
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.outbox()).toEqual([]));
   expect(h.apply).toHaveBeenNthCalledWith(
     1,
     { known: [], outbox: [op], account: "user" },
@@ -765,7 +634,7 @@ it("follows the account on the next sign-in: a membership never uploaded is sent
   service.rows.delete(secondary);
   service.rows.add("wss://third.example");
   await h.session.signIn();
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.outbox()).toEqual([]));
   expect(h.apply).toHaveBeenNthCalledWith(
     1,
     {
@@ -795,7 +664,7 @@ it("keeps what it knows across sign-ins as the same account: a membership remove
       client.add.mockImplementation(async (url) => service.add(url));
     },
   });
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.apply).toHaveBeenCalledTimes(1));
   expect(h.known()).toEqual([primary, secondary]);
   h.session.signOut();
   service.rows.delete(secondary);
@@ -803,7 +672,9 @@ it("keeps what it knows across sign-ins as the same account: a membership remove
   // neither forgets the secondary, and neither re-adds it to the account.
   for (const signIn of [2, 3]) {
     await h.session.signIn();
-    await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+    // Each sign-in merges once and, with nothing to upload, writes nothing else.
+    await until(() => expect(h.apply).toHaveBeenCalledTimes(signIn));
+    await vi.advanceTimersByTimeAsync(0);
     expect(h.client.list).toHaveBeenCalledTimes(signIn);
     expect(h.apply).toHaveBeenLastCalledWith(
       { known: [primary, secondary], outbox: [], account: "user" },
@@ -829,13 +700,19 @@ it("reads nothing into another account's sign-in on this device: the first accou
       client.add.mockImplementation(async (url) => service.add(url));
     },
   });
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.apply).toHaveBeenCalledTimes(1));
   expect(h.known()).toEqual([primary, secondary]);
   h.session.signOut();
   h.account.subject = "bob";
   service = bob;
   await h.session.signIn();
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() =>
+    expect(h.knownCommunities.snapshot().sync).toEqual({
+      known: [primary, secondary],
+      outbox: [],
+      account: "bob",
+    }),
+  );
   // The device record outlived Alice's sign-out, but her list says nothing
   // about Bob's: neither membership was removed elsewhere, and both are ones
   // Bob's account has never seen.
@@ -864,37 +741,6 @@ it("reads nothing into another account's sign-in on this device: the first accou
   h.dispose();
 });
 
-it("runs no pass and reports nothing on a trigger while only parked intents remain", async () => {
-  const h = await fixture({
-    snapshot: { sync: queued(primary) },
-    arrange: (client) =>
-      client.add.mockResolvedValueOnce({ kind: "limit_reached" }),
-  });
-  const parked = {
-    phase: "error",
-    pending: 1,
-    error: "Builderlab can’t save more communities for this account.",
-  };
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(parked));
-  const reports = h.status.mock.calls.length;
-  // A parked intent moves again only when replaced or on the next sign-in,
-  // so these triggers have nothing to run and nothing new to say.
-  window.dispatchEvent(new Event("online"));
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  document.dispatchEvent(new Event("visibilitychange"));
-  await vi.advanceTimersByTimeAsync(120_000);
-  expect(h.status).toHaveBeenCalledTimes(reports);
-  expect(h.client.list).toHaveBeenCalledTimes(1);
-  expect(h.client.add).toHaveBeenCalledTimes(1);
-  // A fresh intent still runs, passing the parked one over.
-  h.enqueue(secondary);
-  await until(() => expect(h.client.add).toHaveBeenCalledTimes(2));
-  expect(h.client.add.mock.calls[1]?.[0]).toBe(secondary);
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(parked));
-  expect(h.outbox()).toEqual([{ url: primary, removed: false }]);
-  h.dispose();
-});
-
 it("signing out abandons the upload in flight and keeps the outbox for the next sign-in", async () => {
   const gate = deferred<UpdateResult>();
   const h = await fixture({
@@ -907,16 +753,12 @@ it("signing out abandons the upload in flight and keeps the outbox for the next 
   const applied = h.apply.mock.calls.length;
   h.session.signOut();
   expect(signal.aborted).toBe(true);
-  expect(h.status).toHaveBeenLastCalledWith({
-    phase: "signed-out",
-    pending: 1,
-  });
   gate.resolve(accepted);
   await vi.advanceTimersByTimeAsync(120_000);
   expect(h.apply).toHaveBeenCalledTimes(applied);
   expect(h.outbox()).toEqual([op]);
   await h.session.signIn();
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.outbox()).toEqual([]));
   // A fresh sign-in reads the list again, then resends.
   expect(h.client.list).toHaveBeenCalledTimes(2);
   expect(h.client.add).toHaveBeenCalledTimes(2);
@@ -934,27 +776,19 @@ it("stops without a retry when the service ends the session", async () => {
     throw new DOMException("Builderlab session changed.", "AbortError");
   });
   await h.session.signIn();
-  await until(() =>
-    expect(h.status).toHaveBeenLastCalledWith({
-      phase: "signed-out",
-      pending: 1,
-    }),
-  );
+  await until(() => expect(h.session.snapshot().status).toBe("signed-out"));
   await vi.advanceTimersByTimeAsync(120_000);
   expect(h.client.add).toHaveBeenCalledTimes(1);
   expect(h.outbox()).toHaveLength(1);
   h.dispose();
 });
 
-it("disposal withdraws the report and stops listening", async () => {
+it("disposal stops listening", async () => {
   const h = await fixture();
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  await until(() => expect(h.apply).toHaveBeenCalledTimes(1));
   h.dispose();
-  expect(h.status).toHaveBeenLastCalledWith(undefined);
-  const reports = h.status.mock.calls.length;
   h.enqueue(primary);
   window.dispatchEvent(new Event("online"));
   await vi.advanceTimersByTimeAsync(120_000);
   expect(h.client.add).not.toHaveBeenCalled();
-  expect(h.status).toHaveBeenCalledTimes(reports);
 });

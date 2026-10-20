@@ -22,21 +22,6 @@ export type SyncState = {
    * a sign-in as another account must not read this set as that account's. */
   account?: string;
 };
-/** What the one sync owner reports while it runs, on the snapshot.
- * `pending` counts queued operations, including ones parked after a refusal.
- * `unavailable` is a service without the known-communities routes: the queue
- * waits quietly for the next sign-in. */
-export type SyncStatus = {
-  phase:
-    | "signed-out"
-    | "syncing"
-    | "synced"
-    | "pending"
-    | "error"
-    | "unavailable";
-  pending: number;
-  error?: string;
-};
 
 export const emptySync = (): SyncState => ({ known: [], outbox: [] });
 

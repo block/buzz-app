@@ -475,12 +475,11 @@ export function useConversationTabs({
     };
     if (closing && tabPane(closing) === "main") {
       // The conversation remains; neighbours keep their order.
-      const index = mainTabs.indexOf(closing);
-      const remaining = mainTabs.filter((tab) => tab !== closing);
+      const order = mainTabIds();
+      const index = order.indexOf(id);
+      const remaining = order.filter((tabId) => tabId !== id);
       if (tabState.mainSelected === id)
-        tabState.selectMain(
-          remaining[Math.min(index, remaining.length - 1)]?.id,
-        );
+        tabState.selectMain(remaining[Math.min(index, remaining.length - 1)]);
       notify(!remaining.length);
       return;
     }

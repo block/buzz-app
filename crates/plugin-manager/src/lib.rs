@@ -234,6 +234,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
     .expect("builderlab manifest");
     let origin = BUILDERLAB_ORIGIN;
     builderlab.host = Some(HostGrants {
+        files: apps_control_plane(origin).is_some(),
         network_origins: if origin.is_empty() {
             vec![]
         } else {
@@ -1932,6 +1933,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
         let grants = manager.host_grants("block.builderlab", "bundled").unwrap();
+        assert_eq!(
+            grants.files,
+            super::apps_control_plane(super::BUILDERLAB_ORIGIN).is_some()
+        );
         assert_eq!(
             grants.network_origins,
             if env!("BUZZ_BUILDERLAB_ORIGIN").is_empty() {

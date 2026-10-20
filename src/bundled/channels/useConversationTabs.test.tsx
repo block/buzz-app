@@ -26,6 +26,85 @@ import { channelTabs, tabPane, useChannelTabState } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
 
 afterEach(cleanup);
+it("closing a main thread selects the adjacent app and keeps focus in its pane", async () => {
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: {
+      list: () => ({ channels }),
+      window: () => ({ rows: [{ id: "root", content: "Thread" }] }),
+    },
+  } as unknown as RelaySession;
+  const app = { key: "app", title: "App", keepOpen: true } as RegisteredPanel;
+  const available = [app];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const onCloseThread = vi.fn();
+  let state!: ReturnType<typeof useChannelTabState>;
+  let workspace!: ReturnType<typeof useConversationTabs>;
+  function Harness() {
+    state = useChannelTabState(session, "alpha");
+    workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      mainPane: true,
+      isLive: () => true,
+      openLink: () => false,
+      onCloseThread,
+    });
+    return (
+      <PanelWorkspace
+        main
+        label="Channel tabs"
+        value={workspace.selectedMain}
+        select={(id) =>
+          state.selectMain(id === "conversation" ? undefined : id)
+        }
+        items={[
+          { id: "conversation", label: "Conversation", content: null },
+          ...workspace.mainItems.map((item) => ({ ...item, content: null })),
+        ]}
+      />
+    );
+  }
+  render(<Harness />);
+  act(() => state.openThreadTab("alpha", "root", "root", undefined, "main"));
+  act(() =>
+    workspace.open({ channelId: "alpha", panel: app, target: "app:one" }),
+  );
+  act(() =>
+    workspace.items.find((item) => item.id === "app:app:one")?.move?.(-1),
+  );
+  act(() => state.selectMain("thread:alpha:root"));
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+    "Conversation",
+    "Thread",
+    "App",
+  ]);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Close Thread tab" }));
+  expect(workspace.selectedMain).toBe("app:app:one");
+  expect(onCloseThread).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "thread" }),
+    true,
+    false,
+  );
+  expect(screen.getByRole("tab", { name: "App" })).toHaveFocus();
+});
+
 it("background opening preserves the panel shown after moving a side thread to main", () => {
   const channels = [{ id: "alpha", name: "Alpha" }];
   const session = {

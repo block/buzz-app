@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -363,12 +365,16 @@ it("keeps each view's guest while another view is shown", async () => {
   expect(platform.detach).not.toHaveBeenCalled();
 });
 
-it("reopens a guest closed to make room at its last page when shown", async () => {
+it("retries a failed evicted guest at its last page only on explicit Reload", async () => {
   const platform = fakePlatform();
   let next = 0;
-  vi.mocked(platform.attach).mockImplementation(
-    async () => `session-${++next}`,
-  );
+  const retry = deferred<string>();
+  vi.mocked(platform.attach).mockImplementation(async () => {
+    next++;
+    if (next === 6) throw new Error("Native browser unavailable");
+    if (next === 7) return retry.promise;
+    return `session-${next}`;
+  });
   vi.mocked(platform.status).mockImplementation(async (sessionId) => ({
     url: sessionId === "session-1" ? "https://first.example/signed-in" : "",
     title: "",
@@ -415,7 +421,40 @@ it("reopens a guest closed to make room at its last page when shown", async () =
       undefined,
     ),
   );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Native browser unavailable",
+  );
+  const user = userEvent.setup();
+  const reload = within(view.getByTestId("pane-0")).getByRole("button", {
+    name: "Reload",
+  });
+  await act(async () => TestResizeObserver.callbacks[0]?.());
+  expect(platform.attach).toHaveBeenCalledTimes(6);
+  // An explicit retry keeps toolbar focus, and repeated Reload while it is
+  // pending must not queue another native guest.
+  await user.click(reload);
+  try {
+    await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(7));
+    expect(reload).toHaveFocus();
+    await user.click(reload);
+    expect(platform.attach).toHaveBeenCalledTimes(7);
+  } finally {
+    retry.resolve("session-7");
+  }
+  await waitFor(() =>
+    expect(platform.setBounds).toHaveBeenCalledWith(
+      "session-7",
+      expect.any(Object),
+      true,
+    ),
+  );
+  expect(platform.attach).toHaveBeenLastCalledWith(
+    "https://first.example/signed-in",
+    expect.any(Object),
+    undefined,
+  );
   expect(screen.queryByRole("alert")).toBeNull();
+  expect(reload).toHaveFocus();
 });
 
 it("parks a kept-storage guest on unmount and adopts it when remounted", async () => {

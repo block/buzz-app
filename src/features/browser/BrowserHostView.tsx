@@ -95,6 +95,7 @@ export function BrowserHostView({
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const session = useRef<string | undefined>(undefined);
+  const retryAttach = useRef<(() => void) | undefined>(undefined);
   // Where the guest last was, so a view whose guest was closed to make room
   // reopens there instead of at its starting URL.
   const resumeUrl = useRef(url);
@@ -125,6 +126,7 @@ export function BrowserHostView({
     if (!element) return;
     let disposed = false;
     let attachStarted = false;
+    let attachFailed = false;
     let pollTimer: ReturnType<typeof setTimeout> | undefined;
     let lastRequested: { bounds: BrowserBounds; visible: boolean } | undefined;
     let desiredPresentation:
@@ -229,6 +231,7 @@ export function BrowserHostView({
       const initialBounds = boundsFor(element);
       if (!visible(initialBounds)) return;
       attachStarted = true;
+      setStatus((previous) => ({ ...previous, loading: true }));
       sessions
         .attach(
           resumeUrl.current,
@@ -246,10 +249,19 @@ export function BrowserHostView({
         })
         .catch((error) => {
           if (!disposed) {
-            setStatus({ ...EMPTY_STATUS, url });
+            attachFailed = true;
+            setStatus({ ...EMPTY_STATUS, url: resumeUrl.current });
             setLocalError(message(error));
           }
         });
+    };
+
+    retryAttach.current = () => {
+      if (!attachFailed) return;
+      attachFailed = false;
+      attachStarted = false;
+      setLocalError(null);
+      begin();
     };
 
     const updatePresentation = () => {
@@ -306,6 +318,7 @@ export function BrowserHostView({
 
     return () => {
       disposed = true;
+      retryAttach.current = undefined;
       if (pollTimer) clearTimeout(pollTimer);
       resizeObserver.disconnect();
       mutationObserver.disconnect();
@@ -344,6 +357,10 @@ export function BrowserHostView({
   }
 
   function action(value: BrowserAction) {
+    if (value === "reload" && !session.current) {
+      retryAttach.current?.();
+      return;
+    }
     void run((sessionId) => platform.action(sessionId, value));
   }
 

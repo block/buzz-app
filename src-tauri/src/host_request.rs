@@ -115,15 +115,12 @@ pub(crate) async fn plugin_host_upload(
         body: None,
         timeout_ms: None,
     })?;
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let path = upload_path(&upload.file.path, home.as_deref())?;
     let operation = async {
         let grants = with_manager(manager, move |manager| manager.host_grants(&id, &revision))
             .await
             .map_err(|_| "Host request is unavailable")?;
-        if !allows_origin(&grants, &url) {
-            return Err("Host request origin is not declared".into());
-        }
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let path = upload_path(&grants, &url, &upload.file.path, home.as_deref())?;
         let bytes = tokio::fs::read(&path)
             .await
             .map_err(|_| "Could not read the upload file")?;
@@ -150,7 +147,18 @@ pub(crate) async fn plugin_host_upload(
 
 /// `path` when it is an absolute `.tar.gz` regular file, not a link, in
 /// `home`, and small enough to upload.
-fn upload_path(path: &str, home: Option<&std::path::Path>) -> Result<std::path::PathBuf, String> {
+fn upload_path(
+    grants: &HostGrants,
+    url: &reqwest::Url,
+    path: &str,
+    home: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf, String> {
+    if !grants.files {
+        return Err("Files are not declared".into());
+    }
+    if !allows_origin(grants, url) {
+        return Err("Host request origin is not declared".into());
+    }
     let invalid = || format!("An upload is a {UPLOAD_EXTENSION} file in your home directory");
     let path = std::path::Path::new(path);
     let home = home
@@ -445,6 +453,27 @@ mod tests {
         let manager =
             buzzodz_plugins::Manager::open(Some(temp.path().into()), "test", false).unwrap();
         let grants = manager.host_grants("block.builderlab", "bundled").unwrap();
+        assert_eq!(
+            grants.files,
+            buzzodz_plugins::apps_control_plane(buzzodz_plugins::BUILDERLAB_ORIGIN).is_some()
+        );
+        if let Some(origin) =
+            buzzodz_plugins::apps_control_plane(buzzodz_plugins::BUILDERLAB_ORIGIN)
+        {
+            let home = temp.path().canonicalize().unwrap();
+            let archive = home.join("app.tar.gz");
+            std::fs::write(&archive, b"gz").unwrap();
+            assert_eq!(
+                upload_path(
+                    &grants,
+                    &reqwest::Url::parse(origin).unwrap(),
+                    archive.to_str().unwrap(),
+                    Some(&home)
+                )
+                .unwrap(),
+                archive
+            );
+        }
         let origin = grants
             .network_origins
             .first()
@@ -495,18 +524,37 @@ mod tests {
 
     #[test]
     fn uploads_only_an_archive_file_in_home() {
+        let url = reqwest::Url::parse("https://apps.example.test/deploy").unwrap();
+        let mut grants = HostGrants {
+            network_origins: vec!["https://apps.example.test".into()],
+            ..HostGrants::default()
+        };
+        // Declared access is checked before any filesystem lookup, including
+        // whether the home directory or supplied archive exists.
+        assert_eq!(
+            upload_path(&grants, &url, "/missing.tar.gz", None).unwrap_err(),
+            "Files are not declared"
+        );
+        grants.files = true;
+        let other = reqwest::Url::parse("https://other.example.test/deploy").unwrap();
+        assert_eq!(
+            upload_path(&grants, &other, "/missing.tar.gz", None).unwrap_err(),
+            "Host request origin is not declared"
+        );
         let home = tempfile::tempdir().unwrap();
         let home = home.path().canonicalize().unwrap();
         let archive = home.join("app/artifact.tar.gz");
         std::fs::create_dir_all(archive.parent().unwrap()).unwrap();
         std::fs::write(&archive, b"gz").unwrap();
         std::fs::write(home.join("app/secret.txt"), b"key").unwrap();
-        let at = |path: &std::path::Path| upload_path(path.to_str().unwrap(), Some(&home));
+        let at = |path: &std::path::Path| {
+            upload_path(&grants, &url, path.to_str().unwrap(), Some(&home))
+        };
         assert_eq!(at(&archive).unwrap(), archive);
         assert!(at(&home.join("app/secret.txt")).is_err());
         assert!(at(&home.join("app/missing.tar.gz")).is_err());
         assert!(at(&home.join("app")).is_err());
-        assert!(upload_path("app/artifact.tar.gz", Some(&home)).is_err());
+        assert!(upload_path(&grants, &url, "app/artifact.tar.gz", Some(&home)).is_err());
         assert!(at(&home.join("app/../app/artifact.tar.gz")).is_err());
         let outside = tempfile::tempdir().unwrap();
         let elsewhere = outside.path().join("artifact.tar.gz");

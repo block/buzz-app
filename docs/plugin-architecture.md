@@ -962,7 +962,8 @@ for long operations such as Apps initialization. Archive uploads have a
 Existing bundled GitHub requests retain their first-party renderer fetch and CSP
 entry.
 
-`host.upload` sends a multipart archive to a declared origin. It reads one absolute
+`host.upload` requires both `host.files` and the destination in `host.networkOrigins`.
+It sends a multipart archive to that origin and reads one absolute
 regular `.tar.gz` file under home, up to 100 MiB. This is local-file access in
 addition to ordinary network requests. The archive suffix and path checks are
 guardrails for trusted plugins, not a sandbox or a content classification check.

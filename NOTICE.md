@@ -90,11 +90,15 @@ Nous Research copyright notice.
 
 ## Plugin catalog artwork
 
-The bundled plugin PNG artwork in `src/bundled/*/icon.png` was created by
+The generated plugin PNG artwork in `src/bundled/*/icon.png` was created by
 Taylor Ho using GPT Image 2.5 and supplied for Buzz, including the Claude Code,
-Codex, goose and GitHub catalog illustrations. These generated illustrations
-incorporate third-party marks; those marks remain the property of their respective
+Codex, goose and GitHub catalog illustrations. These generated integration
+illustrations incorporate third-party marks; those marks remain the property of their respective
 owners. Claude is a trademark of Anthropic; OpenAI and the Blossom logo are
 trademarks of OpenAI; goose is a trademark of LF Projects; GitHub and Octocat
 are trademarks of GitHub, Inc. Their inclusion identifies the corresponding
 integrations and does not imply endorsement.
+
+The Huddles and Voice Notes illustrations were supplied separately by Taylor Ho
+and resized for the catalog; the generation attribution above does not cover
+these two assets.

@@ -13,6 +13,7 @@ export function AlertDialog({
   onClose,
   pending = false,
   finalFocus,
+  initialFocus,
 }: {
   title: ReactNode;
   description: ReactNode;
@@ -20,6 +21,7 @@ export function AlertDialog({
   actions: ReactNode;
   onClose(): void;
   pending?: boolean;
+  initialFocus?: ComponentProps<typeof BaseAlertDialog.Popup>["initialFocus"];
   finalFocus?: ComponentProps<typeof BaseAlertDialog.Popup>["finalFocus"];
 }) {
   const windowDrag = useModalWindowDrag();
@@ -51,6 +53,7 @@ export function AlertDialog({
           data-motion="default"
           aria-modal="true"
           finalFocus={finalFocus}
+          initialFocus={initialFocus}
         >
           <header className="buzz-dialog-header">
             <div className="buzz-dialog-heading">

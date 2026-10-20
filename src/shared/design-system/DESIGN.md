@@ -218,7 +218,9 @@ through the shared `finalFocus` contract; preserve the shared guard against
 stealing focus after the person moves elsewhere.
 
 `AlertDialog` uses the compact geometry and the same header/body/action framing.
-It retains alert-dialog semantics and pending dismissal protection. Do not switch
+It retains alert-dialog semantics and pending dismissal protection. Pass
+`initialFocus` when a confirmation has an established first-action focus target;
+the header Close button must not silently replace that flow. Do not switch
 confirmation semantics just to select a visual size.
 
 ### Menus, popovers, and pickers

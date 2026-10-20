@@ -128,7 +128,7 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
 
   // Existing shortcut journeys cover storage/reload/reset. Here the real
   // capture must reach a focus action from a selected ProseMirror range.
-  const title = keys.apple ? "Focus main pane" : "Focus";
+  const title = keys.apple ? "Focus main pane" : "Focus next pane";
   await page.keyboard.press(`${mod}+,`);
   const settingsDialog = page.getByRole("dialog", {
     name: "Settings",

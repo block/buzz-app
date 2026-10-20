@@ -72,7 +72,7 @@ it("classifies a legacy generated room across restart without granting parent or
   );
   expect(owner.get(room)?.huddle).toBeUndefined();
 });
-it.each([
+const lookalikes = [
   [
     "wrong ID",
     "huddle-deadbeef",
@@ -99,7 +99,8 @@ it.each([
     `huddle-${room.slice(0, 8)}`,
     [["private"], ["t", "stream"], ["ttl", "0"]],
   ],
-] as const)(
+] as const;
+it.each(lookalikes)(
   "does not classify a %s lookalike as a legacy huddle",
   (_, name, extra) => {
     const owner = state();

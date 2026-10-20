@@ -848,7 +848,7 @@ function WorkflowChannelCards({
   return (
     <section className="workflow-channel-group" aria-labelledby={headingId}>
       <Header id={headingId} level={2} title={`#${channel.name}`} />
-      <div className="workflow-channel-rows">
+      <SettingsGroup>
         {snapshot.data.items.map((definition) => {
           const key = workflowKey(definition);
           return (
@@ -875,7 +875,7 @@ function WorkflowChannelCards({
             #{channel.name} returned a partial workflow list.
           </div>
         )}
-      </div>
+      </SettingsGroup>
     </section>
   );
 }

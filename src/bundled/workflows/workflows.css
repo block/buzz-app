@@ -53,19 +53,16 @@
   grid-template-columns: minmax(0, 1fr);
   gap: var(--space-6);
 }
-.workflow-channel-group,
-.workflow-channel-rows {
+.workflow-channel-group {
   min-width: 0;
 }
 .workflow-channel-group > .buzz-content-header {
   margin-bottom: var(--space-2);
   overflow-wrap: anywhere;
-}
-.workflow-channel-rows {
-  display: grid;
-  gap: var(--space-1);
+  padding-inline: calc(var(--space-4) + 1px);
 }
 .workflow-card {
+  padding-block: var(--space-2);
   display: flex;
   align-items: center;
   gap: var(--space-2);

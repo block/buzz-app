@@ -277,11 +277,38 @@ export function MessageComposer(props: MessageComposerProps) {
 }
 
 function PersonalComposer(props: MessageComposerProps) {
-  const choices = useAgentChoices(props.session, true, true);
+  const { session, channelId, submission } = props;
+  const choices = useAgentChoices(session, true, true);
+  const list = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+    session.channels.list,
+  );
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+    session.profiles.snapshot,
+  );
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const members = list.channels.find((c) => c.id === channelId)?.members;
+  // A saved chat keeps its people; agents are only the owner's available ones.
+  const roster = useMemo(
+    () =>
+      submission
+        ? choices.selectable
+        : [
+            ...(members ?? [])
+              .filter((pubkey) => !agentPubkeys.has(pubkey))
+              .map((pubkey) => ({
+                pubkey,
+                name: profiles.get(pubkey)?.name || pubkey.slice(0, 12),
+              })),
+            ...choices.selectable,
+          ],
+    [submission, choices.selectable, members, agentPubkeys, profiles],
+  );
   return (
-    <DraftMentionRoster.Provider
-      value={props.submission ? choices.selectable : undefined}
-    >
+    <DraftMentionRoster.Provider value={roster}>
       <Composer {...props} />
       {choices.error && (
         <p role="alert">

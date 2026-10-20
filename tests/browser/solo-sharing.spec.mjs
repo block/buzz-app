@@ -74,7 +74,7 @@ test("a Solo chat link card opens the same authorized conversation in the channe
       );
     });
   await expect.poll(captionGap).toBe(2);
-  await expect(chip.locator("svg.tabler-icon-file-text")).toBeVisible();
+  await expect(chip.locator("svg.tabler-icon-message-circle")).toBeVisible();
   await chip.click();
   const panel = page.locator("[data-panel-workspace]");
   await expect(panel.getByRole("tab", { name: title })).toHaveAttribute(

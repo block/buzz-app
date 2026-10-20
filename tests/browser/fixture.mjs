@@ -53,6 +53,8 @@ export const test = base.extend({
   channelWriteKinds: [null, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
+  // Starred with savedSidebar; starring files a shared Solo chat in Team navigation.
+  savedStars: [["alpha"], { option: true }],
   ownSoloChannels: [[], { option: true }],
   soloAgentNames: [[], { option: true }],
   soloOutsideAgentNames: [[], { option: true }],
@@ -117,6 +119,7 @@ export const test = base.extend({
       channelWriteKinds,
       sidebarUnread,
       savedSidebar,
+      savedStars,
       ownSoloChannels,
       soloAgentNames,
       soloOutsideAgentNames,
@@ -349,7 +352,9 @@ export const test = base.extend({
             "channel-stars",
             {
               version: 1,
-              channels: { alpha: { starred: true, updatedAt: 1 } },
+              channels: Object.fromEntries(
+                savedStars.map((id) => [id, { starred: true, updatedAt: 1 }]),
+              ),
             },
           ],
           ["channel-sort", { version: 1, groups: initialSidebarSort }],

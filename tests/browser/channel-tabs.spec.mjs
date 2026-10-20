@@ -9,11 +9,17 @@ import {
   settlePanelMotion,
 } from "./navigation.mjs";
 
+const agent =
+  "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+
 test.use({
   productionBroker: true,
   companionFixture: true,
   readState: true,
   soloChannels: ["beta"],
+  // The saved sidebar files shared Beta in a section, so Team navigation lists it.
+  savedSidebar: true,
+  sessionMembers: { beta: [agent] },
   historyCounts: { alpha: 2, beta: 1 },
 });
 
@@ -206,13 +212,22 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     workspace.getByRole("tab", { name: "Beta", exact: true }),
   ).toHaveCount(1);
   await expect(composer).toHaveText("Beta draft");
+  // A Solo chat sends only to an explicit recipient.
+  await beta
+    .getByRole("button", { name: "Mention a member", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Mention a member or agent" })
+    .getByRole("button", { name: new RegExp(agent) })
+    .click();
   await composer.press("Enter");
   await expect
     .poll(() =>
       app.report.publications.some(
         ({ event }) =>
           event.kind === 9 &&
-          event.content === "Beta draft" &&
+          event.content.includes("Beta draft") &&
+          event.tags.some(([key, value]) => key === "p" && value === agent) &&
           event.tags.some(([key, value]) => key === "h" && value === "beta"),
       ),
     )
@@ -220,7 +235,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   // Solo agents answer at top level, so a Solo row starts no thread.
   const sent = beta
     .locator("[data-message-id]")
-    .filter({ has: page.getByText("Beta draft", { exact: true }) });
+    .filter({ hasText: "Beta draft" });
   await hoverMessage(sent);
   await expect(
     sent.getByRole("button", { name: "Reply", exact: true }),

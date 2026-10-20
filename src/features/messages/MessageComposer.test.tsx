@@ -7707,6 +7707,8 @@ it.each(["available", "archived", "readOnly", "removed", "converted"] as const)(
       archived: false,
       readOnly: false,
     };
+    // A store snapshot keeps its identity until the store changes.
+    const channelList = { status: "ready", channels: [channel] };
     h.retarget({
       ownSoloConversation: true,
       requireMention: true,
@@ -7715,7 +7717,7 @@ it.each(["available", "archived", "readOnly", "removed", "converted"] as const)(
         viewer: "viewer",
         channels: {
           ...h.session.channels,
-          list: () => ({ status: "ready", channels: [channel] }),
+          list: () => channelList,
         },
         channelWrites: {
           refreshMembership: async () => ({
@@ -7898,6 +7900,12 @@ it("recovers an uploaded follow-up instead of queuing it after its chat disappea
   const upload = vi.fn(() => gate.promise);
   let present = true;
   const activity = { status: "unavailable", local: [], turns: [], typing: [] };
+  // Store snapshots keep their identity until the store changes.
+  const presentList = {
+    status: "ready",
+    channels: [{ id: "channel", channelType: "solo", creator: "viewer" }],
+  };
+  const absentList = { status: "ready", channels: [] };
   h.retarget({
     ownSoloConversation: true,
     requireMention: true,
@@ -7907,12 +7915,7 @@ it("recovers an uploaded follow-up instead of queuing it after its chat disappea
       attachments: { upload },
       channels: {
         ...h.session.channels,
-        list: () => ({
-          status: "ready",
-          channels: present
-            ? [{ id: "channel", channelType: "solo", creator: "viewer" }]
-            : [],
-        }),
+        list: () => (present ? presentList : absentList),
       },
       channelWrites: {
         refreshMembership: async () => ({

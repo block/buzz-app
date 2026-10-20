@@ -110,6 +110,7 @@ export function SoloWorkspaces({
   const currentVisit = useRef(visit);
   currentVisit.current = visit;
   const [chatSettings, setChatSettings] = useState<{
+    rename?: boolean;
     item: ChatListItem;
     visit: AbortSignal | undefined;
   }>();
@@ -390,6 +391,9 @@ export function SoloWorkspaces({
                             onMove={(projectId) => move(item.id, projectId)}
                             onNewWorkspace={() => setCreatingFor(item)}
                             onCopy={copy}
+                            onRename={() =>
+                              setChatSettings({ item, visit, rename: true })
+                            }
                             onSettings={() => setChatSettings({ item, visit })}
                             onLifecycle={
                               handoff &&
@@ -435,7 +439,7 @@ export function SoloWorkspaces({
                       aria-label={`New chat in ${project.name}`}
                       title={`New chat in ${project.name}`}
                       icon={
-                        <span className="shell-page-icon">
+                        <span className={styles.conversationIcon}>
                           <PlusIcon size={16} strokeWidth={2.5} />
                         </span>
                       }
@@ -485,6 +489,7 @@ export function SoloWorkspaces({
       )}
       {chatSettings && (
         <WorkspaceSettings
+          focusName={chatSettings.rename}
           key={chatSettings.item.id}
           signal={chatSettings.visit}
           finalFocus={() =>

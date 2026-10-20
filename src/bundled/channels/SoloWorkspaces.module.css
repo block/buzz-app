@@ -15,7 +15,7 @@
 
 .nameEditor {
   min-width: 0;
-  padding-inline-start: calc(var(--session-row-inset) + var(--space-1));
+  padding-inline-start: var(--session-row-inset);
 }
 
 .nameEditorRow {
@@ -77,7 +77,6 @@
   min-width: 0;
 }
 .sidebarContents .organizedRow > div > [data-variant="row"] {
-  padding-inline-start: var(--session-row-inset);
   /* Status paints in the row-owned action slot outside the select button.
      Only the label clips text; clipping the button would hide that status. */
   overflow: visible;
@@ -153,7 +152,7 @@
   background: var(--affordance-panel-hover);
 }
 .organizedRow:has([aria-current="page"])::before {
-  background: var(--interaction-selected);
+  background: var(--surface-navigation-selected);
 }
 
 .organizedRow {

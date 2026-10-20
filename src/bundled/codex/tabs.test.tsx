@@ -58,6 +58,7 @@ afterEach(() => {
 });
 function fixture({
   signedIn = true,
+  requiresOpenaiAuth = true,
   installed = true,
   saved = {},
   turns = () => ({ result: { data: [] } }),
@@ -68,6 +69,8 @@ function fixture({
   /** Agent storage, which keeps the provider defaults. */
   storage?: AgentStore;
   signedIn?: boolean;
+  /** Whether the configured model provider needs an OpenAI sign-in. */
+  requiresOpenaiAuth?: boolean;
   installed?: boolean;
   saved?: Record<string, unknown>;
   turns?: (threadId: string) => Wire;
@@ -132,6 +135,7 @@ function fixture({
             account: disk.signedIn
               ? { type: "chatgpt", email: "test@example.com" }
               : null,
+            requiresOpenaiAuth,
           };
         if (wire.method === "model/list")
           result = {
@@ -1117,7 +1121,8 @@ it("replaces sign-in with available models after Codex login succeeds", async ()
   expect(
     screen.queryByRole("button", { name: "Sign in" }),
   ).not.toBeInTheDocument();
-  expect(f.processes).toHaveLength(1);
+  // The first check asked whether sign-in is needed; both cards then shared one discovery.
+  expect(f.processes).toHaveLength(2);
 });
 
 it("keeps sign-in available after a failed Codex login without showing models", async () => {
@@ -1137,6 +1142,22 @@ it("keeps sign-in available after a failed Codex login without showing models", 
   expect(
     screen.queryByRole("combobox", { name: "Model" }),
   ).not.toBeInTheDocument();
+});
+
+it("lists models without a sign-in when the model provider needs no OpenAI account", async () => {
+  const f = fixture({ signedIn: false, requiresOpenaiAuth: false });
+  render(
+    <f.tabs.CreateModel
+      config={defaults}
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByRole("combobox", { name: "Model" }),
+  ).toHaveTextContent("Model A");
+  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+  expect(f.provider.snapshot().readiness).toBe("ready");
 });
 
 it("offers to install Codex from its card when Buzz has no copy", async () => {

@@ -12,7 +12,7 @@ import type {
   TurnResult,
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
-import { appClient } from "../../buzz-mcp/app-client";
+import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { readProject } from "../../features/agent-harness/project";
 import { MemoryReads } from "../../features/agent-harness/core-memory";
 import type { Context } from "../../buzz-mcp/client";
@@ -191,6 +191,9 @@ export class CodexRuntime {
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every thread now. */
     private readonly added: () => readonly AddedTool[] = () => [],
+    /** Desktop-local repository instructions; standalone hosts keep their own layout. */
+    private readonly repositories: (scope: string | undefined) => string = () =>
+      "",
   ) {}
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -462,8 +465,8 @@ export class CodexRuntime {
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v5 added channel and member management; v6
-    // added the shared session tools.
-    return `buzz.codex.sessions.v6:${scope}:${pubkey}`;
+    // added the shared session tools; v7 added the shared note tools.
+    return `buzz.codex.sessions.v7:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -742,7 +745,13 @@ export class CodexRuntime {
           input: input(text),
           model,
           effort,
-          additionalContext: turnContext(agent, settings, team, memory),
+          additionalContext: turnContext(
+            agent,
+            settings,
+            team,
+            memory,
+            this.repositories(scope),
+          ),
         },
       );
       once.turnId ??= turnStarted.turn.id;
@@ -928,8 +937,7 @@ export class CodexRuntime {
         agent.pubkey,
       )?.audienceAuthorityCommunity?.(),
       signingAuthority: this.reads(agent.pubkey)?.workflowAuthority(),
-      spawn: this.spawn,
-      cwd: turn.workspace,
+      read: (path) => readFile(this.spawn, turn.workspace, path, turn.signal),
       check,
       signal: turn.signal,
       memories: async (slug) => {
@@ -1224,7 +1232,13 @@ export class CodexRuntime {
         model,
         effort,
         // Application context is a developer message that updates on each turn.
-        additionalContext: turnContext(agent, settings, request.team, memory),
+        additionalContext: turnContext(
+          agent,
+          settings,
+          request.team,
+          memory,
+          this.repositories(request.scope),
+        ),
       });
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);

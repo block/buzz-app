@@ -5,6 +5,7 @@ import {
   ArrowRightIcon,
   CaretDownIcon,
   PlusIcon,
+  TrashIcon,
   DotsThreeIcon,
   GearIcon,
   NotificationIcon,
@@ -24,6 +25,7 @@ import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
 const variants = [
   "prominent",
   "subtle",
+  "subtle-muted",
   "ghost",
   "glass",
   "inverted",
@@ -36,6 +38,7 @@ const sizes = ["sm", "md", "lg"] as const;
 const descriptions = {
   prominent: "The main action in a group.",
   subtle: "A supporting action with a quiet fill.",
+  "subtle-muted": "A quiet fill with muted text until interaction.",
   ghost: "A low-emphasis action without a resting fill.",
   glass: "A translucent action over artwork.",
   inverted: "An action on an inverse surface.",
@@ -148,6 +151,9 @@ export function ButtonSpecimen() {
         <Button>Continue</Button>
       </ExamplePreview>
       <ButtonMatrix kind="text" />
+      <Button size="caption" variant="subtle-muted">
+        Send
+      </Button>
       <ExamplePreview code='<Button size="sm" shape={labelled ? "capsule" : "icon"} aria-label="Toggle label">…</Button>'>
         <Button
           size="sm"
@@ -395,6 +401,12 @@ export function IconButtonSpecimen() {
         />
       </ExamplePreview>
       <ButtonMatrix kind="icon" />
+      <IconButton
+        variant="destructive-quiet"
+        shape="inset"
+        aria-label="Remove queued message"
+        icon={<TrashIcon />}
+      />
       <ExamplePreview
         label="Row-end action"
         code={`<div className="flex min-h-12 items-center rounded-row bg-affordance-subtle">

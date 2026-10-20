@@ -780,23 +780,26 @@ export function createRelaySession(
     transport?.viewer,
     transport &&
       writer &&
-      uploadAttachment &&
       (!writer.kinds || writer.kinds.includes(EMOJI_SET_KIND))
       ? {
           writer,
-          async upload(file, signal) {
-            const combined = AbortSignal.any([
-              signal,
-              lifetime.signal,
-              uploadLifetime.signal,
-            ]);
-            combined.throwIfAborted();
-            if (closed) throw new UploadError("denied");
-            const result = await uploadAttachment(file, combined);
-            combined.throwIfAborted();
-            if (closed) throw new UploadError("denied");
-            return result;
-          },
+          ...(uploadAttachment
+            ? {
+                async upload(file: File, signal: AbortSignal) {
+                  const combined = AbortSignal.any([
+                    signal,
+                    lifetime.signal,
+                    uploadLifetime.signal,
+                  ]);
+                  combined.throwIfAborted();
+                  if (closed) throw new UploadError("denied");
+                  const result = await uploadAttachment(file, combined);
+                  combined.throwIfAborted();
+                  if (closed) throw new UploadError("denied");
+                  return result;
+                },
+              }
+            : {}),
         }
       : undefined,
   );

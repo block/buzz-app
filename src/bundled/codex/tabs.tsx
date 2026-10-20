@@ -322,12 +322,15 @@ function CodexSignIn({
     login.snapshot,
   );
   const action = step === "install" ? "Install Codex" : "Sign in";
+  // A step's process ends before the check that follows it, which may still
+  // find the step needed; until it answers, neither button starts another.
   return (
     <>
       <Button
         size="sm"
         variant="prominent"
-        disabled={disabled || !!running}
+        disabled={disabled || !!running || checking}
+        focusableWhenDisabled
         onClick={() => {
           if (login.snapshot().running) return;
           setOpen(true);
@@ -359,7 +362,7 @@ function CodexSignIn({
             <Button
               variant="prominent"
               size="sm"
-              loading={running === step}
+              loading={running === step || (!running && checking)}
               disabled={disabled || (!!running && running !== step)}
               onClick={() => void login.run(step)}
             >
@@ -451,6 +454,17 @@ export function createTabs(
         : status?.state === "signed-out" || error === SIGN_IN_ERROR
           ? "login"
           : undefined;
+    const field = useRef<HTMLDivElement>(null);
+    const hadStep = useRef(false);
+    // Setup's dialog and button leave once Codex is ready; focus they held
+    // moves to the model field, not to the page.
+    useEffect(() => {
+      const ended = hadStep.current && !step;
+      hadStep.current = Boolean(step);
+      const active = document.activeElement;
+      if (ended && (!active || active === document.body))
+        field.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+    }, [step]);
     if (step)
       return (
         <CodexSignIn
@@ -462,20 +476,22 @@ export function createTabs(
         />
       );
     return (
-      <CreateModelChoices
-        {...props}
-        models={choices(data)}
-        value={current.model}
-        defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}
-        defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
-        defaultDescription="Following the provider's model default"
-        loading={checking}
-        error={error}
-        retry={retry}
-        onChange={(model) =>
-          onChange(readConfig({ ...current, ...modelChange(model, data) }))
-        }
-      />
+      <div ref={field} className="contents">
+        <CreateModelChoices
+          {...props}
+          models={choices(data)}
+          value={current.model}
+          defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}
+          defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
+          defaultDescription="Following the provider's model default"
+          loading={checking}
+          error={error}
+          retry={retry}
+          onChange={(model) =>
+            onChange(readConfig({ ...current, ...modelChange(model, data) }))
+          }
+        />
+      </div>
     );
   }
 

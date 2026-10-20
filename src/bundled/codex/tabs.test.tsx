@@ -1110,7 +1110,7 @@ it("replaces sign-in with available models after Codex login succeeds", async ()
   });
   if (!dialog) throw new Error("Missing sign-in dialog");
   expect(others).toHaveLength(0);
-  expect(buttons[1]).toBeDisabled();
+  expect(buttons[1]).toHaveAttribute("aria-disabled", "true");
   expect(
     await within(dialog).findByRole("button", { name: "Cancel" }),
   ).toBeVisible();
@@ -1213,19 +1213,34 @@ it("moves the card from Install Codex to Sign in once the install succeeds", asy
   expect(
     await within(dialog).findByRole("button", { name: "Cancel" }),
   ).toBeVisible();
+  // Holds the provider's check that follows the install.
+  const held = deferred<void>();
+  const check = f.setup.check.bind(f.setup);
+  vi.spyOn(f.setup, "check").mockImplementationOnce(async () => {
+    await held.promise;
+    return check();
+  });
   download.resolve();
   // The same dialog and button, so keyboard focus stays on it.
   await screen.findByRole("dialog", { name: "Sign in to Codex" });
   const signIn = await within(dialog).findByRole("button", { name: "Sign in" });
   expect(signIn).toBe(install);
   expect(signIn).toHaveFocus();
+  // Until the check answers, Sign in starts nothing.
+  expect(signIn).toHaveAttribute("aria-busy", "true");
+  fireEvent.click(signIn);
+  expect(f.logins).toHaveLength(0);
+  held.resolve();
+  await waitFor(() => expect(signIn).not.toHaveAttribute("aria-busy"));
+  expect(signIn).toHaveFocus();
   fireEvent.click(signIn);
   await waitFor(() => expect(f.logins).toHaveLength(1));
   f.disk.signedIn = true;
   f.logins[0]?.resolve(0);
-  expect(
-    await screen.findByRole("combobox", { name: "Model" }),
-  ).toHaveTextContent("Model A");
+  const model = await screen.findByRole("combobox", { name: "Model" });
+  expect(model).toHaveTextContent("Model A");
+  // The dialog leaves with setup; its focus moves to the model field.
+  await waitFor(() => expect(model).toHaveFocus());
 });
 
 it("installs and signs in Buzz's copy of Codex from its provider settings", async () => {

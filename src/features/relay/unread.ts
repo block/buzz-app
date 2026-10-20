@@ -937,7 +937,7 @@ export function createUnread({
             dm || (session && !entry.parentId && !roots.has(entry.event.id))
               ? channel.id
               : (entry.rootId ?? entry.event.id);
-          if (id !== channel.id) elsewhere.add(entry.event.id);
+          if (id !== channel.id) elsewhere.add(id);
           const group = groups.get(id) ?? [];
           group.push(entry);
           groups.set(id, group);
@@ -949,7 +949,7 @@ export function createUnread({
         const content = new Map(rows.map((row) => [row.id, row.content]));
         // A session's top-level row shows its newest message from someone
         // else to everyone, even one that is not Inbox evidence, unless that
-        // message is another row's evidence.
+        // message is the root of its own thread row.
         const newest = session
           ? rows.reduce<RelayEvent | undefined>((best, row) => {
               const event = events.get(row.id);

@@ -27,13 +27,7 @@
   overflow: hidden;
   border-radius: inherit;
   pointer-events: none;
-  mask-image: linear-gradient(
-    to bottom,
-    black 0%,
-    rgb(0 0 0 / 0.45) 35%,
-    rgb(0 0 0 / 0.12) 65%,
-    transparent 100%
-  );
+  mask-image: linear-gradient(to bottom, black, 25%, transparent);
 }
 .avatarBackdropImage {
   width: 100%;

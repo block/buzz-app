@@ -12,8 +12,8 @@ Create agents that run Pi on your computer, with any provider Pi supports, and a
 
 # Pi for Agents
 
-A desktop plugin that ships with Buzz on macOS and Linux, off until turned on
-in **Settings → Plugins**. Its agents run on
+A desktop plugin that ships with Buzz on macOS, Linux and Windows, off until
+turned on in **Settings → Plugins**. Its agents run on
 [Pi durable](https://earendil.com/posts/pi-1-0/) (`@earendil-works/pi-durable`),
 not the Pi coding agent, with any provider Pi supports.
 Agents owns the identity, admission, configuration, and signed Buzz actions. This
@@ -30,9 +30,10 @@ source bin/activate-hermit
 BUZZODZ_PROFILE=pi-agents BUZZ_DEV_VIEWER= bin/just desktop
 ```
 
-Pi needs Node.js 22.19 or later on this computer (`node:sqlite`). The app's PATH
-is searched first, then a login shell's, so Homebrew, nvm, fnm and similar
-installs work.
+Pi needs Node.js 22.19 or later on this computer (`node:sqlite`). On macOS and
+Linux the app's PATH is searched first, then a login shell's, so Homebrew, nvm,
+fnm and similar installs work. On Windows, `node` must be on the PATH Buzz
+starts with.
 
 1. Turn on **Pi** in **Settings → Plugins**. Then open **Agents → New agent**
    and choose **Pi** as the **Harness**. Its **Model** starts on **Pi default**:
@@ -86,16 +87,21 @@ model reads what a Buzz tool answered, that a plain answer comes back as text,
 that a request steers a working run, that a run cut off by a stop continues in
 the next host, that aborting a run leaves it unanswered, and that a deferred
 Buzz tool is offered once `tool_search` finds it. `PI_DEPS` is any folder
-`pi.sh` installed Pi's packages in.
+the launcher installed Pi's packages in.
 
 ## Buzz's copy of Pi's packages
 
-[`pi.sh`](pi.sh) runs the host on this computer's Node. On first use it runs
-`npm ci` with [`deps/package-lock.json`](deps/package-lock.json), which pins
-every package and its integrity hash. Install scripts are off, and npm uses the
-registry it is configured for. Each lock gets its own folder under
+[`launch.mjs`](launch.mjs) runs the host on this computer's Node. On macOS and
+Linux, [`pi.sh`](pi.sh) finds that Node and starts the launcher on it; Windows,
+which has no bash, starts `node` itself. The launcher's first line on stdin
+carries the host source and the packages to install, since together they pass
+Windows' 32 KB command line. On first use it runs `npm ci` with
+[`deps/package-lock.json`](deps/package-lock.json), which pins every package and
+its integrity hash. Install scripts are off, and npm uses the registry it is
+configured for. Each lock gets its own folder under
 `~/Library/Application Support/Buzz/pi/deps/`
-(`${XDG_DATA_HOME:-~/.local/share}/buzz/pi/deps/` on Linux). The folder appears
+(`${XDG_DATA_HOME:-~/.local/share}/buzz/pi/deps/` on Linux,
+`%LOCALAPPDATA%\Buzz\pi\deps\` on Windows). The folder appears
 whole or not at all, and is shared by every Buzz build. An install removes the
 folders no build has started for 30 days. Agents' storage is in `agents/<pubkey>.sqlite`
 beside it. A lock on each agent's storage keeps a second Buzz build from opening
@@ -143,5 +149,7 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
 - Only Pi's built-in providers run. One that a Pi package adds (`packages` in
   Pi's settings), such as databricks, is not loaded: the provider field, the
   New agent Model field and a turn's error say so, and Use and Save wait for another.
-- Windows is unsupported. Linux, packaged-app behavior, and human acceptance need
-  separate validation.
+- On Windows, Pi's `bash` tool needs a bash, such as Git for Windows'; the
+  other tools work without one.
+- Windows, Linux, packaged-app behavior, and human acceptance need separate
+  validation.

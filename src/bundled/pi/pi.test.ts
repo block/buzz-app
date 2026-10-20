@@ -21,8 +21,26 @@ it("starts the host once, with the install script, and pairs each answer with it
   expect(process?.id).toBe("pi-sh");
   expect(process?.options.cwd).toBe("~");
   expect(process?.options.args?.[1]).toBe("pi.sh");
+  expect(process?.options.args?.at(-1)).toContain("BUZZ_PI_HOST");
   // The packages it installs are the ones the lock pins.
-  expect(process?.options.args?.at(-1)).toContain('"lockfileVersion"');
+  expect(process?.launched?.lock).toContain('"lockfileVersion"');
+  expect(process?.launched?.host).toContain("export function serve");
+});
+
+it("starts Node itself on Windows, which has no bash", async () => {
+  vi.stubGlobal("navigator", { platform: "Win32" });
+  try {
+    const host = fakeHost({ first: () => ({ ok: true }) });
+    const pi = new Pi(() => host.spawn, handlers());
+    await expect(pi.request("first")).resolves.toEqual({ ok: true });
+    const [process] = host.processes;
+    expect(process?.id).toBe("node");
+    expect(process?.options.args).toHaveLength(1);
+    expect(process?.options.args?.[0]).toContain("BUZZ_PI_HOST");
+    expect(process?.launched?.lock).toContain('"lockfileVersion"');
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 it("reads messages split across chunks, and several in one", async () => {

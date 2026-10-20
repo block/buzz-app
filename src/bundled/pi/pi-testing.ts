@@ -22,6 +22,8 @@ export type FakeProcess = {
   requests: Request[];
   ended: boolean;
   killed: boolean;
+  /** The launcher's line: the host source and the packages it installs. */
+  launched?: { host: string; package: string; lock: string };
   /** Sends the plugin one message, as stdout. */
   send(message: object): void;
   /** Calls one of the plugin's tools and resolves with its answer. */
@@ -96,7 +98,9 @@ export function fakeHost(
         const message = JSON.parse(buffer.slice(0, newline));
         buffer = buffer.slice(newline + 1);
         newline = buffer.indexOf("\n");
-        if (message.method) void handle(message);
+        // The first line is the launcher's: what it installs and runs.
+        if (!process.launched) process.launched = message;
+        else if (message.method) void handle(message);
         else {
           answers.get(message.id)?.(message);
           answers.delete(message.id);

@@ -10,6 +10,7 @@ import type {
 import packageJson from "./deps/package.json?raw";
 import packageLock from "./deps/package-lock.json?raw";
 import host from "./host.mjs?raw";
+import launch from "./launch.mjs?raw";
 import script from "./pi.sh?raw";
 
 type Spawn = (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
@@ -157,8 +158,12 @@ export class Pi {
         else call?.resolve(message.result);
       }
     };
-    connection.process = await this.spawn()("pi-sh", {
-      args: [script, "pi.sh", host, packageJson, packageLock],
+    // Windows has no bash, and starts Node from its own PATH. The host and
+    // its packages go on stdin: together they are past Windows' 32 KB
+    // command line.
+    const windows = /^Win/i.test(globalThis.navigator?.platform ?? "");
+    const starting = this.spawn()(windows ? "node" : "pi-sh", {
+      args: windows ? [launch] : [script, "pi.sh", launch],
       cwd: "~",
       onStdout: (data) => {
         buffer += data;
@@ -179,6 +184,20 @@ export class Pi {
         stderr = (stderr + data).slice(-TAIL);
       },
     });
+    connection.process = await starting.catch((error: unknown) => {
+      // pi.sh says so itself; Windows cannot start a `node` it lacks.
+      throw windows && /Could not start/.test(String(error))
+        ? new Error(
+            "Pi needs Node.js 22.19 or later. Install it from nodejs.org, then try again.",
+          )
+        : error;
+    });
+    void connection.process
+      .write(
+        `${JSON.stringify({ host, package: packageJson, lock: packageLock })}\n`,
+      )
+      // A host that never has its source waits for it; it stops instead.
+      .catch(() => void connection.process.kill().catch(() => undefined));
     void connection.process.exited.then((code) => {
       // Before it is ready, its last words are why it could not start, such
       // as Node missing.

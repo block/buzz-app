@@ -62,7 +62,7 @@ const TOOL_NAMES = `The Buzz tools are named \`${PREFIX}<name>\`: where your ins
 const piDir = () => {
   const dir = process.env.PI_CODING_AGENT_DIR;
   return dir
-    ? dir.replace(/^~(?=$|\/)/, homedir())
+    ? dir.replace(/^~(?=$|[\\/])/, homedir())
     : join(homedir(), ".pi", "agent");
 };
 
@@ -207,7 +207,9 @@ const targetOf = (args) => {
   const value = TARGETS.map((key) => args?.[key]).find(
     (item) => typeof item === "string" && item,
   );
-  return value?.startsWith("/") ? value.split("/").at(-1) : value;
+  return value && /^(?:\/|[A-Za-z]:[\\/])/.test(value)
+    ? value.split(/[\\/]/).at(-1)
+    : value;
 };
 
 /** Serves the plugin on `input` and `output` until `input` closes. */
@@ -508,7 +510,7 @@ export function serve({
           model: chosen.model,
           thinkingLevel: chosen.thinkingLevel,
           instructions: turn.instructions,
-          cwd: turn.cwd.replace(/^~(?=$|\/)/, homedir()),
+          cwd: turn.cwd.replace(/^~(?=$|[\\/])/, homedir()),
         };
     if (Object.keys(change).length)
       await conversation.configure(change, context);

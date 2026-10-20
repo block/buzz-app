@@ -15,10 +15,11 @@
         "args": ["-c"]
       },
       {
-        "id": "read",
-        "program": "base64",
-        "args": ["-i"]
+        "id": "node",
+        "program": "node",
+        "args": ["--input-type=module", "-e"]
       }
-    ]
+    ],
+    "files": true
   }
 }

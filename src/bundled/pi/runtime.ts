@@ -161,7 +161,7 @@ export class PiRuntime {
   readonly setup: PiSetup;
 
   constructor(
-    private readonly host: Pick<Host, "spawn">,
+    private readonly host: Pick<Host, "spawn" | "readFile">,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
@@ -547,8 +547,7 @@ export class PiRuntime {
           call.agent,
         )?.audienceAuthorityCommunity?.(),
         signingAuthority: this.reads(call.agent)?.workflowAuthority(),
-        spawn: this.spawn,
-        cwd: entry.config.workspace,
+        read: (path) => this.readFile(path, { cwd: entry.config.workspace }),
         memories: (slug) => this.memories(call.agent, slug),
         remembered: () => this.forgetMemory(call.agent),
       });
@@ -878,6 +877,12 @@ export class PiRuntime {
     const spawn = this.host.spawn?.bind(this.host);
     if (!spawn) throw new Error("Pi agents run only in the desktop app");
     return spawn;
+  }
+
+  private get readFile() {
+    const readFile = this.host.readFile?.bind(this.host);
+    if (!readFile) throw new Error("Pi agents run only in the desktop app");
+    return readFile;
   }
 
   /** The agent's memory, or only entry `slug`, as its community's reads give

@@ -20,6 +20,7 @@ import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
+import { validTypingTemplate } from "../../src/features/relay/typing-protocol.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 // Public nonmember channel for search/preview/join journeys. Real channel ids
@@ -1682,10 +1683,10 @@ export const test = base.extend({
       expect(verifyEvent(event)).toBe(true);
       expect(event.pubkey).toBe(viewer);
       if (event.kind === 20002) {
-        expect(event.content).toBe("");
+        expect(validTypingTemplate(event)).toBe(true);
         expect(rosterIds).toContain(event.tags[0]?.[1]);
         report.typingPublications.push({ community, event });
-        relay.publish(community, event);
+        relay?.publish(community, event);
         return;
       }
       if (openSearch && event.kind === 9021) {
@@ -1965,6 +1966,15 @@ export const test = base.extend({
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });
+        }
+        if (route === "sign" && body.kind === 20002) {
+          expect(validTypingTemplate(body)).toBe(true);
+          expect(rosterIds).toContain(body.tags[0]?.[1]);
+          return send(response, finalizeEvent(body, userKey));
+        }
+        if (route === "publish" && body.kind === 20002) {
+          acceptReadPublication(community, body);
+          return send(response, { accepted: true, event_id: body.id });
         }
         if (soloChannels.length && route === "sign") {
           expect(body.kind).toBe(9);

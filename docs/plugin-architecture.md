@@ -1288,7 +1288,8 @@ mention, the closing colon for an emoji shortcode. Emoji publishes an exact-matc
 only after both Unicode and community catalogs successfully settle. The editor refuses
 typed terminators in rich or raw Markdown literal ranges; colon conversion records the
 typed source first so undo restores the closing colon and collapsed caret. A rejected
-displayed choice must not fall through to sending. Retry is a selectable menu action
+displayed choice must not fall through to sending, including when Command/Ctrl+Enter
+is the send key. Retry is a selectable menu action
 using the same arrow/Enter/Tab path, including when there are no results. Modified
 keys, Shift+Enter/Shift+Tab and IME events retain ordinary editing behavior.
 

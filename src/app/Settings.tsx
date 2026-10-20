@@ -1128,6 +1128,7 @@ export function Settings({
                 shortcuts={shortcuts}
                 bindings={shortcutBindings}
                 plugins={plugins}
+                active={selected === "shortcuts"}
               />
             </div>
             <div hidden={selected !== "agents"}>

@@ -23,6 +23,8 @@ export type Settled = Readonly<{
   error?: string;
   /** The JSON-RPC code of the harness's error answer behind `error`. */
   code?: number;
+  /** Buzz's own advice for a failure it raised (`HintedError`). */
+  hint?: string;
   /** What the harness wrote, when it answered nowhere in Buzz. Nobody saw it. */
   text?: string;
 }>;
@@ -67,6 +69,9 @@ export type AcpHooks = Readonly<{
   program: string;
   /** The error when that program cannot be found, or cannot run. */
   missing: string;
+  /** What to do about it, posted where others can read it: fixed text, never
+   * the launch's own values. Without it, no hint is given. */
+  missingHint?: string;
   /** Keeps stderr written before the host reports the spawn, and reads exit
    * 126 or 127 before `initialize` answers as `missing`: for a program the
    * owner launches through `env`. */
@@ -74,7 +79,9 @@ export type AcpHooks = Readonly<{
   /** Its environment, under the launch's own. The Buzz identity is always
    * removed, whatever either says. */
   env: Readonly<Record<string, string | null>>;
-  /** `session/new`'s `_meta`. */
+  /** `session/new`'s `_meta`. A session's `title` reaches the harness only
+   * here: ACP has no standard field for it, so only a harness that sets this
+   * hook (Goose) is given one. */
   newSessionMeta?(
     buzz: McpServer | undefined,
     open: Readonly<{ title?: string; provider: string }>,

@@ -584,9 +584,9 @@ export function PluginImport({
                 : preview.candidates.length
                   ? "Select a plugin to review before installing."
                   : "Try another folder or repository."
-              : "Choose a built plugin to load."
+              : "Load built plugins containing manifest.json and plugin.js. Buzz doesn’t build source code or run install scripts."
         }
-        size={error || (reviewing && updating) ? "default" : "wide"}
+        size={error || (reviewing && updating) ? "compact" : "wide"}
         leadingActions={
           !error &&
           !showUnchanged &&
@@ -764,126 +764,114 @@ export function PluginImport({
         <div hidden={!!error || showUnchanged}>
           <div hidden={!!preview || !!updateId}>
             {!updateId && (
-              <>
-                <p className="mb-4 mt-0 text-body-sm text-muted">
-                  Load built plugins containing{" "}
-                  <code className={styles.sourcePath}>manifest.json</code> and{" "}
-                  <code className={styles.sourcePath}>plugin.js</code>. Buzz
-                  doesn’t build source code or run install scripts.
-                </p>
-                <div className={styles.columns}>
-                  <section
-                    aria-label="Add from folder"
-                    className={styles.folder}
-                    data-dragging={dragging || undefined}
-                    onDragOver={(event) => {
-                      if (!event.dataTransfer.types.includes("Files")) return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      event.dataTransfer.dropEffect = blocked ? "none" : "copy";
-                      setDragging(!blocked);
-                    }}
-                    onDragLeave={() => setDragging(false)}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setDragging(false);
-                      const items = Array.from(event.dataTransfer.items);
-                      const entry =
-                        items.length === 1
-                          ? items[0]?.webkitGetAsEntry?.()
-                          : null;
-                      const current = lifetime.current;
-                      void load(async () => {
-                        if (!entry?.isDirectory)
-                          throw new Error("Drop one folder, or choose Browse.");
-                        const upload = await readPluginFolder(entry);
-                        if (!current.active) return null;
-                        const next = await imports.files(
-                          upload.source,
-                          upload.files,
-                        );
-                        return next
-                          ? {
-                              ...next,
-                              warnings: [...upload.warnings, ...next.warnings],
-                            }
-                          : null;
-                      });
-                    }}
-                  >
-                    <FolderOpenIcon size={32} aria-hidden="true" />
-                    <p className="m-0 text-body-sm">
-                      Drop a plugin folder here
-                    </p>
-                    <Button
-                      size="sm"
-                      ref={browse}
-                      aria-label="Browse plugin folder"
-                      disabled={blocked}
-                      onClick={() => void load(() => imports.folder())}
-                    >
-                      Browse
-                    </Button>
-                  </section>
-                  <form
-                    aria-label="Add from Git"
-                    className={styles.git}
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      if (repository.trim())
-                        void load(async () => {
-                          const signed = await authorizeGit?.(repository);
-                          return signed
-                            ? imports.git(
-                                signed.repository,
-                                reference,
-                                signed.token,
-                              )
-                            : imports.git(repository, reference);
-                        });
-                    }}
-                  >
-                    <SettingsGroup layout="form">
-                      <Field label="Git or GitHub repository">
-                        <Input
-                          required
-                          value={repository}
-                          disabled={blocked}
-                          placeholder="https://github.com/owner/repository"
-                          onChange={(event) =>
-                            setRepository(event.target.value)
+              <div className={styles.columns}>
+                <section
+                  aria-label="Add from folder"
+                  className={styles.folder}
+                  data-dragging={dragging || undefined}
+                  onDragOver={(event) => {
+                    if (!event.dataTransfer.types.includes("Files")) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.dataTransfer.dropEffect = blocked ? "none" : "copy";
+                    setDragging(!blocked);
+                  }}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setDragging(false);
+                    const items = Array.from(event.dataTransfer.items);
+                    const entry =
+                      items.length === 1
+                        ? items[0]?.webkitGetAsEntry?.()
+                        : null;
+                    const current = lifetime.current;
+                    void load(async () => {
+                      if (!entry?.isDirectory)
+                        throw new Error("Drop one folder, or choose Browse.");
+                      const upload = await readPluginFolder(entry);
+                      if (!current.active) return null;
+                      const next = await imports.files(
+                        upload.source,
+                        upload.files,
+                      );
+                      return next
+                        ? {
+                            ...next,
+                            warnings: [...upload.warnings, ...next.warnings],
                           }
-                        />
-                      </Field>
-                      <Field label="Branch or tag (optional)">
-                        <Input
-                          value={reference}
-                          disabled={blocked}
-                          placeholder="Repository default"
-                          onChange={(event) => setReference(event.target.value)}
-                        />
-                      </Field>
-                      <p className="m-0 text-caption text-muted">
-                        HTTPS or SSH; GitHub owner/repository also works. SSH
-                        uses your agent and known hosts. Password prompts and
-                        credential helpers are not used. Buzz git repositories
-                        in this community sign in with your account.
-                      </p>
-                      <div className="justify-self-start">
-                        <Button
-                          type="submit"
-                          size="sm"
-                          aria-label="Find plugins"
-                          disabled={blocked || !repository.trim()}
-                        >
-                          Find
-                        </Button>
-                      </div>
-                    </SettingsGroup>
-                  </form>
-                </div>
-              </>
+                        : null;
+                    });
+                  }}
+                >
+                  <FolderOpenIcon size={32} aria-hidden="true" />
+                  <p className="m-0 text-body-sm">Drop a plugin folder here</p>
+                  <Button
+                    size="sm"
+                    ref={browse}
+                    aria-label="Browse plugin folder"
+                    disabled={blocked}
+                    onClick={() => void load(() => imports.folder())}
+                  >
+                    Browse
+                  </Button>
+                </section>
+                <form
+                  aria-label="Add from Git"
+                  className={styles.git}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (repository.trim())
+                      void load(async () => {
+                        const signed = await authorizeGit?.(repository);
+                        return signed
+                          ? imports.git(
+                              signed.repository,
+                              reference,
+                              signed.token,
+                            )
+                          : imports.git(repository, reference);
+                      });
+                  }}
+                >
+                  <SettingsGroup layout="form">
+                    <Field label="Git or GitHub repository">
+                      <Input
+                        required
+                        value={repository}
+                        disabled={blocked}
+                        placeholder="https://github.com/owner/repository"
+                        onChange={(event) => setRepository(event.target.value)}
+                      />
+                    </Field>
+                    <Field label="Branch or tag (optional)">
+                      <Input
+                        value={reference}
+                        disabled={blocked}
+                        placeholder="Repository default"
+                        onChange={(event) => setReference(event.target.value)}
+                      />
+                    </Field>
+                    <p className="m-0 text-caption text-muted">
+                      HTTPS or SSH; GitHub owner/repository also works. SSH uses
+                      your agent and known hosts. Password prompts and
+                      credential helpers are not used. Buzz git repositories in
+                      this community sign in with your account.
+                    </p>
+                    <div className="justify-self-start">
+                      <Button
+                        type="submit"
+                        size="sm"
+                        aria-label="Find plugins"
+                        disabled={blocked || !repository.trim()}
+                      >
+                        Find
+                      </Button>
+                    </div>
+                  </SettingsGroup>
+                </form>
+              </div>
             )}
           </div>
           {loading && !preview && (

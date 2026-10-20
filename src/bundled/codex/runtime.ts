@@ -14,6 +14,7 @@ import type {
 import type { EventData } from "../../features/relay/events";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { readProject } from "../../features/agent-harness/project";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { MemoryReads } from "../../features/agent-harness/core-memory";
 import type { Context } from "../../buzz-mcp/client";
 import {
@@ -74,6 +75,8 @@ type Request = {
   acknowledged?: () => void;
   superseded?: () => void;
   failActivity(reason: string): void;
+  /** Given again after a reload stopped its turn partway. */
+  resumed?: true;
 };
 /** `at` is when the binding last took in a message or ended a turn; bindings
  * saved before it existed have none. `tools` is the `addedKey` of the
@@ -162,6 +165,14 @@ const LINGER_POLL_MS = 100;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+/** The note at the end of a request's turn input, if any. */
+function noteOf(request: Request) {
+  const notes = [
+    request.resumed ? RESUMED_PROMPT : undefined,
+    turnNote(request.agent),
+  ].filter(Boolean);
+  return notes.length ? notes.join("\n\n") : undefined;
+}
 function textOf(event: EventData, name: string) {
   let text = event.content.trim().replace(/^🤖\s+/, "");
   if (text.startsWith(`@${name}`)) text = text.slice(name.length + 1).trim();
@@ -562,6 +573,7 @@ export class CodexRuntime {
       ...(delivery.step ? { step: delivery.step } : {}),
       ...(delivery.acknowledged ? { acknowledged: delivery.acknowledged } : {}),
       ...(delivery.superseded ? { superseded: delivery.superseded } : {}),
+      ...(trigger.resumed ? { resumed: true } : {}),
     };
     if (!validWorkspace(settings.workspace)) {
       failActivity(
@@ -629,7 +641,7 @@ export class CodexRuntime {
             threadId: active.threadId,
             expectedTurnId: active.turnId,
             input: input(
-              `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, turnNote(request.agent))}`,
+              `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, noteOf(request))}`,
             ),
           });
           active.reply = request;
@@ -1227,7 +1239,7 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, turnNote(request.agent))}`,
+          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, noteOf(request))}`,
         ),
         model,
         effort,

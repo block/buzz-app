@@ -15,7 +15,7 @@ import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { MemoryEntry } from "../../features/agents/memory";
 import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
-import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { localSessions } from "./sessions";
@@ -321,6 +321,7 @@ it("hands a mention to its thread's session", async () => {
     `Alice (${alice}) (1970-01-01T00:01:40.000Z): Build is red`,
   );
   expect(prompt).toContain("Content: @Claude can you look?");
+  expect(prompt).not.toContain(RESUMED_PROMPT);
   // The process holds no key: it acts through the tools.
   expect(claude?.options).not.toHaveProperty("agent");
   expect(claude?.options.args).toContain("--mcp-config");
@@ -362,6 +363,22 @@ it("hands the host a stopper that interrupts the mention's running turn", async 
   expect(interrupts()).toHaveLength(1);
   claude?.finish();
   await flush(10);
+});
+
+it("tells a turn a reload stopped to carry on where it left off", async () => {
+  const mention = message("2", "@Claude fix the build", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes } = setup([mention]);
+  await deliver({ type: "mention", event: mention, resumed: true });
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toContain("Content: @Claude fix the build");
+  expect(prompt).toContain(RESUMED_PROMPT);
 });
 
 const EFFORTS = [

@@ -2,6 +2,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { createCommunities } from "./service";
 import { communityDestination } from "./destination";
+import { localCommunityNameKey } from "./names";
 import * as destinations from "./destination";
 import { flush } from "../relay/testing";
 import type { ReadTransport } from "../relay/transport";
@@ -905,6 +906,27 @@ it("applies a server list in one record write: adds under the host name, forgets
   client.select("https://new.example:8443");
   await flush();
   expect(requests.filter((url) => url.endsWith("/session"))).toHaveLength(2);
+});
+
+it("a synced-in community shows the viewer's local name and reads its presentation", async () => {
+  const client = setup();
+  await flush();
+  localStorage.setItem(
+    localCommunityNameKey("https://new.example", viewer),
+    "Mine",
+  );
+  const release = client.retainPresentation();
+  await client.applySync({ known: ["wss://new.example"], outbox: [] }, [
+    "wss://new.example",
+  ]);
+  expect(client.snapshot().memberships).toEqual([
+    { id: "https://new.example", name: "new.example", localName: "Mine" },
+  ]);
+  await flush();
+  expect(requests).toContain(
+    `/api/relay/${encodeURIComponent("https://new.example")}/icon-info`,
+  );
+  release();
 });
 
 it("a native sync write that will not save throws before anything changes", async () => {

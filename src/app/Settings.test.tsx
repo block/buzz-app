@@ -706,24 +706,44 @@ function reviewPluginFixture(
   return { external, snapshot, publish, manager };
 }
 
-it("offers rollback in the row and details menus when a revision is retained", async () => {
+it("keeps bundled plugins free of manual-plugin menus in rows and details", () => {
+  reviewPluginFixture();
+  expect(
+    screen.queryByRole("button", { name: "More actions for Alphabet bundled" }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "More actions for Zebra external" }),
+  ).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Alphabet bundled details" }),
+  );
+  const pane = screen.getByRole("complementary", {
+    name: "Alphabet bundled details",
+  });
+  expect(
+    within(pane).queryByRole("button", { name: "More plugin actions" }),
+  ).toBeNull();
+  expect(within(pane).queryByText("Review access")).toBeNull();
+});
+
+it("confirms rollback from either menu and retains failures for retry", async () => {
   const user = userEvent.setup();
   const { external, manager } = reviewPluginFixture();
   external.previous = "previous";
   await user.click(
     screen.getByRole("button", { name: "View Zebra external details" }),
   );
-  expect(screen.queryByRole("button", { name: "Roll back" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "More plugin actions" }));
-  await screen.findByRole("menuitem", { name: "Roll back" });
+  await user.click(await screen.findByRole("menuitem", { name: "Roll back" }));
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Roll back Zebra external?",
+  });
+  expect(manager.change).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(manager.change).not.toHaveBeenCalled();
   expect(
-    screen.getAllByRole("menuitem").map((item) => item.textContent),
-  ).toEqual(["Review access", "Roll back", "Delete"]);
-  await user.click(screen.getByRole("menuitem", { name: "Roll back" }));
-  expect(manager.change).toHaveBeenLastCalledWith(
-    "rollback",
-    external.manifest.id,
-  );
+    screen.getByRole("button", { name: "More plugin actions" }),
+  ).toHaveFocus();
   await user.click(
     screen.getByRole("button", { name: "Close plugin details" }),
   );
@@ -731,10 +751,18 @@ it("offers rollback in the row and details menus when a revision is retained", a
     screen.getByRole("button", { name: "More actions for Zebra external" }),
   );
   await user.click(await screen.findByRole("menuitem", { name: "Roll back" }));
+  vi.mocked(manager.change).mockResolvedValueOnce(false);
+  await user.click(screen.getByRole("button", { name: "Roll back" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Plugin rollback wasn’t confirmed",
+  );
+  vi.mocked(manager.change).mockResolvedValueOnce(true);
+  await user.click(screen.getByRole("button", { name: "Roll back" }));
   expect(manager.change).toHaveBeenLastCalledWith(
     "rollback",
     external.manifest.id,
   );
+  expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
 it("sorts Essentials first and names alphabetically", () => {

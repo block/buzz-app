@@ -873,12 +873,10 @@ impl Manager {
                             return Err(SIGNED_ROLLBACK_ERROR.into());
                         }
                         let a = self.artifact(id, &previous, p.previous_signature.as_ref())?;
-                        let previous_source = p.previous_source.clone();
-                        p.previous = Some(p.current.clone());
-                        p.previous_source = p.current_source.clone();
                         p.current = previous;
-                        std::mem::swap(&mut p.current_signature, &mut p.previous_signature);
-                        p.current_source = previous_source;
+                        p.current_signature = p.previous_signature.take();
+                        p.current_source = p.previous_source.take();
+                        p.previous = None;
                         p.readme_revision = a.readme_revision();
                         p.icon_png_revision = icon_revision(a.icon_png.as_deref());
                         p.icon_jpg_revision = icon_revision(a.icon_jpg.as_deref());

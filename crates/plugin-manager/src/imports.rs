@@ -1340,16 +1340,21 @@ mod tests {
         assert!(rolled.enabled);
         assert!(rolled.reloadable);
         assert_eq!(rolled.update_source, folder_source);
-        let forward = reopened.change("rollback", "example.remembered").unwrap();
-        assert_eq!(
-            forward
-                .plugins
-                .iter()
-                .find(|p| p.manifest.id == "example.remembered")
-                .unwrap()
-                .update_source,
-            git_source
-        );
+        assert!(rolled.previous.is_none());
+        assert!(reopened
+            .change("rollback", "example.remembered")
+            .err()
+            .unwrap()
+            .contains("No previous revision"));
+        // Updating again creates a new rollback target and remembers the Git source again.
+        let updated = git.install(&reopened, &git.preview.token, "dist").unwrap();
+        let updated = updated
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.remembered")
+            .unwrap();
+        assert!(updated.previous.is_some());
+        assert_eq!(updated.update_source, git_source);
     }
     #[test]
     fn folder_skips_hidden_descendants_but_accepts_a_hidden_selection() {

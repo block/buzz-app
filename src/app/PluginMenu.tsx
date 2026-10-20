@@ -33,7 +33,11 @@ export function PluginMenu({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmRollback, setConfirmRollback] = useState(false);
+  const [rollingBack, setRollingBack] = useState(false);
+  const [rollbackError, setRollbackError] = useState<string | null>(null);
   const [showAccess, setShowAccess] = useState(false);
+  if (plugin.source !== "external") return null;
   return (
     <>
       <MenuRoot>
@@ -51,7 +55,11 @@ export function PluginMenu({
         <MenuPopup
           align="end"
           aria-label="Plugin actions"
-          finalFocus={confirmDelete || showAccess ? false : deleteTrigger}
+          finalFocus={
+            confirmDelete || confirmRollback || showAccess
+              ? false
+              : deleteTrigger
+          }
         >
           <MenuItem onClick={() => setShowAccess(true)}>Review access</MenuItem>
           {toggle && (
@@ -62,7 +70,10 @@ export function PluginMenu({
           {plugin.source === "external" && plugin.previous && (
             <MenuItem
               disabled={busy || !!plugin.rollbackBlockedReason}
-              onClick={() => plugins.change("rollback", plugin.manifest.id)}
+              onClick={() => {
+                setRollbackError(null);
+                setConfirmRollback(true);
+              }}
             >
               Roll back
             </MenuItem>
@@ -90,6 +101,64 @@ export function PluginMenu({
       >
         <PluginAccessReview manifest={plugin.manifest} />
       </Dialog>
+      {confirmRollback && (
+        <AlertDialog
+          title={`Roll back ${plugin.manifest.name}?`}
+          description="Restore the previous installed version. Your enabled or disabled choice will stay the same. You can update again from the source folder or repository."
+          pending={busy || rollingBack}
+          finalFocus={deleteTrigger}
+          onClose={() => setConfirmRollback(false)}
+          actions={
+            <>
+              <Button
+                disabled={busy || rollingBack}
+                onClick={() => setConfirmRollback(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="prominent"
+                disabled={
+                  busy ||
+                  rollingBack ||
+                  !plugin.previous ||
+                  !!plugin.rollbackBlockedReason
+                }
+                onClick={async () => {
+                  if (
+                    busy ||
+                    rollingBack ||
+                    !plugin.previous ||
+                    plugin.rollbackBlockedReason
+                  )
+                    return;
+                  setRollingBack(true);
+                  setRollbackError(null);
+                  try {
+                    if (await plugins.change("rollback", plugin.manifest.id))
+                      setConfirmRollback(false);
+                    else
+                      setRollbackError(
+                        plugins.snapshot().error ??
+                          "Plugin rollback wasn’t confirmed. Try again.",
+                      );
+                  } finally {
+                    setRollingBack(false);
+                  }
+                }}
+              >
+                Roll back
+              </Button>
+            </>
+          }
+        >
+          {rollbackError && (
+            <p role="alert" className="error text-body-sm">
+              {rollbackError}
+            </p>
+          )}
+        </AlertDialog>
+      )}
       {confirmDelete && (
         <AlertDialog
           title={`Delete ${plugin.manifest.name}?`}

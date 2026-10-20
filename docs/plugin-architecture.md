@@ -892,7 +892,8 @@ moves into their ellipsis menus while Update is available. The row retains the l
 check result for the installed revision and opens the pane’s review, checking the
 saved source again when the pane reopens. Only the open pane polls local folders.
 The menus also offer Review access, reusing the import review’s disclosures
-for the installed manifest, and Delete for external plugins with confirmation.
+for the installed manifest, and Delete with confirmation. These menus appear only for
+manual/external plugins; bundled plugins keep their Enable/Disable control.
 The list row shows no freshness status label. Failed activation shows Retry beside the error for an enabled,
 unpaused plugin. Retry activates the installed revision after its previous cleanup
 finishes; it does not acquire source files, install a package, or change saved state.
@@ -906,7 +907,9 @@ known hosts, with interactive prompts and SSH config disabled. If normal Git use
 an `IdentityAgent` from SSH config, launch the app with that socket in
 `SSH_AUTH_SOCK`; otherwise terminal Git can authenticate while the app cannot. Each check creates an
 immutable preview, discarded when details close or a check is replaced. The source
-follows the current revision through update and rollback. Missing sources or changed
+follows the current revision through update and rollback. Rollback requires confirmation
+in Settings and consumes the previous revision: it cannot toggle forward again. The
+enabled/disabled choice is preserved; a later update establishes a new rollback target. Missing sources or changed
 plugin identities/paths leave the installation unchanged. Older Git installs and
 dropped-folder snapshots without saved source information need deletion and a fresh
 Add to establish a source. Git sources remain ineligible for folder Reload.

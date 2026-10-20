@@ -297,7 +297,7 @@ function PluginDetails({
     useState<HTMLDivElement | null>(null);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   useLayoutEffect(() => {
-    close.current?.focus();
+    close.current?.focus({ preventScroll: true });
   }, [close]);
   // READMEs ship with Buzz; never attach one to an external plugin.
   const readme =
@@ -559,7 +559,7 @@ function PluginDetails({
               disabled={busy}
               onClick={() => {
                 if (plugins.retryPlugin(plugin.manifest.id))
-                  close.current?.focus();
+                  close.current?.focus({ preventScroll: true });
               }}
             >
               Retry
@@ -800,7 +800,7 @@ export function Settings({
         (active.contains(element) ||
           (element.contains(active) && !details?.contains(active)))
       )
-        detailsClose.current?.focus();
+        detailsClose.current?.focus({ preventScroll: true });
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -825,7 +825,9 @@ export function Settings({
             plugin.manifest.id === pluginTrigger.current?.dataset.pluginId,
         ),
       );
-      (visible ? pluginTrigger.current : pluginSection.current)?.focus();
+      (visible ? pluginTrigger.current : pluginSection.current)?.focus({
+        preventScroll: true,
+      });
     }
   }, [selectedPlugin, coreGroup, pluginGroups]);
   const selectedRunning = selectedPlugin
@@ -973,7 +975,10 @@ export function Settings({
                           label={name}
                           description={
                             plugin.manifest.description ? (
-                              <span id={`plugin-description-${id}`}>
+                              <span
+                                id={`plugin-description-${id}`}
+                                className={styles.pluginRowDescription}
+                              >
                                 {plugin.manifest.description}
                               </span>
                             ) : undefined
@@ -1420,7 +1425,10 @@ export function Settings({
   // The Settings modal supplies its own frame, title and section navigation.
   if (navigationPane)
     return (
-      <div className={styles.navigationPane}>
+      <div
+        className={styles.navigationPane}
+        data-plugin-catalog={selected === "plugins" || undefined}
+      >
         {announcement}
         <div
           ref={layout}

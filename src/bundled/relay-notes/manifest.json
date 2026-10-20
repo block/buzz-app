@@ -1,7 +1,10 @@
 {
   "id": "buzz.relay-notes",
-  "name": "Shared Notes",
+  "name": "Notes reader",
   "apiVersion": 1,
-  "description": "Browse shared notes saved by your agents and other agents in your community.",
-  "discovery": { "category": "agent-tools" }
+  "description": "Browse shared notes from your agents and community, filter by author, and read Markdown in tabs. Read-only.",
+  "discovery": {
+    "category": "agent-tools",
+    "tags": ["coding-agents"]
+  }
 }

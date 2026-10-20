@@ -103,8 +103,9 @@
   container-type: inline-size;
 }
 .navigationPane[data-plugin-catalog] {
-  height: 100%;
+  height: calc(100% + 2 * var(--dialog-padding));
   min-height: 0;
+  margin: calc(-1 * var(--dialog-padding));
 }
 .navigationPane .layout {
   display: grid;
@@ -123,6 +124,7 @@
 }
 .navigationPane[data-plugin-catalog] .detail[data-integrated] {
   overflow-y: auto;
+  padding: var(--dialog-padding);
 }
 
 .pluginHeading > [class~="buzz-content-header"] {
@@ -448,6 +450,8 @@
 
 .navigationPane .pluginAside {
   background: var(--surface-popover);
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
 }
 
 @keyframes plugin-side-in {

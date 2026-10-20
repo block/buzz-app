@@ -52,8 +52,29 @@ const time = (at: number) =>
     hour: "numeric",
     minute: "2-digit",
   });
-/** An entry's own time, to the second: turn entries are often seconds apart. */
-const clock = (at: number) => new Date(at).toLocaleTimeString();
+const FULL: Intl.DateTimeFormatOptions = {
+  weekday: "long",
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  second: "2-digit",
+};
+/** An entry's time under it; the turn header already dates the prompt. */
+function Stamp({ item }: { item: TranscriptItem }) {
+  if (item.type === "prompt") return null;
+  const date = new Date(item.at);
+  return (
+    <time
+      className={`text-body-sm ${styles.at}`}
+      dateTime={date.toISOString()}
+      title={date.toLocaleString(undefined, FULL)}
+    >
+      {time(item.at)}
+    </time>
+  );
+}
 export function duration(ms: number) {
   if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
   const minutes = Math.floor(ms / 60_000);
@@ -154,13 +175,8 @@ function Turn({
       )}
       {turn.items.map((item) => (
         <div key={item.id} className={styles.item} data-type={item.type}>
-          <time
-            className={`text-body-sm ${styles.at}`}
-            dateTime={new Date(item.at).toISOString()}
-          >
-            {clock(item.at)}
-          </time>
           <Item item={item} agentName={agentName} />
+          <Stamp item={item} />
         </div>
       ))}
       {turn.error && (
@@ -413,7 +429,10 @@ function Tool({ item, agentName }: { item: ToolItem; agentName: string }) {
             Calls recorded during this script
           </p>
           {item.children.map((child) => (
-            <Item key={child.id} item={child} agentName={agentName} />
+            <div key={child.id}>
+              <Item item={child} agentName={agentName} />
+              <Stamp item={child} />
+            </div>
           ))}
         </div>
       ) : null}

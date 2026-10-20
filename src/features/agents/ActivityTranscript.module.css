@@ -31,6 +31,7 @@
 }
 .at {
   display: block;
+  margin-top: var(--space-1);
   color: var(--text-subtle);
 }
 .row {

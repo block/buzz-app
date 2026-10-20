@@ -167,6 +167,9 @@ it("shows a failed nested call on the collapsed script while preserving the scri
   const script = screen.getByText("exec", { exact: true }).closest("details");
   expect(script).not.toHaveAttribute("open");
   expect(script).toHaveAttribute("data-status", "completed");
+  // The script and its nested call each carry their own time.
+  expect(script?.querySelectorAll("time")).toHaveLength(1);
+  expect(script?.parentElement?.querySelectorAll("time")).toHaveLength(2);
 });
 
 it("discloses tool arguments and results without raw details, including a posted send", async () => {
@@ -222,9 +225,9 @@ it("discloses tool arguments and results without raw details, including a posted
   expect(screen.queryByText("Raw details")).not.toBeInTheDocument();
 });
 
-it("shows each entry's own time", () => {
+it("shows each entry's time under it, with the full date on hover, except the prompt", () => {
   const at = Date.UTC(2026, 9, 20, 20, 1, 28);
-  render(
+  const { container } = render(
     <ActivityTranscript
       transcript={{
         unknownThread: 0,
@@ -236,8 +239,9 @@ it("shows each entry's own time", () => {
             threadRootId: null,
             config: [],
             items: [
+              { id: "prompt", at, type: "prompt", text: "hi", sections: [] },
               { id: "thought", at: at + 3000, type: "thought", text: "hmm" },
-              { id: "reply", at: at + 7000, type: "message", text: "done" },
+              { id: "reply", at: at + 70_000, type: "message", text: "done" },
             ],
           } as never,
         ],
@@ -246,10 +250,13 @@ it("shows each entry's own time", () => {
       state={() => "ended"}
     />,
   );
-  for (const offset of [3000, 7000]) {
-    const stamp = new Date(at + offset);
-    expect(
-      screen.getByText(stamp.toLocaleTimeString(), { exact: true }),
-    ).toHaveAttribute("datetime", stamp.toISOString());
+  const stamps = [...container.querySelectorAll("time")];
+  expect(stamps.map((stamp) => stamp.getAttribute("datetime"))).toEqual([
+    new Date(at + 3000).toISOString(),
+    new Date(at + 70_000).toISOString(),
+  ]);
+  for (const stamp of stamps) {
+    expect(stamp.previousElementSibling).not.toBeNull();
+    expect(stamp.title).toContain("2026");
   }
 });

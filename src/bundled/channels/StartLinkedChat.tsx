@@ -5,6 +5,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { Navigation } from "../../features/navigation/controller";
 import { messageCopyLink } from "../../features/messages/message-copy";
 import {
+  linkedDraftId,
   linkedDraftKey,
   type LinkedChat,
 } from "../../features/solo/linked-chat";
@@ -53,7 +54,7 @@ export function StartLinkedChat({
       if (!link || (message && message.channelId !== channelId))
         throw new Error("This source is unavailable. Reopen it and try again.");
       const source: LinkedChat = { channelId, link };
-      const id = crypto.randomUUID();
+      const id = await linkedDraftId(source);
       if (!writeView(session.scope, linkedDraftKey(id), source))
         throw new Error(
           "Your new chat draft couldn’t be saved. Nothing was created.",

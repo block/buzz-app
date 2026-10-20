@@ -23,3 +23,17 @@ export function readLinkedChat(
   return value as LinkedChat;
 }
 export const linkedDraftKey = (id: string) => `solo:linked:${id}`;
+/** One draft per source: starting again from it returns to the unsent prompt
+ * instead of stranding it under a fresh key. */
+export async function linkedDraftId(source: LinkedChat) {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(`${source.channelId}\n${source.link}`),
+    ),
+  );
+  const hex = [...digest.slice(0, 16)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}

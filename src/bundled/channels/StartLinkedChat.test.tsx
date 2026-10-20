@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
@@ -15,6 +15,7 @@ import {
   MenuTrigger,
   MenuPopup,
 } from "../../shared/design-system/ui/Menu";
+import { readView, writeView } from "../../shared/view-state";
 import { StartLinkedChat } from "./StartLinkedChat";
 
 const owner = createRelaySession(null);
@@ -93,5 +94,19 @@ it("opens an isolated Solo draft with the exact source link", async () => {
     channelId: "design",
     link: `buzz://message?channel=design&id=${reply}&thread=${root}`,
   });
+  // Starting again from the same source returns to its unsent prompt.
+  writeView(scope, `${linkedDraftKey(id ?? "")}:new-draft`, "Half typed");
+  await user.click(screen.getByRole("button", { name: "Message actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Start Solo chat" }),
+  );
+  await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+  const again = open.mock.calls[1]?.[0];
+  expect(
+    again?.kind === "page" ? soloDraft(again.route?.params)?.linked : undefined,
+  ).toBe(id);
+  expect(readView(scope, `${linkedDraftKey(id ?? "")}:new-draft`, "")).toBe(
+    "Half typed",
+  );
   view.unmount();
 });

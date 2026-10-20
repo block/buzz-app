@@ -29,8 +29,6 @@ import type { EmojiSearchSelection } from "../../bundled/emoji/emoji-mart";
 type Props = {
   triggerStyle?: "dotted-squircle";
   inlinePicker?: boolean;
-  /** Offers one source: an uploaded image, or an emoji on a background. */
-  source?: "image" | "emoji";
   triggerLabel?: string;
   actionTarget?: HTMLElement | null | undefined;
   value: string;
@@ -113,11 +111,6 @@ export function AvatarEditor(props: Props) {
     <div
       className={props.inlinePicker ? styles.inlineEditor : undefined}
       data-editing={open || undefined}
-      data-empty-image={
-        props.inlinePicker && props.source === "image" && !preview
-          ? ""
-          : undefined
-      }
     >
       <Popover.Root
         open={open}
@@ -125,9 +118,7 @@ export function AvatarEditor(props: Props) {
           if (!props.inlinePicker || next) setOpen(next);
         }}
       >
-        {props.inlinePicker &&
-        props.source === "image" &&
-        !preview ? null : props.triggerStyle === "dotted-squircle" ? (
+        {props.triggerStyle === "dotted-squircle" ? (
           <Popover.Trigger
             render={
               <button
@@ -298,7 +289,6 @@ function EmojiArtwork({ emoji, animate }: { emoji: string; animate: boolean }) {
 function AvatarDraft({
   actionTarget,
   inlinePicker,
-  source,
   value,
   community,
   onPreview,
@@ -329,9 +319,7 @@ function AvatarDraft({
     return () => observer.disconnect();
   }, []);
   const [picture, setPicture] = useState(value);
-  const [mode, setMode] = useState<"image" | "emoji" | "background">(
-    source ?? "image",
-  );
+  const [mode, setMode] = useState<"image" | "emoji" | "background">("image");
   const [emoji, setEmoji] = useState("😀");
   const [color, setColor] = useState("#FFF4CC");
   const [pulse, setPulse] = useState(0);
@@ -339,7 +327,7 @@ function AvatarDraft({
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
-  const droppable = !disabled && !busy && !!community && source !== "emoji";
+  const droppable = !disabled && !busy && !!community;
   useEffect(() => {
     onPreview({
       picture,
@@ -406,7 +394,7 @@ function AvatarDraft({
     tab === "image" ? (
       <div
         className={styles.imagePanel}
-        data-surface={inlinePicker && source === "image" ? "panel" : undefined}
+        data-surface={inlinePicker ? "panel" : undefined}
       >
         <button
           type="button"
@@ -443,7 +431,7 @@ function AvatarDraft({
           error={pictureError}
         >
           <InputGroup
-            surface={inlinePicker && source === "image" ? "panel" : "inset"}
+            surface={inlinePicker ? "panel" : "inset"}
             leading={<LinkIcon size={18} aria-hidden="true" />}
           >
             <Input
@@ -547,30 +535,24 @@ function AvatarDraft({
           }
         }}
       >
-        {source === "image" ? (
-          renderPanel("image")
-        ) : (
-          <Tabs
-            value={mode}
-            label="Avatar source"
-            variant="panel"
-            items={(
-              [
-                { value: "image", label: "Image" },
-                { value: "emoji", label: "Emoji" },
-                { value: "background", label: "Background" },
-              ] as const
-            ).filter((item) => source !== "emoji" || item.value !== "image")}
-            onValueChange={(next) => {
-              if (!busy && !disabled) {
-                setMode(next);
-                setCustomColorOpen(false);
-                setError("");
-              }
-            }}
-            renderPanel={renderPanel}
-          />
-        )}
+        <Tabs
+          value={mode}
+          label="Avatar source"
+          variant="panel"
+          items={[
+            { value: "image", label: "Image" },
+            { value: "emoji", label: "Emoji" },
+            { value: "background", label: "Background" },
+          ]}
+          onValueChange={(next) => {
+            if (!busy && !disabled) {
+              setMode(next);
+              setCustomColorOpen(false);
+              setError("");
+            }
+          }}
+          renderPanel={renderPanel}
+        />
         {busy && (
           <p role="status" className="text-body-sm">
             Uploading avatar…
@@ -589,7 +571,7 @@ function AvatarDraft({
         )}
         {!(mode === "background" && customColorOpen) && (
           <div className="flex flex-wrap justify-between gap-2">
-            {!source && !inlinePicker && (
+            {!inlinePicker && (
               <Button
                 variant="destructive"
                 disabled={(!value && !picture) || disabled || busy}

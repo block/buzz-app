@@ -183,7 +183,7 @@ it("creates with the name, a pack picture and the config from the type's view", 
   expect(onCreated).toHaveBeenCalledExactlyOnceWith(made);
 });
 
-it("creates with an emoji on a chosen background", async () => {
+it("creates with a custom emoji on a chosen background", async () => {
   const file = new File(["emoji"], "avatar.png", { type: "image/png" });
   vi.mocked(emojiAvatar).mockResolvedValueOnce(file);
   vi.mocked(uploadAvatar).mockResolvedValueOnce(
@@ -199,15 +199,16 @@ it("creates with an emoji on a chosen background", async () => {
     within(dialog).getByRole("button", { name: "Choose avatar" }),
   );
   await user.click(
-    await within(dialog).findByRole("button", { name: "Use emoji" }),
+    await within(dialog).findByRole("button", { name: "Use custom" }),
   );
-  expect(within(dialog).getByRole("tab", { name: "Emoji" })).toHaveAttribute(
+  expect(within(dialog).getByRole("tab", { name: "Image" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
   expect(
-    within(dialog).queryByRole("tab", { name: "Image" }),
-  ).not.toBeInTheDocument();
+    within(dialog).getByRole("button", { name: "Edit avatar" }),
+  ).toBeVisible();
+  await user.click(within(dialog).getByRole("tab", { name: "Emoji" }));
   await user.click(within(dialog).getByRole("tab", { name: "Background" }));
   await user.click(
     within(dialog).getByRole("button", { name: "Use #476CFF background" }),
@@ -229,17 +230,19 @@ it("creates with an emoji on a chosen background", async () => {
   );
 });
 
-it("offers an emoji only with a community to upload it to", async () => {
+it("keeps an emoji's Done disabled without a community to upload it to", async () => {
   const { dialog, user } = setup([echo]);
   await user.click(
     within(dialog).getByRole("button", { name: "Choose avatar" }),
   );
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Use custom" }),
+  );
+  await user.click(within(dialog).getByRole("tab", { name: "Background" }));
+  expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
   expect(
-    await within(dialog).findByRole("button", { name: "Use image" }),
+    within(dialog).getByText(/Select a community in the sidebar/),
   ).toBeVisible();
-  expect(
-    within(dialog).queryByRole("button", { name: "Use emoji" }),
-  ).not.toBeInTheDocument();
 });
 
 it("opens on the name field", async () => {

@@ -1683,7 +1683,7 @@ it("opens avatar and name editing from the profile menu", async () => {
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
   expect(dialog).toHaveAttribute("data-height", "stable-tall");
   expect(
-    within(dialog).getByRole("button", { name: "Use image" }),
+    within(dialog).getByRole("button", { name: "Use custom" }),
   ).toBeVisible();
   expect(
     within(dialog).queryByRole("button", { name: "Back" }),
@@ -1724,8 +1724,8 @@ it("leaves an open emoji picker by Back or Cancel without saving", async () => {
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  await user.click(within(dialog).getByRole("button", { name: "Use emoji" }));
-  expect(within(dialog).getByRole("tab", { name: "Emoji" })).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
+  await user.click(within(dialog).getByRole("tab", { name: "Emoji" }));
   // Let Mart finish mounting so it cannot outlive the test.
   await waitFor(() =>
     expect(
@@ -1735,7 +1735,7 @@ it("leaves an open emoji picker by Back or Cancel without saving", async () => {
     ).toBeTruthy(),
   );
   await user.click(within(dialog).getByRole("button", { name: "Back" }));
-  await user.click(within(dialog).getByRole("button", { name: "Use emoji" }));
+  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -1940,7 +1940,7 @@ it("removes an existing avatar through the image editor and explicit Save", asyn
     await screen.findByRole("menuitem", { name: "Change avatar" }),
   );
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  await user.click(within(dialog).getByRole("button", { name: "Use image" }));
+  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
   const url = within(dialog).getByRole("textbox", { name: /url/i });
   await user.clear(url);
   await user.click(within(dialog).getByRole("button", { name: "Done" }));

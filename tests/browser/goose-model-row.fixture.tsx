@@ -30,7 +30,7 @@ const fake = fakeSpawn({
   supported: [LONG],
 });
 const { SettingsTab } = createTabs({
-  setup: new GooseSetup(fake.spawn),
+  setup: new GooseSetup(fake),
   runtime: {} as GooseRuntime,
   history: new GooseHistory(undefined),
 });

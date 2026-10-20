@@ -79,7 +79,7 @@ agents are not migrated into this type.
   destination's latest queued join or leave one at a time, retrying failures
   as sent, and reports its state on the communities snapshot. A list
   this client cannot read halts sync until the next sign-in with that reason;
-  a 404 on `list` (routes not deployed) halts it quietly; a listed address the
+  a 404 on any route (not yet deployed) halts it quietly; a listed address the
   device could never save is dropped and counted, never a halt. See
   [communities](../../../docs/communities.md#known-communities).
 

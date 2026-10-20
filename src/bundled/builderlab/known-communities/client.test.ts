@@ -70,6 +70,22 @@ it("reads an omitted repeated field as an empty list", async () => {
 });
 
 it.each([
+  { name: "an empty body", body: "" },
+  { name: "an HTML page", body: "<html>Blocked</html>" },
+  { name: "a JSON array", body: [] },
+  { name: "JSON null", body: null },
+])(
+  "answers a 200 list carrying $name as an invalid response, never an empty list",
+  async ({ body }) => {
+    const h = await fixture(response(body));
+    expect(await h.client.list(h.signal)).toEqual({ kind: "invalid_response" });
+    // The edits never read their body: the status alone is their answer.
+    expect(await h.client.add(url, h.signal)).toEqual({ kind: "accepted" });
+    expect(await h.client.remove(url, h.signal)).toEqual({ kind: "accepted" });
+  },
+);
+
+it.each([
   "https://primary.example",
   "wss://primary.example/path",
   "wss://user@primary.example",

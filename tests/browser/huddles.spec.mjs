@@ -423,18 +423,13 @@ test("capsule and companion presentation share mute and leave", async ({
           .map((animation) => animation.finished),
       );
     });
-    // Measure the layout circle after arrival settles; the artwork inside can tilt.
+    // A spring can briefly cross its final size before overshooting. Wait for
+    // Motion to remove the arrival/layout transform, not that transient crossing.
     await expect
       .poll(() =>
         roster.evaluate((el) =>
-          [...el.querySelectorAll("[data-self], [data-participant]")].every(
-            (person) =>
-              Math.abs(
-                person.getBoundingClientRect().height -
-                  person
-                    .querySelector("[data-huddle-avatar]")
-                    .getBoundingClientRect().height,
-              ) < 0.1,
+          [...el.querySelectorAll("[data-huddle-avatar]")].every(
+            (avatar) => getComputedStyle(avatar).transform === "none",
           ),
         ),
       )
@@ -1967,7 +1962,14 @@ test("portraits can be tossed within the stage and return home, with reduced mot
   const portrait = stage.locator("[data-huddle-avatar]");
   await expect(portrait).toBeVisible();
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
-  await page.clock.runFor(1000);
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(16);
+      return portrait.evaluate(
+        (element) => getComputedStyle(element).transform,
+      );
+    })
+    .toBe("none");
   await portrait.evaluate(async (element) => {
     await Promise.all(
       element

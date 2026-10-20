@@ -1415,9 +1415,11 @@ export function EditableInput({
           // Send/completion/cancel policy belongs to the host. ProseMirror's
           // default capture otherwise prevents Escape before React can cancel edits.
           keydown(_view, event) {
-            if (event.isComposing || composing.current || event.keyCode === 229)
-              return false;
-            return event.key === "Enter" || event.key === "Escape";
+            return (
+              (event.key === "Enter" || event.key === "Escape") &&
+              !event.isComposing &&
+              !composing.current
+            );
           },
           beforeinput(_view, event) {
             // Native insertion can restore focus before its input/selectionchange

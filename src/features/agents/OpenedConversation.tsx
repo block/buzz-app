@@ -2,6 +2,8 @@
 // apart above the agent's other conversations. Types list their own sessions.
 import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import type { AgentConversation } from "./service";
@@ -134,46 +136,44 @@ export function OpenedConversation({
   return (
     <section aria-labelledby={id}>
       <InlineHeader id={id} title={`This ${place}`} />
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-container bg-surface-inset p-4">
+      <SettingsGroup>
         {session ? (
-          <>
-            <span className="min-w-0">
-              <span className="block truncate text-label">
-                {session.name
-                  ? `#${session.name}`
-                  : session.channelId.slice(0, 8)}
-              </span>
-              <span className="block text-body-sm text-subtle">
-                {[
-                  status,
-                  session.at &&
-                    `Last active ${new Date(session.at).toLocaleString()}`,
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || `${harness} session`}
-              </span>
-            </span>
-            <Button variant="prominent" onClick={onView}>
-              View transcript
-            </Button>
-          </>
+          <PreferenceRow
+            title={
+              session.name ? `#${session.name}` : session.channelId.slice(0, 8)
+            }
+            subtitle={
+              [
+                status,
+                session.at &&
+                  `Last active ${new Date(session.at).toLocaleString()}`,
+              ]
+                .filter(Boolean)
+                .join(" · ") || `${harness} session`
+            }
+            trailing={
+              <Button size="sm" onClick={onView}>
+                View transcript
+              </Button>
+            }
+          />
         ) : searching ? (
-          <span role="status" className="text-body-sm text-subtle">
+          <span role="status" className="block p-4 text-body-sm text-subtle">
             Looking for a {harness} session…
           </span>
         ) : error ? (
-          <span role="alert" className="text-body-sm">
+          <span role="alert" className="block p-4 text-body-sm">
             Could not look for a {harness} session: {error}
           </span>
         ) : (
-          <span className="grid gap-1">
+          <span className="grid gap-1 p-4">
             <span className="text-label">No {harness} session here yet</span>
             <span className="text-body-sm text-subtle">
               One starts when you mention the agent in this {place}.
             </span>
           </span>
         )}
-      </div>
+      </SettingsGroup>
     </section>
   );
 }

@@ -453,6 +453,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "inverted",
       "link",
       "plain: unfilled text disclosure without an underline",
+      "glass (proposed): frosted action over profile artwork",
       "size: inline | xs | sm | md (default) | lg",
       "shape: capsule (default) | control (12px) | icon (square, 10px)",
       "SurfaceButton: artwork layout with shared activation and focus (proposed)",

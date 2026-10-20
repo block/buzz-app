@@ -146,6 +146,18 @@ export function ButtonSpecimen() {
         <Button>Continue</Button>
       </ExamplePreview>
       <ButtonMatrix kind="text" />
+      <ExamplePreview
+        className="bg-affordance-accent"
+        code='<Button variant="glass">Message</Button>'
+      >
+        <Button variant="glass">Message</Button>
+        <Button variant="glass" loading>
+          Message
+        </Button>
+        <Button variant="glass" disabled>
+          Message
+        </Button>
+      </ExamplePreview>
       <ExamplePreview code='<Button size="sm" shape={labelled ? "capsule" : "icon"} aria-label="Toggle label">…</Button>'>
         <Button
           size="sm"

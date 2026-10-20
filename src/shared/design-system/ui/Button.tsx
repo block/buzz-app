@@ -6,6 +6,7 @@ import { Tooltip } from "./Tooltip";
 type ButtonVariant =
   | "prominent"
   | "subtle"
+  | "glass"
   | "ghost"
   | "destructive"
   | "outline"

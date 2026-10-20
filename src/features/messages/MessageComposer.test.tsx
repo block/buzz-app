@@ -1563,7 +1563,9 @@ it.each(["cleanup", "restore"] as const)(
       await waitFor(() =>
         expect(h.input()).toHaveValue("recover this caption"),
       );
-      expect(within(h.form()).getByText("retained.txt")).toBeVisible();
+      await waitFor(() =>
+        expect(within(h.form()).getByText("retained.txt")).toBeVisible(),
+      );
       expect(
         screen.queryByRole("button", { name: "Retry draft cleanup" }),
       ).toBeNull();

@@ -149,6 +149,15 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await launcher.click();
   await expect(assignee).toHaveAttribute("aria-description", /Fixture Reader/);
   const expectCompactRow = async () => {
+    // Reopening and resizing animate both the dock and its parent grid.
+    await dock.evaluate(async (element) => {
+      await Promise.all(
+        [
+          ...element.getAnimations(),
+          ...element.parentElement.getAnimations(),
+        ].map((animation) => animation.finished),
+      );
+    });
     const row = assignee.locator("xpath=ancestor::li");
     const label = row.getByRole("checkbox").locator("..");
     const rowBounds = await row.boundingBox();

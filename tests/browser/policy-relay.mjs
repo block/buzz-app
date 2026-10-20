@@ -710,6 +710,20 @@ export function policyRelay({
           ),
       );
     },
+    hasPresenceRoute(community, author) {
+      return sockets.some(
+        (socket) =>
+          socket.readyState === 1 &&
+          socket.community === community &&
+          [...socket.routes.values()].some((filters) =>
+            filters.some(
+              (filter) =>
+                filter.kinds.includes(20001) &&
+                filter.authors?.includes(author),
+            ),
+          ),
+      );
+    },
     presence(community, event) {
       let deliveries = 0;
       for (const socket of sockets) {

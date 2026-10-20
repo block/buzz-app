@@ -1277,11 +1277,12 @@ offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
 
-PreviewCard may expose one supplemental action through `actionRef`, such as copying
+PreviewCard may expose supplemental actions through `actionRef`, such as copying
 an identity's full npub. Action previews open without a delay so immediate Tab
 navigation reaches the action. They remain non-modal and never take focus on hover. Tab
-from the trigger reaches the action; Shift+Tab returns to the trigger; forward Tab
-continues after the trigger. Escape dismisses the preview before restoring focus,
+from the trigger reaches the first focusable item, including a pausable status ticker.
+Tab moves through the supplemental actions in document order. Shift+Tab from the
+first item returns to the trigger; Tab from the last continues after the trigger. Escape dismisses the preview before restoring focus,
 but never pulls focus back if the user moved it during exit. Closing previews
 are no longer Tab destinations or pointer targets.
 Scrolling anything that contains the trigger dismisses a hover-opened preview when

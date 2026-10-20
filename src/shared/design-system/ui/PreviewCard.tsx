@@ -24,9 +24,12 @@ export type PreviewCardProps = {
   "aria-label"?: string;
   /** Optional anchor that makes the whole card open the trigger's destination. */
   link?: ReactElement;
-  /** One supplemental action, reachable from the trigger with Tab. Not used with link. */
+  /** First supplemental button, reachable from the trigger with Tab. Not used with link. */
   actionRef?: RefObject<HTMLButtonElement | null>;
 };
+
+const focusableActions =
+  "button:not(:disabled), a[href], [tabindex]:not([tabindex='-1'])";
 
 /** Whether a point lies on one of the element's line boxes, 1px inside. */
 function isOver(element: Element, x: number, y: number) {
@@ -56,7 +59,7 @@ export function PreviewCard({
   onOpenChange,
   side = "bottom",
   anchor,
-  delay = 250,
+  delay,
   className,
   id,
   link,
@@ -223,7 +226,7 @@ export function PreviewCard({
     >
       <BasePreviewCard.Trigger
         render={trigger}
-        delay={actionRef ? 0 : delay}
+        delay={delay ?? (actionRef ? 0 : 250)}
         closeDelay={150}
         ref={triggerRef}
         onMouseEnter={() => {
@@ -241,7 +244,12 @@ export function PreviewCard({
             !popupRef.current.closest("[data-anchor-hidden]")
           ) {
             event.preventDefault();
-            (actionRef?.current ?? popupRef.current).focus();
+            (actionRef
+              ? (popupRef.current.querySelector<HTMLElement>(
+                  focusableActions,
+                ) ?? actionRef.current)
+              : popupRef.current
+            )?.focus();
           }
         }}
       />
@@ -260,8 +268,31 @@ export function PreviewCard({
             id={id}
             data-buzz-ui=""
             ref={popupRef}
+            onKeyDownCapture={(event) => {
+              // A button hint must not consume the preview's Escape shortcut.
+              if (
+                actionRef &&
+                event.key === "Escape" &&
+                event.target instanceof Element &&
+                event.target.closest("[data-base-ui-tooltip-trigger]")
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                actions.current?.close();
+                restoreFocus();
+              }
+            }}
             onKeyDown={(event) => {
               if ((link || actionRef) && event.key === "Tab") {
+                if (actionRef) {
+                  const buttons = Array.from(
+                    event.currentTarget.querySelectorAll<HTMLElement>(
+                      focusableActions,
+                    ),
+                  );
+                  const boundary = event.shiftKey ? buttons[0] : buttons.at(-1);
+                  if (document.activeElement !== boundary) return;
+                }
                 // The portal is at the end of the document. Resume from its
                 // trigger so Tab order follows the link's position in prose.
                 restoreFocus();

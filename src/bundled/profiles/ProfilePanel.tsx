@@ -1,3 +1,4 @@
+import { useProfileMessage } from "../../features/profiles/useProfileMessage";
 import { AgentDetails } from "../agents/AgentDetails";
 import { AgentMessageButton } from "../agents/AgentMessageButton";
 import { useAgents } from "../../features/agents/react";
@@ -245,13 +246,8 @@ function ProfileDetails({
   const tabHost = usePanelTabHost();
   const tabbed = !!tabHost;
   const region = useRef<HTMLElement>(null);
-  const messageAttempt = useRef<AbortController>(undefined);
-  const [openingMessage, setOpeningMessage] = useState(false);
-  const [messageError, setMessageError] = useState("");
   useEffect(() => {
     if (!tabbed) region.current?.focus();
-    // Target, viewer and community changes remount this view (see key above).
-    return () => messageAttempt.current?.abort();
   }, [tabbed]);
   // Each target/session owns this completion; shared data work remains session-owned.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery.
@@ -314,56 +310,28 @@ function ProfileDetails({
     [picture, name, knownAgent],
   );
   usePanelTabTitle(name, tabAvatar);
-  // As in New message, a known agent needs this community's ready native control.
-  const messageable = () =>
-    !displayAgent ||
-    session.agentChoices
-      .snapshot()
-      .identities.some((agent) => agent.managed && agent.pubkey === pubkey);
-  const canMessage =
-    session.directMessages.available &&
-    !!navigation &&
-    !!viewer &&
-    !!communityOrigin &&
-    viewer !== pubkey &&
-    messageable();
-  async function openMessage() {
-    if (
-      messageAttempt.current ||
-      !navigation ||
-      !viewer ||
-      !communityOrigin ||
-      !messageable()
-    )
-      return;
-    const controller = new AbortController();
-    messageAttempt.current = controller;
-    setOpeningMessage(true);
-    setMessageError("");
-    try {
-      const channelId = await session.directMessages.open(
-        [pubkey],
-        controller.signal,
-      );
-      if (controller.signal.aborted) return;
-      void navigation.open({
-        version: 1,
-        kind: "conversation",
-        channelId,
-        scope: { viewer, communityOrigin },
-      });
-    } catch (reason) {
-      if (!controller.signal.aborted)
-        setMessageError(
-          reason instanceof Error
-            ? reason.message
-            : "Could not open the conversation. Try again.",
-        );
-    } finally {
-      messageAttempt.current = undefined;
-      if (!controller.signal.aborted) setOpeningMessage(false);
-    }
-  }
+  const {
+    available: canMessage,
+    opening: openingMessage,
+    error: messageError,
+    open: openMessage,
+  } = useProfileMessage({
+    session,
+    pubkey,
+    viewer,
+    agent: displayAgent,
+    enabled: !!navigation && !!communityOrigin,
+    onOpened(channelId) {
+      if (navigation && viewer && communityOrigin)
+        void navigation.open({
+          version: 1,
+          kind: "conversation",
+          channelId,
+          scope: { viewer, communityOrigin },
+        });
+    },
+  });
+
   return (
     <section
       ref={region}

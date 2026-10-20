@@ -1,5 +1,6 @@
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
   TypingPresentation,
@@ -468,41 +469,55 @@ function MessageRowContent({
       }
     />
   ) : clickable ? (
-    <IconButton
-      size={layout === "timeline" ? "default" : "sm"}
-      shape="round"
-      aria-label={`View ${name} profile`}
-      onFocus={() => setAvatarFocused(true)}
-      onBlur={(event) => {
-        // A window blur keeps this element as the browser's return-focus target.
-        if (
-          event.relatedTarget === null &&
-          document.activeElement === event.currentTarget
-        )
-          return;
-        setAvatarFocused(false);
-      }}
-      aria-describedby={presence !== "unknown" ? presenceId : undefined}
-      onClick={(event) => {
-        event.currentTarget.focus();
-        openLink(target);
-      }}
-      icon={
-        <>
-          <Avatar
-            src={picture}
-            alt=""
-            fallback={name}
-            size={compactAvatar ? "small" : "fill"}
-            shape={avatarShape}
-            statusBadge={presence === "unknown" ? undefined : presence}
-          />
-          {presence !== "unknown" && (
-            <span className="sr-only select-none" id={presenceId}>
-              Presence: {presence}
-            </span>
-          )}
-        </>
+    <ProfilePeek
+      key={`${scope}:${viewer}:${row.authorId}`}
+      viewer={viewer}
+      name={name}
+      picture={picture}
+      pubkey={row.authorId}
+      agent={avatarShape === "squircle"}
+      session={session}
+      channelId={row.channelId}
+      target={target}
+      onOpen={openLink}
+      trigger={
+        <IconButton
+          size={layout === "timeline" ? "default" : "sm"}
+          shape="round"
+          aria-label={`View ${name} profile`}
+          onFocus={() => setAvatarFocused(true)}
+          onBlur={(event) => {
+            // A window blur keeps this element as the browser's return-focus target.
+            if (
+              event.relatedTarget === null &&
+              document.activeElement === event.currentTarget
+            )
+              return;
+            setAvatarFocused(false);
+          }}
+          aria-describedby={presence !== "unknown" ? presenceId : undefined}
+          onClick={(event) => {
+            event.currentTarget.focus();
+            openLink(target);
+          }}
+          icon={
+            <>
+              <Avatar
+                src={picture}
+                alt=""
+                fallback={name}
+                size={compactAvatar ? "small" : "fill"}
+                shape={avatarShape}
+                statusBadge={presence === "unknown" ? undefined : presence}
+              />
+              {presence !== "unknown" && (
+                <span className="sr-only select-none" id={presenceId}>
+                  Presence: {presence}
+                </span>
+              )}
+            </>
+          }
+        />
       }
     />
   ) : (

@@ -33,12 +33,14 @@
   height: 100%;
   background-size: cover;
   background-position: center;
-  filter: blur(var(--blur-lg)) saturate(3);
-  transform: scale(1.2);
-  opacity: 0.5;
+  filter: blur(var(--profile-backdrop-blur, var(--blur-lg)))
+    saturate(var(--profile-backdrop-saturation, 3));
+  transform: scale(var(--profile-backdrop-scale, 1.2));
+  opacity: var(--profile-backdrop-opacity, 0.5);
 }
 .avatarBackdropImage[data-kind="human"] {
-  filter: blur(var(--blur-lg)) saturate(1.5);
+  filter: blur(var(--profile-backdrop-blur, var(--blur-lg)))
+    saturate(var(--profile-backdrop-saturation, 1.5));
 }
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
   .avatarBackdrop {

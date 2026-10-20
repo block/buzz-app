@@ -19,13 +19,13 @@ export function CommunityAddress({
   community: Membership;
   communities: CommunityReader;
 }) {
-  const client = useSyncExternalStore(
-    communities.subscribe,
-    communities.snapshot,
-  );
-  const current =
-    client.memberships.find((entry) => entry.id === community.id) ?? community;
-  const icon = current.publishedIcon ?? communityIcon(current.icon);
+  const icon = useSyncExternalStore(communities.subscribe, () => {
+    const current =
+      communities
+        .snapshot()
+        .memberships.find((entry) => entry.id === community.id) ?? community;
+    return current.publishedIcon ?? communityIcon(current.icon);
+  });
   const destination = communityDestination(community.id);
   return (
     <CopyAddress

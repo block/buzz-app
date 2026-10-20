@@ -1145,11 +1145,11 @@ it("shares discovered community artwork with an already-open Settings address wi
     finish = resolve;
   });
   const artwork = "https://images.example/bee.png";
+  const communityId = "primary";
   const fetch = vi.fn(async (url: string) => {
     if (url === "/api/relay/identity") return Response.json({ viewer });
     if (url === "/api/relay/register") return Response.json({});
-    if (url === `/api/relay/${encodeURIComponent(primary)}/icon-info`)
-      return pendingIcon;
+    if (url === `/api/relay/${communityId}/icon-info`) return pendingIcon;
     return Response.json({}, { status: 404 });
   });
   vi.stubGlobal("fetch", fetch);
@@ -1161,13 +1161,13 @@ it("shares discovered community artwork with an already-open Settings address wi
         <CommunityPicker communities={communities} />
         <CommunityAddress
           communities={communities}
-          community={{ id: primary, name: "Primary" }}
+          community={{ id: communityId, name: "Primary" }}
         />
       </>,
     );
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
-        `/api/relay/${encodeURIComponent(primary)}/icon-info`,
+        `/api/relay/${communityId}/icon-info`,
         expect.anything(),
       ),
     );
@@ -1185,8 +1185,7 @@ it("shares discovered community artwork with an already-open Settings address wi
     ).toHaveAttribute("src", artwork);
     expect(
       fetch.mock.calls.filter(
-        ([url]) =>
-          url === `/api/relay/${encodeURIComponent(primary)}/icon-info`,
+        ([url]) => url === `/api/relay/${communityId}/icon-info`,
       ),
     ).toHaveLength(1);
     expect(fetch.mock.calls.some(([url]) => url.endsWith("/session"))).toBe(

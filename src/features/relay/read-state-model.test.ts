@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   advanceRead,
   changeOverride,
+  contextId,
   effectiveFrontier,
   EMPTY_READ_STATE,
   mergeReadStates,
@@ -15,6 +16,32 @@ import {
 
 const parse = (contexts: Record<string, unknown>) =>
   parseReadBlob({ v: 1, client_id: "test", contexts }).state;
+describe("read context ID byte limit", () => {
+  it.each([
+    ["", false],
+    [null, false],
+    [undefined, false],
+    [256, false],
+    [{ length: 1 }, false],
+    ["a".repeat(256), true],
+    ["a".repeat(257), false],
+    ["\u0800".repeat(85), true],
+    ["\u0800".repeat(86), false],
+    ["\u0800".repeat(85) + "a", true],
+    ["\u0800".repeat(85) + "aa", false],
+    ["é".repeat(128), true],
+    ["é".repeat(128) + "a", false],
+    ["😀".repeat(64), true],
+    ["😀".repeat(64) + "a", false],
+    ["\ud800".repeat(85), true],
+    ["\ud800".repeat(86), false],
+    ["\udc00".repeat(85), true],
+    ["\udc00".repeat(86), false],
+  ])("validates boundary case %#", (value, valid) => {
+    expect(contextId(value)).toBe(valid);
+  });
+});
+
 describe("NIP-RS read-state algebra", () => {
   it("is commutative, associative and idempotent across frontier and override replays", () => {
     const a = parse({

@@ -39,6 +39,9 @@ test("adoption guard covers every Appearance family and explicit mode owner", ()
       `color: var(--${family}-9)`,
       `color: var(--${family}-11-light)`,
       `color: var(--${family}-12-dark)`,
+      ...["contrast", "ink", "pressed", "link", "link-hover"].map(
+        (role) => `color: var(--${family}-${role}-dark)`,
+      ),
       `className="text-${family}-9"`,
     ])
       expect(adoptionFindings("src/example.tsx", source)).toHaveLength(1);

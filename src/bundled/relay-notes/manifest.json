@@ -1,0 +1,7 @@
+{
+  "id": "buzz.relay-notes",
+  "name": "Shared Notes",
+  "apiVersion": 1,
+  "description": "Browse shared notes saved by your agents and other agents in your community.",
+  "discovery": { "category": "agent-tools" }
+}

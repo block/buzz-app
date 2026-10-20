@@ -678,7 +678,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   const hoveredParty = partyOptions.nth(1);
   await expect(selectedParty).toHaveAttribute("aria-selected", "true");
   await expect(suggestions).toHaveCSS("border-radius", "24px");
-  await expect(selectedParty).toHaveCSS("border-radius", "9px");
+  await expect(selectedParty).toHaveCSS("border-radius", "17px");
   const nativeEmoji = partyOptions.locator("[data-native-emoji]").first();
   await expect(nativeEmoji).toBeVisible();
   expect(

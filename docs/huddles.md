@@ -113,14 +113,15 @@ or gain controls are included. Physical device switching still needs a native tr
 
 A new Huddle started by another member of a DM appears in both the glass capsule
 and the focused Huddle window, even while viewing another conversation. Both show
-the caller's avatar and equal-width Join/Decline controls. These use opaque Green 10
-and Red 10 fills with inverse labels in both themes; hover uses step 9. They remain
-opaque over glass without changing the active-call Leave treatment. The requested
-bright-fill/inverse-label pairing has a scoped contrast exception for these incoming
-controls; it does not meet every normal text contrast target. The compact label is
-“[Name] calling”, with equal padding above, below, and before the avatar. The window's single title
-puts “[Name]” on its own line above “is calling”; long names wrap within the window. Channel Huddles keep their existing header and
-card join controls without opening an incoming request.
+the caller's avatar and equal-width Join/Decline controls. The compact capsule uses
+opaque Green 10 and Red 10 fills with inverse labels in both themes; hover uses
+step 9. This bright-fill/inverse-label pairing retains its scoped contrast
+exception and does not meet every normal text contrast target. The compact label
+is “[Name] calling”, with equal padding above, below, and before the avatar.
+The window uses round glass icon buttons: decline on the left and join on the
+right, with accessible names and red/green icons. Its single-line “[Name] is
+calling” label sits between the controls; long names truncate. Channel Huddles
+keep their existing header and card join controls without opening an incoming request.
 
 Accepting keeps the caller visible in both surfaces while the connection is prepared,
 with Cancel available. Once connected, Motion moves and scales that same avatar

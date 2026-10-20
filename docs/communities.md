@@ -144,9 +144,25 @@ session, forgets ones removed elsewhere like the banned answer to a leave (no
 relay request, device state kept, Personal space when one was selected), and
 queues an upload for saved memberships the service has never seen, which is how
 a device list from before sync existed reaches the account. Joining and leaving
-never wait for sync. Nothing in the app drains the queue yet; the
-`knownCommunities` capability exposes the record, the queue and these writes to
-the one owner that will.
+never wait for sync. The `knownCommunities` capability exposes the record, the
+queue and these writes to one owner, the bundled Builderlab plugin, and carries
+that owner's report back as `syncStatus` on the snapshot.
+
+The plugin syncs only while signed in to Builderlab, in the native app. Each
+sign-in first reads the key the account is bound to: an account bound to
+another key, or to none, stops everything until the next sign-in, and the app
+never binds the key itself; that is Hosted communities' job. A matching
+binding reads the complete list, merges it as above, then uploads queued
+operations one at a time, so a destination never has two in flight. A newly
+queued operation, the window coming online or becoming visible runs the drain
+again at once. A failed request retries the identical operation, under the
+same operation ID, at 1, 2, 4… seconds, capped at a minute, so the service can
+replay its answer. The service's refusals are never retried as sent: an
+address it refuses or an account that is full parks that one operation until
+the next sign-in while the rest continue, an account that cannot sync stops
+until then, and a session the service has ended signs the plugin out. Signing
+out or disabling the plugin abandons the request in flight and leaves the
+queue intact.
 
 ## Session lifetime
 
@@ -278,6 +294,19 @@ fence and tombstone re-add revision, acknowledgements merged into a newer
 intent (dropped or rebased), conflicts with and without a record and their
 divergences, every list-merge branch including the pre-sync migration upload
 and deference to queued intents, and the tolerant reader of saved state.
+`src/bundled/builderlab/known-communities/client.test.ts` covers the account
+service's routes against the native host transport: the exact request shapes,
+int64 strings and omitted repeated fields, every named refusal in JSON and in
+the framework's plain text, conflicts with and without a record, malformed
+records, a 401 that ends the session and an unreachable service. `sync.test.ts`
+covers the owner under a controlled clock: sign-in and a loading record,
+the binding check that stops without binding, the complete list merged once per
+sign-in, one upload in flight at a time in queue order, identical retries at
+each backoff boundary and the reset after a success, the `online` and
+`visibilitychange` triggers, parked and halting refusals, the conflict rule's
+three outcomes, an abandoned upload on sign-out that keeps the queue, a session
+ended by the service and disposal. `index.test.tsx` runs the real plugin wiring
+through to the binding and list requests under the signed-in credential.
 `CommunityPicker.test.tsx` covers the leave flow end to end against the
 broker route: confirm, publish, then remove; cancel; refusals and timeouts that
 keep the membership; the not-a-member answers (purging) and the banned answer

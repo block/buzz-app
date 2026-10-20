@@ -931,11 +931,13 @@ export function createUnread({
         // roots included, stay separate.
         const roots = new Set(evidence.map((entry) => entry.rootId));
         const groups = new Map<string, Evidence[]>();
+        const elsewhere = new Set<string>();
         for (const entry of evidence) {
           const id =
             dm || (session && !entry.parentId && !roots.has(entry.event.id))
               ? channel.id
               : (entry.rootId ?? entry.event.id);
+          if (id !== channel.id) elsewhere.add(entry.event.id);
           const group = groups.get(id) ?? [];
           group.push(entry);
           groups.set(id, group);
@@ -946,7 +948,8 @@ export function createUnread({
         });
         const content = new Map(rows.map((row) => [row.id, row.content]));
         // A session's top-level row shows its newest message from someone
-        // else to everyone, even one that is not Inbox evidence.
+        // else to everyone, even one that is not Inbox evidence, unless that
+        // message is another row's evidence.
         const newest = session
           ? rows.reduce<RelayEvent | undefined>((best, row) => {
               const event = events.get(row.id);
@@ -955,6 +958,7 @@ export function createUnread({
                 !row.membership &&
                 !row.audience &&
                 row.authorId !== viewer &&
+                !elsewhere.has(row.id) &&
                 (!best || order(event, best) > 0)
                 ? event
                 : best;

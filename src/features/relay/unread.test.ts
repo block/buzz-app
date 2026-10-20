@@ -2786,6 +2786,35 @@ it("inbox describes a row by its newest message within the same second", () => {
     });
 });
 
+it("inbox leaves a Solo chat root that has its own thread row out of the timeline row's preview", () => {
+  const h = setup();
+  h.grant("chat");
+  h.emit([
+    metadata(h.relay, "chat", "Solo chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
+  ]);
+  const root = message(h.alice, "chat", "Question", 20, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([
+    message(h.alice, "chat", "Ping", 19, [["p", h.viewer.pubkey]]),
+    root,
+    message(h.alice, "chat", "Follow-up", 21, [
+      ["e", root.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ]),
+  ]);
+  const items = h.session.unread.inbox().items;
+  expect(items.find((item) => item.id === "chat:chat")).toMatchObject({
+    preview: "Ping",
+    createdAt: 19,
+  });
+  expect(items.find((item) => item.id === `chat:${root.id}`)).toBeDefined();
+});
+
 it("inbox keeps a mentioned Solo chat root with its thread so reading the thread clears it", async () => {
   const h = setup();
   h.grant("chat");

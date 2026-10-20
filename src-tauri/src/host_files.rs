@@ -11,9 +11,12 @@ const MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
 /// How long a read may take, as on a stalled network share, before its caller
 /// is answered; the blocked read itself cannot be stopped.
 const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-/// Reads and directory resolutions under way at once, including ones stuck
+/// Reads, and directory resolutions, under way at once, including ones stuck
 /// past their timeout, so they cannot take every blocking thread the app has.
-static UNDER_WAY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
+/// Each has its own places, so reads stuck on one share cannot keep Goose from
+/// resolving the home it starts in.
+static READS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
+static DIRECTORIES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 
 async fn granted(
     manager: tauri::State<'_, PluginManager>,
@@ -31,13 +34,14 @@ async fn granted(
     }
 }
 
-/// Runs `work` on a blocking thread, holding its place until it ends.
+/// Runs `work` on a blocking thread, holding one of `places` until it ends.
 async fn bounded<T: Send + 'static>(
+    places: &'static tokio::sync::Semaphore,
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    let place = UNDER_WAY
+    let place = places
         .try_acquire()
-        .map_err(|_| "Too many files are being read; try again soon".to_string())?;
+        .map_err(|_| "Too many file operations are under way; try again soon".to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let _place = place;
         work()
@@ -125,10 +129,13 @@ pub(crate) async fn plugin_host_read_file(
 ) -> Result<tauri::ipc::Response, String> {
     granted(manager, id, revision).await?;
     let late = format!("Reading {path} took too long");
-    tokio::time::timeout(READ_TIMEOUT, bounded(move || read(&path, cwd.as_deref())))
-        .await
-        .map_err(|_| late)?
-        .map(tauri::ipc::Response::new)
+    tokio::time::timeout(
+        READ_TIMEOUT,
+        bounded(&READS, move || read(&path, cwd.as_deref())),
+    )
+    .await
+    .map_err(|_| late)?
+    .map(tauri::ipc::Response::new)
 }
 
 /// Resolves a directory for a plugin that declares `host.files`, creating it
@@ -141,7 +148,7 @@ pub(crate) async fn plugin_host_resolve_directory(
     path: String,
 ) -> Result<String, String> {
     granted(manager, id, revision).await?;
-    bounded(move || directory(&path)).await
+    bounded(&DIRECTORIES, move || directory(&path)).await
 }
 
 #[cfg(test)]

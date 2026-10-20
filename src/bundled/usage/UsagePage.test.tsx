@@ -309,7 +309,6 @@ it("switches periods without reading again, comparing only 7 days", async () => 
   // Days 31–60 were not read, so 30 days are not compared.
   expect(within(hero).getByText("$3.00")).toBeTruthy();
   expect(hero.textContent).not.toContain("previous");
-  expect(hero.textContent).toContain("Claude Code keeps 30 days by default.");
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Period" }));
   await user.click(await screen.findByRole("option", { name: "Last 7 days" }));
@@ -344,20 +343,36 @@ it("keeps showing what it read before when a refresh fails", async () => {
   ).toBeTruthy();
 });
 
+it("estimates Codex's cost, and says the estimate is best effort", async () => {
+  render(
+    <UsagePage
+      agents={host(
+        [agent("Sol", "buzz.codex/codex")],
+        async () => [],
+        // $0.50 at GPT-6.1 Sol's $2 per million input tokens.
+        async () => [session("a", 250_000, "Fix the build", "gpt-6.1-sol")],
+      )}
+      open={vi.fn()}
+    />,
+  );
+  const hero = await screen.findByRole("region", { name: "Estimated cost" });
+  expect(within(hero).getByText("$0.50")).toBeTruthy();
+  expect(within(hero).getByRole("note").textContent).toBe(
+    "Best-effort estimate from local session files at published API prices, not your bill.",
+  );
+});
+
 it("says what it could not count instead of counting it as zero", async () => {
   render(
     <UsagePage
       agents={host([agent("Sol")], async () => [
-        session("a", 1000, "Fix the build", "gpt-6.1-sol"),
+        session("a", 1000, "Fix the build", "acme-1"),
       ])}
       open={vi.fn()}
     />,
   );
   const hero = await screen.findByRole("region", { name: "Estimated cost" });
   expect(within(hero).getByText("Unavailable")).toBeTruthy();
-  expect(hero.textContent).toContain(
-    "Not counted: gpt-6.1-sol, which have no known rates.",
-  );
   expect(
     screen.getByText(summary("Sol ran 1 session in the last 30 days.")),
   ).toBeTruthy();
@@ -387,13 +402,13 @@ it("keeps a day unknown when the only harness active then is unpriced", async ()
       agents={host(
         [agent("Pixel"), agent("Sol", "buzz.codex/codex")],
         async () => [],
-        async () => [session("a", 1000, "Fix the build", "gpt-6.1-sol")],
+        async () => [session("a", 1000, "Fix the build", "acme-1")],
       )}
       open={vi.fn()}
     />,
   );
   await screen.findByRole("region", { name: "Estimated cost" });
-  // Claude spent nothing today, which leaves Codex's cost unknown, not $0.
+  // Claude spent nothing today, which leaves the unpriced cost unknown, not $0.
   const today = within(screen.getByRole("table")).getAllByRole("row").at(-1);
   expect(
     [...(today?.querySelectorAll("td") ?? [])].map((cell) => cell.textContent),

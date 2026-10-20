@@ -14,6 +14,7 @@ import {
   ArrowUpIcon,
   ArrowsClockwiseIcon,
   ChartBarIcon,
+  InfoIcon,
 } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -30,6 +31,7 @@ import { Select } from "../../shared/design-system/ui/Select";
 import styles from "./Usage.module.css";
 import { DailyCostChart, type Series } from "./DailyCostChart";
 import { amount, cost, count, percent } from "./format";
+import { loadPrices } from "./pricing";
 import {
   type AgentUsage,
   merge,
@@ -73,6 +75,8 @@ function useUsage(agents: Agents, keys: string, reload: number) {
     const controller = new AbortController();
     const now = Date.now();
     setLoad((current) => current && { ...current, loading: true });
+    // Without price data, estimates show as unknown rates rather than wrong.
+    const prices = loadPrices().catch(() => {});
     void Promise.allSettled(
       targets.map(async (agent) => {
         const read = types.find((type) => type.key === agent.type)?.usage;
@@ -86,7 +90,8 @@ function useUsage(agents: Agents, keys: string, reload: number) {
           }),
         };
       }),
-    ).then((results) => {
+    ).then(async (results) => {
+      await prices;
       if (controller.signal.aborted) return;
       setLoad((current) => ({
         loading: false,
@@ -235,7 +240,7 @@ export function UsagePage({
       <EmptyState
         icon={<ChartBarIcon size="1.5rem" />}
         title="No agent usage to show"
-        description="Usage & costs reads the sessions your Claude Code, Codex and goose agents run on this computer. Add one from Agents to see what it spends."
+        description="Usage reads the sessions your Claude Code, Codex and goose agents run on this computer. Add one from Agents to see what it spends."
       />
     );
   else
@@ -340,12 +345,12 @@ export function UsagePage({
 
   return (
     <div className="h-full min-h-0">
-      <FullPageSurface aria-label="Usage & costs">
+      <FullPageSurface aria-label="Usage">
         <div className="flex h-full min-h-0 flex-col">
           <PanelHeader
             title={
               <PanelHeaderLabel
-                title="Usage & costs"
+                title="Usage"
                 icon={<ChartBarIcon size="1rem" />}
               />
             }
@@ -484,7 +489,11 @@ function Dashboard({
               )}
               {result.cost.partial && <span>Partial</span>}
             </p>
-            <p className={styles.footnote}>{footnote(result)}</p>
+            <p className={styles.footnote} role="note">
+              <InfoIcon size="0.875rem" aria-hidden="true" />
+              Best-effort estimate from local session files at published API
+              prices, not your bill.
+            </p>
           </section>
           <div className={styles.tiles}>
             <Tile
@@ -616,23 +625,6 @@ function Dashboard({
       )}
     </div>
   );
-}
-
-/** What the cost leaves out, and why. */
-function footnote(result: ReturnType<typeof stats>) {
-  const notes = [
-    "Estimated from the session files on this computer, not your bill: at Anthropic API rates where the harness recorded no cost.",
-    "Covers the history each harness keeps; Claude Code keeps 30 days by default.",
-  ];
-  if (result.unpriced.length)
-    notes.push(
-      `Not counted: ${result.unpriced.join(", ")}, which have no known rates.`,
-    );
-  if (result.incomplete)
-    notes.push(
-      `${count(result.incomplete, "session")} could not be fully read.`,
-    );
-  return notes.join(" ");
 }
 
 const partly = (total: Total, text: string) =>

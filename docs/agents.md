@@ -698,9 +698,9 @@ selected model family icon, not the Goose runtime or Databricks/provider mark,
 as explicitly confirmed by the product owner. Goose device defaults have no
 reset action: omitting a model in Goose retains its stored provider model.
 
-## Usage & costs
+## Usage
 
-Usage & costs is a default-off page summarising what the selected community's agents
+Usage is a default-off page summarising what the selected community's agents
 on this computer spent: estimated cost against the previous period, tokens, cache
 hit rate (cache reads over all prompt tokens: uncached input, cache reads and
 cache writes), daily cost by agent
@@ -714,7 +714,7 @@ started, and one observation per model request: the harness's request id when it
 records one, the time, the model, the token counts, and the cost only when the
 harness recorded one, with the harness's word for how it got it. An absent count
 is unknown, not zero; `input` excludes cache counts, and `cacheWrite1h` is the
-subset of `cacheWrite` cached for an hour. Usage & costs groups the observations into
+subset of `cacheWrite` cached for an hour. Usage groups the observations into
 days itself. Reading never starts, stops or changes a session.
 
 A snapshot covers the session's descendants too, such as Claude Code and Codex
@@ -735,15 +735,15 @@ A consumer that keeps snapshots follows these rules:
 - `since` only bounds activity time. It is not a checkpoint, so it cannot find
   a correction a harness made to a session last active before it.
 
-Until collected usage is persisted, Usage & costs applies these rules to what it holds
+Until collected usage is persisted, Usage applies these rules to what it holds
 while the page is open. An agent whose read fails keeps what earlier reads found.
 
-Usage & costs shows the last 7 or 30 days. It reads the last 30 days once for both, and
+Usage shows the last 7 or 30 days. It reads the last 30 days once for both, and
 again only on Refresh or when the agents change. Thirty days is what Claude Code
 keeps by default, and older history would undercount. Only the 7-day period is
 compared with the one before it, because a 30-day comparison would need days
-that were not read. The page says that costs are estimated from the session
-files on this computer, not a bill.
+that were not read. The page marks costs as a best-effort estimate from the
+session files on this computer, not a bill.
 
 Claude implements it from the transcripts Claude Code keeps for the agent's
 workspace: sessions whose first prompt names the agent, plus those this app saved
@@ -764,11 +764,14 @@ input, which the readers subtract.
 All three read only the harness's own session history; none reads Buzz's saved
 agent activity or turn metrics.
 
-Where a harness recorded no cost, Usage & costs estimates it at Anthropic's published
-first-party API rates, including for a Claude model a provider prefixes, such as
-`databricks-claude-sonnet-5-5`. That may differ from what a subscription or
-provider bills. Totals add only known values. A total is marked partial when an
-unknown count, a model without known rates (such as Codex's OpenAI models) or an
-incomplete snapshot left something out, and unavailable when nothing was known.
+Where a harness recorded no cost, Usage estimates it from the token counts at the
+provider's published API list prices, including a model's long-prompt rates and,
+for a Claude model a provider prefixes such as `databricks-claude-sonnet-5-5`, the
+Anthropic model's rates. The prices are the data `@pydantic/genai-prices` bundles,
+loaded when the page first reads; they change with the package version, never at
+run time. That may differ from what a subscription or provider bills. Totals add
+only known values. A total is marked partial when an unknown count, a model
+without known rates or an incomplete snapshot left something out, and
+unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
-recorded usage. Usage & costs does not read or publish kind-44200 metrics.
+recorded usage. Usage does not read or publish kind-44200 metrics.

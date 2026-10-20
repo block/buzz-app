@@ -1,4 +1,4 @@
-import { BRAND_GRADIENTS, PALETTE_FAMILIES } from "./brand";
+import { ACCENTS, BRAND_GRADIENTS, PALETTE_FAMILIES } from "./brand";
 
 /**
  * Documentation metadata for the shared tokens: names, purposes, sources,
@@ -131,7 +131,14 @@ export const PALETTE: PaletteHue[] = [
 PALETTE.push(
   ...PALETTE_FAMILIES.map((id) => ({
     id,
-    usedBy: "Appearance and artwork",
+    usedBy: BRAND_GRADIENTS.some(
+      ({ start, end }) =>
+        start.startsWith(`${id}-`) || end.startsWith(`${id}-`),
+    )
+      ? ACCENTS.some((family) => family === id)
+        ? "Appearance and artwork"
+        : "artwork"
+      : "Appearance",
     steps: STEP_JOBS.map((job, index) => ({
       step: index + 1,
       variable: `--${id}-${index + 1}`,

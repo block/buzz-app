@@ -434,7 +434,9 @@ Values are extracted unchanged. Mode-specific owners (for example
 `--jade-3-light`) remain available independently of the page mode; the resolved
 `--jade-3` follows the nearest light/dark scope. This preserves mixed-mode
 specimens as well as product Appearance choices. Registry and Color viewer
-expose all twelve steps of every existing family. No new colors are invented.
+expose all twelve steps of every named family in Layer 0. No new colors are invented.
+Artwork aliases resolve at the page root; their current step-9 endpoints are
+identical in both themes. Nested opposite-mode artwork is not a supported preview.
 
 | Category | Top → bottom | Identity |
 | --- | --- | --- |

@@ -248,7 +248,7 @@ it("shows exact declared access and changes before an enabled update", async () 
     screen.getByRole("region", { name: "Declared access changes" }),
   ).toBeVisible();
   expect(screen.queryByText(/Command check:/)).toBeNull();
-  expect(screen.getByRole("button", { name: "Update plugin" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Update" })).toHaveAttribute(
     "data-variant",
     "prominent",
   );
@@ -972,7 +972,7 @@ it("limits row updates to the selected plugin without modifying the source previ
   await user.click(
     screen.getByRole("button", { name: "Browse plugin folder" }),
   );
-  const update = await screen.findByRole("button", { name: "Update plugin" });
+  const update = await screen.findByRole("button", { name: "Update" });
   expect(screen.queryByRole("radio")).toBeNull();
   expect(screen.queryByRole("switch", { name: "Enable plugin" })).toBeNull();
   await user.click(update);
@@ -1023,7 +1023,7 @@ it("reviews duplicate Add candidates as updates without reacquiring the package"
   );
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
   fireEvent.click(screen.getByRole("button", { name: "Browse plugin folder" }));
-  const update = await screen.findByRole("button", { name: "Update plugin" });
+  const update = await screen.findByRole("button", { name: "Update" });
   expect(update).toBeEnabled();
   expect(screen.getByRole("dialog")).toHaveAccessibleName("Update Duplicate");
   expect(screen.getByRole("region", { name: "Computer access" })).toBeVisible();
@@ -1193,7 +1193,7 @@ it.each([
         "fresh-authorization",
       );
     }
-    await user.click(screen.getByRole("button", { name: "Update plugin" }));
+    await user.click(screen.getByRole("button", { name: "Update" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(
       "remembered",
@@ -1242,9 +1242,7 @@ it("recovers from an unavailable remembered folder by choosing another source", 
   await user.click(
     screen.getByRole("button", { name: "Browse plugin folder" }),
   );
-  expect(
-    await screen.findByRole("button", { name: "Update plugin" }),
-  ).toBeEnabled();
+  expect(await screen.findByRole("button", { name: "Update" })).toBeEnabled();
   expect(folder.mock.calls).toEqual([["/moved"], []]);
 });
 
@@ -1285,7 +1283,7 @@ it("keeps wrong-plugin sources out of a remembered-source update", async () => {
     "does not contain the selected plugin",
   );
   expect(discard).toHaveBeenCalledExactlyOnceWith("remembered");
-  expect(screen.queryByRole("button", { name: "Update plugin" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
 });
 
 it("shows unchanged declarations in a separate dialog view and returns without reacquisition", async () => {
@@ -1335,9 +1333,9 @@ it("shows unchanged declarations in a separate dialog view and returns without r
   );
   expect(await screen.findByText("No declared access changes")).toBeVisible();
   expect(screen.getByRole("dialog")).toHaveAccessibleName("Update Remembered");
-  expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
-    "Source folder: /plugins/dist",
-  );
+  expect(
+    screen.getByRole("region", { name: "Update source" }),
+  ).toHaveTextContent("Source folderChange/plugins/dist");
   expect(
     screen.queryByRole("region", { name: "Added declarations" }),
   ).toBeNull();
@@ -1360,7 +1358,7 @@ it("shows unchanged declarations in a separate dialog view and returns without r
   );
   expect(screen.getByRole("dialog")).toHaveAccessibleDescription("");
   expect(screen.getByRole("button", { name: "Back" })).toHaveFocus();
-  expect(screen.queryByRole("button", { name: "Update plugin" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
   expect(screen.queryByText("No declared access changes")).not.toBeVisible();
   expect(
     screen.getByRole("button", { name: /^Run example-cli/ }),
@@ -1377,4 +1375,50 @@ it("shows unchanged declarations in a separate dialog view and returns without r
   await user.keyboard("{Escape}");
   expect(screen.getByRole("dialog")).toHaveAccessibleName("Update Remembered");
   expect(view).toHaveFocus();
+});
+
+it("shows an identical package as up to date and closes without installing", async () => {
+  const user = userEvent.setup();
+  const manager = {
+    imports: {
+      folder: vi.fn(async () => ({
+        ...rememberedPreview,
+        candidates: [
+          { path: "dist", revision: "old", manifest: rememberedManifest },
+        ],
+      })),
+      discard: vi.fn(async () => {}),
+    },
+    installImport: vi.fn(async () => true),
+    change: vi.fn(),
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            ...rememberedPlugin,
+            updateSource: { root: "/plugins", path: "dist" },
+          },
+        ],
+      }}
+      busy={false}
+      updateId={rememberedManifest.id}
+    />,
+  );
+  expect(await screen.findByText("Already up to date")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Change source folder" }),
+  ).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(manager.imports?.discard).toHaveBeenCalledExactlyOnceWith(
+    "remembered",
+  );
+  expect(manager.installImport).not.toHaveBeenCalled();
+  expect(manager.change).not.toHaveBeenCalled();
 });

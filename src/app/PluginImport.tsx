@@ -381,6 +381,7 @@ export function PluginImport({
   }
   const candidate = preview?.candidates.find((p) => p.path === selected);
   const updating = !!existing;
+  const upToDate = !!existing && candidate?.revision === existing.revision;
   const rollbackWarning =
     candidate?.publisher && existing && !existing.hasSignature
       ? "You cannot roll back to the unsigned revision after this update."
@@ -516,26 +517,17 @@ export function PluginImport({
                   : "No plugins found"
         }
         description={
-          error || showUnchanged ? undefined : preview ? (
-            reviewing ? (
-              updating ? (
-                <>
-                  {preview.commit ? "Source" : "Source folder"}:{" "}
-                  <code className={styles.sourcePath}>
-                    {importLocation(preview, candidate?.path)}
-                  </code>
-                </>
-              ) : (
-                "Only install code you trust."
-              )
-            ) : preview.candidates.length ? (
-              "Select a plugin to review before installing."
-            ) : (
-              "Try another folder or repository."
-            )
-          ) : (
-            "Choose a built plugin to load."
-          )
+          error || showUnchanged
+            ? undefined
+            : preview
+              ? reviewing
+                ? updating
+                  ? undefined
+                  : "Only install code you trust."
+                : preview.candidates.length
+                  ? "Select a plugin to review before installing."
+                  : "Try another folder or repository."
+              : "Choose a built plugin to load."
         }
         size={error || (reviewing && updating) ? "default" : "wide"}
         leadingActions={
@@ -572,24 +564,31 @@ export function PluginImport({
             </Button>
           ) : preview ? (
             <>
-              <Button
-                ref={previewBack}
-                type="button"
-                disabled={blocked}
-                onClick={() => {
-                  if (
-                    reviewing &&
-                    preview.candidates.length > 1 &&
-                    !(savedSource && "root" in savedSource)
-                  ) {
-                    setReviewing(false);
-                  } else void dismiss();
-                }}
-              >
-                {savedSource && "root" in savedSource
-                  ? "Change source folder"
-                  : "Back"}
-              </Button>
+              {!(reviewing && updating) && (
+                <Button
+                  ref={previewBack}
+                  type="button"
+                  disabled={blocked}
+                  onClick={() => {
+                    if (
+                      reviewing &&
+                      preview.candidates.length > 1 &&
+                      !(savedSource && "root" in savedSource)
+                    ) {
+                      setReviewing(false);
+                    } else void dismiss();
+                  }}
+                >
+                  {savedSource && "root" in savedSource
+                    ? "Change source folder"
+                    : "Back"}
+                </Button>
+              )}
+              {reviewing && upToDate && (
+                <Button disabled={blocked} onClick={() => void close()}>
+                  Done
+                </Button>
+              )}
               {!reviewing && preview.candidates.length > 1 && (
                 <Button
                   variant="prominent"
@@ -607,7 +606,7 @@ export function PluginImport({
                   Continue
                 </Button>
               )}
-              {reviewing && candidate && (
+              {reviewing && candidate && !upToDate && (
                 <Button
                   ref={installButton}
                   variant="prominent"
@@ -648,7 +647,7 @@ export function PluginImport({
                     }
                   }}
                 >
-                  {updating ? "Update plugin" : "Install plugin"}
+                  {updating ? "Update" : "Install plugin"}
                 </Button>
               )}
             </>
@@ -945,6 +944,40 @@ export function PluginImport({
                       </ul>
                     </section>
                   )}
+                {reviewing && updating && (
+                  <section
+                    aria-label="Update source"
+                    className="text-body-sm mb-4"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-muted">
+                        {preview.commit ? "Source" : "Source folder"}
+                      </span>
+                      <Button
+                        ref={previewBack}
+                        variant="link"
+                        size="inline"
+                        aria-label={
+                          preview.commit
+                            ? "Change source"
+                            : "Change source folder"
+                        }
+                        disabled={blocked}
+                        onClick={() => void dismiss()}
+                      >
+                        Change
+                      </Button>
+                    </div>
+                    <code className={styles.sourcePath}>
+                      {importLocation(preview, candidate?.path)}
+                    </code>
+                  </section>
+                )}
+                {reviewing && upToDate && (
+                  <p role="status" className="mt-0 mb-4 text-label">
+                    Already up to date
+                  </p>
+                )}
                 {reviewing &&
                   candidate &&
                   (existing?.source !== "bundled" || loading) && (
@@ -1053,7 +1086,8 @@ export function PluginImport({
                         ? unchangedDetails.length > 0 && (
                             <Button
                               ref={unchangedTrigger}
-                              size="sm"
+                              variant="link"
+                              size="inline"
                               onClick={() => setShowUnchanged(true)}
                             >
                               View unchanged declarations

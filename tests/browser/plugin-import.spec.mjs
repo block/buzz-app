@@ -633,7 +633,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   });
   await button(page, "Update Example two").click();
   // Real modal focus handoff when the remembered-source step is replaced.
-  await expect(button(page, "Update plugin")).toBeEnabled();
+  await expect(button(page, "Update")).toBeEnabled();
   expect(
     await page.evaluate(
       () =>
@@ -649,13 +649,13 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await expect(
     page.getByText(/may run immediately|earlier revision to roll back/),
   ).toHaveCount(0);
-  await expect(button(page, "Update plugin")).toBeEnabled();
+  await expect(button(page, "Update")).toBeEnabled();
   await button(page, "View unchanged declarations").click();
   await expect(page.getByRole("dialog")).toHaveAccessibleName(
     "Unchanged declarations",
   );
   await expect(button(page, "Back")).toBeFocused();
-  await expect(button(page, "Update plugin")).toHaveCount(0);
+  await expect(button(page, "Update")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: /^Run example-cli/ }),
   ).toBeVisible();
@@ -667,7 +667,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await page
     .getByRole("dialog")
     .screenshot({ path: info.outputPath("plugin-update-review.png") });
-  await button(page, "Update plugin").click();
+  await button(page, "Update").click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Update Example two")).toBeFocused();

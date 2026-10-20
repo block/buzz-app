@@ -1947,3 +1947,70 @@ it("keeps identity independent of community profile and clears revealed keys on 
   );
   expect(exportKey).toHaveBeenCalledTimes(1);
 });
+
+it("retains both local drafts across section navigation but retires them with their account or community", async () => {
+  const priorNative = Object.getOwnPropertyDescriptor(globalThis, "isTauri");
+  Object.defineProperty(globalThis, "isTauri", {
+    configurable: true,
+    value: true,
+  });
+  try {
+    const { cards } = registry([]);
+    let snapshot: ClientSnapshot = {
+      ...communityState,
+      status: "ready",
+      relayAvailable: false,
+    };
+    const communities = {
+      ...host.communities,
+      snapshot: () => snapshot,
+    };
+    const view = render(
+      <Settings {...host} cards={cards} communities={communities} />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Local settings", exact: true }),
+    );
+    await user.type(screen.getByLabelText("Display name"), "Unsaved name");
+    await user.type(
+      screen.getByLabelText("Repositories folder"),
+      "/unsaved/repos",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Profile", exact: true }),
+    );
+    expect(screen.queryByRole("region", { name: "Local settings" })).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Local settings", exact: true }),
+    );
+    expect(screen.getByLabelText("Display name")).toHaveValue("Unsaved name");
+    expect(screen.getByLabelText("Repositories folder")).toHaveValue(
+      "/unsaved/repos",
+    );
+    snapshot = {
+      ...snapshot,
+      selected: "https://other.example",
+      memberships: [{ id: "https://other.example", name: "Other" }],
+    };
+    view.rerender(
+      <Settings {...host} cards={cards} communities={communities} />,
+    );
+    expect(screen.getByLabelText("Display name")).toHaveValue("");
+    expect(screen.getByLabelText("Repositories folder")).toHaveValue("");
+    await user.type(screen.getByLabelText("Display name"), "Other draft");
+    await user.type(
+      screen.getByLabelText("Repositories folder"),
+      "/other/draft",
+    );
+    snapshot = { ...snapshot, viewer: "cd".repeat(32) };
+    view.rerender(
+      <Settings {...host} cards={cards} communities={communities} />,
+    );
+    expect(screen.getByLabelText("Display name")).toHaveValue("");
+    expect(screen.getByLabelText("Repositories folder")).toHaveValue("");
+  } finally {
+    if (priorNative) Object.defineProperty(globalThis, "isTauri", priorNative);
+    else Reflect.deleteProperty(globalThis, "isTauri");
+  }
+});

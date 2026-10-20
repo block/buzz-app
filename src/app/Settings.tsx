@@ -1158,13 +1158,15 @@ export function Settings({
             onUnsavedChange={onUnsavedChange}
           />
         </div>
-        {selectedCommunity && selected === "local-settings" && (
-          <CommunityLocalSettings
-            key={`${client.viewer}:${selectedCommunity.id}`}
-            communities={communities}
-            community={selectedCommunity}
-            viewer={client.viewer}
-          />
+        {selectedCommunity && (
+          <div hidden={selected !== "local-settings"}>
+            <CommunityLocalSettings
+              key={`${client.viewer}:${selectedCommunity.id}`}
+              communities={communities}
+              community={selectedCommunity}
+              viewer={client.viewer}
+            />
+          </div>
         )}
         {selected === "identity" && (
           <IdentitySettings

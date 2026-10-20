@@ -234,6 +234,10 @@ impl Session {
     }
 
     pub(super) fn read(&mut self) -> Result<ReadResult, String> {
+        // A read that looked the session up before close must not poll a reaped PID.
+        if self.reaped {
+            return Err("Terminal has exited".into());
+        }
         // Flush before consuming output, so an input error cannot discard a
         // successfully read output chunk. A shell exiting mid-paste cancels the
         // remaining input but still has its final output drained normally.
@@ -328,8 +332,8 @@ impl Drop for Session {
 // Darwin's tty output queue holds about 1 KiB, so a producer that is still
 // writing yields one tiny chunk per nonblocking pass and per IPC round trip.
 // Once output is flowing, wait briefly for more before returning. The budget is
-// cooperative: it limits how long a read keeps draining under the terminal
-// registry lock, though scheduling delays can exceed it.
+// cooperative: it limits how long a read keeps draining under its session
+// lock, though scheduling delays can exceed it.
 const COALESCE_GAP: Duration = Duration::from_micros(500);
 pub(super) const COALESCE_BUDGET: Duration = Duration::from_millis(4);
 

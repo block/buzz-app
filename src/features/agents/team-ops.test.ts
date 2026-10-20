@@ -345,6 +345,22 @@ describe("team operations: witnesses", () => {
     expect(w.writer.publish.mock.calls.map(([e]) => e)).toEqual([held, held]);
   });
 
+  it("after an uncertain rename, reverting the form republishes the original over the landed rename", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    w.hooks.publish = async (event) => {
+      w.accept(event);
+      throw new Error("timeout");
+    };
+    const { op, done } = edit(w, teamId, { name: "Intervening" });
+    await done;
+    await w.runner.revise(op.id, team);
+    w.hooks.publish = undefined;
+    expect(await w.runner.run(op.id)).toBeUndefined();
+    expect(JSON.parse(w.relay.head?.content ?? "{}").name).toBe(team.name);
+    expect(w.writer.sign).toHaveBeenCalledTimes(2);
+  });
+
   it("8: Discard moves to reconcile-only and keeps the evidence", async () => {
     const w = world();
     const teamId = await existing(w);

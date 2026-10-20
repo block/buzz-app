@@ -856,11 +856,9 @@ enable by default, with an opt-out in the review footer; successful installation
 **manifest ID** and preserve the saved enabled state:
 an enabled update may activate immediately except in safe mode. Review shows declared host access, including changes. Installed artifacts do
 not watch/pull the source. Plugins installed from a folder keep the selected folder
-path for Settings → Plugins → Manage plugins → Reload while disabled;
-reloading reads the recorded candidate folder and requires the manifest ID to stay the
-same. Reload rejects changed host declarations; use Update to review and
-install that revision. Enabled plugins must be disabled before reload so memory-only
-plugin state, such as credentials, is not discarded by replacing the running module.
+path for Settings → Plugins → Manage plugins → Check for updates. Changed packages
+open access review before explicit Update confirmation, preserving the saved enabled
+state. Settings does not expose the immediate Reload shortcut.
 For development, `buzzodz plugin reload ID` explicitly allows replacing an enabled
 folder plugin while preserving its enabled state. The running desktop observes the
 shared profile catalog every second and disposes the previous revision before
@@ -873,9 +871,13 @@ work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.
 
 Opening an installed plugin's details checks its remembered folder. A matching
-package shows Up to date in the pane; a changed package offers Update, which opens
+package shows Up to date in the pane with Check for updates for a manual recheck;
+a changed package replaces that action with Update, which opens
 access review before explicit confirmation. The list row shows neither status nor
-an Update action. Update uses the same source and candidate path; changing sources
+an Update action. Failed activation shows Retry beside the error for an enabled,
+unpaused plugin. Retry activates the installed revision after its previous cleanup
+finishes; it does not acquire source files, install a package, or change saved state.
+Package freshness and activation failures are displayed separately. Update uses the same source and candidate path; changing sources
 requires deleting the plugin and adding it again. Git checks remain explicit in the
 pane, using the remembered repository and branch/tag with fresh authorization;
 credentials/tokens are never saved with source metadata. Each check creates an

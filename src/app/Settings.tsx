@@ -250,6 +250,7 @@ function covered(element: Element | null) {
 function PluginDetails({
   plugin,
   failure,
+  retryable,
   busy,
   plugins,
   onToggle,
@@ -262,6 +263,7 @@ function PluginDetails({
 }: {
   plugin: PluginInfo;
   failure: string | null;
+  retryable: boolean;
   busy: boolean;
   plugins: PluginManager;
   onToggle(): void;
@@ -359,7 +361,6 @@ function PluginDetails({
             {access === "checking" ? "Checking…" : "Unavailable"}
           </span>
         )}
-        <div ref={setActionTarget} className={styles.pluginExtraActions} />
         {/* Channels is required and has no enable/disable control. */}
         {plugin.manifest.id === "buzz.channels" ? (
           <Button variant="outline" size="sm" disabled>
@@ -406,6 +407,7 @@ function PluginDetails({
             </Button>
           </Tooltip>
         )}
+        <div ref={setActionTarget} className={styles.pluginExtraActions} />
         {accessReason && access === "error" && (
           <Button
             size="sm"
@@ -432,16 +434,6 @@ function PluginDetails({
           <span className="text-body-sm text-muted">
             {plugin.rollbackBlockedReason}
           </span>
-        )}
-        {plugin.reloadable && !plugin.enabled && (
-          <Button
-            size="sm"
-            type="button"
-            disabled={busy}
-            onClick={() => plugins.reload(plugin.manifest.id)}
-          >
-            Reload
-          </Button>
         )}
         {plugin.source === "external" && (
           <Button
@@ -538,7 +530,23 @@ function PluginDetails({
           </tbody>
         </table>
       </section>
-      {failure && <p className="error text-body-sm">{failure}</p>}
+      {failure && (
+        <div className={styles.pluginStatus}>
+          <p className="m-0 error text-body-sm">{failure}</p>
+          {retryable && (
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                if (plugins.retryPlugin(plugin.manifest.id))
+                  close.current?.focus();
+              }}
+            >
+              Retry
+            </Button>
+          )}
+        </div>
+      )}
       {confirmDelete && (
         <AlertDialog
           title={`Delete ${plugin.manifest.name}?`}
@@ -1376,6 +1384,15 @@ export function Settings({
               catalog={catalog}
               authorizeGit={authorizePluginGit}
               failure={selectedFailure}
+              retryable={
+                !!selectedPlugin.enabled &&
+                !selectedPlugin.error &&
+                !(
+                  externalPluginsPaused && selectedPlugin.source === "external"
+                ) &&
+                selectedRunning?.revision === selectedPlugin.revision &&
+                selectedRunning.status === "failed"
+              }
               busy={busy}
               access={pluginAccess(selectedPlugin)}
               onCheckAccess={() =>

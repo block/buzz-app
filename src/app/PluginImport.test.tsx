@@ -1188,6 +1188,9 @@ it.each([
         "fresh-authorization",
       );
     }
+    expect(
+      screen.queryByRole("button", { name: "Check for updates" }),
+    ).toBeNull();
     await user.click(screen.getByRole("button", { name: "Update" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(

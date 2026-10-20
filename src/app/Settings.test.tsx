@@ -2005,3 +2005,44 @@ it("checks updates only in the open detail pane and keeps matching status off th
   expect(screen.queryByText("Up to date")).toBeNull();
   expect(imports.discard).toHaveBeenCalledExactlyOnceWith("same");
 });
+
+it("offers Retry beside a failed installed revision without changing saved state", () => {
+  const fixture = reviewPluginFixture();
+  const retryPlugin = vi.fn(() => true);
+  Object.assign(fixture.manager, { retryPlugin });
+  Object.assign(fixture.snapshot.activation, {
+    [fixture.external.manifest.id]: {
+      revision: "current",
+      status: "failed",
+      error: "Temporary startup failure",
+    },
+  });
+  act(fixture.publish);
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  const pane = screen.getByRole("complementary", {
+    name: "Zebra external details",
+  });
+  const retry = within(pane).getByRole("button", {
+    name: /^Retry$/,
+  });
+  expect(retry.parentElement).toContainElement(
+    within(pane).getByText("Temporary startup failure"),
+  );
+  fireEvent.click(retry);
+  expect(retryPlugin).toHaveBeenCalledExactlyOnceWith(
+    fixture.external.manifest.id,
+  );
+  expect(fixture.manager.change).not.toHaveBeenCalled();
+  expect(within(pane).queryByRole("button", { name: "Reload" })).toBeNull();
+  Object.assign(fixture.snapshot.activation, {
+    [fixture.external.manifest.id]: {
+      revision: "current",
+      status: "starting",
+      error: null,
+    },
+  });
+  act(fixture.publish);
+  expect(within(pane).queryByRole("button", { name: /^Retry$/ })).toBeNull();
+});

@@ -106,10 +106,12 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
                 ? null
                 : { root: args?.directory ?? "/fixture/plugins" };
           if (window.importCategory)
-            for (const candidate of preview.candidates)
+            for (const candidate of preview.candidates) {
+              candidate.revision = `${candidate.path}-${window.importCategory}`;
               candidate.manifest.discovery = {
                 category: window.importCategory,
               };
+            }
           return preview;
         }
         if (command === "plugin_import_discard") return;
@@ -617,13 +619,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await page.setViewportSize({ width: 1440, height: 950 });
 
   await button(page, "View Example two details").click();
-  await expect(button(page, "Reload")).toBeVisible();
-  await button(page, "Reload").click();
-  expect(
-    await page.evaluate(
-      () => window.importCalls.find((c) => c.command === "plugin_reload").args,
-    ),
-  ).toEqual({ id: "example.two" });
+  await expect(button(page, "Reload")).toHaveCount(0);
   await enabled.click();
   await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Reload")).toHaveCount(0);
@@ -643,6 +639,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
     ),
   ).toEqual({ directory: "/fixture/plugins" });
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(button(page, "Check for updates")).toHaveCount(0);
   await button(page, "Update").click();
   await expect(button(page, "Change source folder")).toHaveCount(0);
   await expect(page.getByRole("radio")).toHaveCount(0);
@@ -681,8 +678,8 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   });
   await expect(paneActions).toHaveCount(4);
   await expect(paneActions).toHaveText([
-    "Check for updates",
     "Disable",
+    "Check for updates",
     "Roll back",
     "Delete",
   ]);
@@ -908,6 +905,59 @@ test("checked-in local examples activate and work independently", async ({
   await expect(
     navigation.getByRole("option", { name: "Notes playground", exact: true }),
   ).toBeVisible();
+});
+
+// Browser-only: Settings -> manager -> runtime retries the cached installed module,
+// keeping native acquisition and persistence separate from activation recovery.
+test("Retry recovers installed activation without installing or enabling again", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(page, [
+    {
+      path: "dist",
+      revision: "one",
+      manifest: { id: "example.retry", name: "Retry example", apiVersion: 1 },
+      code: "export function apply() { globalThis.retryAttempts = (globalThis.retryAttempts ?? 0) + 1; if (globalThis.retryAttempts === 1) throw new Error('Temporary startup failure'); }",
+    },
+  ]);
+  await openPlugins(page, app.origin);
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
+  await button(page, "Install plugin").click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await button(page, "View Retry example details").click();
+  const pane = page.getByRole("complementary", {
+    name: "Retry example details",
+  });
+  await expect(pane.getByText("Up to date", { exact: true })).toBeVisible();
+  await expect(pane.getByText(/Temporary startup failure/)).toBeVisible();
+  const callsBefore = await page.evaluate(
+    () =>
+      window.importCalls.filter((c) =>
+        /^(plugin_import_folder|plugin_import_install|plugin_change|plugin_reload)$/.test(
+          c.command,
+        ),
+      ).length,
+  );
+  await button(page, "Retry").click();
+  await expect
+    .poll(() => page.evaluate(() => globalThis.retryAttempts))
+    .toBe(2);
+  await expect(button(page, "Retry")).toHaveCount(0);
+  await expect(button(page, "Close plugin details")).toBeFocused();
+  await expect(pane.getByText(/Temporary startup failure/)).toHaveCount(0);
+  await expect(button(page, "Disable")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        window.importCalls.filter((c) =>
+          /^(plugin_import_folder|plugin_import_install|plugin_change|plugin_reload)$/.test(
+            c.command,
+          ),
+        ).length,
+    ),
+  ).toBe(callsBefore);
 });
 
 // Browser-only: real modal focus and manager error propagation across the IPC boundary.

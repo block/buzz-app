@@ -502,7 +502,7 @@ export function PluginImport({
   );
   const updateActions = (
     <>
-      {savedSource && (
+      {savedSource && !(preview && !error && !upToDate) && (
         <Button
           ref={checkAgain}
           variant="subtle"

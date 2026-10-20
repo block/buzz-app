@@ -280,7 +280,7 @@ export type Connection = {
 /** An agent's community while it is live: one object for as long as its
  * session lasts. */
 export type LiveCommunity = {
-  readonly session: Pick<RelaySession, "read">;
+  readonly session: Pick<RelaySession, "read" | "readRemote">;
   /** Aborts when the session is replaced, so no work outlives it. */
   readonly controller: AbortController;
   readonly connection: Connection;
@@ -959,8 +959,9 @@ export class AgentRunners {
     this.left = rest;
     const ids = Object.keys(left);
     if (!runner.type.resumes) return this.unmark(runner.pubkey, ids);
+    // Not read(): it returns the owner's own mentions as unproven outbox copies.
     void community.session
-      .read([{ ids, limit: ids.length }], {
+      .readRemote([{ ids, limit: ids.length }], {
         signal: community.controller.signal,
         fresh: true,
       })

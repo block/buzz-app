@@ -4389,7 +4389,7 @@ describe("a turn closing or reloading the app stopped", () => {
       history: [asked],
     });
     await settle();
-    const read = vi.mocked(second.session.read);
+    const read = vi.mocked(second.session.readRemote);
     const original = read.getMockImplementation() as NonNullable<
       ReturnType<typeof read.getMockImplementation>
     >;

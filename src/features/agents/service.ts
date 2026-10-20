@@ -522,6 +522,13 @@ export type AgentType<Config = unknown> = {
   /** A brought-over agent's config: `config` from `defaults` with whatever of
    * `carry` the type has a place for. Without it, all of `carry` stays behind. */
   adopt?(carry: Carry, config: Config): Config;
+  /** Recognize a published catalog runtime and seed this type's import draft.
+   * Return undefined when its runtime/provider cannot be preserved by this type. */
+  importShared?(source: {
+    runtime?: string;
+    provider?: string;
+    model: string;
+  }): Config | undefined;
   /** What of `config` another type may adopt when the agent changes type.
    * Without it, all of its settings stay behind. */
   carry?(config: Config): Carry;
@@ -666,6 +673,7 @@ export type PortInput = Readonly<
       /** An HTTPS image URL. */
       picture?: string;
       instructions?: string;
+      config?: unknown;
     }
 >;
 /** Whether the binding's owner owns the agent, by the partition Yours uses. */
@@ -1663,7 +1671,10 @@ export class AgentsService extends Service implements Agents {
         agent: await native.create(destination, owner, type, name),
         ...(instructions?.trim() ? { carry: { instructions } } : {}),
       }),
-      { picture },
+      {
+        picture,
+        ...(input.config !== undefined ? { config: input.config } : {}),
+      },
     );
     return { agent, notes: [] };
   }

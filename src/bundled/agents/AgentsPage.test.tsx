@@ -414,6 +414,7 @@ it("opens the side panel with the type's tabs and the app's Attention and Memory
     "Agents",
     "Your agents",
     "Your teams",
+    "Marketplace",
     "AAda",
     "Identity",
     "Reply",
@@ -1525,29 +1526,21 @@ it("saves a card model through its type and keeps failures on the card", async (
   expect(agents.save).toHaveBeenCalledTimes(2);
 });
 
-it("opens marketplace in a modal and restores focus to New agent", async () => {
+it("opens marketplace beside Your teams without a modal", async () => {
   const user = userEvent.setup();
   setup([]);
+  await user.click(screen.getByRole("tab", { name: "Marketplace" }));
   expect(
-    screen.queryByRole("button", { name: "Teams" }),
+    screen.getByRole("tabpanel", { name: "Marketplace" }),
+  ).toHaveTextContent("Connect to a community to browse shared agents.");
+  expect(
+    screen.queryByRole("dialog", { name: "Marketplace" }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "New agent" }));
   expect(
-    screen.queryByRole("dialog", { name: "Create agent" }),
+    screen.queryByRole("button", { name: "New agent" }),
   ).not.toBeInTheDocument();
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Browse the marketplace" }),
-  );
-  expect(
-    screen.getByRole("dialog", { name: "Marketplace" }),
-  ).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Close" }));
-  expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(screen.getByRole("tab", { name: "Your teams" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "New agent" })).toHaveFocus();
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  expect(screen.getByRole("button", { name: "New agent" })).toBeVisible();
 });
 
 it.each(["loading", "error", "unavailable"] as const)(
@@ -1959,4 +1952,55 @@ it("announces the default agent and presents its menu status without a fake togg
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
   expect(within(menu).getByText("Default agent")).toBeVisible();
   expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
+});
+
+it("opens a Marketplace tile in the profile pane and returns focus on close", async () => {
+  const user = userEvent.setup();
+  const view = setup([]);
+  const owner = createRelaySession(null);
+  const session = {
+    ...owner.session,
+    read: vi.fn().mockResolvedValue([
+      {
+        id: "ab".repeat(32),
+        pubkey: "cd".repeat(32),
+        kind: 30175,
+        created_at: 1,
+        tags: [
+          ["d", "helper"],
+          ["shared", "true"],
+        ],
+        content: JSON.stringify({
+          display_name: "Marketplace helper",
+          system_prompt: "Help with tasks.",
+          model: "example-model",
+        }),
+      },
+    ]),
+  };
+  const snapshot = { status: "ready" as const, generation: 1, session };
+  const relay = { ...view.relay, snapshot: () => snapshot };
+  try {
+    view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+    await user.click(screen.getByRole("tab", { name: "Marketplace" }));
+    const tile = await screen.findByRole("button", {
+      name: "Marketplace helper",
+    });
+    await user.click(tile);
+    expect(
+      screen.getByRole("heading", { name: "Marketplace helper" }),
+    ).toBeVisible();
+    expect(screen.getByText("Help with tasks.")).toBeVisible();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Close Marketplace helper tab" }),
+    );
+    expect(tile).toHaveFocus();
+    expect(
+      screen.queryByRole("heading", { name: "Marketplace helper" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
 });

@@ -367,8 +367,9 @@ it("imports a shared agent as a new identity with its name and picture, adopting
     source: "shared",
     type: "example/echo",
     name: "Plain",
+    config: { reply: "Shared model configuration" },
   });
-  expect(plain.config).toEqual({ reply: "ok" });
+  expect(plain.config).toEqual({ reply: "Shared model configuration" });
   await expect(
     service.port({ source: "shared", type: "example/echo", name: "  " }),
   ).rejects.toThrow("Name the agent");

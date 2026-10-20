@@ -457,16 +457,6 @@ function PluginDetails({
           </Button>
         )}
 
-        {plugin.previous && (
-          <Button
-            size="sm"
-            type="button"
-            disabled={busy || !!plugin.rollbackBlockedReason}
-            onClick={() => plugins.change("rollback", plugin.manifest.id)}
-          >
-            Roll back
-          </Button>
-        )}
         {plugin.rollbackBlockedReason && (
           <span className="text-body-sm text-muted">
             {plugin.rollbackBlockedReason}

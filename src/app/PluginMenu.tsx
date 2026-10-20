@@ -59,6 +59,14 @@ export function PluginMenu({
               {toggle.label}
             </MenuItem>
           )}
+          {plugin.source === "external" && plugin.previous && (
+            <MenuItem
+              disabled={busy || !!plugin.rollbackBlockedReason}
+              onClick={() => plugins.change("rollback", plugin.manifest.id)}
+            >
+              Roll back
+            </MenuItem>
+          )}
           {plugin.source === "external" && (
             <MenuItem
               tone="danger"

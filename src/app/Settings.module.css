@@ -102,6 +102,10 @@
 .navigationPane {
   container-type: inline-size;
 }
+.navigationPane:has([data-plugin-detail]) {
+  height: 100%;
+  min-height: 0;
+}
 .navigationPane .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -110,11 +114,15 @@
 .navigationPane .layout[data-plugin-detail] {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 22rem;
+  grid-template-rows: minmax(0, 1fr);
 }
-/* The modal body scrolls; integrated details keep their natural height. */
+/* Ordinary sections use the modal scrollport; an open inspector bounds both panes. */
 .detail[data-integrated] {
   padding: 0;
   overflow: visible;
+}
+.layout[data-plugin-detail] > .detail[data-integrated] {
+  overflow-y: auto;
 }
 
 .pluginHeading > [class~="buzz-content-header"] {

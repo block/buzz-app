@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -28,24 +29,26 @@ export function IdentitySetup({
   const state = useSyncExternalStore(identity.subscribe, identity.snapshot);
   const [importing, setImporting] = useState(false);
   const [nsec, setNsec] = useState("");
-  const [backupAvailable, setBackupAvailable] = useState(false);
-  const [legacyAvailable, setLegacyAvailable] = useState(false);
+  // Held until both checks settle so the primary action never changes under a click.
+  const [available, setAvailable] = useState<{
+    backup: boolean;
+    legacy: boolean;
+  }>();
   const missing = state.status === "missing";
   useEffect(() => {
     if (!missing) return;
     let active = true;
-    void identity.backupAvailable().then(
-      (available) => active && setBackupAvailable(available),
-      () => active && setBackupAvailable(false),
-    );
-    void identity.legacyAvailable().then(
-      (available) => active && setLegacyAvailable(available),
-      () => active && setLegacyAvailable(false),
-    );
+    void Promise.all([
+      identity.backupAvailable().catch(() => false),
+      identity.legacyAvailable().catch(() => false),
+    ]).then(([backup, legacy]) => active && setAvailable({ backup, legacy }));
     return () => {
       active = false;
     };
   }, [identity, missing]);
+  const legacyAvailable = available?.legacy ?? false;
+  // Back replaces the screen; return focus to the action that opened import.
+  const returning = useRef(false);
   useEffect(
     () => () => {
       void identity.cancelRecovery();
@@ -78,41 +81,50 @@ export function IdentitySetup({
           </div>
           <div className={styles.actions}>
             {state.error && <p role="alert">{state.error}</p>}
-            {legacyAvailable && (
-              <Button
-                size="lg"
-                variant="prominent"
-                disabled={state.busy}
-                onClick={() => void identity.importLegacy()}
-              >
-                Continue with your Buzz identity
-              </Button>
-            )}
-            <Button
-              size="lg"
-              variant={legacyAvailable ? "subtle" : "prominent"}
-              disabled={state.busy}
-              onClick={() => void identity.create()}
-            >
-              Create a new identity
-            </Button>
-            <Button
-              size="lg"
-              variant="ghost"
-              disabled={state.busy}
-              onClick={() => setImporting(true)}
-            >
-              Use an existing key
-            </Button>
-            {backupAvailable && (
-              <Button
-                size="lg"
-                variant="ghost"
-                disabled={state.busy}
-                onClick={() => void identity.beginRecovery()}
-              >
-                Restore from backup
-              </Button>
+            {available && (
+              <>
+                {legacyAvailable && (
+                  <Button
+                    size="lg"
+                    variant="prominent"
+                    disabled={state.busy}
+                    onClick={() => void identity.importLegacy()}
+                  >
+                    Continue with your Buzz identity
+                  </Button>
+                )}
+                <Button
+                  size="lg"
+                  variant={legacyAvailable ? "subtle" : "prominent"}
+                  disabled={state.busy}
+                  onClick={() => void identity.create()}
+                >
+                  Create a new identity
+                </Button>
+                <Button
+                  ref={(button) => {
+                    if (!button || !returning.current) return;
+                    returning.current = false;
+                    button.focus();
+                  }}
+                  size="lg"
+                  variant="ghost"
+                  disabled={state.busy}
+                  onClick={() => setImporting(true)}
+                >
+                  Use an existing key
+                </Button>
+                {available.backup && (
+                  <Button
+                    size="lg"
+                    variant="ghost"
+                    disabled={state.busy}
+                    onClick={() => void identity.beginRecovery()}
+                  >
+                    Restore from backup
+                  </Button>
+                )}
+              </>
             )}
             {state.busy && <p role="status">Saving your identity securely…</p>}
           </div>
@@ -180,6 +192,7 @@ export function IdentitySetup({
                     description="Copy this from Identity details in your old Buzz app. Never share it with anyone."
                   >
                     <Input
+                      autoFocus
                       id="import-nsec"
                       type="password"
                       autoComplete="off"
@@ -216,6 +229,7 @@ export function IdentitySetup({
               onClick={() => {
                 setNsec("");
                 setImporting(false);
+                returning.current = true;
               }}
             >
               Back

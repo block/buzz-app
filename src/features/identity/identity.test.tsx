@@ -131,9 +131,16 @@ it("offers alternatives, passes exactly the imported key, and keeps secrets out 
       <p>Signed in</p>
     </IdentitySetup>,
   );
-  await user.click(
-    await screen.findByRole("button", { name: "Use an existing key" }),
-  );
+  const useKey = await screen.findByRole("button", {
+    name: "Use an existing key",
+  });
+  await user.click(useKey);
+  expect(screen.getByLabelText("Private key (nsec)")).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    screen.getByRole("button", { name: "Use an existing key" }),
+  ).toHaveFocus();
+  await user.keyboard("{Enter}");
   await user.type(screen.getByLabelText("Private key (nsec)"), key);
   await user.click(
     screen.getByRole("button", { name: "Import this identity" }),
@@ -160,10 +167,11 @@ it("offers alternatives, passes exactly the imported key, and keeps secrets out 
 
 it("brings over installed old Buzz's identity only after an explicit click", async () => {
   const imported = deferred<string>();
+  const legacy = deferred<boolean>();
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "identity_restore") return Promise.resolve(null);
     if (command === "nsec_backup_available") return Promise.resolve(false);
-    if (command === "identity_legacy_available") return Promise.resolve(true);
+    if (command === "identity_legacy_available") return legacy.promise;
     if (command === "identity_import_legacy") return imported.promise;
     throw new Error("Unexpected command");
   });
@@ -174,6 +182,14 @@ it("brings over installed old Buzz's identity only after an explicit click", asy
       <p>Signed in</p>
     </IdentitySetup>,
   );
+  // A click must not reach Create before migration can be offered first.
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("identity_legacy_available"),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Create a new identity" }),
+  ).toBeNull();
+  await act(async () => legacy.resolve(true));
   const bringOver = await screen.findByRole("button", {
     name: "Continue with your Buzz identity",
   });

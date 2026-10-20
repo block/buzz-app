@@ -3,7 +3,10 @@
   "name": "Pi",
   "apiVersion": 1,
   "description": "Run local Pi agents in Buzz.",
-  "discovery": { "category": "agents" },
+  "discovery": {
+    "category": "agents",
+    "tags": ["code", "coding-agents"]
+  },
   "host": {
     "processes": [
       {

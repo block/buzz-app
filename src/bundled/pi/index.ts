@@ -70,6 +70,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const { model, provider } = config(agent.config);
       return [provider, model].filter(Boolean).join(" · ") || "Pi";
     },
+    sessions: {
+      list: (pubkey) => runtime.sessions(pubkey),
+      subscribe: (listener) => runtime.subscribe(listener),
+    },
     tabs: [
       {
         id: "settings",

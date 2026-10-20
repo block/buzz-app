@@ -50,6 +50,8 @@ const reply = (id: string, content: string, created_at = 110) =>
 function setup(
   handlers: Readonly<Record<string, Handler>> = {},
   added: readonly AddedTool[] = [],
+  /** The channel's Canvas, as it reads now. */
+  canvas?: { content: string; pubkey?: string },
 ) {
   let submissions = 0;
   const host = fakeHost({
@@ -87,6 +89,20 @@ function setup(
       ensure: vi.fn(async (): Promise<void> => {}),
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
+    },
+    channelWrites: { startingCanvas: () => undefined },
+    canvas: {
+      available: !!canvas,
+      read: vi.fn(
+        async () =>
+          canvas && {
+            pubkey: alice,
+            kind: 40100,
+            created_at: 100,
+            tags: [],
+            ...canvas,
+          },
+      ),
     },
   };
   const relay = {
@@ -576,6 +592,101 @@ it("continues an owner's Solo chat at the top level, answers and failures alike"
       ["p", alice],
     ],
   ]);
+});
+
+it("hands a Solo chat's Canvas to each turn, and no one else's", async () => {
+  const { host, deliver, solo } = setup({}, [], {
+    content: "Work in ~/src/app.",
+  });
+  solo.add("solo-1");
+  const turn = deliver(
+    {
+      type: "mention",
+      event: message("2", "@Pi", { tags: [["h", "solo-1"]] }),
+    },
+    { channelId: "solo-1" },
+  );
+  await turn.run;
+  expect(String(host.requests("deliver")[0]?.params.text)).toContain(
+    "Work in ~/src/app.",
+  );
+  // A thread is no Solo chat: its Canvas is not read.
+  await deliver({ type: "mention", event: reply("3", "@Pi look") }).run;
+  expect(String(host.requests("deliver")[1]?.params.text)).not.toContain(
+    "workspace-canvas",
+  );
+});
+
+it("stops a mention's run when the owner stops it, and posts nothing", async () => {
+  const answered = deferred<unknown>();
+  const { host, deliver, settled, published } = setup({
+    wait: () => answered.promise,
+    abort: () => {
+      answered.resolve({ status: "unanswered", reason: "aborted" });
+      return {};
+    },
+  });
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const turn = deliver(
+    { type: "mention", event: reply("2", "@Pi look") },
+    { interruptible },
+  );
+  await turn.run;
+  expect(interruptible).toHaveBeenCalledTimes(1);
+  await interruptible.mock.calls[0]?.[0]();
+  expect(host.requests("abort")[0]?.params).toEqual({
+    agent: self,
+    conversation: CONVERSATION,
+  });
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  expect(published).toEqual([]);
+});
+
+it("lists the agent's sessions from Pi's storage, and whether each works", async () => {
+  const answered = deferred<unknown>();
+  const key = `${channel}/${root.id}`;
+  const { runtime, deliver, settled } = setup({
+    places: () => ({
+      places: [
+        { key, conversation: CONVERSATION, seen: 105 },
+        { key: "chan-2", conversation: 3, seen: 90 },
+      ],
+    }),
+    deliver: (params, process) => {
+      process.send({
+        method: "event",
+        params: {
+          agent: self,
+          conversation: CONVERSATION,
+          type: "placed",
+          request: params.request,
+          entry: 1,
+        },
+      });
+      return { submission: 1, conversation: CONVERSATION };
+    },
+    wait: () => answered.promise,
+  });
+  const listener = vi.fn();
+  runtime.subscribe(listener);
+  // Read from storage on first ask; subscribers hear when it is in.
+  expect(runtime.sessions(self)).toEqual([]);
+  await vi.waitFor(() => expect(listener).toHaveBeenCalled());
+  expect(runtime.sessions(self)).toEqual([
+    { channelId: channel, root: root.id, at: 105_000 },
+    { channelId: "chan-2", at: 90_000 },
+  ]);
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await vi.waitFor(() => expect(turn.acknowledged).toHaveBeenCalled());
+  expect(runtime.sessions(self)).toEqual([
+    { channelId: channel, root: root.id, at: 110_000, status: "Working" },
+    { channelId: "chan-2", at: 90_000, status: "Idle" },
+  ]);
+  answered.resolve({ status: "done", answer: 2, text: "" });
+  await settled(turn);
+  await vi.waitFor(() =>
+    expect(runtime.sessions(self)[0]?.status).toBe("Idle"),
+  );
 });
 
 it("waits for a turn again in a new host when the host stops", async () => {

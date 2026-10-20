@@ -20,12 +20,14 @@ import {
   MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
+import { readProject } from "../../features/agent-harness/project";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
   Agent,
   AgentHandle,
   Agents,
+  AgentSession,
   Delivery,
   Models,
   StandaloneTurn,
@@ -144,6 +146,12 @@ export class PiRuntime {
   private readonly listeners = new Set<() => void>();
   /** Each agent's working conversations, as last read, for a stable view. */
   private readonly views = new Map<string, readonly number[]>();
+  /** Each agent's conversations as Pi's storage and this app run's
+   * deliveries know them, by key; read from storage once, when first asked. */
+  private readonly known = new Map<
+    string,
+    Map<string, { conversation: number; at: number }>
+  >();
 
   /** The Pi host every agent of this type runs in, started when needed. */
   private readonly pi: Pi;
@@ -209,6 +217,11 @@ export class PiRuntime {
     const { places } = await this.pi.request<{
       places: { key: string; conversation: number; seen: number }[];
     }>("places", { agent: pubkey });
+    if (!this.known.has(pubkey)) this.known.set(pubkey, new Map());
+    let changed = false;
+    for (const { key, conversation, seen } of places)
+      changed = this.remember(pubkey, key, conversation, seen) || changed;
+    if (changed) this.notify();
     return places
       .map(({ key, conversation, seen }) => {
         const [channelId = key, root] = key.split("/");
@@ -223,6 +236,35 @@ export class PiRuntime {
         };
       })
       .sort((a, b) => b.at - a.at);
+  }
+  /** The agent's conversations, most recently active first, with whether
+   * each is working while it runs here. The first call reads them from Pi's
+   * storage, and tells subscribers when they are in. */
+  sessions(pubkey: string): AgentSession[] {
+    const known = this.known.get(pubkey);
+    if (!known) {
+      this.known.set(pubkey, new Map());
+      // One that failed is read again when next asked.
+      void this.places(pubkey).catch((error) => {
+        if (!this.known.get(pubkey)?.size) this.known.delete(pubkey);
+        console.warn("Pi could not list an agent's conversations", error);
+      });
+      return [];
+    }
+    const entry = this.agents.get(pubkey);
+    return [...known]
+      .sort(([, a], [, b]) => b.at - a.at)
+      .map(([key, { conversation, at }]) => {
+        const [channelId = key, root] = key.split("/");
+        return {
+          channelId,
+          ...(root && { root }),
+          at,
+          ...(entry && {
+            status: entry.active.has(conversation) ? "Working" : "Idle",
+          }),
+        };
+      });
   }
   /** The conversations a Buzz request of the agent's is working in. */
   working(pubkey: string) {
@@ -272,6 +314,7 @@ export class PiRuntime {
     step,
     acknowledged,
     superseded,
+    interruptible,
   }: Delivery) {
     // Watches and timers come as standalone turns (`runOnce`).
     if (trigger.type !== "mention") return ignored?.();
@@ -359,6 +402,12 @@ export class PiRuntime {
         ...(await this.turnOf(entry, agent.pubkey, model, effort)),
       });
       sends = entry.sends.get(submitted.conversation) ?? 0;
+      this.remember(
+        agent.pubkey,
+        key,
+        submitted.conversation,
+        event.created_at,
+      );
     })();
     const settled = handed
       .then(async (): Promise<TurnResult> => {
@@ -377,7 +426,8 @@ export class PiRuntime {
           );
           return { ok: true };
         }
-        return waited.status === "closed"
+        // A turn the owner stopped, or a removed agent's, says nothing more.
+        return waited.status === "closed" || waited.reason === "aborted"
           ? { ok: true }
           : { ok: false, error: unanswered(waited) };
       })
@@ -408,6 +458,14 @@ export class PiRuntime {
     if (!wait) await policy.handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(settled);
+    // Stop on its activity stops the run the request is in.
+    interruptible?.(async () => {
+      await handed;
+      await this.pi.request("abort", {
+        agent: agent.pubkey,
+        conversation: submitted.conversation,
+      });
+    });
     void settled.then(async (result) => {
       if (!result.ok) await this.report(agent, where, result.error ?? "");
     });
@@ -473,6 +531,11 @@ export class PiRuntime {
     const client =
       entry?.handle &&
       appClient(entry.handle, {
+        relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
+        audienceAuthorityCommunity: this.reads(
+          call.agent,
+        )?.audienceAuthorityCommunity?.(),
+        signingAuthority: this.reads(call.agent)?.workflowAuthority(),
         spawn: this.spawn,
         cwd: entry.config.workspace,
         memories: (slug) => this.memories(call.agent, slug),
@@ -528,6 +591,24 @@ export class PiRuntime {
     } else
       for (const receipt of active?.values() ?? [])
         receipt.step?.(event.tool, event.target);
+  }
+
+  /** Notes a conversation's newest message, `seen` in seconds, once the
+   * agent's conversations were asked for; a later one already known stays.
+   * True when that changed what is known. */
+  private remember(
+    pubkey: string,
+    key: string,
+    conversation: number,
+    seen: number,
+  ) {
+    const known = this.known.get(pubkey);
+    const before = known?.get(key);
+    const at = Math.max(seen * 1000, before?.at ?? 0);
+    if (!known || (before?.conversation === conversation && before.at === at))
+      return false;
+    known.set(key, { conversation, at });
+    return true;
   }
 
   private forget(entry: Entry, request: string) {
@@ -684,8 +765,17 @@ export class PiRuntime {
     const rootId = thread?.rootId ?? event.id;
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
+    // Read alongside the conversation: only a Solo chat's Canvas is handed over.
+    const canvas = reads?.canvas?.bind(reads);
+    const owner = this.agents.get(self)?.handle?.owner;
+    const reading = topLevel
+      ? readProject(
+          canvas && owner ? () => canvas(channelId, owner) : undefined,
+        )
+      : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
-    if (reads && (thread || dm || topLevel))
+    // A chat its owner is still creating has nothing earlier to read.
+    if (reads && !summary?.starting && (thread || dm || topLevel))
       try {
         const events = await reads.read(
           thread && !topLevel
@@ -726,6 +816,7 @@ export class PiRuntime {
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
+    const project = (await reading)?.section;
     return {
       event,
       scope,
@@ -739,6 +830,7 @@ export class PiRuntime {
       context: unseen,
       total: earlier.length + 1,
       name: (pubkey: string) => reads?.name(pubkey, members),
+      ...(project ? { project } : {}),
     };
   }
 

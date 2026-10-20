@@ -307,6 +307,18 @@ function AvatarStackSpecimen() {
       >
         <AvatarStack items={items} size="small" /> 4 replies
       </Button>
+      <Button variant="ghost" aria-label="Seven agents to import">
+        <AvatarStack
+          items={[
+            ...items,
+            { id: "dana", name: "Dana", shape: "squircle" },
+            { id: "eli", name: "Eli", shape: "squircle" },
+            { id: "fern", name: "Fern", shape: "squircle" },
+          ]}
+          size="hero"
+          max={5}
+        />
+      </Button>
     </div>
   );
 }

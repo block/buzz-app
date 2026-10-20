@@ -529,7 +529,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "mini",
       "compact",
       "small",
-      "large",
+      "hero",
       "circle",
       "squircle",
       "overflow count",

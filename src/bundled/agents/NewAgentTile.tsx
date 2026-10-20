@@ -67,11 +67,10 @@ export function NewAgentTile({
     >
       {crew ? (
         <AvatarStack
-          size="large"
+          size="hero"
           max={CREW}
           // Pictures lead; an agent without one shows its initial.
-          items={[...crew]
-            .sort((a, b) => Number(!a.picture) - Number(!b.picture))
+          items={crew
             .map((agent) => ({
               id: agent.pubkey,
               name: agent.name,
@@ -83,8 +82,9 @@ export function NewAgentTile({
                   agent.relay || undefined,
                   "small",
                 ),
-              shape: "squircle",
-            }))}
+              shape: "squircle" as const,
+            }))
+            .sort((a, b) => Number(!a.src) - Number(!b.src))}
         />
       ) : (
         <span aria-hidden="true" className={styles.newArtwork}>

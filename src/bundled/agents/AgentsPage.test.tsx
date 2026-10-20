@@ -1030,6 +1030,35 @@ it("queues several imports in a row and keeps the dialog open until they finish"
   ).not.toBeInTheDocument();
 });
 
+it("keeps importing the rest after one fails, and clears the failure on a retry", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.port.mockRejectedValueOnce(new Error("Keychain access was denied"));
+  await user.click(
+    await screen.findByRole("button", { name: /Import them now/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Import Ada" }),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
+  expect(
+    await within(dialog).findByRole("button", { name: "Bea imported" }),
+  ).toBeDisabled();
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Ada wasn't imported. Keychain access was denied.",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Import Ada" }));
+  expect(
+    await within(dialog).findByRole("button", { name: "Ada imported" }),
+  ).toBeDisabled();
+  expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(
+    screen.queryByRole("dialog", { name: "Import an agent" }),
+  ).not.toBeInTheDocument();
+});
+
 it("tells same-named agents to import apart by their keys", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
@@ -1623,6 +1652,35 @@ it("offers importing first agents only when there are some to import", async () 
   expect(
     screen.queryByRole("button", { name: /Import them now/ }),
   ).not.toBeInTheDocument();
+});
+
+it("stacks five old agents, pictures first, and counts the rest", async () => {
+  setup([], {
+    found: ["Ada", "Bea", "Cy", "Di", "Ed", "Flo", "Gus"].map(
+      (name, index) => ({
+        source: "installed" as const,
+        pubkey: String(index).repeat(64),
+        name,
+        relay: "",
+        ...(name === "Gus"
+          ? { picture: "https://old.example/media/g.png" }
+          : {}),
+      }),
+    ),
+  });
+  const tile = await screen.findByRole("button", { name: /Import them now/ });
+  const stacked = tile.querySelectorAll(
+    "[data-avatar-stack] > [data-avatar-shape]",
+  );
+  // Five agents, then the count as one more stack item.
+  expect(stacked).toHaveLength(6);
+  expect(stacked[5]).toHaveTextContent("+2");
+  // Gus, the only one with a picture, leads; the rest show initials.
+  expect(stacked[1]).toHaveTextContent("A");
+  expect(stacked[0]?.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://old.example/media/g.png",
+  );
 });
 
 it("offers creating and the marketplace while agents load", () => {

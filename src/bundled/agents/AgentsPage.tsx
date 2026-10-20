@@ -1061,6 +1061,9 @@ function ImportAgents({
   const [ports, setPorts] = useState<ReadonlyMap<string, "queued" | "done">>(
     new Map(),
   );
+  // What did not come over, or why an import failed, by agent; choosing the
+  // agent again replaces it.
+  const [said, setSaid] = useState<ReadonlyMap<string, string>>(new Map());
   const chosenPorts = useRef(new Set<string>());
   const portLine = useRef(Promise.resolve());
   const queued = [...ports.values()].includes("queued");
@@ -1087,12 +1090,18 @@ function ImportAgents({
       else next.delete(pubkey);
       return next;
     });
-  const say = (text: string) =>
-    setError((last) => [last, text].filter(Boolean).join(" "));
+  const say = (pubkey: string, text?: string) =>
+    setSaid((last) => {
+      const next = new Map(last);
+      if (text) next.set(pubkey, text);
+      else next.delete(pubkey);
+      return next;
+    });
   const port = (agent: PortableAgent) => {
     if (!chosen || chosenPorts.current.has(agent.pubkey)) return;
     chosenPorts.current.add(agent.pubkey);
     setPort(agent.pubkey, "queued");
+    say(agent.pubkey);
     const type = chosen.key;
     portLine.current = portLine.current.then(async () => {
       try {
@@ -1102,12 +1111,15 @@ function ImportAgents({
           type,
         });
         setPort(agent.pubkey, "done");
-        if (notes.length) say(notes.join(" "));
+        if (notes.length) say(agent.pubkey, notes.join(" "));
         onImported();
       } catch (reason) {
         chosenPorts.current.delete(agent.pubkey);
         setPort(agent.pubkey);
-        say(`${agent.name} wasn't imported. ${sentence(message(reason))}`);
+        say(
+          agent.pubkey,
+          `${agent.name} wasn't imported. ${sentence(message(reason))}`,
+        );
       }
     });
   };
@@ -1173,9 +1185,9 @@ function ImportAgents({
           />
         </div>
       )}
-      {error && (
+      {(error || said.size > 0) && (
         <p role="alert" className="m-0 text-body-sm text-danger">
-          {error}
+          {[error, ...said.values()].filter(Boolean).join(" ")}
         </p>
       )}
       {found?.warnings.map((warning) => (

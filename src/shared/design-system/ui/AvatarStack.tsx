@@ -15,7 +15,7 @@ export function AvatarStack({
   max = 3,
 }: {
   items: readonly StackAvatar[];
-  size?: "compact" | "small" | "mini" | "large";
+  size?: "compact" | "small" | "mini" | "hero";
   /** How many avatars show before the overflow count. */
   max?: number;
 }) {
@@ -53,8 +53,8 @@ export function AvatarStack({
         </span>
       ))}
       {items.length > max &&
-        (size === "large" ? (
-          // A large count is one more stack item, shaped like the avatars.
+        (size === "hero" ? (
+          // A hero count is one more stack item, shaped like the avatars.
           <span
             className={styles.item}
             data-avatar-shape={items[0]?.shape}

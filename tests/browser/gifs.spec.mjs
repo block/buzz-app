@@ -227,7 +227,15 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   ).toHaveCount(0);
   const tabIndicator = picker.locator(".buzz-tabs-indicator");
   await expect(tabIndicator).toHaveCSS("height", "2px");
-  await expect(tabIndicator).toHaveCSS("background-color", "rgb(15, 15, 15)");
+  const indicatorColor = await tabIndicator.evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--affordance-prominent-mark)";
+    element.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await expect(tabIndicator).toHaveCSS("background-color", indicatorColor);
   const search = page.getByRole("searchbox", { name: "Search GIFs" });
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("hello");

@@ -38,11 +38,14 @@ export function CommunityDialog({
   close,
   onJoined,
   invite,
+  connectionFrom,
 }: {
   communities: Communities;
   mode: "join" | "profile";
   close(): void;
   onJoined?: (id: string) => void;
+  /** A deliberate connection edit uses the same admission flow, never rekeys existing data. */
+  connectionFrom?: string;
   invite?:
     | Readonly<{
         community: string;
@@ -67,7 +70,8 @@ export function CommunityDialog({
     }
   });
   const [url, setUrl] = useState(
-    invite?.community ??
+    connectionFrom ??
+      invite?.community ??
       (recovery.pending
         ? communityDestination(recovery.pending.community).url
         : ""),
@@ -263,7 +267,9 @@ export function CommunityDialog({
         unavailable
           ? undefined
           : step === "destination"
-            ? "Use your identity across communities. Your profile and conversations stay separate in each one."
+            ? connectionFrom
+              ? "Enter a wss:// or https:// relay address without a path. Changing the connection URL does not rename or move this community."
+              : "Use your identity across communities. Your profile and conversations stay separate in each one."
             : step === "access"
               ? `Connect to ${destination?.name} with your Buzz identity.`
               : mode === "profile"
@@ -324,7 +330,9 @@ export function CommunityDialog({
           ? "Your profile"
           : step === "profile"
             ? `Your profile in ${info?.name && info.name !== "Buzz Relay" ? info.name : destination?.name}`
-            : "Add a community"
+            : connectionFrom
+              ? "Edit connection"
+              : "Add a community"
       }
     >
       <form
@@ -353,7 +361,11 @@ export function CommunityDialog({
               <Field
                 label="Relay URL"
                 error={error || undefined}
-                description="Enter a wss:// or https:// relay address without a path. Continue contacts this relay using your Buzz identity; joining or publishing a profile requires a later step."
+                description={
+                  connectionFrom
+                    ? undefined
+                    : "Enter a wss:// or https:// relay address without a path. Continue contacts this relay using your Buzz identity; joining or publishing a profile requires a later step."
+                }
               >
                 <Input
                   type="url"

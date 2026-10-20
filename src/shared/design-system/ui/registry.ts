@@ -448,6 +448,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     variants: [
       "prominent",
       "subtle",
+      "subtle-muted",
       "ghost",
       "destructive",
       "outline",
@@ -455,7 +456,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "inverted",
       "link",
       "plain: unfilled text disclosure without an underline",
-      "size: inline | xs | sm | md (default) | lg",
+      "size: caption (32px, caption text) | inline | xs | sm | md (default) | lg",
       "shape: capsule (default) | control (12px) | icon (square, 10px)",
       "SurfaceButton: artwork layout with shared activation and focus (proposed)",
       "loading",
@@ -476,9 +477,11 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     variants: [
       "prominent",
       "subtle",
+      "subtle-muted",
       "ghost",
       "inverted",
       "destructive",
+      "destructive-quiet (muted at rest, danger on hover and press)",
       "outline",
       "attention (proposed): light dashed danger outline with slow marching ants",
       "link",
@@ -487,7 +490,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "avatar",
       "media",
       "bare (no background in any state; glyph-state toggles use 20px artwork at sm; row-revealed actions retain standard artwork sizing)",
-      "shape: control (default, 10px) | round (avatar default) | row-end | squircle (prominent avatar edit action)",
+      "shape: inset (container radius minus inset via --control-inset-radius) | control (default, 10px) | round (avatar default) | row-end | squircle (prominent avatar edit action)",
       "size: xs (20px, 12px icon) | sm (default, 32px, 16px icon) | md (40px) | lg (52px)",
       "legacy aliases: quiet, solid, compact, toolbar, default, large",
     ],
@@ -524,13 +527,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "avatar-stack",
     name: "AvatarStack",
     purpose:
-      "Show up to three overlapping identities and an overflow count on one line. The enclosing control supplies the accessible name.",
+      "Show overlapping identities, three unless the caller sets a maximum, and an overflow count on one line. The enclosing control supplies the accessible name.",
     behavior:
       "Decorative artwork composed from Avatar; identity data stays with the caller.",
     variants: [
       "mini",
       "compact",
       "small",
+      "hero",
       "circle",
       "squircle",
       "overflow count",

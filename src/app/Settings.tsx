@@ -45,7 +45,7 @@ import {
   XIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
-import type { PluginInfo } from "../plugins/types";
+import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
 import { PluginReadme } from "./PluginReadme";
@@ -257,6 +257,8 @@ function PluginDetails({
   onClose,
   access,
   onCheckAccess,
+  catalog,
+  authorizeGit,
 }: {
   plugin: PluginInfo;
   failure: string | null;
@@ -266,6 +268,8 @@ function PluginDetails({
   close: RefObject<HTMLButtonElement | null>;
   onClose(): void;
   access: AdminAccessState;
+  catalog: Catalog;
+  authorizeGit: Parameters<typeof PluginImport>[0]["authorizeGit"];
   onCheckAccess(): void;
 }) {
   const accessReason = restrictedPlugin(plugin)
@@ -393,6 +397,17 @@ function PluginDetails({
           </Tooltip>
         )}
       </div>
+      {plugin.source === "external" && plugins.imports && (
+        <PluginImport
+          key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
+          returnFocus={() => close.current}
+          updateId={plugin.manifest.id}
+          plugins={plugins}
+          catalog={catalog}
+          busy={busy}
+          {...(authorizeGit ? { authorizeGit } : {})}
+        />
+      )}
       {accessReason && (
         <p id="plugin-detail-access" className="sr-only">
           {access === "error"
@@ -751,7 +766,6 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
-  const [updatingPluginId, setUpdatingPluginId] = useState<string>();
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
   const pluginTrigger = useRef<HTMLButtonElement>(null);
@@ -900,10 +914,6 @@ export function Settings({
                       data-access-state={
                         plugin.enabled && accessReason ? "" : undefined
                       }
-                      data-updatable={
-                        (plugin.source === "external" && !!plugins.imports) ||
-                        undefined
-                      }
                       className={styles.pluginRow}
                       data-enabled={plugin.enabled}
                       aria-label={`View ${plugin.manifest.name} details`}
@@ -975,19 +985,6 @@ export function Settings({
                           {access === "checking" ? "Checking…" : "Unavailable"}
                         </span>
                       )}
-                      {plugin.source === "external" &&
-                        plugins.imports &&
-                        catalog && (
-                          <Button
-                            size="sm"
-                            aria-label={`Update ${plugin.manifest.name}`}
-                            data-plugin-update-id={id}
-                            disabled={busy}
-                            onClick={() => setUpdatingPluginId(id)}
-                          >
-                            Update
-                          </Button>
-                        )}
                       {isRequiredPlugin(plugin) ? (
                         <Button variant="outline" size="sm" disabled>
                           Required
@@ -1276,28 +1273,6 @@ export function Settings({
                     still work.
                   </p>
                 )}
-                {catalog && updatingPluginId && (
-                  <PluginImport
-                    updateId={updatingPluginId}
-                    plugins={plugins}
-                    catalog={catalog}
-                    busy={busy}
-                    authorizeGit={authorizePluginGit}
-                    onClosed={() => setUpdatingPluginId(undefined)}
-                    returnFocus={() =>
-                      visibleReturn(
-                        Array.from(
-                          pluginSection.current?.querySelectorAll<HTMLButtonElement>(
-                            "[data-plugin-update-id]",
-                          ) ?? [],
-                        ).find(
-                          (button) =>
-                            button.dataset.pluginUpdateId === updatingPluginId,
-                        ) ?? pluginSection.current,
-                      )
-                    }
-                  />
-                )}
                 <div>
                   <div>
                     {externalPluginsPaused && (
@@ -1382,10 +1357,12 @@ export function Settings({
               </section>
             </div>
           </div>
-          {showingDetails && selectedPlugin && (
+          {showingDetails && selectedPlugin && catalog && (
             <PluginDetails
               key={selectedPlugin.manifest.id}
               plugin={selectedPlugin}
+              catalog={catalog}
+              authorizeGit={authorizePluginGit}
               failure={selectedFailure}
               busy={busy}
               access={pluginAccess(selectedPlugin)}

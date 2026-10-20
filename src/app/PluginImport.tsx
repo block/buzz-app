@@ -27,7 +27,10 @@ import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
 import type { PluginManifest } from "../plugins/api";
 
-function importLocation(preview: ImportPreview, path: string | undefined) {
+function importLocation(
+  preview: Pick<ImportPreview, "source" | "commit">,
+  path: string | undefined,
+) {
   if (!path || path === ".") return preview.source;
   if (preview.commit) return `${preview.source} · ${path}`;
   const windows = /^(?:[a-z]:\\|\\\\)/i.test(preview.source);
@@ -164,13 +167,13 @@ export function PluginImport({
   ) => Promise<{ repository: string; token: string } | null>;
 }) {
   const imports = plugins.imports;
-  const [open, setOpen] = useState(!!updateId);
+  const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const checkAgain = useRef<HTMLButtonElement>(null);
   const savedSource = catalog.plugins.find(
     (item) => item.manifest.id === updateId,
   )?.updateSource;
-  const [chooseSource, setChooseSource] = useState(!savedSource);
   const [repository, setRepository] = useState(
     savedSource && "repository" in savedSource ? savedSource.repository : "",
   );
@@ -207,7 +210,9 @@ export function PluginImport({
             '[role="radio"][aria-checked="true"], input[type="radio"]:checked',
           )
         : null;
-      (checked ?? previewBack.current)?.focus();
+      (
+        checked ?? (updateId ? installButton.current : previewBack.current)
+      )?.focus();
     } else if (sourceTrigger.current) {
       if (
         sourceTrigger.current === document.body ||
@@ -217,11 +222,7 @@ export function PluginImport({
       else sourceTrigger.current.focus();
       sourceTrigger.current = null;
     }
-  }, [open, preview, loading, discarding, reviewing]);
-  const hasSavedSource = !!savedSource;
-  useLayoutEffect(() => {
-    if (chooseSource && hasSavedSource) browse.current?.focus();
-  }, [chooseSource, hasSavedSource]);
+  }, [open, preview, loading, discarding, reviewing, updateId]);
   const errorTrigger = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     if (busy || loading || discarding) return;
@@ -281,28 +282,17 @@ export function PluginImport({
     setEnableOnInstall(true);
     try {
       const result = await operation();
-      let next =
+      const next =
         result && updateId
           ? {
               ...result,
               candidates: result.candidates.filter(
-                (item) => item.manifest.id === updateId,
+                (item) =>
+                  item.manifest.id === updateId &&
+                  item.path === savedSource?.path,
               ),
             }
           : result;
-      if (
-        next &&
-        savedSource &&
-        !chooseSource &&
-        next.candidates.some((item) => item.path === savedSource.path)
-      ) {
-        next = {
-          ...next,
-          candidates: next.candidates.filter(
-            (item) => item.path === savedSource.path,
-          ),
-        };
-      }
       if (!current.active) {
         if (next) await imports?.discard(next.token);
         return;
@@ -313,7 +303,7 @@ export function PluginImport({
           await imports?.discard(next.token);
           current.token = "";
           throw new Error(
-            "This source does not contain the selected plugin. Choose its built folder or repository.",
+            "The saved folder or repository no longer contains this plugin at its installed path.",
           );
         }
       }
@@ -331,7 +321,6 @@ export function PluginImport({
       );
     } catch (reason) {
       if (current.active) {
-        if (savedSource && "root" in savedSource) setChooseSource(true);
         showError(reason, returnTo);
       }
     } finally {
@@ -348,7 +337,6 @@ export function PluginImport({
       lifetime.current.token = "";
       setPreview(null);
       setShowUnchanged(false);
-      if (savedSource && "root" in savedSource) setChooseSource(true);
     } catch (reason) {
       showError(reason, previewBack.current);
     } finally {
@@ -381,7 +369,14 @@ export function PluginImport({
   }
   const candidate = preview?.candidates.find((p) => p.path === selected);
   const updating = !!existing;
-  const upToDate = !!existing && candidate?.revision === existing.revision;
+  const duplicate = updating && !updateId;
+  const upToDate =
+    !!existing &&
+    candidate?.revision ===
+      (updateId
+        ? catalog.plugins.find((item) => item.manifest.id === updateId)
+            ?.revision
+        : existing.revision);
   const rollbackWarning =
     candidate?.publisher && existing && !existing.hasSignature
       ? "You cannot roll back to the unsigned revision after this update."
@@ -496,6 +491,81 @@ export function PluginImport({
     <>
       {!updateId &&
         (actionTarget ? createPortal(addButton, actionTarget) : addButton)}
+      {updateId && (
+        <section aria-label="Plugin updates" className="text-body-sm">
+          <p className="mt-0 mb-2 text-label">
+            {savedSource && "repository" in savedSource
+              ? "Source repository"
+              : "Source folder"}
+          </p>
+          {savedSource ? (
+            <code className={styles.sourcePath}>
+              {"root" in savedSource
+                ? importLocation(
+                    { source: savedSource.root, commit: null },
+                    savedSource.path,
+                  )
+                : `${savedSource.repository} · ${savedSource.reference || "Repository default"} · ${savedSource.path}`}
+            </code>
+          ) : (
+            <p className="m-0 text-muted">
+              No saved source. Delete this plugin and add it again to choose a
+              source.
+            </p>
+          )}
+          {loading && !open ? <p role="status">Checking for updates…</p> : null}
+          {error && !open ? (
+            <p role="alert">
+              Source{" "}
+              {savedSource && "repository" in savedSource
+                ? "repository"
+                : "folder"}{" "}
+              unavailable. {error}
+            </p>
+          ) : null}
+          {preview && !open && !error && upToDate ? (
+            <p role="status">Up to date</p>
+          ) : null}
+          <div className="flex items-center gap-3 mt-3">
+            {preview && !error && !upToDate && (
+              <Button
+                ref={trigger}
+                size="sm"
+                disabled={blocked}
+                onClick={() => setOpen(true)}
+              >
+                Update
+              </Button>
+            )}
+            {savedSource && (
+              <Button
+                ref={checkAgain}
+                variant="link"
+                size="inline"
+                disabled={blocked}
+                onClick={() =>
+                  void load(async () => {
+                    if (lifetime.current.token) {
+                      await imports.discard(lifetime.current.token);
+                      lifetime.current.token = "";
+                    }
+                    if ("root" in savedSource)
+                      return imports.folder(savedSource.root);
+                    const signed = await authorizeGit?.(savedSource.repository);
+                    return imports.git(
+                      signed?.repository ?? savedSource.repository,
+                      savedSource.reference,
+                      signed?.token,
+                    );
+                  })
+                }
+              >
+                {preview || error ? "Check again" : "Check for updates"}
+              </Button>
+            )}
+          </div>
+        </section>
+      )}
       <Dialog
         open={open}
         onOpenChange={(next) => {
@@ -509,9 +579,11 @@ export function PluginImport({
                 ? "Update plugin"
                 : "Add a plugin"
               : reviewing
-                ? existing
-                  ? `Update ${existing.manifest.name}`
-                  : "Review plugin access"
+                ? duplicate
+                  ? "Already installed"
+                  : existing
+                    ? `Update ${existing.manifest.name}`
+                    : "Review plugin access"
                 : preview.candidates.length
                   ? "Choose a plugin"
                   : "No plugins found"
@@ -579,12 +651,10 @@ export function PluginImport({
                     } else void dismiss();
                   }}
                 >
-                  {savedSource && "root" in savedSource
-                    ? "Change source folder"
-                    : "Back"}
+                  Back
                 </Button>
               )}
-              {reviewing && upToDate && (
+              {reviewing && (upToDate || duplicate) && (
                 <Button disabled={blocked} onClick={() => void close()}>
                   Done
                 </Button>
@@ -606,50 +676,58 @@ export function PluginImport({
                   Continue
                 </Button>
               )}
-              {reviewing && candidate && !upToDate && (
-                <Button
-                  ref={installButton}
-                  variant="prominent"
-                  type="button"
-                  disabled={blocked || existing?.source === "bundled"}
-                  onClick={async () => {
-                    if (blocked || pending.current) return;
-                    const current = lifetime.current;
-                    pending.current = true;
-                    setLoading(true);
-                    setError(null);
-                    try {
-                      const success = await plugins.installImport(
-                        preview.token,
-                        candidate.path,
-                      );
-                      if (!current.active) return;
-                      if (!success) {
-                        showError(
-                          plugins.snapshot().error ??
-                            "Plugin installation wasn’t confirmed. Check the preview and try again.",
-                          installButton.current,
+              {reviewing &&
+                candidate &&
+                !upToDate &&
+                (!existing || !!updateId) && (
+                  <Button
+                    ref={installButton}
+                    variant="prominent"
+                    type="button"
+                    disabled={blocked || existing?.source === "bundled"}
+                    onClick={async () => {
+                      if (blocked || pending.current) return;
+                      const current = lifetime.current;
+                      pending.current = true;
+                      setLoading(true);
+                      setError(null);
+                      try {
+                        const success = await plugins.installImport(
+                          preview.token,
+                          candidate.path,
                         );
-                        return;
+                        if (!current.active) return;
+                        if (!success) {
+                          showError(
+                            plugins.snapshot().error ??
+                              "Plugin installation wasn’t confirmed. Check the preview and try again.",
+                            installButton.current,
+                          );
+                          return;
+                        }
+                        // Native keeps the prepared preview after install.
+                        current.token = "";
+                        void imports.discard(preview.token).catch(() => {});
+                        if (!existing && enableOnInstall)
+                          await plugins.change("enable", candidate.manifest.id);
+                        if (!current.active) return;
+                        if (!updateId) setPreview(null);
+                        else if (existing)
+                          setExisting({
+                            ...existing,
+                            revision: candidate.revision,
+                          });
+                        setOpen(false);
+                        onClosed?.();
+                      } finally {
+                        pending.current = false;
+                        if (current.active) setLoading(false);
                       }
-                      // Native keeps the prepared preview after install.
-                      current.token = "";
-                      void imports.discard(preview.token).catch(() => {});
-                      if (!existing && enableOnInstall)
-                        await plugins.change("enable", candidate.manifest.id);
-                      if (!current.active) return;
-                      setPreview(null);
-                      setOpen(false);
-                      onClosed?.();
-                    } finally {
-                      pending.current = false;
-                      if (current.active) setLoading(false);
-                    }
-                  }}
-                >
-                  {updating ? "Update" : "Install plugin"}
-                </Button>
-              )}
+                    }}
+                  >
+                    {updating ? "Update" : "Install plugin"}
+                  </Button>
+                )}
             </>
           ) : undefined
         }
@@ -660,7 +738,9 @@ export function PluginImport({
         }}
         dismissOnOutsideClick
         preventClose={blocked}
-        finalFocus={() => returnFocus?.() ?? trigger.current}
+        finalFocus={() =>
+          returnFocus?.() ?? trigger.current ?? checkAgain.current
+        }
       >
         {error && (
           <p role="alert" className="error break-words">
@@ -669,73 +749,9 @@ export function PluginImport({
         )}
         {showUnchanged && allDeclarations}
         <div hidden={!!error || showUnchanged}>
-          <div
-            hidden={
-              !!preview ||
-              (!!savedSource && "root" in savedSource && !chooseSource)
-            }
-          >
-            {updateId && savedSource && !chooseSource ? (
-              <section aria-label="Saved plugin source">
-                <p className="mt-0 mb-2 text-body-sm break-words">
-                  <code className={styles.sourcePath}>
-                    {"root" in savedSource
-                      ? savedSource.root
-                      : savedSource.repository}
-                  </code>
-                </p>
-                <p className="mt-0 mb-4 text-body-sm text-muted break-words">
-                  Plugin folder:{" "}
-                  <code className={styles.sourcePath}>{savedSource.path}</code>
-                </p>
-                {"reference" in savedSource && (
-                  <p className="mt-0 mb-4 text-body-sm text-muted">
-                    Branch or tag:{" "}
-                    {savedSource.reference ? (
-                      <code className={styles.sourcePath}>
-                        {savedSource.reference}
-                      </code>
-                    ) : (
-                      "Repository default"
-                    )}
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-3">
-                  {!("root" in savedSource) && (
-                    <Button
-                      disabled={blocked}
-                      onClick={() =>
-                        void load(async () => {
-                          const signed = await authorizeGit?.(
-                            savedSource.repository,
-                          );
-                          return imports.git(
-                            signed?.repository ?? savedSource.repository,
-                            savedSource.reference,
-                            signed?.token,
-                          );
-                        })
-                      }
-                    >
-                      Check this repository
-                    </Button>
-                  )}
-                  <Button
-                    disabled={blocked}
-                    onClick={() => setChooseSource(true)}
-                  >
-                    Choose another source
-                  </Button>
-                </div>
-              </section>
-            ) : (
+          <div hidden={!!preview || !!updateId}>
+            {!updateId && (
               <>
-                {updateId && !savedSource && (
-                  <p className="mt-0 mb-4 text-body-sm text-muted">
-                    Buzz needs the source again. Choose or drop the replacement
-                    folder, or enter its repository.
-                  </p>
-                )}
                 <p className="mb-4 mt-0 text-body-sm text-muted">
                   Load built plugins containing{" "}
                   <code className={styles.sourcePath}>manifest.json</code> and{" "}
@@ -953,34 +969,22 @@ export function PluginImport({
                       <span className="text-muted">
                         {preview.commit ? "Source" : "Source folder"}
                       </span>
-                      <Button
-                        ref={previewBack}
-                        variant="link"
-                        size="inline"
-                        aria-label={
-                          preview.commit
-                            ? "Change source"
-                            : "Change source folder"
-                        }
-                        disabled={blocked}
-                        onClick={() => void dismiss()}
-                      >
-                        Change
-                      </Button>
                     </div>
                     <code className={styles.sourcePath}>
                       {importLocation(preview, candidate?.path)}
                     </code>
                   </section>
                 )}
-                {reviewing && upToDate && (
-                  <p role="status" className="mt-0 mb-4 text-label">
-                    Already up to date
+                {reviewing && updating && !updateId && (
+                  <p>
+                    This plugin is already installed. Update it from its
+                    details, or delete it before adding another source.
                   </p>
                 )}
                 {reviewing &&
                   candidate &&
-                  (existing?.source !== "bundled" || loading) && (
+                  (existing?.source !== "bundled" || loading) &&
+                  (!existing || !!updateId) && (
                     <section
                       aria-label="Computer access"
                       className="text-body-sm"

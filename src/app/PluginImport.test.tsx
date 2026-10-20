@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -204,6 +205,7 @@ it("shows exact declared access and changes before an enabled update", async () 
         revision: "one",
         previous: null,
         reloadable: false,
+        updateSource: { root: "/example", path: "dist" },
         error: null,
         readmeRevision: "readme-one",
         iconPngRevision: "icon-one",
@@ -227,7 +229,7 @@ it("shows exact declared access and changes before an enabled update", async () 
       busy={false}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Browse plugin folder" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Update" }));
   await screen.findByRole("region", { name: "Computer access" });
   expect(screen.getByText(/^Run example-cli/)).toBeVisible();
   expect(screen.getByText(/^Start example-worker/)).toBeVisible();
@@ -550,6 +552,7 @@ it.each([
           revision: "one",
           previous: null,
           reloadable: false,
+          updateSource: { root: "/example", path: "dist" },
           error: null,
         },
       ],
@@ -569,9 +572,7 @@ it.each([
         busy={false}
       />,
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Browse plugin folder" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Update" }));
     const access = within(
       await screen.findByRole("region", { name: "Computer access" }),
     );
@@ -924,7 +925,7 @@ it.each([true, false])(
   },
 );
 
-it("limits row updates to the selected plugin without modifying the source preview", async () => {
+it("limits pane updates to the selected plugin without modifying the source preview", async () => {
   const preview = {
     token: "update",
     source: "/plugins",
@@ -950,6 +951,7 @@ it("limits row updates to the selected plugin without modifying the source previ
     revision: "one",
     previous: null,
     reloadable: true,
+    updateSource: { root: "/plugins", path: "target" },
     error: null,
   };
   const manager = {
@@ -969,9 +971,7 @@ it("limits row updates to the selected plugin without modifying the source previ
       busy={false}
     />,
   );
-  await user.click(
-    screen.getByRole("button", { name: "Browse plugin folder" }),
-  );
+  await user.click(await screen.findByRole("button", { name: "Update" }));
   const update = await screen.findByRole("button", { name: "Update" });
   expect(screen.queryByRole("radio")).toBeNull();
   expect(screen.queryByRole("switch", { name: "Enable plugin" })).toBeNull();
@@ -985,7 +985,7 @@ it("limits row updates to the selected plugin without modifying the source previ
   expect(preview.candidates).toHaveLength(2);
 });
 
-it("reviews duplicate Add candidates as updates without reacquiring the package", async () => {
+it("requires deletion before adding another source for an installed plugin", async () => {
   const manifest = {
     id: "example.duplicate",
     name: "Duplicate",
@@ -1023,18 +1023,12 @@ it("reviews duplicate Add candidates as updates without reacquiring the package"
   );
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
   fireEvent.click(screen.getByRole("button", { name: "Browse plugin folder" }));
-  const update = await screen.findByRole("button", { name: "Update" });
-  expect(update).toBeEnabled();
-  expect(screen.getByRole("dialog")).toHaveAccessibleName("Update Duplicate");
-  expect(screen.getByRole("region", { name: "Computer access" })).toBeVisible();
-  expect(screen.queryByRole("switch", { name: "Enable plugin" })).toBeNull();
-  fireEvent.click(update);
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(
-    "duplicate",
-    ".",
-  );
-  expect(manager.imports?.folder).toHaveBeenCalledTimes(1);
+  expect(
+    await screen.findByText(/This plugin is already installed/),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Install plugin" })).toBeNull();
+  expect(manager.installImport).not.toHaveBeenCalled();
   expect(manager.change).not.toHaveBeenCalled();
 });
 
@@ -1172,8 +1166,9 @@ it.each([
     ).toBeNull();
     if (!("root" in updateSource))
       await user.click(
-        screen.getByRole("button", { name: "Check this repository" }),
+        screen.getByRole("button", { name: "Check for updates" }),
       );
+    await user.click(await screen.findByRole("button", { name: "Update" }));
     expect(
       await screen.findByText(/This plugin will stay disabled/),
     ).toBeVisible();
@@ -1203,7 +1198,7 @@ it.each([
   },
 );
 
-it("recovers from an unavailable remembered folder by choosing another source", async () => {
+it("retries an unavailable folder without offering a different source", async () => {
   const user = userEvent.setup();
   const folder = vi
     .fn()
@@ -1235,15 +1230,13 @@ it("recovers from an unavailable remembered folder by choosing another source", 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Folder no longer exists",
   );
-  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
   expect(
-    screen.getByRole("button", { name: "Browse plugin folder" }),
-  ).toHaveFocus();
-  await user.click(
-    screen.getByRole("button", { name: "Browse plugin folder" }),
-  );
+    screen.queryByRole("button", { name: "Browse plugin folder" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Check again" }));
   expect(await screen.findByRole("button", { name: "Update" })).toBeEnabled();
-  expect(folder.mock.calls).toEqual([["/moved"], []]);
+  expect(folder.mock.calls).toEqual([["/moved"], ["/moved"]]);
 });
 
 it("keeps wrong-plugin sources out of a remembered-source update", async () => {
@@ -1280,7 +1273,7 @@ it("keeps wrong-plugin sources out of a remembered-source update", async () => {
     />,
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "does not contain the selected plugin",
+    "no longer contains this plugin",
   );
   expect(discard).toHaveBeenCalledExactlyOnceWith("remembered");
   expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
@@ -1331,11 +1324,12 @@ it("shows unchanged declarations in a separate dialog view and returns without r
       updateId={rememberedManifest.id}
     />,
   );
+  await user.click(await screen.findByRole("button", { name: "Update" }));
   expect(await screen.findByText("No declared access changes")).toBeVisible();
   expect(screen.getByRole("dialog")).toHaveAccessibleName("Update Remembered");
   expect(
     screen.getByRole("region", { name: "Update source" }),
-  ).toHaveTextContent("Source folderChange/plugins/dist");
+  ).toHaveTextContent("Source folder/plugins/dist");
   expect(
     screen.queryByRole("region", { name: "Added declarations" }),
   ).toBeNull();
@@ -1377,8 +1371,7 @@ it("shows unchanged declarations in a separate dialog view and returns without r
   expect(view).toHaveFocus();
 });
 
-it("shows an identical package as up to date and closes without installing", async () => {
-  const user = userEvent.setup();
+it("keeps identical packages in the pane without opening review or installing", async () => {
   const manager = {
     imports: {
       folder: vi.fn(async () => ({
@@ -1391,6 +1384,89 @@ it("shows an identical package as up to date and closes without installing", asy
     },
     installImport: vi.fn(async () => true),
     change: vi.fn(),
+  } as unknown as PluginManager;
+  const view = render(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            ...rememberedPlugin,
+            updateSource: { root: "/plugins", path: "dist" },
+          },
+        ],
+      }}
+      busy={false}
+      updateId={rememberedManifest.id}
+    />,
+  );
+  expect(await screen.findByText("Up to date")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByText("No declared access changes")).toBeNull();
+  expect(screen.queryByRole("note")).toBeNull();
+  view.unmount();
+  await waitFor(() =>
+    expect(manager.imports?.discard).toHaveBeenCalledExactlyOnceWith(
+      "remembered",
+    ),
+  );
+  expect(manager.installImport).not.toHaveBeenCalled();
+  expect(manager.change).not.toHaveBeenCalled();
+});
+
+it("discards a late pane check after details unmount without opening review", async () => {
+  let finish!: (preview: ImportPreview) => void;
+  const manager = {
+    imports: {
+      folder: vi.fn(
+        () =>
+          new Promise<ImportPreview>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+      discard: vi.fn(async () => {}),
+    },
+    installImport: vi.fn(),
+  } as unknown as PluginManager;
+  const view = render(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            ...rememberedPlugin,
+            updateSource: { root: "/plugins", path: "dist" },
+          },
+        ],
+      }}
+      busy={false}
+      updateId={rememberedManifest.id}
+    />,
+  );
+  await waitFor(() => expect(manager.imports?.folder).toHaveBeenCalledTimes(1));
+  view.unmount();
+  await act(async () => finish(rememberedPreview));
+  expect(manager.imports?.discard).toHaveBeenCalledExactlyOnceWith(
+    "remembered",
+  );
+  expect(manager.installImport).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("does not substitute another folder with the same plugin identity", async () => {
+  const manager = {
+    imports: {
+      folder: vi.fn(async () => ({
+        ...rememberedPreview,
+        candidates: [rememberedPreview.candidates[1]],
+      })),
+      discard: vi.fn(async () => {}),
+    },
   } as unknown as PluginManager;
   render(
     <PluginImport
@@ -1409,16 +1485,11 @@ it("shows an identical package as up to date and closes without installing", asy
       updateId={rememberedManifest.id}
     />,
   );
-  expect(await screen.findByText("Already up to date")).toBeVisible();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "no longer contains this plugin",
+  );
   expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
-  expect(
-    screen.getByRole("button", { name: "Change source folder" }),
-  ).toHaveFocus();
-  await user.click(screen.getByRole("button", { name: "Done" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(manager.imports?.discard).toHaveBeenCalledExactlyOnceWith(
     "remembered",
   );
-  expect(manager.installImport).not.toHaveBeenCalled();
-  expect(manager.change).not.toHaveBeenCalled();
 });

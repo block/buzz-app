@@ -258,7 +258,6 @@
   user-select: none;
 }
 
-.pluginRow[data-updatable],
 .pluginRow[data-access-state] {
   padding-right: calc(
     var(--space-16) +
@@ -426,7 +425,6 @@
 
 @container (max-width: 32rem) {
   .pluginRow,
-  .pluginRow[data-updatable],
   .pluginRow[data-access-state] {
     align-items: stretch;
     flex-direction: column;

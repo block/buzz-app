@@ -1940,3 +1940,54 @@ it("keeps identity independent of community profile and clears revealed keys on 
   );
   expect(exportKey).toHaveBeenCalledTimes(1);
 });
+
+it("checks updates only in the open detail pane and keeps matching status off the row", async () => {
+  const fixture = reviewPluginFixture();
+  let finish!: (preview: import("../plugins/types").ImportPreview) => void;
+  const imports = {
+    folder: vi.fn(
+      () =>
+        new Promise<import("../plugins/types").ImportPreview>((resolve) => {
+          finish = resolve;
+        }),
+    ),
+    discard: vi.fn(async () => {}),
+  };
+  Object.assign(fixture.external, {
+    updateSource: { root: "/plugins", path: "dist" },
+  });
+  Object.assign(fixture.manager, { imports });
+  act(fixture.publish);
+  expect(imports.folder).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: /^Update/ })).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  expect(await screen.findByText("Checking for updates…")).toBeVisible();
+  expect(imports.folder).toHaveBeenCalledExactlyOnceWith("/plugins");
+  await act(async () =>
+    finish({
+      token: "same",
+      source: "/plugins",
+      commit: null,
+      warnings: [],
+      candidates: [
+        {
+          path: "dist",
+          revision: "current",
+          manifest: {
+            id: "example.external",
+            name: "Zebra external",
+            apiVersion: 1,
+          },
+        },
+      ],
+    }),
+  );
+  expect(screen.getByText("Up to date")).toBeVisible();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));
+  expect(screen.queryByText("Up to date")).toBeNull();
+  expect(imports.discard).toHaveBeenCalledExactlyOnceWith("same");
+});

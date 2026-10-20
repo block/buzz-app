@@ -850,10 +850,10 @@ HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional bran
 or tag is separate from the repository URL; GitHub `tree` URLs are rejected with
 guidance rather than ambiguously splitting branch names and subfolders. Discovery
 lists built plugin folders by path, name and manifest ID, including nested `dist`
-folders. Choose one and explicitly install/update. Add opens update review directly
-when the plugin is already installed. New plugins enable by default, with an opt-out
-in the review footer; successful installation closes the dialog. Updates match
-**manifest ID**, even across repositories, and preserve the saved enabled state:
+folders. Choose one and explicitly install. An already-installed plugin directs you
+to its details to update, or to delete it before adding another source. New plugins
+enable by default, with an opt-out in the review footer; successful installation closes the dialog. Updates match
+**manifest ID** and preserve the saved enabled state:
 an enabled update may activate immediately except in safe mode. Review shows declared host access, including changes. Installed artifacts do
 not watch/pull the source. Plugins installed from a folder keep the selected folder
 path for Settings → Plugins → Manage plugins → Reload while disabled;
@@ -872,17 +872,18 @@ the installed revision unchanged. Replacing an active plugin ends its in-memory
 work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.
 
-Update on an installed row immediately checks its remembered folder and opens access
-review, with Change source folder available before confirmation. Git installations
-still offer to check the remembered repository, branch/tag and candidate path,
-with a choice to use another source. Each check creates
-an immutable preview and requires explicit confirmation. Git authorization is acquired
-again for each check; credentials/tokens are never saved with source metadata. The
-source follows the current revision through update and rollback. Existing folder
-metadata remains readable; older Git installs and dropped-folder snapshots without
-saved source information ask for a replacement folder or repository. A missing source
-or a source without the selected plugin leaves the installation unchanged and allows
-choosing another source. Git sources remain ineligible for folder Reload.
+Opening an installed plugin's details checks its remembered folder. A matching
+package shows Up to date in the pane; a changed package offers Update, which opens
+access review before explicit confirmation. The list row shows neither status nor
+an Update action. Update uses the same source and candidate path; changing sources
+requires deleting the plugin and adding it again. Git checks remain explicit in the
+pane, using the remembered repository and branch/tag with fresh authorization;
+credentials/tokens are never saved with source metadata. Each check creates an
+immutable preview, discarded when details close or a check is replaced. The source
+follows the current revision through update and rollback. Missing sources or changed
+plugin identities/paths leave the installation unchanged. Older Git installs and
+dropped-folder snapshots without saved source information need deletion and a fresh
+Add to establish a source. Git sources remain ineligible for folder Reload.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
 single pending preview per native process. Replacing/closing a preview discards it;

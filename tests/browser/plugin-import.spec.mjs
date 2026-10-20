@@ -581,7 +581,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   const enabled = pluginAction(page, "Example two");
   await expect(enabled).toHaveAccessibleName("Enable Example two");
   const row = button(page, "View Example two details");
-  await expect(row).toHaveAttribute("data-updatable", "true");
+  await expect(button(page, "Update Example two")).toHaveCount(0);
   for (const width of [1100, 768]) {
     await page.setViewportSize({ width, height: 950 });
     await row.scrollIntoViewIfNeeded();
@@ -631,8 +631,8 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await page.evaluate(() => {
     window.importCategory = "productivity";
   });
-  await button(page, "Update Example two").click();
-  // Real modal focus handoff when the remembered-source step is replaced.
+  await button(page, "View Example two details").click();
+  // The pane checks the folder before offering a review action.
   await expect(button(page, "Update")).toBeEnabled();
   expect(
     await page.evaluate(
@@ -642,9 +642,9 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
           .at(-1).args,
     ),
   ).toEqual({ directory: "/fixture/plugins" });
-  await button(page, "Change source folder").click();
-  await expect(button(page, "Browse plugin folder")).toBeFocused();
-  await button(page, "Browse plugin folder").click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await button(page, "Update").click();
+  await expect(button(page, "Change source folder")).toHaveCount(0);
   await expect(page.getByRole("radio")).toHaveCount(0);
   await expect(
     page.getByText(/may run immediately|earlier revision to roll back/),
@@ -670,8 +670,11 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await button(page, "Update").click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(enabled).toHaveAccessibleName("Disable Example two");
-  await expect(button(page, "Update Example two")).toBeFocused();
-  await button(page, "View Example two details").click();
+  await expect(button(page, "Close plugin details")).toBeFocused();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Up to date" }),
+  ).toBeVisible();
+  await expect(button(page, "Update")).toHaveCount(0);
   await button(page, "Delete").click();
   const deletion = page.getByRole("alertdialog", {
     name: "Delete Example two?",

@@ -26,7 +26,9 @@ import type {
 } from "../../features/agents/service";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import { PanelSubview } from "../../features/panels/PanelSubview";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -304,44 +306,106 @@ const modelChange = (model: string, data?: Catalog) => ({
 function CodexSignIn({
   login,
   step,
+  checking,
+  check,
   disabled,
 }: {
   login: CodexSetup;
   step: "install" | "login";
+  checking: boolean;
+  check(): void;
   disabled: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   const { running, output } = useSyncExternalStore(
     login.subscribe,
     login.snapshot,
   );
+  const action = step === "install" ? "Install Codex" : "Sign in";
   return (
-    <div className="grid gap-2">
-      <div className="flex justify-end gap-2">
-        <Button
-          variant="prominent"
-          size="sm"
-          disabled={disabled}
-          loading={Boolean(running)}
-          onClick={() => void login.run(step)}
-        >
-          {step === "install" ? "Install Codex" : "Sign in"}
-        </Button>
-        {running && (
-          <Button size="sm" onClick={() => void login.cancel()}>
-            Cancel
-          </Button>
-        )}
-      </div>
-      {output && (
-        <pre
-          role="log"
-          aria-label="Setup output"
-          className="m-0 max-h-40 max-w-sm overflow-auto whitespace-pre-wrap break-all text-caption"
-        >
-          {output}
-        </pre>
-      )}
-    </div>
+    <>
+      <Button
+        size="sm"
+        variant="prominent"
+        disabled={disabled || !!running}
+        onClick={() => {
+          if (login.snapshot().running) return;
+          setOpen(true);
+          void login.run(step);
+        }}
+      >
+        {action}
+      </Button>
+      <Dialog
+        open={open}
+        title={step === "install" ? "Set up Codex" : "Sign in to Codex"}
+        description={step === "login" ? "Continue in your browser." : undefined}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) void login.cancel();
+        }}
+      >
+        <section className="grid gap-2">
+          {step === "install" && (
+            <p role="status" className="m-0">
+              {checking && !running
+                ? "Checking Codex…"
+                : "Codex is not installed."}
+            </p>
+          )}
+          {/* One button per slot, so focus stays put as Install becomes
+              Sign in and Cancel becomes Check again. */}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="prominent"
+              size="sm"
+              loading={running === step}
+              disabled={disabled || (!!running && running !== step)}
+              onClick={() => void login.run(step)}
+            >
+              {action}
+            </Button>
+            {(step !== "login" || running) && (
+              <Button
+                variant="ghost"
+                disabled={!running && checking}
+                focusableWhenDisabled
+                onClick={() => void (running ? login.cancel() : check())}
+              >
+                {running ? "Cancel" : "Check again"}
+              </Button>
+            )}
+          </div>
+          {step === "install" && (
+            <p className="m-0 text-body-sm text-subtle">
+              Downloads Buzz's own copy of Codex (about 130 MB) from
+              releases.openai.com and keeps it on the latest release. It does
+              not change the <code>codex</code> in your terminal, and uses the
+              same sign-in and settings.
+            </p>
+          )}
+          {output && (
+            <Accordion
+              items={[
+                {
+                  value: "details",
+                  title: "Setup details",
+                  content: (
+                    <pre
+                      role="log"
+                      aria-label="Setup output"
+                      className="m-0 max-h-60 overflow-auto whitespace-pre-wrap break-all text-caption"
+                    >
+                      {output}
+                    </pre>
+                  ),
+                },
+              ]}
+            />
+          )}
+        </section>
+      </Dialog>
+    </>
   );
 }
 
@@ -389,7 +453,13 @@ export function createTabs(
           : undefined;
     if (step)
       return (
-        <CodexSignIn login={login} step={step} disabled={props.disabled} />
+        <CodexSignIn
+          login={login}
+          step={step}
+          checking={checking}
+          check={retry}
+          disabled={props.disabled}
+        />
       );
     return (
       <CreateModelChoices

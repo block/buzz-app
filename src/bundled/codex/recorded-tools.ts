@@ -97,7 +97,7 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       item.output = output(payload.output);
       // A yielded exec has returned a cell handle, not its final result.
       // Its separately recorded wait calls retain that handle and output.
-      item.status = item.output.includes("Script running with cell ID")
+      item.status = item.output.startsWith("Script running with cell ID ")
         ? "yielded"
         : "completed";
       // Yielding returns before inner calls finish. Their later events cannot

@@ -92,6 +92,47 @@ it("restores the actual exec script and results around its recorded calls, witho
   });
 });
 
+it.each(["string", "blocks"])(
+  "keeps completed status and later grouping when %s output quotes the yielded message",
+  (shape) => {
+    const mapped = turns();
+    const header = "Script completed\nWall time 0.1 seconds\nOutput:\n";
+    const printed = "source: Script running with cell ID cell-1";
+    restoreRecordedTools(
+      mapped,
+      [
+        start(),
+        completed("prompt"),
+        record("response_item", call("first")),
+        record("response_item", {
+          type: "custom_tool_call_output",
+          call_id: "first",
+          output:
+            shape === "string"
+              ? header + printed
+              : [
+                  { type: "input_text", text: header },
+                  { type: "input_text", text: printed },
+                ],
+        }),
+        record("response_item", call("second")),
+        completed("nested"),
+        record("response_item", result("second")),
+      ].join("\n"),
+    );
+    expect(mapped[0]?.items).toMatchObject([
+      { id: "prompt" },
+      {
+        id: "first",
+        status: "completed",
+        output: expect.stringContaining(printed),
+      },
+      { id: "second", status: "completed", children: [{ id: "nested" }] },
+      { id: "reply" },
+    ]);
+  },
+);
+
 it("keeps concurrent calls independent and does not associate a later turn with an unfinished script", () => {
   const mapped = turns();
   restoreRecordedTools(

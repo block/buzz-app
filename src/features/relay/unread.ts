@@ -18,6 +18,7 @@ import type { ReadJournal } from "./read-state-storage";
 import { markMessage } from "./read-state-retention";
 import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies } from "./fold";
+import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
 import {
   memoryThreadFollows,
@@ -135,6 +136,9 @@ export interface UnreadCapability {
   clearUnreadLocal(target: ReadTarget): Promise<ReadMutationResult>;
   readonly syncedManualUnread: false;
 }
+/** Rendered message order: effective ms, then event id. */
+const order = (a: RelayEvent, b: RelayEvent) =>
+  eventMs(a) - eventMs(b) || a.id.localeCompare(b.id);
 const contentKind = (event: RelayEvent) =>
   event.kind === 9 || event.kind === 40002 || event.kind === 40008;
 const channelIds = new WeakMap<RelayEvent, string | undefined>();
@@ -951,17 +955,13 @@ export function createUnread({
                 !row.membership &&
                 !row.audience &&
                 row.authorId !== viewer &&
-                (!best || event.created_at > best.created_at)
+                (!best || order(event, best) > 0)
                 ? event
                 : best;
             }, undefined)
           : undefined;
         for (const [id, entries] of groups) {
-          entries.sort(
-            (a, b) =>
-              a.event.created_at - b.event.created_at ||
-              a.event.id.localeCompare(b.event.id),
-          );
+          entries.sort((a, b) => order(a.event, b.event));
           const project = (
             entries: readonly Evidence[],
             timeline = false,
@@ -971,7 +971,7 @@ export function createUnread({
             // The row shows its newest message, matching its time; opening
             // still resumes at the representative.
             const shown =
-              timeline && newest && newest.created_at >= latest.event.created_at
+              timeline && newest && order(newest, latest.event) >= 0
                 ? newest
                 : latest.event;
             const unread = entries.filter((entry) =>

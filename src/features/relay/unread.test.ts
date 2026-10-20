@@ -2752,6 +2752,40 @@ it("inbox describes a Solo chat row by its newest top-level message, not only it
   expect(item?.mention).toMatchObject({ preview: "Ping", createdAt: 20 });
 });
 
+it("inbox describes a row by its newest message within the same second", () => {
+  const h = setup();
+  h.grant("chat");
+  h.grant("dm");
+  h.emit([
+    metadata(h.relay, "chat", "Solo chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
+    metadata(h.relay, "dm", "DM", 11, [["t", "dm"]]),
+  ]);
+  // Done follows Working by its ms offset alone; its id sorts first.
+  const pair = (channel: string) => {
+    const done = message(h.alice, channel, "Done", 20, [["ms", "900"]]);
+    for (let i = 0; ; i++) {
+      const working = message(h.alice, channel, `Working${"!".repeat(i)}`, 20, [
+        ["ms", "100"],
+      ]);
+      if (working.id > done.id) return [working, done];
+    }
+  };
+  h.emit([
+    message(h.alice, "chat", "Ping", 19, [["p", h.viewer.pubkey]]),
+    ...pair("chat"),
+    ...pair("dm"),
+  ]);
+  const items = h.session.unread.inbox().items;
+  for (const id of ["chat:chat", "dm:dm"])
+    expect(items.find((item) => item.id === id)).toMatchObject({
+      preview: "Done",
+    });
+});
+
 it("inbox keeps a mentioned Solo chat root with its thread so reading the thread clears it", async () => {
   const h = setup();
   h.grant("chat");

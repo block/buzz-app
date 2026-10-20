@@ -579,17 +579,26 @@ export function createCommunities(
     pendingSync: () => state.sync.outbox,
     /** Writes the sync owner's settled state and, in the same device record,
      * the memberships a server list adds: destinations saved on another
-     * device appear here under their host name without a session. Sync never
-     * forgets a membership. Persistence follows `joined`, and that save is the
-     * only step that throws, before anything has changed. */
+     * device appear here under their host name, or the viewer's local name
+     * for them, without a session. Sync never forgets a membership.
+     * Persistence follows `joined`, and that save is the only step that
+     * throws, before anything has changed. */
     async applySync(next: SyncState, add: string[] = []) {
       const memberships = [...state.memberships];
       for (const url of add) {
         const { id, name } = communityDestination(url);
-        if (!memberships.some((m) => m.id === id))
-          memberships.push({ id, name });
+        if (memberships.some((m) => m.id === id)) continue;
+        memberships.push({
+          id,
+          name,
+          ...(state.viewer
+            ? { localName: readLocalCommunityName(id, state.viewer) }
+            : {}),
+        });
       }
+      const added = memberships.length > state.memberships.length;
       update({ memberships, sync: next }, true, !!nativeConnect && !live);
+      if (added) refreshPresentation();
     },
   };
 }

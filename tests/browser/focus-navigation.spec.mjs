@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { closeSettings } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
@@ -8,6 +9,19 @@ test.use({
   historyCounts: { alpha: 2, beta: 1 },
 });
 
+async function focusKeys(page) {
+  const apple = await page.evaluate(() =>
+    /Mac|iPhone|iPad/.test(navigator.platform),
+  );
+  return {
+    apple,
+    mod: apple ? "Meta" : "Control",
+    composer: apple ? "Meta+l" : "Control+l",
+    main: apple ? "Control+Meta+ArrowLeft" : "Shift+F8",
+    side: apple ? "Control+Meta+ArrowRight" : "F8",
+  };
+}
+
 // Browser focus, modal dismissal and native editor selection require a real
 // browser. The app and broker are real; upstream relay traffic is modeled.
 test("search, composer and split-pane keyboard focus preserve both drafts", async ({
@@ -15,11 +29,8 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   app,
 }) => {
   await open(page, app);
-  const mod = (await page.evaluate(() =>
-    /Mac|iPhone|iPad/.test(navigator.platform),
-  ))
-    ? "Meta"
-    : "Control";
+  const keys = await focusKeys(page);
+  const mod = keys.mod;
   const main = page.locator("[data-main-workspace], [data-solo-focus-pane]");
   const alpha = main.getByRole("textbox", {
     name: "Message #Alpha",
@@ -47,8 +58,6 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
     name: "Message your agents",
     exact: true,
   });
-  await expect(beta).toBeVisible();
-  await page.keyboard.press(`${mod}+Shift+m`);
   await expect(beta).toBeFocused();
   await page.keyboard.type("Beta draft");
   await expect(beta).toHaveText("Beta draft");
@@ -63,7 +72,6 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   );
   await page.keyboard.press("Enter");
   await expect(search).toHaveCount(0);
-  await page.keyboard.press(`${mod}+Shift+m`);
   await expect(alpha).toBeFocused();
   await expect(alpha).toHaveText("Alpha draft");
 
@@ -83,7 +91,7 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   });
   await expect(sideBeta).toHaveText("Beta draft");
 
-  // F8 reaches the pane's tab list; arrow keys choose another retained tab.
+  // Focus the requested pane's tab list, then choose another retained tab.
   await openChannelDetails(page);
   const settings = side.getByRole("tab", {
     name: "Channel settings",
@@ -91,15 +99,15 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   });
   await expect(settings).toHaveAttribute("aria-selected", "true");
   await settings.focus();
-  await page.keyboard.press(`${mod}+Shift+m`);
+  await page.keyboard.press(keys.composer);
   await expect(settings).toBeFocused();
-  await page.keyboard.press("F8");
+  await page.keyboard.press(keys.main);
   await expect(main.getByRole("tab", { selected: true })).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
     "",
   );
-  await page.keyboard.press("F8");
+  await page.keyboard.press(keys.side);
   await expect(settings).toBeFocused();
   await page.keyboard.press("ArrowLeft");
   await expect(
@@ -109,7 +117,7 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   await expect(
     side.getByRole("tab", { name: "Beta", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press(`${mod}+Shift+m`);
+  await page.keyboard.press(keys.composer);
   await expect(sideBeta).toBeFocused();
   await page.keyboard.press("Home");
   await page.keyboard.press("Shift+ArrowRight");
@@ -126,13 +134,13 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
     element.selectionStart,
     element.selectionEnd,
   ]);
-  await page.keyboard.press("F8");
+  await page.keyboard.press(keys.main);
   await expect(main.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(`${mod}+Shift+m`);
+  await page.keyboard.press(keys.composer);
   await expect(alpha).toBeFocused();
-  await page.keyboard.press("Shift+F8");
+  await page.keyboard.press(keys.side);
   await expect(side.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(`${mod}+Shift+m`);
+  await page.keyboard.press(keys.composer);
   await expect(sideBeta).toBeFocused();
   expect(
     await sideBeta.evaluate((element) => [
@@ -150,9 +158,9 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   });
   await toggle.click();
   await expect(side).toBeHidden();
-  await page.keyboard.press("F8");
+  await page.keyboard.press(keys.main);
   await expect(main.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(`${mod}+Shift+m`);
+  await page.keyboard.press(keys.composer);
   await expect(alpha).toBeFocused();
   await toggle.click();
   await expect(sideBeta).toHaveText("Beta draft");
@@ -160,10 +168,89 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   await page.keyboard.press(`${mod}+k`);
   await expect(query).toBeFocused();
   await query.fill("Keep search focus");
-  await page.keyboard.press(`${mod}+Shift+m`);
-  await page.keyboard.press("F8");
+  await page.keyboard.press(keys.composer);
+  await page.keyboard.press(keys.side);
   await expect(query).toBeFocused();
   await expect(query).toHaveValue("Keep search focus");
+  await page.keyboard.press("Escape");
+  await expect(query).toHaveCount(0);
+
+  // Use the actual Settings capture controls, then restore those device-local
+  // overrides through a full app reload before resetting them.
+  const custom = keys.apple ? "Control+Meta" : "Control+Alt";
+  const actions = keys.apple
+    ? [
+        ["Message", `${custom}+u`],
+        ["Focus main pane", `${custom}+p`],
+        ["Focus side pane", `${custom}+o`],
+      ]
+    : [
+        ["Message", `${custom}+u`],
+        ["Focus", `${custom}+p`],
+      ];
+  const settingsDialog = page.getByRole("dialog", {
+    name: "Settings",
+    exact: true,
+  });
+  const openShortcuts = async () => {
+    await page.keyboard.press(`${mod}+,`);
+    await settingsDialog
+      .getByRole("button", { name: "Shortcuts", exact: true })
+      .click();
+  };
+  await openShortcuts();
+  for (const [title, chord] of actions) {
+    const row = settingsDialog.getByRole("article", {
+      name: title,
+      exact: true,
+    });
+    await expect(row).toHaveCount(1);
+    await row
+      .getByRole("button", {
+        name: `Change shortcut for ${title}`,
+        exact: true,
+      })
+      .click();
+    await expect(
+      row.getByRole("textbox", {
+        name: `New shortcut for ${title}`,
+        exact: true,
+      }),
+    ).toBeFocused();
+    await page.keyboard.press(chord);
+    await expect(row.getByText("Modified", { exact: true })).toBeVisible();
+  }
+  await closeSettings(page);
+  await alpha.focus();
+  await page.keyboard.press(keys.apple ? actions[2][1] : actions[1][1]);
+  await expect(side.getByRole("tab", { selected: true })).toBeFocused();
+  await page.keyboard.press(actions[0][1]);
+  await expect(sideBeta).toBeFocused();
+  await expect(sideBeta).toHaveText("Beta draft");
+  await page.keyboard.press(actions[1][1]);
+  await expect(main.getByRole("tab", { selected: true })).toBeFocused();
+  await page.reload();
+  await expect(alpha).toBeVisible();
+  await main.getByRole("tab", { selected: true }).focus();
+  await page.keyboard.press(actions[0][1]);
+  await expect(alpha).toBeFocused();
+  await expect(alpha).toHaveText("Alpha draft");
+  await openShortcuts();
+  for (const [title] of actions) {
+    const row = settingsDialog.getByRole("article", {
+      name: title,
+      exact: true,
+    });
+    await expect(row.getByText("Modified", { exact: true })).toBeVisible();
+    await row
+      .getByRole("button", { name: `Reset shortcut for ${title}`, exact: true })
+      .click();
+    await expect(row.getByText("Modified", { exact: true })).toHaveCount(0);
+  }
+  await closeSettings(page);
+  await main.getByRole("tab", { selected: true }).focus();
+  await page.keyboard.press(keys.composer);
+  await expect(alpha).toBeFocused();
 });
 
 test.extend({ companionFixture: true })(
@@ -171,9 +258,7 @@ test.extend({ companionFixture: true })(
   async ({ page, app }, testInfo) => {
     await page.setViewportSize({ width: 600, height: 900 });
     await open(page, app);
-    const mod = await page.evaluate(() =>
-      /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
-    );
+    const keys = await focusKeys(page);
     const main = page.locator("[data-main-workspace]");
     const composer = main.getByRole("textbox", {
       name: "Message #Alpha",
@@ -211,16 +296,18 @@ test.extend({ companionFixture: true })(
       page.getByRole("button", { name: "Search Buzz", exact: true }),
     ]) {
       await start.focus();
-      await page.keyboard.press(`${mod}+Shift+m`);
+      await page.keyboard.press(keys.composer);
       await expect(start).toBeFocused();
-      await page.keyboard.press("F8");
-      await expect(start).toBeFocused();
+      for (const key of [keys.main, keys.side]) {
+        await page.keyboard.press(key);
+        await expect(start).toBeFocused();
+      }
       await expect(composer).toHaveText("Alpha draft");
     }
     await companion
       .getByRole("button", { name: "Close Companion fixture panel" })
       .click();
-    await page.keyboard.press(`${mod}+Shift+m`);
+    await page.keyboard.press(keys.composer);
     await expect(composer).toBeFocused();
     await expect(composer).toHaveText("Alpha draft");
 
@@ -239,7 +326,7 @@ test.extend({ companionFixture: true })(
           "data-keyboard-navigation",
           "",
         );
-        await page.keyboard.press("F8");
+        await page.keyboard.press(keys.main);
         await expect(tab).toBeFocused();
         await expect(tab).toHaveCSS("outline-style", "solid");
         await expect(tab).toHaveCSS("outline-width", "2px");
@@ -254,9 +341,7 @@ test.extend({ companionFixture: true })(
 
 test("pane focus preserves F6 notification recovery", async ({ page, app }) => {
   await open(page, app);
-  const mod = await page.evaluate(() =>
-    /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
-  );
+  const keys = await focusKeys(page);
   const link = app.append(
     "primary",
     "alpha",
@@ -306,15 +391,15 @@ test("pane focus preserves F6 notification recovery", async ({ page, app }) => {
     await page.keyboard.press(key);
     await expect(notices.locator("ol")).toBeFocused();
   }
-  await page.keyboard.press("F8");
+  await page.keyboard.press(keys.main);
   await expect(
     page
       .locator("[data-main-workspace], [data-solo-focus-pane]")
       .getByRole("tab", { selected: true }),
   ).toBeFocused();
-  await page.keyboard.press("F8");
+  await page.keyboard.press(keys.side);
   await expect(side.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(`${mod}+Shift+m`);
+  await page.keyboard.press(keys.composer);
   await expect(composer).toBeFocused();
   await expect(composer).toHaveText("Toast draft");
 
@@ -324,11 +409,11 @@ test("pane focus preserves F6 notification recovery", async ({ page, app }) => {
   await expect.poll(toastCoversComposer).toBe(true);
   const search = page.getByRole("button", { name: "Search Buzz", exact: true });
   await search.focus();
-  await page.keyboard.press(`${mod}+Shift+m`);
+  await page.keyboard.press(keys.composer);
   await expect(search).toBeFocused();
-  await page.keyboard.press("F8");
+  await page.keyboard.press(keys.side);
   await expect(side.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(`${mod}+Shift+m`);
+  await page.keyboard.press(keys.composer);
   await expect(composer).toBeFocused();
   await expect(
     notices.getByText("Could not attach file", { exact: true }),
@@ -340,9 +425,7 @@ test("pane and composer shortcuts exclude fully and partially covered targets", 
   app,
 }) => {
   await open(page, app);
-  const mod = await page.evaluate(() =>
-    /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
-  );
+  const keys = await focusKeys(page);
   const main = page.locator("[data-main-workspace], [data-solo-focus-pane]");
   const alpha = main.getByRole("textbox", {
     name: "Message #Alpha",
@@ -382,10 +465,10 @@ test("pane and composer shortcuts exclude fully and partially covered targets", 
     await page.setViewportSize({ width, height: 900 });
     await expect.poll(() => exposed(alpha)).toBe(false);
     await beta.focus();
-    await page.keyboard.press("F8");
+    await page.keyboard.press(keys.main);
     const focused = page.locator(":focus");
     await expect.poll(() => exposed(focused)).toBe(true);
-    await page.keyboard.press(`${mod}+Shift+m`);
+    await page.keyboard.press(keys.composer);
     await expect.poll(() => exposed(focused)).toBe(true);
     await page.keyboard.type("x");
     await expect(alpha).toHaveText("Alpha draft");
@@ -395,7 +478,7 @@ test("pane and composer shortcuts exclude fully and partially covered targets", 
       exact: true,
     });
     await search.focus();
-    await page.keyboard.press(`${mod}+Shift+m`);
+    await page.keyboard.press(keys.composer);
     await expect(search).toBeFocused();
     await expect(alpha).toHaveText("Alpha draft");
   }

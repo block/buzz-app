@@ -1,3 +1,5 @@
+import { focusWithKeyboard } from "../shared/design-system/useKeyboardFocusVisibility";
+
 const PRIMARY = "[data-main-workspace], [data-solo-focus-pane]";
 const WORKSPACE = `${PRIMARY}, [data-panel-workspace]`;
 const COVERING = `${WORKSPACE}, [data-panel-dock]`;
@@ -54,15 +56,34 @@ function composerIn(root: HTMLElement | null | undefined) {
   );
 }
 
+/** Search selects a conversation in main, regardless of its previous focus. */
+export function conversationComposerFocusTarget(channelId: string) {
+  const conversation = document
+    .getElementById("main-content")
+    ?.querySelector(`[data-channel-workspace="${CSS.escape(channelId)}"]`);
+  return composerIn(conversation?.querySelector<HTMLElement>(PRIMARY));
+}
+
+export function focusKeyboardTarget(target: HTMLElement | undefined) {
+  if (!target) return;
+  focusWithKeyboard(target);
+}
+
 /** Land on the selected tab so existing arrow-key tab navigation remains usable. */
-export function paneFocusTarget() {
+export function paneFocusTarget(pane?: "main" | "side") {
   const targets = workspaces()
+    .filter(
+      (workspace) =>
+        !pane ||
+        workspace.matches(pane === "main" ? PRIMARY : "[data-panel-workspace]"),
+    )
     .map(
       (pane) =>
         pane.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ??
         composerIn(pane),
     )
     .filter((target): target is HTMLElement => !!target && available(target));
+  if (pane) return targets[0];
   const index = targets.findIndex(
     (target) => target.closest(WORKSPACE) === focusedWorkspace(),
   );

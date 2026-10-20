@@ -389,14 +389,21 @@ Switching retains mounted content, scroll position, and drafts. Each tab has a
 close control; middle-click or Delete on a tab and Escape in its content close
 that tab. Middle-clicking an inactive tab preserves the editor's focus. Closing
 the selected tab selects a neighbor, and closing the last tab dismisses the pane.
-Cmd+Shift+M on macOS or Ctrl+Shift+M on Windows/Linux focuses the writable
+Selecting a conversation from Search focuses its writable composer after the
+search dialog closes. Message results retain their exact-message reveal behavior.
+Cmd+L on macOS or Ctrl+L on Windows/Linux focuses the writable
 composer in the focused pane. Outside a pane it uses the exposed main conversation.
-F8 and Shift+F8 switch between visible pane tab strips; arrow keys move between
-tabs and Enter selects one. A Solo main pane has no tab strip, so F8 focuses its
-composer. Covered targets, hidden tabs and collapsed panes are skipped. These shortcuts preserve
+The composer shortcut yields to terminal input, preserving shell Ctrl+L.
+On macOS, Ctrl+Cmd+Left focuses the main pane's tab strip and Ctrl+Cmd+Right
+focuses the side pane's strip. On Windows/Linux, F8 and Shift+F8 cycle between
+visible pane strips. Arrow keys move between tabs and Enter selects one. A Solo
+main pane has no tab strip, so its pane action focuses its composer.
+Covered targets, hidden tabs and collapsed panes are skipped. These shortcuts preserve
 drafts and selection and yield to modals and editor-owned key handling.
-The shortcut labels reuse “Message” and “Focus” from block/buzz's profile actions
-and appearance settings. F6 retains its notification focus behavior.
+Settings → Shortcuts lists Message and the platform's pane focus actions. Each
+action supports a device-local override and reset. F6 retains notification focus.
+Browser builds may reserve Cmd/Ctrl+L for the address bar; choose another binding
+in Settings when using Buzz in a browser. Native key delivery is a separate host check.
 On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the selected
 closable tab in the focused pane. If focus is in the permanent main conversation,
 it closes the selected tab in the visible side pane instead. A selected closable

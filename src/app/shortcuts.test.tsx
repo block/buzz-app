@@ -8,6 +8,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { PanelWorkspace } from "../features/panels/PanelWorkspace";
 import { ShortcutsService } from "../features/shortcuts/service";
 import { forwardTerminalKey } from "../features/shortcuts/terminal-key-event";
+import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { createAppearance } from "../shared/theme/service";
 import { registerAppShortcuts } from "./shortcuts";
 
@@ -21,6 +22,7 @@ afterEach(() => {
   cleanup();
   document.body.replaceChildren();
   localStorage.clear();
+  delete document.documentElement.dataset.keyboardNavigation;
   vi.restoreAllMocks();
   close.mockClear();
   vi.mocked(isTauri).mockReturnValue(true);
@@ -33,16 +35,19 @@ function harness(platform = "Win32") {
     isActive: () => true,
     subscribe: () => () => {},
   });
-  const shortcuts = new ShortcutsService(ctx);
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(ctx, window, bindings);
   const appearance = createAppearance(window);
   const remove = registerAppShortcuts(shortcuts, appearance, vi.fn(), true);
   return {
     ctx,
     shortcuts,
+    bindings,
     remove,
     async dispose() {
       remove();
       appearance.dispose();
+      bindings.dispose();
       await ctx.fiber.dispose();
     },
   };
@@ -360,6 +365,9 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
               <input data-tab-focus="" aria-label="Hidden draft" />
             </div>
           </main>
+          <div className="xterm">
+            <textarea aria-label="Drawer terminal" />
+          </div>
         </>,
       );
       const main = screen.getByRole("textbox", {
@@ -371,19 +379,20 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       const sideTab = screen.getByRole("tab", { name: "Side tab" });
       const apple = platform === "MacIntel";
       const chord = {
-        key: "m",
+        key: "l",
         ctrlKey: !apple,
         metaKey: apple,
-        shiftKey: true,
+        shiftKey: false,
+        altKey: false,
       };
       main.focus();
       main.setSelectionRange(2, 6);
       outside.focus();
       for (const extra of [
-        { shiftKey: false },
-        { altKey: true },
-        { ctrlKey: true, metaKey: true },
-        { ctrlKey: apple, metaKey: !apple },
+        { shiftKey: !chord.shiftKey },
+        { altKey: !chord.altKey },
+        { ctrlKey: !chord.ctrlKey },
+        { metaKey: !chord.metaKey },
         { isComposing: true },
       ]) {
         expect(press(outside, { ...chord, ...extra }).defaultPrevented).toBe(
@@ -396,12 +405,33 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       expect(main.selectionStart).toBe(2);
       expect(main.selectionEnd).toBe(6);
       expect(main).toHaveValue("Keep this draft");
-      const paneKey = { key: "F8", ctrlKey: false };
+      const terminal = screen.getByRole("textbox", { name: "Drawer terminal" });
+      terminal.focus();
+      const terminalKey = new KeyboardEvent("keydown", {
+        ...chord,
+        bubbles: true,
+        cancelable: true,
+      });
+      expect(forwardTerminalKey(window, terminalKey)).toBe(true);
+      expect(terminalKey.defaultPrevented).toBe(false);
+      expect(terminal).toHaveFocus();
+      const paneKey = apple
+        ? { key: "ArrowRight", ctrlKey: true, metaKey: true }
+        : { key: "F8", ctrlKey: false };
+      const mainKey = apple
+        ? { ...paneKey, key: "ArrowLeft" }
+        : { ...paneKey, shiftKey: true };
+      main.focus();
       press(main, paneKey);
       expect(sideTab).toHaveFocus();
+      expect(document.documentElement.dataset.keyboardNavigation).toBe("");
+      if (apple) {
+        press(sideTab, paneKey);
+        expect(sideTab).toHaveFocus();
+      }
       press(sideTab, chord);
       expect(side).toHaveFocus();
-      press(side, { ...paneKey, shiftKey: true });
+      press(side, mainKey);
       expect(mainTab).toHaveFocus();
       press(mainTab, chord);
       expect(main).toHaveFocus();
@@ -436,6 +466,7 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
           start.focus();
           expect(press(start, chord).defaultPrevented).toBe(false);
           expect(press(start, paneKey).defaultPrevented).toBe(false);
+          expect(press(start, mainKey).defaultPrevented).toBe(false);
           expect(start).toHaveFocus();
           expect(main).toHaveValue("Keep this draft");
         }
@@ -456,6 +487,13 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       expect(press(filter, paneKey).defaultPrevented).toBe(false);
       expect(filter).toHaveFocus();
       modal.remove();
+      act(() => h.bindings.set("focus-composer", { key: "u", mod: true }));
+      expect(press(filter, chord).defaultPrevented).toBe(false);
+      delete document.documentElement.dataset.keyboardNavigation;
+      press(filter, { key: "u", ctrlKey: !apple, metaKey: apple });
+      expect(side).toHaveFocus();
+      expect(document.documentElement.dataset.keyboardNavigation).toBe("");
+      act(() => h.bindings.set("focus-composer", null));
       h.remove();
       expect(press(filter, paneKey).defaultPrevented).toBe(false);
     } finally {

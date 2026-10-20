@@ -1415,11 +1415,18 @@ export function EditableInput({
           // Send/completion/cancel policy belongs to the host. ProseMirror's
           // default capture otherwise prevents Escape before React can cancel edits.
           keydown(_view, event) {
-            return (
-              (event.key === "Enter" || event.key === "Escape") &&
-              !event.isComposing &&
-              !composing.current
-            );
+            if (event.isComposing || composing.current || event.keyCode === 229)
+              return false;
+            // ProseMirror also captures horizontal movement of a selected range.
+            // The additional Control+Command pair belongs to host pane focus.
+            const paneFocus =
+              event.ctrlKey &&
+              event.metaKey &&
+              !event.altKey &&
+              !event.shiftKey &&
+              (event.key === "ArrowLeft" || event.key === "ArrowRight");
+            if (paneFocus) syncNativeSelection();
+            return event.key === "Enter" || event.key === "Escape" || paneFocus;
           },
           beforeinput(_view, event) {
             // Native insertion can restore focus before its input/selectionchange

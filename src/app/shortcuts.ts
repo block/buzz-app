@@ -2,7 +2,11 @@ import { isTauri } from "@tauri-apps/api/core";
 import { isApplePlatform } from "../features/shortcuts/format";
 import type { ShortcutsService } from "../features/shortcuts/service";
 import type { Appearance } from "../shared/theme/service";
-import { composerFocusTarget, paneFocusTarget } from "./focus-navigation";
+import {
+  composerFocusTarget,
+  focusKeyboardTarget,
+  paneFocusTarget,
+} from "./focus-navigation";
 
 /** Host actions use the same binding/dispatch rules as plugins, without fake plugin ownership. */
 // Settings presents the host category in functional sections: navigation,
@@ -29,25 +33,45 @@ export function registerAppShortcuts(
   openSettings: () => void,
   ready: boolean,
 ) {
+  const apple = isApplePlatform(navigator.platform);
   const remove = [
     shortcuts.registerHost({
       id: "focus-composer",
       title: "Message",
-      binding: { key: "m", mod: true, shift: true },
+      binding: { key: "l", mod: true },
       order: HOST_SHORTCUT_ORDER.focus,
       allowInEditable: true,
-      when: () => !!composerFocusTarget(),
-      run: () => composerFocusTarget()?.focus({ preventScroll: true }),
+      when: () =>
+        !document.activeElement?.closest(".xterm") && !!composerFocusTarget(),
+      run: () => focusKeyboardTarget(composerFocusTarget()),
     }),
-    shortcuts.registerHost({
-      id: "focus-pane",
-      title: "Focus",
-      binding: [{ key: "F8" }, { key: "F8", shift: true }],
-      order: HOST_SHORTCUT_ORDER.focus,
-      allowInEditable: true,
-      when: () => !!paneFocusTarget(),
-      run: () => paneFocusTarget()?.focus({ preventScroll: true }),
-    }),
+    ...(apple
+      ? (["main", "side"] as const).map((pane) =>
+          shortcuts.registerHost({
+            id: `focus-${pane}-pane`,
+            title: `Focus ${pane} pane`,
+            binding: {
+              key: pane === "main" ? "ArrowLeft" : "ArrowRight",
+              mod: true,
+              ctrl: true,
+            },
+            order: HOST_SHORTCUT_ORDER.focus,
+            allowInEditable: true,
+            when: () => !!paneFocusTarget(pane),
+            run: () => focusKeyboardTarget(paneFocusTarget(pane)),
+          }),
+        )
+      : [
+          shortcuts.registerHost({
+            id: "focus-pane",
+            title: "Focus",
+            binding: [{ key: "F8" }, { key: "F8", shift: true }],
+            order: HOST_SHORTCUT_ORDER.focus,
+            allowInEditable: true,
+            when: () => !!paneFocusTarget(),
+            run: () => focusKeyboardTarget(paneFocusTarget()),
+          }),
+        ]),
     shortcuts.registerHost({
       id: "settings",
       title: "Open Settings",

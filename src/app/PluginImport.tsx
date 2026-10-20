@@ -150,6 +150,7 @@ export function PluginImport({
   busy,
   authorizeGit,
   actionTarget,
+  statusTarget,
   updateId,
   onClosed,
   returnFocus,
@@ -158,6 +159,7 @@ export function PluginImport({
   catalog: Catalog;
   busy: boolean;
   actionTarget?: HTMLElement | null;
+  statusTarget?: HTMLElement | null;
   updateId?: string;
   onClosed?: () => void;
   returnFocus?: () => HTMLElement | null;
@@ -487,6 +489,47 @@ export function PluginImport({
       {updateId ? "Update" : "Add"}
     </Button>
   );
+  const updateActions = (
+    <>
+      {preview && !error && !upToDate && (
+        <Button
+          ref={trigger}
+          size="sm"
+          disabled={blocked}
+          onClick={() => setOpen(true)}
+        >
+          Update
+        </Button>
+      )}
+      {savedSource && (
+        <Button
+          ref={checkAgain}
+          variant="subtle"
+          size="sm"
+          loading={loading && !open}
+          disabled={blocked}
+          onClick={() =>
+            void load(async () => {
+              if (lifetime.current.token) {
+                await imports.discard(lifetime.current.token);
+                lifetime.current.token = "";
+              }
+              if ("root" in savedSource)
+                return imports.folder(savedSource.root);
+              const signed = await authorizeGit?.(savedSource.repository);
+              return imports.git(
+                signed?.repository ?? savedSource.repository,
+                savedSource.reference,
+                signed?.token,
+              );
+            })
+          }
+        >
+          Check for updates
+        </Button>
+      )}
+    </>
+  );
   return (
     <>
       {!updateId &&
@@ -524,46 +567,15 @@ export function PluginImport({
             </p>
           ) : null}
           {preview && !open && !error && upToDate ? (
-            <p role="status">Up to date</p>
+            statusTarget ? (
+              createPortal(<span role="status">Up to date</span>, statusTarget)
+            ) : (
+              <p role="status">Up to date</p>
+            )
           ) : null}
-          <div className="flex items-center gap-3 mt-3">
-            {preview && !error && !upToDate && (
-              <Button
-                ref={trigger}
-                size="sm"
-                disabled={blocked}
-                onClick={() => setOpen(true)}
-              >
-                Update
-              </Button>
-            )}
-            {savedSource && (
-              <Button
-                ref={checkAgain}
-                variant="link"
-                size="inline"
-                disabled={blocked}
-                onClick={() =>
-                  void load(async () => {
-                    if (lifetime.current.token) {
-                      await imports.discard(lifetime.current.token);
-                      lifetime.current.token = "";
-                    }
-                    if ("root" in savedSource)
-                      return imports.folder(savedSource.root);
-                    const signed = await authorizeGit?.(savedSource.repository);
-                    return imports.git(
-                      signed?.repository ?? savedSource.repository,
-                      savedSource.reference,
-                      signed?.token,
-                    );
-                  })
-                }
-              >
-                {preview || error ? "Check again" : "Check for updates"}
-              </Button>
-            )}
-          </div>
+          {actionTarget
+            ? createPortal(updateActions, actionTarget)
+            : updateActions}
         </section>
       )}
       <Dialog

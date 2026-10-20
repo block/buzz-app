@@ -1016,7 +1016,8 @@ it("returns focus to the Plugins section when the selected plugin is deleted", a
   const details = screen.getByRole("complementary", {
     name: "Zebra external details",
   });
-  const remove = within(details).getByRole("button", { name: "Delete" });
+  const remove = screen.getByRole("button", { name: "Delete" });
+  expect(details).not.toContainElement(remove);
   remove.focus();
   fireEvent.click(remove);
   expect(fixture.manager.change).not.toHaveBeenCalledWith(
@@ -1833,21 +1834,21 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
       expect(f.manager.change).not.toHaveBeenCalled();
     }
     await user.click(
-      within(pane).getByRole("button", { name: "Check access again" }),
+      screen.getByRole("button", { name: "Check access again" }),
     );
     expect(retry).toHaveBeenCalledWith(id);
-    expect(enable).toHaveFocus();
+    expect(action).toHaveFocus();
     act(() => {
       state = "checking";
       for (const listener of listeners) listener();
     });
-    expect(enable).toHaveFocus();
+    expect(action).toHaveFocus();
     act(() => {
       state = "allowed";
       for (const listener of listeners) listener();
     });
     expect(within(pane).getByRole("button", { name: /^Enable$/ })).toBe(enable);
-    expect(enable).toHaveFocus();
+    expect(action).toHaveFocus();
     expect(
       screen.getByRole("button", { name: "Enable Restricted plugin" }),
     ).toBe(action);
@@ -1865,7 +1866,7 @@ it.each(["buzz.moderation", "buzz.relay-staff"])(
     });
     expect(disable).not.toHaveAttribute("aria-disabled", "true");
     expect(
-      within(pane).queryByRole("button", { name: "Check access again" }),
+      screen.queryByRole("button", { name: "Check access again" }),
     ).toBeInTheDocument();
     expect(disable).toHaveAccessibleDescription(/Could not check access/);
     expect(
@@ -1965,6 +1966,13 @@ it("checks updates only in the open detail pane and keeps matching status off th
   );
   expect(await screen.findByText("Checking for updates…")).toBeVisible();
   expect(imports.folder).toHaveBeenCalledExactlyOnceWith("/plugins");
+  const check = screen.getByRole("button", { name: "Check for updates" });
+  expect(
+    screen.getByRole("complementary", { name: "Zebra external details" }),
+  ).not.toContainElement(check);
+  expect(check.closest("article")).toContainElement(
+    screen.getByRole("button", { name: "Disable Zebra external" }),
+  );
   await act(async () =>
     finish({
       token: "same",
@@ -1985,6 +1993,9 @@ it("checks updates only in the open detail pane and keeps matching status off th
     }),
   );
   expect(screen.getByText("Up to date")).toBeVisible();
+  expect(screen.getByText("Installed").nextElementSibling).toContainElement(
+    screen.getByText("Up to date"),
+  );
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));

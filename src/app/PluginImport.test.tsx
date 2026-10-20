@@ -1234,7 +1234,7 @@ it("retries an unavailable folder without offering a different source", async ()
   expect(
     screen.queryByRole("button", { name: "Browse plugin folder" }),
   ).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Check again" }));
+  await user.click(screen.getByRole("button", { name: "Check for updates" }));
   expect(await screen.findByRole("button", { name: "Update" })).toBeEnabled();
   expect(folder.mock.calls).toEqual([["/moved"], ["/moved"]]);
 });

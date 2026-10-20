@@ -36,6 +36,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { createPortal } from "react-dom";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import {
@@ -252,6 +253,7 @@ function PluginDetails({
   failure,
   busy,
   plugins,
+  actionTarget: rowActionTarget,
   onToggle,
   close,
   onClose,
@@ -264,6 +266,7 @@ function PluginDetails({
   failure: string | null;
   busy: boolean;
   plugins: PluginManager;
+  actionTarget: HTMLElement | null;
   onToggle(): void;
   close: RefObject<HTMLButtonElement | null>;
   onClose(): void;
@@ -275,7 +278,23 @@ function PluginDetails({
   const accessReason = restrictedPlugin(plugin)
     ? accessMessage(plugin, access)
     : null;
+  const [installedStatus, setInstalledStatus] =
+    useState<HTMLSpanElement | null>(null);
   const toggle = useRef<HTMLButtonElement>(null);
+  const [fallbackActions, setFallbackActions] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const [compact, setCompact] = useState(false);
+  useLayoutEffect(() => {
+    if (!rowActionTarget) return;
+    const observer = new ResizeObserver(() =>
+      setCompact(covered(rowActionTarget)),
+    );
+    observer.observe(rowActionTarget.closest("section") ?? rowActionTarget);
+    setCompact(covered(rowActionTarget));
+    return () => observer.disconnect();
+  }, [rowActionTarget]);
+  const actionTarget = compact ? fallbackActions : rowActionTarget;
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -339,10 +358,16 @@ function PluginDetails({
         />
       </div>
       {plugin.source === "external" && (
-        <span className={styles.pluginInstallBadge}>
-          <CheckCircleIcon size={14} aria-hidden="true" />
-          Installed
-        </span>
+        <div className={styles.pluginBadges}>
+          <span className={styles.pluginInstallBadge}>
+            <CheckCircleIcon size={14} aria-hidden="true" />
+            Installed
+          </span>
+          <span
+            ref={setInstalledStatus}
+            className={styles.pluginInstallBadge}
+          />
+        </div>
       )}
       <div className={styles.pluginStatus}>
         {plugin.enabled && accessReason && (
@@ -397,10 +422,15 @@ function PluginDetails({
           </Tooltip>
         )}
       </div>
+      <div ref={setFallbackActions} className={styles.pluginExtraActions} />
       {plugin.source === "external" && plugins.imports && (
         <PluginImport
           key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
-          returnFocus={() => close.current}
+          actionTarget={actionTarget}
+          statusTarget={installedStatus}
+          returnFocus={() =>
+            actionTarget?.querySelector("button") ?? close.current
+          }
           updateId={plugin.manifest.id}
           plugins={plugins}
           catalog={catalog}
@@ -415,19 +445,26 @@ function PluginDetails({
             : accessReason}
         </p>
       )}
-      {accessReason && access === "error" && (
-        <div className={styles.pluginAccess}>
-          <Button
-            size="sm"
-            onClick={() => {
-              onCheckAccess();
-              toggle.current?.focus();
-            }}
-          >
-            Check access again
-          </Button>
-        </div>
-      )}
+      {actionTarget &&
+        accessReason &&
+        access === "error" &&
+        createPortal(
+          <div className={styles.pluginAccess}>
+            <Button
+              size="sm"
+              onClick={() => {
+                onCheckAccess();
+                (compact
+                  ? toggle.current
+                  : rowActionTarget?.parentElement?.querySelector("button")
+                )?.focus();
+              }}
+            >
+              Check access again
+            </Button>
+          </div>,
+          actionTarget,
+        )}
       {readme && (
         <section
           className={styles.pluginAsideSection}
@@ -488,45 +525,52 @@ function PluginDetails({
         </table>
       </section>
       {failure && <p className="error text-body-sm">{failure}</p>}
-      <div className="actions items-center">
-        {plugin.previous && (
-          <Button
-            type="button"
-            disabled={busy || !!plugin.rollbackBlockedReason}
-            onClick={() => plugins.change("rollback", plugin.manifest.id)}
-          >
-            Roll back
-          </Button>
+      {actionTarget &&
+        createPortal(
+          <div className="actions items-center">
+            {plugin.previous && (
+              <Button
+                size="sm"
+                type="button"
+                disabled={busy || !!plugin.rollbackBlockedReason}
+                onClick={() => plugins.change("rollback", plugin.manifest.id)}
+              >
+                Roll back
+              </Button>
+            )}
+            {plugin.rollbackBlockedReason && (
+              <span className="text-body-sm text-muted">
+                {plugin.rollbackBlockedReason}
+              </span>
+            )}
+            {plugin.reloadable && !plugin.enabled && (
+              <Button
+                size="sm"
+                type="button"
+                disabled={busy}
+                onClick={() => plugins.reload(plugin.manifest.id)}
+              >
+                Reload
+              </Button>
+            )}
+            {plugin.source === "external" && (
+              <Button
+                size="sm"
+                type="button"
+                ref={deleteTrigger}
+                variant="destructive"
+                disabled={busy}
+                onClick={() => {
+                  setDeleteError(null);
+                  setConfirmDelete(true);
+                }}
+              >
+                Delete
+              </Button>
+            )}
+          </div>,
+          actionTarget,
         )}
-        {plugin.rollbackBlockedReason && (
-          <span className="text-body-sm text-muted">
-            {plugin.rollbackBlockedReason}
-          </span>
-        )}
-        {plugin.reloadable && !plugin.enabled && (
-          <Button
-            type="button"
-            disabled={busy}
-            onClick={() => plugins.reload(plugin.manifest.id)}
-          >
-            Reload
-          </Button>
-        )}
-        {plugin.source === "external" && (
-          <Button
-            type="button"
-            ref={deleteTrigger}
-            variant="destructive"
-            disabled={busy}
-            onClick={() => {
-              setDeleteError(null);
-              setConfirmDelete(true);
-            }}
-          >
-            Delete
-          </Button>
-        )}
-      </div>
       {confirmDelete && (
         <AlertDialog
           title={`Delete ${plugin.manifest.name}?`}
@@ -768,6 +812,8 @@ export function Settings({
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
+  const [pluginRowActions, setPluginRowActions] =
+    useState<HTMLDivElement | null>(null);
   const pluginTrigger = useRef<HTMLButtonElement>(null);
   const restorePluginFocus = useRef(false);
   const pluginSection = useRef<HTMLElement>(null);
@@ -1025,6 +1071,12 @@ export function Settings({
                             {pluginActionLabel(plugin, access)}
                           </Button>
                         </Tooltip>
+                      )}
+                      {active && (
+                        <div
+                          className={styles.pluginExtraActions}
+                          ref={setPluginRowActions}
+                        />
                       )}
                     </div>
                   </article>
@@ -1370,6 +1422,7 @@ export function Settings({
                 adminAccess?.retry(selectedPlugin.manifest.id)
               }
               plugins={plugins}
+              actionTarget={pluginRowActions}
               onToggle={() => togglePlugin(selectedPlugin)}
               close={detailsClose}
               onClose={closePluginDetails}

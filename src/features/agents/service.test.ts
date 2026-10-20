@@ -6966,11 +6966,11 @@ describe("Delete as a recoverable archive", () => {
     const config = {
       life,
       archive: vi.fn(async () => {
-        put(life.next);
+        await put(life.next);
         return life.next;
       }),
       recover: vi.fn(async () => {
-        put("active");
+        await put("active");
         return "active";
       }),
       save: vi.fn(async (): Promise<Record<string, unknown>> => ({})),
@@ -7050,7 +7050,7 @@ describe("Delete as a recoverable archive", () => {
     // A restart onto a relay that is down or no longer supports config
     // channels: only the persisted journal says the agent synced.
     const storage = memoryStorage();
-    new MigrationJournal(storage).put(
+    await new MigrationJournal(storage).put(
       {
         owner: viewer,
         community: "https://relay.example.test",

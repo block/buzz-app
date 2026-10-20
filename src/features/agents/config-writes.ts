@@ -18,6 +18,7 @@ import {
 } from "./agent-config-artifacts";
 import type { AgentConfigStore, Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
+import { SavedState } from "./saved-state";
 import { localStore, type AgentStore } from "./store";
 
 export const MIGRATION_STORAGE_KEY = "buzz.agents.config.migration.v1";
@@ -84,14 +85,21 @@ type Held = Readonly<{ event: RelayEvent; unsent?: true }>;
  * saved. */
 export type JournalStore = Pick<AgentStore, "get" | "set">;
 
-export class MigrationJournal {
-  private entries: Record<string, Migration> = {};
-  private saves: Record<string, Held> = {};
+type Journaled = Readonly<{
+  entries: Readonly<Record<string, Migration>>;
+  saves: Readonly<Record<string, Held>>;
   /** Saves retired from replay that may still have been accepted (§3.5). */
-  private maybe: Record<string, string> = {};
+  maybe: Readonly<Record<string, string>>;
+}>;
+
+/** Migrations and held saves, as last saved: each change is seen once it is
+ * saved, and a failed one changes nothing (`SavedState`). */
+export class MigrationJournal {
+  private readonly state: SavedState<Journaled>;
   /** Each subject's latest save or resend, which the next waits for. */
   private writing = new Map<string, Promise<unknown>>();
-  constructor(private readonly storage: JournalStore = localStore()) {
+  constructor(storage: JournalStore = localStore()) {
+    let saved: Journaled = { entries: {}, saves: {}, maybe: {} };
     try {
       const value = JSON.parse(
         storage.get(MIGRATION_STORAGE_KEY) ?? "null",
@@ -101,34 +109,46 @@ export class MigrationJournal {
         saves?: unknown;
         maybe?: unknown;
       } | null;
-      if (value?.version !== 1) return;
-      if (value.entries && typeof value.entries === "object")
-        this.entries = value.entries as Record<string, Migration>;
-      if (value.saves && typeof value.saves === "object")
-        this.saves = value.saves as Record<string, Held>;
-      if (value.maybe && typeof value.maybe === "object")
-        this.maybe = value.maybe as Record<string, string>;
+      const record = (field: unknown) =>
+        field && typeof field === "object" ? field : {};
+      if (value?.version === 1)
+        saved = {
+          entries: record(value.entries) as Journaled["entries"],
+          saves: record(value.saves) as Journaled["saves"],
+          maybe: record(value.maybe) as Journaled["maybe"],
+        };
     } catch {
       /* Start fresh after malformed local data. */
     }
+    this.state = new SavedState(saved, (next) =>
+      storage.set(
+        MIGRATION_STORAGE_KEY,
+        JSON.stringify({ version: 1, ...next }),
+      ),
+    );
   }
   get = (subject: Subject): Migration | undefined =>
-    this.entries[migrationKey(subject)];
+    this.state.current.entries[migrationKey(subject)];
   /** Resolves once saved, so the caller's next relay write follows it. */
   put(subject: Subject, entry: Migration) {
-    return this.save(() => {
-      this.entries[migrationKey(subject)] = entry;
-    });
+    return this.state.change((state) => ({
+      ...state,
+      entries: { ...state.entries, [migrationKey(subject)]: entry },
+    }));
   }
   /** A signed save not yet resolved, by subject, so a restart resends it. */
   unsaved = (subject: Subject): Held | undefined =>
-    this.saves[migrationKey(subject)];
+    this.state.current.saves[migrationKey(subject)];
   holdSave(subject: Subject, held: Held | undefined) {
-    return this.save(() => {
-      if (held) this.saves[migrationKey(subject)] = held;
-      else delete this.saves[migrationKey(subject)];
+    const key = migrationKey(subject);
+    return this.state.change((state) => {
+      const { [key]: _, ...saves } = state.saves;
+      return { ...state, saves: held ? { ...saves, [key]: held } : saves };
     });
   }
+  /** Settles once every change made so far has, so a replay reads what an
+   * earlier coordinator's last change left. */
+  settled = () => this.state.settled();
   /** Runs `run` once the subject's earlier save or resend has finished, so
    * one held save is signed, sent and resolved at a time. */
   serially<T>(subject: Subject, run: () => Promise<T>): Promise<T> {
@@ -147,42 +167,20 @@ export class MigrationJournal {
   /** The id of a save that may have been saved: never declared unaccepted,
    * only resolved by a later accepted save of the subject. */
   maybeSaved = (subject: Subject): string | undefined =>
-    this.maybe[migrationKey(subject)];
+    this.state.current.maybe[migrationKey(subject)];
   /** Retires a held save, recording in the same write whether it may have
    * been accepted, so no crash can lose that evidence. */
   retireSave(subject: Subject, maybe: string | undefined) {
     const key = migrationKey(subject);
-    return this.save(() => {
-      delete this.saves[key];
-      if (maybe) this.maybe[key] = maybe;
-      else delete this.maybe[key];
+    return this.state.change((state) => {
+      const { [key]: _, ...saves } = state.saves;
+      const { [key]: __, ...kept } = state.maybe;
+      return {
+        entries: state.entries,
+        saves,
+        maybe: maybe ? { ...kept, [key]: maybe } : kept,
+      };
     });
-  }
-  /** Applies `change` and saves the journal. When the save fails, the
-   * journal is put back and the promise rejects, so nothing that needs the
-   * change saved goes ahead. */
-  private async save(change: () => void) {
-    const before = [this.entries, this.saves, this.maybe] as const;
-    [this.entries, this.saves, this.maybe] = [
-      { ...this.entries },
-      { ...this.saves },
-      { ...this.maybe },
-    ];
-    change();
-    try {
-      await this.storage.set(
-        MIGRATION_STORAGE_KEY,
-        JSON.stringify({
-          version: 1,
-          entries: this.entries,
-          saves: this.saves,
-          maybe: this.maybe,
-        }),
-      );
-    } catch (error) {
-      [this.entries, this.saves, this.maybe] = before;
-      throw error;
-    }
   }
 }
 
@@ -266,6 +264,8 @@ export async function migrate(
   side: LocalSide,
 ): Promise<Migration> {
   const { journal, store } = deps;
+  // From what is saved, after any change another run still saves.
+  await journal.settled();
   const stored = journal.get(side.subject);
   // An entry for another channel predates a reselection: this channel
   // migrates afresh from that channel's last confirmed copy, and the
@@ -568,6 +568,7 @@ async function write(
   ) => ReturnType<typeof artifactTemplate>,
 ): Promise<Saved> {
   return deps.journal.serially(side.subject, async () => {
+    await deps.journal.settled();
     if (deps.journal.unsaved(side.subject)) {
       const earlier = await resend(deps, side);
       if (earlier?.status === "uncertain" && !earlier.retired) return earlier;
@@ -593,6 +594,7 @@ export const resume = (deps: WriteDeps, side: Sending) =>
   deps.journal.serially(side.subject, () => resend(deps, side));
 
 async function resend(deps: WriteDeps, side: Sending) {
+  await deps.journal.settled();
   const held = deps.journal.unsaved(side.subject);
   if (!held) return undefined;
   // Signed for a channel reselected away from: resolved there, as it was

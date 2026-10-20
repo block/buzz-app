@@ -23,7 +23,7 @@ import {
 } from "./config-writes";
 import { storedBinding } from "./community-config";
 import { TeamJournal } from "./team-config";
-import { memoryStorage, sharedFiles } from "./test-fakes";
+import { gatedStore, memoryStorage, sharedFiles } from "./test-fakes";
 
 const owner = keypair();
 const agent = keypair().pubkey;
@@ -591,6 +591,55 @@ describe("journal saves before relay writes", () => {
     await expect(refused).rejects.toThrow("disk full");
     expect(g.sent).toHaveLength(0);
     expect(failing.journal.get(subject)).toBeUndefined();
+  });
+});
+
+describe("journal changes are seen only once saved", () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+  it("keeps a saved change of one subject when another's earlier save fails", async () => {
+    const f = await setup();
+    const disk = gatedStore();
+    const journal = new MigrationJournal(disk.store);
+    const deps = { ...f.deps, journal };
+    const other: Subject = { ...subject, subject: keypair().pubkey };
+    const savingA = save(deps, f.side, body("A"));
+    const savingB = save(deps, { ...f.side, subject: other }, body("B"));
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(1));
+    disk.writes[0]?.fail();
+    await expect(savingA).rejects.toThrow("disk full");
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(2));
+    disk.writes[1]?.land();
+    // B's send and its retirement save the rest at once.
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(3));
+    disk.writes[2]?.land();
+    expect((await savingB).status).toBe("saved");
+    expect(f.sent.map((event) => event.content)).toEqual([body("B")]);
+    const restarted = new MigrationJournal(disk.disk);
+    expect(restarted.unsaved(subject)).toBeUndefined();
+    expect(restarted.unsaved(other)).toBeUndefined();
+  });
+
+  it("resends a replaced run's signed bytes only once they are saved", async () => {
+    const f = await setup();
+    const disk = gatedStore((value) => !value?.includes('"dispatched"'));
+    const journal = new MigrationJournal(disk.store);
+    const first = new AbortController();
+    void migrate({ ...f.deps, journal, signal: first.signal }, f.side).catch(
+      () => {},
+    );
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(1));
+    // Replaced, as a reconnect replaces the coordinator, while that saves.
+    first.abort();
+    const replacement = migrate({ ...f.deps, journal }, f.side);
+    await settle();
+    expect(f.sent).toHaveLength(0);
+    disk.writes[0]?.land();
+    expect((await replacement).status).toBe("confirmed");
+    // Only the bytes saved before any send, never a fresh signature.
+    const ids = new Set(f.sent.map((event) => event.id));
+    expect(ids.size).toBe(1);
+    expect(disk.writes[0]?.value).toContain([...ids][0]);
   });
 });
 

@@ -6,6 +6,7 @@ import { PublishRejected } from "../relay/outbox";
 import { refusal } from "./agent-config-artifacts";
 import type { ConfigChannels } from "./config-channels";
 import type { JournalStore } from "./config-writes";
+import { SavedState } from "./saved-state";
 import { localStore } from "./store";
 
 export const LIFECYCLE_STORAGE_KEY = "buzz.agents.config.lifecycle.v1";
@@ -13,10 +14,15 @@ export const LIFECYCLE_STORAGE_KEY = "buzz.agents.config.lifecycle.v1";
 export type Lifecycle = "active" | "archiving" | "archived" | "recovering";
 type Entry = Readonly<{ state: Exclude<Lifecycle, "active">; channel: string }>;
 
-/** Per `community\nsubject` (agent pubkey or team id); absent is `active`. */
+type Entries = Readonly<Record<string, Entry>>;
+
+/** Per `community\nsubject` (agent pubkey or team id); absent is `active`.
+ * Each change is seen once it is saved, and a failed one changes nothing
+ * (`SavedState`). */
 export class LifecycleJournal {
-  private entries: Record<string, Entry> = {};
-  constructor(private readonly storage: JournalStore = localStore()) {
+  private readonly state: SavedState<Entries>;
+  constructor(storage: JournalStore = localStore()) {
+    let saved: Entries = {};
     try {
       const value = JSON.parse(
         storage.get(LIFECYCLE_STORAGE_KEY) ?? "null",
@@ -26,15 +32,21 @@ export class LifecycleJournal {
         value.entries &&
         typeof value.entries === "object"
       )
-        this.entries = value.entries as Record<string, Entry>;
+        saved = value.entries as Entries;
     } catch {
       /* Start fresh after malformed local data. */
     }
+    this.state = new SavedState(saved, (entries) =>
+      storage.set(
+        LIFECYCLE_STORAGE_KEY,
+        JSON.stringify({ version: 1, entries }),
+      ),
+    );
   }
   get = (community: string, subject: string): Lifecycle =>
-    this.entries[`${community}\n${subject}`]?.state ?? "active";
+    this.state.current[`${community}\n${subject}`]?.state ?? "active";
   pending = (community: string) =>
-    Object.entries(this.entries).flatMap(([key, entry]) => {
+    Object.entries(this.state.current).flatMap(([key, entry]) => {
       const [at, subject] = key.split("\n");
       return at === community &&
         subject &&
@@ -42,30 +54,25 @@ export class LifecycleJournal {
         ? [{ subject, ...entry }]
         : [];
     });
-  /** Resolves once saved. When the save fails, the journal is put back and
-   * the promise rejects. */
-  async put(community: string, subject: string, entry: Entry | undefined) {
+  /** Saves the subject's entry as `next` makes it from the saved one, once
+   * earlier changes settled; resolves once saved. */
+  change(
+    community: string,
+    subject: string,
+    next: (entry: Entry | undefined) => Entry | undefined,
+  ) {
     const key = `${community}\n${subject}`;
-    const before = this.entries;
-    this.entries = { ...before };
-    if (entry) this.entries[key] = entry;
-    else delete this.entries[key];
-    try {
-      await this.storage.set(
-        LIFECYCLE_STORAGE_KEY,
-        JSON.stringify({ version: 1, entries: this.entries }),
-      );
-    } catch (error) {
-      this.entries = before;
-      throw error;
-    }
+    return this.state.change((entries) => {
+      const before = entries[key];
+      const after = next(before);
+      if (after === before) return entries;
+      const { [key]: _, ...rest } = entries;
+      return after ? { ...rest, [key]: after } : rest;
+    });
   }
-  /** `put` for a state the relay already confirmed: a restart that misses
-   * it drives the intent again, which confirms it again. */
-  settled(community: string, subject: string, entry: Entry | undefined) {
-    void this.put(community, subject, entry).catch((error: unknown) =>
-      console.warn(`Agent config lifecycle ${subject} was not saved`, error),
-    );
+  /** Saves `entry` as the subject's, once earlier changes settled. */
+  put(community: string, subject: string, entry: Entry | undefined) {
+    return this.change(community, subject, () => entry);
   }
 }
 
@@ -126,49 +133,54 @@ export async function drive(
   return settle(deps, subject, channel, archived, refused);
 }
 
-/** Applies strong (or live-discovered) metadata to a pending intent. */
-export function settle(
+/** Applies strong (or live-discovered) metadata to a pending intent, if it
+ * is still the one saved when its turn to save comes: a newer intent stays. */
+export async function settle(
   deps: LifecycleDeps,
   subject: string,
   channel: string,
   archived: boolean,
   refused = false,
-): Lifecycle {
+): Promise<Lifecycle> {
   const { journal, community } = deps;
   const state = journal.get(community, subject);
-  if (state === "archiving") {
-    if (archived)
-      journal.settled(community, subject, { state: "archived", channel });
-    else if (refused) journal.settled(community, subject, undefined);
-    return journal.get(community, subject);
-  }
-  if (state === "recovering") {
-    if (!archived) journal.settled(community, subject, undefined);
-    else if (refused)
-      journal.settled(community, subject, { state: "archived", channel });
-    return journal.get(community, subject);
-  }
-  return state;
+  await journal.change(community, subject, (entry) => {
+    if (entry?.state !== state || entry.channel !== channel) return entry;
+    if (state === "archiving") {
+      if (archived) return { state: "archived", channel };
+      return refused ? undefined : entry;
+    }
+    if (state === "recovering") {
+      if (!archived) return undefined;
+      return refused ? { state: "archived", channel } : entry;
+    }
+    return entry;
+  });
+  return journal.get(community, subject);
 }
 
 /** Applies discovered metadata, whoever changed it: a pending intent settles,
  * and with none pending the channel's own state is admitted, so an archive or
  * recovery made on another device holds here too. */
-export function observe(
+export async function observe(
   deps: LifecycleDeps,
   subject: string,
   channel: string,
   archived: boolean,
-): Lifecycle {
+): Promise<Lifecycle> {
   const { journal, community } = deps;
   const state = journal.get(community, subject);
   if (state === "archiving" || state === "recovering")
     return settle(deps, subject, channel, archived);
-  journal.settled(
-    community,
-    subject,
-    archived ? { state: "archived", channel } : undefined,
-  );
+  await journal.change(community, subject, (entry) => {
+    // An intent begun meanwhile is newer than this observation.
+    if (entry?.state === "archiving" || entry?.state === "recovering")
+      return entry;
+    if (!archived) return undefined;
+    return entry?.state === "archived" && entry.channel === channel
+      ? entry
+      : { state: "archived", channel };
+  });
   return journal.get(community, subject);
 }
 

@@ -366,7 +366,8 @@ export function agentConfigs(
     // The channel's archive state holds whoever set it (§8.1); its config
     // stays unbound while archived.
     if (
-      observe(life, agent.pubkey, channel.id, channel.archived) !== "active"
+      (await observe(life, agent.pubkey, channel.id, channel.archived)) !==
+      "active"
     ) {
       bindings.delete(agent.pubkey);
       input.changed();

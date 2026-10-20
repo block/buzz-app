@@ -1108,7 +1108,7 @@ export class AgentRunners {
             progress(stream.key, window.checkpoint);
             const events = window.events.filter((event) => event.kind === 9);
             let skipped = window.skipped;
-            for (let index = 0; index < events.length;) {
+            for (let index = 0; index < events.length; ) {
               const taken = await this.caughtUp(
                 runner,
                 pass,

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { PublishRejected } from "../relay/outbox";
 import { begin, LifecycleJournal, resumeAll, settle } from "./config-lifecycle";
-import { memoryStorage, sharedFiles } from "./test-fakes";
+import { gatedStore, memoryStorage, sharedFiles } from "./test-fakes";
 
 const channel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
 const subject = "a".repeat(64);
@@ -74,6 +74,47 @@ describe("archive and recover", () => {
     expect(refusing.get("c", subject)).toBe("active");
   });
 
+  it("drives nothing on reconnect until a begun intent is saved", async () => {
+    const f = setup();
+    const disk = gatedStore();
+    const deps = { ...f.deps, journal: new LifecycleJournal(disk.store) };
+    const archiving = begin(deps, subject, channel, "archive");
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(1));
+    // A reconnect retries pending intents while that one saves.
+    const resumed = resumeAll(deps);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(f.channels.archive).not.toHaveBeenCalled();
+    expect(new LifecycleJournal(disk.disk).get("c", subject)).toBe("active");
+    disk.writes[0]?.land();
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(2));
+    disk.writes[1]?.land();
+    expect(await archiving).toBe("archived");
+    await resumed;
+  });
+
+  it("archives when a confirmed recovery's save fails behind a newer archive", async () => {
+    const f = setup();
+    const disk = gatedStore();
+    const journal = new LifecycleJournal(disk.store);
+    const deps = { ...f.deps, journal };
+    const saved = journal.put("c", subject, { state: "recovering", channel });
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(1));
+    disk.writes[0]?.land();
+    await saved;
+    const recovered = settle(deps, subject, channel, false);
+    const archiving = begin(deps, subject, channel, "archive");
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(2));
+    disk.writes[1]?.fail();
+    await expect(recovered).rejects.toThrow("disk full");
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(3));
+    disk.writes[2]?.land();
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(4));
+    disk.writes[3]?.land();
+    expect(await archiving).toBe("archived");
+    expect(f.channels.archive).toHaveBeenCalledOnce();
+    expect(f.channels.unarchive).not.toHaveBeenCalled();
+  });
+
   it("stays archiving after a lost reply and active metadata, then retries after restart", async () => {
     const f = setup();
     f.channels.archive.mockRejectedValueOnce(new Error("timeout"));
@@ -111,7 +152,7 @@ describe("archive and recover", () => {
   it("recovers to active on active metadata, and back to archived only on a refusal plus archived metadata", async () => {
     const f = setup();
     f.relay.archived = true;
-    f.deps.journal.put("c", subject, { state: "archived", channel });
+    await f.deps.journal.put("c", subject, { state: "archived", channel });
     expect(await begin(f.deps, subject, channel, "recover")).toBe("active");
     f.relay.archived = true;
     f.channels.unarchive.mockRejectedValueOnce(new Error("timeout"));
@@ -122,9 +163,9 @@ describe("archive and recover", () => {
     expect(await resumeAll(f.deps)).toEqual(["archived"]);
   });
 
-  it("settles a pending archive from live discovery", () => {
+  it("settles a pending archive from live discovery", async () => {
     const f = setup();
-    f.deps.journal.put("c", subject, { state: "archiving", channel });
-    expect(settle(f.deps, subject, channel, true)).toBe("archived");
+    await f.deps.journal.put("c", subject, { state: "archiving", channel });
+    expect(await settle(f.deps, subject, channel, true)).toBe("archived");
   });
 });

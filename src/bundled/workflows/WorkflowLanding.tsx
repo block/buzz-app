@@ -764,13 +764,11 @@ function WorkflowCard({
               >
                 {presentation.description}
               </span>
-              <span
-                className="workflow-card-name text-label-sm text-subtle"
-                title={name}
-              >
-                {name}
-              </span>
               <span className="workflow-card-meta text-caption text-subtle">
+                <span className="workflow-card-name text-label-sm" title={name}>
+                  {name}
+                </span>
+                <span aria-hidden="true">·</span>
                 {updated}
                 {status}
               </span>

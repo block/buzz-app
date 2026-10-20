@@ -138,8 +138,10 @@ test("narrow mouse double-click renames while single-click and keyboard still na
   });
   await show.click();
   await expect(row(page, alpha)).toBeVisible();
-  await page.clock.install();
-  await page.clock.pauseAt(new Date());
+  // Anchor both calls to the same clock: runner/browser wall clocks can differ.
+  const clockStart = Date.now();
+  await page.clock.install({ time: clockStart });
+  await page.clock.pauseAt(clockStart + 60_000);
   await row(page, alpha).dblclick();
   await expect(input(page)).toBeFocused();
   await expect(input(page)).toHaveAttribute("aria-disabled", "false");

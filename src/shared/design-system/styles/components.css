@@ -58,6 +58,10 @@
     width: var(--space-4);
     height: var(--space-4);
   }
+  /* A leading icon sits as close to the leading edge as to the top and bottom. */
+  .buzz-button[data-size="xs"]:has(> .buzz-button-label > svg:first-child) {
+    padding-inline-start: var(--space-1);
+  }
   /* Inline caption choices, such as the composer's model label. */
   .buzz-button[data-size="inline"] {
     @apply text-caption;
@@ -352,12 +356,14 @@
     background: var(--interaction-selected);
   }
 
-  /* Glyph-state toggles stay unfilled; their caller supplies outline/filled art.
-     Keep the 32px small hit area with slightly larger 20px artwork. */
+  /* Bare controls stay unfilled. Glyph-state toggles keep their larger
+     artwork; row actions retain the standard icon sizing. */
   .buzz-button[data-icon-variant="bare"] {
     background: transparent;
   }
-  .buzz-button[data-icon-variant="bare"][data-size="sm"]
+  .buzz-button[data-icon-variant="bare"][aria-pressed]:where(
+      [data-icon-size="sm"]
+    )
     .buzz-button-label
     > svg {
     width: var(--space-5);
@@ -1116,6 +1122,20 @@
     box-shadow: var(--shadow-xs);
   }
 
+  .navigation-item[data-variant="search"] {
+    padding: var(--space-3);
+    border-radius: max(
+      0px,
+      calc(
+        var(
+          --search-palette-radius,
+          calc(var(--radius-panel) + var(--space-1))
+        ) -
+        var(--space-3)
+      )
+    );
+    corner-shape: squircle;
+  }
   .navigation-item[data-variant="option"] {
     padding: var(--space-2);
     transition: none;
@@ -1836,92 +1856,6 @@
     outline-offset: 2px;
   }
 
-  /* A few ordered steps read as stops, not a continuous range: each step is a
-     visible dot, filled up to the choice, and the choice's name follows the
-     thumb. Track selection and thumb are standalone marks, not filled buttons;
-     use the contrasting mark role even when prominent buttons are bright. */
-  .buzz-step-slider {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    inline-size: calc(var(--space-16) * 2.5);
-    max-inline-size: 100%;
-    color: var(--text-standard);
-  }
-  .buzz-step-slider-control {
-    display: flex;
-    align-items: center;
-    block-size: var(--space-6);
-    /* Half a thumb on each side keeps the end stops' thumb inside the box. */
-    padding-inline: var(--space-2);
-    cursor: pointer;
-    touch-action: none;
-  }
-  .buzz-step-slider-track {
-    position: relative;
-    inline-size: 100%;
-    block-size: var(--space-1);
-    border-radius: var(--radius-pill);
-    background: var(--affordance-subtle-pressed);
-  }
-  .buzz-step-slider-indicator {
-    border-radius: var(--radius-pill);
-    background: var(--affordance-prominent-mark);
-  }
-  .buzz-step-slider-stop {
-    position: absolute;
-    inset-block-start: 50%;
-    inset-inline-start: var(--stop-position);
-    inline-size: var(--space-2);
-    block-size: var(--space-2);
-    border-radius: var(--radius-pill);
-    /* A stop is a bump in the track, never a separate gray: it shares the
-       track's color, so it follows the vibe level with it. */
-    background: var(--affordance-subtle-pressed);
-    translate: -50% -50%;
-    pointer-events: none;
-  }
-  .buzz-step-slider-stop[data-filled] {
-    background: var(--affordance-prominent-mark);
-  }
-  .buzz-step-slider-thumb {
-    inline-size: var(--space-4);
-    block-size: var(--space-4);
-    border: 2px solid var(--surface-panel);
-    border-radius: var(--radius-pill);
-    background: var(--affordance-prominent-mark);
-    box-shadow: var(--shadow-xs);
-  }
-  html[data-keyboard-navigation] .buzz-step-slider-thumb:has(:focus-visible) {
-    outline: 2px solid var(--text-standard);
-    outline-offset: 2px;
-  }
-  .buzz-step-slider-label {
-    @apply text-body-sm;
-    display: block;
-    align-self: flex-start;
-    inline-size: max-content;
-    max-inline-size: 100%;
-    /* Under its stop, held inside the slider at either end. */
-    margin-inline-start: var(--step-position);
-    translate: calc(var(--step-position) * -1) 0;
-    font-weight: var(--type-weight-medium);
-  }
-  .buzz-step-slider[data-disabled] {
-    color: var(--text-unavailable);
-  }
-  .buzz-step-slider[data-disabled] .buzz-step-slider-control {
-    cursor: not-allowed;
-  }
-  .buzz-step-slider[data-disabled]
-    :is(
-      .buzz-step-slider-indicator,
-      .buzz-step-slider-stop[data-filled],
-      .buzz-step-slider-thumb
-    ) {
-    background: var(--affordance-disabled);
-  }
-
   .buzz-preference-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -2160,5 +2094,41 @@
     .buzz-arrive[data-leaving] {
       animation: none;
     }
+  }
+}
+
+@layer components {
+  .buzz-preference-row[data-variant="search"] {
+    padding: var(--space-3);
+    gap: var(--space-row-gap);
+  }
+  .buzz-preference-row[data-variant="search"] .buzz-preference-row-icon {
+    width: var(--space-6);
+    height: var(--space-6);
+    justify-content: flex-start;
+  }
+  .buzz-preference-row[data-variant="search"] .buzz-preference-row-icon > svg {
+    width: calc(var(--space-5) + 1px);
+    height: calc(var(--space-5) + 1px);
+  }
+  .buzz-preference-row[data-variant="search"] .buzz-preference-row-content {
+    gap: 0;
+  }
+  .buzz-preference-row[data-variant="search"] .buzz-preference-row-description {
+    @apply text-body-sm;
+    color: var(--text-subtle);
+  }
+}
+
+@layer components {
+  .search-control-row {
+    border-radius: max(
+      0px,
+      calc(var(--search-palette-radius, var(--radius-panel)) - var(--space-3))
+    );
+    corner-shape: squircle;
+  }
+  .search-control-row[data-highlighted] {
+    background: var(--affordance-subtle-hover);
   }
 }

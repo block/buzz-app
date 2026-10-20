@@ -16,8 +16,10 @@ import {
   type TurnPick,
 } from "./claude";
 import { STANDALONE_DEADLINE_MS } from "../../features/agent-harness/standalone";
+import type { AgentStore } from "../../features/agents/store";
 
-/** A conversation's process stops after this long without a message. */
+/** A conversation's process stops after this long without a message or its
+ * own activity, such as background work. */
 export const IDLE_MS = 15 * 60_000;
 /** How long a one-off turn can run before it is given up; Janet's turn
  * deadline. */
@@ -246,6 +248,13 @@ export class AgentSessions {
     return delivered;
   }
 
+  /** Stops the turn running in conversation `key`, if any, once a process
+   * starting for it has taken its message. */
+  async interrupt(key: string) {
+    await this.opening.get(key);
+    await this.live.get(key)?.process.interrupt();
+  }
+
   /** Runs one turn in a new session, then stops its process. The session is
    * not saved, so it never displaces a conversation's saved session and is
    * never resumed. `label` names it in the snapshot. It gives up, and stops
@@ -349,6 +358,10 @@ export class AgentSessions {
   }
   private adopt(key: string, live: Live, seen: number) {
     live.process.conversation = key;
+    // Not a stop: a turn that reports finished work may be about to start.
+    live.process.onQuiet = () => {
+      if (this.live.get(key) === live) this.touch(key, live);
+    };
     this.live.set(key, live);
     this.touch(key, live, seen);
     this.options.onChange?.();
@@ -390,12 +403,12 @@ export class AgentSessions {
       at: live.used,
     });
   }
-  /** Stops the process after IDLE_MS, or waits again while it is busy: a
-   * long turn is not new use. */
+  /** Stops the process after IDLE_MS, or waits again while it is active:
+   * a long turn or background work is not new use. */
   private countdown(key: string, live: Live) {
     clearTimeout(live.timer);
     live.timer = setTimeout(() => {
-      if (live.process.busy) this.countdown(key, live);
+      if (live.process.active) this.countdown(key, live);
       else if (this.live.get(key) === live) this.drop(key, live);
     }, IDLE_MS);
   }
@@ -505,53 +518,78 @@ export class Spare {
   }
 }
 
-/** Sessions saved in local storage, by agent and then conversation. */
+/** Where sessions were kept for every agent in one value, before each agent's
+ * had its own key. */
+export const LEGACY_SESSIONS = "buzz.claude-code.sessions.v1";
+
+/** Sessions saved in agent storage, one key per agent, by conversation. Each
+ * agent's own key lets programs that run different agents share the storage. */
 export function localSessions(
-  storage: Storage,
+  storage: AgentStore,
   agent: string,
-  name = "buzz.claude-code.sessions.v1",
+  name = LEGACY_SESSIONS,
 ): SessionStore & {
   /** Saved sessions, most recently used first. */
   list(): [string, SavedSession][];
 } {
-  const readAll = (): Record<string, Record<string, SavedSession>> => {
+  const key = `${name}:${agent}`;
+  const object = (text: string | null) => {
     try {
-      const value = JSON.parse(storage.getItem(name) ?? "{}");
+      const value = JSON.parse(text ?? "{}");
       return value && typeof value === "object" ? value : {};
     } catch {
       return {};
     }
   };
+  const read = (): Record<string, SavedSession> => {
+    const own = storage.get(key);
+    return own === null
+      ? (object(storage.get(name))[agent] ?? {})
+      : object(own);
+  };
   const update = (change: (sessions: Record<string, SavedSession>) => void) => {
-    const all = readAll();
-    const sessions = { ...(all[agent] ?? {}) };
+    const sessions = { ...read() };
     change(sessions);
     const kept = Object.entries(sessions)
       .sort(([, a], [, b]) => b.at - a.at)
       .slice(0, SAVED_LIMIT);
-    all[agent] = Object.fromEntries(kept);
-    try {
-      storage.setItem(name, JSON.stringify(all));
-    } catch (error) {
+    const warn = (error: unknown) =>
       console.warn("Claude sessions were not saved", error);
+    const own = storage.set(key, JSON.stringify(Object.fromEntries(kept)));
+    // The old shared value drops this agent once its own key is saved: until
+    // then it holds the only saved copy.
+    if (!(agent in object(storage.get(name)))) {
+      void own.catch(warn);
+      return;
     }
+    void own
+      .then(() => {
+        const legacy = object(storage.get(name));
+        if (!(agent in legacy)) return;
+        delete legacy[agent];
+        return storage.set(
+          name,
+          Object.keys(legacy).length ? JSON.stringify(legacy) : null,
+        );
+      })
+      .catch(warn);
   };
   return {
     list: () =>
-      Object.entries(readAll()[agent] ?? {})
+      Object.entries(read())
         .filter(([, saved]) => typeof saved?.id === "string")
         .sort(([, a], [, b]) => b.at - a.at),
-    get: (key) => {
-      const saved = readAll()[agent]?.[key];
+    get: (conversation) => {
+      const saved = read()[conversation];
       return saved && typeof saved.id === "string" ? saved : undefined;
     },
-    set: (key, session) =>
+    set: (conversation, session) =>
       update((sessions) => {
-        sessions[key] = session;
+        sessions[conversation] = session;
       }),
-    delete: (key) =>
+    delete: (conversation) =>
       update((sessions) => {
-        delete sessions[key];
+        delete sessions[conversation];
       }),
   };
 }

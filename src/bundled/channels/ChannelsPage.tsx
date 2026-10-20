@@ -199,6 +199,7 @@ function ChannelWorkspace({
     [draftTarget],
   );
   const list = useChannelList(queries.channels);
+  const initialList = useRef(list);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
     // Initial channel discovery cancels in-flight reads as it settles access.
@@ -269,9 +270,16 @@ function ChannelWorkspace({
   const threadTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const { channels, profiles } = useChannelLabels(
-    list.channels,
+    list.channels.filter(
+      (channel) =>
+        // Wait for metadata so temporary rooms never flash as unnamed channels.
+        !channel.huddle && !channel.metadataPending,
+    ),
     queries.profiles,
     queries.names,
+  );
+  const metadataPending = list.channels.some(
+    (channel) => channel.metadataPending,
   );
   const requestedChannel =
     navigation?.target.kind === "conversation"
@@ -323,7 +331,7 @@ function ChannelWorkspace({
     queries,
     list.status,
   ]);
-  const resolving =
+  const resolvingMembership =
     !!requestedChannel &&
     !joinedRequest &&
     !!queries.channels.resolve &&
@@ -347,7 +355,7 @@ function ChannelWorkspace({
     !!draft ||
     (navigation?.target.kind === "page" &&
       navigation.target.route?.params === "empty");
-  const current = emptyDestination
+  const requestedDestination = emptyDestination
     ? undefined
     : requestedChannel
       ? (channels.find((channel) => channel.id === requestedChannel) ??
@@ -361,6 +369,14 @@ function ChannelWorkspace({
           : undefined) ??
         channels.find((channel) => channel.id === selected) ??
         channels.find((item) => item.channelType !== "solo"));
+  // Exact links and saved selections must respect the same Huddle-only entry point.
+  const resolving =
+    resolvingMembership ||
+    (list.status !== "error" && !!requestedDestination?.metadataPending);
+  const current =
+    requestedDestination?.huddle || requestedDestination?.metadataPending
+      ? undefined
+      : requestedDestination;
   useLayoutEffect(() => {
     visiblePreview.current =
       current?.readOnly && !current.cached && !cached
@@ -391,13 +407,23 @@ function ChannelWorkspace({
     }
     if (
       !cached &&
-      requestedChannel &&
       !resolving &&
-      list.status === "ready" &&
-      !current
+      !current &&
+      ((requestedChannel && list.status === "ready") ||
+        (list.status === "error" &&
+          // ensureList retries on mount, possibly after asynchronous cache restore.
+          // Do not settle a new navigation using the previous attempt's error.
+          list !== initialList.current &&
+          metadataPending &&
+          !emptyDestination))
     )
       navigation?.complete({ status: "failed", reason: "unavailable" });
-    if (!requestedChannel && !current && list.status === "ready")
+    if (
+      !requestedChannel &&
+      !current &&
+      list.status === "ready" &&
+      (!metadataPending || emptyDestination)
+    )
       navigation?.complete({ status: "opened" });
     if (!requestedChannel && current && navigation && viewer) {
       // Resolve the saved default within this attempt, keeping its caller and deadline.
@@ -414,11 +440,13 @@ function ChannelWorkspace({
   }, [
     cached,
     composingMessage,
+    metadataPending,
+    emptyDestination,
     draft,
     requestedChannel,
     resolving,
     current,
-    list.status,
+    list,
     navigation,
     viewer,
     scope,
@@ -731,6 +759,7 @@ function ChannelWorkspace({
     leadingIds: settings ? ["settings"] : [],
     threadId: routedThread?.messageId,
     mainPane: true,
+    navigation: navigator,
     routed: routedThread,
     onCloseThread: (tab, active, last) => {
       // Closing the addressed thread returns the route to its channel, so a
@@ -768,6 +797,7 @@ function ChannelWorkspace({
     openLink: (url) => openLink(url, { fromThread: true }),
     // A Solo conversation has no channel menu; its history takes focus instead.
     fallbackFocus: solo ? historyContainer : settingsTrigger,
+    openMembers: () => setMembersOpen(true),
     eligible: (entry) =>
       !entry.panel.channelMenu ||
       !!(

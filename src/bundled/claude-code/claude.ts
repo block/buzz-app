@@ -112,8 +112,16 @@ export class ClaudeProcess {
   private stderr = "";
   private lastError: string | undefined;
   private alive = true;
+  /** The owner stopped the running turn, so how it ends is not a failure. */
+  private stopping = false;
   /** It reports idle; an older `claude` that does not is settled per result. */
   private reportsState = false;
+  /** It runs a turn of its own, such as one a finished background task starts. */
+  private working = false;
+  /** Its live background tasks that are activity, as Claude last listed them. */
+  private tasks = 0;
+  /** Called when it was active and is no longer. */
+  onQuiet?: () => void;
   private requests = 0;
   /** Control requests awaiting Claude's answer, by request id. */
   private calls = new Map<string, (response: Message) => void>();
@@ -258,6 +266,10 @@ export class ClaudeProcess {
   get busy() {
     return this.pending > 0;
   }
+  /** Busy, in a turn of its own, or running background work that may call back. */
+  get active() {
+    return this.busy || this.working || this.tasks > 0;
+  }
   get started() {
     return this.began;
   }
@@ -320,6 +332,18 @@ export class ClaudeProcess {
       }),
     );
     return settled;
+  }
+
+  /** Stops the running turn, as the SDK's `interrupt` does; messages folded
+   * into it end with it. The turn then settles as Claude ends it. */
+  async interrupt() {
+    if (!this.alive || !this.busy) return;
+    this.stopping = true;
+    const answer = await this.call({ subtype: "interrupt" });
+    if (answer.subtype === "error" && this.alive) {
+      this.stopping = false;
+      throw new Error(`Claude did not stop: ${String(answer.error)}`);
+    }
   }
 
   kill() {
@@ -403,6 +427,7 @@ export class ClaudeProcess {
     this.receipts.clear();
     this.activeReceipts.clear();
     this.lastError = undefined;
+    this.stopping = false;
     for (const resolve of this.waiters.splice(0)) resolve(settled);
   }
 
@@ -456,7 +481,23 @@ export class ClaudeProcess {
       message.subtype === "session_state_changed"
     ) {
       this.reportsState = true;
-      if (message.state === "idle" && this.pending) this.done();
+      const active = this.active;
+      this.working = message.state !== "idle";
+      if (!this.working && this.pending) this.done();
+      if (active && !this.active) this.onQuiet?.();
+      return;
+    }
+    // The whole set each time; ambient tasks, such as watchers, are not activity.
+    if (
+      message.type === "system" &&
+      message.subtype === "background_tasks_changed" &&
+      Array.isArray(message.tasks)
+    ) {
+      const active = this.active;
+      this.tasks = message.tasks.filter(
+        (task) => !(task as Message | null)?.ambient,
+      ).length;
+      if (active && !this.active) this.onQuiet?.();
       return;
     }
     if (
@@ -485,8 +526,13 @@ export class ClaudeProcess {
       return;
     }
     if (message.type !== "result") return;
-    // An interrupt is not a failure to report.
-    if (message.is_error && message.terminal_reason !== "aborted_streaming")
+    // An interrupt is not a failure to report: Claude ends a turn stopped
+    // mid-tool as `error_during_execution`.
+    if (
+      message.is_error &&
+      !this.stopping &&
+      message.terminal_reason !== "aborted_streaming"
+    )
       this.lastError =
         typeof message.result === "string" && message.result
           ? message.result

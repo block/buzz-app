@@ -273,7 +273,8 @@ it("member names open the subject's and the actor's profiles when the host can",
   fireEvent.click(screen.getByRole("button", { name: "View your profile" }));
   expect(open).toHaveBeenLastCalledWith(profileTarget(wes));
   const agent = screen.getByRole("button", { name: "View Brain profile" });
-  expect(agent).toHaveAttribute("data-mention-kind", "agent");
+  // System notices name people as quiet text, never as mention chips.
+  expect(agent).not.toHaveAttribute("data-mention-kind");
   fireEvent.click(agent);
   expect(open).toHaveBeenLastCalledWith(profileTarget(brain, { agent: true }));
   expect(screen.getAllByRole("button")).toHaveLength(3);
@@ -303,9 +304,9 @@ it("member names open the subject's and the actor's profiles when the host can",
   );
   fireEvent.click(screen.getByRole("button", { name: "View Pinky profile" }));
   expect(open).toHaveBeenLastCalledWith(profileTarget(pinky));
-  expect(
-    screen.getByRole("button", { name: "View Brain profile" }),
-  ).toHaveAttribute("data-mention-kind", "person");
+  // Without agent evidence, Brain opens as a person.
+  fireEvent.click(screen.getByRole("button", { name: "View Brain profile" }));
+  expect(open).toHaveBeenLastCalledWith(profileTarget(brain));
   expect(document.querySelector("[data-profile-target]")).toBeNull();
 });
 

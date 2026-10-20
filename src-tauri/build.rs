@@ -39,6 +39,15 @@ fn main() {
     }
     tauri_build::try_build(
         attributes.app_manifest(tauri_build::AppManifest::new().commands(&[
+            "huddle_window_reset_incoming",
+            "huddle_window_open",
+            "huddle_window_update",
+            "huddle_window_watch",
+            "huddle_window_action",
+            "huddle_open",
+            "huddle_close",
+            "huddle_pcm",
+            "huddle_touch",
             "pairing_account",
             "pairing_start",
             "pairing_status",
@@ -47,6 +56,8 @@ fn main() {
             "pairing_cancel",
             "identity_restore",
             "identity_import",
+            "identity_legacy_available",
+            "identity_import_legacy",
             "identity_create",
             "identity_export",
             "nsec_backup_available",
@@ -144,6 +155,8 @@ fn main() {
             "jev_classifier_set_key",
             "jev_classifier_clear_key",
             "jev_classify",
+            "app_agent_state_load",
+            "app_agent_state_set",
             "title_bar_double_click",
             "notification_show",
             "notification_permission_state",

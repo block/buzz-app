@@ -1,5 +1,6 @@
+import { setPluginEnabled } from "./plugin-settings.mjs";
+import { settleShellToggle, selectSettingsSection } from "./navigation.mjs";
 import { openCommunityPicker } from "./navigation.mjs";
-import { settleShellToggle } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -237,9 +238,11 @@ test.describe("community administration permissions", () => {
     const sections = page.getByRole("navigation", {
       name: "Settings sections",
     });
-    await expect(sections).toContainText("Community admin");
     // The account menu finishes its focus handoff before testing section focus.
     await expect(page.getByRole("main")).toBeFocused();
+    await selectSettingsSection(page, "Manage plugins");
+    await setPluginEnabled(page, "Membership", true);
+    await expect(sections).toContainText("Community admin");
     const membership = sections.getByRole("button", {
       name: "Membership",
       exact: true,
@@ -518,7 +521,6 @@ confirmedPresence(
       await profile.focus();
       for (const name of [
         "Custom emoji",
-        "Local archive",
         "Pair mobile",
         "Leave or remove",
         "Identity",
@@ -587,7 +589,6 @@ confirmedPresence(
       }
       for (const name of [
         "Custom emoji",
-        "Local archive",
         "Pair mobile",
         "Leave or remove",
         "Identity",
@@ -1084,6 +1085,8 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
       pane.getByRole("button", { name: "Close plugin details" }),
     ).toBeFocused();
     await expect(trigger).toBeHidden();
+    // The covered catalog is hidden from AT; its live feedback must stay exposed.
+    await expect(page.getByRole("alert")).toHaveCSS("visibility", "visible");
     await page.keyboard.press("Tab");
     await expect(
       pane.getByRole("button", { name: "Disable", exact: true }),

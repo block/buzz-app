@@ -14,6 +14,7 @@ import {
 } from "../../buzz-mcp/session-tools";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
   Agent,
   AgentHandle,
@@ -151,7 +152,7 @@ export class ClaudeRuntime {
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
-    private readonly storage: Storage = globalThis.localStorage,
+    private readonly storage: AgentStore = localStore(),
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every session now. */
     private readonly added: () => readonly AddedTool[] = () => [],
@@ -340,6 +341,7 @@ export class ClaudeRuntime {
     step,
     acknowledged,
     superseded,
+    interruptible,
     named,
   }: Delivery) {
     const settings = this.resolveConfig(raw);
@@ -443,6 +445,7 @@ export class ClaudeRuntime {
     if (!wait) await handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(done);
+    interruptible?.(() => entry.sessions.interrupt(key));
     this.notify();
     this.watch(done, async (error) => {
       if (error) await this.report(agent, channel, event, error, topLevel);

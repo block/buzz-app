@@ -155,6 +155,15 @@ export class GooseRuntime {
   /** Brings the runtime in line with this type's agents: changed settings
    * reopen idle sessions, and removed agents stop. goose stops with the
    * last. */
+  private defaultsRevision = 0;
+
+  /** Reopen inherited sessions on their next idle turn after Goose defaults save. */
+  defaultsChanged() {
+    this.defaultsRevision++;
+    for (const entry of this.agents.values())
+      if (!entry.config.provider.trim()) entry.sessions.reconfigure();
+  }
+
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.pubkey));
     for (const [pubkey, entry] of this.agents)
@@ -225,6 +234,7 @@ export class GooseRuntime {
     step,
     acknowledged,
     superseded,
+    interruptible,
   }: Delivery) {
     const settings = config(raw);
     // Watches and timers come as standalone turns (`runOnce`).
@@ -311,6 +321,7 @@ export class GooseRuntime {
       ...(superseded ? { superseded } : {}),
     });
     workingUntil(done);
+    interruptible?.(() => entry.sessions.interrupt(key));
     this.notify();
     void done
       .then((result) => {
@@ -546,6 +557,7 @@ export class GooseRuntime {
       }),
       fingerprint: () =>
         JSON.stringify([
+          entry.config.provider.trim() ? 0 : this.defaultsRevision,
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,

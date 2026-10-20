@@ -10,6 +10,7 @@ import { gooseRun } from "./run";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
 import { GooseHistory } from "./transcript";
+import { readUsage } from "./usage";
 
 export const TYPE_ID = "goose";
 
@@ -28,11 +29,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
     () => agents.tools(),
   );
   const spawn = host.spawn?.bind(host);
-  const setup = new GooseSetup(spawn);
-  const { Create, CreateModel, SettingsTab, ActivityTab } = createTabs({
+  const setup = new GooseSetup(spawn, () => runtime.defaultsChanged());
+  const history = new GooseHistory(spawn);
+  const {
+    Create,
+    CreateModel,
+    SettingsTab,
+    ActivityTab,
+    DefaultControl,
+    ProviderDialogBody,
+  } = createTabs({
     setup,
     runtime,
-    history: new GooseHistory(spawn),
+    history,
   });
   const sync = () => {
     const snapshot = agents.snapshot();
@@ -57,6 +66,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
     CreateModel,
+    provider: {
+      snapshot: setup.snapshot,
+      subscribe: setup.subscribe,
+      check: setup.check,
+      DialogBody: ProviderDialogBody,
+      DefaultControl,
+    },
     adopt: (carry, saved) => ({
       ...saved,
       instructions: carry.instructions ?? saved.instructions,
@@ -100,6 +116,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
       subscribe: (listener) => runtime.subscribe(listener),
     },
+    ...(spawn && {
+      usage: (agent, { since, signal }) =>
+        readUsage(
+          history,
+          agent.pubkey,
+          config(agent.config).workspace,
+          since,
+          signal,
+        ),
+    }),
     tabs: [
       {
         id: "settings",

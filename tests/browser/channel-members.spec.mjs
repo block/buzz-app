@@ -39,7 +39,7 @@ test("channel members opens from the header, fits each viewport, and returns key
     });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("searchbox")).toBeFocused();
-    await expect(dialog.getByText(/Members ·/)).toBeVisible();
+    await expect(dialog.getByText(/People ·/)).toBeVisible();
     await expect(dialog.getByText("Loading members…")).toHaveCount(0);
     // Finish the entrance before measuring; content changes must not recenter it.
     await dialog.evaluate(async (node) => {
@@ -198,7 +198,8 @@ test("Members has a reloadable history visit without replacing channel tabs or d
   await expect(composer).toBeVisible();
   await page.goBack();
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("Alpha");
+  await expect(dialog.getByRole("searchbox")).toBeFocused();
+  expect((await entry()).target).toEqual(members.target);
   expect((await entry()).id).toBe(members.id);
 });
 

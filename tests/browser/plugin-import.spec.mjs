@@ -1,6 +1,6 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import { chooseColorMode, selectSettingsSection } from "./navigation.mjs";
-import { openPage, pageChoices } from "./navigation.mjs";
+import { openPage, pageChoices, pageChoice } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 
@@ -106,6 +106,9 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
           return preview;
         }
         if (command === "plugin_import_discard") return;
+        // Agent storage starts empty; the app saves agent state there.
+        if (command === "app_agent_state_load") return {};
+        if (command === "app_agent_state_set") return;
         if (command === "plugin_import_install") {
           if (window.importInstallError) {
             await new Promise((resolve) => {
@@ -320,7 +323,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       });
       await chooseColorMode(page, mode);
       await expect(appearance.getByRole("button")).toHaveCount(
-        scale === 100 ? 8 : 9,
+        scale === 100 ? 9 : 10,
       );
       await expect(
         appearance.getByRole("button", {
@@ -334,7 +337,7 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       await colors.first().focus();
       await page.keyboard.press("Shift+Tab");
       await page.keyboard.press("Tab");
-      for (let index = 0; index < 6; index++) {
+      for (let index = 0; index < 7; index++) {
         if (index) await page.keyboard.press("Tab");
         await expect(colors.nth(index)).toBeFocused();
         await expect
@@ -448,6 +451,8 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
       manifest: {
         id: `example.${name}`,
         name: `Example ${name}`,
+        description:
+          "Review repository activity and share detailed project updates with your community and collaborators.",
         apiVersion: 1,
       },
       revision: name,
@@ -562,6 +567,42 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   ).toEqual({ token: "preview-one", path: "dist" });
   const enabled = pluginAction(page, "Example two");
   await expect(enabled).toHaveAccessibleName("Enable Example two");
+  const row = button(page, "View Example two details");
+  await expect(row).toHaveAttribute("data-updatable", "true");
+  for (const width of [1100, 768]) {
+    await page.setViewportSize({ width, height: 950 });
+    await row.scrollIntoViewIfNeeded();
+    await expect
+      .poll(() =>
+        row.evaluate((node) => {
+          const description = node.querySelector('[id^="plugin-description-"]');
+          const actions = [...node.parentElement.querySelectorAll("button")]
+            .filter((button) => button !== node)
+            .map((button) => button.getBoundingClientRect());
+          const range = document.createRange();
+          range.selectNodeContents(description);
+          return [...range.getClientRects()].every((rect) =>
+            actions.every(
+              (action) =>
+                rect.right <= action.left ||
+                rect.left >= action.right ||
+                rect.bottom <= action.top ||
+                rect.top >= action.bottom,
+            ),
+          );
+        }),
+      )
+      .toBe(true);
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.screenshot({ path: info.outputPath("updatable-row-light.png") });
+  await page.setViewportSize({ width: 480, height: 850 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({
+    path: info.outputPath("updatable-row-dark-narrow.png"),
+  });
+  await page.setViewportSize({ width: 1440, height: 950 });
+
   await button(page, "View Example two details").click();
   await expect(button(page, "Reload")).toBeVisible();
   await button(page, "Reload").click();
@@ -779,13 +820,12 @@ test("checked-in local examples activate and work independently", async ({
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await selectSettingsSection(page, "Manage plugins");
   await pluginAction(page, "Counter playground").click();
-  const navigation = await pageChoices(page);
-  await expect(
-    navigation.getByRole("option", { name: "Counter playground", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    navigation.getByRole("option", { name: "Notes playground", exact: true }),
-  ).toBeVisible();
+  const navigation = await pageChoices(page, "Counter playground");
+  await expect(pageChoice(navigation, "Counter playground")).toHaveCount(0);
+  await page
+    .getByRole("combobox", { name: "Search Buzz", exact: true })
+    .fill("Notes playground");
+  await expect(pageChoice(navigation, "Notes playground")).toBeVisible();
 });
 
 // Browser-only: real modal focus and manager error propagation across the IPC boundary.

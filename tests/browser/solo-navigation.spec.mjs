@@ -237,12 +237,7 @@ test("selected message actions hide beyond their pane and return with it", async
           .querySelector("[data-message-action-anchor]")
           .getBoundingClientRect();
         const pane = bar.closest("section").getBoundingClientRect();
-        const beside = bar.dataset.placement === "beside";
-        const aligned = beside
-          ? Math.abs(
-              rect.top + rect.height / 2 - bubble.top - bubble.height / 2,
-            ) < 1
-          : Math.abs(rect.bottom - bubble.top - 8) < 1;
+        const aligned = Math.abs(rect.bottom - bubble.top - 8) < 1;
         return aligned && rect.bottom > pane.top;
       }),
     )

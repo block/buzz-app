@@ -6,6 +6,7 @@ import type { BuzzClient } from "../../buzz-mcp/client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { ownerReads } from "../../features/agents/reads";
+import { localStore } from "../../features/agents/state";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -129,10 +130,11 @@ function setup(
     snapshot: () => ({ status: "ready", session, viewer: alice }),
   } as unknown as RelayData;
   const data = new Map<string, string>();
-  const storage = {
+  const storage = localStore({
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
-  } as Storage;
+    removeItem: (key: string) => void data.delete(key),
+  } as Storage);
   // The host's copy of `core` memory, which needs no relay read.
   const core = vi.fn(
     async (
@@ -185,6 +187,7 @@ function setup(
     },
   };
   const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
   const attention = { on: true };
   // Slugs the host would no longer run, as when a watch was tightened.
   const stale = new Set<string>();
@@ -209,6 +212,7 @@ function setup(
       config: DEFAULT_CONFIG,
       signal,
       workingUntil,
+      interruptible,
       ...(options.named ? { named: options.named } : {}),
       // The host's answer, as it is when asked.
       current: () =>
@@ -245,6 +249,7 @@ function setup(
     data,
     agent,
     workingUntil,
+    interruptible,
     attention,
     objects,
     stale,
@@ -255,11 +260,11 @@ function setup(
 it("names each saved session's channel as the community lists it", () => {
   const { runtime, data } = setup();
   const saved = localSessions(
-    {
+    localStore({
       getItem: (key: string) => data.get(key) ?? null,
       setItem: (key: string, value: string) => void data.set(key, value),
       removeItem: (key: string) => void data.delete(key),
-    } as Storage,
+    } as Storage),
     self,
   );
   saved.set(channel, { id: "s1", seen: 100, at: 5 });
@@ -325,6 +330,27 @@ it("tells a subscriber when a new conversation's first turn starts working", asy
   claude?.finish();
   await flush(10);
   expect(runtime.sessions(self)).toMatchObject([{ busy: false }]);
+});
+
+it("hands the host a stopper that interrupts the mention's running turn", async () => {
+  const { deliver, claudes, interruptible } = setup([], { hold: true });
+  await deliver({ type: "mention", event: message("1", "@Claude hi") });
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(interruptible).toHaveBeenCalledTimes(1);
+  const stop = interruptible.mock.calls[0]?.[0];
+  if (!stop) throw new Error("no stopper");
+  const interrupts = () =>
+    claude?.received.filter(
+      (item) =>
+        item.type === "control_request" &&
+        (item.request as { subtype?: string }).subtype === "interrupt",
+    );
+  expect(interrupts()).toEqual([]);
+  await stop();
+  expect(interrupts()).toHaveLength(1);
+  claude?.finish();
+  await flush(10);
 });
 
 const EFFORTS = [
@@ -1019,7 +1045,7 @@ it("runs a timer as a one-off turn that is never saved", async () => {
   expect(prompt).toMatch(/<attention>\nHandle the work that caused this turn/);
   // Its process stops once the turn is done, and no session is kept for it.
   expect(claude?.killed).toBe(true);
-  expect(data.get("buzz.claude-code.sessions.v1") ?? "{}").toBe("{}");
+  expect(data.get(`buzz.claude-code.sessions.v1:${self}`) ?? "{}").toBe("{}");
   expect(runtime.sessions(self)).toEqual([]);
 });
 

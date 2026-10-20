@@ -374,6 +374,9 @@ same menu does the same, except that the right-clicked tab stays open, selected
 and focused. On the channel conversation it is the same as Close all tabs. On a
 detail tab, such as an agent log, the tab that owns it stays instead, without
 its details.
+A tab for another conversation, or for one of its threads, also offers
+**Open in channel**, which opens that conversation in Channels; a thread opens
+there at the same message. The current channel's own threads do not offer it.
 Shift+F10 on a focused tab opens the same
 menu. Hiding the pane remains separate from closing its tabs.
 The main-header split control toggles existing pane content without closing its

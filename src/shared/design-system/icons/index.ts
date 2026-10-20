@@ -434,6 +434,27 @@ export const PlayFilledIcon = defineIcon("tabler", TablerPlayFilledIcon);
 import TablerPauseFilledIcon from "@tabler/icons-react/dist/esm/icons/IconPlayerPauseFilled.mjs";
 export const PauseFilledIcon = defineIcon("tabler", TablerPauseFilledIcon);
 
+import TablerArrowsInSimpleIcon from "@tabler/icons-react/dist/esm/icons/IconArrowsMinimize.mjs";
+export const ArrowsInSimpleIcon = defineIcon(
+  "tabler",
+  TablerArrowsInSimpleIcon,
+);
+
+import TablerHeadphonesIcon from "@tabler/icons-react/dist/esm/icons/IconHeadphones.mjs";
+export const HeadphonesIcon = defineIcon("tabler", TablerHeadphonesIcon);
+
+import TablerMicrophoneSlashIcon from "@tabler/icons-react/dist/esm/icons/IconMicrophoneOff.mjs";
+export const MicrophoneSlashIcon = defineIcon(
+  "tabler",
+  TablerMicrophoneSlashIcon,
+);
+
+import TablerPhoneDisconnectIcon from "@tabler/icons-react/dist/esm/icons/IconPhoneOff.mjs";
+export const PhoneDisconnectIcon = defineIcon(
+  "tabler",
+  TablerPhoneDisconnectIcon,
+);
+
 import { HashArrowInArtwork } from "./HashArrowIn";
 export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
   meaning: "Send to channel",
@@ -494,6 +515,8 @@ export const CircleHalfIcon = defineIcon("tabler", TablerCircleHalfIcon);
 
 import TablerGaugeIcon from "@tabler/icons-react/dist/esm/icons/IconGauge.mjs";
 export const GaugeIcon = defineIcon("tabler", TablerGaugeIcon);
+import TablerChartBarIcon from "@tabler/icons-react/dist/esm/icons/IconChartBar.mjs";
+export const ChartBarIcon = defineIcon("tabler", TablerChartBarIcon);
 
 import TablerStorefrontIcon from "@tabler/icons-react/dist/esm/icons/IconBuildingStore.mjs";
 export const StorefrontIcon = defineIcon("tabler", TablerStorefrontIcon);
@@ -504,6 +527,8 @@ export const BrainIcon = defineIcon("tabler", TablerBrainIcon);
 import TablerThinkingHighIcon from "@tabler/icons-react/dist/esm/icons/IconThinkingHigh.mjs";
 export const ThinkingHighIcon = defineIcon("tabler", TablerThinkingHighIcon);
 
+import TablerMetaLogoIcon from "@tabler/icons-react/dist/esm/icons/IconBrandMeta.mjs";
+export const MetaLogoIcon = defineIcon("tabler", TablerMetaLogoIcon);
 import TablerFileTypePdfIcon from "@tabler/icons-react/dist/esm/icons/IconFileTypePdf.mjs";
 export const FileTypePdfIcon = defineIcon("tabler", TablerFileTypePdfIcon);
 

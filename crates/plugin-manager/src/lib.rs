@@ -225,6 +225,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         ..HostGrants::default()
     });
     vec![
+        serde_json::from_str(include_str!("../../../src/bundled/huddles/manifest.json"))
+            .expect("huddles manifest"),
         builderlab,
         serde_json::from_str(include_str!("../../../src/bundled/pairing/manifest.json"))
             .expect("valid pairing manifest"),
@@ -232,6 +234,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("todos manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
             .expect("bundled diffs manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/mermaid/manifest.json"))
+            .expect("bundled mermaid manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/identity-naming/manifest.json"
         ))
@@ -264,6 +268,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("reminders manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/bestie/manifest.json"))
             .expect("bestie manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/usage/manifest.json"))
+            .expect("usage manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/repos/manifest.json"))
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
@@ -301,6 +307,7 @@ fn enabled_by_default(id: &str) -> bool {
         "buzz.channels"
             | "buzz.feedback"
             | "buzz.diffs"
+            | "buzz.mermaid"
             | "buzz.identity-naming"
             | "buzz.agent-activity"
             | "buzz.terminal"
@@ -308,6 +315,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.links"
             | "buzz.mentions"
             | "buzz.voice-notes"
+            | "buzz.huddles"
             | "buzz.emoji"
             | "buzz.github"
             | "buzz.pairing"
@@ -1939,6 +1947,26 @@ mod tests {
             .unwrap()
             .commands
             .is_empty());
+    }
+
+    #[test]
+    fn huddles_are_available_on_desktop_and_can_be_disabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "huddles-test", false).unwrap();
+        let huddles = || {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "buzz.huddles")
+                .expect("Desktop must expose the Huddles plugin")
+        };
+        assert!(huddles().enabled);
+        manager.change("disable", "buzz.huddles").unwrap();
+        assert!(!huddles().enabled);
+        manager.change("enable", "buzz.huddles").unwrap();
+        assert!(huddles().enabled);
     }
 
     #[test]

@@ -101,6 +101,13 @@ behavior on the label, so a rename touches copy only.
   chat, including from the composer, after the menu's fresh permission read; it does
   nothing where the menu offers no Archive. Success returns to Solo. Archived chats
   are restored from search and Channel Settings, as before.
+- The owner can add agents from **Channel members → Add agents** without sending
+  a message or starting a run. The chooser uses the same available agents as
+  the composer, excludes current members and archived agents, and confirms the
+  signed roster before reporting success. Additions grant access to the chat and
+  its history; people continue to use Share. Closing stops the dialog's continuation,
+  while an already-sent membership request may still complete; reopening reads the
+  roster, and retry uses the existing membership receipt.
 - Solo chats use the ordinary composer with explicit
   owner-scoped agent tags. Empty new-chat drafts start tagged with the device's default
   agent for this account/community. **Agents → right-click → Make default agent**

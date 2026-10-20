@@ -127,6 +127,33 @@ test.describe("Berd-style Solo project organization", () => {
     await page.clock.runFor(1_100);
     await page.clock.resume();
 
+    await newChat(page);
+    for (const [before, choice, after] of [
+      ["Add workspace", "Work", "Workspace: Work"],
+      ["Workspace: Work", "No workspace", "Add workspace"],
+    ]) {
+      const trigger = page.getByRole("button", { name: before, exact: true });
+      await trigger.focus();
+      await trigger.press("Enter");
+      const popup = page.getByRole("menu").filter({
+        has: page.getByRole("menuitemradio", {
+          name: "No workspace",
+          exact: true,
+        }),
+      });
+      const option = popup.getByRole("menuitemradio", {
+        name: choice,
+        exact: true,
+      });
+      await option.focus();
+      await option.press("Enter");
+      // Wait for popup teardown, when Base UI restores focus to the trigger.
+      await expect(popup).toHaveCount(0);
+      await expect
+        .soft(page.getByRole("button", { name: after, exact: true }))
+        .toBeFocused();
+    }
+
     const beta = sidebar.getByRole("button", { name: "Beta", exact: true });
     await beta.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();

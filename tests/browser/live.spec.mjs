@@ -106,6 +106,14 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .fill("Keep my draft");
+  // Finish the draft pulse before deliberately retiring its delivery route.
+  await expect
+    .poll(() =>
+      app.report.typingPublications.some(
+        ({ event }) => event.tags[0]?.[1] === "alpha",
+      ),
+    )
+    .toBe(true);
   const established = (kind) =>
     app.relay.sockets.some(
       ({ community, readyState, routes }) =>

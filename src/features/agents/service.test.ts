@@ -2778,6 +2778,47 @@ it("shows the saved teams after a team save agent storage could not write", asyn
   expect(service.find(bot)?.settings.team).not.toContain("Solo");
 });
 
+it("refuses a turn on an earlier unsaved team when two overlapping team saves fail", async () => {
+  let failing: Promise<void> | undefined;
+  const storage = fileStore(new Map(), async () => {
+    if (failing) {
+      await failing;
+      throw new Error("disk full");
+    }
+  });
+  const { service } = await setup({
+    storage,
+    identities: [here(bot), here(sibling)],
+  });
+  const crew = await service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [bot],
+  });
+  const other = await service.saveTeam({
+    name: "Other",
+    instructions: "",
+    members: [sibling],
+  });
+  let fail!: () => void;
+  failing = new Promise((resolve) => {
+    fail = resolve;
+  });
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const first = service.saveTeam({ ...crew, instructions: "UNSAVED A" });
+  // A turn started on the first write's unsaved team.
+  const unsaved = service.find(bot);
+  expect(unsaved?.settings.team).toContain("UNSAVED A");
+  // The second changes only another agent's team, keeping the first's edit.
+  const second = service.saveTeam({ ...other, instructions: "UNSAVED B" });
+  fail();
+  await expect(first).rejects.toThrow("disk full");
+  await expect(second).rejects.toThrow("disk full");
+  error.mockRestore();
+  expect(service.find(bot)?.epoch).not.toBe(unsaved?.epoch);
+  expect(service.find(bot)?.settings.team).not.toContain("UNSAVED A");
+});
+
 it("saves nothing when native create fails", async () => {
   const storage = memoryStorage();
   const { service, native } = await setup({ storage });

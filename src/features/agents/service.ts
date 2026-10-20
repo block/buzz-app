@@ -2589,8 +2589,18 @@ export class AgentsService extends Service implements Agents {
    * promise settles once they are saved. When the save fails, memory goes
    * back to the teams storage still has. */
   private writeTeams(teams: readonly Team[]) {
-    // A local team write is a local Save for every agent on a team it
-    // changed: their team text moves, so their sessions reopen on it.
+    const saving = writeTeams(this.storage, teams);
+    const shown = this.showWritten(teams);
+    return saving.catch((error: unknown) => {
+      // Back to the saved teams, unless a newer write is shown: whatever
+      // the unsaved ones started, by this write or one before, is stale.
+      if (this.teamList === shown) this.showWritten(readTeams(this.storage));
+      throw error;
+    });
+  }
+  /** Shows `teams` as a local team write: a local Save for every agent on a
+   * team it changed, whose team text moves, so their sessions reopen on it. */
+  private showWritten(teams: readonly Team[]) {
     const kept = new Set(teams);
     const reached = new Set(
       [...this.teamList, ...teams]
@@ -2598,18 +2608,9 @@ export class AgentsService extends Service implements Agents {
         .flatMap((team) => team.members),
     );
     for (const pubkey of reached) this.advance(pubkey);
-    const saving = writeTeams(this.storage, teams);
     const shown = this.setTeams(teams);
     if (reached.size) this.update();
-    return saving.catch((error: unknown) => {
-      if (this.teamList === shown) {
-        // Back to the saved teams: what the unsaved ones started is stale.
-        for (const pubkey of reached) this.advance(pubkey);
-        this.setTeams(readTeams(this.storage));
-        if (reached.size) this.update();
-      }
-      throw error;
-    });
+    return shown;
   }
   private setTeams(teams: readonly Team[]) {
     this.teamList = Object.freeze(teams);

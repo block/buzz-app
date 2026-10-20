@@ -5,7 +5,7 @@
 Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
-display, activity, names and inventory. The v1 Agents page, Profiles plugin,
+display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
 Channel templates plugin, agent snapshots, team bundles, community catalog and
 agent-management request popups are gone, as are the native `agent_control_*`,
 model-discovery and harness-install commands behind them.
@@ -39,16 +39,33 @@ behavior for its agents. The host appends the shared Attention tab.
 
 Attention is shared by every harness, and a harness has no attention code.
 `src/buzz-mcp/session-tools.ts` exports `BUZZ_SESSION`: the Buzz tools and the
-attention tools. Their guidance is part of `BUZZ_PROMPT`. Every session gets the
+attention tools. How to use the attention tools is in their own descriptions,
+not `BUZZ_PROMPT`. Every session gets the
 same list and prompt, whether attention is on or off, so turning attention on or off never
 restarts a session or invalidates its prompt cache. `turnNote` gives the text
-to add at the end of each turn: the attention review when attention is on, and a
-note that it is off when it is off. `callSessionTool` dispatches each call and
-refuses attention calls while attention is off. A new shared tool needs no
-harness change.
+to add at the end of each turn: the attention review when attention is on and
+the agent has Interests, a line that it has none when it has none, and a note
+that it is off when it is off.
 
-Plugins add tools with `ctx.agents.addTool`, listed after the Buzz
-tools under the same `buzz` server; the standalone server in
+`sessionTools` lists every tool under one `buzz` server, each with a `load`
+of `always` or `search`. The Buzz tools load up front and the attention tools on
+search. Only the Buzz tools choose: tools plugins add always load on search, so
+installing plugins never grows what every turn carries. `sessionHint` says what
+the searchable tools are. `respond` stays harness-neutral: a harness passes a
+`Listing` to shape it. Claude's marks each tool that loads up front with
+`_meta["anthropic/alwaysLoad"]`, so Claude lists the rest by name until the
+model searches for them, and makes the hint the server's `instructions`. Codex gets
+`deferLoading` on each searched tool and the hint as the namespace description.
+Every model in Codex's catalog supports tool search; one that did not would not
+see the deferred tools. goose cannot load tools on demand, so it gets every tool
+up front and no hint. A tool's name is the same whenever it loads.
+`callSessionTool` dispatches each call and refuses attention calls while
+attention is off. A new shared tool needs no harness change.
+
+Plugins add tools with `ctx.agents.addTool`, listed after the Buzz tools under
+the same `buzz` server. Names are shared by every plugin, so a plugin's tools
+should start with its name (`notes_get`); `addTool` refuses one that a Buzz tool
+or another plugin has. The standalone server in
 `src/buzz-mcp/main.ts` stays without them. A harness reads `agents.tools()`
 and passes it to `respond` or `callSessionTool`. A session keeps the list it
 started with, so `addedKey` goes in what decides when one is replaced: the
@@ -57,6 +74,8 @@ binding, since `thread/resume` keeps a thread's tools. Claude and goose resume
 their sessions when replaced, but a Codex agent starts a new thread and loses its
 context. That happens once when a plugin with tools ships, and again whenever a
 tool's name, description or schema changes, so edit those deliberately.
+`addedKey` covers only plugins' tools, so a resumed Codex thread keeps the Buzz
+tools, and their `load`, that it started with.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
@@ -663,3 +682,78 @@ Provider dropdowns are intentionally text-only. The model control shows the
 selected model family icon, not the Goose runtime or Databricks/provider mark,
 as explicitly confirmed by the product owner. Goose device defaults have no
 reset action: omitting a model in Goose retains its stored provider model.
+
+## Usage
+
+Usage is a default-off page summarising what the selected community's agents
+on this computer spent: estimated cost against the previous period, tokens, cache
+hit rate (cache reads over all prompt tokens: uncached input, cache reads and
+cache writes), daily cost by agent
+type, and the costliest sessions, each opening its thread.
+
+It reads nothing itself. An agent type that can report usage implements the
+optional, read-only `AgentType.usage(agent, { since, signal })`, returning a
+snapshot of each session the agent ran from Buzz on this device with activity
+since `since`. A snapshot carries the harness's session id, where in Buzz it
+started, and one observation per model request: the harness's request id when it
+records one, the time, the model, the token counts, and the cost only when the
+harness recorded one, with the harness's word for how it got it. An absent count
+is unknown, not zero; `input` excludes cache counts, and `cacheWrite1h` is the
+subset of `cacheWrite` cached for an hour. Usage groups the observations into
+days itself. Reading never starts, stops or changes a session.
+
+A snapshot covers the session's descendants too, such as Claude Code and Codex
+subagents, so a consumer never adds a child session again. It also carries:
+
+- `revision`, an opaque digest that is equal for two reads that saw the same
+  usage. It says whether a snapshot changed, not which is newer.
+- `gaps`, what the read could not see, such as a subagent file that has since
+  vanished or a finished line that is not JSON. A partial last line is still
+  being written and is not a gap.
+
+A consumer that keeps snapshots follows these rules:
+
+- A snapshot without gaps replaces whatever it kept for that session.
+- An incomplete snapshot leaves the previous one in place and reports the gap.
+- A session missing from a later read is not deleted: its source may be gone,
+  not its usage.
+- `since` only bounds activity time. It is not a checkpoint, so it cannot find
+  a correction a harness made to a session last active before it.
+
+Until collected usage is persisted, Usage applies these rules to what it holds
+while the page is open. An agent whose read fails keeps what earlier reads found.
+
+Usage shows the last 7 or 30 days. It reads the last 30 days once for both, and
+again only on Refresh or when the agents change. Thirty days is what Claude Code
+keeps by default, and older history would undercount. Only the 7-day period is
+compared with the one before it, because a 30-day comparison would need days
+that were not read. The page says that costs are estimated from the session
+files on this computer, not a bill.
+
+Claude implements it from the transcripts Claude Code keeps for the agent's
+workspace: sessions whose first prompt names the agent, plus those this app saved
+for it (prompts from before agents were named), with their subagents' requests.
+Streamed responses repeat their usage on each line, so each request is counted
+once.
+
+Codex finds the agent's threads through app-server by the agent's name in their
+thread names, keeps those whose rollout's developer instructions name the agent's
+pubkey, and reads each rollout's per-response `token_usage_record` entries, adding
+the subagent threads each one spawned. Codex records no cost.
+
+Goose lists the agent's sessions in its workspace through `goose-acp`, as its
+Activity tab does, and reads the usage goose saves on each reply, with goose's
+own cost estimate where it has one. Both count a request's cached tokens in its
+input, which the readers subtract.
+
+All three read only the harness's own session history; none reads Buzz's saved
+agent activity or turn metrics.
+
+Where a harness recorded no cost, Usage estimates it at Anthropic's published
+first-party API rates, including for a Claude model a provider prefixes, such as
+`databricks-claude-sonnet-5-5`. That may differ from what a subscription or
+provider bills. Totals add only known values. A total is marked partial when an
+unknown count, a model without known rates (such as Codex's OpenAI models) or an
+incomplete snapshot left something out, and unavailable when nothing was known.
+It is never priced at zero. Sessions count by activity time, whether or not they
+recorded usage. Usage does not read or publish kind-44200 metrics.

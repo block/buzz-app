@@ -2,14 +2,15 @@
 export const BRAND_SHADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 /** Canonical Appearance order; re-exported by shared/theme/accent.ts. */
 export const ACCENTS = [
-  "gray",
-  "chartreuse",
-  "flame",
+  "bee",
   "magenta",
   "iris",
   "cobalt",
-  "jade",
+  "citrus",
+  "mono",
 ] as const;
+/** Retained artwork palettes are independent of selectable Appearance accents. */
+export const PALETTE_FAMILIES = [...ACCENTS, "flame", "jade"] as const;
 /** Proposed artwork mapping uses existing theme-aware palette families independently
  * of the existing Appearance choices above. */
 export const BRAND_GRADIENTS = [

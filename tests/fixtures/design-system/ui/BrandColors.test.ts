@@ -31,7 +31,7 @@ it("selects a shade and copies its CSS reference, with a manual fallback", async
   });
   const { container } = render(createElement(BrandColors));
   fireEvent.click(screen.getByRole("button", { name: "iris 11" }));
-  expect(screen.getByRole("button", { name: "chartreuse 9" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "bee 9" })).toHaveAttribute(
     "aria-pressed",
     "false",
   );
@@ -46,10 +46,10 @@ it("selects a shade and copies its CSS reference, with a manual fallback", async
   fireEvent.click(screen.getByRole("button", { name: "Copy value" }));
   expect(await screen.findByText("Copied color value.")).toBeInTheDocument();
   expect(writeText).toHaveBeenCalledWith("#5b4bbe");
-  fireEvent.click(screen.getByRole("button", { name: "jade 12" }));
+  fireEvent.click(screen.getByRole("button", { name: "citrus 12" }));
   expect(screen.getByRole("status")).toBeEmptyDOMElement();
   writeText.mockRejectedValueOnce(new Error("denied"));
   fireEvent.click(screen.getByRole("button", { name: "Copy value" }));
   expect(await screen.findByText(/Could not copy/)).toBeInTheDocument();
-  expect(screen.getByText("jade · var(--accent-12)")).toBeInTheDocument();
+  expect(screen.getByText("citrus · var(--accent-12)")).toBeInTheDocument();
 });

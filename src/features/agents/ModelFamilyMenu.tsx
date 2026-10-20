@@ -19,9 +19,8 @@ import {
 export function modelFamily(model: ModelChoice): string {
   const name = `${model.id} ${model.label}`.toLowerCase();
   for (const [family, pattern] of [
-    ["Codex", /codex/],
+    ["OpenAI", /codex|gpt|openai|(?:^|[\s/._-])o[134](?:[\s/._-]|$)/],
     ["Claude", /claude|anthropic|sonnet|opus|haiku/],
-    ["GPT", /gpt|openai|(?:^|[\s/._-])o[134](?:[\s/._-]|$)/],
     ["Kimi", /kimi|moonshot/],
     ["Gemini", /gemini/],
     ["DeepSeek", /deepseek/],

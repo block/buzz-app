@@ -13,6 +13,8 @@ export type RequestWork = {
   lifecycle: boolean;
   /** A settled error the owner dismissed on this device. */
   dismissed?: boolean;
+  /** Its harness can stop the turn this local request is in. */
+  stoppable?: boolean;
   selected: ReturnType<typeof requestActivity>;
   turns: Snapshot["turns"];
   working: boolean;
@@ -60,6 +62,7 @@ export function requestWork(
           working: chosen.state === "working",
           lifecycle: true,
           ...(chosen.dismissed ? { dismissed: true } : {}),
+          ...(chosen.stoppable ? { stoppable: true } : {}),
         },
       ];
     }

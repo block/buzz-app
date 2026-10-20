@@ -228,7 +228,7 @@ function auditLayers() {
   for (const match of css.matchAll(/(--art-[a-z0-9-]+):\s*([^;]+);/g)) {
     const [declaration, name, value] = match;
     const alias =
-      /^var\(--(?:(?:amber|blue|cyan|green|orange|purple|red)-(?:[1-9]|1[0-2])|(?:chartreuse|flame|magenta|iris|cobalt|jade)-(?:[1-9]|1[0-2]))\)$/.test(
+      /^var\(--(?:(?:amber|blue|cyan|green|orange|purple|red)-(?:[1-9]|1[0-2])|(?:bee|citrus|mono|flame|magenta|iris|cobalt|jade)-(?:[1-9]|1[0-2]))\)$/.test(
         value.trim(),
       );
     const category = /^--art-plugin-(.+)-gradient$/.exec(name)?.[1];
@@ -326,8 +326,9 @@ function auditLayers() {
 
   // Appearance palettes retain explicit mode owners and scoped ramp bindings.
   for (const family of [
-    "gray",
-    "chartreuse",
+    "bee",
+    "citrus",
+    "mono",
     "flame",
     "magenta",
     "iris",

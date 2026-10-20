@@ -56,83 +56,212 @@
 
 /* Existing Appearance values, extracted unchanged. Explicit mode owners allow
    a light specimen inside a dark page (and the reverse) without inheriting
-   the wrong resolved ramp. Numeric steps and pressed fills own literals;
-   ink/link mappings reuse an equal step where one already exists. */
+   the wrong resolved ramp. Numeric steps, ink, pressed and link colors keep their authored values. */
 :root {
-  --gray-1-light: #ffffff;
-  --gray-2-light: #fafafa;
-  --gray-3-light: #f0f0f0;
-  --gray-4-light: #e8e8e8;
-  --gray-5-light: #dedede;
-  --gray-6-light: #d4d4d4;
-  --gray-7-light: #bfbfbf;
-  --gray-8-light: #a0a0a0;
-  --gray-9-light: #525252;
-  --gray-10-light: #404040;
-  --gray-11-light: #525252;
-  --gray-12-light: #171717;
-  --gray-contrast-light: #ffffff;
-  --gray-ink-light: #ffffff;
-  --gray-pressed-light: #303030;
-  --gray-link-light: #404040;
-  --gray-link-hover-light: #f0f0f0;
-  --gray-1-dark: #111111;
-  --gray-2-dark: #191919;
-  --gray-3-dark: #232323;
-  --gray-4-dark: #2a2a2a;
-  --gray-5-dark: #313131;
-  --gray-6-dark: #3a3a3a;
-  --gray-7-dark: #484848;
-  --gray-8-dark: #606060;
-  --gray-9-dark: #c7c7c7;
-  --gray-10-dark: #dedede;
-  --gray-11-dark: #c7c7c7;
-  --gray-12-dark: #eeeeee;
-  --gray-contrast-dark: #111111;
-  --gray-ink-dark: #111111;
-  --gray-pressed-dark: #b8b8b8;
-  --gray-link-dark: #c7c7c7;
-  --gray-link-hover-dark: #232323;
-
-  /* chartreuse */
-  --chartreuse-1-light: #fefdf4;
-  --chartreuse-2-light: #fbfbeb;
-  --chartreuse-3-light: #f5f4da;
-  --chartreuse-4-light: #efeec8;
-  --chartreuse-5-light: #e8e6b4;
-  --chartreuse-6-light: #e0dd9f;
-  --chartreuse-7-light: #d4d086;
-  --chartreuse-8-light: #c4bf68;
-  --chartreuse-9-light: #d7d72e;
-  --chartreuse-10-light: #cccc1e;
-  --chartreuse-11-light: #575602;
-  --chartreuse-12-light: #303005;
-  --chartreuse-contrast-light: #000000;
-  --chartreuse-ink-light: var(--chartreuse-12-light);
-  --chartreuse-pressed-light: #c3c315;
-  /* Darkened chartreuse turns olive, so light-mode links use light Blue 11
-     (#0b5fa8) and Blue 3 hover (#e6f4fe). Explicit values preserve light
-     specimens inside dark pages; dark-mode links keep bright chartreuse. */
-  --chartreuse-link-light: #0b5fa8;
-  --chartreuse-link-hover-light: #e6f4fe;
-  --chartreuse-1-dark: #10100a;
-  --chartreuse-2-dark: #17170c;
-  --chartreuse-3-dark: #23230b;
-  --chartreuse-4-dark: #2d2d08;
-  --chartreuse-5-dark: #383802;
-  --chartreuse-6-dark: #464601;
-  --chartreuse-7-dark: #575602;
-  --chartreuse-8-dark: #6e6e01;
-  --chartreuse-9-dark: #d7d72e;
-  --chartreuse-10-dark: #cccc1e;
-  --chartreuse-11-dark: #e6e76a;
-  --chartreuse-12-dark: #f4f7c0;
-  --chartreuse-contrast-dark: #000000;
-  --chartreuse-ink-dark: #303005;
-  --chartreuse-pressed-dark: #c3c315;
-  --chartreuse-link-dark: var(--chartreuse-11-dark);
-  --chartreuse-link-hover-dark: var(--chartreuse-3-dark);
-  /* flame */
+  --magenta-1-light: #fffbfc;
+  --magenta-2-light: #fff7fa;
+  --magenta-3-light: #ffeef3;
+  --magenta-4-light: #fee2ec;
+  --magenta-5-light: #fed8e4;
+  --magenta-6-light: #f9cbdb;
+  --magenta-7-light: #f1bbce;
+  --magenta-8-light: #e7a4bd;
+  --magenta-9-light: #df1e85;
+  --magenta-10-light: #db2984;
+  --magenta-11-light: #6c3149;
+  --magenta-12-light: #42242f;
+  --magenta-contrast-light: #ffffff;
+  --magenta-ink-light: #ffffff;
+  --magenta-pressed-light: #d12c7f;
+  --magenta-link-light: #84034b;
+  --magenta-link-hover-light: #ffeef3;
+  --magenta-1-dark: #120e10;
+  --magenta-2-dark: #191415;
+  --magenta-3-dark: #2b1f23;
+  --magenta-4-dark: #38252c;
+  --magenta-5-dark: #452d36;
+  --magenta-6-dark: #553843;
+  --magenta-7-dark: #6b4754;
+  --magenta-8-dark: #865a6a;
+  --magenta-9-dark: #df1e85;
+  --magenta-10-dark: #db2984;
+  --magenta-11-dark: #f4bccf;
+  --magenta-12-dark: #feeaf1;
+  --magenta-contrast-dark: #ffffff;
+  --magenta-ink-dark: #ffffff;
+  --magenta-pressed-dark: #d12c7f;
+  --magenta-link-dark: #fdb6d0;
+  --magenta-link-hover-dark: #2b1f23;
+  --iris-1-light: #fbfcff;
+  --iris-2-light: #f8f9ff;
+  --iris-3-light: #f0f2ff;
+  --iris-4-light: #e6eafe;
+  --iris-5-light: #dde1fe;
+  --iris-6-light: #d2d7fd;
+  --iris-7-light: #c2c8f8;
+  --iris-8-light: #aeb6f0;
+  --iris-9-light: #5f55fa;
+  --iris-10-light: #5a4ef2;
+  --iris-11-light: #3d407a;
+  --iris-12-light: #282b48;
+  --iris-contrast-light: #ffffff;
+  --iris-ink-light: #ffffff;
+  --iris-pressed-light: #5648ea;
+  --iris-link-light: #3c04c3;
+  --iris-link-hover-light: #f0f2ff;
+  --iris-1-dark: #0f0f13;
+  --iris-2-dark: #14151a;
+  --iris-3-dark: #20212e;
+  --iris-4-dark: #272a3c;
+  --iris-5-dark: #31344a;
+  --iris-6-dark: #3c405b;
+  --iris-7-dark: #4c4f72;
+  --iris-8-dark: #60658f;
+  --iris-9-dark: #5f55fa;
+  --iris-10-dark: #5a4ef2;
+  --iris-11-dark: #c3cafb;
+  --iris-12-dark: #edf0fe;
+  --iris-contrast-dark: #ffffff;
+  --iris-ink-dark: #ffffff;
+  --iris-pressed-dark: #5648ea;
+  --iris-link-dark: #c2cafd;
+  --iris-link-hover-dark: #20212e;
+  --cobalt-1-light: #fafcff;
+  --cobalt-2-light: #f6faff;
+  --cobalt-3-light: #ecf4ff;
+  --cobalt-4-light: #dfecfe;
+  --cobalt-5-light: #d3e5fe;
+  --cobalt-6-light: #c3dcfc;
+  --cobalt-7-light: #b0cff8;
+  --cobalt-8-light: #97bdf0;
+  --cobalt-9-light: #1475e1;
+  --cobalt-10-light: #2176d9;
+  --cobalt-11-light: #264975;
+  --cobalt-12-light: #1e2f45;
+  --cobalt-contrast-light: #ffffff;
+  --cobalt-ink-light: #ffffff;
+  --cobalt-pressed-light: #2271cf;
+  --cobalt-link-light: #02468e;
+  --cobalt-link-hover-light: #ecf4ff;
+  --cobalt-1-dark: #0e1012;
+  --cobalt-2-dark: #131519;
+  --cobalt-3-dark: #1c232c;
+  --cobalt-4-dark: #212c3a;
+  --cobalt-5-dark: #293748;
+  --cobalt-6-dark: #334358;
+  --cobalt-7-dark: #40546f;
+  --cobalt-8-dark: #516b8c;
+  --cobalt-9-dark: #1475e1;
+  --cobalt-10-dark: #2176d9;
+  --cobalt-11-dark: #b1d1fa;
+  --cobalt-12-dark: #e8f2fe;
+  --cobalt-contrast-dark: #ffffff;
+  --cobalt-ink-dark: #ffffff;
+  --cobalt-pressed-dark: #2271cf;
+  --cobalt-link-dark: #afd1fe;
+  --cobalt-link-hover-dark: #1c232c;
+  --bee-1-light: #fdfcf8;
+  --bee-2-light: #fcf9f1;
+  --bee-3-light: #faf3df;
+  --bee-4-light: #f5eace;
+  --bee-5-light: #f1e3be;
+  --bee-6-light: #e8d9af;
+  --bee-7-light: #ddcb98;
+  --bee-8-light: #d0b979;
+  --bee-9-light: #f5c518;
+  --bee-10-light: #fdcd2a;
+  --bee-11-light: #584504;
+  --bee-12-light: #362d13;
+  --bee-contrast-light: #000000;
+  --bee-ink-light: #000000;
+  --bee-pressed-light: #ffd763;
+  --bee-link-light: #594501;
+  --bee-link-hover-light: #faf3df;
+  --bee-1-dark: #100f0c;
+  --bee-2-dark: #171511;
+  --bee-3-dark: #252118;
+  --bee-4-dark: #312b1c;
+  --bee-5-dark: #3d3521;
+  --bee-6-dark: #4a412a;
+  --bee-7-dark: #5c5234;
+  --bee-8-dark: #766842;
+  --bee-9-dark: #f5c518;
+  --bee-10-dark: #fdcd2a;
+  --bee-11-dark: #e0cd97;
+  --bee-12-dark: #f6f0df;
+  --bee-contrast-dark: #000000;
+  --bee-ink-dark: #000000;
+  --bee-pressed-dark: #ffd763;
+  --bee-link-dark: #f2c94e;
+  --bee-link-hover-dark: #252118;
+  --citrus-1-light: #fcfdf7;
+  --citrus-2-light: #f8fbef;
+  --citrus-3-light: #f1f6de;
+  --citrus-4-light: #e8f0cd;
+  --citrus-5-light: #e0e9bc;
+  --citrus-6-light: #d5e1aa;
+  --citrus-7-light: #c8d495;
+  --citrus-8-light: #b6c378;
+  --citrus-9-light: #beda36;
+  --citrus-10-light: #bdd836;
+  --citrus-11-light: #485311;
+  --citrus-12-light: #2b3110;
+  --citrus-contrast-light: #000000;
+  --citrus-ink-light: #000000;
+  --citrus-pressed-light: #bcd83a;
+  --citrus-link-light: #485400;
+  --citrus-link-hover-light: #f1f6de;
+  --citrus-1-dark: #0f100c;
+  --citrus-2-dark: #15170f;
+  --citrus-3-dark: #202413;
+  --citrus-4-dark: #292e16;
+  --citrus-5-dark: #333a18;
+  --citrus-6-dark: #3e471f;
+  --citrus-7-dark: #4f5827;
+  --citrus-8-dark: #637033;
+  --citrus-9-dark: #beda36;
+  --citrus-10-dark: #bdd836;
+  --citrus-11-dark: #cee28b;
+  --citrus-12-dark: #edf7d2;
+  --citrus-contrast-dark: #000000;
+  --citrus-ink-dark: #000000;
+  --citrus-pressed-dark: #bcd83a;
+  --citrus-link-dark: #cbe648;
+  --citrus-link-hover-dark: #202413;
+  --mono-1-light: #fcfcfc;
+  --mono-2-light: #f9f9f9;
+  --mono-3-light: #f3f3f3;
+  --mono-4-light: #ebebeb;
+  --mono-5-light: #e3e3e3;
+  --mono-6-light: #d9d9d9;
+  --mono-7-light: #cccccc;
+  --mono-8-light: #bababa;
+  --mono-9-light: #1a1a1a;
+  --mono-10-light: #141414;
+  --mono-11-light: #484848;
+  --mono-12-light: #2e2e2e;
+  --mono-contrast-light: #ffffff;
+  --mono-ink-light: #ffffff;
+  --mono-pressed-light: #0f0f0f;
+  --mono-link-light: #484848;
+  --mono-link-hover-light: #f3f3f3;
+  --mono-1-dark: #0f0f0f;
+  --mono-2-dark: #151515;
+  --mono-3-dark: #222222;
+  --mono-4-dark: #2b2b2b;
+  --mono-5-dark: #363636;
+  --mono-6-dark: #424242;
+  --mono-7-dark: #535353;
+  --mono-8-dark: #696969;
+  --mono-9-dark: #e6e6e6;
+  --mono-10-dark: #eeeeee;
+  --mono-11-dark: #cecece;
+  --mono-12-dark: #f0f0f0;
+  --mono-contrast-dark: #000000;
+  --mono-ink-dark: #000000;
+  --mono-pressed-dark: #f7f7f7;
+  --mono-link-dark: #cecece;
+  --mono-link-hover-dark: #222222;
   --flame-1-light: #fefcfc;
   --flame-2-light: #fff8f6;
   --flame-3-light: #ffeeea;
@@ -167,112 +296,6 @@
   --flame-pressed-dark: #b92d01;
   --flame-link-dark: var(--flame-11-dark);
   --flame-link-hover-dark: var(--flame-3-dark);
-  /* magenta */
-  --magenta-1-light: #fefcfd;
-  --magenta-2-light: #fef7fa;
-  --magenta-3-light: #feedf3;
-  --magenta-4-light: #ffe3ec;
-  --magenta-5-light: #ffd6e4;
-  --magenta-6-light: #ffc7db;
-  --magenta-7-light: #ffb2cf;
-  --magenta-8-light: #fe94be;
-  --magenta-9-light: #cc1f7a;
-  --magenta-10-light: #bf0570;
-  --magenta-11-light: #a32e65;
-  --magenta-12-light: #4d172f;
-  --magenta-contrast-light: #ffffff;
-  --magenta-ink-light: #ffffff;
-  --magenta-pressed-light: #af0465;
-  --magenta-link-light: var(--magenta-11-light);
-  --magenta-link-hover-light: var(--magenta-3-light);
-  --magenta-1-dark: #130e10;
-  --magenta-2-dark: #1d1316;
-  --magenta-3-dark: #301a22;
-  --magenta-4-dark: #3f202c;
-  --magenta-5-dark: #4f2637;
-  --magenta-6-dark: #622f44;
-  --magenta-7-dark: #7a3a55;
-  --magenta-8-dark: #9d486c;
-  --magenta-9-dark: #cc1f7a;
-  --magenta-10-dark: #bf0570;
-  --magenta-11-dark: #ffaaca;
-  --magenta-12-dark: #feeaf1;
-  --magenta-contrast-dark: #ffffff;
-  --magenta-ink-dark: #ffffff;
-  --magenta-pressed-dark: #af0465;
-  --magenta-link-dark: var(--magenta-11-dark);
-  --magenta-link-hover-dark: var(--magenta-3-dark);
-  /* iris */
-  --iris-1-light: #fcfdfe;
-  --iris-2-light: #f9f9ff;
-  --iris-3-light: #f1f1fe;
-  --iris-4-light: #e8e9fe;
-  --iris-5-light: #dfe0ff;
-  --iris-6-light: #d4d5fe;
-  --iris-7-light: #c6c6ff;
-  --iris-8-light: #b2b1ff;
-  --iris-9-light: #6c4ef0;
-  --iris-10-light: #6342e4;
-  --iris-11-light: #5b4bbe;
-  --iris-12-light: #2a2459;
-  --iris-contrast-light: #ffffff;
-  --iris-ink-light: #ffffff;
-  --iris-pressed-light: #5a34d7;
-  --iris-link-light: var(--iris-11-light);
-  --iris-link-hover-light: var(--iris-3-light);
-  --iris-1-dark: #0f0f14;
-  --iris-2-dark: #15151e;
-  --iris-3-dark: #1f1f34;
-  --iris-4-dark: #282746;
-  --iris-5-dark: #323057;
-  --iris-6-dark: #3e3b6c;
-  --iris-7-dark: #4d4988;
-  --iris-8-dark: #625caf;
-  --iris-9-dark: #6c4ef0;
-  --iris-10-dark: #6342e4;
-  --iris-11-dark: #bdbcff;
-  --iris-12-dark: #eeeffe;
-  --iris-contrast-dark: #ffffff;
-  --iris-ink-dark: #ffffff;
-  --iris-pressed-dark: #5a34d7;
-  --iris-link-dark: var(--iris-11-dark);
-  --iris-link-hover-dark: var(--iris-3-dark);
-  /* cobalt */
-  --cobalt-1-light: #fcfdfe;
-  --cobalt-2-light: #f7f9fe;
-  --cobalt-3-light: #edf2ff;
-  --cobalt-4-light: #e2ebff;
-  --cobalt-5-light: #d7e3ff;
-  --cobalt-6-light: #c9d9fe;
-  --cobalt-7-light: #b6ccfe;
-  --cobalt-8-light: #9cb9fe;
-  --cobalt-9-light: #2b4fe0;
-  --cobalt-10-light: #2343d4;
-  --cobalt-11-light: #3556be;
-  --cobalt-12-light: #192a5a;
-  --cobalt-contrast-light: #ffffff;
-  --cobalt-ink-light: #ffffff;
-  --cobalt-pressed-light: #1c36c8;
-  --cobalt-link-light: var(--cobalt-11-light);
-  --cobalt-link-hover-light: var(--cobalt-3-light);
-  --cobalt-1-dark: #0d0f14;
-  --cobalt-2-dark: #12161e;
-  --cobalt-3-dark: #192134;
-  --cobalt-4-dark: #1f2a46;
-  --cobalt-5-dark: #263458;
-  --cobalt-6-dark: #2f406d;
-  --cobalt-7-dark: #3a4f89;
-  --cobalt-8-dark: #4864b0;
-  --cobalt-9-dark: #2b4fe0;
-  --cobalt-10-dark: #2343d4;
-  --cobalt-11-dark: #aac3fe;
-  --cobalt-12-dark: #eaf0ff;
-  --cobalt-contrast-dark: #ffffff;
-  --cobalt-ink-dark: #ffffff;
-  --cobalt-pressed-dark: #1c36c8;
-  --cobalt-link-dark: var(--cobalt-11-dark);
-  --cobalt-link-hover-dark: var(--cobalt-3-dark);
-  /* jade */
   --jade-1-light: #f9fefc;
   --jade-2-light: #f2fcf8;
   --jade-3-light: #e2f9f0;
@@ -312,44 +335,19 @@
 .light,
 [data-color-mode="light"],
 :root {
-  /* Named Appearance ramps resolve the current scope mode. */
-  --gray-1: var(--gray-1-light);
-  --gray-2: var(--gray-2-light);
-  --gray-3: var(--gray-3-light);
-  --gray-4: var(--gray-4-light);
-  --gray-5: var(--gray-5-light);
-  --gray-6: var(--gray-6-light);
-  --gray-7: var(--gray-7-light);
-  --gray-8: var(--gray-8-light);
-  --gray-9: var(--gray-9-light);
-  --gray-10: var(--gray-10-light);
-  --gray-11: var(--gray-11-light);
-  --gray-12: var(--gray-12-light);
-
-  --chartreuse-1: var(--chartreuse-1-light);
-  --chartreuse-2: var(--chartreuse-2-light);
-  --chartreuse-3: var(--chartreuse-3-light);
-  --chartreuse-4: var(--chartreuse-4-light);
-  --chartreuse-5: var(--chartreuse-5-light);
-  --chartreuse-6: var(--chartreuse-6-light);
-  --chartreuse-7: var(--chartreuse-7-light);
-  --chartreuse-8: var(--chartreuse-8-light);
-  --chartreuse-9: var(--chartreuse-9-light);
-  --chartreuse-10: var(--chartreuse-10-light);
-  --chartreuse-11: var(--chartreuse-11-light);
-  --chartreuse-12: var(--chartreuse-12-light);
-  --flame-1: var(--flame-1-light);
-  --flame-2: var(--flame-2-light);
-  --flame-3: var(--flame-3-light);
-  --flame-4: var(--flame-4-light);
-  --flame-5: var(--flame-5-light);
-  --flame-6: var(--flame-6-light);
-  --flame-7: var(--flame-7-light);
-  --flame-8: var(--flame-8-light);
-  --flame-9: var(--flame-9-light);
-  --flame-10: var(--flame-10-light);
-  --flame-11: var(--flame-11-light);
-  --flame-12: var(--flame-12-light);
+  /* Named palettes resolve the current scope mode. */
+  --bee-1: var(--bee-1-light);
+  --bee-2: var(--bee-2-light);
+  --bee-3: var(--bee-3-light);
+  --bee-4: var(--bee-4-light);
+  --bee-5: var(--bee-5-light);
+  --bee-6: var(--bee-6-light);
+  --bee-7: var(--bee-7-light);
+  --bee-8: var(--bee-8-light);
+  --bee-9: var(--bee-9-light);
+  --bee-10: var(--bee-10-light);
+  --bee-11: var(--bee-11-light);
+  --bee-12: var(--bee-12-light);
   --magenta-1: var(--magenta-1-light);
   --magenta-2: var(--magenta-2-light);
   --magenta-3: var(--magenta-3-light);
@@ -386,6 +384,42 @@
   --cobalt-10: var(--cobalt-10-light);
   --cobalt-11: var(--cobalt-11-light);
   --cobalt-12: var(--cobalt-12-light);
+  --citrus-1: var(--citrus-1-light);
+  --citrus-2: var(--citrus-2-light);
+  --citrus-3: var(--citrus-3-light);
+  --citrus-4: var(--citrus-4-light);
+  --citrus-5: var(--citrus-5-light);
+  --citrus-6: var(--citrus-6-light);
+  --citrus-7: var(--citrus-7-light);
+  --citrus-8: var(--citrus-8-light);
+  --citrus-9: var(--citrus-9-light);
+  --citrus-10: var(--citrus-10-light);
+  --citrus-11: var(--citrus-11-light);
+  --citrus-12: var(--citrus-12-light);
+  --mono-1: var(--mono-1-light);
+  --mono-2: var(--mono-2-light);
+  --mono-3: var(--mono-3-light);
+  --mono-4: var(--mono-4-light);
+  --mono-5: var(--mono-5-light);
+  --mono-6: var(--mono-6-light);
+  --mono-7: var(--mono-7-light);
+  --mono-8: var(--mono-8-light);
+  --mono-9: var(--mono-9-light);
+  --mono-10: var(--mono-10-light);
+  --mono-11: var(--mono-11-light);
+  --mono-12: var(--mono-12-light);
+  --flame-1: var(--flame-1-light);
+  --flame-2: var(--flame-2-light);
+  --flame-3: var(--flame-3-light);
+  --flame-4: var(--flame-4-light);
+  --flame-5: var(--flame-5-light);
+  --flame-6: var(--flame-6-light);
+  --flame-7: var(--flame-7-light);
+  --flame-8: var(--flame-8-light);
+  --flame-9: var(--flame-9-light);
+  --flame-10: var(--flame-10-light);
+  --flame-11: var(--flame-11-light);
+  --flame-12: var(--flame-12-light);
   --jade-1: var(--jade-1-light);
   --jade-2: var(--jade-2-light);
   --jade-3: var(--jade-3-light);
@@ -506,44 +540,19 @@
 :root[data-color-mode="dark"],
 [data-color-mode="dark"],
 .dark {
-  /* Named Appearance ramps resolve the current scope mode. */
-  --gray-1: var(--gray-1-dark);
-  --gray-2: var(--gray-2-dark);
-  --gray-3: var(--gray-3-dark);
-  --gray-4: var(--gray-4-dark);
-  --gray-5: var(--gray-5-dark);
-  --gray-6: var(--gray-6-dark);
-  --gray-7: var(--gray-7-dark);
-  --gray-8: var(--gray-8-dark);
-  --gray-9: var(--gray-9-dark);
-  --gray-10: var(--gray-10-dark);
-  --gray-11: var(--gray-11-dark);
-  --gray-12: var(--gray-12-dark);
-
-  --chartreuse-1: var(--chartreuse-1-dark);
-  --chartreuse-2: var(--chartreuse-2-dark);
-  --chartreuse-3: var(--chartreuse-3-dark);
-  --chartreuse-4: var(--chartreuse-4-dark);
-  --chartreuse-5: var(--chartreuse-5-dark);
-  --chartreuse-6: var(--chartreuse-6-dark);
-  --chartreuse-7: var(--chartreuse-7-dark);
-  --chartreuse-8: var(--chartreuse-8-dark);
-  --chartreuse-9: var(--chartreuse-9-dark);
-  --chartreuse-10: var(--chartreuse-10-dark);
-  --chartreuse-11: var(--chartreuse-11-dark);
-  --chartreuse-12: var(--chartreuse-12-dark);
-  --flame-1: var(--flame-1-dark);
-  --flame-2: var(--flame-2-dark);
-  --flame-3: var(--flame-3-dark);
-  --flame-4: var(--flame-4-dark);
-  --flame-5: var(--flame-5-dark);
-  --flame-6: var(--flame-6-dark);
-  --flame-7: var(--flame-7-dark);
-  --flame-8: var(--flame-8-dark);
-  --flame-9: var(--flame-9-dark);
-  --flame-10: var(--flame-10-dark);
-  --flame-11: var(--flame-11-dark);
-  --flame-12: var(--flame-12-dark);
+  /* Named palettes resolve the current scope mode. */
+  --bee-1: var(--bee-1-dark);
+  --bee-2: var(--bee-2-dark);
+  --bee-3: var(--bee-3-dark);
+  --bee-4: var(--bee-4-dark);
+  --bee-5: var(--bee-5-dark);
+  --bee-6: var(--bee-6-dark);
+  --bee-7: var(--bee-7-dark);
+  --bee-8: var(--bee-8-dark);
+  --bee-9: var(--bee-9-dark);
+  --bee-10: var(--bee-10-dark);
+  --bee-11: var(--bee-11-dark);
+  --bee-12: var(--bee-12-dark);
   --magenta-1: var(--magenta-1-dark);
   --magenta-2: var(--magenta-2-dark);
   --magenta-3: var(--magenta-3-dark);
@@ -580,6 +589,42 @@
   --cobalt-10: var(--cobalt-10-dark);
   --cobalt-11: var(--cobalt-11-dark);
   --cobalt-12: var(--cobalt-12-dark);
+  --citrus-1: var(--citrus-1-dark);
+  --citrus-2: var(--citrus-2-dark);
+  --citrus-3: var(--citrus-3-dark);
+  --citrus-4: var(--citrus-4-dark);
+  --citrus-5: var(--citrus-5-dark);
+  --citrus-6: var(--citrus-6-dark);
+  --citrus-7: var(--citrus-7-dark);
+  --citrus-8: var(--citrus-8-dark);
+  --citrus-9: var(--citrus-9-dark);
+  --citrus-10: var(--citrus-10-dark);
+  --citrus-11: var(--citrus-11-dark);
+  --citrus-12: var(--citrus-12-dark);
+  --mono-1: var(--mono-1-dark);
+  --mono-2: var(--mono-2-dark);
+  --mono-3: var(--mono-3-dark);
+  --mono-4: var(--mono-4-dark);
+  --mono-5: var(--mono-5-dark);
+  --mono-6: var(--mono-6-dark);
+  --mono-7: var(--mono-7-dark);
+  --mono-8: var(--mono-8-dark);
+  --mono-9: var(--mono-9-dark);
+  --mono-10: var(--mono-10-dark);
+  --mono-11: var(--mono-11-dark);
+  --mono-12: var(--mono-12-dark);
+  --flame-1: var(--flame-1-dark);
+  --flame-2: var(--flame-2-dark);
+  --flame-3: var(--flame-3-dark);
+  --flame-4: var(--flame-4-dark);
+  --flame-5: var(--flame-5-dark);
+  --flame-6: var(--flame-6-dark);
+  --flame-7: var(--flame-7-dark);
+  --flame-8: var(--flame-8-dark);
+  --flame-9: var(--flame-9-dark);
+  --flame-10: var(--flame-10-dark);
+  --flame-11: var(--flame-11-dark);
+  --flame-12: var(--flame-12-dark);
   --jade-1: var(--jade-1-dark);
   --jade-2: var(--jade-2-dark);
   --jade-3: var(--jade-3-dark);
@@ -738,7 +783,7 @@
      alpha. */
   --neutral-quiet-hover: #f1f1f2; /* hover between quiet fill and selection */
   --neutral-2: #f5f5f6; /* quiet compact controls, callouts, and grouping */
-  --neutral-3: #e8e8e8; /* available for a future, genuinely recessed region; bg-panel in dark */
+  --neutral-3: #e8e8e8; /* chrome track in light; bg-panel in dark */
   --neutral-4: #dadada; /* border-primary in light mode            */
   --neutral-5: #cccccc; /* unused in light; float + selected, dark */
   --neutral-6: #b3b3b3; /* border-primary in dark mode             */
@@ -822,11 +867,11 @@
   --space-8: 2rem;
   --space-16: 4rem;
 
-  /* --- Corner. Containers stop at 20px; pills/circles are separate shapes. */
-  --corner-row: 0.5rem;
-  --corner-control: 0.75rem;
-  --corner-container: 1rem;
-  --corner-panel: 1.25rem;
+  /* --- Corner. Containers stop at 28px; pills/circles are separate shapes. */
+  --corner-row: 1rem;
+  --corner-control: 1.25rem;
+  --corner-container: 1.5rem;
+  --corner-panel: 1.75rem;
   --corner-round: 9999rem;
 
   /* --- Time. State is quick; geometry settles deliberately. - */
@@ -1053,6 +1098,12 @@
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
   --status-offline: var(--neutral-8);
+  /* Chart series marks, in this order; validated as a set for colour-vision
+   * separation and 3:1 against the panel. Text never uses them. */
+  --chart-series-1: var(--blue-10);
+  --chart-series-2: var(--orange-10);
+  --chart-series-3: var(--green-10);
+  --chart-series-4: var(--purple-9);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
   --text-link: var(--blue-11);
@@ -1088,16 +1139,20 @@
   --text-row-metadata: var(--text-metadata);
   /* Primary navigation text on a hovered or selected row. */
   --text-row: var(--text-navigation);
-  --text-row-selected: var(--text-row);
-  --text-row-selected-subtle: var(--text-row-subtle);
-  --text-row-selected-metadata: var(--text-row-metadata);
-  --affordance-navigation-selected: var(--affordance-selected);
+  --surface-control-selected: var(--surface-panel);
+  --text-control-selected: var(--text-standard);
+  --surface-navigation-selected: var(--affordance-selected);
+  --text-navigation-selected: var(--text-standard);
+  --text-row-selected: var(--text-navigation-selected);
+  --text-row-selected-subtle: var(--text-navigation-selected);
+  --text-row-selected-metadata: var(--text-navigation-selected);
+  --affordance-navigation-selected: var(--surface-navigation-selected);
   /* Small badges on a selected row stay distinct without another strong fill. */
   --surface-row-selected-detail: var(--neutral-2);
-  --text-row-selected-detail: var(--neutral-standard-text);
+  --text-row-selected-detail: var(--neutral-12);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
-  --affordance-chrome: var(--affordance-subtle);
+  --affordance-chrome: var(--neutral-3);
   --affordance-chrome-hover: var(--affordance-subtle-hover);
   --text-chrome-subtle: var(--text-subtle);
   --affordance-navigation-quiet: var(--neutral-navigation-quiet);
@@ -1170,6 +1225,11 @@
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
   --status-offline: var(--neutral-10);
+  /* Dark steps stay in the band where no series outshines the others. */
+  --chart-series-1: var(--blue-9);
+  --chart-series-2: var(--orange-8);
+  --chart-series-3: var(--green-9);
+  --chart-series-4: var(--purple-10);
   --text-categorical-purple: var(--purple-12);
   --surface-categorical-purple: var(--purple-3);
   --text-link: var(--blue-11);
@@ -1203,12 +1263,16 @@
   --text-row-metadata: var(--text-metadata);
   /* Primary navigation text on a hovered or selected row. */
   --text-row: var(--text-navigation);
-  --text-row-selected: var(--text-row);
-  --text-row-selected-subtle: var(--text-row-subtle);
-  --text-row-selected-metadata: var(--text-row-metadata);
-  --affordance-navigation-selected: var(--affordance-selected);
+  --surface-control-selected: var(--surface-panel);
+  --text-control-selected: var(--text-standard);
+  --surface-navigation-selected: var(--affordance-selected);
+  --text-navigation-selected: var(--text-standard);
+  --text-row-selected: var(--text-navigation-selected);
+  --text-row-selected-subtle: var(--text-navigation-selected);
+  --text-row-selected-metadata: var(--text-navigation-selected);
+  --affordance-navigation-selected: var(--surface-navigation-selected);
   --surface-row-selected-detail: var(--neutral-6);
-  --text-row-selected-detail: var(--text-row-selected);
+  --text-row-selected-detail: var(--neutral-12);
   /* Chrome on the shell: the grouped Solo/Multiplayer capsule and its labels.
      They belong to the shell's color group, not to quiet controls. */
   --affordance-chrome: var(--affordance-subtle);
@@ -1318,6 +1382,8 @@
   --space-chip-gap: var(--space-1);
   --layer-dialog-backdrop: 1000;
   --layer-dialog: 1001;
+  /* Feedback raised from a dialog must stay visible above it. */
+  --layer-toast: 1050;
   --layer-popover: 1100;
   --layer-tooltip: 1200;
   --size-topbar: 3.5rem;
@@ -1337,13 +1403,13 @@
   --radius-container: var(--corner-container);
   --radius-row: var(--corner-row);
   /* Independent icon controls use an even contour on all four corners. */
-  --radius-icon-button: 0.625rem;
-  /* Half the large (52px) action height; smaller controls clamp naturally. */
-  --radius-capsule: 1.625rem;
+  --radius-icon-button: 1.125rem;
+  /* Capsule actions stay rounded through 68px; smaller controls clamp naturally. */
+  --radius-capsule: 2.125rem;
   --radius-pill: var(--corner-round);
   /* A chip reads as a chip in running text, so it takes a tighter corner than
      a control and gets its own role rather than borrowing one. */
-  --radius-chip: 0.25rem;
+  --radius-chip: 0.75rem;
   /* Profile refinements: emphasized availability. */
   --weight-profile-status: 600;
   --text-avatar-fallback: var(--neutral-avatar-on-white);
@@ -1433,124 +1499,71 @@
    then stack on those steps. Swatches that preview a family carry
    data-color-mode, never borrow an already-resolved role.
 
-   Chartreuse is Buzz's brand color and the default. Its strong fill
-   is the brand value (#d7d72e) in both modes and takes black ink; text
-   on chartreuse surfaces and messages uses the darkest olive step.
-   Its light-mode text steps down to olive, because the brand value
-   cannot be read on white.
+   Citrus is the default accent and uses black ink on its strong fills.
    ============================================================ */
 
-[data-accent="chartreuse"],
+/* Mode owners bind the ramp, then the accent roles every level uses. */
+[data-accent][data-color-mode="light"],
+.light,
 :root {
-  --accent-1-light: var(--chartreuse-1-light);
-  --accent-2-light: var(--chartreuse-2-light);
-  --accent-3-light: var(--chartreuse-3-light);
-  --accent-4-light: var(--chartreuse-4-light);
-  --accent-5-light: var(--chartreuse-5-light);
-  --accent-6-light: var(--chartreuse-6-light);
-  --accent-7-light: var(--chartreuse-7-light);
-  --accent-8-light: var(--chartreuse-8-light);
-  --accent-9-light: var(--chartreuse-9-light);
-  --accent-10-light: var(--chartreuse-10-light);
-  --accent-11-light: var(--chartreuse-11-light);
-  --accent-12-light: var(--chartreuse-12-light);
-  --accent-contrast-light: var(--chartreuse-contrast-light);
-  --accent-ink-light: var(--chartreuse-ink-light);
-  --accent-pressed-light: var(--chartreuse-pressed-light);
-  --accent-link-light: var(--chartreuse-link-light);
-  --accent-link-hover-light: var(--chartreuse-link-hover-light);
-  --accent-1-dark: var(--chartreuse-1-dark);
-  --accent-2-dark: var(--chartreuse-2-dark);
-  --accent-3-dark: var(--chartreuse-3-dark);
-  --accent-4-dark: var(--chartreuse-4-dark);
-  --accent-5-dark: var(--chartreuse-5-dark);
-  --accent-6-dark: var(--chartreuse-6-dark);
-  --accent-7-dark: var(--chartreuse-7-dark);
-  --accent-8-dark: var(--chartreuse-8-dark);
-  --accent-9-dark: var(--chartreuse-9-dark);
-  --accent-10-dark: var(--chartreuse-10-dark);
-  --accent-11-dark: var(--chartreuse-11-dark);
-  --accent-12-dark: var(--chartreuse-12-dark);
-  --accent-contrast-dark: var(--chartreuse-contrast-dark);
-  --accent-ink-dark: var(--chartreuse-ink-dark);
-  --accent-pressed-dark: var(--chartreuse-pressed-dark);
-  --accent-link-dark: var(--chartreuse-link-dark);
-  --accent-link-hover-dark: var(--chartreuse-link-hover-dark);
+  --accent-1: var(--accent-1-light);
+  --accent-2: var(--accent-2-light);
+  --accent-3: var(--accent-3-light);
+  --accent-4: var(--accent-4-light);
+  --accent-5: var(--accent-5-light);
+  --accent-6: var(--accent-6-light);
+  --accent-7: var(--accent-7-light);
+  --accent-8: var(--accent-8-light);
+  --accent-9: var(--accent-9-light);
+  --accent-10: var(--accent-10-light);
+  --accent-11: var(--accent-11-light);
+  --accent-12: var(--accent-12-light);
+  --accent-contrast: var(--accent-contrast-light);
+  --accent-ink: var(--accent-ink-light);
+  --accent-pressed: var(--accent-pressed-light);
+  --accent-link: var(--accent-link-light);
+  --accent-link-hover: var(--accent-link-hover-light);
+  --text-accent: var(--accent-11);
+  --border-accent: var(--accent-11);
+  --affordance-accent: var(--accent-3);
+  --affordance-accent-hover: var(--accent-4);
+  --surface-message-highlight: var(--accent-3);
+  --affordance-accent-prominent: var(--accent-9);
+  --affordance-accent-prominent-hover: var(--accent-10);
+  --affordance-accent-prominent-pressed: var(--accent-pressed);
+  --text-on-accent: var(--accent-contrast);
 }
-:root[data-accent="gray"],
-[data-accent="gray"] {
-  --accent-1-light: var(--gray-1-light);
-  --accent-2-light: var(--gray-2-light);
-  --accent-3-light: var(--gray-3-light);
-  --accent-4-light: var(--gray-4-light);
-  --accent-5-light: var(--gray-5-light);
-  --accent-6-light: var(--gray-6-light);
-  --accent-7-light: var(--gray-7-light);
-  --accent-8-light: var(--gray-8-light);
-  --accent-9-light: var(--gray-9-light);
-  --accent-10-light: var(--gray-10-light);
-  --accent-11-light: var(--gray-11-light);
-  --accent-12-light: var(--gray-12-light);
-  --accent-contrast-light: var(--gray-contrast-light);
-  --accent-ink-light: var(--gray-ink-light);
-  --accent-pressed-light: var(--gray-pressed-light);
-  --accent-link-light: var(--gray-link-light);
-  --accent-link-hover-light: var(--gray-link-hover-light);
-  --accent-1-dark: var(--gray-1-dark);
-  --accent-2-dark: var(--gray-2-dark);
-  --accent-3-dark: var(--gray-3-dark);
-  --accent-4-dark: var(--gray-4-dark);
-  --accent-5-dark: var(--gray-5-dark);
-  --accent-6-dark: var(--gray-6-dark);
-  --accent-7-dark: var(--gray-7-dark);
-  --accent-8-dark: var(--gray-8-dark);
-  --accent-9-dark: var(--gray-9-dark);
-  --accent-10-dark: var(--gray-10-dark);
-  --accent-11-dark: var(--gray-11-dark);
-  --accent-12-dark: var(--gray-12-dark);
-  --accent-contrast-dark: var(--gray-contrast-dark);
-  --accent-ink-dark: var(--gray-ink-dark);
-  --accent-pressed-dark: var(--gray-pressed-dark);
-  --accent-link-dark: var(--gray-link-dark);
-  --accent-link-hover-dark: var(--gray-link-hover-dark);
+:root[data-color-mode="dark"],
+[data-accent][data-color-mode="dark"],
+.dark {
+  --accent-1: var(--accent-1-dark);
+  --accent-2: var(--accent-2-dark);
+  --accent-3: var(--accent-3-dark);
+  --accent-4: var(--accent-4-dark);
+  --accent-5: var(--accent-5-dark);
+  --accent-6: var(--accent-6-dark);
+  --accent-7: var(--accent-7-dark);
+  --accent-8: var(--accent-8-dark);
+  --accent-9: var(--accent-9-dark);
+  --accent-10: var(--accent-10-dark);
+  --accent-11: var(--accent-11-dark);
+  --accent-12: var(--accent-12-dark);
+  --accent-contrast: var(--accent-contrast-dark);
+  --accent-ink: var(--accent-ink-dark);
+  --accent-pressed: var(--accent-pressed-dark);
+  --accent-link: var(--accent-link-dark);
+  --accent-link-hover: var(--accent-link-hover-dark);
+  --text-accent: var(--accent-11);
+  --border-accent: var(--accent-11);
+  --affordance-accent: var(--accent-3);
+  --affordance-accent-hover: var(--accent-4);
+  --surface-message-highlight: var(--accent-3);
+  --affordance-accent-prominent: var(--accent-9);
+  --affordance-accent-prominent-hover: var(--accent-10);
+  --affordance-accent-prominent-pressed: var(--accent-pressed);
+  --text-on-accent: var(--accent-contrast);
 }
-:root[data-accent="flame"],
-[data-accent="flame"] {
-  --accent-1-light: var(--flame-1-light);
-  --accent-2-light: var(--flame-2-light);
-  --accent-3-light: var(--flame-3-light);
-  --accent-4-light: var(--flame-4-light);
-  --accent-5-light: var(--flame-5-light);
-  --accent-6-light: var(--flame-6-light);
-  --accent-7-light: var(--flame-7-light);
-  --accent-8-light: var(--flame-8-light);
-  --accent-9-light: var(--flame-9-light);
-  --accent-10-light: var(--flame-10-light);
-  --accent-11-light: var(--flame-11-light);
-  --accent-12-light: var(--flame-12-light);
-  --accent-contrast-light: var(--flame-contrast-light);
-  --accent-ink-light: var(--flame-ink-light);
-  --accent-pressed-light: var(--flame-pressed-light);
-  --accent-link-light: var(--flame-link-light);
-  --accent-link-hover-light: var(--flame-link-hover-light);
-  --accent-1-dark: var(--flame-1-dark);
-  --accent-2-dark: var(--flame-2-dark);
-  --accent-3-dark: var(--flame-3-dark);
-  --accent-4-dark: var(--flame-4-dark);
-  --accent-5-dark: var(--flame-5-dark);
-  --accent-6-dark: var(--flame-6-dark);
-  --accent-7-dark: var(--flame-7-dark);
-  --accent-8-dark: var(--flame-8-dark);
-  --accent-9-dark: var(--flame-9-dark);
-  --accent-10-dark: var(--flame-10-dark);
-  --accent-11-dark: var(--flame-11-dark);
-  --accent-12-dark: var(--flame-12-dark);
-  --accent-contrast-dark: var(--flame-contrast-dark);
-  --accent-ink-dark: var(--flame-ink-dark);
-  --accent-pressed-dark: var(--flame-pressed-dark);
-  --accent-link-dark: var(--flame-link-dark);
-  --accent-link-hover-dark: var(--flame-link-hover-dark);
-}
+
 :root[data-accent="magenta"],
 [data-accent="magenta"] {
   --accent-1-light: var(--magenta-1-light);
@@ -1662,120 +1675,128 @@
   --accent-link-dark: var(--cobalt-link-dark);
   --accent-link-hover-dark: var(--cobalt-link-hover-dark);
 }
-:root[data-accent="jade"],
-[data-accent="jade"] {
-  --accent-1-light: var(--jade-1-light);
-  --accent-2-light: var(--jade-2-light);
-  --accent-3-light: var(--jade-3-light);
-  --accent-4-light: var(--jade-4-light);
-  --accent-5-light: var(--jade-5-light);
-  --accent-6-light: var(--jade-6-light);
-  --accent-7-light: var(--jade-7-light);
-  --accent-8-light: var(--jade-8-light);
-  --accent-9-light: var(--jade-9-light);
-  --accent-10-light: var(--jade-10-light);
-  --accent-11-light: var(--jade-11-light);
-  --accent-12-light: var(--jade-12-light);
-  --accent-contrast-light: var(--jade-contrast-light);
-  --accent-ink-light: var(--jade-ink-light);
-  --accent-pressed-light: var(--jade-pressed-light);
-  --accent-link-light: var(--jade-link-light);
-  --accent-link-hover-light: var(--jade-link-hover-light);
-  --accent-1-dark: var(--jade-1-dark);
-  --accent-2-dark: var(--jade-2-dark);
-  --accent-3-dark: var(--jade-3-dark);
-  --accent-4-dark: var(--jade-4-dark);
-  --accent-5-dark: var(--jade-5-dark);
-  --accent-6-dark: var(--jade-6-dark);
-  --accent-7-dark: var(--jade-7-dark);
-  --accent-8-dark: var(--jade-8-dark);
-  --accent-9-dark: var(--jade-9-dark);
-  --accent-10-dark: var(--jade-10-dark);
-  --accent-11-dark: var(--jade-11-dark);
-  --accent-12-dark: var(--jade-12-dark);
-  --accent-contrast-dark: var(--jade-contrast-dark);
-  --accent-ink-dark: var(--jade-ink-dark);
-  --accent-pressed-dark: var(--jade-pressed-dark);
-  --accent-link-dark: var(--jade-link-dark);
-  --accent-link-hover-dark: var(--jade-link-hover-dark);
+:root[data-accent="bee"],
+[data-accent="bee"] {
+  --accent-1-light: var(--bee-1-light);
+  --accent-2-light: var(--bee-2-light);
+  --accent-3-light: var(--bee-3-light);
+  --accent-4-light: var(--bee-4-light);
+  --accent-5-light: var(--bee-5-light);
+  --accent-6-light: var(--bee-6-light);
+  --accent-7-light: var(--bee-7-light);
+  --accent-8-light: var(--bee-8-light);
+  --accent-9-light: var(--bee-9-light);
+  --accent-10-light: var(--bee-10-light);
+  --accent-11-light: var(--bee-11-light);
+  --accent-12-light: var(--bee-12-light);
+  --accent-contrast-light: var(--bee-contrast-light);
+  --accent-ink-light: var(--bee-ink-light);
+  --accent-pressed-light: var(--bee-pressed-light);
+  --accent-link-light: var(--bee-link-light);
+  --accent-link-hover-light: var(--bee-link-hover-light);
+  --accent-1-dark: var(--bee-1-dark);
+  --accent-2-dark: var(--bee-2-dark);
+  --accent-3-dark: var(--bee-3-dark);
+  --accent-4-dark: var(--bee-4-dark);
+  --accent-5-dark: var(--bee-5-dark);
+  --accent-6-dark: var(--bee-6-dark);
+  --accent-7-dark: var(--bee-7-dark);
+  --accent-8-dark: var(--bee-8-dark);
+  --accent-9-dark: var(--bee-9-dark);
+  --accent-10-dark: var(--bee-10-dark);
+  --accent-11-dark: var(--bee-11-dark);
+  --accent-12-dark: var(--bee-12-dark);
+  --accent-contrast-dark: var(--bee-contrast-dark);
+  --accent-ink-dark: var(--bee-ink-dark);
+  --accent-pressed-dark: var(--bee-pressed-dark);
+  --accent-link-dark: var(--bee-link-dark);
+  --accent-link-hover-dark: var(--bee-link-hover-dark);
 }
-
-/* Mode owners bind the ramp, then the accent roles every level uses. */
-[data-accent][data-color-mode="light"],
-.light,
+:root[data-accent="citrus"],
+[data-accent="citrus"],
 :root {
-  --accent-1: var(--accent-1-light);
-  --accent-2: var(--accent-2-light);
-  --accent-3: var(--accent-3-light);
-  --accent-4: var(--accent-4-light);
-  --accent-5: var(--accent-5-light);
-  --accent-6: var(--accent-6-light);
-  --accent-7: var(--accent-7-light);
-  --accent-8: var(--accent-8-light);
-  --accent-9: var(--accent-9-light);
-  --accent-10: var(--accent-10-light);
-  --accent-11: var(--accent-11-light);
-  --accent-12: var(--accent-12-light);
-  --accent-contrast: var(--accent-contrast-light);
-  --accent-ink: var(--accent-ink-light);
-  --accent-pressed: var(--accent-pressed-light);
-  --accent-link: var(--accent-link-light);
-  --accent-link-hover: var(--accent-link-hover-light);
-  --text-accent: var(--accent-11);
-  --border-accent: var(--accent-11);
-  --affordance-accent: var(--accent-3);
-  --affordance-accent-hover: var(--accent-4);
-  --surface-message-highlight: var(--accent-3);
-  --affordance-accent-prominent: var(--accent-9);
-  --affordance-accent-prominent-hover: var(--accent-10);
-  --affordance-accent-prominent-pressed: var(--accent-pressed);
-  --text-on-accent: var(--accent-contrast);
+  --accent-1-light: var(--citrus-1-light);
+  --accent-2-light: var(--citrus-2-light);
+  --accent-3-light: var(--citrus-3-light);
+  --accent-4-light: var(--citrus-4-light);
+  --accent-5-light: var(--citrus-5-light);
+  --accent-6-light: var(--citrus-6-light);
+  --accent-7-light: var(--citrus-7-light);
+  --accent-8-light: var(--citrus-8-light);
+  --accent-9-light: var(--citrus-9-light);
+  --accent-10-light: var(--citrus-10-light);
+  --accent-11-light: var(--citrus-11-light);
+  --accent-12-light: var(--citrus-12-light);
+  --accent-contrast-light: var(--citrus-contrast-light);
+  --accent-ink-light: var(--citrus-ink-light);
+  --accent-pressed-light: var(--citrus-pressed-light);
+  --accent-link-light: var(--citrus-link-light);
+  --accent-link-hover-light: var(--citrus-link-hover-light);
+  --accent-1-dark: var(--citrus-1-dark);
+  --accent-2-dark: var(--citrus-2-dark);
+  --accent-3-dark: var(--citrus-3-dark);
+  --accent-4-dark: var(--citrus-4-dark);
+  --accent-5-dark: var(--citrus-5-dark);
+  --accent-6-dark: var(--citrus-6-dark);
+  --accent-7-dark: var(--citrus-7-dark);
+  --accent-8-dark: var(--citrus-8-dark);
+  --accent-9-dark: var(--citrus-9-dark);
+  --accent-10-dark: var(--citrus-10-dark);
+  --accent-11-dark: var(--citrus-11-dark);
+  --accent-12-dark: var(--citrus-12-dark);
+  --accent-contrast-dark: var(--citrus-contrast-dark);
+  --accent-ink-dark: var(--citrus-ink-dark);
+  --accent-pressed-dark: var(--citrus-pressed-dark);
+  --accent-link-dark: var(--citrus-link-dark);
+  --accent-link-hover-dark: var(--citrus-link-hover-dark);
 }
-:root[data-color-mode="dark"],
-[data-accent][data-color-mode="dark"],
-.dark {
-  --accent-1: var(--accent-1-dark);
-  --accent-2: var(--accent-2-dark);
-  --accent-3: var(--accent-3-dark);
-  --accent-4: var(--accent-4-dark);
-  --accent-5: var(--accent-5-dark);
-  --accent-6: var(--accent-6-dark);
-  --accent-7: var(--accent-7-dark);
-  --accent-8: var(--accent-8-dark);
-  --accent-9: var(--accent-9-dark);
-  --accent-10: var(--accent-10-dark);
-  --accent-11: var(--accent-11-dark);
-  --accent-12: var(--accent-12-dark);
-  --accent-contrast: var(--accent-contrast-dark);
-  --accent-ink: var(--accent-ink-dark);
-  --accent-pressed: var(--accent-pressed-dark);
-  --accent-link: var(--accent-link-dark);
-  --accent-link-hover: var(--accent-link-hover-dark);
-  --text-accent: var(--accent-11);
-  --border-accent: var(--accent-11);
-  --affordance-accent: var(--accent-3);
-  --affordance-accent-hover: var(--accent-4);
-  --surface-message-highlight: var(--accent-3);
-  --affordance-accent-prominent: var(--accent-9);
-  --affordance-accent-prominent-hover: var(--accent-10);
-  --affordance-accent-prominent-pressed: var(--accent-pressed);
-  --text-on-accent: var(--accent-contrast);
+:root[data-accent="mono"],
+[data-accent="mono"] {
+  --accent-1-light: var(--mono-1-light);
+  --accent-2-light: var(--mono-2-light);
+  --accent-3-light: var(--mono-3-light);
+  --accent-4-light: var(--mono-4-light);
+  --accent-5-light: var(--mono-5-light);
+  --accent-6-light: var(--mono-6-light);
+  --accent-7-light: var(--mono-7-light);
+  --accent-8-light: var(--mono-8-light);
+  --accent-9-light: var(--mono-9-light);
+  --accent-10-light: var(--mono-10-light);
+  --accent-11-light: var(--mono-11-light);
+  --accent-12-light: var(--mono-12-light);
+  --accent-contrast-light: var(--mono-contrast-light);
+  --accent-ink-light: var(--mono-ink-light);
+  --accent-pressed-light: var(--mono-pressed-light);
+  --accent-link-light: var(--mono-link-light);
+  --accent-link-hover-light: var(--mono-link-hover-light);
+  --accent-1-dark: var(--mono-1-dark);
+  --accent-2-dark: var(--mono-2-dark);
+  --accent-3-dark: var(--mono-3-dark);
+  --accent-4-dark: var(--mono-4-dark);
+  --accent-5-dark: var(--mono-5-dark);
+  --accent-6-dark: var(--mono-6-dark);
+  --accent-7-dark: var(--mono-7-dark);
+  --accent-8-dark: var(--mono-8-dark);
+  --accent-9-dark: var(--mono-9-dark);
+  --accent-10-dark: var(--mono-10-dark);
+  --accent-11-dark: var(--mono-11-dark);
+  --accent-12-dark: var(--mono-12-dark);
+  --accent-contrast-dark: var(--mono-contrast-dark);
+  --accent-ink-dark: var(--mono-ink-dark);
+  --accent-pressed-dark: var(--mono-pressed-dark);
+  --accent-link-dark: var(--mono-link-dark);
+  --accent-link-hover-dark: var(--mono-link-hover-dark);
 }
 
-/* Accent levels switch whole color groups onto the accent ramp. Snoozin’ is the
-   neutral role layer. Hummin’ adds links, strong controls and rows. Swarmin’ adds your
-   own messages. Buzzin’ also colors the shell (background, dots and chrome on
-   it), quiet controls, lines, surfaces and text. Shared groups are
-   declared once; level-only blocks contain intentional differences. */
-/* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Light. */
+/* All three vibe levels keep app surfaces neutral. Hummin’ adds soft personal
+   and selected states; Buzzin’ makes those fills solid. */
+
+:root[data-color-level="quiet"],
+[data-color-level="quiet"] .light,
 :root[data-color-level="touch"],
 [data-color-level="touch"] .light,
-:root[data-color-level="more"],
-[data-color-level="more"] .light,
-:root[data-color-level="full"],
-[data-color-level="full"] .light {
-  /* Each family names its link partner: a color that stays readable as
-     text on light grounds. Chartreuse can only glow on dark grounds. */
+:root[data-color-level="high"],
+[data-color-level="high"] .light {
   --text-link: var(--accent-link);
   --affordance-link-hover: var(--accent-link-hover);
   --affordance-prominent: var(--accent-9);
@@ -1783,89 +1804,24 @@
   --affordance-prominent-pressed: var(--accent-pressed);
   --text-on-prominent: var(--accent-contrast);
   --affordance-prominent-mark: var(--accent-11);
+  --affordance-navigation-quiet: var(--accent-2);
+  --affordance-selected: var(--accent-5);
   --affordance-floating-hover: var(--accent-3);
   --affordance-popover-selected: var(--accent-3);
   --affordance-floating-selected: var(--accent-4);
-  /* Only one destination is selected at a time, so it can take the brand fill
-     with its ink. Pale tints of chartreuse read as khaki, so other selection
-     and hover stay neutral until Buzzin’ tints every surface. */
-  --affordance-navigation-selected: var(--accent-9);
-  --surface-row-selected-detail: var(--accent-3);
-  --text-row-selected: var(--accent-contrast);
-  --text-row-selected-subtle: var(--accent-contrast);
-  --text-row-selected-metadata: var(--accent-contrast);
-}
-
-/* Buzzin’: quiet controls, shell, lines and supporting text. Light. */
-:root[data-color-level="full"],
-[data-color-level="full"] .light {
-  --bg-app: var(--accent-4);
-  --texture-dots-color: var(--accent-6);
-  --affordance-chrome: var(--accent-3);
-  --affordance-chrome-hover: var(--accent-4);
-  --text-chrome-subtle: var(--accent-11);
-  --bg-chrome-selected: var(--accent-1);
-  --border-prominent: var(--accent-11);
-  --border-floating-control: var(--accent-11);
-  --border-message-thread: var(--accent-6);
-  --scrollbar-thumb: var(--accent-8);
-  --text-subtle: var(--accent-11);
-  --text-metadata: var(--accent-11);
-}
-
-/* Swarmin’ and Buzzin’: your own messages take the brand fill. Pale and
-   dark tints of chartreuse read khaki or olive; it only works bright. Light. */
-:root[data-color-level="more"],
-[data-color-level="more"] .light,
-:root[data-color-level="full"],
-[data-color-level="full"] .light {
-  /* Mentions stay tone-on-tone on the brand-filled bubble: a deeper step of
-     its fill with the bubble's ink, deepening again on hover. */
-  --affordance-mention-own: var(--accent-10);
-  --affordance-mention-own-hover: var(--accent-pressed);
-  --text-mention-own: var(--text-message-own);
-  --surface-message-own: var(--accent-9);
-  --text-message-own: var(--accent-ink);
-  --text-message-link-own: var(--accent-ink);
-}
-
-/* Full-only changes. Light. */
-:root[data-color-level="full"],
-[data-color-level="full"] .light {
-  --affordance-row-hover: var(--accent-3);
-  --affordance-panel-hover: var(--accent-3);
-  --affordance-navigation-quiet: var(--accent-2);
-  --affordance-selected: var(--accent-5);
   --text-row-subtle: var(--accent-11);
   --text-row-metadata: var(--accent-11);
   --text-row: var(--accent-12);
-  --affordance-subtle: var(--accent-3);
-  --affordance-subtle-hover: var(--accent-4);
-  --affordance-subtle-pressed: var(--accent-6);
-  --affordance-floating-control: var(--accent-3);
-  --affordance-floating-control-hover: var(--accent-4);
-  --affordance-floating-control-pressed: var(--accent-6);
-  --border-standard: var(--accent-6);
-  --surface-base: var(--accent-2);
-  --surface-panel: var(--accent-1);
-  --surface-popover: var(--accent-1);
-  --surface-inset: var(--accent-2);
-  --surface-message: var(--accent-3);
-  --text-standard: var(--accent-12);
-  --text-navigation: var(--accent-11);
-  --text-navigation-unread: var(--accent-12);
-  --text-unavailable: var(--accent-8);
+  --affordance-row-hover: var(--accent-2);
+  --affordance-panel-hover: var(--accent-2);
 }
 
-/* Hummin’, Swarmin’ and Buzzin’: links, strong controls and rows. Dark. */
+:root[data-color-level="quiet"][data-color-mode="dark"],
+[data-color-level="quiet"] .dark,
 :root[data-color-level="touch"][data-color-mode="dark"],
 [data-color-level="touch"] .dark,
-:root[data-color-level="more"][data-color-mode="dark"],
-[data-color-level="more"] .dark,
-:root[data-color-level="full"][data-color-mode="dark"],
-[data-color-level="full"] .dark {
-  /* Each family names its link partner: a color that stays readable as
-     text on light grounds. Chartreuse can only glow on dark grounds. */
+:root[data-color-level="high"][data-color-mode="dark"],
+[data-color-level="high"] .dark {
   --text-link: var(--accent-link);
   --affordance-link-hover: var(--accent-link-hover);
   --affordance-prominent: var(--accent-9);
@@ -1873,12 +1829,36 @@
   --affordance-prominent-pressed: var(--accent-pressed);
   --text-on-prominent: var(--accent-contrast);
   --affordance-prominent-mark: var(--accent-11);
-  /* Dark chartreuse has no vivid form, so dark rows keep neutral fills and
-     let the selected label carry the accent at its glowing step. The level
-     blocks above also match a dark root, so restate the neutral row group
-     by step: Buzzin’ tints quiet controls, but its rows stay neutral too. */
-  --affordance-row-hover: var(--neutral-4);
-  --affordance-panel-hover: var(--neutral-4);
+  --affordance-row-hover: var(--accent-3);
+  --affordance-navigation-quiet: var(--accent-3);
+  --affordance-panel-hover: var(--accent-3);
+  --affordance-selected: var(--accent-4);
+  --affordance-floating-hover: var(--accent-4);
+  --affordance-popover-selected: var(--accent-4);
+  --affordance-floating-selected: var(--accent-5);
+  --text-row-subtle: var(--accent-11);
+  --text-row-metadata: var(--accent-11);
+  --text-row: var(--accent-12);
+}
+
+:root[data-color-level="quiet"],
+[data-color-level="quiet"] .light {
+  --affordance-row-hover: var(--affordance-subtle);
+  --affordance-panel-hover: var(--affordance-subtle-hover);
+  --affordance-navigation-quiet: var(--neutral-navigation-quiet);
+  --affordance-selected: var(--neutral-3);
+  --affordance-floating-hover: var(--neutral-2);
+  --affordance-popover-selected: var(--neutral-3);
+  --affordance-floating-selected: var(--neutral-3);
+  --text-row-subtle: var(--text-subtle);
+  --text-row-metadata: var(--text-metadata);
+  --text-row: var(--text-navigation);
+}
+
+:root[data-color-level="quiet"][data-color-mode="dark"],
+[data-color-level="quiet"] .dark {
+  --affordance-row-hover: var(--affordance-subtle);
+  --affordance-panel-hover: var(--affordance-subtle-hover);
   --affordance-navigation-quiet: var(--neutral-navigation-quiet);
   --affordance-selected: var(--neutral-5);
   --affordance-floating-hover: var(--neutral-5);
@@ -1887,66 +1867,62 @@
   --text-row-subtle: var(--text-subtle);
   --text-row-metadata: var(--text-metadata);
   --text-row: var(--text-navigation);
-  --affordance-navigation-selected: var(--neutral-5);
-  /* Rebind after the light level rules, which also match a dark root. */
-  --surface-row-selected-detail: var(--neutral-6);
-  --text-row-selected-detail: var(--text-row-selected);
-  --text-row-selected: var(--accent-11);
-  --text-row-selected-subtle: var(--text-subtle);
-  --text-row-selected-metadata: var(--text-metadata);
 }
 
-/* Buzzin’: quiet controls, shell, lines and supporting text. Dark. */
-:root[data-color-level="full"][data-color-mode="dark"],
-[data-color-level="full"] .dark {
-  --bg-app: var(--accent-2);
-  --texture-dots-color: var(--accent-4);
-  --affordance-chrome: var(--accent-3);
-  --affordance-chrome-hover: var(--accent-4);
-  --text-chrome-subtle: var(--accent-11);
+/* Low contrast carries the accent through personal and selected states,
+   while the surrounding app surfaces retain their neutral roles. */
+:root[data-color-level="touch"],
+[data-color-level="touch"] .light {
+  --surface-message-own: var(--accent-4);
+  --text-message-own: var(--accent-12);
+  --text-message-link-own: var(--accent-link);
+  --surface-control-selected: var(--accent-4);
+  --text-control-selected: var(--accent-11);
+  --surface-navigation-selected: var(--accent-4);
+  --text-navigation-selected: var(--accent-11);
   --bg-chrome-selected: var(--accent-4);
-  --affordance-subtle: var(--accent-3);
-  --affordance-subtle-hover: var(--accent-4);
-  --affordance-subtle-pressed: var(--accent-5);
-  --affordance-floating-control: var(--accent-4);
-  --affordance-floating-control-hover: var(--accent-5);
-  --affordance-floating-control-pressed: var(--accent-6);
-  --border-prominent: var(--accent-8);
-  --border-floating-control: var(--accent-11);
-  --border-standard: var(--accent-5);
-  --border-message-thread: var(--accent-6);
-  --scrollbar-thumb: var(--accent-8);
-  --text-subtle: var(--accent-11);
-  --text-metadata: var(--accent-11);
 }
 
-/* Swarmin’ and Buzzin’: your own messages take the brand fill. Dark. */
-:root[data-color-level="more"][data-color-mode="dark"],
-[data-color-level="more"] .dark,
-:root[data-color-level="full"][data-color-mode="dark"],
-[data-color-level="full"] .dark {
-  /* Mentions stay tone-on-tone on the brand-filled bubble: a deeper step of
-     its fill with the bubble's ink, deepening again on hover. */
+:root[data-color-level="touch"][data-color-mode="dark"],
+[data-color-level="touch"] .dark {
+  --surface-message-own: var(--accent-4);
+  --text-message-own: var(--accent-12);
+  --text-message-link-own: var(--accent-link);
+  --surface-control-selected: var(--accent-4);
+  --text-control-selected: var(--accent-11);
+  --surface-navigation-selected: var(--accent-4);
+  --text-navigation-selected: var(--accent-11);
+  --bg-chrome-selected: var(--accent-4);
+}
+
+:root[data-color-level="high"],
+[data-color-level="high"] .light {
   --affordance-mention-own: var(--accent-10);
   --affordance-mention-own-hover: var(--accent-pressed);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);
+  --surface-control-selected: var(--accent-9);
+  --text-control-selected: var(--accent-contrast);
+  --surface-navigation-selected: var(--accent-9);
+  --text-navigation-selected: var(--accent-contrast);
+  --bg-chrome-selected: var(--accent-9);
 }
 
-/* Full-only changes. Dark. */
-:root[data-color-level="full"][data-color-mode="dark"],
-[data-color-level="full"] .dark {
-  --surface-base: var(--accent-1);
-  --surface-panel: var(--accent-2);
-  --surface-popover: var(--accent-3);
-  --surface-inset: var(--accent-1);
-  --surface-message: var(--accent-3);
-  --text-standard: var(--neutral-12);
-  --text-navigation: var(--accent-11);
-  --text-navigation-unread: var(--neutral-12);
-  --text-unavailable: var(--accent-8);
+:root[data-color-level="high"][data-color-mode="dark"],
+[data-color-level="high"] .dark {
+  --affordance-mention-own: var(--accent-10);
+  --affordance-mention-own-hover: var(--accent-pressed);
+  --text-mention-own: var(--text-message-own);
+  --surface-message-own: var(--accent-9);
+  --text-message-own: var(--accent-ink);
+  --text-message-link-own: var(--accent-ink);
+  --surface-control-selected: var(--accent-9);
+  --text-control-selected: var(--accent-contrast);
+  --surface-navigation-selected: var(--accent-9);
+  --text-navigation-selected: var(--accent-contrast);
+  --bg-chrome-selected: var(--accent-9);
 }
 
 /* ============================================================
@@ -1959,6 +1935,9 @@
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
   --text-color-link: var(--text-link);
+  --color-surface-control-selected: var(--surface-control-selected);
+  --text-color-control-selected: var(--text-control-selected);
+  --text-color-navigation-selected: var(--text-navigation-selected);
   --text-color-message-own: var(--text-message-own);
   --text-color-message-link-own: var(--text-message-link-own);
   --text-color-mention: var(--text-mention);

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { ACCENTS, BRAND_GRADIENTS } from "./brand";
+import { ACCENTS, BRAND_GRADIENTS, PALETTE_FAMILIES } from "./brand";
 import { PALETTE, ROLE_GROUPS } from "./registry";
 
 const css = readFileSync(
@@ -30,7 +30,7 @@ it("maps all artwork endpoints to existing family steps in both themes", () => {
         ["light", light],
         ["dark", dark],
       ] as const) {
-        if (ACCENTS.some((family) => palette.startsWith(`${family}-`)))
+        if (PALETTE_FAMILIES.some((family) => palette.startsWith(`${family}-`)))
           expect(mode).toContain(`--${palette}: var(--${palette}-${name});`);
         else expect(mode).toMatch(new RegExp(`--${palette}: #[a-f0-9]{6};`));
       }

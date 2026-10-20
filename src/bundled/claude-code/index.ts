@@ -10,6 +10,7 @@ import { ClaudeDefaults } from "./defaults";
 import { ClaudeRuntime, type Config, config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup, withScript } from "./setup";
 import { createTabs } from "./tabs";
+import { readUsage } from "./usage";
 
 export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
@@ -24,12 +25,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const typeKey = `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/${TYPE_ID}`;
   const spawn = host.spawn && withScript(host.spawn.bind(host));
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
-  const providerDefaults = new ClaudeDefaults();
+  const providerDefaults = new ClaudeDefaults(agents.storage);
   const runtime = new ClaudeRuntime(
     spawn ? { spawn } : {},
     (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
     (pubkey, signal) => agents.core(pubkey, signal),
-    localStorage,
+    agents.storage,
     (raw) => providerDefaults.resolve(raw),
     () => agents.tools(),
   );
@@ -114,6 +115,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ];
     },
     summary: (agent) => config(agent.config).model || "Claude",
+    ...(spawn && {
+      usage: (agent, { since, signal }) =>
+        readUsage(
+          spawn,
+          config(agent.config).workspace,
+          agent.pubkey,
+          runtime.conversations(agent.pubkey).map((saved) => saved.sessionId),
+          since,
+          signal,
+        ),
+    }),
     provider: {
       snapshot: setup.providerSnapshot,
       subscribe: setup.subscribe,

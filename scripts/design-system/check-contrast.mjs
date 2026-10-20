@@ -155,6 +155,7 @@ const TEXT_ROLES = [
  * every fill it can actually sit on, and hover is one of them.
  */
 const PAIRS = [
+  ["--text-control-selected", "--surface-control-selected"],
   ...[
     "affordance-call-join",
     "affordance-call-join-hover",
@@ -248,6 +249,11 @@ const BOUNDARY_ROLES = [
   "--status-avatar-online-border",
   "--status-away",
   "--status-offline",
+  // Chart marks need 3:1 against the surfaces a chart sits on.
+  "--chart-series-1",
+  "--chart-series-2",
+  "--chart-series-3",
+  "--chart-series-4",
 ];
 
 const TINT_PAIRS = [
@@ -266,7 +272,7 @@ const TINT_PAIRS = [
 ];
 
 const css = readFileSync(TOKENS, "utf8");
-const DEFAULT_ACCENT = "chartreuse";
+const DEFAULT_ACCENT = "citrus";
 /** Exceptions are approved against the neutral role layer. */
 const BASELINE_LEVEL = "neutral";
 
@@ -395,7 +401,12 @@ function audit(mode, map, baseline) {
             "--affordance-floating-hover",
             "--neutral-4",
           ]
-        : BOUNDARY_SURFACES;
+        : role.startsWith("--chart-series-")
+          ? // Charts sit on panels; a popover only shows a swatch beside its label.
+            BOUNDARY_SURFACES.filter(
+              (surface) => surface !== "--surface-popover",
+            )
+          : BOUNDARY_SURFACES;
     for (const surface of surfaces) {
       const borderColor = resolve(map, role);
       const surfaceColor = resolve(map, surface);
@@ -445,6 +456,8 @@ const accentFamilies = [
   ),
 ];
 const ACCENT_PAIRS = [
+  ["--text-navigation-selected", "--surface-navigation-selected"],
+  ["--text-navigation-selected", "--bg-chrome-selected"],
   ...["", "-hover", "-pressed"].map((state) => [
     "--text-on-accent",
     `--affordance-accent-prominent${state}`,
@@ -536,6 +549,8 @@ const isGray = (hex) => {
 const on = (foregrounds, grounds) =>
   grounds.flatMap((ground) => foregrounds.map((fg) => [fg, ground]));
 const GROUNDED = [
+  ["--text-navigation-selected", "--surface-navigation-selected"],
+  ["--text-navigation-selected", "--bg-chrome-selected"],
   ...on(
     [
       "--text-standard",
@@ -590,11 +605,7 @@ const GROUNDED = [
   ),
   ...on(
     ["--text-standard", "--text-chrome-subtle"],
-    [
-      "--affordance-chrome",
-      "--affordance-chrome-hover",
-      "--bg-chrome-selected",
-    ],
+    ["--affordance-chrome", "--affordance-chrome-hover"],
   ),
   ...on(
     [

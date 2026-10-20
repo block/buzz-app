@@ -342,13 +342,13 @@ profile avatar editor, shortcut recorder, native emoji file input,
 plugin skipped-folder disclosure, and developer diagnostics.
 External plugin settings own their content.
 
-Use `ThemePicker` at the trailing edge of a PreferenceRow for color mode. The
-color mode, interface size, accent color and accent level rows share one Appearance
-group. Accent level uses the compact `Select`, with a chip previewing each level. The
-System, Light, and Dark previews retain shared radio semantics, accessible names,
-and a persistent selection outline without visible captions. Their nested light/dark
-scopes use the system's surface, text, border, and accent roles. The row wraps these choices below the label
-when its container is narrow. Palette changes suppress transitions for the swap.
+Use a compact shared Select at the trailing edge of a PreferenceRow for Mode,
+with System, Light, and Dark options. Mode, interface size, accent color, and
+vibe level rows share one Appearance group beneath the live illustrative preview.
+Accent applies to actions, links, and selections. Buzzin’ gives own messages and
+selected controls solid accent fills; app backgrounds stay neutral. Use another
+compact Select for Snoozin’, Hummin’, and Buzzin’. Rows wrap controls below their
+labels when narrow. Palette changes suppress transitions during the swap.
 Hide desktop delivery options and permission actions when
 desktop alerts are off, preserving saved choices. Keep a development-pause notice
 visible so it explains the disabled alert switch. Show sound choices whenever
@@ -427,7 +427,8 @@ existing minimum heights. The extra-small capsule keeps its caption role.
 ## Colorways and plugin gradients
 
 Plugin artwork uses existing palette colors, including the complete Appearance
-ramps: Gray, Chartreuse, Flame, Magenta, Iris, Cobalt and Jade. All twelve steps and
+ramps: Bee, Magenta, Iris, Cobalt, Citrus and Mono. Flame and Jade remain
+independent artwork palettes. All twelve steps and
 existing ink, pressed and link mappings reference explicit palette owners.
 Values are extracted unchanged. Mode-specific owners (for example
 `--jade-3-light`) remain available independently of the page mode; the resolved

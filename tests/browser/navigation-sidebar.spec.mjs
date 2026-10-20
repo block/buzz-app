@@ -1,6 +1,11 @@
 import { selectCommunity, openCommunityPicker } from "./navigation.mjs";
 import { checkDurationConsumer } from "./duration-layout.mjs";
-import { openPage } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  openSettings,
+  pageChoice,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -282,7 +287,7 @@ test("hovering a sidebar row inks only that row, not its siblings", async ({
   // Buzzin' light is where hover ink differs from resting navigation ink.
   await page.evaluate(() => {
     document.documentElement.dataset.colorMode = "light";
-    document.documentElement.dataset.colorLevel = "full";
+    document.documentElement.dataset.colorLevel = "high";
   });
   const pages = page.getByRole("navigation", { name: "Pages", exact: true });
   const inbox = pages.getByRole("button", { name: "Inbox", exact: true });
@@ -478,16 +483,7 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
             .getByRole("tab", { name, exact: true });
     const leave = async () => {
       if (destination === "Settings") {
-        await button(page, "Your profile").click();
-        await page
-          .getByRole("menuitem", { name: "Settings", exact: true })
-          .click();
-        await expect(
-          page.getByRole("complementary", {
-            name: "Settings sidebar",
-            exact: true,
-          }),
-        ).toBeVisible();
+        await openSettings(page);
       } else {
         await openPage(
           page,
@@ -495,10 +491,16 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
         );
       }
       if (destination === "Settings") {
+        // The Settings modal retains the sidebar behind it, hidden from
+        // assistive technology and inert until Settings closes.
         await expect(sidebar).toHaveCount(0);
-        expect(await node.evaluate((element) => element.isConnected)).toBe(
-          false,
-        );
+        expect(
+          await node.evaluate(
+            (element) =>
+              element.isConnected &&
+              !!element.closest('[aria-hidden="true"], [inert]'),
+          ),
+        ).toBe(true);
       } else {
         await expect(sidebar).toBeVisible();
         expect(await node.evaluate((element) => element.isConnected)).toBe(
@@ -513,11 +515,7 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
         page.getByRole("region", { name: "Channel message history" }),
       ).toHaveCount(0);
       if (destination === "Back/Forward") await button(page, "Go back").click();
-      else if (destination === "Settings")
-        await page
-          .getByRole("complementary", { name: "Settings sidebar" })
-          .getByRole("button", { name: "Back", exact: true })
-          .click();
+      else if (destination === "Settings") await closeSettings(page);
       else await openPage(page, "Messages");
     };
     await group.locator("summary").click();
@@ -527,7 +525,7 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
     await leave();
     await expect(group).not.toHaveAttribute("open");
     if (destination === "Settings")
-      // Settings replaces the sidebar; returning to the same channel restores
+      // Settings retains the sidebar; returning to the same channel keeps
       // the saved position instead of revealing it again.
       await expect
         .poll(() => sidebar.evaluate((element) => element.scrollTop))
@@ -688,9 +686,10 @@ test("Messages reselects the latest sidebar channel and keyboard page search foc
   const search = dialog.getByRole("combobox", { name: "Search Buzz" });
   await expect(search).toBeFocused();
   await search.pressSequentially("Messages");
-  await expect(
-    dialog.getByRole("option", { name: "Messages", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+  await expect(pageChoice(dialog, "Messages")).toHaveAttribute(
+    "data-highlighted",
+    "true",
+  );
   await search.press("Enter");
   await expect(composer).toBeVisible();
   await expect(page.locator('button[data-channel-id="beta"]')).toHaveAttribute(

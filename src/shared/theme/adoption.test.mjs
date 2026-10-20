@@ -24,6 +24,9 @@ test("adoption guard catches utilities, CSS and renderer string reads", () => {
 
 test("adoption guard covers every Appearance family and explicit mode owner", () => {
   for (const family of [
+    "bee",
+    "citrus",
+    "mono",
     "gray",
     "chartreuse",
     "flame",

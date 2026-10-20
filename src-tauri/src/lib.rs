@@ -14,6 +14,7 @@ use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_status,
 };
+mod agent_state;
 mod app_agents;
 mod deep_links;
 mod dock;
@@ -56,8 +57,9 @@ mod relay;
 mod relay_admin;
 mod sign_out;
 use identity::{
-    identity_create, identity_export, identity_import, identity_prepare_remote_agent_authorization,
-    identity_restore, identity_sign_builderlab_binding, IdentityHost,
+    identity_create, identity_export, identity_import, identity_import_legacy,
+    identity_legacy_available, identity_prepare_remote_agent_authorization, identity_restore,
+    identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 use relay::{
@@ -458,6 +460,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         pairing::pairing_cancel,
         identity_restore,
         identity_import,
+        identity_legacy_available,
+        identity_import_legacy,
         identity_create,
         identity_export,
         nsec_backup_choice,
@@ -553,6 +557,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
         jev::jev_classify,
+        agent_state::app_agent_state_load,
+        agent_state::app_agent_state_set,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]
@@ -682,6 +688,12 @@ pub fn run() {
                     .map_err(|_| "Could not resolve legacy library directory")?;
                 Ok((root, legacy))
             })();
+            app.manage(agent_state::AgentState::new(
+                paths
+                    .as_ref()
+                    .map(|(root, _)| root.with_file_name(sign_out::AGENTS).join("state"))
+                    .map_err(Clone::clone),
+            ));
             app.manage(app_agents::AppAgentHost::new(
                 paths
                     .as_ref()

@@ -492,7 +492,7 @@ export function SoloWorkspaces({
                   <div className={styles.showMore} data-solo-show-more="">
                     {project.hidden > 0 && (
                       <NavigationItem
-                        variant="row"
+                        variant="text"
                         data-solo-show-more-expand=""
                         label="Show more"
                         aria-label={`Show more chats in ${project.name}`}
@@ -511,7 +511,7 @@ export function SoloWorkspaces({
                     )}
                     {project.extra > 0 && (
                       <NavigationItem
-                        variant="row"
+                        variant="text"
                         data-solo-show-more-fold=""
                         label="Show less"
                         aria-label={`Show fewer chats in ${project.name}`}

@@ -78,24 +78,26 @@
   flex: 1;
   min-width: 0;
 }
-/* Show more and Show less are two row items sharing one painted row: Show
-   more fills it like a chat; Show less ends on the row inset. */
+/* Show more and Show less are text actions sharing one row: Show more aligns
+   with the chat icons and titles; Show less ends on the row inset. */
 .showMore {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   margin-inline: var(--channel-row-fill-start, 0) var(--channel-row-fill-end, 0);
 }
-.sidebarContents .showMore > [data-variant="row"] {
-  width: auto;
-  margin-inline: 0;
-}
-.sidebarContents .showMore > [data-solo-show-more-expand] {
+.showMore > [data-solo-show-more-expand] {
   flex: 1;
+  width: auto;
   min-width: 0;
+  padding-inline-start: calc(
+    var(--space-2) -
+    var(--channel-row-fill-start, 0px)
+  );
 }
-.sidebarContents .showMore > [data-solo-show-more-fold] {
+.showMore > [data-solo-show-more-fold] {
   flex: 0 0 auto;
+  width: auto;
   padding-inline-end: var(--session-row-inset);
 }
 .sidebarContents .organizedRow > div > [data-variant="row"] {

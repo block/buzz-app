@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 
 /// The largest file a plugin reads: the community's upload limit.
 const MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
+/// How long a read may take, as on a stalled network share, before its caller
+/// is answered; the blocked read itself cannot be stopped.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 async fn granted(
     manager: tauri::State<'_, PluginManager>,
@@ -42,7 +45,8 @@ fn locate(path: &str, cwd: Option<&str>) -> Result<PathBuf, String> {
         return expand_home(path);
     }
     let cwd = cwd.ok_or_else(|| format!("Cannot read {path} without a directory"))?;
-    Ok(expand_home(cwd)?.join(path))
+    let cwd = expand_home(cwd).map_err(|_| format!("Cannot read {path} from {cwd}"))?;
+    Ok(cwd.join(path))
 }
 
 /// The bytes of the file at `path`, at most 50 MB.
@@ -53,6 +57,10 @@ fn read(path: &str, cwd: Option<&str>) -> Result<Vec<u8>, String> {
         std::io::ErrorKind::NotFound => format!("{path}: No such file"),
         _ => format!("Could not read {path}: {error}"),
     };
+    // Windows refuses to open a folder at all, with "Access is denied".
+    if full.is_dir() {
+        return Err(format!("{path} is not a file"));
+    }
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     // Opening a FIFO without a writer would block until one came; without
@@ -60,8 +68,13 @@ fn read(path: &str, cwd: Option<&str>) -> Result<Vec<u8>, String> {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
     let file = options.open(&full).map_err(failed)?;
-    if !file.metadata().map_err(failed)?.is_file() {
+    let metadata = file.metadata().map_err(failed)?;
+    if !metadata.is_file() {
         return Err(format!("{path} is not a file"));
+    }
+    let too_large = || format!("{path} is larger than 50 MB");
+    if metadata.len() > MAX_READ_BYTES {
+        return Err(too_large());
     }
     let mut data = Vec::new();
     // One more byte than allowed tells a file that grew past it.
@@ -69,7 +82,7 @@ fn read(path: &str, cwd: Option<&str>) -> Result<Vec<u8>, String> {
         .read_to_end(&mut data)
         .map_err(failed)?;
     if data.len() as u64 > MAX_READ_BYTES {
-        return Err(format!("{path} is larger than 50 MB"));
+        return Err(too_large());
     }
     Ok(data)
 }
@@ -99,8 +112,10 @@ pub(crate) async fn plugin_host_read_file(
     cwd: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
     granted(manager, id, revision).await?;
-    blocking(move || read(&path, cwd.as_deref()))
+    let late = format!("Reading {path} took too long");
+    tokio::time::timeout(READ_TIMEOUT, blocking(move || read(&path, cwd.as_deref())))
         .await
+        .map_err(|_| late)?
         .map(tauri::ipc::Response::new)
 }
 

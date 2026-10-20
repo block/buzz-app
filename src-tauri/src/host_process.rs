@@ -441,8 +441,15 @@ pub(crate) fn expand_home(directory: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 fn home() -> Result<PathBuf, String> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    // Windows' own profile folder, never a `HOME` another tool set, such as
+    // Git for Windows' `/c/Users/…`.
+    #[cfg(windows)]
+    let order = ["USERPROFILE", "HOME"];
+    #[cfg(not(windows))]
+    let order = ["HOME", "USERPROFILE"];
+    order
+        .into_iter()
+        .find_map(std::env::var_os)
         .map(PathBuf::from)
         .ok_or_else(|| "No home directory".into())
 }

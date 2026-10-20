@@ -349,7 +349,7 @@
 }
 
 .pluginIcon[data-branded][data-category="people-and-communities"] img {
-  filter: hue-rotate(-196deg) saturate(0.8);
+  filter: hue-rotate(125deg) saturate(0.8);
 }
 
 .pluginIcon[data-branded][data-category="productivity"] {

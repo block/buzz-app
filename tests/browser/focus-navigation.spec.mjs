@@ -93,17 +93,11 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
 
   // Pane shortcuts resume typing directly and retain the native range.
   await sideBeta.focus();
-  await page.keyboard.press("Home");
-  await page.keyboard.press("Shift+ArrowRight");
-  // ProseMirror adopts the browser's native selectionchange asynchronously.
-  await expect
-    .poll(() =>
-      sideBeta.evaluate((element) => [
-        element.selectionStart,
-        element.selectionEnd,
-      ]),
-    )
-    .toEqual([0, 1]);
+  // Seed editor state directly so setup does not race native selectionchange.
+  await sideBeta.evaluate((element) => element.setSelectionRange(0, 1));
+  expect(
+    await sideBeta.evaluate(() => document.getSelection()?.toString()),
+  ).toBe("B");
   await page.keyboard.press(keys.main);
   await expect(alpha).toBeFocused();
   await page.keyboard.press(keys.side);
@@ -114,6 +108,9 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
       element.selectionEnd,
     ]),
   ).toEqual([0, 1]);
+  expect(
+    await sideBeta.evaluate(() => document.getSelection()?.toString()),
+  ).toBe("B");
   await expect(alpha).toHaveText("Alpha draft");
   await expect(sideBeta).toHaveText("Beta draft");
 

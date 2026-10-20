@@ -46,6 +46,8 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
   const call = useRef<HTMLElement>(null);
   const open = !!view.discussion;
   const [closing, setClosing] = useState(false);
+  const closeDispatched = useRef(false);
+  const reopenAfterClose = useRef(false);
   const [hold, setHold] = useState<{
     width: number;
     open: boolean;
@@ -55,6 +57,8 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
   }, [open, hold]);
   useLayoutEffect(() => {
     if (error) {
+      closeDispatched.current = false;
+      reopenAfterClose.current = false;
       setHold(undefined);
       setClosing(false);
     }
@@ -63,7 +67,14 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
     act("thread");
   });
   useLayoutEffect(() => {
-    if (!open) setClosing(false);
+    if (!open) {
+      setClosing(false);
+      closeDispatched.current = false;
+      if (reopenAfterClose.current) {
+        reopenAfterClose.current = false;
+        requestToggle();
+      }
+    }
     if (!closing || !open) return;
     // Finish the shared panel exit before the host shrinks the native window.
     const panel =
@@ -73,7 +84,10 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
     void Promise.allSettled(
       animations.map((animation) => animation.finished),
     ).then(() => {
-      if (!cancelled) requestToggle();
+      if (!cancelled) {
+        closeDispatched.current = true;
+        requestToggle();
+      }
     });
     return () => {
       cancelled = true;
@@ -93,6 +107,11 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
     );
   const toggleChat = () => {
     if (closing) {
+      // Once sent, wait for the closed presentation before issuing its inverse.
+      if (closeDispatched.current) {
+        reopenAfterClose.current = !reopenAfterClose.current;
+        return;
+      }
       setClosing(false);
       setHold(undefined);
       return;

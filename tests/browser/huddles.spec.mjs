@@ -1905,6 +1905,7 @@ test("huddle panel finishes its exit before resizing and can reverse a pending c
   await page.evaluate(() => {
     window.heldHuddleExits = [];
     const original = Element.prototype.getAnimations;
+    window.huddleGetAnimations = original;
     Element.prototype.getAnimations = function (...args) {
       const animations = original.apply(this, args);
       if (this.matches("[data-panel-dock][data-closing]")) {
@@ -1929,6 +1930,7 @@ test("huddle panel finishes its exit before resizing and can reverse a pending c
     await expect(dock).toHaveAttribute("inert", "");
   } finally {
     await page.evaluate(() => {
+      Element.prototype.getAnimations = window.huddleGetAnimations;
       for (const animation of window.heldHuddleExits) {
         if (animation.playState !== "idle") animation.finish();
       }
@@ -1939,6 +1941,25 @@ test("huddle panel finishes its exit before resizing and can reverse a pending c
     .poll(async () => (await companion.boundingBox()).width)
     .toBeLessThan(width);
   await chat.press("Enter");
+  await expect(dock).toBeVisible();
+  // A dispatched close cannot be canceled locally: delay its host presentation.
+  const waiting = await page.evaluate(
+    () => window.huddleFixture.stats.layoutWaiting,
+  );
+  await page.evaluate(() => window.huddleFixture.holdLayout());
+  try {
+    await chat.click();
+    await expect
+      .poll(() => page.evaluate(() => window.huddleFixture.stats.layoutWaiting))
+      .toBe(waiting + 1);
+    await chat.click();
+  } finally {
+    await page.evaluate(() => window.huddleFixture.releaseLayout());
+  }
+  await expect
+    .poll(async () => (await companion.boundingBox()).width)
+    .toBe(width);
+  await expect(chat).toHaveAttribute("aria-expanded", "true");
   await expect(dock).toBeVisible();
   await chat.press("Enter");
   await expect(dock).toHaveCount(0);
@@ -1998,6 +2019,18 @@ test("portraits can be tossed within the stage and return home, with reduced mot
     await page.clock.runFor(16);
     const box = await portrait.boundingBox();
     frames.push(box);
+    if (i === 12) {
+      // Tapping a returning portrait must resume its spring, not snap home.
+      expect(Math.abs(box.x - home.x)).toBeGreaterThan(1);
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.clock.runFor(16);
+      const resumed = await portrait.boundingBox();
+      expect(Math.abs(resumed.x - home.x)).toBeGreaterThan(
+        Math.abs(box.x - home.x) / 2,
+      );
+    }
     if (!(await stage.locator("[data-avatar-moving]").count())) break;
   }
   expect(frames.some((box) => box.x > dragged.x + 5)).toBe(true);

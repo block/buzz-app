@@ -56,6 +56,15 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
       await portrait.elementHandle(),
     ),
   ).toBe(true);
+  await expect
+    .poll(async () => {
+      const heading = await name.boundingBox();
+      const image = await portrait.boundingBox();
+      return Math.abs(
+        heading.x + heading.width / 2 - image.x - image.width / 2,
+      );
+    })
+    .toBeLessThan(1);
   expect(
     await page.evaluate(() => window.profilesFixture.report.media),
   ).toContainEqual(["https://images.test/avatar.png", "small"]);

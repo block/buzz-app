@@ -54,8 +54,10 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
       },
     });
     let importSource = null;
+    let pendingPreview = null;
+    let importLocked = false;
+    let previewSequence = 0;
     const preview = {
-      token: "preview-one",
       source: "https://github.com/example/plugins",
       commit: "a".repeat(40),
       warnings: ["broken: Missing file: broken/plugin.js"],
@@ -105,64 +107,88 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
           command === "plugin_import_folder" ||
           command === "plugin_import_git"
         ) {
-          if (window.importDelay)
-            await new Promise((resolve) => {
-              window.resolveImport = resolve;
-            });
-          if (args?.repository === "bad")
-            throw new Error("Repository unavailable");
-          importSource =
-            command === "plugin_import_git"
-              ? { repository: args.repository, reference: args.reference }
-              : args?.upload
-                ? null
-                : { root: args?.directory ?? "/fixture/plugins" };
-          if (window.importCategory)
-            for (const candidate of preview.candidates) {
-              candidate.revision = `${candidate.path}-${window.importCategory}`;
-              candidate.manifest.discovery = {
-                category: window.importCategory,
-              };
-            }
-          return preview;
+          if (importLocked) throw new Error("Another import is in progress");
+          importLocked = true;
+          pendingPreview = null;
+          try {
+            if (window.importDelay)
+              await new Promise((resolve) => {
+                window.resolveImport = resolve;
+              });
+            if (args?.repository === "bad")
+              throw new Error("Repository unavailable");
+            importSource =
+              command === "plugin_import_git"
+                ? { repository: args.repository, reference: args.reference }
+                : args?.upload
+                  ? null
+                  : { root: args?.directory ?? "/fixture/plugins" };
+            if (window.importCategory)
+              for (const candidate of preview.candidates) {
+                candidate.revision = `${candidate.path}-${window.importCategory}`;
+                candidate.manifest.discovery = {
+                  category: window.importCategory,
+                };
+              }
+
+            pendingPreview = {
+              ...structuredClone(preview),
+              token: `preview-${++previewSequence}`,
+            };
+            return structuredClone(pendingPreview);
+          } finally {
+            importLocked = false;
+          }
         }
-        if (command === "plugin_import_discard") return;
+        if (command === "plugin_import_discard") {
+          if (importLocked) throw new Error("Another import is in progress");
+          if (pendingPreview?.token === args.token) pendingPreview = null;
+          return;
+        }
         // Agent storage starts empty; the app saves agent state there.
         if (command === "app_agent_state_load") return {};
         if (command === "app_agent_state_set") return;
         if (command === "plugin_import_install") {
-          if (window.importInstallError) {
-            await new Promise((resolve) => {
-              window.rejectInstall = resolve;
-            });
-            throw new Error(window.importInstallError);
-          }
-          const candidate = preview.candidates.find(
-            (p) => p.path === args.path,
-          );
-          const existing = plugins.find(
-            (p) => p.manifest.id === candidate.manifest.id,
-          );
-          if (existing) {
-            existing.manifest = structuredClone(candidate.manifest);
-            existing.previous = existing.revision;
-            existing.revision = candidate.revision;
-            existing.updateSource = importSource
-              ? { ...importSource, path: candidate.path }
-              : null;
-          } else
-            plugins.push({
-              ...candidate,
-              source: "external",
-              enabled: false,
-              previous: null,
-              reloadable: true,
-              updateSource: importSource
+          if (importLocked) throw new Error("Another import is in progress");
+          if (!pendingPreview || pendingPreview.token !== args.token)
+            throw new Error("This import preview expired");
+          importLocked = true;
+          try {
+            if (window.importInstallError) {
+              await new Promise((resolve) => {
+                window.rejectInstall = resolve;
+              });
+              throw new Error(window.importInstallError);
+            }
+            const candidate = pendingPreview.candidates.find(
+              (p) => p.path === args.path,
+            );
+            const existing = plugins.find(
+              (p) => p.manifest.id === candidate.manifest.id,
+            );
+            if (existing) {
+              existing.manifest = structuredClone(candidate.manifest);
+              existing.previous = existing.revision;
+              existing.revision = candidate.revision;
+              existing.updateSource = importSource
                 ? { ...importSource, path: candidate.path }
-                : null,
-              error: null,
-            });
-          return ready();
+                : null;
+            } else
+              plugins.push({
+                ...candidate,
+                source: "external",
+                enabled: false,
+                previous: null,
+                reloadable: true,
+                updateSource: importSource
+                  ? { ...importSource, path: candidate.path }
+                  : null,
+                error: null,
+              });
+            return ready();
+          } finally {
+            importLocked = false;
+          }
         }
         if (command === "plugin_reload") {
           const plugin = plugins.find((p) => p.manifest.id === args.id);
@@ -599,7 +625,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
         window.importCalls.find((c) => c.command === "plugin_import_install")
           .args,
     ),
-  ).toEqual({ token: "preview-one", path: "dist" });
+  ).toEqual({ token: expect.stringMatching(/^preview-\d+$/), path: "dist" });
   const enabled = pluginAction(page, "Example two");
   await expect(enabled).toHaveAccessibleName("Enable Example two");
   const row = button(page, "View Example two details");
@@ -1334,11 +1360,15 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   await expect(pluginAction(page, "Retry plugin")).toHaveAccessibleName(
     "Disable Retry plugin",
   );
-  expect(
-    await page.evaluate(() =>
-      window.importCalls
-        .filter((c) => c.command === "plugin_import_install")
-        .map((c) => c.args),
-    ),
-  ).toEqual(Array(2).fill({ token: "preview-one", path: "dist" }));
+  const installs = await page.evaluate(() =>
+    window.importCalls
+      .filter((c) => c.command === "plugin_import_install")
+      .map((c) => c.args),
+  );
+  expect(installs).toHaveLength(2);
+  expect(installs[0]).toEqual({
+    token: expect.stringMatching(/^preview-\d+$/),
+    path: "dist",
+  });
+  expect(installs[1]).toEqual(installs[0]);
 });

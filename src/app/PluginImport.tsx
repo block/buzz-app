@@ -11,6 +11,8 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useImperativeHandle,
+  type Ref,
   useRef,
   useState,
 } from "react";
@@ -32,7 +34,14 @@ function importLocation(
   return `${source}${separator}${path.replaceAll("/", separator)}`;
 }
 
+export type PluginPreviewControl = {
+  pause(): Promise<void>;
+  resume(): void;
+};
+
 export function PluginImport({
+  previewControl,
+  onBeforeOpen,
   plugins,
   catalog,
   busy,
@@ -47,6 +56,8 @@ export function PluginImport({
   onReviewHandled,
   returnFocus,
 }: {
+  previewControl?: Ref<PluginPreviewControl>;
+  onBeforeOpen?: () => Promise<void>;
   plugins: PluginManager;
   catalog: Catalog;
   busy: boolean;
@@ -152,12 +163,32 @@ export function PluginImport({
   const [enableOnInstall, setEnableOnInstall] = useState(true);
   const lifetime = useRef({ active: true, token: "" });
   const pending = useRef(false);
+  const inFlight = useRef<Promise<void>>(Promise.resolve());
+  const paused = useRef(false);
+  const [resumed, setResumed] = useState(0);
+  useImperativeHandle(previewControl, () => ({
+    async pause() {
+      // Stop new checks before waiting for an already-running native scan.
+      paused.current = true;
+      await inFlight.current;
+      if (lifetime.current.token) {
+        await imports?.discard(lifetime.current.token);
+        lifetime.current.token = "";
+      }
+      setPreview(null);
+    },
+    resume() {
+      paused.current = false;
+      setResumed((value) => value + 1);
+    },
+  }));
   const startSavedFolder = useEffectEvent(() => {
     if (
       imports &&
       savedSource &&
       "root" in savedSource &&
       !open &&
+      !paused.current &&
       !busy &&
       !discarding &&
       document.visibilityState !== "hidden"
@@ -184,6 +215,10 @@ export function PluginImport({
       if (current.token) void imports?.discard(current.token).catch(() => {});
     };
   }, [imports]);
+
+  useEffect(() => {
+    if (resumed) startSavedFolder();
+  }, [resumed]);
 
   const localFolder = !!savedSource && "root" in savedSource;
   useEffect(() => {
@@ -254,7 +289,16 @@ export function PluginImport({
   const blocked = busy || loading || discarding;
   if (!imports) return null;
 
-  async function load(
+  function load(
+    operation: () => Promise<ImportPreview | null>,
+    automatic = false,
+  ) {
+    if (paused.current || pending.current || blocked) return;
+    const work = loadPreview(operation, automatic);
+    inFlight.current = work;
+    return work;
+  }
+  async function loadPreview(
     operation: () => Promise<ImportPreview | null>,
     automatic = false,
   ) {
@@ -312,7 +356,10 @@ export function PluginImport({
         next?.candidates.length === 1 ? (next.candidates[0]?.path ?? "") : "",
       );
     } catch (reason) {
-      if (current.active) {
+      const contended =
+        (reason instanceof Error ? reason.message : String(reason)) ===
+        "Another import is in progress";
+      if (current.active && !(automatic && contended)) {
         showError(reason, automatic ? null : returnTo);
       }
     } finally {
@@ -397,7 +444,21 @@ export function PluginImport({
           : undefined
       }
       disabled={blocked}
-      onClick={() => setOpen(true)}
+      onClick={async () => {
+        if (blocked || pending.current) return;
+        pending.current = true;
+        setDiscarding(true);
+        try {
+          if (onBeforeOpen) await onBeforeOpen();
+          setOpen(true);
+        } catch (reason) {
+          showError(reason, trigger.current);
+          setOpen(true);
+        } finally {
+          pending.current = false;
+          setDiscarding(false);
+        }
+      }}
     >
       {updateId ? "Update" : "Add"}
     </Button>
@@ -634,7 +695,7 @@ export function PluginImport({
                         }
                         // Native keeps the prepared preview after install.
                         current.token = "";
-                        void imports.discard(preview.token).catch(() => {});
+                        await imports.discard(preview.token).catch(() => {});
                         if (!existing && enableOnInstall)
                           await plugins.change("enable", candidate.manifest.id);
                         if (!current.active) return;

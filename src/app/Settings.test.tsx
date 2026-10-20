@@ -2048,3 +2048,129 @@ it("offers Retry beside a failed installed revision without changing saved state
   act(fixture.publish);
   expect(within(pane).queryByRole("button", { name: /^Retry$/ })).toBeNull();
 });
+
+it.each([false, true])(
+  "hands the native preview slot from the pane to Add (scan pending: %s)",
+  async (holdScan) => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const visibility = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockReturnValue("visible");
+    let releaseScan!: () => void;
+    const scan = new Promise<void>((resolve) => {
+      releaseScan = resolve;
+    });
+    let locked = false;
+    let slot: import("../plugins/types").ImportPreview | null = null;
+    let sequence = 0;
+    const activeToken = () => {
+      if (!slot) throw new Error("Missing native preview");
+      return slot.token;
+    };
+    const fixture = reviewPluginFixture();
+    const folder = vi.fn(async (directory?: string) => {
+      if (locked) throw new Error("Another import is in progress");
+      locked = true;
+      slot = null;
+      try {
+        if (directory && holdScan) await scan;
+        slot = {
+          token: `preview-${++sequence}`,
+          source: directory ?? "/new",
+          commit: null,
+          warnings: [],
+          candidates: [
+            {
+              path: "dist",
+              revision: directory ? "current" : "new",
+              manifest: directory
+                ? { ...fixture.external.manifest, apiVersion: 1 as const }
+                : { id: "example.new", name: "New plugin", apiVersion: 1 },
+            },
+          ],
+        };
+        return slot;
+      } finally {
+        locked = false;
+      }
+    });
+    const discard = vi.fn(async (token: string) => {
+      if (locked) throw new Error("Another import is in progress");
+      if (slot?.token === token) slot = null;
+    });
+    const install = vi.fn(async (token: string) => {
+      if (locked) throw new Error("Another import is in progress");
+      if (!slot || slot.token !== token)
+        throw new Error("This import preview expired");
+      return true;
+    });
+    Object.assign(fixture.external, {
+      updateSource: { root: "/plugins", path: "dist" },
+    });
+    Object.assign(fixture.manager, {
+      imports: { folder, discard },
+      installImport: install,
+    });
+    try {
+      act(fixture.publish);
+      fireEvent.click(
+        screen.getByRole("button", { name: "View Zebra external details" }),
+      );
+      await act(async () => {});
+      expect(folder).toHaveBeenCalledExactlyOnceWith("/plugins");
+      fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+      if (holdScan) {
+        expect(
+          screen.queryByRole("dialog", { name: "Add a plugin" }),
+        ).toBeNull();
+        expect(screen.getByRole("button", { name: /^Add$/ })).toBeDisabled();
+      }
+      await act(async () => {
+        releaseScan();
+      });
+      const dialog = await screen.findByRole("dialog", {
+        name: "Add a plugin",
+      });
+      await act(async () => {
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: "Browse plugin folder" }),
+        );
+      });
+      expect(
+        within(dialog).getByRole("heading", { name: "Review plugin access" }),
+      ).toBeVisible();
+      const token = activeToken();
+      const calls = folder.mock.calls.length;
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+        fireEvent(window, new Event("focus"));
+        fireEvent(document, new Event("visibilitychange"));
+      });
+      expect(folder).toHaveBeenCalledTimes(calls);
+      expect(activeToken()).toBe(token);
+      expect(screen.queryByText(/Source folder unavailable/)).toBeNull();
+      fireEvent.click(
+        within(dialog).getByRole("switch", { name: "Enable plugin" }),
+      );
+      await act(async () => {
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: "Install plugin" }),
+        );
+      });
+      expect(install).toHaveBeenCalledExactlyOnceWith(token, "dist");
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Add a plugin" }),
+        ).toBeNull(),
+      );
+      // Closing Add resumes checks without a second pane or a second timer.
+      expect(folder.mock.calls.length).toBeGreaterThan(calls);
+    } finally {
+      releaseScan();
+      await act(async () => {});
+      cleanup();
+      visibility.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);

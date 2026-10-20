@@ -1760,3 +1760,46 @@ it("keeps Git checks explicit across timer ticks and window activation", async (
     vi.useRealTimers();
   }
 });
+
+it("skips a contended automatic check and retries without a source-unavailable error", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const folder = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Another import is in progress"))
+    .mockResolvedValue(rememberedPreview);
+  const manager = {
+    imports: { folder, discard: vi.fn(async () => {}) },
+  } as unknown as PluginManager;
+  const view = render(
+    <PluginImport
+      plugins={manager}
+      busy={false}
+      updateId={rememberedManifest.id}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            ...rememberedPlugin,
+            updateSource: { root: "/plugins", path: "dist" },
+          },
+        ],
+      }}
+    />,
+  );
+  try {
+    await act(async () => {});
+    expect(folder).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByText(
+        /Source folder unavailable|Another import is in progress/,
+      ),
+    ).toBeNull();
+    await act(async () => vi.advanceTimersByTime(5_000));
+    expect(folder).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Update" })).toBeEnabled();
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+});

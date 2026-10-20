@@ -49,7 +49,7 @@ import {
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
-import { PluginImport } from "./PluginImport";
+import { PluginImport, type PluginPreviewControl } from "./PluginImport";
 import { PluginReadme } from "./PluginReadme";
 import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
@@ -265,6 +265,7 @@ function PluginDetails({
   onUpdateAvailableChange,
   reviewRequested,
   onReviewHandled,
+  previewControl,
 }: {
   plugin: PluginInfo;
   failure: string | null;
@@ -281,6 +282,7 @@ function PluginDetails({
   onUpdateAvailableChange(available: boolean): void;
   reviewRequested: boolean;
   onReviewHandled(): void;
+  previewControl: RefObject<PluginPreviewControl | null>;
 }) {
   const accessReason = restrictedPlugin(plugin)
     ? accessMessage(plugin, access)
@@ -472,6 +474,7 @@ function PluginDetails({
       {plugin.source === "external" && plugins.imports && (
         <PluginImport
           key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
+          previewControl={previewControl}
           actionTarget={updateAvailable ? primaryActionTarget : actionTarget}
           onUpdateAvailableChange={(available) => {
             setUpdateAvailable(available);
@@ -767,6 +770,7 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const panePreview = useRef<PluginPreviewControl>(null);
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
     Record<string, { revision: string; available: boolean }>
@@ -1259,6 +1263,10 @@ export function Settings({
             {catalog ? (
               <PluginImport
                 actionTarget={pluginImportActions}
+                onBeforeOpen={async () => {
+                  await panePreview.current?.pause();
+                }}
+                onClosed={() => panePreview.current?.resume()}
                 plugins={plugins}
                 catalog={catalog}
                 busy={busy}
@@ -1373,6 +1381,7 @@ export function Settings({
           key={selectedPlugin.manifest.id}
           plugin={selectedPlugin}
           catalog={catalog}
+          previewControl={panePreview}
           authorizeGit={authorizePluginGit}
           reviewRequested={reviewPluginId === selectedPlugin.manifest.id}
           onReviewHandled={() => setReviewPluginId(undefined)}

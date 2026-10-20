@@ -883,7 +883,9 @@ external plugin cannot manage other installations or add CLI commands.
 Opening an installed plugin's details checks its remembered folder. A matching
 package shows Up to date in the pane. Local folders are checked every five seconds
 while the pane is open and the app is visible, and again when the app becomes active.
-Checks pause during review or pending management operations. A changed package offers
+Checks pause during review or pending management operations. Opening Add pauses
+the pane, waits for an in-flight source check and discards its preview before
+handing over the native preview slot. Checks resume when Add closes. A changed package offers
 Update, which opens access review before explicit confirmation. A known update takes
 the prominent action position in both the pane and its list row; Enable/Disable
 moves into their ellipsis menus while Update is available. The row retains the latest

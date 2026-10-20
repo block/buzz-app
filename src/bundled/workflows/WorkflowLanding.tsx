@@ -43,6 +43,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import { Header } from "../../shared/design-system/ui/Header";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { Select } from "../../shared/design-system/ui/Select";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
@@ -885,6 +886,7 @@ export function WorkflowLanding({
   capability,
   channels,
   filter = "",
+  onFilterChange,
   refreshRequest,
   saveReadback,
   viewer,
@@ -904,6 +906,7 @@ export function WorkflowLanding({
   onSelect: (key: string | undefined, name?: string) => void;
   /** Channel ID to show; every channel is still read. Empty shows all. */
   filter?: string;
+  onFilterChange?: (channelId: string) => void;
   refreshRequest: number;
   saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
   viewer: string;
@@ -959,8 +962,18 @@ export function WorkflowLanding({
     operationRefreshKey,
     saveReadback,
   );
-  const visible = filter
-    ? channels.filter((channel) => channel.id === filter)
+  const populated = channels
+    .filter((channel) => snapshots[channel.id]?.data.items.length)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  const shown =
+    onFilterChange && !populated.some((channel) => channel.id === filter)
+      ? ""
+      : filter;
+  useEffect(() => {
+    if (filter !== shown) onFilterChange?.(shown);
+  }, [filter, shown, onFilterChange]);
+  const visible = shown
+    ? channels.filter((channel) => channel.id === shown)
     : channels;
   const reading = visible.some(
     (channel) =>
@@ -997,6 +1010,27 @@ export function WorkflowLanding({
     );
   return (
     <>
+      {onFilterChange && (
+        <div className="workflow-page-filter">
+          <Select
+            label="Channel"
+            value={shown}
+            groups={[
+              {
+                label: "Channels with workflows",
+                options: [
+                  { value: "", label: "All workflows" },
+                  ...populated.map((channel) => ({
+                    value: channel.id,
+                    label: channel.name,
+                  })),
+                ],
+              },
+            ]}
+            onValueChange={onFilterChange}
+          />
+        </div>
+      )}
       <WorkflowDeletionNotices
         operations={operations}
         snapshots={snapshots}
@@ -1008,7 +1042,7 @@ export function WorkflowLanding({
       {settledEmpty ? (
         <EmptyState
           icon={<LightningIcon size="1.5rem" aria-hidden="true" />}
-          title={filter ? "No workflows in this channel yet." : "Workflows"}
+          title={shown ? "No workflows in this channel yet." : "Workflows"}
           description="Automations that keep your community moving."
           action={
             capability.availability.save && (

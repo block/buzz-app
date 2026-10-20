@@ -24,7 +24,6 @@ import {
   PanelHeader,
   PanelHeaderLabel,
 } from "../../shared/design-system/ui/PanelHeader";
-import { Select } from "../../shared/design-system/ui/Select";
 import { WorkflowChannelPicker } from "./WorkflowChannelPicker";
 import { WorkflowChannel } from "./WorkflowChannel";
 import { WorkflowWebhookSecrets } from "./WorkflowWebhookSecrets";
@@ -241,27 +240,6 @@ export function WorkflowCommunity({
                   </Button>
                 </div>
               )}
-              {eligible.length > 0 && (
-                <div className="workflow-page-filter">
-                  <Select
-                    label="Channel"
-                    value={shown}
-                    groups={[
-                      {
-                        label: "Community channels",
-                        options: [
-                          { value: "", label: "All workflows" },
-                          ...eligible.map((item) => ({
-                            value: item.id,
-                            label: item.name,
-                          })),
-                        ],
-                      },
-                    ]}
-                    onValueChange={setFilter}
-                  />
-                </div>
-              )}
               {channels.status === "ready" && !eligible.length && (
                 <div className="workflow-page-state">
                   <p>No channels are available in this community.</p>
@@ -275,6 +253,7 @@ export function WorkflowCommunity({
                   capability={capability}
                   channels={eligible}
                   filter={shown}
+                  onFilterChange={setFilter}
                   detailTarget={detailTarget}
                   selected={detail?.key}
                   onSelect={selectDetail}

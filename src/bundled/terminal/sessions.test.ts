@@ -264,3 +264,53 @@ it("restoring an ended panel waits for explicit start instead of spawning anothe
   h.read.resolve({ data: new Uint8Array(), exited: true });
   await h.sessions.dispose();
 });
+
+it("input wakes an idle read loop before the poll delay", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = harness();
+    h.read.resolve({ data: new Uint8Array(), exited: false });
+    h.sessions.ensure(context);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.bridge.read).toHaveBeenCalledTimes(1);
+    h.input("x");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.bridge.write).toHaveBeenCalledWith("owner", "pty", "x");
+    expect(h.bridge.read).toHaveBeenCalledTimes(2);
+    // Without input, idle polling keeps its delay.
+    await vi.advanceTimersByTimeAsync(39);
+    expect(h.bridge.read).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.bridge.read).toHaveBeenCalledTimes(3);
+    const disposing = h.sessions.dispose();
+    await vi.advanceTimersByTimeAsync(40);
+    await disposing;
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("input written during an in-flight read skips the following idle delay", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = harness();
+    const inFlight = deferred<{ data: Uint8Array; exited: boolean }>();
+    h.bridge.read.mockImplementationOnce(() => inFlight.promise);
+    h.read.resolve({ data: new Uint8Array(), exited: false });
+    h.sessions.ensure(context);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.bridge.read).toHaveBeenCalledTimes(1);
+    h.input("x");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.bridge.write).toHaveBeenCalledWith("owner", "pty", "x");
+    // The read started before the write returns its earlier, empty result.
+    inFlight.resolve({ data: new Uint8Array(), exited: false });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.bridge.read).toHaveBeenCalledTimes(2);
+    const disposing = h.sessions.dispose();
+    await vi.advanceTimersByTimeAsync(40);
+    await disposing;
+  } finally {
+    vi.useRealTimers();
+  }
+});

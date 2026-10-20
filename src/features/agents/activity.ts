@@ -384,6 +384,16 @@ export function createAgentActivity(
         local.source.dismissError?.({ scope: local.scope, agent, messageId });
         return true;
       },
+      /** Stops the turn a local request is in, scoped to this session and access. */
+      interrupt(agent: string, channelId: string, messageId: string) {
+        if (!local?.source.interrupt || closed || !canAccess(channelId))
+          return Promise.reject(new Error("This work can't be stopped here"));
+        return local.source.interrupt({
+          scope: local.scope,
+          agent,
+          messageId,
+        });
+      },
       workingSnapshot: () => workingChannels,
       subscribeWorking(listener: () => void) {
         if (closed) return () => {};

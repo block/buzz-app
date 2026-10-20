@@ -1,5 +1,10 @@
 import { pluginAction } from "./plugin-settings.mjs";
-import { openPage, pageChoices } from "./navigation.mjs";
+import {
+  closeSettings,
+  openPage,
+  pageChoice,
+  pageChoices,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ pluginFixtures: true });
@@ -70,13 +75,12 @@ test("launch opens Messages without exposing Home across responsive navigation, 
         },
       });
     await expect(messages(page)).toBeVisible();
-    const choices = await pageChoices(page);
-    await expect(
-      choices.getByRole("option", { name: "Messages", exact: true }),
-    ).toBeVisible();
-    await expect(
-      choices.getByRole("option", { name: "Home", exact: true }),
-    ).toHaveCount(0);
+    const choices = await pageChoices(page, "Messages");
+    await expect(pageChoice(choices, "Messages")).toBeVisible();
+    await page
+      .getByRole("combobox", { name: "Search Buzz", exact: true })
+      .fill("Home");
+    await expect(pageChoice(choices, "Home")).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect
       .poll(() =>
@@ -97,12 +101,15 @@ test("launch opens Messages without exposing Home across responsive navigation, 
   await expect(
     dialog.getByRole("group", { name: "This conversation" }),
   ).toBeVisible();
-  await expect(
-    dialog.getByRole("option", { name: "Messages", exact: true }),
-  ).toBeVisible();
-  await expect(
-    dialog.getByRole("option", { name: "Home", exact: true }),
-  ).toHaveCount(0);
+  await dialog
+    .getByRole("combobox", { name: "Search Buzz", exact: true })
+    .fill("Messages");
+  await expect(pageChoice(dialog, "Messages")).toBeVisible();
+  await dialog
+    .getByRole("combobox", { name: "Search Buzz", exact: true })
+    .fill("Home");
+  await expect(pageChoice(dialog, "Home")).toHaveCount(0);
+
   await page.keyboard.press("Escape");
   await openPage(page, "Workflows");
   await expect(
@@ -239,6 +246,8 @@ test("Channels stays enabled despite saved disabled settings and has no disable 
       .getByText("Required", { exact: true }),
   ).toBeVisible();
   await expect(pluginAction(page, "Channels")).toHaveCount(0);
+  // The workspace behind Settings is inert; close it before opening a page.
+  await closeSettings(page);
   await openPage(page, "Messages");
   await expect(messages(page)).toBeVisible();
 });
@@ -254,10 +263,8 @@ test("launch retains plugin-configuration recovery without Home", async ({
   await expect(
     page.getByRole("heading", { name: "Couldn’t open Buzz", exact: true }),
   ).toBeVisible();
-  const recoveryChoices = await pageChoices(page);
-  await expect(
-    recoveryChoices.getByRole("option", { name: "Home", exact: true }),
-  ).toHaveCount(0);
+  const recoveryChoices = await pageChoices(page, "Home");
+  await expect(pageChoice(recoveryChoices, "Home")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
@@ -268,10 +275,8 @@ test("launch retains plugin-configuration recovery without Home", async ({
   await page
     .getByRole("button", { name: "Back up & reset settings", exact: true })
     .click();
-  const recoveredChoices = await pageChoices(page);
-  await expect(
-    recoveredChoices.getByRole("option", { name: "Messages", exact: true }),
-  ).toBeVisible();
+  const recoveredChoices = await pageChoices(page, "Messages");
+  await expect(pageChoice(recoveredChoices, "Messages")).toBeVisible();
   await page.keyboard.press("Escape");
   await page
     .getByRole("button", { name: "Retry navigation", exact: true })

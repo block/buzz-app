@@ -1,6 +1,7 @@
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { AgentReads } from "../../features/agents/reads";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
   Agent,
   AgentHandle,
@@ -19,6 +20,7 @@ import {
   type AddedTool,
   addedKey,
   callSessionTool,
+  sessionHint,
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
@@ -91,6 +93,10 @@ type Active = {
   steering: Promise<void>;
   reply: Request;
   finished: boolean;
+  /** The owner stopped it, so its interruption is not reported. */
+  stopped?: boolean;
+  /** The one interrupt every Stop of this turn shares. */
+  stopping?: Promise<void>;
   /** What the turn runs on, once resolved; a differing pick queues a turn. */
   model?: string;
   effort?: string;
@@ -129,6 +135,8 @@ type Entry = {
   saved: Record<string, Saved>;
   /** Standalone turns now running, for their tool calls to find. */
   onces: Set<Once>;
+  /** Requests delivered and not yet taken into a turn, nor ended. */
+  waiting: Set<Request>;
 };
 type Server = {
   rpc: AppServer;
@@ -147,6 +155,10 @@ export type SavedConversation = {
   threadId: string;
   at?: number;
 };
+/** How long a stopped turn's shells are looked for, and how often. Codex hands
+ * one over about 50ms after the turn ends. */
+const STOP_LINGER_MS = 1_000;
+const LINGER_POLL_MS = 100;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -175,7 +187,7 @@ export class CodexRuntime {
     private readonly reads: (pubkey: string) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
     private readonly core: Agents["core"],
-    private readonly storage: Storage = localStorage,
+    private readonly storage: AgentStore = localStore(),
     private readonly resolveConfig: (raw: unknown) => Config = config,
     /** The tools plugins add to every thread now. */
     private readonly added: () => readonly AddedTool[] = () => [],
@@ -368,15 +380,14 @@ export class CodexRuntime {
       saved,
       lanes: new Map(),
       onces: new Set(),
+      waiting: new Set(),
     };
     this.entries.set(pubkey, entry);
     return entry;
   }
   private load(storageKey: string) {
     try {
-      const stored: unknown = JSON.parse(
-        this.storage.getItem(storageKey) ?? "{}",
-      );
+      const stored: unknown = JSON.parse(this.storage.get(storageKey) ?? "{}");
       if (stored && typeof stored === "object" && !Array.isArray(stored))
         return Object.fromEntries(
           Object.entries(stored).filter(
@@ -460,16 +471,16 @@ export class CodexRuntime {
     entry.saved[key] = saved;
     // Retain a bounded set of bindings; this never deletes Codex's own history.
     entry.saved = Object.fromEntries(Object.entries(entry.saved).slice(-200));
-    try {
-      this.storage.setItem(entry.storageKey, JSON.stringify(entry.saved));
-    } catch (error) {
-      this.status(
-        request.agent.pubkey,
-        key,
-        "Session could not be saved",
-        message(error),
+    void this.storage
+      .set(entry.storageKey, JSON.stringify(entry.saved))
+      .catch((error: unknown) =>
+        this.status(
+          request.agent.pubkey,
+          key,
+          "Session could not be saved",
+          message(error),
+        ),
       );
-    }
   }
   /** Dates the binding now, when it takes in a message or ends a turn. */
   private touch(request: Request, entry: Entry, key: string) {
@@ -562,6 +573,8 @@ export class CodexRuntime {
     const key = JSON.stringify([channelId, root ?? "channel"]);
     const text = textOf(request.event, agent.name);
     const entry = this.entry(agent.pubkey, request.scope);
+    delivery.interruptible?.(() => this.interrupt(entry, key, request));
+    entry.waiting.add(request);
     let lane = entry.lanes.get(key);
     if (!lane) {
       lane = { tail: entry.after, queued: 0 };
@@ -569,6 +582,11 @@ export class CodexRuntime {
     }
     if (lane.active) {
       const active = lane.active;
+      let queued = false;
+      const queue = () => {
+        queued = true;
+        this.start(request, text, key, lane, entry);
+      };
       // Startup and history reads stay ordered without holding Agents delivery.
       const accepted = active.steering.then(async () => {
         try {
@@ -581,16 +599,18 @@ export class CodexRuntime {
           // waits for this turn and runs as the next one. Everything after
           // it queues too until the lane drains: steering would run later
           // messages first. A turn keeps the posting policy it was admitted
-          // with, so a request under the other policy waits for it too.
+          // with, so a request under the other policy waits for it too. A
+          // turn the owner stopped takes nothing more.
           if (
             active.finished ||
+            active.stopped ||
             lane.queued ||
             request.conversation.topLevel !==
               active.reply.conversation.topLevel ||
             (request.model && request.model !== active.model) ||
             (request.effort && request.effort !== active.effort)
           ) {
-            this.start(request, text, key, lane, entry);
+            queue();
             return;
           }
           const context = await this.history(request, entry.abort.signal);
@@ -598,8 +618,8 @@ export class CodexRuntime {
             request.failActivity("Codex was stopped");
             return;
           }
-          if (active.finished) {
-            this.start(request, text, key, lane, entry);
+          if (active.finished || active.stopped) {
+            queue();
             return;
           }
           await active.rpc.request("turn/steer", {
@@ -611,6 +631,7 @@ export class CodexRuntime {
           });
           active.reply = request;
           active.requests.push(request);
+          entry.waiting.delete(request);
           this.touch(request, entry, key);
           this.acknowledgeActivity(active, request);
         } catch (error) {
@@ -620,7 +641,7 @@ export class CodexRuntime {
           }
           // A completion racing the request means this is the next ordinary turn.
           if (message(error) === "no active turn to steer") {
-            this.start(request, text, key, lane, entry);
+            queue();
             return;
           }
           request.failActivity(`Steering was not accepted: ${message(error)}`);
@@ -631,6 +652,8 @@ export class CodexRuntime {
           // The running turn never took this request in, so nothing else
           // answers it: let go of its working hold now, not at that turn's end.
           request.answered();
+        } finally {
+          if (!queued) entry.waiting.delete(request);
         }
       });
       active.steering = accepted.catch((error) =>
@@ -759,6 +782,37 @@ export class CodexRuntime {
     }
   }
 
+  /** Stops the turn in conversation `key` that took `request` in, once it
+   * started. A request still waiting for its turn is not stopped. Stops of
+   * one turn share its interrupt, so one that fails cannot undo another. */
+  private interrupt(entry: Entry, key: string, request: Request) {
+    if (entry.waiting.has(request))
+      return Promise.reject(
+        new Error("Codex has not started on this message yet"),
+      );
+    const active = entry.lanes.get(key)?.active;
+    if (!active?.requests.includes(request) || active.finished)
+      return Promise.resolve();
+    active.stopped = true;
+    active.stopping ??= (async () => {
+      try {
+        await active.ready;
+        if (active.finished || !active.threadId || !active.turnId) return;
+        await active.rpc.request("turn/interrupt", {
+          threadId: active.threadId,
+          turnId: active.turnId,
+        });
+      } catch (error) {
+        // A turn that did not stop still reports how it ends, and can be
+        // stopped again.
+        delete active.stopping;
+        if (!active.finished) active.stopped = false;
+        throw error;
+      }
+    })();
+    return active.stopping;
+  }
+
   /** A positive harness response transfers presentation, not execution or
    * success. Watches have no bubble; mentions in other threads keep theirs,
    * and a top-level chat is one scope. */
@@ -787,6 +841,7 @@ export class CodexRuntime {
       .catch(() => undefined)
       .then(async () => {
         current.queued--;
+        entry.waiting.delete(request);
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
           return;
@@ -808,8 +863,14 @@ export class CodexRuntime {
     const reads = this.reads(request.agent.pubkey);
     if (reads?.scope !== request.scope)
       throw new Error("The community changed");
-    return conversationHistory(request.event, request.conversation, (filters) =>
-      reads.read(filters, signal),
+    // A chat its owner is still creating has nothing earlier to read.
+    const starting = (await reads.channel(request.conversation.channelId))
+      ?.starting;
+    return conversationHistory(
+      request.event,
+      request.conversation,
+      (filters) =>
+        starting ? Promise.resolve([]) : reads.read(filters, signal),
     );
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
@@ -935,14 +996,17 @@ export class CodexRuntime {
       throw new Error("Buzz is not connected to this community");
     return listing;
   }
-  private async terminals(rpc: AppServer, threadId: string) {
+  /** Stops the thread's shells. `linger` keeps looking that long: a command
+   * a stopped turn was waiting on becomes a background terminal only just
+   * after the turn ends. */
+  private async terminals(rpc: AppServer, threadId: string, linger = 0) {
     // Interrupt acknowledges the turn, not the death of separately grouped shells.
     try {
       await rpc.request("thread/backgroundTerminals/clean", { threadId });
+      const until = Date.now() + linger;
       // clean acknowledges submission. Direct termination is the completion
       // barrier for any shells still reported by the server.
-      let cursor: string | null = null;
-      do {
+      for (let cursor: string | null = null; ; ) {
         const page: {
           data: { processId: string }[];
           nextCursor: string | null;
@@ -960,7 +1024,10 @@ export class CodexRuntime {
           ),
         );
         cursor = page.nextCursor;
-      } while (cursor);
+        if (cursor) continue;
+        if (Date.now() >= until) break;
+        await new Promise((resolve) => setTimeout(resolve, LINGER_POLL_MS));
+      }
       const remaining = await rpc.request<{ data: unknown[] }>(
         "thread/backgroundTerminals/list",
         { threadId, limit: 1 },
@@ -1173,7 +1240,11 @@ export class CodexRuntime {
       const status = await followed.completed;
       await active.steering;
       signal.throwIfAborted();
-      if (status === "interrupted") {
+      if (status === "interrupted" && active.stopped) {
+        for (const taken of active.requests) taken.answered();
+        await this.terminals(rpc, active.threadId, STOP_LINGER_MS);
+        this.status(agent.pubkey, key, "Stopped");
+      } else if (status === "interrupted") {
         for (const taken of active.requests)
           taken.failActivity("Codex’s turn was interrupted");
         await this.terminals(rpc, active.threadId);
@@ -1288,15 +1359,19 @@ function follow(
     },
   };
 }
-/** The Buzz tools, with those plugins add, that a new thread gets. */
+/** The Buzz tools, with those plugins add, that a new thread gets. Codex
+ * keeps a deferred tool from the model until its tool search finds it. Every
+ * model in Codex's catalog has tool search (supports_search_tool); one
+ * without it would not see deferred tools. */
 const dynamicTools = (added: readonly AddedTool[]) => [
   {
     type: "namespace",
     name: "buzz",
-    description: "Read and act in Buzz as this agent.",
-    tools: sessionTools(added).map((tool) => ({
+    description: sessionHint(added),
+    tools: sessionTools(added).map(({ load, ...tool }) => ({
       type: "function",
       ...tool,
+      ...(load === "search" ? { deferLoading: true } : {}),
     })),
   },
 ];

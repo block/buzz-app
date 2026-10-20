@@ -108,6 +108,16 @@ export type LinkRenderer = Readonly<{
   className?: string | undefined;
   component: ComponentType<{ url: string }>;
 }>;
+/** Presentation for a fenced code block, chosen by its info-string language.
+ * The host retains the frame and copy action; failure or removal restores the code. */
+export type CodeBlockRenderer = Readonly<{
+  id: string;
+  title: string;
+  matches(language: string): boolean;
+  component: ComponentType<{ code: string; language: string }>;
+  /** A control the host places before its copy action, such as expanding the block. */
+  action?: ComponentType<{ code: string; language: string }> | undefined;
+}>;
 export type ContributionReader<T> = Readonly<{
   snapshot(): readonly Contribution<T>[];
   subscribe(listener: () => void): () => void;
@@ -187,6 +197,7 @@ export type ConversationExtensions = Readonly<{
   inline: ContributionReader<InlineRenderer>;
   completions?: ContributionReader<ComposerCompletion>;
   links?: ContributionReader<LinkRenderer>;
+  codeBlocks?: ContributionReader<CodeBlockRenderer>;
 }>;
 
 /** Immutable host-issued evidence, scoped to one live editor observation. */
@@ -281,5 +292,10 @@ export type PageTabsProps = {
   /** The page's own first tab. `open` shows a joined conversation in a host tab. */
   children(
     open: (target: PageTabTarget, options?: PageTabOptions) => boolean,
+    close: (target: PageTabTarget) => boolean,
+    isOpen: (target: PageTabTarget) => boolean,
   ): ReactNode;
+  /** `false` keeps showing a tab out of its channel visit, so the page decides
+   * what is read; tabs visit as Channels tabs do by default. */
+  visits?: boolean | undefined;
 };

@@ -18,6 +18,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
+import { PageTabs } from "../channels/PageTabs";
 import { InboxPage } from "./InboxPage";
 import { ChannelPreview } from "./ChannelPreview";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
@@ -286,6 +287,15 @@ function fixture(
     clearCache: owner.clearCache,
   };
   const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
+  const host = {
+    relay,
+    navigation: { open },
+    panels: {
+      subscribe: () => () => {},
+      snapshot: () => emptyPanels,
+      resolve: () => undefined,
+    },
+  } as unknown as ConversationHostServices;
   return {
     owner,
     relay,
@@ -375,17 +385,8 @@ function fixture(
     view: (
       <StrictMode>
         <InboxPage
-          host={
-            {
-              relay,
-              navigation: { open },
-              panels: {
-                subscribe: () => () => {},
-                snapshot: () => emptyPanels,
-                resolve: () => undefined,
-              },
-            } as unknown as ConversationHostServices
-          }
+          host={host}
+          tabs={(props) => <PageTabs {...props} host={host} />}
           relay={relay}
           navigator={{ open } as unknown as Navigation}
         />

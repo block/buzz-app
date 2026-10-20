@@ -83,6 +83,7 @@ export function AppearanceSettings({
         <InlineHeader title="Interface" />
         <SettingsGroup>
           <PreferenceRow
+            id="setting-mode"
             title="Color mode"
             trailing={
               <ThemePicker

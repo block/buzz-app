@@ -9,6 +9,50 @@ import { restoreRecordedTools } from "../../bundled/codex/recorded-tools";
 
 afterEach(cleanup);
 
+it.each([
+  ["failed", "Failed"],
+  ["terminated", "Terminated"],
+])("shows %s script status before opening its output", (status, label) => {
+  const turns = codexTurns(
+    [
+      {
+        id: "t",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        items: [],
+      },
+    ],
+    { channelId: "channel" },
+  );
+  turns[0]?.items.push({
+    id: "script",
+    toolCallId: "script",
+    at: 1000,
+    type: "tool",
+    title: "exec",
+    kind: "execute",
+    status,
+    input: "throw new Error('failed')",
+    output: `Script ${status}\nOutput:\nError`,
+    paths: [],
+    diffs: [],
+    truncated: false,
+  });
+  render(
+    <ActivityTranscript
+      transcript={{ turns, unknownThread: 0 }}
+      agentName="Sol"
+      state={() => "ended"}
+    />,
+  );
+  expect(screen.getByText(label, { exact: true })).toBeVisible();
+  expect(
+    screen.getByText("exec", { exact: true }).closest("details"),
+  ).not.toHaveAttribute("open");
+});
+
 it("shows the recorded tool name, highlights tool calls, and keeps script text intact without raw details", async () => {
   const turns = codexTurns(
     [

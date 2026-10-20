@@ -17,13 +17,26 @@ const result = (id: string) => ({
     { type: "image", image_url: "data:image/png;base64,AA==" },
   ],
 });
-const record = (type: string, payload: unknown) =>
-  JSON.stringify({ type, timestamp: "2026-10-20T12:00:00Z", payload });
+const record = (
+  type: string,
+  payload: unknown,
+  timestamp = "2026-10-20T12:00:00Z",
+) => JSON.stringify({ type, timestamp, payload });
 const start = (turn_id = "turn") =>
   record("event_msg", { type: "task_started", turn_id });
 const completed = (id: string, turn_id = "turn") =>
   record("event_msg", { type: "item_completed", turn_id, item: { id } });
-function turns() {
+function turns(
+  native: Record<string, unknown> = {
+    type: "dynamicToolCall",
+    id: "nested",
+    namespace: "buzz",
+    tool: "read",
+    arguments: { limit: 2 },
+    status: "completed",
+    contentItems: [{ type: "inputText", text: "two messages" }],
+  },
+) {
   return codexTurns(
     [
       {
@@ -38,15 +51,7 @@ function turns() {
             id: "prompt",
             content: [{ type: "text", text: "read messages" }],
           },
-          {
-            type: "dynamicToolCall",
-            id: "nested",
-            namespace: "buzz",
-            tool: "read",
-            arguments: { limit: 2 },
-            status: "completed",
-            contentItems: [{ type: "inputText", text: "two messages" }],
-          },
+          native,
           { type: "agentMessage", id: "reply", text: "Done" },
         ],
       },
@@ -133,6 +138,92 @@ it.each(["string", "blocks"])(
   },
 );
 
+it.each([
+  ["Script failed", "failed"],
+  ["Script terminated", "terminated"],
+  ["Unrecognized wrapper", "unknown"],
+])("preserves the %s wrapper status", (header, status) => {
+  const mapped = turns();
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      record("response_item", call("script")),
+      record("response_item", {
+        type: "custom_tool_call_output",
+        call_id: "script",
+        output: [
+          {
+            type: "input_text",
+            text: `${header}\nWall time: 0.1 seconds\nOutput:\nError`,
+          },
+        ],
+      }),
+    ].join("\n"),
+  );
+  expect(mapped[0]?.items[0]).toMatchObject({ id: "script", status });
+});
+
+it.each([
+  ["earlier", Date.parse("2026-10-20T12:00:01Z"), false],
+  ["missing", undefined, false],
+  ["same", Date.parse("2026-10-20T12:00:02Z"), true],
+  ["later", Date.parse("2026-10-20T12:00:03Z"), true],
+])(
+  "uses the %s command start time to avoid attributing a delayed completion to another script",
+  (_, startedAt, nested) => {
+    const mapped = turns({
+      type: "commandExecution",
+      id: "nested",
+      command: "sleep 1; false",
+      status: "failed",
+      aggregatedOutput: "exit 1",
+    });
+    restoreRecordedTools(
+      mapped,
+      [
+        start(),
+        completed("prompt"),
+        record("response_item", call("a")),
+        record("response_item", result("a")),
+        record("response_item", call("b"), "2026-10-20T12:00:02Z"),
+        record(
+          "event_msg",
+          {
+            type: "item_completed",
+            turn_id: "turn",
+            started_at_ms: startedAt,
+            item: { id: "nested", type: "CommandExecution" },
+          },
+          "2026-10-20T12:00:04Z",
+        ),
+        record("response_item", result("b"), "2026-10-20T12:00:05Z"),
+      ].join("\n"),
+    );
+    const script = mapped[0]?.items.find((item) => item.id === "b");
+    if (nested) {
+      expect(script).toMatchObject({
+        children: [{ id: "nested", status: "failed" }],
+      });
+      expect(mapped[0]?.items.map((item) => item.id)).toEqual([
+        "prompt",
+        "a",
+        "b",
+        "reply",
+      ]);
+    } else {
+      expect(script).not.toHaveProperty("children");
+      expect(mapped[0]?.items.map((item) => item.id)).toEqual([
+        "prompt",
+        "a",
+        "b",
+        "nested",
+        "reply",
+      ]);
+    }
+  },
+);
+
 it("keeps concurrent calls independent and does not associate a later turn with an unfinished script", () => {
   const mapped = turns();
   restoreRecordedTools(
@@ -214,7 +305,7 @@ it("retains yielded exec and wait inputs and outputs, including the explicit cel
   const finished = {
     type: "function_call_output",
     call_id: "wait",
-    output: "Script completed: final result",
+    output: "Script completed\nOutput:\nfinal result",
   };
   restoreRecordedTools(
     mapped,

@@ -43,6 +43,7 @@ const STATUS: Record<string, string> = {
   pending: "Pending",
   in_progress: "Running",
   failed: "Failed",
+  terminated: "Terminated",
   yielded: "Yielded",
 };
 const line = (text: string) => text.split("\n").find(Boolean)?.trim() ?? "";

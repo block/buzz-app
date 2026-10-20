@@ -12,6 +12,11 @@ const object = (value: unknown): Json | undefined =>
     ? (value as Json)
     : undefined;
 const str = (value: unknown) => (typeof value === "string" ? value : "");
+const SCRIPT_STATUS: Record<string, string> = {
+  "Script completed": "completed",
+  "Script failed": "failed",
+  "Script terminated": "terminated",
+};
 const display = (value: unknown) =>
   typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? "");
 const output = (value: unknown) =>
@@ -76,8 +81,16 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       );
       const parent =
         !draft.ambiguous && parents.length === 1 ? parents[0]?.[0] : undefined;
+      // A shell process can outlive its exec. Its completion timestamp alone
+      // cannot establish ownership by the currently active script.
+      const command = object(payload.item)?.type === "CommandExecution";
+      const startedAt = payload.started_at_ms;
       if (
         parent &&
+        (!command ||
+          (typeof startedAt === "number" &&
+            Number.isFinite(startedAt) &&
+            startedAt >= parent.at)) &&
         (item.type === "tool" || (item.type === "message" && item.posted))
       ) {
         parent.children ??= [];
@@ -97,9 +110,10 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       item.output = output(payload.output);
       // A yielded exec has returned a cell handle, not its final result.
       // Its separately recorded wait calls retain that handle and output.
-      item.status = item.output.startsWith("Script running with cell ID ")
+      const header = item.output.split("\n", 1)[0] ?? "";
+      item.status = header.startsWith("Script running with cell ID ")
         ? "yielded"
-        : "completed";
+        : (SCRIPT_STATUS[header] ?? "unknown");
       // Yielding returns before inner calls finish. Their later events cannot
       // safely be assigned to a subsequently active script in this turn.
       const owner = drafts.get(found.owner);

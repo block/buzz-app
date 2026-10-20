@@ -805,18 +805,23 @@ it("Archive from the composer focuses the successor's tab while its message cann
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
   (await screen.findByRole("textbox")).focus();
   const release = h.holdHistory("room");
-  await archiveOpened(h);
-  await waitFor(() => expect(rows()).toHaveLength(1));
-  expect(rows()[0]).toHaveTextContent("Please review this");
-  await waitFor(() =>
-    expect(document.activeElement).toBe(
-      screen
-        .getAllByRole("tablist")
-        .find((item) => item.getAttribute("aria-label") !== "Inbox tabs")
-        ?.querySelector('[role="tab"][aria-selected="true"]'),
-    ),
-  );
-  release();
+  try {
+    await archiveOpened(h);
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(rows()[0]).toHaveTextContent("Please review this");
+    expect(rows()[0]).toHaveAttribute("data-selected");
+    expect(sideTabs()).toHaveLength(1);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen
+          .getAllByRole("tablist")
+          .find((item) => item.getAttribute("aria-label") !== "Inbox tabs")
+          ?.querySelector('[role="tab"][aria-selected="true"]'),
+      ),
+    );
+  } finally {
+    await act(async () => release());
+  }
 });
 
 it("the Archive shortcut advances from an ordinary-reply visit after switching to Mentions", async () => {

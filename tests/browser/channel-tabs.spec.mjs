@@ -32,7 +32,7 @@ test("middle-click closes a content tab without selecting it", async ({
   );
   await main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Session: beta" })
+    .getByRole("link", { name: "Open Chat: Beta" })
     .click();
   const workspace = page.locator("[data-panel-workspace]");
   const beta = workspace.getByRole("tab", { name: "Beta", exact: true });
@@ -82,7 +82,7 @@ test("Open in channel takes a content tab to its conversation with its composer 
   );
   await main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Session: beta" })
+    .getByRole("link", { name: "Open Chat: Beta" })
     .click();
   await page
     .locator("[data-panel-workspace]")
@@ -122,7 +122,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   );
   const chip = main
     .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link", { name: "Open Session: beta" });
+    .getByRole("link", { name: "Open Chat: Beta" });
   await expect(chip).toBeVisible();
   await main
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
@@ -337,7 +337,7 @@ test.describe("crowded content tabs", () => {
     );
     const row = main.locator(`[data-message-id="${link.id}"]`);
     await row
-      .getByRole("link", { name: "Open Session: beta", exact: true })
+      .getByRole("link", { name: "Open Chat: Beta", exact: true })
       .click();
     const workspace = page.locator("[data-panel-workspace]");
     const list = workspace.getByRole("tablist", { name: "Panel tabs" });
@@ -365,7 +365,7 @@ test.describe("crowded content tabs", () => {
     };
     for (const id of ids.slice(2))
       await row
-        .getByRole("link", { name: `Open Session: ${id}`, exact: true })
+        .getByRole("link", { name: `Open Chat: ${id}`, exact: true })
         .click();
     await expect(tabs).toHaveCount(6);
     await settlePanelMotion(page);

@@ -59,7 +59,7 @@ test("a Solo chat link card opens the same authorized conversation in the channe
   );
   const row = destination.locator(`[data-message-id="${link.id}"]`);
   const chip = row.getByRole("link", {
-    name: `Open Session: ${title}`,
+    name: `Open Chat: ${title}`,
     exact: true,
   });
   await expect(chip).toBeVisible();
@@ -387,7 +387,7 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
   const links = app.report.publications.filter(({ event }) => event.kind === 9);
   expect(links).toHaveLength(1);
   expect(links[0].event.id).toBe(failedId);
-  expect(links[0].event.content).toBe("[Session: beta](buzz://channel/beta)");
+  expect(links[0].event.content).toBe("[Chat: Beta](buzz://channel/beta)");
   expect(links[0].event.tags).toContainEqual(["h", "alpha"]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
   // Reload proves real app wiring to this account/community's device-local history.

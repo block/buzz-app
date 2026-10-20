@@ -572,7 +572,7 @@ test.describe("personal recipients", () => {
       await page
         .locator(`[data-message-id="${link.id}"]`)
         .getByRole("link", {
-          name: `Open Session: ${other.slice(0, 8)}`,
+          name: "Open Chat: Beta",
           exact: true,
         })
         .click();

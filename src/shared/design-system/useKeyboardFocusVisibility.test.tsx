@@ -7,6 +7,17 @@ afterEach(() => {
   delete document.documentElement.dataset.keyboardNavigation;
 });
 
+it("shows keyboard focus when F8 or Shift+F8 follows a pointer action", () => {
+  const hook = renderHook(() => useKeyboardFocusVisibility());
+  for (const shiftKey of [false, true]) {
+    fireEvent.pointerDown(document.body);
+    expect(document.documentElement.dataset.keyboardNavigation).toBeUndefined();
+    fireEvent.keyDown(document.body, { key: "F8", shiftKey });
+    expect(document.documentElement.dataset.keyboardNavigation).toBe("");
+  }
+  hook.unmount();
+});
+
 it("treats Ctrl+Tab after a pointer as keyboard navigation, but not other Ctrl chords", () => {
   const root = document.documentElement;
   const hook = renderHook(() => useKeyboardFocusVisibility());

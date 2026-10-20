@@ -389,6 +389,14 @@ Switching retains mounted content, scroll position, and drafts. Each tab has a
 close control; middle-click or Delete on a tab and Escape in its content close
 that tab. Middle-clicking an inactive tab preserves the editor's focus. Closing
 the selected tab selects a neighbor, and closing the last tab dismisses the pane.
+Cmd+Shift+M on macOS or Ctrl+Shift+M on Windows/Linux focuses the writable
+composer in the focused pane. Outside a pane it uses the exposed main conversation.
+F8 and Shift+F8 switch between visible pane tab strips; arrow keys move between
+tabs and Enter selects one. A Solo main pane has no tab strip, so F8 focuses its
+composer. Covered targets, hidden tabs and collapsed panes are skipped. These shortcuts preserve
+drafts and selection and yield to modals and editor-owned key handling.
+The shortcut labels reuse “Message” and “Focus” from block/buzz's profile actions
+and appearance settings. F6 retains its notification focus behavior.
 On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the selected
 closable tab in the focused pane. If focus is in the permanent main conversation,
 it closes the selected tab in the visible side pane instead. A selected closable

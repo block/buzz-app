@@ -2,10 +2,11 @@ import { isTauri } from "@tauri-apps/api/core";
 import { isApplePlatform } from "../features/shortcuts/format";
 import type { ShortcutsService } from "../features/shortcuts/service";
 import type { Appearance } from "../shared/theme/service";
+import { composerFocusTarget, paneFocusTarget } from "./focus-navigation";
 
 /** Host actions use the same binding/dispatch rules as plugins, without fake plugin ownership. */
 // Settings presents the host category in functional sections: navigation,
-// interface sizing, search/settings, then app reload.
+// interface sizing, search/settings, tab/focus actions, then app reload.
 export const HOST_SHORTCUT_ORDER = {
   home: 10,
   navigationBack: 20,
@@ -18,6 +19,7 @@ export const HOST_SHORTCUT_ORDER = {
   nextTab: 82,
   previousTab: 84,
   close: 85,
+  focus: 86,
   reload: 90,
 } as const;
 
@@ -28,6 +30,24 @@ export function registerAppShortcuts(
   ready: boolean,
 ) {
   const remove = [
+    shortcuts.registerHost({
+      id: "focus-composer",
+      title: "Message",
+      binding: { key: "m", mod: true, shift: true },
+      order: HOST_SHORTCUT_ORDER.focus,
+      allowInEditable: true,
+      when: () => !!composerFocusTarget(),
+      run: () => composerFocusTarget()?.focus({ preventScroll: true }),
+    }),
+    shortcuts.registerHost({
+      id: "focus-pane",
+      title: "Focus",
+      binding: [{ key: "F8" }, { key: "F8", shift: true }],
+      order: HOST_SHORTCUT_ORDER.focus,
+      allowInEditable: true,
+      when: () => !!paneFocusTarget(),
+      run: () => paneFocusTarget()?.focus({ preventScroll: true }),
+    }),
     shortcuts.registerHost({
       id: "settings",
       title: "Open Settings",

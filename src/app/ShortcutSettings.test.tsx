@@ -289,6 +289,8 @@ it("presents actual host registrations in navigation, interface sizing, search/s
       "Search Buzz",
       "Search this conversation",
       "Open Settings",
+      "Message",
+      "Focus",
       "Reload Buzz",
     ]);
   } finally {

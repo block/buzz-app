@@ -293,3 +293,174 @@ it("Win32 Ctrl+Tab and Ctrl+Shift+Tab request the next and previous tab, even wh
     await h.dispose();
   }
 });
+
+it.each(["MacIntel", "Win32", "Linux x86_64"])(
+  "%s focuses the current pane's composer and tab strip with exact modifiers",
+  async (platform) => {
+    vi.mocked(isTauri).mockReturnValue(false);
+    const h = harness(platform);
+    // jsdom has no layout. Browser journeys verify visibility and native focus.
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+      {},
+    ] as unknown as DOMRectList);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return new DOMRect(
+          this.closest("[data-panel-workspace]") ? 200 : 0,
+          0,
+          100,
+          100,
+        );
+      },
+    );
+    const notification = document.createElement("div");
+    let cover: HTMLElement | undefined;
+    Object.defineProperty(document, "elementsFromPoint", {
+      configurable: true,
+      value: (x: number) => {
+        const pane = document.querySelector(
+          x < 200 ? "[data-main-workspace]" : "[data-panel-workspace]",
+        );
+        return [notification, cover, pane].filter(Boolean);
+      },
+    });
+    try {
+      render(
+        <>
+          <button type="button">Outside</button>
+          <main id="main-content">
+            <div data-main-workspace="">
+              <button type="button" role="tab" aria-selected="true">
+                Main tab
+              </button>
+              <div inert>
+                <input data-tab-focus="" aria-label="Retained draft" />
+              </div>
+              <input
+                data-tab-focus=""
+                aria-label="Main draft"
+                defaultValue="Keep this draft"
+              />
+            </div>
+            <div data-panel-workspace="">
+              <button type="button" role="tab" aria-selected="true">
+                Side tab
+              </button>
+              <input aria-label="Tool filter" />
+              <input
+                data-tab-focus=""
+                aria-label="Side draft"
+                defaultValue="Side draft"
+              />
+            </div>
+            <div hidden data-panel-workspace="">
+              <button type="button" role="tab" aria-selected="true">
+                Hidden tab
+              </button>
+              <input data-tab-focus="" aria-label="Hidden draft" />
+            </div>
+          </main>
+        </>,
+      );
+      const main = screen.getByRole("textbox", {
+        name: "Main draft",
+      }) as HTMLInputElement;
+      const side = screen.getByRole("textbox", { name: "Side draft" });
+      const outside = screen.getByRole("button", { name: "Outside" });
+      const mainTab = screen.getByRole("tab", { name: "Main tab" });
+      const sideTab = screen.getByRole("tab", { name: "Side tab" });
+      const apple = platform === "MacIntel";
+      const chord = {
+        key: "m",
+        ctrlKey: !apple,
+        metaKey: apple,
+        shiftKey: true,
+      };
+      main.focus();
+      main.setSelectionRange(2, 6);
+      outside.focus();
+      for (const extra of [
+        { shiftKey: false },
+        { altKey: true },
+        { ctrlKey: true, metaKey: true },
+        { ctrlKey: apple, metaKey: !apple },
+        { isComposing: true },
+      ]) {
+        expect(press(outside, { ...chord, ...extra }).defaultPrevented).toBe(
+          false,
+        );
+        expect(outside).toHaveFocus();
+      }
+      expect(press(outside, chord).defaultPrevented).toBe(true);
+      expect(main).toHaveFocus();
+      expect(main.selectionStart).toBe(2);
+      expect(main.selectionEnd).toBe(6);
+      expect(main).toHaveValue("Keep this draft");
+      const paneKey = { key: "F8", ctrlKey: false };
+      press(main, paneKey);
+      expect(sideTab).toHaveFocus();
+      press(sideTab, chord);
+      expect(side).toHaveFocus();
+      press(side, { ...paneKey, shiftKey: true });
+      expect(mainTab).toHaveFocus();
+      press(mainTab, chord);
+      expect(main).toHaveFocus();
+
+      // A tool's filter is not a composer; disabled editors and hidden tabs
+      // must not redirect the request to the main pane.
+      side.setAttribute("aria-disabled", "true");
+      const filter = screen.getByRole("textbox", { name: "Tool filter" });
+      filter.focus();
+      expect(press(filter, chord).defaultPrevented).toBe(false);
+      expect(filter).toHaveFocus();
+      side.removeAttribute("aria-disabled");
+      side.setAttribute("readonly", "");
+      expect(press(filter, chord).defaultPrevented).toBe(false);
+      expect(filter).toHaveFocus();
+
+      // Companion cards and drawer content share the dock without owning a
+      // workspace. Their cover must block main targets beneath notifications.
+      const sidePane = side.closest<HTMLElement>("[data-panel-workspace]");
+      if (!sidePane) throw new Error("Missing side workspace");
+      const dock = document.createElement("div");
+      dock.dataset.panelDock = "";
+      sidePane.before(dock);
+      dock.append(sidePane);
+      sidePane.hidden = true;
+      for (const tag of ["aside", "div"]) {
+        cover = document.createElement(tag);
+        const button = document.createElement("button");
+        cover.append(button);
+        dock.append(cover);
+        for (const start of [outside, button]) {
+          start.focus();
+          expect(press(start, chord).defaultPrevented).toBe(false);
+          expect(press(start, paneKey).defaultPrevented).toBe(false);
+          expect(start).toHaveFocus();
+          expect(main).toHaveValue("Keep this draft");
+        }
+        cover.remove();
+      }
+      cover = undefined;
+      sidePane.hidden = false;
+      side.removeAttribute("readonly");
+      filter.focus();
+      expect(press(filter, chord).defaultPrevented).toBe(true);
+      expect(side).toHaveFocus();
+      filter.focus();
+
+      const modal = document.createElement("div");
+      modal.setAttribute("aria-modal", "true");
+      document.body.append(modal);
+      expect(press(filter, chord).defaultPrevented).toBe(false);
+      expect(press(filter, paneKey).defaultPrevented).toBe(false);
+      expect(filter).toHaveFocus();
+      modal.remove();
+      h.remove();
+      expect(press(filter, paneKey).defaultPrevented).toBe(false);
+    } finally {
+      Reflect.deleteProperty(document, "elementsFromPoint");
+      await h.dispose();
+    }
+  },
+);

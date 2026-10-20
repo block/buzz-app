@@ -7,6 +7,7 @@ const KEYBOARD_NAVIGATION_KEYS = new Set([
   "ArrowRight",
   "ArrowUp",
   "End",
+  "F8",
   "Home",
   "PageDown",
   "PageUp",

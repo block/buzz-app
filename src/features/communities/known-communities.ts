@@ -22,10 +22,10 @@ export type SyncState = {
    * a sign-in as another account must not read this set as that account's. */
   account?: string;
 };
-/** What the one sync owner reports while it runs, for the rail's indicator.
+/** What the one sync owner reports while it runs, on the snapshot.
  * `pending` counts queued operations, including ones parked after a refusal.
  * `unavailable` is a service without the known-communities routes: the queue
- * waits for the next sign-in and the rail shows nothing. */
+ * waits quietly for the next sign-in. */
 export type SyncStatus = {
   phase:
     | "signed-out"

@@ -153,7 +153,8 @@ devices of one account can disagree about a community, and an add queued while
 the service was unreachable can likewise land after another device's removal.
 Joining and leaving never wait for sync. The `knownCommunities` capability
 exposes the record, the queue and these writes to one owner, the bundled
-Builderlab plugin, and carries that owner's report back as `syncStatus` on the snapshot.
+Builderlab plugin, and carries that owner's report back as `syncStatus` on the
+snapshot.
 
 The list is account-scoped, but this state is still kept under the device
 record's viewer key (`buzz-client.v1:<viewer>`), where it outlives a
@@ -331,7 +332,8 @@ unsaveable addresses dropped and counted, rows of another shape and a success
 without a JSON object body answered as an invalid response, every named refusal
 in JSON and in the framework's plain text, unnamed client errors returned as
 rejections on every route while timeouts, rate limits and server errors remain
-failures, a 401 that ends the session and an unreachable service. `sync.test.ts` covers the owner under a
+failures, a 401 that ends the session and an unreachable service.
+`sync.test.ts` covers the owner under a
 controlled clock: sign-in and a loading record, the complete list merged once
 per sign-in and an intent queued while it is in flight, the never-uploaded
 rule on a later sign-in and a membership removed elsewhere kept and never
@@ -346,7 +348,8 @@ and the quiet 404 on the list or an upload for a service without the routes,
 addresses the list left out, a parked add replaced by the removal that then
 goes out and re-sent on the next sign-in, a parked refusal reported again
 after a failed upload beside it or another parked intent clears, both
-lost-acknowledgement orders against a set service, an abandoned upload on sign-out that keeps the queue, a
+lost-acknowledgement orders against a set service, an abandoned upload on
+sign-out that keeps the queue, a
 session ended
 by the service and disposal. `index.test.tsx` runs the real plugin wiring
 through to the list request under the signed-in credential, and that an

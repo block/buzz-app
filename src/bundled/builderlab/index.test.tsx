@@ -197,6 +197,7 @@ it.each([undefined, false, true])(
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    provideKnownCommunities(root, community.viewer);
     const agents = provideAgents(root, community);
     try {
       runtime.reconcile([
@@ -246,11 +247,13 @@ it.each([undefined, false, true])(
             signal: new AbortController().signal,
           }),
         ).rejects.toThrow("coming soon");
+        // The known-communities sync follows sign-in, not the remote agents gate.
         expect(
           native.invoke.mock.calls.filter(
             ([command, input]) =>
               command === "plugin_host_request" &&
-              !/\/(exchange|me)$/.test(input.request.url),
+              !/\/(exchange|me)$/.test(input.request.url) &&
+              !input.request.url.includes("/known-communities/"),
           ),
         ).toHaveLength(0);
         expect(localStorage.length).toBe(0);
@@ -335,6 +338,7 @@ it.each([
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    provideKnownCommunities(root, community.viewer);
     provideAgents(root, community);
     const backupCalls = () =>
       native.invoke.mock.calls.filter(([command]) =>

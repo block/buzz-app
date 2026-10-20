@@ -404,7 +404,8 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       };
       outside.focus();
       for (const extra of [
-        { shiftKey: !chord.shiftKey },
+        // Command+Shift+L is the Mac side-pane action, covered below.
+        ...(apple ? [] : [{ shiftKey: !chord.shiftKey }]),
         { altKey: !chord.altKey },
         { ctrlKey: !chord.ctrlKey },
         { metaKey: !chord.metaKey },
@@ -428,16 +429,17 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       expect(terminalKey.defaultPrevented).toBe(false);
       expect(terminal).toHaveFocus();
       const paneKey = apple
-        ? { key: "ArrowRight", ctrlKey: false, metaKey: true, altKey: true }
+        ? { key: "L", ctrlKey: false, metaKey: true, shiftKey: true }
         : { key: "F8", ctrlKey: false };
       const mainKey = apple
-        ? { ...paneKey, key: "ArrowLeft" }
+        ? { ...paneKey, key: "H" }
         : { ...paneKey, shiftKey: true };
       main.focus();
       if (apple) {
         // Command+arrows retain native line navigation while typing.
         expect(
-          press(main, { ...paneKey, altKey: false }).defaultPrevented,
+          press(main, { key: "ArrowRight", ctrlKey: false, metaKey: true })
+            .defaultPrevented,
         ).toBe(false);
         expect(main).toHaveFocus();
       }

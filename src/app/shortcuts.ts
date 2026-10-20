@@ -51,9 +51,9 @@ export function registerAppShortcuts(
         title: pane ? `Focus ${pane} pane` : "Focus",
         binding: pane
           ? {
-              key: { main: "ArrowLeft", side: "ArrowRight" }[pane],
+              key: { main: "h", side: "l" }[pane],
               mod: true,
-              alt: true,
+              shift: true,
             }
           : [{ key: "F8" }, { key: "F8", shift: true }],
         order: HOST_SHORTCUT_ORDER.focus,

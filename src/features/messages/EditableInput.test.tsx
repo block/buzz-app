@@ -144,26 +144,6 @@ function mount(
   };
 }
 
-it.each(["ArrowLeft", "ArrowRight"])(
-  "yields Command+Option+%s to host navigation without collapsing the selection",
-  (key) => {
-    const h = mount("abcdef");
-    act(() => h.input.setSelectionRange(1, 4));
-    const event = new KeyboardEvent("keydown", {
-      key,
-      keyCode: key === "ArrowLeft" ? 37 : 39,
-      altKey: true,
-      metaKey: true,
-      bubbles: true,
-      cancelable: true,
-    });
-    act(() => h.input.dispatchEvent(event));
-    expect(event.defaultPrevented).toBe(false);
-    expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([1, 4]);
-    expect(h.markdown()).toBe("abcdef");
-  },
-);
-
 it("refuses a closing-colon conversion when its literal undo source exceeds the limit", () => {
   const h = mount(":-1", { maxLength: 3 });
   act(() =>

@@ -17,8 +17,8 @@ async function focusKeys(page) {
     apple,
     mod: apple ? "Meta" : "Control",
     composer: apple ? "Meta+l" : "Control+l",
-    main: apple ? "Meta+Alt+ArrowLeft" : "Shift+F8",
-    side: apple ? "Meta+Alt+ArrowRight" : "F8",
+    main: apple ? "Meta+Shift+h" : "Shift+F8",
+    side: apple ? "Meta+Shift+l" : "F8",
   };
 }
 

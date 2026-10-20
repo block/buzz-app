@@ -1,7 +1,7 @@
 //! Files a plugin that declares `host.files` reads, and directories it
 //! resolves, with the user's own access, the same on every platform: no
 //! program such as `base64` or `pwd` has to be on the computer for it.
-use crate::host_process::expand_home;
+use crate::host_process::{expand_home, under_home};
 use crate::{with_manager, PluginManager};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -11,6 +11,9 @@ const MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
 /// How long a read may take, as on a stalled network share, before its caller
 /// is answered; the blocked read itself cannot be stopped.
 const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// Reads and directory resolutions under way at once, including ones stuck
+/// past their timeout, so they cannot take every blocking thread the app has.
+static UNDER_WAY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
 
 async fn granted(
     manager: tauri::State<'_, PluginManager>,
@@ -28,20 +31,28 @@ async fn granted(
     }
 }
 
-async fn blocking<T: Send + 'static>(
+/// Runs `work` on a blocking thread, holding its place until it ends.
+async fn bounded<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| error.to_string())?
+    let place = UNDER_WAY
+        .try_acquire()
+        .map_err(|_| "Too many files are being read; try again soon".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _place = place;
+        work()
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
-/// `path`, absolute or `~/…`, or else relative to `cwd`, which is one of those.
+/// `path`, absolute or `~/…` (`~\…` too on Windows), or else relative to
+/// `cwd`, which is one of those.
 fn locate(path: &str, cwd: Option<&str>) -> Result<PathBuf, String> {
     if path.is_empty() || path.contains('\0') {
         return Err(format!("Cannot read {path}"));
     }
-    if path == "~" || path.starts_with("~/") || Path::new(path).is_absolute() {
+    if path == "~" || under_home(path).is_some() || Path::new(path).is_absolute() {
         return expand_home(path);
     }
     let cwd = cwd.ok_or_else(|| format!("Cannot read {path} without a directory"))?;
@@ -65,6 +76,7 @@ fn read(path: &str, cwd: Option<&str>) -> Result<Vec<u8>, String> {
     options.read(true);
     // Opening a FIFO without a writer would block until one came; without
     // waiting, it opens and then fails the check below. A file reads alike.
+    // Windows counts pipes and devices as files; the timeout bounds those.
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
     let file = options.open(&full).map_err(failed)?;
@@ -91,7 +103,7 @@ fn read(path: &str, cwd: Option<&str>) -> Result<Vec<u8>, String> {
 /// links, created if missing.
 fn directory(path: &str) -> Result<String, String> {
     let full = expand_home(path)?;
-    std::fs::create_dir_all(&full).map_err(|_| format!("Could not create {path}"))?;
+    std::fs::create_dir_all(&full).map_err(|error| format!("Could not create {path}: {error}"))?;
     // `dunce` keeps Windows paths in their ordinary `C:\…` form, which agents
     // and the programs they run expect, rather than `\\?\C:\…`.
     let resolved = dunce::canonicalize(&full).map_err(|_| format!("Could not find {path}"))?;
@@ -113,7 +125,7 @@ pub(crate) async fn plugin_host_read_file(
 ) -> Result<tauri::ipc::Response, String> {
     granted(manager, id, revision).await?;
     let late = format!("Reading {path} took too long");
-    tokio::time::timeout(READ_TIMEOUT, blocking(move || read(&path, cwd.as_deref())))
+    tokio::time::timeout(READ_TIMEOUT, bounded(move || read(&path, cwd.as_deref())))
         .await
         .map_err(|_| late)?
         .map(tauri::ipc::Response::new)
@@ -129,7 +141,7 @@ pub(crate) async fn plugin_host_resolve_directory(
     path: String,
 ) -> Result<String, String> {
     granted(manager, id, revision).await?;
-    blocking(move || directory(&path)).await
+    bounded(move || directory(&path)).await
 }
 
 #[cfg(test)]
@@ -160,6 +172,11 @@ mod tests {
             assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
             assert!(read("fifo", Some(cwd)).unwrap_err().contains("not a file"));
         }
+        #[cfg(windows)]
+        assert_eq!(
+            locate(r"~\a.bin", None).unwrap(),
+            expand_home("~").unwrap().join("a.bin")
+        );
         assert!(read("a.bin", None).is_err());
         assert!(read("", Some(cwd)).is_err());
         assert!(read("a.bin", Some("relative")).is_err());

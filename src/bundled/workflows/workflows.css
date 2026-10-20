@@ -59,7 +59,10 @@
 .workflow-channel-group > .buzz-content-header {
   margin-bottom: var(--space-2);
   overflow-wrap: anywhere;
-  padding-inline: calc(var(--space-4) + 1px);
+  padding-inline: calc(var(--space-2) + 1px);
+}
+.workflow-channel-group > .buzz-settings-group {
+  --settings-group-inset: var(--space-2);
 }
 .workflow-card {
   padding-block: var(--space-2);

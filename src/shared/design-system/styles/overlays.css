@@ -481,6 +481,9 @@
     }
   }
   @media (max-width: 30rem) {
+    .buzz-dialog {
+      --dialog-padding: var(--space-4);
+    }
     .buzz-dialog-actions > .buzz-button {
       flex: 1 0 auto;
     }

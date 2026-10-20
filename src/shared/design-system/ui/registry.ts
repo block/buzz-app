@@ -183,7 +183,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "AlertDialog",
     purpose: "Confirm a consequential action before continuing.",
     behavior:
-      "Centered 25rem confirmation with 2rem insets, a grouped title/description header and secondary Close control. Optional body content precedes actions; header-only confirmations omit the body. Base UI owns modal focus and alert-dialog semantics.",
+      "Centered 25rem confirmation with 2rem insets (1rem at viewport widths up to 30rem), a grouped title/description header and secondary Close control. Optional body content precedes actions; header-only confirmations omit the body. Base UI owns modal focus and alert-dialog semantics.",
     variants: ["default", "pending"],
     status: "core",
     collection: "components",
@@ -209,7 +209,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Dialog",
     purpose: "A shared modal frame with title, content and actions.",
     behavior:
-      "Shared title/description header and secondary Close; 2rem insets and a fixed 1rem minimum gutter above footer buttons outside scrolling content. Compact dialogs center; task modals start 8rem from the top. Base UI owns focus, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
+      "Shared title/description header and secondary Close; 2rem insets (1rem at viewport widths up to 30rem) and a fixed 1rem minimum gutter above footer buttons outside scrolling content. Compact dialogs center; task modals start 8rem from the top. Base UI owns focus, default outside dismissal and transition presence; shared motion tokens animate entry and exit. The host can preserve native titlebar dragging through the backdrop.",
     variants: [
       "compact (25rem)",
       "default (40rem)",

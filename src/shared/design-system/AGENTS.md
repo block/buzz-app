@@ -22,7 +22,9 @@ For dialogs, use `Dialog` / `AlertDialog` and the guide's
 [modal composition](DESIGN.md#modal-composition). Put introductory copy in
 `description`, not a separate body paragraph. Omit an absent body; use shared
 size, inset, footer-gutter, Close, and motion recipes rather than local overrides.
-The standard viewer specimens show these compositions.
+Shared insets are 2rem, reducing to 1rem at viewport widths up to 30rem; keep
+this responsive rule in the shared recipe. The standard viewer specimens show
+these compositions.
 
 ## Preserve interaction contracts
 

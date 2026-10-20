@@ -149,8 +149,8 @@ policy rather than silently changing semantics during visual adoption.
 Compose title and optional useful description together in the shared header
 heading, with Close aligned beside them. This lockup applies to both `Dialog`
 and `AlertDialog`; descriptions are not separate body paragraphs. Follow with
-optional task content, then actions. Without task content, keep one `2rem` gap
-between the header and actions. Pass introductory copy through `description` and
+optional task content, then actions. Without task content, use the shared inset
+as the gap between the header and actions. Pass introductory copy through `description` and
 omit `children` when there is no task body; do not add an empty wrapper. Keep field
 help, status, warnings, and section-specific explanations with their content.
 Put the completion action in the `actions` footer, with Cancel/Close before it. Keep other
@@ -168,7 +168,10 @@ close button, body padding, or footer with feature-specific markup.
 | Settings or another sectioned modal | `navigation={{ label, content }}` | Shared flush sidebar and detail scrollports; stacked navigation at narrow widths |
 | Side inspector that must be modal | `placement="right"` | Same modal labelling, focus, and dismissal contracts |
 
-Dialogs and modals share a `2rem` inset and secondary (`subtle`) Close button.
+Dialogs and modals share a `2rem` inset, reduced to `1rem` at viewport widths
+of `30rem` or less, and a secondary (`subtle`) Close button. The responsive inset
+applies to headers, bodies, actions, and navigation panes; search keeps its
+documented field framing.
 Use `size="compact"` for a short form or confirmation: a centered `25rem` maximum
 width. Standard modals use `40rem`, wide modals `55rem`, and expanded modals `72rem`.
 Modals start `8rem` from the viewport top, with a `1rem` bottom/side gutter and
@@ -1138,7 +1141,8 @@ or explicit-save actions inside the content, rather than a modal-wide Save foote
 Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
 title. Group the title and optional description with `--space-2` (8px), beside
 the close button so its hit area does not enlarge the text gap. The body owns
-vertical padding matching the dialog's horizontal padding: `--space-8` (`2rem`). Do not add an outer flex gap
+vertical padding matching the dialog's horizontal `--dialog-padding`: `2rem`,
+or `1rem` at viewport widths up to `30rem`. Do not add an outer flex gap
 on top of that body padding. Footers following body content also reserve a fixed
 `--space-4` (`1rem`) top gutter outside the scrollport, so scrolling content never
 meets the buttons directly. Header-only confirmations retain their header-to-action

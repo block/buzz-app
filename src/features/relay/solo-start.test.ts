@@ -1,6 +1,6 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
-import { PublishRejected } from "./outbox";
+import { PublishNotSent, PublishRejected } from "./outbox";
 import { ChatNotStarted } from "./channel-writes";
 import { ReadError } from "./errors";
 import { subscribeRelayTraffic } from "./live";
@@ -56,6 +56,7 @@ function setup(id: string, deliveryTimeoutMs?: number) {
   let refuse = false;
   let loseAck = false;
   let unreachable = false;
+  let paused = false;
   let stored: RelayEvent | undefined;
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -83,6 +84,10 @@ function setup(id: string, deliveryTimeoutMs?: number) {
     if (event.kind !== 9007) return;
     await held;
     if (refuse) throw new PublishRejected("blocked: not allowed");
+    if (paused) {
+      paused = false;
+      throw new PublishNotSent("Relay requests paused; retry in 1s");
+    }
     if (unreachable) throw new Error("connection lost");
     stored = event;
     created = [
@@ -144,6 +149,10 @@ function setup(id: string, deliveryTimeoutMs?: number) {
     },
     unreachable() {
       unreachable = true;
+    },
+    /** This device holds the next create back, as during the API cooldown. */
+    pauseOnce() {
+      paused = true;
     },
     /** Live subscriptions asked for the chat's events. */
     liveReads(channelId: string) {
@@ -282,6 +291,26 @@ async function settle(ready: Promise<void>) {
   expect(settled).toBe(true);
   await vi.advanceTimersByTimeAsync(0);
 }
+
+it("a create this device held back for the relay's cooldown goes again, and the chat starts", async () => {
+  const id = "79797979-7979-4979-8979-797979797979";
+  const h = setup(id);
+  await h.established();
+  h.pauseOnce();
+  const { create, ready } = h.session.channelWrites.start(id, "Start", [
+    h.agent.pubkey,
+  ]);
+  const message = h.session.messages.send(id, "@Agent go", [h.agent.pubkey]);
+  h.release();
+  await settle(ready);
+  await expect(ready).resolves.toBeUndefined();
+  const sent = h.publish.mock.calls.map(([event]) => event.id);
+  expect(sent.filter((event) => event === create)).toHaveLength(2);
+  expect(sent.at(-1)).toBe(message);
+  expect(
+    h.session.channels.list().channels.some((channel) => channel.id === id),
+  ).toBe(true);
+});
 
 it("a lost create acknowledgment resends the same create, and the chat starts", async () => {
   const id = "77777777-7777-4777-8777-777777777777";

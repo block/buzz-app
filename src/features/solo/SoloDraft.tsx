@@ -8,7 +8,12 @@ import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GearIcon } from "../../shared/design-system/icons";
-import { loadChatSetup, parseChatSetup, type ChatSetup } from "./workspace";
+import {
+  defaultsRevision,
+  loadChatSetup,
+  parseChatSetup,
+  type ChatSetup,
+} from "./workspace";
 import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
@@ -144,22 +149,13 @@ export function SoloDraft({
   // A workspace's defaults load as soon as it is picked, so starting a chat
   // in it does not wait for them. A start uses them up, or loads them again
   // if that load failed or the saved defaults have changed since.
-  const revision = () => {
-    const kit = session.channelKit.snapshot();
-    return kit.status === "ready"
-      ? kit.entries.map((entry) => entry.eventId).join()
-      : "";
-  };
   const workspace = useRef<{
     id: string;
-    setup: Promise<{ setup: ChatSetup; revision: string }>;
+    setup: ReturnType<typeof loadChatSetup>;
   }>(undefined);
   useEffect(() => {
     if (!selectedProject || workspace.current?.id === selectedProject) return;
-    const setup = loadChatSetup(session, selectedProject).then((setup) => ({
-      setup,
-      revision: revision(),
-    }));
+    const setup = loadChatSetup(session, selectedProject);
     setup.catch(() => {});
     workspace.current = { id: selectedProject, setup };
   });
@@ -205,11 +201,14 @@ export function SoloDraft({
           ? await workspace.current.setup.catch(() => undefined)
           : undefined;
       workspace.current = undefined;
-      let setup = !project
-        ? undefined
-        : loaded?.revision === revision()
-          ? loaded.setup
-          : await loadChatSetup(session, project);
+      let setup: ChatSetup | undefined;
+      if (project) {
+        const kit = session.channelKit.snapshot();
+        setup =
+          kit.status === "ready" && loaded?.revision === defaultsRevision(kit)
+            ? loaded
+            : await loadChatSetup(session, project);
+      }
       if (!mounted.current) return;
       if (canvas !== undefined)
         setup = parseChatSetup({

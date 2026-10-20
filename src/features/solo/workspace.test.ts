@@ -116,11 +116,53 @@ it("loads exact project defaults and blocks when the catalog fails", async () =>
     projectId: "work",
     canvas: "Work here",
     agents: [],
+    revision: "head",
   });
   f.kit.status = "error";
   await expect(loadChatSetup(f.session, "work")).rejects.toThrow(
     "defaults couldn’t load",
   );
+});
+it("names the saved defaults it read, even when they change while agents load", async () => {
+  const f = fixture();
+  const pubkey = "a".repeat(64);
+  const template = (canvas: string) => ({
+    type: "template",
+    id: "",
+    canvas,
+    agents: [pubkey],
+    teamIds: [],
+  });
+  const id = await projectTemplateId("work");
+  f.kit.entries = [
+    { eventId: "first", record: { value: { ...template("Old"), id } } },
+  ];
+  Object.assign(f.session, {
+    agentChoices: {
+      // Workspace settings save new defaults while the agents load.
+      refresh: vi.fn(async () => {
+        f.kit.entries = [
+          { eventId: "second", record: { value: { ...template("New"), id } } },
+        ];
+      }),
+      snapshot: () => ({
+        templates: {
+          status: "ready",
+          complete: true,
+          identities: [{ pubkey, name: "Agent", managed: false }],
+        },
+        archives: { status: "ready", archived: [] },
+      }),
+    },
+    channels: {
+      refreshList: vi.fn(),
+      list: () => ({ status: "ready", channels: [{ members: [pubkey] }] }),
+    },
+  });
+  expect(await loadChatSetup(f.session, "work")).toMatchObject({
+    canvas: "Old",
+    revision: "first",
+  });
 });
 it.each([
   "incomplete",

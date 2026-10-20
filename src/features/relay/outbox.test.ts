@@ -1,6 +1,7 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import {
+  PublishNotSent,
   PublishRejected,
   createOutbox,
   type OutboxStorage,
@@ -173,6 +174,18 @@ it("a relay echo before publish ACK wins over a late failure and never duplicate
   expect(h.session.channels.window("c").rows).toMatchObject([
     { id, delivery: "seen" },
   ]);
+});
+it("a send held back before the relay saw it fails without being refused", async () => {
+  const h = setup();
+  await h.open();
+  h.send();
+  await h.signNext();
+  const publication = h.publications.shift();
+  assert.exists(publication);
+  publication.reject(new PublishNotSent("Relay requests paused; retry in 1s"));
+  await flush();
+  expect(h.outbox.snapshot()[0]).toMatchObject({ delivery: "failed" });
+  expect(h.outbox.snapshot()[0]?.refused).toBeUndefined();
 });
 it("failed sends remain retryable, and retry republishes exactly the same signed event", async () => {
   const h = setup();

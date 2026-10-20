@@ -41,7 +41,7 @@ export type OutgoingEvent = Readonly<{
   delivery: Delivery;
   error?: string | undefined;
   /** The relay refused the last attempt, rather than it failing on this
-   * device or going unanswered. */
+   * device, being asked to wait, or going unanswered. */
   refused?: true | undefined;
 }>;
 export interface Outbox {
@@ -87,6 +87,10 @@ export class PublishRejected extends Error {
     super(message);
   }
 }
+
+/** Proven not delivered, but not refused: the request never left this
+ * device, or the relay asked it to wait. Retrying may succeed. */
+export class PublishNotSent extends PublishRejected {}
 
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
@@ -570,7 +574,9 @@ export function createOutbox(
           ...latest,
           delivery,
           refused:
-            delivery === "failed" && error instanceof PublishRejected
+            delivery === "failed" &&
+            error instanceof PublishRejected &&
+            !(error instanceof PublishNotSent)
               ? true
               : undefined,
           error: awaitsReceipt(latest.event)

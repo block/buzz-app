@@ -640,16 +640,19 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
           const actions = [...node.parentElement.querySelectorAll("button")]
             .filter((button) => button !== node)
             .map((button) => button.getBoundingClientRect());
-          const range = document.createRange();
-          range.selectNodeContents(description);
-          return [...range.getClientRects()].every((rect) =>
+          // Ellipsis clips glyphs outside this box; Range rects include those hidden glyphs.
+          const rect = description.getBoundingClientRect();
+          const style = getComputedStyle(description);
+          return (
+            style.textOverflow === "ellipsis" &&
+            style.overflow === "hidden" &&
             actions.every(
               (action) =>
                 rect.right <= action.left ||
                 rect.left >= action.right ||
                 rect.bottom <= action.top ||
                 rect.top >= action.bottom,
-            ),
+            )
           );
         }),
       )
@@ -764,10 +767,10 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await expect(button(page, "Update")).toHaveCount(0);
   const pane = page.getByRole("complementary", { name: "Example two details" });
   const paneActions = pane.getByRole("button", {
-    name: /^(Disable|Roll back)$/,
+    name: /^Disable$/,
   });
-  await expect(paneActions).toHaveCount(2);
-  await expect(paneActions).toHaveText(["Disable", "Roll back"]);
+  await expect(paneActions).toHaveCount(1);
+  await expect(paneActions).toHaveText(["Disable"]);
   await expect(button(page, "Delete")).toHaveCount(0);
   for (const [width, theme] of [
     [1440, "light"],
@@ -811,7 +814,23 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
     await menu.screenshot({
       path: info.outputPath(`plugin-menu-${theme}-${width}.png`),
     });
-    await page.keyboard.press("Escape");
+    await menu
+      .getByRole("menuitem", { name: "Roll back", exact: true })
+      .click();
+    const rollback = page.getByRole("alertdialog", {
+      name: "Roll back Example two?",
+    });
+    const cancel = rollback.getByRole("button", {
+      name: "Cancel",
+      exact: true,
+    });
+    await expect(cancel).toBeFocused();
+    await expect(
+      rollback.getByRole("button", { name: "Roll back", exact: true }),
+    ).toBeVisible();
+    await cancel.click();
+    await expect(rollback).toHaveCount(0);
+    await expect(paneActions).toHaveText(["Disable"]);
     await expect(button(page, "More plugin actions")).toBeFocused();
   }
   await page.setViewportSize({ width: 1440, height: 950 });

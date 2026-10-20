@@ -351,6 +351,7 @@ it("shows the viewer's emoji but hides authoring without upload or kind-30030 wr
   };
   const view = store.connect(vi.fn(), [9]);
   await settled();
+  expect(screen.queryByRole("button", { name: /Remove/ })).toBeNull();
   expect(screen.queryByText("Add emoji")).toBeNull();
   expect(screen.queryByText(UPLOAD_FAILURES.unavailable)).toBeNull();
   view.unmount();
@@ -456,11 +457,4 @@ it("searches the read-only community collection, clears the query and handles no
   expect(search).toHaveFocus();
   expect(screen.getAllByRole("listitem")).toHaveLength(2);
   expect(store.stored).toHaveLength(2);
-});
-it("hides removal when kind-30030 writing is unavailable", async () => {
-  const store = relayStore();
-  store.stored.push(emojiSet());
-  store.connect(null, [9]);
-  expect(await screen.findByRole("img", { name: ":mine:" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: /Remove/ })).toBeNull();
 });

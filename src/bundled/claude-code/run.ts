@@ -17,6 +17,8 @@ export const claudeRun = (
   AgentType<Config>,
   | "models"
   | "sessionActions"
+  | "sessionState"
+  | "session"
   | "run"
   | "runOnce"
   | "timeoutMs"
@@ -24,6 +26,8 @@ export const claudeRun = (
 > => ({
   models: (agent) => runtime.models(agent.pubkey),
   sessionActions: (agent) => config(agent.config).scope,
+  sessionState: (agent, place) => runtime.sessionState(agent, place),
+  session: (agent, place, action) => runtime.session(agent, place, action),
   run: async (delivery) => {
     await ready?.(delivery.signal);
     return runtime.run(delivery);

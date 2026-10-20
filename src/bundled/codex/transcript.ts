@@ -124,6 +124,8 @@ function item(
     }
     case "plan":
       return { id, at, type: "status", text: str(value.text) };
+    case "contextCompaction":
+      return { id, at, type: "status", text: "Context compaction" };
     case "commandExecution":
       return tool({
         title: shellCommand(str(value.command)),

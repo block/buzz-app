@@ -124,6 +124,7 @@ export class ClaudeProcess {
   /** Its live background tasks that are activity, as Claude last listed them. */
   private tasks = 0;
   /** Called when it was active and is no longer. */
+  onActivity: (() => void) | undefined;
   onQuiet?: () => void;
   private requests = 0;
   /** Control requests awaiting Claude's answer, by request id. */
@@ -341,7 +342,7 @@ export class ClaudeProcess {
   /** Stops the running turn, as the SDK's `interrupt` does; messages folded
    * into it end with it. The turn then settles as Claude ends it. */
   async interrupt() {
-    if (!this.alive || !this.busy) return;
+    if (!this.alive || !this.active) return;
     this.stopping = true;
     const answer = await this.call({ subtype: "interrupt" });
     if (answer.subtype === "error" && this.alive) {
@@ -489,6 +490,8 @@ export class ClaudeProcess {
       const active = this.active;
       this.working = message.state !== "idle";
       if (!this.working && this.pending) this.done();
+      if (!this.active) this.stopping = false;
+      if (active !== this.active) this.onActivity?.();
       if (active && !this.active) this.onQuiet?.();
       return;
     }
@@ -502,6 +505,8 @@ export class ClaudeProcess {
       this.tasks = message.tasks.filter(
         (task) => !(task as Message | null)?.ambient,
       ).length;
+      if (!this.active) this.stopping = false;
+      if (active !== this.active) this.onActivity?.();
       if (active && !this.active) this.onQuiet?.();
       return;
     }

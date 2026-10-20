@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -8,7 +9,7 @@ import {
 } from "react";
 import type { ChannelQueries } from "../relay/contracts";
 import type { ChannelChoice } from "./attention";
-import type { Agents, Models } from "./service";
+import type { Agents, Models, SessionPlace, SessionState } from "./service";
 
 const noSubscribe = () => () => {};
 const none = () => undefined;
@@ -56,6 +57,49 @@ export function useAgent(agents: Agents | undefined, pubkey: string) {
     none,
   );
   return agent ? { agent, type } : undefined;
+}
+
+const EMPTY_TYPES = [] as const;
+const noTypes = () => EMPTY_TYPES;
+
+/** The state of the targeted harness sessions. Any compaction blocks a send
+ * to those targets; ordinary active turns keep accepting steering. */
+export function useSessionState(
+  agents: Agents | undefined,
+  pubkeys: readonly string[],
+  place: SessionPlace,
+): SessionState {
+  const types = useSyncExternalStore(
+    agents?.subscribe ?? noSubscribe,
+    agents?.types ?? noTypes,
+    noTypes,
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const stops = [
+        agents?.subscribe(listener),
+        ...types.map((type) => type.sessions?.subscribe(listener)),
+      ];
+      return () => {
+        for (const stop of stops) stop?.();
+      };
+    },
+    [agents, types],
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => {
+      const states = pubkeys.map(
+        (pubkey) => agents?.sessionState(pubkey, place) ?? "unavailable",
+      );
+      if (states.includes("compacting")) return "compacting";
+      if (states.includes("active")) return "active";
+      return states.length && states.every((state) => state === "idle")
+        ? "idle"
+        : "unavailable";
+    },
+    () => "unavailable",
+  );
 }
 
 /** The app's Agents, for surfaces such as the composer that plugins do not own. */

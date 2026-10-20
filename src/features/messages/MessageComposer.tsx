@@ -88,6 +88,7 @@ import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
+import { AgentsContext, useSessionState } from "../agents/react";
 import { ComposerModels } from "./ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import type {
@@ -428,6 +429,32 @@ function Composer({
   // Model and effort picked for mentioned agents' next run; cleared by each send.
   const [picks, setPicks] = useState<MentionPicks>({});
   const resolvedPicks = useRef<MentionPicks>({});
+  const agents = useContext(AgentsContext);
+  const sessionPlace = useMemo(
+    () => ({
+      channelId,
+      ...(!solo &&
+      channelType !== "dm" &&
+      channelType !== "solo" &&
+      threadRootId
+        ? { root: threadRootId }
+        : {}),
+    }),
+    [channelId, solo, channelType, threadRootId],
+  );
+  const sessionState = useSessionState(
+    agents,
+    value.recipients.map((item) => item.pubkey),
+    sessionPlace,
+  );
+  const compacting = sessionState === "compacting";
+  const compactingNow = (
+    recipients = valueRef.current.recipients.map((item) => item.pubkey),
+  ) =>
+    recipients.some(
+      (pubkey) => agents?.sessionState(pubkey, sessionPlace) === "compacting",
+    );
+
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
   const focusOnMount = useRef(
@@ -1223,6 +1250,7 @@ function Composer({
     }
     if (
       disabled ||
+      compactingNow() ||
       accepted ||
       conflict ||
       admission.current ||
@@ -1359,6 +1387,8 @@ function Composer({
       );
       // Destination and content are fixed here; a background send never retargets.
       const publish = (uploaded: readonly UploadedAttachment[]) => {
+        if (compactingNow(recipients))
+          throw new Error("Wait for compaction to finish, or interrupt it.");
         return threadRootId
           ? session.messages.reply(
               channelId,
@@ -1943,6 +1973,7 @@ function Composer({
                     resolvedPicks.current = next;
                   }}
                   startsThread={startsThread}
+                  place={sessionPlace}
                 />
               )}
             <IconButton
@@ -1957,14 +1988,19 @@ function Composer({
               title={
                 editing.target
                   ? "Save changes"
-                  : untagged
-                    ? "Tag an agent to send"
-                    : "Send message"
+                  : compacting
+                    ? "Wait for compaction to finish, or interrupt it."
+                    : untagged
+                      ? "Tag an agent to send"
+                      : "Send message"
               }
-              focusableWhenDisabled={untagged || undefined}
+              focusableWhenDisabled={
+                untagged || (!editing.target && compacting) || undefined
+              }
               disabled={
                 disabled ||
                 untagged ||
+                (!editing.target && compacting) ||
                 (!editing.target && (!!accepted || conflict || sendPending)) ||
                 (!!editing.target && (editing.locked || editDisabled)) ||
                 admitting ||
@@ -1984,6 +2020,11 @@ function Composer({
             />
           </div>
         </div>
+        {!editing.target && compacting && (
+          <p className={styles.composerStatus} role="status">
+            Compacting session…
+          </p>
+        )}
         {(error || editing.error) && (
           <p role="alert">{error ?? editing.error}</p>
         )}

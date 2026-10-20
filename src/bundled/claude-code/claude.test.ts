@@ -88,9 +88,17 @@ it("is active in a turn of its own or with background work, but not for ambient 
   sessionState(fake, "running");
   expect(claude.active).toBe(true);
   expect(claude.busy).toBe(false);
+  await claude.interrupt();
+  if (!fake) throw new Error("Expected Claude process");
+  expect(interrupts(fake)).toHaveLength(1);
   sessionState(fake, "idle");
   expect(claude.active).toBe(false);
   expect(quiet).toHaveBeenCalledTimes(2);
+  fake.hold = true;
+  const later = claude.send("later");
+  await flush();
+  fake.finish({ error: "Provider failed" });
+  await expect(later).resolves.toEqual({ ok: false, error: "Provider failed" });
 });
 
 it("answers both messages of a turn that took a second one mid-way", async () => {

@@ -888,6 +888,7 @@ describe("AgentSessions", () => {
       pool,
       // Another conversation needs a server the moment this session opens.
       onChange: () => {
+        if (fake.geese[0]?.turns.length) return;
         evicted ??= pool.evict() ?? null;
       },
     });

@@ -16,6 +16,12 @@ import type { EventData } from "../../features/relay/events";
 import { appClient } from "../../buzz-mcp/app-client";
 import { readProject } from "../../features/agent-harness/project";
 import { MemoryReads } from "../../features/agent-harness/core-memory";
+import { SessionControls } from "../../features/agent-harness/session-control";
+import type {
+  SessionPlace,
+  SessionControlAction,
+  SessionState,
+} from "../../features/agents/service";
 import type { Context } from "../../buzz-mcp/client";
 import {
   type AddedTool,
@@ -201,6 +207,99 @@ export class CodexRuntime {
   };
   sessions = (pubkey: string): readonly SessionView[] =>
     this.views.get(pubkey) ?? EMPTY;
+  private readonly controls = new SessionControls(() => {
+    for (const listener of this.listeners) listener();
+  });
+  private controlKey(agent: Agent, place: SessionPlace) {
+    return JSON.stringify([
+      place.channelId,
+      this.resolveConfig(agent.config).scope === "channel"
+        ? "channel"
+        : (place.root ?? "channel"),
+    ]);
+  }
+  sessionState(agent: Agent, place: SessionPlace): SessionState {
+    const key = this.controlKey(agent, place);
+    if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";
+    return this.controls.active(`${agent.pubkey}/${key}`) ||
+      this.entries.get(agent.pubkey)?.lanes.has(key)
+      ? "active"
+      : "idle";
+  }
+  async session(
+    agent: Agent,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ) {
+    const reads = this.reads(agent.pubkey);
+    if (!reads) throw new Error("Connect to the agent's community first.");
+    const key = this.controlKey(agent, place);
+    const control = `${agent.pubkey}/${key}`;
+    const entry = this.entry(agent.pubkey, reads.scope);
+    if (action === "interrupt") {
+      if (this.controls.interrupt(control)) return;
+      const active = entry.lanes.get(key)?.active;
+      if (active) await this.interrupt(entry, key, active.reply);
+      return;
+    }
+    if (this.sessionState(agent, place) !== "idle")
+      throw new Error("Wait for the active turn to finish first.");
+    return this.controls.run(control, action, async (cancel) => {
+      const signal = AbortSignal.any([entry.abort.signal, cancel]);
+      signal.throwIfAborted();
+      const saved = entry.saved[key];
+      if (action === "new") {
+        if (!saved) return;
+        delete entry.saved[key];
+        try {
+          await this.storage.set(entry.storageKey, JSON.stringify(entry.saved));
+        } catch (error) {
+          entry.saved[key] = saved;
+          throw error;
+        }
+        return;
+      }
+      if (!saved) throw new Error("There is no session here to compact yet.");
+      const server = this.open();
+      const rpc = await server.opening;
+      const settings = this.resolveConfig(agent.config);
+      const workspace = await this.workspace(settings.workspace);
+      if (workspace !== saved.workspace)
+        throw new Error(
+          "The workspace changed. Send a message to start its session first.",
+        );
+      const { params } = await this.prepare(
+        rpc,
+        agent,
+        settings,
+        workspace,
+        {},
+      );
+      signal.throwIfAborted();
+      try {
+        await rpc.request("thread/resume", {
+          ...params,
+          threadId: saved.threadId,
+          excludeTurns: true,
+        });
+        signal.throwIfAborted();
+        await this.compact(rpc, signal, saved.threadId, agent.pubkey, key);
+        this.status(agent.pubkey, key, "Idle");
+      } catch (error) {
+        this.status(
+          agent.pubkey,
+          key,
+          signal.aborted ? "Interrupted" : "Needs attention",
+          message(error),
+        );
+        throw error;
+      } finally {
+        await rpc
+          .request("thread/unsubscribe", { threadId: saved.threadId })
+          .catch(() => undefined);
+      }
+    });
+  }
   preview(agent: Agent) {
     const settings = this.resolveConfig(agent.config);
     const key = JSON.stringify([settings.model, settings.effort]);
@@ -573,98 +672,103 @@ export class CodexRuntime {
       return;
     }
     const key = JSON.stringify([channelId, root ?? "channel"]);
-    const text = textOf(request.event, agent.name);
-    const entry = this.entry(agent.pubkey, request.scope);
-    delivery.interruptible?.(() => this.interrupt(entry, key, request));
-    entry.waiting.add(request);
-    let lane = entry.lanes.get(key);
-    if (!lane) {
-      lane = { tail: entry.after, queued: 0 };
-      entry.lanes.set(key, lane);
-    }
-    if (lane.active) {
-      const active = lane.active;
-      let queued = false;
-      const queue = () => {
-        queued = true;
-        this.start(request, text, key, lane, entry);
-      };
-      // Startup and history reads stay ordered without holding Agents delivery.
-      const accepted = active.steering.then(async () => {
-        try {
-          await active.ready;
-          if (entry.abort.signal.aborted) {
-            request.failActivity("Codex was stopped");
-            return;
+    return this.controls.deliver(`${agent.pubkey}/${key}`, async () => {
+      delivery.signal.throwIfAborted();
+      const text = textOf(request.event, agent.name);
+      const entry = this.entry(agent.pubkey, request.scope);
+      delivery.interruptible?.(() => this.interrupt(entry, key, request));
+      entry.waiting.add(request);
+      let lane = entry.lanes.get(key);
+      if (!lane) {
+        lane = { tail: entry.after, queued: 0 };
+        entry.lanes.set(key, lane);
+      }
+      if (lane.active) {
+        const active = lane.active;
+        let queued = false;
+        const queue = () => {
+          queued = true;
+          this.start(request, text, key, lane, entry);
+        };
+        // Startup and history reads stay ordered without holding Agents delivery.
+        const accepted = active.steering.then(async () => {
+          try {
+            await active.ready;
+            if (entry.abort.signal.aborted) {
+              request.failActivity("Codex was stopped");
+              return;
+            }
+            // Steering cannot carry a model, effort or session action, so a
+            // differing pick waits for this turn and runs as the next one.
+            // Everything after it queues too until the lane drains: steering
+            // would run later messages first. A turn keeps the posting policy
+            // it was admitted with, so a request under the other policy waits
+            // for it too. A turn the owner stopped takes nothing more.
+            if (
+              active.finished ||
+              active.stopped ||
+              lane.queued ||
+              request.session ||
+              request.conversation.topLevel !==
+                active.reply.conversation.topLevel ||
+              (request.model && request.model !== active.model) ||
+              (request.effort && request.effort !== active.effort)
+            ) {
+              queue();
+              return;
+            }
+            const context = await this.history(request, entry.abort.signal);
+            if (entry.abort.signal.aborted) {
+              request.failActivity("Codex was stopped");
+              return;
+            }
+            if (active.finished || active.stopped) {
+              queue();
+              return;
+            }
+            await active.rpc.request("turn/steer", {
+              threadId: active.threadId,
+              expectedTurnId: active.turnId,
+              input: input(
+                `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, turnNote(request.agent))}`,
+              ),
+            });
+            active.reply = request;
+            active.requests.push(request);
+            entry.waiting.delete(request);
+            this.touch(request, entry, key);
+            this.acknowledgeActivity(active, request);
+          } catch (error) {
+            if (entry.abort.signal.aborted) {
+              request.failActivity("Codex was stopped");
+              return;
+            }
+            // A completion racing the request means this is the next ordinary turn.
+            if (message(error) === "no active turn to steer") {
+              queue();
+              return;
+            }
+            request.failActivity(
+              `Steering was not accepted: ${message(error)}`,
+            );
+            await this.publish(
+              request,
+              `Steering was not accepted: ${message(error)}. Send another mention to continue.`,
+            );
+            // The running turn never took this request in, so nothing else
+            // answers it: let go of its working hold now, not at that turn's end.
+            request.answered();
+          } finally {
+            if (!queued) entry.waiting.delete(request);
           }
-          // Steering cannot carry a model, effort or session action, so a
-          // differing pick waits for this turn and runs as the next one.
-          // Everything after it queues too until the lane drains: steering
-          // would run later messages first. A turn keeps the posting policy
-          // it was admitted with, so a request under the other policy waits
-          // for it too. A turn the owner stopped takes nothing more.
-          if (
-            active.finished ||
-            active.stopped ||
-            lane.queued ||
-            request.session ||
-            request.conversation.topLevel !==
-              active.reply.conversation.topLevel ||
-            (request.model && request.model !== active.model) ||
-            (request.effort && request.effort !== active.effort)
-          ) {
-            queue();
-            return;
-          }
-          const context = await this.history(request, entry.abort.signal);
-          if (entry.abort.signal.aborted) {
-            request.failActivity("Codex was stopped");
-            return;
-          }
-          if (active.finished || active.stopped) {
-            queue();
-            return;
-          }
-          await active.rpc.request("turn/steer", {
-            threadId: active.threadId,
-            expectedTurnId: active.turnId,
-            input: input(
-              `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, turnNote(request.agent))}`,
-            ),
-          });
-          active.reply = request;
-          active.requests.push(request);
-          entry.waiting.delete(request);
-          this.touch(request, entry, key);
-          this.acknowledgeActivity(active, request);
-        } catch (error) {
-          if (entry.abort.signal.aborted) {
-            request.failActivity("Codex was stopped");
-            return;
-          }
-          // A completion racing the request means this is the next ordinary turn.
-          if (message(error) === "no active turn to steer") {
-            queue();
-            return;
-          }
-          request.failActivity(`Steering was not accepted: ${message(error)}`);
-          await this.publish(
-            request,
-            `Steering was not accepted: ${message(error)}. Send another mention to continue.`,
-          );
-          // The running turn never took this request in, so nothing else
-          // answers it: let go of its working hold now, not at that turn's end.
-          request.answered();
-        } finally {
-          if (!queued) entry.waiting.delete(request);
-        }
-      });
-      active.steering = accepted.catch((error) =>
-        console.error("Codex steering failed", error),
-      );
-      return;
-    }
-    this.start(request, text, key, lane, entry);
+        });
+        active.steering = accepted.catch((error) =>
+          console.error("Codex steering failed", error),
+        );
+        return;
+      }
+      this.start(request, text, key, lane, entry);
+    });
   }
 
   /** Runs a standalone turn, such as a watch's or a timer's: a new
@@ -843,26 +947,38 @@ export class CodexRuntime {
       threadId,
       finished: false,
     };
-    const followed = follow(rpc, signal, turn);
+    // Keep following until the provider ends the turn, even if Interrupt is
+    // clicked before its turn/started notification arrives.
+    const followed = follow(rpc, new AbortController().signal, turn);
+    let stopping: Promise<unknown> | undefined;
+    const interrupt = () => {
+      if (!signal.aborted || !turn.turnId || turn.finished) return;
+      if (stopping) return;
+      stopping = rpc
+        .request("turn/interrupt", { threadId, turnId: turn.turnId })
+        .catch(() => rpc.close());
+    };
+    const off = rpc.onMessage(interrupt);
+    signal.addEventListener("abort", interrupt);
     try {
+      signal.throwIfAborted();
       this.status(pubkey, key, "Compacting");
       await rpc.request("thread/compact/start", { threadId });
-      await followed.completed;
+      const status = await followed.completed;
+      signal.throwIfAborted();
+      if (status !== "completed") throw new Error("Compaction was interrupted");
     } catch (error) {
-      // A stopped agent's compaction stops too, so nothing resumes it mid-way.
-      if (signal.aborted && turn.turnId && !turn.finished)
-        await rpc
-          .request("turn/interrupt", { threadId, turnId: turn.turnId })
-          .catch(() => rpc.close());
-      // The turn never takes the thread over, so nothing else lets go of it.
       await rpc
         .request("thread/unsubscribe", { threadId })
         .catch(() => rpc.close());
       throw error;
     } finally {
+      signal.removeEventListener("abort", interrupt);
+      off();
       followed.stop();
     }
   }
+
   private start(
     request: Request,
     text: string,
@@ -889,7 +1005,10 @@ export class CodexRuntime {
     void job
       .catch((error) => console.error("Codex turn failed", error))
       .finally(() => {
-        if (current.tail === job && !current.active) entry.lanes.delete(key);
+        if (current.tail === job && !current.active) {
+          entry.lanes.delete(key);
+          for (const listener of this.listeners) listener();
+        }
       });
     return job;
   }
@@ -1073,7 +1192,7 @@ export class CodexRuntime {
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
     rpc: AppServer,
-    agent: AgentHandle,
+    agent: Pick<AgentHandle, "name" | "pubkey">,
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,

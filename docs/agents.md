@@ -114,21 +114,27 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
-A type with `sessionActions` (Claude, Codex and goose) also offers its owner two
-session picks in the composer's model popover, behind each agent's **…** menu:
-**Compact session first** and **Start a new session**. Like a model or effort
-pick, it applies to the next message only, travels on it as a
-`["session", agent, "compact" | "new"]` tag that only the owner's counts, and
-reaches the run as `Delivery.session`. The run waits for any turn already
-working in that conversation, then compacts its session or starts a new one
-before answering. A new session is primed with the conversation as any new one
-is. A failed compaction fails that message's turn with its error.
-`sessionActions(agent)` returns the agent's session scope, and the menu shows
-only where the message has a session to act on: in a thread, a DM or a Solo
-chat, and at a channel's top level only for a channel-scoped agent. A
-thread-scoped agent's top-level message starts a thread of its own, so it has
-none. goose keeps no session once it closes, so it compacts only one still
-open.
+A type with `sessionActions` (Claude, Codex and goose) offers three immediate
+session controls in the composer's gauge popover: **Compact session**,
+**Start a new session**, and **Interrupt**. A side rail keeps all three visible.
+Compact and New are enabled while that harness session is idle; Interrupt is
+enabled while it is active, including work after a final Buzz reply. Disabled
+controls remain focusable and explain their state in a tooltip. The app holding
+the agent's runner performs the action; other copies explain where to use it.
+Send keeps its ordinary steering behavior and carries no session action.
+While manual compaction runs, its icon shows a spinner and the composer says
+“Compacting session…”. Compact, New and Send (including Enter) are disabled;
+the draft remains editable and Interrupt remains available. Send returns when
+compaction finishes, fails or is interrupted. The block applies to messages
+targeting that harness session; other sessions remain usable.
+
+`sessionActions(agent)` returns the agent's session scope. Controls appear in a
+thread, DM or Solo chat, and at a channel's top level for a channel-scoped agent.
+A thread-scoped agent's top-level message starts a thread of its own, so it has
+no existing session to control. goose compacts only a session still open. A new
+session is primed with the conversation on the next message. Compaction failures
+appear beside the controls. Previously published owner-signed `session` tags
+remain supported by delivery for compatibility.
 
 Codex's provider model menu offers **Codex recommended** (the catalog's
 recommendation) and specific models. Blank model preferences follow the

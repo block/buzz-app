@@ -1804,3 +1804,82 @@ it("hands no Canvas to a shared channel's turns", async () => {
   expect(claude?.prompts[0]).not.toContain("workspace-canvas");
   runtime.dispose();
 });
+
+it("controls an idle Claude session without sending a message, and rejects reset while active", async () => {
+  const f = setup([], { hold: true });
+  const root = message("1", "hello");
+  const place = { channelId: channel, root: root.id };
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  try {
+    await f.deliver({ type: "mention", event: root });
+    const process = f.claudes()[0];
+    if (!process) throw new Error("Expected Claude process");
+    await vi.waitFor(() => expect(process.prompts).toHaveLength(1));
+    expect(f.runtime.sessionState(agent, place)).toBe("active");
+    await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
+      "active turn",
+    );
+    process.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime.session(agent, place, "compact");
+    await vi.waitFor(() =>
+      expect(process.prompts).toEqual([expect.any(String), "/compact"]),
+    );
+    expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    process.finish();
+    await compacted;
+    await f.runtime.session(agent, place, "new");
+    expect(process.killed).toBe(true);
+    expect(f.claudes()).toHaveLength(1);
+    await f.deliver({
+      type: "mention",
+      event: message("2", "hello again", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      }),
+    });
+    expect(f.claudes()).toHaveLength(2);
+    expect(f.claudes()[1]?.options.args).not.toContain("--resume");
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("interrupts a turn still loading its prompt before Claude receives it", async () => {
+  const f = setup();
+  let release!: (events: readonly EventData[]) => void;
+  const history = new Promise<readonly EventData[]>((resolve) => {
+    release = resolve;
+  });
+  f.read.mockImplementationOnce(async () => history);
+  const root = message("1", "hello");
+  const place = { channelId: channel, root: root.id };
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  const delivered = f.deliver({
+    type: "mention",
+    event: message("2", "followup", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    }),
+  });
+  try {
+    await vi.waitFor(() => expect(f.read).toHaveBeenCalled());
+    expect(f.runtime.sessionState(agent, place)).toBe("active");
+    await f.runtime.session(agent, place, "interrupt");
+  } finally {
+    release([]);
+  }
+  try {
+    await delivered;
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    expect(f.claudes().flatMap((process) => process.prompts)).toEqual([]);
+  } finally {
+    f.runtime.dispose();
+  }
+});

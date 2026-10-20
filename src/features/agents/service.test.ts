@@ -85,6 +85,9 @@ async function setup({
   jev = undefined as ClassifierNative | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
   sessionActions = false,
+  sessionControls = undefined as
+    | Pick<AgentType<Config>, "sessionState" | "session">
+    | undefined,
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
@@ -170,6 +173,7 @@ async function setup({
     }),
     run,
     ...(runOnce ? { runOnce } : {}),
+    ...sessionControls,
     ...(sessionActions ? { sessionActions: () => "thread" as const } : {}),
   };
   plugin.agents.register(type);
@@ -1464,6 +1468,36 @@ it("drops its events while another copy of the app holds the agent, and runs onc
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
 });
 
+it.each([false, new Error("Custody unavailable")])(
+  "rechecks native custody before an immediate session mutation: %s",
+  async (denied) => {
+    const session = vi.fn<NonNullable<AgentType<Config>["session"]>>(
+      async () => {},
+    );
+    const { service, native } = await setup({
+      sessionControls: { sessionState: () => "idle", session },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() =>
+      expect(service.sessionState(bot, { channelId: channel })).toBe("idle"),
+    );
+    await service.session(bot, { channelId: channel }, "compact");
+    expect(session).toHaveBeenCalledOnce();
+    const availability: string[] = [];
+    const unsubscribe = service.subscribe(() => {
+      availability.push(service.sessionState(bot, { channelId: channel }));
+    });
+    if (denied instanceof Error) native.claim.mockRejectedValueOnce(denied);
+    else native.claim.mockResolvedValueOnce(denied);
+    await expect(
+      service.session(bot, { channelId: channel }, "new"),
+    ).rejects.toThrow();
+    expect(session).toHaveBeenCalledOnce();
+    unsubscribe();
+    expect(availability).toContain("unavailable");
+  },
+);
+
 it("lets another copy of the app run an agent it cannot run", async () => {
   vi.useFakeTimers();
   const { service, run, emit, native, connect } = await setup();
@@ -1578,9 +1612,23 @@ it("hands out an agent's handle only to its new type's plugin once a change of t
 });
 
 it("keeps running an agent while another community is selected, and gives it only its community's events", async () => {
-  const { service, run, emit, second, select } = await setup();
+  const { service, run, emit, second, select } = await setup({
+    sessionControls: {
+      sessionState: () => "compacting",
+      session: async () => {},
+    },
+  });
   await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() =>
+    expect(service.sessionState(bot, { channelId: channel })).toBe(
+      "compacting",
+    ),
+  );
   select(second.origin);
+  expect(service.sessionState(bot, { channelId: channel })).toBe("compacting");
+  await expect(
+    service.session(bot, { channelId: channel }, "new"),
+  ).rejects.toThrow();
   expect(service.find(bot)).toBeUndefined();
   expect(service.snapshot().running.map((agent) => agent.pubkey)).toEqual([
     bot,

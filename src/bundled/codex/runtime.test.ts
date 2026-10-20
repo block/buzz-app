@@ -3550,6 +3550,88 @@ describe("session actions", () => {
   const methods = (f: ReturnType<typeof fixture>) =>
     f.sent.flatMap((wire) => (wire.method ? [wire.method] : []));
 
+  it("compacts immediately, and keeps the session active until an early interrupt ends its turn", async () => {
+    const f = fixture();
+    const delivery = f.delivery("first");
+    const agent = {
+      ...delivery.agent,
+      config: delivery.config,
+    } as unknown as Agent;
+    const place = { channelId: "channel", root };
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
+      "active turn",
+    );
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime
+      .session(agent, place, "compact")
+      .catch((error) => error);
+    await vi.waitFor(() =>
+      expect(methods(f)).toContain("thread/compact/start"),
+    );
+    expect(f.starts()).toHaveLength(1);
+    expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    await f.runtime.session(agent, place, "interrupt");
+    expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    const later = f.runtime.run(f.delivery("after interrupt"));
+    f.emit({
+      method: "turn/started",
+      params: { threadId: "thread-1", turn: { id: "compact" } },
+    });
+    expect(await compacted).toBeInstanceOf(Error);
+    await later;
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(
+      f.sent.find((wire) => wire.method === "turn/interrupt")?.params,
+    ).toEqual({ threadId: "thread-1", turnId: "compact" });
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+    await f.complete();
+  });
+
+  it("resets durably without a message, and preserves the binding if the write fails", async () => {
+    const f = fixture();
+    const delivery = f.delivery("first");
+    const agent = {
+      ...delivery.agent,
+      config: delivery.config,
+    } as unknown as Agent;
+    const place = { channelId: "channel", root };
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    vi.spyOn(f.storage, "set").mockImplementationOnce(() => {
+      throw new Error("Disk full");
+    });
+    await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
+      "Disk full",
+    );
+    await f.runtime.run(f.delivery("still the old session"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    await f.runtime.session(agent, place, "new");
+    expect(f.starts()).toHaveLength(2);
+    expect(
+      [...f.storage.values()].some((value) =>
+        value.includes('"threadId":"thread-1"'),
+      ),
+    ).toBe(false);
+    await f.runtime.run(f.delivery("new session"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(f.starts()[2]?.params).toMatchObject({ threadId: "thread-2" });
+    await f.complete();
+  });
+
   it("compacts a conversation's thread before the turn, after the one working", async () => {
     const f = fixture();
     await f.runtime.run(f.delivery("first"));

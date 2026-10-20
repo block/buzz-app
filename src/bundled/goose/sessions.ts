@@ -190,6 +190,13 @@ export class AgentSessions {
   seen(key: string) {
     return this.shown.get(key) ?? 0;
   }
+  active(key: string) {
+    return (
+      this.opening.has(key) ||
+      this.handing.has(key) ||
+      !!this.live.get(key)?.session.working
+    );
+  }
   /** Conversations with a session, whether each is working, and when each
    * last took in a message or ended a turn. */
   snapshot(): {
@@ -336,7 +343,7 @@ export class AgentSessions {
   /** Waits for the conversation's session to finish its work, then compacts
    * it or closes it, so the message opens a new one. Without an open session
    * there is nothing to do. */
-  private async reset(key: string, action: SessionAction): Promise<Settled> {
+  async reset(key: string, action: SessionAction): Promise<Settled> {
     const live = this.live.get(key);
     if (!live?.session.open) return { ok: true };
     await live.session.idle();
@@ -511,6 +518,10 @@ export class AgentSessions {
     model: string | undefined,
   ) {
     const sent = live.session.send(text, activity, model);
+    // A final Buzz send can answer before goose finishes its model work.
+    void live.session.idle().then(() => {
+      if (this.live.get(key) === live) this.options.onChange?.();
+    });
     // Sending made it busy; a snapshot read when it opened is not.
     this.options.onChange?.();
     const settled = await sent;

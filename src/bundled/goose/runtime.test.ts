@@ -601,3 +601,46 @@ it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", as
   await flush(100);
   expect(shared.goose()?.turns[0]?.text).not.toContain("workspace-canvas");
 });
+
+it("compacts idle Goose immediately, keeps active controls through the turn, and resets without a message", async () => {
+  const f = setup({ hold: true, reply: "Compaction complete" });
+  const root = message("1", "hello");
+  const place = { channelId: channel, root: root.id };
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  try {
+    await f.deliver(root);
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const goose = f.goose();
+    if (!goose) throw new Error("Expected Goose process");
+    expect(f.runtime.sessionState(agent, place)).toBe("active");
+    await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
+      "active turn",
+    );
+    goose.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime.session(agent, place, "compact");
+    await vi.waitFor(() => expect(goose.turns[1]?.text).toBe("/compact"));
+    expect(goose.turns).toHaveLength(2);
+    expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    expect(
+      f.runtime.sessionState(agent, { ...place, root: "another-thread" }),
+    ).toBe("idle");
+    goose.turns[1]?.finish();
+    await compacted;
+    await f.runtime.session(agent, place, "new");
+    await f.deliver(
+      message("2", "next", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      }),
+    );
+    await vi.waitFor(() => expect(goose.turns).toHaveLength(3));
+    expect(goose.turns[2]?.sessionId).not.toBe(goose.turns[0]?.sessionId);
+  } finally {
+    f.runtime.dispose();
+  }
+});

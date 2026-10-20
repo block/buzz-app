@@ -11,9 +11,17 @@ export const gooseRun = (
   runtime: GooseRuntime,
 ): Pick<
   AgentType<Config>,
-  "sessionActions" | "run" | "runOnce" | "timeoutMs" | "syncedSettings"
+  | "sessionActions"
+  | "sessionState"
+  | "session"
+  | "run"
+  | "runOnce"
+  | "timeoutMs"
+  | "syncedSettings"
 > => ({
   sessionActions: (agent) => config(agent.config).scope,
+  sessionState: (agent, place) => runtime.sessionState(agent, place),
+  session: (agent, place, action) => runtime.session(agent, place, action),
   run: (delivery) => runtime.run(delivery),
   runOnce: (turn) => runtime.runOnce(turn),
   timeoutMs: HANDOVER_MS,

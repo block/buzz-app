@@ -485,6 +485,26 @@ it("reports a compaction that failed", async () => {
   });
 });
 
+it("keeps the live session if its durable reset fails, then forgets it on retry", async () => {
+  const { pool, store, claudes } = sessions();
+  try {
+    await pool.deliver("c/root", "one", 1);
+    const process = claudes()[0];
+    if (!process) throw new Error("Expected Claude process");
+    vi.spyOn(store, "delete").mockRejectedValueOnce(new Error("Disk full"));
+    await expect(pool.forget("c/root")).rejects.toThrow("Disk full");
+    expect(process.killed).toBe(false);
+    expect(store.get("c/root")?.id).toBe("new-1");
+    await pool.forget("c/root");
+    expect(process.killed).toBe(true);
+    expect(store.get("c/root")).toBeUndefined();
+    await pool.deliver("c/root", "two", 2);
+    expect(claudes()[1]?.options.args).not.toContain("--resume");
+  } finally {
+    pool.dispose();
+  }
+});
+
 it("starts a new session when asked, whose id replaces the saved one's", async () => {
   const store = memoryStore();
   store.set("c/root", { id: "old", seen: 4, at: 1 });

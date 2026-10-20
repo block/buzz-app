@@ -483,6 +483,9 @@ export class GooseSession {
   get busy() {
     return this.pending > 0;
   }
+  get working() {
+    return !this.quiet();
+  }
   get open() {
     return !this.closed;
   }
@@ -543,7 +546,7 @@ export class GooseSession {
    * A turn not yet sent is never sent. The work then ends as goose ends it;
    * a message sent before it has runs as a new turn after. */
   interrupt() {
-    if (!this.busy || this.closed) return;
+    if (!this.working || this.closed) return;
     this.queue.length = 0;
     this.stopped = {
       waiters: [...this.waiters],

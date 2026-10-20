@@ -466,6 +466,10 @@ export type Effort = Readonly<{ id: string; label: string }>;
 /** What a turn does to its conversation's session first: `compact`
  * summarizes its history to free context, and `new` starts a new session. */
 export type SessionAction = "compact" | "new";
+/** Immediate controls for an existing conversation; separate from run picks. */
+export type SessionControlAction = SessionAction | "interrupt";
+export type SessionPlace = Readonly<{ channelId: string; root?: string }>;
+export type SessionState = "idle" | "active" | "compacting" | "unavailable";
 export type AgentMigrationSetting = Readonly<{
   id: string;
   label: string;
@@ -562,6 +566,12 @@ export type AgentType<Config = unknown> = {
    * and under `thread` it starts a thread of its own, with no session to act
    * on. A DM or Solo chat is one session either way. */
   sessionActions?(agent: Agent<Config>): "thread" | "channel";
+  sessionState?(agent: Agent<Config>, place: SessionPlace): SessionState;
+  session?(
+    agent: Agent<Config>,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ): Promise<void>;
   /** Read-only: snapshots of the sessions the agent ran from Buzz on this
    * device with activity since `since` (milliseconds). `since` only bounds
    * activity time; it is no checkpoint, and a session last active before it
@@ -805,6 +815,13 @@ export type Agents = {
   remove(pubkey: string): Promise<void>;
   /** Whether the owner can stop a hosted agent's turns through its provider. */
   interruptible(pubkey: string): boolean;
+  /** Session controls are available only in the copy holding this agent. */
+  sessionState(pubkey: string, place: SessionPlace): SessionState;
+  session(
+    pubkey: string,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ): Promise<void>;
   /** Has a hosted agent's provider stop its turn in one conversation. False
    * when nothing there was running. */
   interrupt(
@@ -1144,6 +1161,7 @@ export class AgentsService extends Service implements Agents {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
+      ownershipChanged: () => this.notify(),
       ready: (pubkey) => this.ready(pubkey),
       agent: (pubkey) => this.agent(pubkey),
       member: (agent, event) => this.member(agent, event),
@@ -1955,6 +1973,40 @@ export class AgentsService extends Service implements Agents {
       prior: this.rowOf(origin, pubkey)?.prior,
     });
   }
+  sessionState(pubkey: string, place: SessionPlace): SessionState {
+    const agent = this.agent(pubkey);
+    const type = agent && this.types().find((kind) => kind.key === agent.type);
+    if (
+      !agent ||
+      !this.runners.runs(pubkey) ||
+      this.runners.transitioning(pubkey)
+    )
+      return "unavailable";
+    return type?.sessionState?.(agent, place) ?? "unavailable";
+  }
+  async session(
+    pubkey: string,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ) {
+    const agent = this.find(pubkey);
+    const type = agent && this.types().find((kind) => kind.key === agent.type);
+    if (
+      !agent ||
+      !type?.session ||
+      this.sessionState(pubkey, place) === "unavailable"
+    )
+      throw new Error(
+        "Use session controls in the Buzz app that runs this agent.",
+      );
+    await this.runners.control(pubkey, async () => {
+      const current = this.find(pubkey);
+      if (current?.type !== agent.type || !this.types().includes(type))
+        throw new Error("The agent's harness changed. Try again.");
+      await type.session?.(current, place, action);
+    });
+  }
+
   /** Whether the owner can stop a hosted agent's turn: its provider can. */
   interruptible(pubkey: string) {
     const agent = this.state.agents.find(

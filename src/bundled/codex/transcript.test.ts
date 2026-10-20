@@ -108,6 +108,7 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
     }),
     expect.objectContaining({ type: "message", text: "Done", posted: true }),
     expect.objectContaining({ type: "message", text: "Fixed." }),
+    expect.objectContaining({ type: "status", text: "Context compaction" }),
   ]);
   const [channelTurn] = codexTurns(
     [turn({ status: "interrupted", completedAt: null, items: [] })],

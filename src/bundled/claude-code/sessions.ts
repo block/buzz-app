@@ -37,7 +37,7 @@ export type SavedSession = Readonly<{
 export type SessionStore = {
   get(key: string): SavedSession | undefined;
   set(key: string, session: SavedSession): void;
-  delete(key: string): void;
+  delete(key: string): void | Promise<void>;
 };
 
 export type SessionsOptions = Readonly<{
@@ -94,6 +94,17 @@ export class AgentSessions {
   /** What `seen` says this conversation's session has been shown. */
   seen(key: string) {
     return this.options.store.get(key)?.seen ?? 0;
+  }
+  active(key: string) {
+    return this.opening.has(key) || !!this.live.get(key)?.process.active;
+  }
+  async forget(key: string) {
+    // Commit the reset before dropping the live process; failed writes must
+    // not report success and resume the old session after restarting Buzz.
+    await this.options.store.delete(key);
+    const live = this.live.get(key);
+    if (live) this.drop(key, live);
+    this.options.onChange?.();
   }
   /** Conversations with a running process, and whether each is working. */
   snapshot() {
@@ -233,7 +244,7 @@ export class AgentSessions {
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
     if (!delivered.ok && saved && !live.process.started) {
-      this.options.store.delete(key);
+      await this.options.store.delete(key);
       this.drop(key, live);
       return this.deliver(key, fresh ? await fresh() : text, seen, {
         pick,
@@ -265,7 +276,7 @@ export class AgentSessions {
     const settled = await this.answer(key, live, "/compact", {});
     // A saved session that no longer loads is the message's to start over.
     if (!settled.ok && !live.process.started) {
-      this.options.store.delete(key);
+      await this.options.store.delete(key);
       this.drop(key, live);
       return { ok: true };
     }
@@ -295,6 +306,7 @@ export class AgentSessions {
       if (this.disposed) return { ok: false, error: "Claude was stopped" };
       // A key no conversation uses: its tools have no default destination.
       live.process.conversation = key;
+      live.process.onActivity = this.options.onChange;
       this.once.set(key, live);
       const text = await prompt();
       if (text === undefined || this.disposed) return { ok: true };
@@ -402,6 +414,7 @@ export class AgentSessions {
   }
   private adopt(key: string, live: Live, seen: number) {
     live.process.conversation = key;
+    live.process.onActivity = this.options.onChange;
     // Not a stop: a turn that reports finished work may be about to start.
     live.process.onQuiet = () => {
       if (this.live.get(key) === live) this.touch(key, live);
@@ -597,27 +610,19 @@ export function localSessions(
     const kept = Object.entries(sessions)
       .sort(([, a], [, b]) => b.at - a.at)
       .slice(0, SAVED_LIMIT);
-    const warn = (error: unknown) =>
-      console.warn("Claude sessions were not saved", error);
     const own = storage.set(key, JSON.stringify(Object.fromEntries(kept)));
-    // The old shared value drops this agent once its own key is saved: until
-    // then it holds the only saved copy.
-    if (!(agent in object(storage.get(name)))) {
-      void own.catch(warn);
-      return;
-    }
-    void own
-      .then(() => {
-        const legacy = object(storage.get(name));
-        if (!(agent in legacy)) return;
-        delete legacy[agent];
-        return storage.set(
-          name,
-          Object.keys(legacy).length ? JSON.stringify(legacy) : null,
-        );
-      })
-      .catch(warn);
+    // Drop the legacy copy only after the agent's own value is durable.
+    return own.then(async () => {
+      const legacy = object(storage.get(name));
+      if (!(agent in legacy)) return;
+      delete legacy[agent];
+      await storage.set(
+        name,
+        Object.keys(legacy).length ? JSON.stringify(legacy) : null,
+      );
+    });
   };
+
   return {
     list: () =>
       Object.entries(read())
@@ -627,10 +632,13 @@ export function localSessions(
       const saved = read()[conversation];
       return saved && typeof saved.id === "string" ? saved : undefined;
     },
-    set: (conversation, session) =>
-      update((sessions) => {
+    set: (conversation, session) => {
+      void update((sessions) => {
         sessions[conversation] = session;
-      }),
+      }).catch((error) =>
+        console.warn("Claude sessions were not saved", error),
+      );
+    },
     delete: (conversation) =>
       update((sessions) => {
         delete sessions[conversation];

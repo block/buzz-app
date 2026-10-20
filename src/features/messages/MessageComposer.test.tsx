@@ -1389,6 +1389,7 @@ it.each(["never", "before the failure", "after the failure"])(
     };
     const types = [{ key: "test/agent", models: () => models }];
     const agents = {
+      sessionState: () => "unavailable" as const,
       subscribe: () => () => {},
       snapshot: () => snapshot,
       types: () => types,
@@ -2378,6 +2379,7 @@ it("opens the model picker while discovery is pending, then fills its controls",
   };
   const types = [{ key: "test/agent", models: () => pending.promise }];
   const agents = {
+    sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -2411,40 +2413,154 @@ const sessionAgents = (
     status: "ready",
     agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
   };
+  let state: "idle" | "active" | "compacting" | "unavailable" = "idle";
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  const serviceListeners = new Set<() => void>();
   const types = [
     {
       key: "test/agent",
       models: () => ({ current: "fast", models }),
       sessionActions: () => scope,
+      sessions: { subscribe },
     },
   ];
+  const session = vi.fn<Agents["session"]>(async () => {});
   return {
-    subscribe: () => () => {},
+    subscribe: (listener: () => void) => {
+      serviceListeners.add(listener);
+      return () => {
+        serviceListeners.delete(listener);
+      };
+    },
     snapshot: () => snapshot,
     types: () => types,
-  } as unknown as Agents;
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    sessionState: () => state,
+    session,
+    setSessionState(
+      next: typeof state,
+      source: "harness" | "agents" = "harness",
+    ) {
+      state = next;
+      for (const listener of source === "agents" ? serviceListeners : listeners)
+        listener();
+    },
+  } as unknown as Agents & {
+    session: typeof session;
+    setSessionState(next: typeof state, source?: "harness" | "agents"): void;
+  };
 };
 
-it("asks an agent whose type has them to compact its session first on the next run", async () => {
-  // A channel-scoped agent's top-level message joins the channel's session.
-  const h = mount({}, undefined, undefined, sessionAgents("channel"));
-  await h.user.type(h.input(), "tidy up");
+it("restores an attachment draft instead of publishing when compaction starts during upload", async () => {
+  const agents = sessionAgents("channel");
+  const h = await mountUploadComposer({
+    agents,
+    members: [first.pubkey],
+    defaultMention: first,
+  });
+  attachByPaste(h.input(), attachmentFile("waiting.txt"));
+  await userEvent.type(h.input(), "keep this caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+  act(() => agents.setSessionState("compacting"));
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("waiting.txt"));
+  });
+  await waitFor(() =>
+    expect(h.input()).toHaveValue("keep this caption@Honey "),
+  );
+  expect(screen.getByText("waiting.txt")).toBeVisible();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.send()).toHaveAttribute("aria-disabled", "true");
+  act(() => agents.setSessionState("idle"));
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("keep this caption");
+});
+
+it("refreshes unavailable session buttons when runner ownership changes without changing the agent", async () => {
+  const agents = sessionAgents("channel");
+  agents.setSessionState("unavailable", "agents");
+  const h = mount({}, undefined, undefined, agents);
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
-  // One model and no efforts is no choice of its own; the session still is.
   await h.user.click(
     await screen.findByRole("button", {
       name: "Model and effort for the next run",
     }),
   );
-  await h.user.click(
-    await screen.findByRole("button", { name: "Honey's session" }),
+  const compact = await screen.findByRole("button", {
+    name: "Compact session",
+  });
+  const fresh = screen.getByRole("button", { name: "Start a new session" });
+  const interrupt = screen.getByRole("button", { name: "Interrupt" });
+  expect(compact).toHaveAttribute("aria-disabled", "true");
+  expect(fresh).toHaveAttribute("aria-disabled", "true");
+  expect(interrupt).toHaveAttribute("aria-disabled", "true");
+  act(() => agents.setSessionState("idle", "agents"));
+  expect(compact).not.toHaveAttribute("aria-disabled", "true");
+  expect(fresh).not.toHaveAttribute("aria-disabled", "true");
+  expect(interrupt).toHaveAttribute("aria-disabled", "true");
+  await h.user.click(fresh);
+  expect(agents.session).toHaveBeenCalledWith(
+    first.pubkey,
+    { channelId: "channel" },
+    "new",
   );
+});
+
+it("acts on the idle session immediately and keeps Send independent while active", async () => {
+  const agents = sessionAgents("channel");
+  const h = mount({}, undefined, undefined, agents);
+  await h.user.type(h.input(), "tidy up");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   await h.user.click(
-    await screen.findByRole("menuitemcheckbox", {
-      name: "Compact session first",
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
     }),
   );
-  await h.user.keyboard("{Escape}");
+  const compact = await screen.findByRole("button", {
+    name: "Compact session",
+  });
+  const fresh = screen.getByRole("button", { name: "Start a new session" });
+  const interrupt = screen.getByRole("button", {
+    name: "Interrupt",
+  });
+  expect(compact).not.toHaveAttribute("aria-disabled", "true");
+  expect(fresh).not.toHaveAttribute("aria-disabled", "true");
+  expect(interrupt).toHaveAttribute("aria-disabled", "true");
+  await h.user.click(compact);
+  expect(agents.session).toHaveBeenCalledWith(
+    first.pubkey,
+    { channelId: "channel" },
+    "compact",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  await h.user.click(fresh);
+  expect(agents.session).toHaveBeenLastCalledWith(
+    first.pubkey,
+    { channelId: "channel" },
+    "new",
+  );
+  act(() => agents.setSessionState("active"));
+  expect(compact).toHaveAttribute("aria-disabled", "true");
+  expect(fresh).toHaveAttribute("aria-disabled", "true");
+  expect(interrupt).not.toHaveAttribute("aria-disabled", "true");
+  await h.user.click(compact);
+  expect(agents.session).toHaveBeenCalledTimes(2);
+  await h.user.click(interrupt);
+  expect(agents.session).toHaveBeenLastCalledWith(
+    first.pubkey,
+    { channelId: "channel" },
+    "interrupt",
+  );
   await h.user.keyboard("{Escape}");
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
   expect(h.messages.send).toHaveBeenLastCalledWith(
@@ -2452,22 +2568,121 @@ it("asks an agent whose type has them to compact its session first on the next r
     expect.stringContaining("tidy up"),
     [first.pubkey],
     [],
-    undefined,
-    [],
-    { [first.pubkey]: { session: "compact" } },
+  );
+});
+
+it.each(["success", "failure", "interrupt"] as const)(
+  "blocks sending during compaction, preserves editing, and recovers after %s",
+  async (outcome) => {
+    const agents = sessionAgents("channel");
+    const pending = deferred<void>();
+    agents.session.mockImplementation(async (_pubkey, _place, action) => {
+      if (action === "compact") await pending.promise;
+    });
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.type(h.input(), "saved draft ");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    const compact = await screen.findByRole("button", {
+      name: "Compact session",
+    });
+    await h.user.click(compact);
+    expect(agents.session).toHaveBeenCalledWith(
+      first.pubkey,
+      { channelId: "channel" },
+      "compact",
+    );
+    act(() => agents.setSessionState("compacting"));
+    try {
+      expect(compact).toHaveAttribute("aria-busy", "true");
+      expect(compact).toHaveAttribute("aria-disabled", "true");
+      expect(
+        screen.getByRole("button", { name: "Start a new session" }),
+      ).toHaveAttribute("aria-disabled", "true");
+      const interrupt = screen.getByRole("button", { name: "Interrupt" });
+      expect(interrupt).not.toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByText("Compacting session…")).toBeInTheDocument();
+      await h.user.keyboard("{Escape}");
+      const send = screen.getByRole("button", { name: "Send message" });
+      expect(send).toHaveAttribute("aria-disabled", "true");
+      await h.user.type(h.input(), "keep editing{Enter}");
+      await h.user.click(send);
+      fireEvent.submit(screen.getByRole("form"));
+      expect(h.messages.send).not.toHaveBeenCalled();
+      expect(h.input()).toHaveTextContent("saved draft");
+      expect(h.input()).toHaveTextContent("keep editing");
+      if (outcome === "interrupt") {
+        await h.user.click(
+          screen.getByRole("button", {
+            name: "Model and effort for the next run",
+          }),
+        );
+        await h.user.click(screen.getByRole("button", { name: "Interrupt" }));
+        expect(agents.session).toHaveBeenLastCalledWith(
+          first.pubkey,
+          { channelId: "channel" },
+          "interrupt",
+        );
+        await h.user.keyboard("{Escape}");
+      }
+    } finally {
+      await act(async () => {
+        if (outcome === "success") pending.resolve();
+        else
+          pending.reject(
+            new Error(
+              outcome === "failure"
+                ? "Compaction failed"
+                : "Compaction interrupted",
+            ),
+          );
+        agents.setSessionState("idle");
+      });
+    }
+    expect(screen.queryByText("Compacting session…")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Send message" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledOnce();
+    expect(h.messages.send.mock.calls[0]?.[1]).toContain("keep editing");
+  },
+);
+
+it("shows action failures and lets an idle session retry", async () => {
+  const agents = sessionAgents("channel");
+  agents.session.mockRejectedValueOnce(new Error("Disk is full"));
+  const h = mount({}, undefined, undefined, agents);
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    }),
+  );
+  await h.user.click(
+    await screen.findByRole("button", { name: "Start a new session" }),
+  );
+  expect(await screen.findByText("Disk is full")).toHaveTextContent(
+    "Disk is full",
+  );
+  await h.user.click(
+    screen.getByRole("button", { name: "Start a new session" }),
+  );
+  expect(await screen.findByText("New session started")).toHaveTextContent(
+    "New session started",
   );
 });
 
 it("offers a thread-scoped agent session actions in a thread, not on a message that starts one", async () => {
-  const h = mount(
-    {},
-    undefined,
-    undefined,
-    sessionAgents("thread", [
-      { id: "fast", label: "Fast", efforts: [] },
-      { id: "deep", label: "Deep", efforts: [] },
-    ]),
-  );
+  const agents = sessionAgents("thread", [
+    { id: "fast", label: "Fast", efforts: [] },
+    { id: "deep", label: "Deep", efforts: [] },
+  ]);
+  const h = mount({}, undefined, undefined, agents);
   const open = async () => {
     await h.user.type(h.input(), "tidy up");
     await h.user.click(screen.getByRole("button", { name: "First Honey" }));
@@ -2476,16 +2691,19 @@ it("offers a thread-scoped agent session actions in a thread, not on a message t
         name: "Model and effort for the next run",
       }),
     );
-    // Its choices have loaded.
     await screen.findByRole("button", { name: "Model for Honey's next run" });
   };
   await open();
-  // A top-level message starts a thread, which has no session yet.
-  expect(screen.queryByRole("button", { name: "Honey's session" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Compact session" })).toBeNull();
   await h.user.keyboard("{Escape}");
   h.retarget({ threadRootId: "root" });
   await open();
-  expect(screen.getByRole("button", { name: "Honey's session" })).toBeTruthy();
+  await h.user.click(screen.getByRole("button", { name: "Compact session" }));
+  expect(agents.session).toHaveBeenLastCalledWith(
+    first.pubkey,
+    { channelId: "channel", root: "root" },
+    "compact",
+  );
 });
 
 it.each([
@@ -2511,6 +2729,7 @@ it.each([
       },
     ];
     const agents = {
+      sessionState: () => "unavailable" as const,
       subscribe: () => () => {},
       snapshot: () => snapshot,
       types: () => types,
@@ -2578,6 +2797,7 @@ it("keeps an active Claude model when a follow-up composer picker is untouched",
     },
   ];
   const agents = {
+    sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -2643,6 +2863,7 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
   };
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
+    sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -2712,6 +2933,7 @@ it.each(["settings refresh", "model pick"])(
       },
     ];
     const agents = {
+      sessionState: () => "unavailable" as const,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -2799,6 +3021,7 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
   };
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
+    sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -2918,6 +3141,7 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
   };
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
+    sessionState: () => "unavailable" as const,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,

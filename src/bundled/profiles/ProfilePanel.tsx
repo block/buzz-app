@@ -439,7 +439,9 @@ function ProfileDetails({
               ) : selected === "info" ? (
                 <>
                   {profile?.about && (
-                    <p className={styles.about}>{profile.about}</p>
+                    <SettingsGroup layout="form">
+                      <p className={styles.about}>{profile.about}</p>
+                    </SettingsGroup>
                   )}
                   {plugin && agents && plugin.agent.place !== "elsewhere" && (
                     <div>

@@ -31,6 +31,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import lockfile from "proper-lockfile";
 
@@ -278,6 +279,8 @@ export function serve({
     try {
       const registry = createRegistry();
       registry.install(CodingTools);
+      // Loads the Buzz tools that are deferred when the model asks for them.
+      registry.install(createToolSearchExtension());
       const harness = await Harness.open(
         await openNodeSqliteStorage(path),
         {
@@ -347,16 +350,20 @@ export function serve({
     return opened;
   }
 
-  /** The agent's Buzz tools, served by the plugin. */
-  function buzz(opened, tools) {
+  /** The agent's Buzz tools, served by the plugin. Those it lists to load on
+   * search are deferred: the model finds them with `tool_search`, which
+   * `hint` says what it can find with. */
+  function buzz(opened, tools, hint) {
+    const text = hint ? `${TOOL_NAMES} ${hint}` : TOOL_NAMES;
     return defineExtension({
       name: "buzz",
-      sections: [section("buzz-tools", () => TOOL_NAMES)],
+      sections: [section("buzz-tools", () => text)],
       tools: tools.map((tool) =>
         defineTool({
           name: `${PREFIX}${tool.name}`,
           description: tool.description ?? "",
           parameters: tool.inputSchema ?? { type: "object" },
+          ...(tool.load === "search" ? { deferred: true } : {}),
           async execute(args, api, signalled) {
             // Given up when the run is stopped, so closing the agent does
             // not wait on Buzz.
@@ -581,11 +588,11 @@ export function serve({
         : { ok: true, message: `Connected to ${model.modelId}` };
     },
     /** Opens the agent's storage, once, with its Buzz tools as they are now. */
-    async open({ agent, tools }) {
+    async open({ agent, tools, hint }) {
       const opened = await opening(agent);
-      const listed = JSON.stringify(tools);
+      const listed = JSON.stringify([tools, hint]);
       if (opened.tools !== listed) {
-        opened.registry.install(buzz(opened, tools));
+        opened.registry.install(buzz(opened, tools, hint));
         opened.tools = listed;
       }
     },

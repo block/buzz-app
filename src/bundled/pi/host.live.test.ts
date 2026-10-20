@@ -26,7 +26,10 @@ const faux = fauxProvider();
 const models = createModels();
 models.setProvider(faux.provider);
 const agent = "b".repeat(64);
-const tools = [{ name: "send", description: "Post", inputSchema: { type: "object", properties: { text: { type: "string" }, final: { type: "boolean" } } } }];
+const tools = [
+  { name: "send", description: "Post", inputSchema: { type: "object", properties: { text: { type: "string" }, final: { type: "boolean" } } }, load: "always" },
+  { name: "watch_add", description: "Watch for events", inputSchema: { type: "object" }, load: "search" },
+];
 const out = {};
 function start() {
   const input = new PassThrough(), output = new PassThrough();
@@ -114,6 +117,24 @@ const g1 = await pi.rpc("deliver", turn("G", "ninth"));
 await asking.gate;
 await pi.rpc("abort", { agent, conversation: g1.conversation });
 out.aborted = await pi.rpc("wait", { agent, submission: g1.submission });
+// A tool loaded on search is offered once tool_search finds it.
+const offered = [];
+/** The tools a request offers: its own, and those its system messages add. */
+const toolsOf = (context) => {
+  const names = new Set((context.tools ?? []).map((tool) => tool.name));
+  for (const message of context.messages) {
+    for (const tool of message.toolsAdded ?? []) names.add(tool.name);
+    for (const tool of message.toolsRemoved ?? []) names.delete(tool.name ?? tool);
+  }
+  return [...names];
+};
+faux.setResponses([
+  (context) => { offered.push(toolsOf(context)); return fauxAssistantMessage(fauxToolCall("tool_search", { query: "watch events" }), { stopReason: "toolUse" }); },
+  (context) => { offered.push(toolsOf(context)); return fauxAssistantMessage(fauxToolCall("buzz_watch_add", {}), { stopReason: "toolUse" }); },
+  () => fauxAssistantMessage("Watching"),
+]);
+const h = await pi.rpc("deliver", turn("H", "watch it"));
+out.search = { wait: await pi.rpc("wait", { agent, submission: h.submission }), offered, called: pi.tools.splice(0).map((call) => call.name) };
 out.place = await pi.rpc("place", { agent, key: "chan/root" });
 // A turn Pi could not start leaves what the conversation was shown.
 out.unstarted = await pi.rpc("deliver", { ...turn("F", "eighth"), at: 200, model: "nope" }).catch((error) => error.message);
@@ -222,6 +243,14 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       status: "unanswered",
       reason: "aborted",
     });
+    const [before, after] = out.search.offered;
+    expect(before).toEqual(
+      expect.arrayContaining(["buzz_send", "tool_search"]),
+    );
+    expect(before).not.toContain("buzz_watch_add");
+    expect(after).toContain("buzz_watch_add");
+    expect(out.search.called).toContain("watch_add");
+    expect(out.search.wait).toMatchObject({ status: "done", text: "Watching" });
     expect(out.place).toEqual({ seen: 100 });
     expect(out.unstarted).toMatch(/Pi has no model nope/);
     expect(out.unstartedPlace).toEqual({ seen: 100 });

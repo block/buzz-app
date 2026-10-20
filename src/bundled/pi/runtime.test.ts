@@ -204,6 +204,11 @@ it("hands an owner's mention to its thread's Pi conversation", async () => {
     (tool) => tool.name,
   );
   expect(tools).toEqual(expect.arrayContaining(["send", "read"]));
+  // Loaded up front or on search, and what the search can find.
+  const listed = open?.params.tools as { name: string; load: string }[];
+  expect(listed.find((tool) => tool.name === "send")?.load).toBe("always");
+  expect(listed.find((tool) => tool.name === "watch_add")?.load).toBe("search");
+  expect(String(open?.params.hint)).toContain("Search for the rest");
   const [delivered] = host.requests("deliver");
   expect(delivered?.params).toMatchObject({
     agent: self,

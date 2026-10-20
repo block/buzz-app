@@ -69,9 +69,11 @@ PI_DEPS="$HOME/Library/Application Support/Buzz/pi/deps/<sum>" bin/pnpm exec vit
 The unit tests cover the stdio protocol (`pi.ts`), the runtime against a fake
 host, the install script in a throwaway home, and the New agent and Settings
 fields. The opt-in live test runs the real `host.mjs` on Pi durable, using Pi's
-faux provider as the model. It checks that a final `send` ends the run, that a
-plain answer comes back as text, that a request steers a working run, and that
-a run cut off by a stop continues in the next host. `PI_DEPS` is any folder
+faux provider as the model. It checks that a final `send` ends the run, that the
+model reads what a Buzz tool answered, that a plain answer comes back as text,
+that a request steers a working run, that a run cut off by a stop continues in
+the next host, that aborting a run leaves it unanswered, and that a deferred
+Buzz tool is offered once `tool_search` finds it. `PI_DEPS` is any folder
 `pi.sh` installed Pi's packages in.
 
 ## Buzz's copy of Pi's packages
@@ -107,6 +109,11 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
   are offered as `buzz_<name>` (`buzz_send`, `buzz_read`, …), since `read` and
   `edit` would collide. They run inside Buzz through the agent's native-held
   handle, so the host holds no Buzz key. A final `buzz_send` ends the run.
+  The Buzz tools Claude and Codex load on search (the attention tools, and
+  those plugins add) are deferred: Pi's `tool_search` loads them when the
+  model looks for them, and they stay loaded in that conversation.
+- **Stop** on a turn's activity aborts the Pi run it is in, and posts
+  nothing.
 - A turn that answered in text and never called `buzz_send` has its answer
   posted in the thread, as goose does. A turn that fails posts `⚠️ I couldn't
   finish that: …` and tags the owner.

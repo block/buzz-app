@@ -13,6 +13,7 @@ import { content, errorText } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
   callSessionTool,
+  sessionHint,
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
@@ -624,11 +625,14 @@ export class PiRuntime {
   }
 
   /** Opens the agent's storage in the host, with its Buzz tools as they are
-   * now. The host does nothing for one already open with these tools. */
+   * now: those loaded on search are deferred until Pi's tool search loads
+   * them, and the hint says what to search for. The host does nothing for one
+   * already open with these tools. */
   private async open(pubkey: string) {
     await this.pi.request("open", {
       agent: pubkey,
       tools: sessionTools(this.added()),
+      hint: sessionHint(this.added()),
     });
   }
 

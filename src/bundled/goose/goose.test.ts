@@ -658,6 +658,8 @@ describe("GooseProcess", () => {
     const shown = (messageId: string) =>
       local.reader.work().find((row) => row.messageId === messageId);
     const A = receipt("A");
+    const stop = vi.fn(async () => {});
+    A.work.interruptible(stop);
     const a = session.send("A", A.activity);
     await flush();
     const controller = new AbortController();
@@ -672,13 +674,18 @@ describe("GooseProcess", () => {
     expect(shown("A")).toMatchObject({
       state: "working",
       step: { tool: "Thinking" },
+      stoppable: true,
     });
+    await local.reader.interrupt?.({
+      scope: "conversation",
+      agent: "goose",
+      messageId: "A",
+    });
+    expect(stop).toHaveBeenCalledTimes(1);
     process.exit(1, "A PROCESS FAILURE\n");
     A.work.finish(await a);
-    expect(shown("A")).toMatchObject({
-      state: "error",
-      error: "A PROCESS FAILURE",
-    });
+    // The owner stopped A, so its later failure stays a stop.
+    expect(shown("A")?.state).toBe("stopped");
   });
 
   it("never hands activity back to a stopped turn that already ended", async () => {

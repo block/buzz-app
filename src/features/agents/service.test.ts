@@ -8097,6 +8097,7 @@ describe("Delete as a recoverable archive", () => {
       let enter = () => {};
       const entered = new Promise<void>((r) => (enter = r));
       let saving: Promise<unknown> | undefined;
+      let restore = () => {};
       try {
         await vi.waitFor(() =>
           expect(f.service.find(alder)?.configBase).toBeDefined(),
@@ -8117,6 +8118,17 @@ describe("Delete as a recoverable archive", () => {
         await expect(f.service.saveTeam(team)).rejects.toThrow();
         const op = teamOps(f.storage).every()[0];
         if (!op) throw new Error("Missing Create");
+        // A run's first act, before any I/O, is hashing its team's channel
+        // label. An unheld Check again shows the spy sees that.
+        const digest = vi.spyOn(crypto.subtle, "digest");
+        restore = () => digest.mockRestore();
+        const hashed = () =>
+          digest.mock.calls.filter(
+            ([, data]) =>
+              new TextDecoder().decode(data as Uint8Array) === op.teamId,
+          ).length;
+        await f.service.teamChange(op.id, "check");
+        expect(hashed()).toBeGreaterThan(0);
         relay.owns.mockImplementationOnce(async () => {
           enter();
           await gate;
@@ -8137,23 +8149,17 @@ describe("Delete as a recoverable archive", () => {
             ? ({ status: "refused", error: "Try later" } as never)
             : add(id, pubkey),
         );
-        const digest = vi.spyOn(crypto.subtle, "digest");
         // Check again queues behind the held Save, or, without serialization,
         // adds B and (on the second run) replans B's confirmed command away.
+        const before = hashed();
         let checking = Promise.resolve();
         for (let i = 0; i < checks; i++)
           checking = checking
             .then(() => f.service.teamChange(op.id, "check"))
             .catch(() => {});
-        // A run's first act, before any I/O, is hashing its team's channel
-        // label: none may start while the Save holds the team.
+        // None may start while the Save holds the team.
         await settle();
-        const started = digest.mock.calls.filter(
-          ([, data]) =>
-            new TextDecoder().decode(data as Uint8Array) === op.teamId,
-        );
-        digest.mockRestore();
-        expect(started).toEqual([]);
+        expect(hashed()).toBe(before);
         relay.addMember.mockImplementation(add);
         release();
         const result = await outcome;
@@ -8164,6 +8170,7 @@ describe("Delete as a recoverable archive", () => {
         // Never both: Save reports success and B, whom it left out, is joined.
         expect(!("error" in result) && roster?.includes(birch)).toBe(false);
       } finally {
+        restore();
         release();
         await saving?.catch(() => {});
         await f.ctx.fiber.dispose();

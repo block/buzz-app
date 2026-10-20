@@ -985,7 +985,7 @@ it("limits pane updates to the selected plugin without modifying the source prev
   expect(preview.candidates).toHaveLength(2);
 });
 
-it("requires deletion before adding another source for an installed plugin", async () => {
+it("opens installed details instead of adding another source", async () => {
   const manifest = {
     id: "example.duplicate",
     name: "Duplicate",
@@ -994,12 +994,13 @@ it("requires deletion before adding another source for an installed plugin", asy
   const installed = {
     manifest,
     source: "external" as const,
-    enabled: true,
+    enabled: false,
     revision: "one",
     previous: null,
     reloadable: true,
     error: null,
   };
+  const discard = vi.fn(async () => {});
   const manager = {
     installImport: vi.fn(async () => true),
     change: vi.fn(),
@@ -1011,12 +1012,14 @@ it("requires deletion before adding another source for an installed plugin", asy
         warnings: [],
         candidates: [{ path: ".", revision: "two", manifest }],
       })),
-      discard: vi.fn(async () => {}),
+      discard,
     },
   } as unknown as PluginManager;
+  const openInstalled = vi.fn();
   render(
     <PluginImport
       plugins={manager}
+      onOpenInstalled={openInstalled}
       catalog={{ profile: "test", location: "test", plugins: [installed] }}
       busy={false}
     />,
@@ -1028,8 +1031,20 @@ it("requires deletion before adding another source for an installed plugin", asy
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Install plugin" })).toBeNull();
+  expect(screen.queryByText(/This plugin will stay disabled/)).toBeNull();
   expect(manager.installImport).not.toHaveBeenCalled();
   expect(manager.change).not.toHaveBeenCalled();
+  discard.mockRejectedValueOnce(new Error("Discard failed"));
+  fireEvent.click(screen.getByRole("button", { name: "Open in Buzz" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Discard failed");
+  expect(openInstalled).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open in Buzz" }));
+  await waitFor(() =>
+    expect(openInstalled).toHaveBeenCalledExactlyOnceWith(manifest.id),
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(manager.installImport).not.toHaveBeenCalled();
 });
 
 it("keeps install review stable while the saved catalog arrives before enabling", async () => {

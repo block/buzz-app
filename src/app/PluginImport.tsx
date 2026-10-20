@@ -153,6 +153,7 @@ export function PluginImport({
   statusTarget,
   updateId,
   onClosed,
+  onOpenInstalled,
   returnFocus,
 }: {
   plugins: PluginManager;
@@ -162,6 +163,7 @@ export function PluginImport({
   statusTarget?: HTMLElement | null;
   updateId?: string;
   onClosed?: () => void;
+  onOpenInstalled?: (id: string) => void;
   returnFocus?: () => HTMLElement | null;
   /** Signs in to the selected community's Buzz git; null for other repositories. */
   authorizeGit?: (
@@ -392,7 +394,7 @@ export function PluginImport({
     }
   }
   async function close() {
-    if (blocked || pending.current) return;
+    if (blocked || pending.current) return false;
     const returnTo = document.activeElement;
     pending.current = true;
     setDiscarding(true);
@@ -407,8 +409,10 @@ export function PluginImport({
       setShowUnchanged(false);
       setOpen(false);
       onClosed?.();
+      return true;
     } catch (reason) {
       showError(reason, returnTo);
+      return false;
     } finally {
       pending.current = false;
       setDiscarding(false);
@@ -713,7 +717,19 @@ export function PluginImport({
                   Back
                 </Button>
               )}
-              {reviewing && (upToDate || duplicate) && (
+              {reviewing && duplicate && onOpenInstalled && (
+                <Button
+                  variant="prominent"
+                  disabled={blocked}
+                  onClick={async () => {
+                    const id = existing.manifest.id;
+                    if (await close()) onOpenInstalled(id);
+                  }}
+                >
+                  Open in Buzz
+                </Button>
+              )}
+              {reviewing && (duplicate ? !onOpenInstalled : upToDate) && (
                 <Button disabled={blocked} onClick={() => void close()}>
                   Done
                 </Button>
@@ -1036,8 +1052,8 @@ export function PluginImport({
                 )}
                 {reviewing && updating && !updateId && (
                   <p>
-                    This plugin is already installed. Update it from its
-                    details, or delete it before adding another source.
+                    This plugin is already installed. Open its details to manage
+                    it.
                   </p>
                 )}
                 {reviewing &&
@@ -1165,18 +1181,21 @@ export function PluginImport({
                     latest version.
                   </p>
                 )}
-                {reviewing && candidate && existing?.source === "external" && (
-                  <>
-                    {!existing.enabled && (
-                      <p className="m-0 text-body-sm text-muted">
-                        This plugin will stay disabled.
-                      </p>
-                    )}
-                    {rollbackWarning && (
-                      <p className="m-0 text-body-sm">{rollbackWarning}</p>
-                    )}
-                  </>
-                )}
+                {reviewing &&
+                  updateId &&
+                  candidate &&
+                  existing?.source === "external" && (
+                    <>
+                      {!existing.enabled && (
+                        <p className="m-0 text-body-sm text-muted">
+                          This plugin will stay disabled.
+                        </p>
+                      )}
+                      {rollbackWarning && (
+                        <p className="m-0 text-body-sm">{rollbackWarning}</p>
+                      )}
+                    </>
+                  )}
               </div>
             </section>
           )}

@@ -850,15 +850,16 @@ HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional bran
 or tag is separate from the repository URL; GitHub `tree` URLs are rejected with
 guidance rather than ambiguously splitting branch names and subfolders. Discovery
 lists built plugin folders by path, name and manifest ID, including nested `dist`
-folders. Choose one and explicitly install. An already-installed plugin directs you
-to its details to update, or to delete it before adding another source. New plugins
+folders. Choose one and explicitly install. An already-installed plugin offers
+Open in Buzz, which discards the preview and opens its installed details. Choosing
+another source still requires deleting the plugin and adding it again. New plugins
 enable by default, with an opt-out in the review footer; successful installation closes the dialog. Updates match
 **manifest ID** and preserve the saved enabled state:
 an enabled update may activate immediately except in safe mode. Review shows declared host access, including changes. Installed artifacts do
 not watch/pull the source. Plugins installed from a folder keep the selected folder
 path for automatic checks in Settings → Plugins → Manage plugins. Changed packages
-open access review before explicit Update confirmation, preserving the saved enabled
-state. Settings does not expose the immediate Reload shortcut.
+offer Update, which opens access review before explicit confirmation, preserving
+the saved enabled state. Settings does not expose the immediate Reload shortcut.
 For development, `buzzodz plugin reload ID` explicitly allows replacing an enabled
 folder plugin while preserving its enabled state. The running desktop observes the
 shared profile catalog every second and disposes the previous revision before

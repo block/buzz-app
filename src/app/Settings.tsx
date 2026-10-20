@@ -1308,7 +1308,20 @@ export function Settings({
                     catalog={catalog}
                     busy={busy}
                     authorizeGit={authorizePluginGit}
-                    returnFocus={() => visibleReturn(null)}
+                    onOpenInstalled={(id) => {
+                      pluginTrigger.current =
+                        [
+                          ...(pluginSection.current?.querySelectorAll<HTMLButtonElement>(
+                            "button[data-plugin-id]",
+                          ) ?? []),
+                        ].find((button) => button.dataset.pluginId === id) ??
+                        null;
+                      setActivationAttempt(undefined);
+                      setSelectedPluginId(id);
+                    }}
+                    returnFocus={() =>
+                      detailsClose.current ?? visibleReturn(null)
+                    }
                   />
                 ) : configuration.status === "recovery" ? (
                   <RecoveryScreen plugins={plugins} />

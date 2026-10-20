@@ -789,6 +789,22 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await expect(button(page, "Find plugins")).toBeFocused();
   await expect(page.getByLabel("Git or GitHub repository")).toHaveValue("bad");
   await page.keyboard.press("Escape");
+  await button(page, "Add").click();
+  await button(page, "Browse plugin folder").click();
+  await page.getByRole("radio", { name: /Example two/ }).check();
+  await button(page, "Continue").click();
+  await expect(
+    page.getByRole("dialog", { name: "Already installed" }),
+  ).toBeVisible();
+  await page.getByRole("dialog").screenshot({
+    path: info.outputPath("installed-open-dialog.png"),
+  });
+  await button(page, "Open in Buzz").click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(pane).toBeVisible();
+  await expect(button(page, "Close plugin details")).toBeFocused();
+  await button(page, "Close plugin details").click();
+  await expect(button(page, "View Example two details")).toBeFocused();
   await button(page, "View Example two details").click();
   await button(page, "More plugin actions").click();
   await page.getByRole("menuitem", { name: "Delete", exact: true }).click();

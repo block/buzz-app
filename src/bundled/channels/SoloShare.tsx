@@ -70,7 +70,7 @@ type Choice = { id: string; name: string; kind: "person" | "channel" };
 
 /** Unknown classification is not evidence of a private conversation. Only a
  * verified current roster plus a known non-agent profile supplies Shared. */
-function useSharedWithPeople(
+export function useSharedWithPeople(
   session: RelaySession,
   channel: ChannelSummary | undefined,
 ) {

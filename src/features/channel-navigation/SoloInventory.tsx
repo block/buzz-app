@@ -14,9 +14,13 @@ import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
 import { useUnreadChannelIds } from "../../bundled/channels/useSidebarFilters";
 import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
-import { soloSharedMarkId } from "../../bundled/channels/SoloShare";
+import {
+  soloSharedMarkId,
+  useSharedWithPeople,
+} from "../../bundled/channels/SoloShare";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
+import type { ChannelSummary } from "../relay/contracts";
 import { useRecoveryShown } from "../relay/RecoveryNotice";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
@@ -214,6 +218,9 @@ export function SoloInventory({
             navigation={navigator}
             pendingClick={pendingClick}
             id={item.id}
+            channel={conversations.find(
+              (conversation) => conversation.id === item.id,
+            )}
             title={item.title}
             selected={selected === item.id}
             working={workingChannels.has(item.id)}
@@ -243,6 +250,7 @@ function SoloConversationRow({
   navigation,
   pendingClick,
   id,
+  channel,
   title,
   selected,
   working,
@@ -256,6 +264,7 @@ function SoloConversationRow({
   navigation: Navigation;
   pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>;
   id: string;
+  channel: ChannelSummary | undefined;
   title: string;
   selected: boolean;
   working: boolean;
@@ -273,6 +282,8 @@ function SoloConversationRow({
     id,
     working,
   );
+  // Describe only by a mark that renders, using the same Shared evidence.
+  const shared = useSharedWithPeople(session, channel);
   return (
     <ChannelActivityPopover
       session={session}
@@ -289,7 +300,7 @@ function SoloConversationRow({
           selected={selected}
           data-solo-channel-id={id}
           aria-current={selected ? "page" : undefined}
-          aria-describedby={soloSharedMarkId(id)}
+          aria-describedby={shared ? soloSharedMarkId(id) : undefined}
           onPointerDown={(event) => {
             pointer.current = event.pointerType;
           }}

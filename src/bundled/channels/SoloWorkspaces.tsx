@@ -165,6 +165,17 @@ export function SoloWorkspaces({
       ?.focus({ preventScroll: true });
     setRowFocus(undefined);
   }, [rowFocus, collapsed, snapshot.data]);
+  // Show more and Show less each unmount once spent; focus stays on the row.
+  const [stepFocus, setStepFocus] = useState<string>();
+  useLayoutEffect(() => {
+    if (stepFocus === undefined) return;
+    const row = document.querySelector<HTMLElement>(
+      `[data-solo-show-more="${CSS.escape(stepFocus)}"]`,
+    );
+    if (row && !row.contains(document.activeElement))
+      row.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+    setStepFocus(undefined);
+  }, [stepFocus]);
   const [creatingFor, setCreatingFor] = useState<ChatListItem>();
   const [settingsFor, setSettingsFor] = useState<{
     id: string;
@@ -245,6 +256,7 @@ export function SoloWorkspaces({
     const next = extra > 0 ? { ...rest, [id]: extra } : rest;
     setExpanded(next);
     writeView(scope, expandedKey, next);
+    setStepFocus(id);
   };
   const moves =
     snapshot.moves?.filter((move) =>
@@ -489,7 +501,10 @@ export function SoloWorkspaces({
                   );
                 })}
                 {(project.hidden > 0 || project.extra > 0) && (
-                  <div className={styles.showMore} data-solo-show-more="">
+                  <div
+                    className={styles.showMore}
+                    data-solo-show-more={project.id}
+                  >
                     {project.hidden > 0 && (
                       <NavigationItem
                         variant="text"

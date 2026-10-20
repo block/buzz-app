@@ -189,3 +189,42 @@ it.each([
     expect(row.querySelector('[data-channel-unread-title="true"]')).toBeNull();
   },
 );
+
+it("keeps the open, unread and working chats listed past a workspace's cap", () => {
+  const f = fixture(false, false, undefined, undefined, 10);
+  const listed = () =>
+    screen
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("data-solo-channel-id"))
+      .filter(Boolean);
+  // Seven newest, then unread Planning and open Other past the cap, in order.
+  expect(listed()).toEqual([
+    ...Array.from({ length: 7 }, (_, index) => `newer-${index}`),
+    id,
+    other,
+  ]);
+  f.clearUnread();
+  expect(listed()).not.toContain(id);
+  f.activity({
+    ...f.activitySnapshot,
+    status: "listening",
+    turns: [
+      {
+        channelId: "newer-9",
+        agent,
+        turnId: "one",
+        timestamp: Date.now(),
+        state: "working",
+      },
+    ],
+  });
+  expect(listed()).toContain("newer-9");
+  expect(listed()).not.toContain("newer-8");
+});
+
+it("describes a Solo row as Shared only when its Shared mark renders", () => {
+  fixture();
+  expect(screen.getByRole("button", { name: /^Planning/ })).not.toHaveAttribute(
+    "aria-describedby",
+  );
+});

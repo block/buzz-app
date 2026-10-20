@@ -244,7 +244,7 @@
     :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
-  :is([data-channel-activity], [data-solo-shared]) {
+  [data-channel-activity] {
   opacity: 0;
 }
 @media (hover: none) {
@@ -309,6 +309,15 @@
   .organizedRow:has([data-channel-activity]) [data-solo-shared],
   .organizedRow:has([data-solo-working-indicator]:not(:empty))
     :is([data-channel-activity], [data-solo-shared]) {
+    opacity: 0;
+  }
+  /* The menu takes Shared's slot; touch keeps both in flow instead. */
+  .organizedRow:is(
+    :hover,
+    [data-context-menu-present],
+    :has(:focus-visible),
+    :has([aria-expanded="true"][aria-haspopup="menu"])
+  ) [data-solo-shared] {
     opacity: 0;
   }
   .sidebarContents

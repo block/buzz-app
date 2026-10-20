@@ -613,3 +613,25 @@ it("offers no Show more when a workspace fits under the cap", async () => {
   await screen.findByRole("button", { name: "Planning" });
   expect(document.querySelector("[data-solo-show-more]")).toBeNull();
 });
+
+it("keeps keyboard focus on the row when Show more or Show less is spent", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const chats = Array.from({ length: SOLO_CHAT_CAP + 2 }, (_, index) => ({
+    id: `c${index}`,
+    title: `Chat ${index}`,
+  }));
+  render(h.view(h.store().queries, undefined, undefined, chats));
+  const more = await screen.findByRole("button", {
+    name: "Show more chats in Chats",
+  });
+  more.focus();
+  await user.keyboard("{Enter}");
+  expect(
+    screen.getByRole("button", { name: "Show fewer chats in Chats" }),
+  ).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(
+    screen.getByRole("button", { name: "Show more chats in Chats" }),
+  ).toHaveFocus();
+});

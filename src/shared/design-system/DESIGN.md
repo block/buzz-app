@@ -1306,7 +1306,7 @@ offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
 Its `text` variant is a text-only row action, such as a capped list's Show
-more and Show less: row text and geometry with no fill, resting in
+more and Show less: the base navigation item's type and padding with no fill, resting in
 `--text-subtle` and strengthening to `--text-standard` on hover and keyboard
 focus. Use it where a fill would read as another destination.
 

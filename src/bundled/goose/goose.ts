@@ -975,6 +975,10 @@ export class GooseSession {
     for (const [scope, receipt] of this.active)
       if (stopped.receipts.has(receipt)) this.active.delete(scope);
     for (const receipt of stopped.receipts) this.displaced.delete(receipt);
+    // Stopped work has ended: no later message may hand its activity back.
+    for (const [later, earlier] of this.displaced)
+      if (earlier.receipt && stopped.receipts.has(earlier.receipt))
+        this.displaced.set(later, { ...earlier, receipt: undefined });
     const owner =
       this.owner && stopped.waiters.includes(this.owner)
         ? this.owner

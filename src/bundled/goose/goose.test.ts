@@ -681,6 +681,59 @@ describe("GooseProcess", () => {
     });
   });
 
+  it("never hands activity back to a stopped turn that already ended", async () => {
+    const { goose, process, release } = await slow("session/cancel");
+    process.hold = true;
+    const session = await goose.open({
+      cwd: "/work",
+      systemPrompt: "",
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      models: async () => ({
+        current: "",
+        models: [{ id: "o3", label: "o3", efforts: [] }],
+      }),
+    });
+    const local = createLocalAgentActivity();
+    const receipt = (messageId: string) => {
+      const work = local.begin({
+        scope: "conversation",
+        agent: "goose",
+        channelId: "channel",
+        messageId,
+        threadRootId: messageId,
+      });
+      const activity = {
+        step: work.step,
+        acknowledged: work.started,
+        superseded: work.supersede,
+      };
+      return { work, activity };
+    };
+    const A = receipt("A");
+    const a = session.send("A", A.activity);
+    await flush();
+    session.interrupt();
+    await flush();
+    let handed = false;
+    const hold = (<T>(send: () => T): T => {
+      handed = true;
+      return new Promise<void>(() => {}).then(send) as T;
+    }) as Handoff;
+    const controller = new AbortController();
+    const B = receipt("B");
+    const b = session.send("B", B.activity, "o3", hold, controller.signal);
+    await flush();
+    // The stop ends A, and B waits at its handoff.
+    release();
+    A.work.finish(await a);
+    await vi.waitFor(() => expect(handed).toBe(true));
+    controller.abort();
+    B.work.finish(await b);
+    expect(
+      local.reader.work().find((row) => row.messageId === "A")?.state,
+    ).toBe("superseded");
+  });
+
   it("keeps a newer result owner in another thread when a cancelled message leaves", async () => {
     const { open, process } = await start();
     process.hold = true;

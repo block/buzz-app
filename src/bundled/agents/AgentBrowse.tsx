@@ -8,6 +8,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { flushSync } from "react-dom";
 import { AGENT_CATALOG_KIND } from "../../features/agents/catalog-envelope";
 import { ModelIcon } from "../../features/agents/ModelPicker";
 import type {
@@ -160,7 +161,7 @@ function SharedAgentList({
             key={agent.id}
             className={cardStyles.card}
             aria-label={agent.name}
-            aria-pressed={selectedId === agent.id}
+            aria-current={selectedId === agent.id || undefined}
             data-selected={selectedId === agent.id || undefined}
             onClick={(event) =>
               onSelect({ agent, session, community }, event.currentTarget)
@@ -369,6 +370,7 @@ function SharedImportDialog({
   const [type, setType] = useState(initial?.key ?? "");
   const [config, setConfig] = useState<unknown>(initial?.config);
   const [changing, setChanging] = useState(!initial);
+  const form = useRef<HTMLDivElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const chosen = types.find((item) => item.key === type);
@@ -422,7 +424,7 @@ function SharedImportDialog({
         </>
       }
     >
-      <div className="grid gap-4">
+      <div ref={form} className="grid gap-4">
         {types.length === 0 && (
           <p className="m-0 text-body-sm text-secondary">
             Enable an agent type plugin to import agents.
@@ -431,7 +433,7 @@ function SharedImportDialog({
         {initial && !changing ? (
           <>
             <SettingsGroup>
-              <PreferenceRow title="Agent type" trailing={chosen?.title} />
+              <PreferenceRow title="Import as" trailing={chosen?.title} />
               {shared.provider && (
                 <PreferenceRow title="Provider" trailing={shared.provider} />
               )}
@@ -440,7 +442,16 @@ function SharedImportDialog({
                 trailing={shared.model || "Default"}
               />
             </SettingsGroup>
-            <Button variant="ghost" onClick={() => setChanging(true)}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                // The button goes with the summary; keep focus on what replaces it.
+                flushSync(() => setChanging(true));
+                form.current
+                  ?.querySelector<HTMLElement>("[role='combobox']")
+                  ?.focus();
+              }}
+            >
               Change settings
             </Button>
           </>

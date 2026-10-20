@@ -348,7 +348,7 @@ it("imports as the chosen type, and keeps the panel open with the error when it 
   );
   expect(
     within(confirmation).getByRole("combobox", { name: "Import as" }),
-  ).toBeVisible();
+  ).toHaveFocus();
   fireEvent.click(within(confirmation).getByRole("button", { name: "Import" }));
   expect(await within(confirmation).findByRole("alert")).toHaveTextContent(
     "Connect to a community first",

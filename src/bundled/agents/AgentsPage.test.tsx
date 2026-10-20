@@ -2199,6 +2199,7 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
       name: "Marketplace helper",
     });
     await user.click(tile);
+    expect(tile).toHaveAttribute("aria-current", "true");
     expect(
       screen.getByRole("heading", { name: "Marketplace helper" }),
     ).toBeVisible();

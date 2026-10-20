@@ -3,7 +3,6 @@ import {
   detailsDraftErrors,
 } from "../relay/channel-details-protocol";
 import { startingChatTitle } from "./chat-title";
-import { restoreStart, startFilesKey } from "./restore-start";
 import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
@@ -27,7 +26,6 @@ import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ComposerInputElement } from "../messages/composer-dom";
 import {
   attachmentDraft,
-  clearAttachmentDraft,
   transferAttachmentDraft,
   type AttachmentDraft,
 } from "../messages/attachment-draft";
@@ -81,8 +79,9 @@ export function SoloDraft({
   session: RelaySession;
   scope: string;
   onStarted: (id: string) => void;
-  /** The started chat `id` could not be made; its draft is back here. */
-  onFailed?: ((id: string) => void) | undefined;
+  /** The started chat `id` was never made, and what was sent in it is lost;
+   * `message` says why. */
+  onFailed?: ((id: string, message: string) => void) | undefined;
   projectId?: string | undefined;
 }) {
   const draftKey = projectId ? `solo:project:${projectId}` : "solo";
@@ -221,7 +220,7 @@ export function SoloDraft({
       setup?.catch(() => {});
       // The chat lists at once and its message goes out behind the create,
       // so the agents start on it without waiting for the relay.
-      const { create, ready } = session.channelWrites.start(
+      const { ready } = session.channelWrites.start(
         channelId,
         name,
         recipients,
@@ -234,25 +233,13 @@ export function SoloDraft({
               await applyChatSetup(session, channelId, loaded, () => true);
           }),
       );
-      let message: string | undefined;
       try {
-        message = session.messages.send(
+        session.messages.send(
           channelId,
           text,
           recipients,
           ...(uploaded.length ? [uploaded] : []),
         );
-        // The start keeps the message's files until the relay confirms the
-        // chat, in case they have to come back.
-        if (uploaded.length)
-          transferAttachmentDraft(
-            files,
-            attachmentDraft(
-              session,
-              startFilesKey(scope, channelId),
-              channelId,
-            ),
-          );
         files.clear();
         writeView(
           scope,
@@ -272,33 +259,14 @@ export function SoloDraft({
       writeView(scope, `${draftKey}:new-draft`, "");
       writeView(scope, `${draftKey}:new-project`, null);
       onStarted(channelId);
-      void ready.then(
-        () => clearAttachmentDraft(session, startFilesKey(scope, channelId)),
-        async (reason: unknown) => {
-          // Only a start that made no chat comes back here; any other miss
-          // leaves the chat listed, with its messages' own Retry.
-          if (!(reason instanceof ChatNotStarted)) {
-            clearAttachmentDraft(session, startFilesKey(scope, channelId));
-            return;
-          }
-          try {
-            await restoreStart(session, {
-              scope,
-              draftKey,
-              channelId,
-              create,
-              first: message ? { id: message, draft } : undefined,
-              settings: { name: draftSettings.name, canvas, ttlSeconds },
-              project,
-              reason,
-            });
-          } catch (error) {
-            console.error("Solo start could not come back", error);
-          } finally {
-            onFailed?.(channelId);
-          }
-        },
-      );
+      // Only a start that made no chat ends here; the chat and its messages
+      // are dropped (see channelWrites.start). Any other miss leaves the chat
+      // listed, with its messages' own Retry.
+      void ready.catch((reason: unknown) => {
+        if (!(reason instanceof ChatNotStarted)) return;
+        writeView(scope, `draft:${channelId}`, null);
+        onFailed?.(channelId, `Couldn't start "${name}": ${reason.message}`);
+      });
     } catch (reason) {
       if (mounted.current)
         setError(reason instanceof Error ? reason.message : String(reason));

@@ -3,7 +3,6 @@ import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
 import { ChatNotStarted } from "./channel-writes";
 import { ReadError } from "./errors";
-import { withdraw } from "../solo/withdraw";
 import { subscribeRelayTraffic } from "./live";
 import { keypair, metadata, roster, signed } from "./testing";
 import { matchesEvent } from "./projection";
@@ -234,7 +233,7 @@ it("a new chat's first message reaches its local agent at once and the relay rig
   expect(listed()?.members).toContain(h.agent.pubkey);
 });
 
-it("a refused create drops the pending chat and never publishes its message", async () => {
+it("a refused create drops the pending chat and everything sent in it", async () => {
   const id = "66666666-6666-4666-8666-666666666666";
   const h = setup(id);
   await h.established();
@@ -242,22 +241,22 @@ it("a refused create drops the pending chat and never publishes its message", as
     h.agent.pubkey,
   ]);
   ready.catch(() => {});
-  const message = h.session.messages.send(id, "@Agent go", [h.agent.pubkey]);
+  h.session.messages.send(id, "@Agent go", [h.agent.pubkey]);
   const outbox = h.session.outbox;
   assert.exists(outbox);
-  // As the new-chat composer does: withdraw as soon as the start fails, while
-  // the message's attempt may still be waiting on it.
-  const withdrawn = ready.then(
-    () => {},
-    () => withdraw(outbox, message),
-  );
   h.refuse();
   h.release();
   await vi.advanceTimersByTimeAsync(0);
   await expect(ready).rejects.toThrow("blocked");
   await vi.advanceTimersByTimeAsync(0);
-  await withdrawn;
-  expect(outbox.snapshot().map((item) => item.event.id)).not.toContain(message);
+  await vi.advanceTimersByTimeAsync(0);
+  // The start withdraws the create and the message it held, so neither
+  // lingers as a failed item for a chat that is not there.
+  expect(
+    outbox
+      .snapshot()
+      .filter((item) => item.event.tags.some(([, value]) => value === id)),
+  ).toEqual([]);
   // The create was sent, and once more on retry; never the message.
   expect(new Set(h.publish.mock.calls.map(([event]) => event.kind))).toEqual(
     new Set([9007]),
@@ -466,6 +465,12 @@ it("a create that never arrives backs off, then ends the start once the relay sh
   await settle(ready);
   await expect(ready).rejects.toBeInstanceOf(ChatNotStarted);
   expect(creates()).toBeGreaterThan(first);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(
+    h.session.outbox
+      ?.snapshot()
+      .some((item) => item.event.tags.some(([, value]) => value === id)),
+  ).toBe(false);
   expect(
     h.session.channels.list().channels.some((channel) => channel.id === id),
   ).toBe(false);

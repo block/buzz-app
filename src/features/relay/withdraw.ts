@@ -1,4 +1,4 @@
-import type { Outbox } from "../relay/outbox";
+import type { Outbox } from "./outbox";
 
 /** Removes a queued operation once its delivery attempt has ended; the outbox
  * keeps one that is still being attempted. */

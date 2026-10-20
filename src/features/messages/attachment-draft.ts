@@ -50,23 +50,15 @@ const handoffs = new WeakMap<
   }
 >();
 
-/** Send transfers the existing upload owner; clearing the composer cannot abort it.
- * With `append`, a target that holds files keeps them first. */
+/** Send transfers the existing upload owner; clearing the composer cannot abort it. */
 export function transferAttachmentDraft(
   source: AttachmentDraft,
   target: AttachmentDraft,
-  append = false,
 ) {
-  const held = target.snapshot().length;
-  if (source === target || (held && !append))
+  if (source === target || target.snapshot().length)
     throw new Error("Attachment upload handoff unavailable");
   const files = source.snapshot();
-  if (!files.length) return;
-  if (held + files.length > MAX_ATTACHMENT_FILES)
-    throw new Error(
-      `Attach at most ${MAX_ATTACHMENT_FILES} files per message.`,
-    );
-  if (!held && files.every((item) => item.uploaded)) {
+  if (files.every((item) => item.uploaded)) {
     target.adopt(files);
     source.clear();
     return;
@@ -411,34 +403,12 @@ export function attachmentDraft(
     },
     receive(work) {
       paused = false;
-      if (!items.length) {
-        items = work.items;
-        active = work.active;
-        pending = work.pending;
-        for (const task of active.values()) {
-          task.update = replace;
-          task.settled = pump;
-        }
-      } else {
-        // Appended uploads keep running here; each leaves this draft's maps
-        // when it settles, as its own would.
-        items = [...items, ...work.items];
-        for (const [id, task] of work.active) {
-          active.set(id, task);
-          task.update = replace;
-          task.settled = () => {
-            if (active.get(id) === task) active.delete(id);
-            pump();
-          };
-        }
-        for (const [id, upload] of work.pending) {
-          pending.set(id, upload);
-          void upload
-            .catch(() => {})
-            .finally(() => {
-              if (pending.get(id) === upload) pending.delete(id);
-            });
-        }
+      items = work.items;
+      active = work.active;
+      pending = work.pending;
+      for (const task of active.values()) {
+        task.update = replace;
+        task.settled = pump;
       }
       owners.set(key, store);
       emit();

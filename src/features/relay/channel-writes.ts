@@ -2,6 +2,7 @@ import { canonicalDetailsName } from "./channel-details-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { Outbox } from "./outbox";
+import { withdraw } from "./withdraw";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";
 
@@ -538,11 +539,8 @@ export function createChannelWrites(
         await pause(wait, signal);
         continue;
       }
-      // The relay has no such create. Keep it from landing later.
-      await outbox?.dismiss(create).catch(() => {});
-      throw new ChatNotStarted(
-        "The chat couldn't be started. Your message is back in New chat.",
-      );
+      // The relay has no such create; `start` withdraws it.
+      throw new ChatNotStarted("The relay has no record of it.");
     }
   }
   const api = Object.freeze({
@@ -675,7 +673,17 @@ export function createChannelWrites(
         // Confirming the chat only ends its pending listing.
         () => refresh(id).catch(() => {}),
         (error) => {
-          if (error instanceof ChatNotStarted) channels.abandon?.(id);
+          if (!(error instanceof ChatNotStarted)) return;
+          // A chat that was never made is gone, with everything sent in it.
+          channels.abandon?.(id);
+          for (const item of outbox?.snapshot() ?? [])
+            if (
+              outbox &&
+              item.event.tags.some(
+                ([name, value]) => name === "h" && value === id,
+              )
+            )
+              void withdraw(outbox, item.event.id).catch(() => {});
         },
       );
       void ready.catch(() => {}).finally(() => starts.delete(id));

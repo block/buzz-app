@@ -471,37 +471,6 @@ it("Send transfers the eager queue once and cancellation freezes active and queu
   stop();
 });
 
-it("an appended transfer keeps the target's files first and finishes the source's upload there", async () => {
-  const h = fixture();
-  const target = attachmentDraft(h.session, "recovered", "one");
-  const stop = target.subscribe(() => {});
-  target.addUploaded(uploaded("mine.txt"));
-  const source = attachmentDraft(h.session, "started", "one");
-  const stopSource = source.subscribe(() => {});
-  act(() => source.add([file("theirs.txt")]));
-  await waitFor(() => expect(h.calls).toHaveLength(1));
-  act(() => transferAttachmentDraft(source, target, true));
-  stopSource();
-  expect(source.snapshot()).toEqual([]);
-  expect(h.calls[0]?.signal.aborted).toBe(false);
-  h.calls[0]?.result.resolve(uploaded("theirs.txt"));
-  await waitFor(() =>
-    expect(target.snapshot().map((item) => item.status)).toEqual([
-      "ready",
-      "ready",
-    ]),
-  );
-  expect(target.snapshot().map((item) => item.uploaded?.name)).toEqual([
-    "mine.txt",
-    "theirs.txt",
-  ]);
-  // The finished upload left the target's work, so its queue moves again.
-  act(() => target.add([file("next.txt")]));
-  await waitFor(() => expect(h.calls).toHaveLength(2));
-  expect(() => transferAttachmentDraft(source, target)).toThrow();
-  stop();
-});
-
 it("renders real host transfer bytes as a determinate ring through completion", async () => {
   const h = fixture();
   function Draft() {

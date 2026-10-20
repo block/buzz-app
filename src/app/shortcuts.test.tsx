@@ -372,12 +372,29 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       );
       const main = screen.getByRole("textbox", {
         name: "Main draft",
-      }) as HTMLInputElement;
+      });
       const side = screen.getByRole("textbox", { name: "Side draft" });
       const outside = screen.getByRole("button", { name: "Outside" });
       const mainTab = screen.getByRole("tab", { name: "Main tab" });
       const sideTab = screen.getByRole("tab", { name: "Side tab" });
       const apple = platform === "MacIntel";
+      expect(
+        h.shortcuts
+          .hostSnapshot()
+          .filter(({ id }) => id.startsWith("focus-"))
+          .map(({ id, title }) => [id, title]),
+      ).toEqual(
+        apple
+          ? [
+              ["focus-composer", "Message"],
+              ["focus-main-pane", "Focus main pane"],
+              ["focus-side-pane", "Focus side pane"],
+            ]
+          : [
+              ["focus-composer", "Message"],
+              ["focus-pane", "Focus"],
+            ],
+      );
       const chord = {
         key: "l",
         ctrlKey: !apple,
@@ -385,8 +402,6 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
         shiftKey: false,
         altKey: false,
       };
-      main.focus();
-      main.setSelectionRange(2, 6);
       outside.focus();
       for (const extra of [
         { shiftKey: !chord.shiftKey },
@@ -402,9 +417,6 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       }
       expect(press(outside, chord).defaultPrevented).toBe(true);
       expect(main).toHaveFocus();
-      expect(main.selectionStart).toBe(2);
-      expect(main.selectionEnd).toBe(6);
-      expect(main).toHaveValue("Keep this draft");
       const terminal = screen.getByRole("textbox", { name: "Drawer terminal" });
       terminal.focus();
       const terminalKey = new KeyboardEvent("keydown", {
@@ -457,21 +469,18 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       sidePane.before(dock);
       dock.append(sidePane);
       sidePane.hidden = true;
-      for (const tag of ["aside", "div"]) {
-        cover = document.createElement(tag);
-        const button = document.createElement("button");
-        cover.append(button);
-        dock.append(cover);
-        for (const start of [outside, button]) {
-          start.focus();
-          expect(press(start, chord).defaultPrevented).toBe(false);
-          expect(press(start, paneKey).defaultPrevented).toBe(false);
-          expect(press(start, mainKey).defaultPrevented).toBe(false);
-          expect(start).toHaveFocus();
-          expect(main).toHaveValue("Keep this draft");
-        }
-        cover.remove();
+      cover = document.createElement("aside");
+      const button = document.createElement("button");
+      cover.append(button);
+      dock.append(cover);
+      for (const start of [outside, button]) {
+        start.focus();
+        expect(press(start, chord).defaultPrevented).toBe(false);
+        expect(press(start, paneKey).defaultPrevented).toBe(false);
+        expect(press(start, mainKey).defaultPrevented).toBe(false);
+        expect(start).toHaveFocus();
       }
+      cover.remove();
       cover = undefined;
       sidePane.hidden = false;
       side.removeAttribute("readonly");

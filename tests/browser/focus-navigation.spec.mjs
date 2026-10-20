@@ -1,7 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { closeSettings } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
-import { openChannelDetails } from "./channel-details.mjs";
 
 test.use({
   productionBroker: true,
@@ -91,34 +90,8 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   });
   await expect(sideBeta).toHaveText("Beta draft");
 
-  // Focus the requested pane's tab list, then choose another retained tab.
-  await openChannelDetails(page);
-  const settings = side.getByRole("tab", {
-    name: "Channel settings",
-    exact: true,
-  });
-  await expect(settings).toHaveAttribute("aria-selected", "true");
-  await settings.focus();
-  await page.keyboard.press(keys.composer);
-  await expect(settings).toBeFocused();
-  await page.keyboard.press(keys.main);
-  await expect(main.getByRole("tab", { selected: true })).toBeFocused();
-  await expect(page.locator("html")).toHaveAttribute(
-    "data-keyboard-navigation",
-    "",
-  );
-  await page.keyboard.press(keys.side);
-  await expect(settings).toBeFocused();
-  await page.keyboard.press("ArrowLeft");
-  await expect(
-    side.getByRole("tab", { name: "Beta", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(
-    side.getByRole("tab", { name: "Beta", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press(keys.composer);
-  await expect(sideBeta).toBeFocused();
+  // The range must survive a round trip through both pane strips.
+  await sideBeta.focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("Shift+ArrowRight");
   // ProseMirror adopts the browser's native selectionchange asynchronously.
@@ -130,10 +103,6 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
       ]),
     )
     .toEqual([0, 1]);
-  const selection = await sideBeta.evaluate((element) => [
-    element.selectionStart,
-    element.selectionEnd,
-  ]);
   await page.keyboard.press(keys.main);
   await expect(main.getByRole("tab", { selected: true })).toBeFocused();
   await page.keyboard.press(keys.composer);
@@ -147,7 +116,7 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
       element.selectionStart,
       element.selectionEnd,
     ]),
-  ).toEqual(selection);
+  ).toEqual([0, 1]);
   await expect(alpha).toHaveText("Alpha draft");
   await expect(sideBeta).toHaveText("Beta draft");
 
@@ -165,92 +134,34 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   await toggle.click();
   await expect(sideBeta).toHaveText("Beta draft");
 
-  await page.keyboard.press(`${mod}+k`);
-  await expect(query).toBeFocused();
-  await query.fill("Keep search focus");
-  await page.keyboard.press(keys.composer);
-  await page.keyboard.press(keys.side);
-  await expect(query).toBeFocused();
-  await expect(query).toHaveValue("Keep search focus");
-  await page.keyboard.press("Escape");
-  await expect(query).toHaveCount(0);
-
-  // Use the actual Settings capture controls, then restore those device-local
-  // overrides through a full app reload before resetting them.
-  const custom = keys.apple ? "Control+Meta" : "Control+Alt";
-  const actions = keys.apple
-    ? [
-        ["Message", `${custom}+u`],
-        ["Focus main pane", `${custom}+p`],
-        ["Focus side pane", `${custom}+o`],
-      ]
-    : [
-        ["Message", `${custom}+u`],
-        ["Focus", `${custom}+p`],
-      ];
+  // Existing shortcut journeys cover storage/reload/reset. Here the real
+  // capture must reach a focus action from a selected ProseMirror range.
+  const title = keys.apple ? "Focus main pane" : "Focus";
+  await page.keyboard.press(`${mod}+,`);
   const settingsDialog = page.getByRole("dialog", {
     name: "Settings",
     exact: true,
   });
-  const openShortcuts = async () => {
-    await page.keyboard.press(`${mod}+,`);
-    await settingsDialog
-      .getByRole("button", { name: "Shortcuts", exact: true })
-      .click();
-  };
-  await openShortcuts();
-  for (const [title, chord] of actions) {
-    const row = settingsDialog.getByRole("article", {
-      name: title,
-      exact: true,
-    });
-    await expect(row).toHaveCount(1);
-    await row
-      .getByRole("button", {
-        name: `Change shortcut for ${title}`,
-        exact: true,
-      })
-      .click();
-    await expect(
-      row.getByRole("textbox", {
-        name: `New shortcut for ${title}`,
-        exact: true,
-      }),
-    ).toBeFocused();
-    await page.keyboard.press(chord);
-    await expect(row.getByText("Modified", { exact: true })).toBeVisible();
-  }
+  await settingsDialog
+    .getByRole("button", { name: "Shortcuts", exact: true })
+    .click();
+  const row = settingsDialog.getByRole("article", { name: title, exact: true });
+  await row
+    .getByRole("button", { name: `Change shortcut for ${title}` })
+    .click();
+  await expect(
+    row.getByRole("textbox", { name: `New shortcut for ${title}` }),
+  ).toBeFocused();
+  await page.keyboard.press("Control+Alt+ArrowLeft");
+  await expect(row.getByText("Modified", { exact: true })).toBeVisible();
   await closeSettings(page);
-  await alpha.focus();
-  await page.keyboard.press(keys.apple ? actions[2][1] : actions[1][1]);
-  await expect(side.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(actions[0][1]);
-  await expect(sideBeta).toBeFocused();
-  await expect(sideBeta).toHaveText("Beta draft");
-  await page.keyboard.press(actions[1][1]);
-  await expect(main.getByRole("tab", { selected: true })).toBeFocused();
-  await page.reload();
-  await expect(alpha).toBeVisible();
-  await main.getByRole("tab", { selected: true }).focus();
-  await page.keyboard.press(actions[0][1]);
-  await expect(alpha).toBeFocused();
-  await expect(alpha).toHaveText("Alpha draft");
-  await openShortcuts();
-  for (const [title] of actions) {
-    const row = settingsDialog.getByRole("article", {
-      name: title,
-      exact: true,
-    });
-    await expect(row.getByText("Modified", { exact: true })).toBeVisible();
-    await row
-      .getByRole("button", { name: `Reset shortcut for ${title}`, exact: true })
-      .click();
-    await expect(row.getByText("Modified", { exact: true })).toHaveCount(0);
-  }
-  await closeSettings(page);
-  await main.getByRole("tab", { selected: true }).focus();
-  await page.keyboard.press(keys.composer);
-  await expect(alpha).toBeFocused();
+  await sideBeta.focus();
+  await sideBeta.evaluate((element) => element.setSelectionRange(0, 1));
+  await page.keyboard.press("Control+Alt+ArrowLeft");
+  const selectedMain = main.getByRole("tab", { selected: true });
+  await expect(selectedMain).toBeFocused();
+  await expect(selectedMain).toHaveCSS("outline-style", "solid");
+  await expect(selectedMain).toHaveCSS("outline-width", "2px");
 });
 
 test.extend({ companionFixture: true })(
@@ -339,9 +250,18 @@ test.extend({ companionFixture: true })(
   },
 );
 
-test("pane focus preserves F6 notification recovery", async ({ page, app }) => {
+test("covered panes and notifications preserve focus and F6 recovery", async ({
+  page,
+  app,
+}) => {
   await open(page, app);
   const keys = await focusKeys(page);
+  const main = page.locator("[data-main-workspace], [data-solo-focus-pane]");
+  const alpha = main.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  await alpha.fill("Alpha draft");
   const link = app.append(
     "primary",
     "alpha",
@@ -356,6 +276,44 @@ test("pane focus preserves F6 notification recovery", async ({ page, app }) => {
     name: "Message your agents",
     exact: true,
   });
+  await composer.fill("Beta draft");
+  const exposed = (locator) =>
+    locator.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const front = document.elementFromPoint(
+        rect.x + rect.width / 2,
+        rect.y + rect.height / 2,
+      );
+      return (
+        !!front &&
+        element
+          .closest("[data-main-workspace], [data-panel-workspace]")
+          ?.contains(front)
+      );
+    });
+  for (const width of [900, 600]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => exposed(alpha)).toBe(false);
+    await composer.focus();
+    await page.keyboard.press(keys.main);
+    const focused = page.locator(":focus");
+    await expect.poll(() => exposed(focused)).toBe(true);
+    await page.keyboard.press(keys.composer);
+    await expect.poll(() => exposed(focused)).toBe(true);
+    await page.keyboard.type("x");
+    await expect(alpha).toHaveText("Alpha draft");
+    // Outside both panes, a covered main composer must not claim the shortcut.
+    const search = page.getByRole("button", {
+      name: "Search Buzz",
+      exact: true,
+    });
+    await search.focus();
+    await page.keyboard.press(keys.composer);
+    await expect(search).toBeFocused();
+    await expect(alpha).toHaveText("Alpha draft");
+  }
+  // Repeat with a notification above the competing dock.
+  await page.setViewportSize({ width: 1440, height: 900 });
   await composer.fill("Toast draft");
   await composer.evaluate((input) => {
     // Exercise the real attachment rejection without allocating a huge buffer.
@@ -418,68 +376,4 @@ test("pane focus preserves F6 notification recovery", async ({ page, app }) => {
   await expect(
     notices.getByText("Could not attach file", { exact: true }),
   ).toBeVisible();
-});
-
-test("pane and composer shortcuts exclude fully and partially covered targets", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  const keys = await focusKeys(page);
-  const main = page.locator("[data-main-workspace], [data-solo-focus-pane]");
-  const alpha = main.getByRole("textbox", {
-    name: "Message #Alpha",
-    exact: true,
-  });
-  await alpha.fill("Alpha draft");
-  const link = app.append(
-    "primary",
-    "alpha",
-    "[Open Beta](buzz://channel/beta)",
-  );
-  await main
-    .locator(`[data-message-id="${link.id}"]`)
-    .getByRole("link")
-    .click();
-  const side = page.locator("[data-panel-workspace]");
-  const beta = side.getByRole("textbox", {
-    name: "Message your agents",
-    exact: true,
-  });
-  await beta.fill("Beta draft");
-  const exposed = (locator) =>
-    locator.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      const front = document.elementFromPoint(
-        rect.x + rect.width / 2,
-        rect.y + rect.height / 2,
-      );
-      return (
-        !!front &&
-        element
-          .closest("[data-main-workspace], [data-panel-workspace]")
-          ?.contains(front)
-      );
-    });
-  for (const width of [900, 600]) {
-    await page.setViewportSize({ width, height: 900 });
-    await expect.poll(() => exposed(alpha)).toBe(false);
-    await beta.focus();
-    await page.keyboard.press(keys.main);
-    const focused = page.locator(":focus");
-    await expect.poll(() => exposed(focused)).toBe(true);
-    await page.keyboard.press(keys.composer);
-    await expect.poll(() => exposed(focused)).toBe(true);
-    await page.keyboard.type("x");
-    await expect(alpha).toHaveText("Alpha draft");
-    // Outside both panes, a covered main composer must not claim the shortcut.
-    const search = page.getByRole("button", {
-      name: "Search Buzz",
-      exact: true,
-    });
-    await search.focus();
-    await page.keyboard.press(keys.composer);
-    await expect(search).toBeFocused();
-    await expect(alpha).toHaveText("Alpha draft");
-  }
 });

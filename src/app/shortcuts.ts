@@ -45,33 +45,23 @@ export function registerAppShortcuts(
         !document.activeElement?.closest(".xterm") && !!composerFocusTarget(),
       run: () => focusKeyboardTarget(composerFocusTarget()),
     }),
-    ...(apple
-      ? (["main", "side"] as const).map((pane) =>
-          shortcuts.registerHost({
-            id: `focus-${pane}-pane`,
-            title: `Focus ${pane} pane`,
-            binding: {
-              key: pane === "main" ? "ArrowLeft" : "ArrowRight",
+    ...(apple ? (["main", "side"] as const) : [undefined]).map((pane) =>
+      shortcuts.registerHost({
+        id: pane ? `focus-${pane}-pane` : "focus-pane",
+        title: pane ? `Focus ${pane} pane` : "Focus",
+        binding: pane
+          ? {
+              key: { main: "ArrowLeft", side: "ArrowRight" }[pane],
               mod: true,
               ctrl: true,
-            },
-            order: HOST_SHORTCUT_ORDER.focus,
-            allowInEditable: true,
-            when: () => !!paneFocusTarget(pane),
-            run: () => focusKeyboardTarget(paneFocusTarget(pane)),
-          }),
-        )
-      : [
-          shortcuts.registerHost({
-            id: "focus-pane",
-            title: "Focus",
-            binding: [{ key: "F8" }, { key: "F8", shift: true }],
-            order: HOST_SHORTCUT_ORDER.focus,
-            allowInEditable: true,
-            when: () => !!paneFocusTarget(),
-            run: () => focusKeyboardTarget(paneFocusTarget()),
-          }),
-        ]),
+            }
+          : [{ key: "F8" }, { key: "F8", shift: true }],
+        order: HOST_SHORTCUT_ORDER.focus,
+        allowInEditable: true,
+        when: () => !!paneFocusTarget(pane),
+        run: () => focusKeyboardTarget(paneFocusTarget(pane)),
+      }),
+    ),
     shortcuts.registerHost({
       id: "settings",
       title: "Open Settings",

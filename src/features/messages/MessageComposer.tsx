@@ -34,6 +34,7 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
+import { ownSolo } from "../solo/labels";
 import { soloRecipients } from "../solo/recipients";
 import { TypingIndicator } from "./TypingIndicator";
 import {
@@ -111,6 +112,9 @@ import type {
 } from "./composer-dom";
 import { TargetOpenerProvider } from "../conversation/opener";
 import { avatarMedia } from "../../shared/avatar-source";
+import { followUpBehaviorPreference } from "./follow-up-preference";
+import { followUpQueue } from "./follow-up-queue";
+import { QueuedFollowUps } from "./QueuedFollowUps";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
@@ -389,6 +393,7 @@ function Composer({
   // starts a thread of its own.
   const startsThread =
     !threadRootId && !solo && channelType !== "dm" && channelType !== "solo";
+  const host = fullSession(session);
   const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
   const sendPending = useBackgroundSendPending(session, recoveryKey);
@@ -425,6 +430,13 @@ function Composer({
     return caption;
   }, [value]);
   const draft = value.text;
+  const recipientKey = JSON.stringify(
+    value.recipients.map(({ pubkey, name }) => ({ pubkey, name })),
+  );
+  const recipients = useMemo(
+    () => JSON.parse(recipientKey) as readonly MentionRecipient[],
+    [recipientKey],
+  );
   const valueRef = useRef(value);
   // Model and effort picked for mentioned agents' next run; cleared by each send.
   const [picks, setPicks] = useState<MentionPicks>({});
@@ -1292,6 +1304,11 @@ function Composer({
     const capturedAttachments = attachments.store.snapshot();
     const capturedPicks = picks;
     const capturedRunPicks = { ...picks, ...resolvedPicks.current };
+    const queueFollowUp =
+      !!host &&
+      ownSoloConversation &&
+      !threadRootId &&
+      followUpBehaviorPreference() === "queue";
     try {
       if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
         throw new Error(
@@ -1386,11 +1403,44 @@ function Composer({
         stagedSessions.has(id),
       );
       // Destination and content are fixed here; a background send never retargets.
-      const publish = (uploaded: readonly UploadedAttachment[]) => {
+      function publishNow(
+        uploaded: readonly UploadedAttachment[],
+        sender: RelaySession,
+      ): string;
+      function publishNow(
+        uploaded: readonly UploadedAttachment[],
+        sender: ComposerSession,
+      ): string | Promise<string>;
+      function publishNow(
+        uploaded: readonly UploadedAttachment[],
+        sender: ComposerSession,
+      ) {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
+        const destination = session.channels
+          .list()
+          .channels.find((channel) => channel.id === channelId);
+        if (
+          queueFollowUp &&
+          (!destination || destination.archived || destination.readOnly)
+        )
+          throw new Error("This chat is no longer available for sending.");
+        if (
+          queueFollowUp &&
+          (!ownSolo(destination, session.viewer) ||
+            recipients.some(
+              (key) =>
+                archivedMention(session, key) ||
+                !session.agentChoices
+                  .snapshot()
+                  .selectable.some((agent) => agent.pubkey === key),
+            ))
+        )
+          throw new Error(
+            "This Solo chat or its recipients are no longer available.",
+          );
         return threadRootId
-          ? session.messages.reply(
+          ? sender.messages.reply(
               channelId,
               threadRootId,
               content,
@@ -1409,7 +1459,7 @@ function Composer({
               ...(sharedSessions.length ? [sharedSessions] : []),
             )
           : references.length || tuned || sharedSessions.length
-            ? session.messages.send(
+            ? sender.messages.send(
                 channelId,
                 content,
                 recipients,
@@ -1419,7 +1469,36 @@ function Composer({
                 ...(tuned || sharedSessions.length ? [sentPicks] : []),
                 ...(sharedSessions.length ? [sharedSessions] : []),
               )
-            : session.messages.send(channelId, content, recipients, uploaded);
+            : sender.messages.send(channelId, content, recipients, uploaded);
+      }
+      const publish = (
+        uploaded: readonly UploadedAttachment[],
+        validated = false,
+      ) => {
+        if (compactingNow(recipients))
+          throw new Error("Wait for compaction to finish, or interrupt it.");
+        return queueFollowUp && host
+          ? followUpQueue(host).submit(
+              {
+                channelId,
+                text: content,
+                recipients,
+                beforeRelease: async () => {
+                  const channel =
+                    await session.channelWrites.refreshMembership(channelId);
+                  if (recipients.some((key) => !channel.members?.includes(key)))
+                    throw new Error(
+                      "A queued recipient is no longer a member of this chat.",
+                    );
+                },
+                publish: () => publishNow(uploaded, host),
+                onSend: (id) => {
+                  if (live.current) onSend?.(id);
+                },
+              },
+              validated,
+            )
+          : publishNow(uploaded, session);
       };
       let id: string | undefined;
       if (capturedAttachments.length && !fullSession(session)) {
@@ -1436,7 +1515,7 @@ function Composer({
           capturedAttachments,
           async (uploaded) => {
             const sent = await publish(uploaded);
-            if (live.current) onSend?.(sent);
+            if (sent && live.current) onSend?.(sent);
           },
           (files, preparationError) => {
             // Only the original saved draft or the untouched follow-up can be
@@ -1507,7 +1586,8 @@ function Composer({
           attachments.store,
         );
       } else {
-        const result = publish([]);
+        // prepareRecipients just refreshed membership; nothing awaited since.
+        const result = publish([], true);
         if (typeof result !== "string") setSending(true);
         id = typeof result === "string" ? result : await result;
       }
@@ -1549,9 +1629,8 @@ function Composer({
       }
     }
   }
-  const host = fullSession(session);
   const readingOnly = !outbox?.supports(9) && !cached;
-  // The attachments section animates out over 180 ms; the form's gap and
+  // The attachments section animates out over 150 ms; the form's gap and
   // padding (data-attachments) collapse when it has, not when the list empties.
   // An edit unmounts the section at once, so no exit completes during one.
   const hasAttachments = attachments.items.length > 0;
@@ -1642,6 +1721,14 @@ function Composer({
     <SelectedMentionContext.Provider value={value.recipients}>
       {context}
       {active && nonmembers.dialog}
+      {!submission && !threadRootId && host && (
+        <QueuedFollowUps
+          session={host}
+          channelId={channelId}
+          disabled={disabled || !active}
+          focusComposer={() => input.current?.focus()}
+        />
+      )}
       <form
         ref={form}
         className={styles.composer}
@@ -1731,6 +1818,9 @@ function Composer({
             onDismiss={() => setAttachmentError(undefined)}
           />
         )}
+        <ComposerReplyContext>
+          {!editing.target && replyContext}
+        </ComposerReplyContext>
         <div className={styles.composerContent}>
           {!editing.target && (
             <ComposerAttachments
@@ -1904,7 +1994,6 @@ function Composer({
             />
           </div>
         </div>
-        {!editing.target && replyContext}
         {!editing.target &&
           threadRootId &&
           mediaTimeSeconds !== undefined &&
@@ -1949,6 +2038,7 @@ function Composer({
                     threadRootId={threadRootId}
                     disabled={editingDisabled}
                     inviteAgents={agentChoices && !editing.target}
+                    recipients={recipients}
                     insertText={(text) => insert(text)}
                     insertMention={insertMention}
                     insertMentions={insertMentions}
@@ -2101,6 +2191,27 @@ function Composer({
         />
       )}
     </SelectedMentionContext.Provider>
+  );
+}
+
+/** Retain the last preview for collapse; reply semantics clear immediately. */
+function ComposerReplyContext({ children }: { children: ReactNode }) {
+  const open = !!children;
+  const [lastContext, setLastContext] = useState(children);
+  if (open && children !== lastContext) setLastContext(children);
+  return (
+    <div
+      className={styles.composerReplySlot}
+      data-open={open || undefined}
+      inert={!open}
+      aria-hidden={!open || undefined}
+    >
+      <div className={styles.composerReplyClip}>
+        <div className={styles.composerReplyContent}>
+          {open ? children : lastContext}
+        </div>
+      </div>
+    </div>
   );
 }
 

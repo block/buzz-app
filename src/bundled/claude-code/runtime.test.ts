@@ -54,10 +54,13 @@ function setup(
     signal?: AbortSignal;
     /** Channels that are the owner's own Solo chats; the owner is the viewer. */
     solo?: Set<string>;
+    /** Solo chats the owner's device is still creating. */
+    pending?: Set<string>;
     named?: Delivery["named"];
     title?: string;
     /** The channel's Canvas, as it reads now. */
     canvas?: { content: string; pubkey?: string };
+    repositories?: (scope: string | undefined) => string;
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -100,6 +103,7 @@ function setup(
             name: "general",
             channelType: options.solo?.has(channel) ? "solo" : "stream",
             members: [],
+            ...(options.pending?.has(channel) ? { pending: true } : {}),
           },
         ],
       }),
@@ -112,6 +116,7 @@ function setup(
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
     },
+    channelWrites: { startingCanvas: () => undefined },
     canvas: {
       available: !!options.canvas,
       read: vi.fn(
@@ -127,7 +132,12 @@ function setup(
     },
   };
   const relay = {
-    snapshot: () => ({ status: "ready", session, viewer: alice }),
+    snapshot: () => ({
+      status: "ready",
+      session,
+      viewer: alice,
+      scope: `https://agent.example:${alice}`,
+    }),
   } as unknown as RelayData;
   const data = new Map<string, string>();
   const storage = localStore({
@@ -151,6 +161,7 @@ function setup(
     storage,
     config,
     () => added,
+    options.repositories,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
@@ -1215,7 +1226,7 @@ it("gives up a one-off turn that runs past its deadline", async () => {
   }
 });
 
-it("always offers attention tools and guidance, and says in each turn whether attention is on", async () => {
+it("always offers attention tools, on search, and says in each turn whether attention is on", async () => {
   const { runtime, claudes, deliver, attention } = setup();
   const agent = {
     pubkey: self,
@@ -1236,18 +1247,32 @@ it("always offers attention tools and guidance, and says in each turn whether at
     claudes().find((process) =>
       process.prompts[0]?.includes(`Content: @Claude ${id}`),
     );
-  const names = async (claude: FakeClaude | undefined, id: number) =>
+  const tools = async (claude: FakeClaude | undefined, id: number) =>
     (
       ((await mcp(claude, id, "tools/list")) as unknown as {
-        tools: { name: string }[];
+        tools: { name: string; _meta?: unknown }[];
       }) ?? { tools: [] }
-    ).tools.map((tool) => tool.name);
+    ).tools;
+  const names = async (claude: FakeClaude | undefined, id: number) =>
+    (await tools(claude, id)).map((tool) => tool.name);
   runtime.sync([agent as Agent]);
   await mention("6");
   await flush(10);
   const on = asked("6");
-  expect(await names(on, 1)).toContain("watch_add");
-  expect(systemPromptOf(on)).toContain("## Attention");
+  // Listed, but loaded only when the model searches for them, with their
+  // guidance in their descriptions rather than the system prompt.
+  const listed = await tools(on, 1);
+  const watchAdd = listed.find((tool) => tool.name === "watch_add");
+  expect(watchAdd).toBeDefined();
+  expect(watchAdd?._meta).toBe(undefined);
+  expect(listed.find((tool) => tool.name === "send")?._meta).toEqual({
+    "anthropic/alwaysLoad": true,
+  });
+  const initialized = (await mcp(on, 8, "initialize")) as unknown as {
+    instructions?: string;
+  };
+  expect(initialized?.instructions).toContain("your attention");
+  expect(systemPromptOf(on)).not.toContain("## Attention");
   expect(on?.prompts[0]).toMatch(/<attention>\nHandle the work/);
   // Turned off, the session keeps its tools and prompt: nothing restarts.
   attention.on = false;
@@ -1258,7 +1283,7 @@ it("always offers attention tools and guidance, and says in each turn whether at
   await flush(10);
   const off = asked("7");
   expect(await names(off, 2)).toContain("watch_add");
-  expect(systemPromptOf(off)).toContain("## Attention");
+  expect(systemPromptOf(off)).toBe(systemPromptOf(on));
   // Only the turn says that attention is off, and the tools refuse.
   expect(off?.prompts[0]).toMatch(/<attention>\nYour owner has attention off/);
   expect(off?.prompts[0]).not.toContain("Handle the work");
@@ -1508,6 +1533,31 @@ it("continues an owner's Solo chat as one channel session posted at the top leve
       ["p", alice],
     ],
   ]);
+});
+
+it("starts a turn in a chat its owner is still creating without reading its history", async () => {
+  const first = message("2", "@Claude first", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, read } = setup([first], {
+    hold: true,
+    solo: new Set([channel]),
+    pending: new Set([channel]),
+  });
+  await deliver({ type: "mention", event: first });
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toContain("@Claude first");
+  expect(read).not.toHaveBeenCalledWith(
+    [{ kinds: [9, 40002], "#h": [channel], limit: 13 }],
+    expect.anything(),
+  );
+  expect(prompt).not.toContain("<conversation-context");
 });
 
 it("finishes a Solo turn under its policy when the chat is converted mid-turn, and keeps the next turn's conversation while it waits", async () => {
@@ -1881,5 +1931,22 @@ it("interrupts a turn still loading its prompt before Claude receives it", async
     expect(f.claudes().flatMap((process) => process.prompts)).toEqual([]);
   } finally {
     f.runtime.dispose();
+  }
+});
+
+it("hands a session its own community repositories without changing its workspace", async () => {
+  const repositories = vi.fn(
+    () => "<community-repositories>/code/own</community-repositories>",
+  );
+  const { runtime, deliver, claudes } = setup([], { repositories });
+  try {
+    await deliver({ type: "mention", event: message("1", "@Claude work") });
+    await flush(10);
+    const process = claudes().find((item) => item.prompts.length);
+    expect(repositories).toHaveBeenCalledWith(`https://agent.example:${alice}`);
+    expect(JSON.stringify(process?.received)).toContain("/code/own");
+    expect(process?.options.cwd).toBe("~/.buzz");
+  } finally {
+    runtime.dispose();
   }
 });

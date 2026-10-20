@@ -1704,7 +1704,7 @@ it("opens avatar and name editing from the profile menu", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
-it("leaves an open emoji picker by Back or Cancel without saving", async () => {
+it("leaves an open avatar picker by Back, Escape or Cancel without saving", async () => {
   for (const name of ["ResizeObserver", "IntersectionObserver"])
     vi.stubGlobal(
       name,
@@ -1735,6 +1735,11 @@ it("leaves an open emoji picker by Back or Cancel without saving", async () => {
     ).toBeTruthy(),
   );
   await user.click(within(dialog).getByRole("button", { name: "Back" }));
+  await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
+  await user.keyboard("{Escape}");
+  expect(
+    await within(dialog).findByRole("button", { name: "Use custom" }),
+  ).toBeVisible();
   await user.click(within(dialog).getByRole("button", { name: "Use custom" }));
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() =>

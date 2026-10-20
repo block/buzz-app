@@ -114,7 +114,10 @@ export function AvatarEditor(props: Props) {
     >
       <Popover.Root
         open={open}
-        onOpenChange={(next) => {
+        onOpenChange={(next, details) => {
+          // An inline picker stays open, so Escape belongs to its dialog.
+          if (props.inlinePicker && details.reason === "escape-key")
+            details.allowPropagation();
           if (!props.inlinePicker || next) setOpen(next);
         }}
       >

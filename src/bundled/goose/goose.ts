@@ -669,6 +669,7 @@ export class GooseSession {
   ): Promise<{ settled: Promise<Settled> } | undefined> {
     if (
       this.closed ||
+      this.stopped ||
       !this.prompting ||
       this.queue.length ||
       (model && model !== this.model)
@@ -676,7 +677,9 @@ export class GooseSession {
       return undefined;
     this.steering++;
     try {
-      if (!(await this.steered(text, signal))) return undefined;
+      // Stopped work takes nothing more, even once goose took it: the
+      // caller sends it again, as new work.
+      if (!(await this.steered(text, signal)) || this.stopped) return undefined;
       this.pending++;
       let waiter!: Waiter;
       const settled = new Promise<Settled>((resolve) => {
@@ -727,7 +730,7 @@ export class GooseSession {
             this.runWaiters.push(resolve),
           )
         : undefined);
-    if (!runId || signal?.aborted) return false;
+    if (!runId || signal?.aborted || this.stopped) return false;
     try {
       await this.goose.request("_goose/unstable/session/steer", {
         sessionId: this.id,

@@ -265,6 +265,33 @@ describe("AgentSessions", () => {
     await expect(other).resolves.toMatchObject({ ok: true });
   });
 
+  it("runs a message sent after Stop as its own turn when the stopped session is stale", async () => {
+    const { fake, process, sessions, change } = setup({}, true);
+    const one = sessions.deliver("a", "one", 1);
+    await flush(20);
+    const goose = await process.get();
+    const notify = goose.notify.bind(goose);
+    let cancel = () => {};
+    // Goose takes its time to end the stopped turn.
+    goose.notify = (method, params) => {
+      if (method === "session/cancel") cancel = () => notify(method, params);
+      else notify(method, params);
+    };
+    change({ systemPrompt: "newer" }, false);
+    await sessions.interrupt("a");
+    const two = sessions.deliver("a", "two", 2);
+    await flush(30);
+    const turns = () => fake.geese[0]?.turns ?? [];
+    expect(turns()[0]?.steered).toEqual([]);
+    cancel();
+    await expect(one).resolves.toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(turns()).toHaveLength(2));
+    expect(turns()[1]?.text).toContain("two");
+    expect(turns()[1]?.sessionId).not.toBe(turns()[0]?.sessionId);
+    turns()[1]?.finish();
+    await expect(two).resolves.toMatchObject({ ok: true });
+  });
+
   it("interrupts a conversation once the session opening for it has its message", async () => {
     const { fake, sessions } = setup({}, true);
     const delivered = sessions.deliver("a", "one", 1);

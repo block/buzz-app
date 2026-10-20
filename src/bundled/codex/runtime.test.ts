@@ -1022,6 +1022,7 @@ it("tells a turn a reload stopped to carry on where it left off", async () => {
 it.each([
   [undefined, "auto"],
   ["detailed", undefined],
+  ["none", undefined],
 ])(
   "asks for reasoning summaries unless the user set %s",
   async (setting, expected) => {
@@ -1035,6 +1036,41 @@ it.each([
     expect(params?.summary).toBe(expected);
   },
 );
+it("asks for reasoning summaries on a resumed turn", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(f.delivery("@Codex second"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.sent.some((wire) => wire.method === "thread/resume")).toBe(true);
+  expect(f.starts()[1]?.params).toMatchObject({ summary: "auto" });
+});
+it("asks for reasoning summaries on a standalone watch turn", async () => {
+  const f = fixture();
+  f.attention.on = true;
+  f.objects.set("interest/ops", { type: "interest", instructions: "Watch" });
+  const watch = {
+    type: "event",
+    enabled: true,
+    interest_id: "ops",
+    since: 0,
+    channels: "all",
+    kinds: [9],
+  } as const;
+  f.objects.set("watch/deploys", watch);
+  const base = f.delivery("someone else's message");
+  if (base.trigger.type !== "mention") throw new Error("Expected mention");
+  const event = { ...base.trigger.event, pubkey: "f".repeat(64) };
+  f.wake({
+    ...base,
+    trigger: { type: "watch", event, slug: "watch/deploys", watch },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.starts()[0]?.params).toMatchObject({ summary: "auto" });
+  await f.complete(0, "");
+});
 it("starts a turn at the effort its owner picked when the model supports it", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });

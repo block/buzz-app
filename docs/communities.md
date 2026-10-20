@@ -161,16 +161,22 @@ The plugin starts a sync owner only where signing in is possible: the native
 app with a configured Builderlab service. The owner syncs only while signed in.
 Each sign-in reads the complete list, merges it as above, then sends each
 destination's latest intent one at a time. A newly queued intent, the window
-coming online or becoming visible runs the drain again at once. A failed
+coming online or becoming visible runs the drain again at once; once the list
+has merged and nothing is queued or due for a retry, a trigger runs no pass
+and reports nothing, and an unchanged report is never repeated. A failed
 request, or a device record that would not take the answer, retries at 1, 2,
 4… seconds, capped at a minute, re-sending the intent that then stands; a
 timeout, a rate limit and a server error are such failures. The service's
 refusals are never retried as sent: an address it refuses, an account that is
 full or any other client error (named with its HTTP status) parks that one
 intent until it is replaced or the next sign-in while the rest continue, an
-account that cannot sync stops until then, and a session the service has ended
-signs the plugin out. Signing out or disabling the plugin abandons the request
-in flight and leaves the queue intact.
+account that cannot sync or a list this client cannot read (a shape the two
+sides no longer share) stops until then, and a session the service has ended
+signs the plugin out. A service that answers the list with 404 has no
+known-communities routes yet: sync stops quietly until the next sign-in. A listed address this device could never save is left out and
+counted in a console warning, so one bad row cannot stop the account's sync.
+Signing out or disabling the plugin abandons the request in flight and leaves
+the queue intact.
 
 ## Session lifetime
 
@@ -305,23 +311,28 @@ and out of the known set while keeping an intent that replaced the settled one,
 both lost-acknowledgement orders converging on the latest intent as a plain
 retry, every list-merge branch including the removed-elsewhere rule, the
 pre-sync migration upload and deference to the pending intent, and the
-tolerant reader of saved state including the pre-set shape normalised to live
-records and newest operations. `src/bundled/builderlab/known-communities/client.test.ts`
-covers the account service's three routes against the native host transport:
-the exact request shapes, omitted repeated fields, malformed list entries,
-every named refusal in JSON and in the framework's plain text, unnamed client
-errors returned as rejections on every route while timeouts, rate limits and
-server errors remain failures, a 401 that ends the session and an unreachable
-service. `sync.test.ts` covers the owner under a controlled clock: sign-in and
-a loading record, the complete list merged once per sign-in and an intent
-queued while it is in flight, the removed-elsewhere and never-uploaded rules on
+tolerant reader of saved state.
+`src/bundled/builderlab/known-communities/client.test.ts` covers the account
+service's three routes against the native host transport: the exact request
+shapes, the device's spelling of listed addresses, omitted repeated fields,
+unsaveable addresses dropped and counted, rows of another shape answered as an
+invalid response, every named refusal in JSON and in the framework's plain
+text, unnamed client errors returned as rejections on every route while
+timeouts, rate limits and server errors remain failures, a 401 that ends the
+session and an unreachable service. `sync.test.ts` covers the owner under a
+controlled clock: sign-in and a loading record, the complete list merged once
+per sign-in and an intent queued while it is in flight, the removed-elsewhere
+and never-uploaded rules on
 a later sign-in, one upload in flight at a time in queue order, identical
 retries at each backoff boundary and the reset after a success, a device record
 that will not take an answer backing off and replaying, the `online` and
-`visibilitychange` triggers, parked and halting refusals including rejections
-named by status, a parked add replaced by the removal that then goes out and
-re-sent on the next sign-in, both lost-acknowledgement orders against a set
-service, an abandoned upload on sign-out that keeps the queue, a session ended
+`visibilitychange` triggers and their silence once synced with an empty queue,
+no repeated report, parked and halting refusals including rejections named by
+status, an unreadable list and the quiet 404 for a service without the routes,
+addresses the list left out, a parked add replaced by the removal that then
+goes out and re-sent on the next sign-in, both lost-acknowledgement orders
+against a set service, an abandoned upload on sign-out that keeps the queue, a
+session ended
 by the service and disposal. `index.test.tsx` runs the real plugin wiring
 through to the list request under the signed-in credential, and that an
 unconfigured build starts no owner.

@@ -35,18 +35,19 @@ async function fixture(reply: HostResponse | (() => Promise<HostResponse>)) {
   };
 }
 
-it("lists every destination the account holds under the session credential", async () => {
+it("lists every destination the account holds under the session credential, in the device's spelling", async () => {
   const h = await fixture(
     response({
       communities: [
         { community_url: url },
         { community_url: "wss://b.example:8443" },
+        { community_url: "wss://Primary.Example:443/" },
       ],
     }),
   );
   expect(await h.client.list(h.signal)).toEqual({
     kind: "listed",
-    communities: [url, "wss://b.example:8443"],
+    communities: [url, "wss://b.example:8443", url],
   });
   expect(h.host.request).toHaveBeenCalledWith({
     url: route("list"),
@@ -69,19 +70,37 @@ it("reads an omitted repeated field as an empty list", async () => {
 });
 
 it.each([
-  { community_url: "https://primary.example" },
-  { community_url: 7 },
-  {},
-  "not a record",
-  null,
-])("rejects a list holding %j", async (entry) => {
-  const h = await fixture(
-    response({ communities: [{ community_url: url }, entry] }),
-  );
-  await expect(h.client.list(h.signal)).rejects.toThrow(
-    "Builderlab returned an invalid response.",
-  );
-});
+  "https://primary.example",
+  "wss://primary.example/path",
+  "wss://user@primary.example",
+  "wss://",
+])(
+  "drops a listed address this device could never save, %s, and counts it",
+  async (community_url) => {
+    const h = await fixture(
+      response({ communities: [{ community_url: url }, { community_url }] }),
+    );
+    expect(await h.client.list(h.signal)).toEqual({
+      kind: "listed",
+      communities: [url],
+      dropped: 1,
+    });
+  },
+);
+
+it.each([{ community_url: 7 }, {}, "not a record", null])(
+  "answers a list holding a row shaped %j as an invalid response, not a failure to retry",
+  async (entry) => {
+    const h = await fixture(
+      response({ communities: [{ community_url: url }, entry] }),
+    );
+    expect(await h.client.list(h.signal)).toEqual({ kind: "invalid_response" });
+    const rows = await fixture(response({ communities: "none" }));
+    expect(await rows.client.list(rows.signal)).toEqual({
+      kind: "invalid_response",
+    });
+  },
+);
 
 it.each([
   {

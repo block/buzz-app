@@ -17,9 +17,17 @@ export type SyncState = {
 /** Membership changes a server list implies, as destination addresses. */
 export type SyncChanges = { add?: string[]; remove?: string[] };
 /** What the one sync owner reports while it runs, for the rail's indicator.
- * `pending` counts queued operations, including ones parked after a refusal. */
+ * `pending` counts queued operations, including ones parked after a refusal.
+ * `unavailable` is a service without the known-communities routes: the queue
+ * waits for the next sign-in and the rail shows nothing. */
 export type SyncStatus = {
-  phase: "signed-out" | "syncing" | "synced" | "pending" | "error";
+  phase:
+    | "signed-out"
+    | "syncing"
+    | "synced"
+    | "pending"
+    | "error"
+    | "unavailable";
   pending: number;
   error?: string;
 };
@@ -31,41 +39,24 @@ const isAddress = (value: unknown): value is string =>
 
 /** Reads the saved `sync` field. Records from before this field existed, or
  * ones this reader cannot understand, read as empty, and a malformed entry is
- * dropped on its own. The shape saved before the service's set model (records
- * with revisions, several operations per destination) reads as its live
- * records and each destination's newest operation. */
+ * dropped on its own. */
 export function parseSync(raw: unknown): SyncState {
   if (!raw || typeof raw !== "object") return emptySync();
   const { known, outbox } = raw as Record<string, unknown>;
-  const ops = Array.isArray(outbox)
-    ? outbox.flatMap((op): PendingOp[] =>
-        op &&
-        typeof op === "object" &&
-        "url" in op &&
-        isAddress(op.url) &&
-        "removed" in op &&
-        typeof op.removed === "boolean"
-          ? [{ url: op.url, removed: op.removed }]
-          : [],
-      )
-    : [];
   return {
-    known: Array.isArray(known)
-      ? [...new Set(known.filter(isAddress))]
-      : known && typeof known === "object"
-        ? Object.entries(known).flatMap(([url, record]) =>
-            isAddress(url) &&
-            record &&
-            typeof record === "object" &&
-            (record as { removed?: unknown }).removed !== true
-              ? [url]
-              : [],
-          )
-        : [],
-    outbox: ops.filter(
-      (op, index) =>
-        !ops.some((later, at) => at > index && later.url === op.url),
-    ),
+    known: Array.isArray(known) ? [...new Set(known.filter(isAddress))] : [],
+    outbox: Array.isArray(outbox)
+      ? outbox.flatMap((op): PendingOp[] =>
+          op &&
+          typeof op === "object" &&
+          "url" in op &&
+          isAddress(op.url) &&
+          "removed" in op &&
+          typeof op.removed === "boolean"
+            ? [{ url: op.url, removed: op.removed }]
+            : [],
+        )
+      : [],
   };
 }
 

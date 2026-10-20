@@ -13,6 +13,7 @@ const REASONS: Record<Exclude<Refusal["kind"], "rejected">, string> = {
   invalid_request: "Builderlab refused one of your community addresses.",
   forbidden: "This Builderlab account can’t sync communities.",
   limit_reached: "Builderlab can’t save more communities for this account.",
+  invalid_response: "Builderlab returned an invalid response.",
 };
 const reason = (refusal: Refusal) =>
   refusal.kind === "rejected"
@@ -22,6 +23,8 @@ const backoff = (failures: number) => Math.min(60_000, 1000 * 2 ** failures);
 /** An intent's identity for parking: the newer intent that replaces a parked
  * one is a different request and goes out. */
 const key = (op: PendingOp) => `${op.removed ? "-" : "+"}${op.url}`;
+const same = (a: SyncStatus | undefined, b: SyncStatus) =>
+  a?.phase === b.phase && a.pending === b.pending && a.error === b.error;
 
 /** Drains the known-community outbox to the account service and reconciles
  * its list, for one plugin lifetime. It runs only while signed in: each
@@ -30,11 +33,12 @@ const key = (op: PendingOp) => `${op.removed ? "-" : "+"}${op.url}`;
  * or becoming visible runs it again at once; a failure retries at 1·2·4… s,
  * capped at a minute, re-sending whatever intent then stands, which is safe
  * because the service's add and remove are idempotent. The service's refusals
- * are not retried: an account that cannot sync stops everything until the
- * next sign-in, while a refused address, a full account or another client
- * error parks that one intent until it is replaced or the next sign-in.
- * Signing out or disposal abandons in-flight work and leaves the outbox
- * intact. */
+ * are not retried: an account that cannot sync, or a list this client cannot
+ * read, stops everything until the next sign-in, while a refused address, a
+ * full account or another client error parks that one intent until it is
+ * replaced or the next sign-in. A service without the routes (404 on the
+ * list) stops the same way but reports nothing to show. Signing out or
+ * disposal abandons in-flight work and leaves the outbox intact. */
 export function startKnownCommunitiesSync({
   client,
   session,
@@ -53,29 +57,37 @@ export function startKnownCommunitiesSync({
   let rerun = false;
   let listed = false;
   let halted = false;
+  let unavailable = false;
   let error: string | undefined;
+  let reported: SyncStatus | undefined;
   // Refused intents wait for the next sign-in, counted as pending meanwhile.
   const parked = new Set<string>();
   let outbox = knownCommunities.snapshot().sync.outbox;
   let ready = knownCommunities.snapshot().status === "ready";
 
+  /** Reports a change of status; an unchanged one would only wake every
+   * listener on the communities snapshot for nothing. */
   const publish = () => {
     if (disposed) return;
     const pending = knownCommunities.pending().length;
     const phase: SyncStatus["phase"] = !controller
       ? "signed-out"
-      : running
-        ? "syncing"
-        : error
-          ? "error"
-          : pending
-            ? "pending"
-            : "synced";
-    knownCommunities.status(
+      : unavailable
+        ? "unavailable"
+        : running
+          ? "syncing"
+          : error
+            ? "error"
+            : pending
+              ? "pending"
+              : "synced";
+    const status: SyncStatus =
       phase === "error" && error
         ? { phase, pending, error }
-        : { phase, pending },
-    );
+        : { phase, pending };
+    if (same(reported, status)) return;
+    reported = status;
+    knownCommunities.status(status);
   };
   const refuse = (refusal: Refusal) => {
     halted = true;
@@ -95,8 +107,19 @@ export function startKnownCommunitiesSync({
     try {
       if (!listed) {
         const list = await client.list(signal);
+        if (list.kind === "rejected" && list.status === 404) {
+          // The service has no known-communities routes yet: nothing to
+          // show and nothing to do until the next sign-in.
+          halted = true;
+          unavailable = true;
+          return;
+        }
         if (list.kind !== "listed") return refuse(list);
         signal.throwIfAborted();
+        if (list.dropped)
+          console.warn(
+            `Builderlab listed ${list.dropped} community address(es) this device can’t save; they were left out.`,
+          );
         const current = knownCommunities.snapshot();
         const merged = mergeList(
           current.sync,
@@ -152,9 +175,11 @@ export function startKnownCommunitiesSync({
     }
   }
   /** A trigger resets the backoff and runs now, or again once the request in
-   * flight settles. */
+   * flight settles. Once the list has merged, nothing is waiting and no retry
+   * is due, there is no pass to run. */
   const kick = () => {
     if (disposed || !controller || halted) return;
+    if (listed && !timer && knownCommunities.pending().length === 0) return;
     failures = 0;
     clearTimeout(timer);
     timer = undefined;
@@ -167,6 +192,7 @@ export function startKnownCommunitiesSync({
       controller = new AbortController();
       listed = false;
       halted = false;
+      unavailable = false;
       error = undefined;
       parked.clear();
       kick();

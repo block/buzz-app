@@ -1,3 +1,4 @@
+import { relayAddress } from "../../../features/communities/destination";
 import type { Host, HostResponse } from "../../../features/host/service";
 import { oauthTarget, type Credential } from "../oauth/browser";
 import type { OAuthSession } from "../oauth/session";
@@ -5,13 +6,24 @@ import type { OAuthSession } from "../oauth/session";
 /** The service's refusals. None is retried as sent: each waits for a fresh
  * sign-in. A client error the service did not name is `rejected` with its
  * status: the request as sent will not be accepted, unlike a timeout, a rate
- * limit or a server error. */
+ * limit or a server error. A success whose body this client cannot read is
+ * `invalid_response`: a contract the two sides no longer share, which no
+ * retry mends either. */
 export type Refusal =
   | { kind: "invalid_request" }
   | { kind: "forbidden" }
   | { kind: "limit_reached" }
+  | { kind: "invalid_response" }
   | { kind: "rejected"; status: number };
-export type ListResult = { kind: "listed"; communities: string[] } | Refusal;
+export type ListResult =
+  | {
+      kind: "listed";
+      /** In the device's spelling (`relayAddress`), which the service shares. */
+      communities: string[];
+      /** Rows whose address this device could never save, left out. */
+      dropped?: number;
+    }
+  | Refusal;
 export type UpdateResult = { kind: "accepted" } | Refusal;
 
 /** Refusals the framework answers in plain text, by status alone. */
@@ -41,15 +53,21 @@ function unexpected(status: number): Refusal {
     },
   );
 }
-const invalid = () => new Error("Builderlab returned an invalid response.");
 
-/** A listed destination's address as the service holds it. */
-function address(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const { community_url } = value as Record<string, unknown>;
-  return typeof community_url === "string" && community_url.startsWith("wss://")
-    ? community_url
-    : undefined;
+/** A listed row's destination. `null` is a row whose address this device could
+ * never save (dropped on its own), `undefined` a row of a shape this client
+ * does not understand, which makes the whole response invalid. */
+function address(row: unknown): string | null | undefined {
+  if (!row || typeof row !== "object") return undefined;
+  const { community_url } = row as Record<string, unknown>;
+  if (typeof community_url !== "string") return undefined;
+  try {
+    return community_url.startsWith("wss://")
+      ? relayAddress(community_url)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The known-communities routes under the signed-in Builderlab session. The
@@ -134,10 +152,17 @@ export function createKnownCommunitiesClient(
       if (status !== 200) return refusal(status, value);
       // Protobuf JSON can omit an empty repeated field.
       const rows = value.communities ?? [];
-      const communities = Array.isArray(rows) ? rows.map(address) : [];
-      if (!Array.isArray(rows) || communities.includes(undefined))
-        throw invalid();
-      return { kind: "listed", communities: communities as string[] };
+      if (!Array.isArray(rows)) return { kind: "invalid_response" };
+      const addresses = rows.map(address);
+      if (addresses.includes(undefined)) return { kind: "invalid_response" };
+      const communities = addresses.filter((a): a is string => a !== null);
+      return {
+        kind: "listed",
+        communities,
+        ...(communities.length < rows.length
+          ? { dropped: rows.length - communities.length }
+          : {}),
+      };
     },
     add: (url: string, signal: AbortSignal) => send("add", url, signal),
     remove: (url: string, signal: AbortSignal) => send("remove", url, signal),

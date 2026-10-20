@@ -233,12 +233,29 @@ it.each([
   {
     name: "the list route rejects the request as sent",
     arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
-      h.client.list.mockResolvedValue({ kind: "rejected", status: 404 }),
+      h.client.list.mockResolvedValue({ kind: "rejected", status: 405 }),
     status: {
       phase: "error",
       pending: 1,
-      error: "Builderlab refused this request (HTTP 404).",
+      error: "Builderlab refused this request (HTTP 405).",
     },
+  },
+  {
+    name: "the list cannot be read",
+    arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
+      h.client.list.mockResolvedValue({ kind: "invalid_response" }),
+    status: {
+      phase: "error",
+      pending: 1,
+      error: "Builderlab returned an invalid response.",
+    },
+  },
+  {
+    // Routes not yet deployed: quiet, with nothing for the rail to show.
+    name: "the service has no known-communities routes",
+    arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
+      h.client.list.mockResolvedValue({ kind: "rejected", status: 404 }),
+    status: { phase: "unavailable", pending: 1 },
   },
   {
     name: "an upload is forbidden",
@@ -274,6 +291,50 @@ it.each([
   await h.session.signIn();
   await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
   expect(h.outbox()).toEqual([]);
+  h.dispose();
+});
+
+it("runs no pass and reports nothing on a trigger once synced with an empty queue, and never repeats a report", async () => {
+  const h = await fixture({ snapshot: { sync: queued(primary) } });
+  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  const reports = h.status.mock.calls.length;
+  window.dispatchEvent(new Event("online"));
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  document.dispatchEvent(new Event("visibilitychange"));
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(h.status).toHaveBeenCalledTimes(reports);
+  expect(h.client.list).toHaveBeenCalledTimes(1);
+  expect(h.client.add).toHaveBeenCalledTimes(1);
+  // A new intent still runs; the store's own notice of it, and the queue
+  // shrinking under the acknowledgement, add no report that says the same.
+  h.enqueue(secondary);
+  await until(() => expect(h.outbox()).toEqual([]));
+  const phases = h.status.mock.calls.slice(reports).map(([s]) => s);
+  expect(phases).toEqual([
+    { phase: "syncing", pending: 1 },
+    { phase: "syncing", pending: 0 },
+    synced(),
+  ]);
+  h.dispose();
+});
+
+it("keeps syncing when the list left out addresses this device cannot save, and says so once", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const h = await fixture({
+    arrange: (client) =>
+      client.list.mockResolvedValue({
+        kind: "listed",
+        communities: [secondary],
+        dropped: 2,
+      }),
+  });
+  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  expect(h.apply).toHaveBeenCalledWith(
+    { known: [secondary], outbox: [] },
+    { add: [secondary], remove: [] },
+  );
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0]?.[0]).toContain("2 community address(es)");
   h.dispose();
 });
 

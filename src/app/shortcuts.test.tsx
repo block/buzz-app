@@ -428,12 +428,19 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       expect(terminalKey.defaultPrevented).toBe(false);
       expect(terminal).toHaveFocus();
       const paneKey = apple
-        ? { key: "ArrowRight", ctrlKey: true, metaKey: true }
+        ? { key: "ArrowRight", ctrlKey: false, metaKey: true, altKey: true }
         : { key: "F8", ctrlKey: false };
       const mainKey = apple
         ? { ...paneKey, key: "ArrowLeft" }
         : { ...paneKey, shiftKey: true };
       main.focus();
+      if (apple) {
+        // Command+arrows retain native line navigation while typing.
+        expect(
+          press(main, { ...paneKey, altKey: false }).defaultPrevented,
+        ).toBe(false);
+        expect(main).toHaveFocus();
+      }
       press(main, paneKey);
       expect(side).toHaveFocus();
       expect(document.documentElement.dataset.keyboardNavigation).toBe("");

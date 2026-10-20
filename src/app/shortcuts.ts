@@ -53,7 +53,7 @@ export function registerAppShortcuts(
           ? {
               key: { main: "ArrowLeft", side: "ArrowRight" }[pane],
               mod: true,
-              ctrl: true,
+              alt: true,
             }
           : [{ key: "F8" }, { key: "F8", shift: true }],
         order: HOST_SHORTCUT_ORDER.focus,

@@ -145,14 +145,14 @@ function mount(
 }
 
 it.each(["ArrowLeft", "ArrowRight"])(
-  "yields Control+Command+%s to host navigation without collapsing the selection",
+  "yields Command+Option+%s to host navigation without collapsing the selection",
   (key) => {
     const h = mount("abcdef");
     act(() => h.input.setSelectionRange(1, 4));
     const event = new KeyboardEvent("keydown", {
       key,
       keyCode: key === "ArrowLeft" ? 37 : 39,
-      ctrlKey: true,
+      altKey: true,
       metaKey: true,
       bubbles: true,
       cancelable: true,

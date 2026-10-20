@@ -394,7 +394,7 @@ search dialog closes. Message results retain their exact-message reveal behavior
 Cmd+L on macOS or Ctrl+L on Windows/Linux focuses the writable
 composer in the focused pane. Outside a pane it uses the exposed main conversation.
 The composer shortcut yields to terminal input, preserving shell Ctrl+L.
-On macOS, Ctrl+Cmd+Left focuses the main pane and Ctrl+Cmd+Right the side pane.
+On macOS, Cmd+Option+Left focuses the main pane and Cmd+Option+Right the side pane.
 On Windows/Linux, F8 and Shift+F8 cycle between visible panes. Pane focus resumes
 the writable composer directly, falling back to the selected tab for tools without
 a composer. On that tab strip, arrow keys move between tabs and Enter selects one.

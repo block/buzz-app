@@ -17,8 +17,8 @@ async function focusKeys(page) {
     apple,
     mod: apple ? "Meta" : "Control",
     composer: apple ? "Meta+l" : "Control+l",
-    main: apple ? "Control+Meta+ArrowLeft" : "Shift+F8",
-    side: apple ? "Control+Meta+ArrowRight" : "F8",
+    main: apple ? "Meta+Alt+ArrowLeft" : "Shift+F8",
+    side: apple ? "Meta+Alt+ArrowRight" : "F8",
   };
 }
 
@@ -147,16 +147,12 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   await expect(
     row.getByRole("textbox", { name: `New shortcut for ${title}` }),
   ).toBeFocused();
-  await page.keyboard.press(
-    keys.apple ? "Meta+Alt+ArrowLeft" : "Control+Alt+ArrowLeft",
-  );
+  await page.keyboard.press("Control+Alt+ArrowLeft");
   await expect(row.getByText("Modified", { exact: true })).toBeVisible();
   await closeSettings(page);
   await sideBeta.focus();
   await sideBeta.evaluate((element) => element.setSelectionRange(0, 1));
-  await page.keyboard.press(
-    keys.apple ? "Meta+Alt+ArrowLeft" : "Control+Alt+ArrowLeft",
-  );
+  await page.keyboard.press("Control+Alt+ArrowLeft");
   await expect(alpha).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",

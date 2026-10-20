@@ -1418,11 +1418,11 @@ export function EditableInput({
             if (event.isComposing || composing.current || event.keyCode === 229)
               return false;
             // ProseMirror also captures horizontal movement of a selected range.
-            // The additional Control+Command pair belongs to host pane focus.
+            // The Command+Option pair belongs to host pane focus.
             const paneFocus =
-              event.ctrlKey &&
+              !event.ctrlKey &&
               event.metaKey &&
-              !event.altKey &&
+              event.altKey &&
               !event.shiftKey &&
               (event.key === "ArrowLeft" || event.key === "ArrowRight");
             if (paneFocus) syncNativeSelection();

@@ -74,7 +74,9 @@ export type AcpHooks = Readonly<{
   /** Its environment, under the launch's own. The Buzz identity is always
    * removed, whatever either says. */
   env: Readonly<Record<string, string | null>>;
-  /** `session/new`'s `_meta`. */
+  /** `session/new`'s `_meta`. A session's `title` reaches the harness only
+   * here: ACP has no standard field for it, so only a harness that sets this
+   * hook (Goose) is given one. */
   newSessionMeta?(
     buzz: McpServer | undefined,
     open: Readonly<{ title?: string; provider: string }>,

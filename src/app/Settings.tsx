@@ -429,7 +429,6 @@ function PluginDetails({
                 }
               />
               <MenuPopup
-                size="compact"
                 align="end"
                 aria-label="Plugin actions"
                 finalFocus={confirmDelete ? false : deleteTrigger}

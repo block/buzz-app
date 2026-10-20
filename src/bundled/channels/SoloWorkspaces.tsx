@@ -493,6 +493,7 @@ export function SoloWorkspaces({
                     {project.hidden > 0 && (
                       <NavigationItem
                         variant="row"
+                        data-solo-show-more-expand=""
                         label="Show more"
                         aria-label={`Show more chats in ${project.name}`}
                         icon={
@@ -509,14 +510,13 @@ export function SoloWorkspaces({
                       />
                     )}
                     {project.extra > 0 && (
-                      <Button
-                        variant="plain"
-                        size="inline"
+                      <NavigationItem
+                        variant="row"
+                        data-solo-show-more-fold=""
+                        label="Show less"
                         aria-label={`Show fewer chats in ${project.name}`}
                         onClick={() => expand(project.id, 0)}
-                      >
-                        Show less
-                      </Button>
+                      />
                     )}
                   </div>
                 )}

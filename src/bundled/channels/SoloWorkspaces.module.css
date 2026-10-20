@@ -78,27 +78,25 @@
   flex: 1;
   min-width: 0;
 }
-/* Show more spans the full row like a chat; Show less overlays its trailing
-   edge on the row inset inside the gutter fill, like the overflow glyph. */
+/* Show more and Show less are two row items sharing one painted row: Show
+   more fills it like a chat; Show less ends on the row inset. */
 .showMore {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  min-height: var(--size-row);
+  margin-inline: var(--channel-row-fill-start, 0) var(--channel-row-fill-end, 0);
 }
-.showMore > [data-variant="row"] {
+.sidebarContents .showMore > [data-variant="row"] {
+  width: auto;
+  margin-inline: 0;
+}
+.sidebarContents .showMore > [data-solo-show-more-expand] {
   flex: 1;
   min-width: 0;
 }
-.showMore > :not([data-variant="row"]) {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  inset-inline-end: calc(
-    var(--session-row-inset) +
-    var(--channel-row-fill-end, 0%)
-  );
+.sidebarContents .showMore > [data-solo-show-more-fold] {
+  flex: 0 0 auto;
+  padding-inline-end: var(--session-row-inset);
 }
 .sidebarContents .organizedRow > div > [data-variant="row"] {
   /* Status paints in the row-owned action slot outside the select button.

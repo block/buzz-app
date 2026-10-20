@@ -22,7 +22,7 @@ export function avatarSource(value: unknown): string | undefined {
 export function avatarMedia(
   value: unknown,
   media: ((url: string, size: "small") => string | undefined) | undefined,
-) {
+): string | undefined {
   const source = avatarSource(value);
   return source?.startsWith("data:")
     ? source

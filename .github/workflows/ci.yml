@@ -23,7 +23,8 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     name: JavaScript (${{ matrix.shard }}/2)
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Signing-heavy shards need setup/reporting headroom beyond their test time.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -211,9 +212,9 @@ jobs:
       HOME: /root
       BUZZ_BROWSER_FIXTURE_DIR: target/ci-browser-fixture
     # Playwright sizes file-level shards by test count, not duration, so costly
-    # files can share one. Nine shards keep the slowest WebKit shard well inside
-    # this deadline on slower runners, setup included.
-    timeout-minutes: 15
+    # files can share one. Keep setup/reporting headroom for slow WebKit shards;
+    # individual test deadlines remain unchanged.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

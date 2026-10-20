@@ -41,7 +41,7 @@ import {
   MenuItem,
   MenuIcon,
 } from "../../shared/design-system/ui/Menu";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header } from "../../shared/design-system/ui/Header";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
@@ -757,7 +757,7 @@ function WorkflowCard({
           }
           label={
             <span className="workflow-row-copy">
-              <span className="workflow-card-name text-label" title={name}>
+              <span className="workflow-card-name text-label-sm" title={name}>
                 {name}
               </span>
               <span
@@ -845,7 +845,7 @@ function WorkflowChannelCards({
 
   return (
     <section className="workflow-channel-group" aria-labelledby={headingId}>
-      <InlineHeader id={headingId} level={2} title={`#${channel.name}`} />
+      <Header id={headingId} level={2} title={`#${channel.name}`} />
       <div className="workflow-channel-rows">
         {snapshot.data.items.map((definition) => {
           const key = workflowKey(definition);

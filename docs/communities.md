@@ -141,14 +141,19 @@ what makes a lost answer safe: the retry simply sends whatever intent stands,
 so joining then leaving (or leaving then rejoining) across a lost
 acknowledgement converges on the latest intent. A complete list from the
 service adds destinations saved on another device under their host name
-without opening a session, forgets a saved membership the service held before
-but no longer lists (removed elsewhere) like the banned answer to a leave (no
-relay request, device state kept, Personal space when one was selected), and
-queues an upload for saved memberships the service has never seen, which is
-how a device list from before sync existed reaches the account; a pending
-intent for a destination speaks for it in that merge. What the set model gives
-up: an add queued while the service was unreachable can resurrect a
-destination another device removed meanwhile; removing it again propagates.
+without opening a session, and queues an upload for saved memberships the
+service has never seen, which is how a device list from before sync existed
+reaches the account; a pending intent for a destination speaks for it in that
+merge. Removals made on another device are ignored for now, a deliberate
+interim choice: a saved membership the service knew but no longer lists stays
+on this device, and sync never forgets a membership. So that this device does
+not undo the other's removal by uploading the membership again, the known set
+is cumulative for its account (everything the service has listed or accepted
+an add for, less the removals it accepted from here) rather than the last list:
+the omitted membership stays known, and so off the queue, on every later
+sign-in. Leaving it here still propagates. Until removals are followed, the
+devices of one account can disagree about a community, and an add queued while
+the service was unreachable can likewise land after another device's removal.
 Joining and leaving never wait for sync. The `knownCommunities` capability
 exposes the record, the queue and these writes to one owner, the bundled
 Builderlab plugin, and carries that owner's report back as `syncStatus` on the snapshot.
@@ -157,11 +162,11 @@ The list is account-scoped, but this state is still kept under the device
 record's viewer key (`buzz-client.v1:<viewer>`), where it outlives a
 Builderlab sign-out. So the record also names the account whose list the
 known set describes, and a merge for a different account (or for a record
-that names none) starts from nothing known, with the outbox kept: nothing of
-the previous account's list is read as removed elsewhere, and every saved
-membership the new account's list lacks is queued for it. Signing back in as
-the same account keeps the set, so a removal made elsewhere meanwhile is still
-applied. Moving the state to live with the Builderlab account is a follow-up;
+that names none) starts from nothing known, with the outbox kept, so every
+saved membership the new account's list lacks is queued for it. Signing back
+in as the same account keeps the set, so a membership it once held and no
+longer lists is still neither forgotten nor uploaded again. Moving the state
+to live with the Builderlab account is a follow-up;
 until then a device whose identity changes starts from an empty record and
 re-merges on its next sign-in.
 
@@ -309,8 +314,8 @@ community, a purge that leaves named failures, and a native device record that
 will not save, which throws before the snapshot, session, record or device state
 change), that join and leave each write the membership change and its queued
 upload in one record write which a restart restores, applying a server list
-(additions under the host name, forgetting without a purge or relay request,
-one record write) and a native sync write that will not save.
+(additions under the host name, nothing forgotten, one record write) and a
+native sync write that will not save.
 It also covers that re-running a join the service already holds queues nothing
 while a join it does not hold queues an add.
 `known-communities.test.ts` covers the queue rules on their own: one latest
@@ -318,8 +323,9 @@ intent per destination with a newer intent replacing the older, nothing queued
 when the latest word already agrees, acknowledgements moving a destination in
 and out of the known set while keeping an intent that replaced the settled one,
 both lost-acknowledgement orders converging on the latest intent as a plain
-retry, every list-merge branch including the removed-elsewhere rule, the
-pre-sync migration upload and deference to the pending intent, and the
+retry, every list-merge branch including the omitted membership kept and not
+uploaded again, the pre-sync migration upload and deference to the pending
+intent, and the
 tolerant reader of saved state.
 `src/bundled/builderlab/known-communities/client.test.ts` covers the account
 service's three routes against the native host transport: the exact request
@@ -330,9 +336,10 @@ in JSON and in the framework's plain text, unnamed client errors returned as
 rejections on every route while timeouts, rate limits and server errors remain
 failures, a 401 that ends the session and an unreachable service. `sync.test.ts` covers the owner under a
 controlled clock: sign-in and a loading record, the complete list merged once
-per sign-in and an intent queued while it is in flight, the removed-elsewhere
-and never-uploaded rules on
-a later sign-in, one upload in flight at a time in queue order, identical
+per sign-in and an intent queued while it is in flight, the never-uploaded
+rule on a later sign-in and a membership removed elsewhere kept and never
+re-sent across the sign-ins after it, one upload in flight at a time in queue
+order, identical
 retries at each backoff boundary and the reset after a success, a device record
 that will not take an answer backing off and replaying, the `online` and
 `visibilitychange` triggers and their silence once synced with an empty queue,

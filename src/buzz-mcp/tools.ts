@@ -958,10 +958,25 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async notes_rm(tools, args) {
     const { client } = tools;
     const name = noteSlug(args.name);
-    const [mine] = await client.query([
-      { kinds: [NOTE], authors: [client.pubkey], "#d": [name], limit: 1 },
-    ]);
+    // Read from the writer, so a lagging replica cannot hide a new note.
+    const [mine] = latestNotes(
+      await client.query([
+        {
+          kinds: [NOTE],
+          authors: [client.pubkey],
+          "#d": [name],
+          limit: 1,
+          consistency: "strong",
+        },
+      ]),
+    );
     if (!mine) throw new Error(`You have no note ${name}.`);
+    // A deletion removes only versions dated at or before it, so it must be
+    // dated after the note, even one from a writer whose clock runs ahead.
+    const after = (mine.created_at + 1) * 1000;
+    if (after - Date.now() > 5000)
+      throw new Error("The note was just changed; try again.");
+    await waitUntil(after);
     const coordinate = `${NOTE}:${client.pubkey}:${name}`;
     await client.publish({ kind: 5, content: "", tags: [["a", coordinate]] });
     return `deleted ${coordinate}`;

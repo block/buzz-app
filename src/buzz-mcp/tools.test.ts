@@ -1942,6 +1942,48 @@ it("reports a conflict when the note is gone after a write", async () => {
   );
 });
 
+it("dates a note deletion after the note it deletes", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(100_500);
+    // Another writer of this key, with its clock ahead, saved second 102.
+    const { client, published } = fake([...community, note(me, "plan", 102)]);
+    let done = false;
+    const deleting = callTool(client, {}, "notes_rm", { name: "plan" }).then(
+      (result) => {
+        done = true;
+        return result;
+      },
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(done).toBe(false);
+    expect(published).toEqual([]);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(deleting).resolves.toBe(`deleted 30023:${me}:plan`);
+    expect(published).toHaveLength(1);
+    expect(vi.mocked(client.query).mock.calls[0]?.[0]).toEqual([
+      {
+        kinds: [30023],
+        authors: [me],
+        "#d": ["plan"],
+        limit: 1,
+        consistency: "strong",
+      },
+    ]);
+    // A note dated too far ahead is not waited out.
+    const { client: ahead, published: none } = fake([
+      ...community,
+      note(me, "plan", 200),
+    ]);
+    await expect(
+      callTool(ahead, {}, "notes_rm", { name: "plan" }),
+    ).rejects.toThrow("The note was just changed; try again.");
+    expect(none).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("deletes only your own note, by its address", async () => {
   const { client, published } = fake([
     ...community,

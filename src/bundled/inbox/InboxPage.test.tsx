@@ -3770,6 +3770,61 @@ it("keeps the captured reply selected when its older root is verified", async ()
   expect(h.open).not.toHaveBeenCalled();
 });
 
+it("a Solo chat row previewing unfinished workflow output that is not its evidence shows its placeholder", async () => {
+  const h = fixture({ soloChannel: true });
+  // Output attributed to the viewer without a workflow mention is not Inbox
+  // evidence, but the addressed feed still settles its stored overlays.
+  const output = signed(h.relayKey, {
+    kind: 9,
+    content: "OLD BODY",
+    created_at: 39,
+    tags: [
+      ["h", "room"],
+      ["p", h.viewer.pubkey],
+      ["buzz:workflow", "true"],
+      ["buzz:workflow-owner", h.viewer.pubkey],
+    ],
+  });
+  // Fill the bounded addressed page so the row's own mention stays settled.
+  h.events.unshift(
+    output,
+    ...Array.from({ length: 49 }, (_, i) =>
+      message(h.viewer, "room", `Note ${i}`, 1 + i, [["p", h.viewer.pubkey]]),
+    ),
+  );
+  const release = h.holdAux();
+  render(h.view);
+  act(() => h.emit([output]));
+  const timeline = () => {
+    const row = rows().find(
+      (item) => !item.textContent?.includes("A thread update"),
+    );
+    if (!row) throw Error("Missing timeline row");
+    return row;
+  };
+  try {
+    await waitFor(() =>
+      expect(h.owner.session.inboxFeed.snapshot().incomplete).toContain(
+        output.id,
+      ),
+    );
+    expect(h.owner.session.inboxFeed.snapshot().incomplete).not.toContain(
+      h.mention.id,
+    );
+    await waitFor(() =>
+      expect(timeline()).toHaveTextContent("Preview updating…"),
+    );
+    expect(timeline()).not.toHaveTextContent("OLD BODY");
+    h.failAux();
+  } finally {
+    await act(async () => release());
+  }
+  await waitFor(() =>
+    expect(timeline()).toHaveTextContent("Preview unavailable. Retry inbox."),
+  );
+  expect(timeline()).not.toHaveTextContent("OLD BODY");
+});
+
 it("shows only the exact unfinished row's placeholder through held edits and retry, never an unverified body", async () => {
   const h = fixture();
   const old = message(h.alice, "room", "OLD BODY", 39, [

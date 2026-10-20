@@ -1039,6 +1039,7 @@ export function createUnread({
               authorId: shown.pubkey,
               workflowOwnerId: workflowOwner(shown, workflowAuthority),
               preview: content.get(shown.id) ?? shown.content,
+              previewMessageId: shown.id,
               createdAt: shown.created_at,
               mentioned: entries.some((entry) => entry.mentioned),
               messages: Object.freeze(

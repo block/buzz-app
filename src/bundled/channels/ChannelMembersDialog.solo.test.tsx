@@ -1159,7 +1159,7 @@ it("shares one channel snapshot, retains confirmed partial access and exact link
     name: "Shared with channels",
   });
   const segment = within(shared).getByRole("button", {
-    name: /#Planning.*2 members/,
+    name: /#Planning.*3 members/,
   });
   expect(segment).toHaveAttribute("aria-expanded", "false");
   await user.click(segment);
@@ -1171,7 +1171,7 @@ it("shares one channel snapshot, retains confirmed partial access and exact link
   await act(async () => {
     await t.session.channels.refreshRoster?.(source, { consistency: "strong" });
   });
-  expect(segment).toHaveAccessibleName(/#Planning.*1 member/);
+  expect(segment).toHaveAccessibleName(/#Planning.*2 members/);
   expect(t.published.filter((event) => event.kind === 9000)).toHaveLength(2);
 });
 
@@ -1360,7 +1360,7 @@ it("groups agents and people by role while only verified additional humans mark 
     name: "Shared with channels",
   });
   const recorded = within(shared).getByRole("button", {
-    name: /#Planning.*1 member/,
+    name: /#Planning.*2 members/,
   });
   expect(within(shared).queryByText("Helper Bot")).toBeNull();
   await user.click(recorded);

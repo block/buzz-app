@@ -353,7 +353,7 @@ async function captureActions(page, menu, path) {
   });
   const first = await menu.getByRole("menuitem").first().boundingBox();
   const last = await menu
-    .getByRole("menuitem", { name: /^Mark as (Read|Unread)$/ })
+    .getByRole("menuitem", { name: /^Mark as (read|unread)$/ })
     .boundingBox();
   if (!first || !last) throw new Error("Read/mute actions are not laid out");
   await page.screenshot({

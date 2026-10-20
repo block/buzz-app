@@ -1045,9 +1045,12 @@ it.each([true, false])(
     await vi.waitFor(() =>
       expect(refresh).not.toHaveAttribute("aria-disabled", "true"),
     );
-    // An empty role group is hidden; the list says why it is empty.
+    // An empty role group is hidden; search results say why it is empty.
     expect(section).not.toBeInTheDocument();
-    expect(screen.getByText("No members match your search.")).toBeVisible();
+    expect(
+      screen.queryByText("No members match your search."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/^No other matching people/)).toBeVisible();
     expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
     expect(t.publish).not.toHaveBeenCalled();
   },

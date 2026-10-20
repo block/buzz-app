@@ -461,7 +461,7 @@ test.describe("sidebar actions in the header", () => {
       menu.getByRole("menuitem", { name: "Unmute", exact: true }),
     ).toBeVisible();
     await menu
-      .getByRole("menuitem", { name: /^Mark as (Read|Unread)$/ })
+      .getByRole("menuitem", { name: /^Mark as (read|unread)$/ })
       .click();
     await expect(menu).toHaveCount(0);
     await expect(trigger).toBeFocused();

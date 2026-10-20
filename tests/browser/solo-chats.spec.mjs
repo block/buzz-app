@@ -743,7 +743,7 @@ test("unified chat naming and lifetime retain host focus and save only explicit 
   await expect(canvas).toBeVisible();
   await canvas.fill("Keep this local draft");
   const draftName = settings.getByRole("textbox", {
-    name: "Chat name (optional)",
+    name: "Chat name Optional",
     exact: true,
   });
   await draftName.fill("Make contrast meet accessibility standards");

@@ -190,9 +190,9 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
   await expect(
     agents.getByText("Carol Fixture", { exact: true }),
   ).toBeVisible();
-  // The 14 legacy humans plus Alice are members.
+  // People holds the owner, the 14 legacy humans and Alice.
   const people = dialog.getByRole("region", { name: "People", exact: true });
-  await expect(people.getByRole("heading")).toHaveText("Members · 15");
+  await expect(people.getByRole("heading")).toHaveText("People · 16");
   await expect(
     people.getByText("Existing person 14", { exact: true }),
   ).toBeAttached();
@@ -292,7 +292,8 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
           !(await action.evaluate((el) => el === document.activeElement));
           step++
         ) {
-          expect(step).toBeLessThan(12);
+          // Every roster row has profile and actions stops before the footer.
+          expect(step).toBeLessThan(64);
           await page.keyboard.press("Tab");
           // Base UI returns focus from its guard on the next frame. Do not
           // send another Tab while that handoff is still pending.
@@ -367,8 +368,9 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
   await expect(trigger).toBeFocused();
   await trigger.press("Enter");
   await expect(search).toBeDisabled();
+  // The locked search is skipped; focus starts on the first header control.
   await expect(
-    dialog.getByRole("button", { name: "Close", exact: true }),
+    dialog.getByRole("button", { name: "Refresh member data", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect
@@ -392,12 +394,16 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
   const reopened = page.getByRole("dialog", { name: "Chat access" });
   const recorded = reopened.getByRole("button", { name: /#Alpha.*4 members/ });
   await expect(recorded).toHaveAttribute("aria-expanded", "false");
+  const shares = reopened.getByRole("region", {
+    name: "Shared with channels",
+    exact: true,
+  });
   await expect(
-    reopened.getByText("Alice Fixture", { exact: true }),
-  ).toHaveCount(0);
+    shares.getByText("Alice Fixture", { exact: true }),
+  ).not.toBeVisible();
   await recorded.click();
   await expect(
-    reopened.getByText("Alice Fixture", { exact: true }),
+    shares.getByText("Alice Fixture", { exact: true }),
   ).toBeVisible();
   await recorded.press("Enter");
   await expect(recorded).toHaveAttribute("aria-expanded", "false");

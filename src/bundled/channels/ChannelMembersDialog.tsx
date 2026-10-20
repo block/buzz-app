@@ -1183,10 +1183,9 @@ export function ChannelMembersDialog({
   // Channel shares this device recorded, with the recipients who still have access.
   const sharedChannels = solo
     ? share.history.channels.flatMap((item) => {
-        const shared = item.members.filter(
-          (key) => key !== session.viewer && members.has(key),
-        );
-        return item.id === share.chosen?.id || !shared.length
+        const shared = item.members.filter((key) => members.has(key));
+        return item.id === share.chosen?.id ||
+          !shared.some((key) => key !== session.viewer)
           ? []
           : [
               {
@@ -1361,7 +1360,7 @@ export function ChannelMembersDialog({
           />
         )
       }
-      initialFocus={input}
+      initialFocus={solo && (share.busy || share.saved) ? true : input}
       finalFocus={() => (openingDestination.current ? false : trigger.current)}
     >
       {selection ? (
@@ -1396,6 +1395,8 @@ export function ChannelMembersDialog({
                           : "Add agents"
                 }
                 value={query}
+                // A pending share retry keeps its exact submitted audience.
+                disabled={solo && (share.busy || !!share.saved)}
                 onValueChange={(value) => {
                   setQuery(value);
                   if (value.length > 0) setSelectedRole("All");
@@ -1479,7 +1480,7 @@ export function ChannelMembersDialog({
             aria-label="Member list"
           >
             {!canAdd && !(solo && rosterBusy) && (
-              <p className="text-body-sm text-subtle">
+              <p className="px-control-inset text-body-sm text-subtle">
                 {channel?.channelType === "dm"
                   ? "DM membership cannot be changed here."
                   : channel?.archived
@@ -1492,7 +1493,10 @@ export function ChannelMembersDialog({
               </p>
             )}
             {rosterError && (
-              <p role="alert" className="text-body-sm text-danger">
+              <p
+                role="alert"
+                className="px-control-inset text-body-sm text-danger"
+              >
                 {rosterError}
               </p>
             )}
@@ -1579,7 +1583,7 @@ export function ChannelMembersDialog({
                     </ul>
                   </section>
                 ))}
-                {!filteredGroups.length && !rosterBusy && (
+                {!filteredGroups.length && !rosterBusy && !offering && (
                   <p className="px-control-inset text-body-sm text-subtle">
                     {query
                       ? "No members match your search."

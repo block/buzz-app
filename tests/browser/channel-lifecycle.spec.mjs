@@ -509,10 +509,9 @@ test.describe("Solo chat lifecycle", () => {
     // The retained address must still support archived-history recovery.
     await page.goto(url);
     await expect(composer).toBeDisabled();
-    // Access stays viewable in an archived chat; the dialog is read-only.
     await expect(
       page.getByRole("button", { name: "Access", exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await page.reload();
     await expect(composer).toBeDisabled();
     await expect(page).toHaveURL(url);

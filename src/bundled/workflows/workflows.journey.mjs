@@ -562,14 +562,14 @@ test("real session page under StrictMode fences community changes, warns before 
   await button("Close editor").click();
   await leave.getByRole("button", { name: "Leave draft", exact: true }).click();
   await expect(editor.region).toHaveCount(0);
-  await choose("Second channel");
+  await page.getByRole("combobox", { name: "Channel", exact: true }).click();
   await expect(
-    page.getByText("No workflows in this channel yet.", { exact: true }),
+    page.getByRole("option", { name: "First channel", exact: true }),
   ).toBeVisible();
-  await expect(button("New workflow")).toBeDisabled();
-  // Without save, the empty state offers no create action beside the header's.
-  await expect(button("New workflow")).toHaveCount(1);
-  await expect(editor.region).toHaveCount(0);
+  await expect(
+    page.getByRole("option", { name: "Second channel", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await choose("First channel");
   await editor.open("Fixture A helper");
   await fixture("switchCommunity");
@@ -586,6 +586,23 @@ test("real session page under StrictMode fences community changes, warns before 
     "Revoked private text",
   );
   expect(errors.unexplained()).toEqual([]);
+});
+
+test("an empty read-only landing keeps only the disabled header create action", async ({
+  page,
+}) => {
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?empty"));
+  await expect(
+    page.getByText("Automations that keep your community moving.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const create = page.getByRole("button", {
+    name: "New workflow",
+    exact: true,
+  });
+  await expect(create).toHaveCount(1);
+  await expect(create).toBeDisabled();
 });
 
 test("landing batches 129 channels into two workflow reads", async ({

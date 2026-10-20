@@ -915,7 +915,8 @@ export function WorkflowLanding({
   selected: string | undefined;
   /** Reports the selected workflow and its name, or clears the selection. */
   onSelect: (key: string | undefined, name?: string) => void;
-  /** Channel ID to show; every channel is still read. Empty shows all. */
+  /** Channel ID to show; every channel is still read. Empty shows all.
+   * Without onFilterChange, callers may also select an empty channel. */
   filter?: string;
   onFilterChange?: (channelId: string) => void;
   refreshRequest: number;

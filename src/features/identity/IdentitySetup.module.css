@@ -71,9 +71,9 @@
   gap: var(--space-2);
   text-align: center;
   /* Shared subtle/ghost controls retain their states on the artwork. */
-  --interaction-fill: rgb(255 255 255 / 52%);
-  --interaction-hover: rgb(255 255 255 / 62%);
-  --interaction-pressed: rgb(255 255 255 / 72%);
+  --interaction-fill: #ffffff85;
+  --interaction-hover: #ffffff9e;
+  --interaction-pressed: #ffffffb8;
 }
 
 .setup {
@@ -123,9 +123,9 @@
 }
 
 [data-color-mode="dark"] .actions {
-  --interaction-fill: rgb(28 28 28 / 52%);
-  --interaction-hover: rgb(28 28 28 / 66%);
-  --interaction-pressed: rgb(28 28 28 / 80%);
+  --interaction-fill: #1c1c1c85;
+  --interaction-hover: #1c1c1ca8;
+  --interaction-pressed: #1c1c1ccc;
 }
 
 @media (forced-colors: active) {

@@ -112,7 +112,7 @@ impl HostProcesses {
         #[cfg(windows)]
         let mut child = job
             .spawn_hidden(&mut command)
-            .ok_or_else(|| format!("Could not start {program}"))?;
+            .map_err(|error| format!("Could not start {program}: {error}"))?;
         #[cfg(not(windows))]
         let mut child = command
             .spawn()

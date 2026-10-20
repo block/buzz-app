@@ -71,8 +71,11 @@ test("a delayed initial name read keeps focus on a different chat", async ({
     await expect(row(page, beta)).toHaveAttribute("aria-current", "page");
     await composer(page).focus();
     held.release();
-    await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+    await expect(input(page)).toHaveCount(0);
     await expect(composer(page)).toBeFocused();
+    await row(page, beta).dblclick();
+    await expect(input(page)).toHaveValue("Beta");
+    await input(page).press("Escape");
   } finally {
     held.release();
   }
@@ -100,6 +103,27 @@ test("failed Enter-save and explicit reload retain keyboard control", async ({
   await expect(input(page)).toBeFocused();
   await expect(input(page)).toHaveValue("Keep this draft");
   expect(app.report.detailsPublications ?? []).toHaveLength(0);
+  // Refreshing the base must preserve the native caret in the retained draft.
+  await input(page).evaluate((field) => field.setSelectionRange(4, 4));
+  await sidebar(page)
+    .getByRole("button", { name: "Reload chat details" })
+    .click();
+  await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+  await expect(input(page)).toBeFocused();
+  await expect
+    .poll(() =>
+      input(page).evaluate((field) => [
+        field.selectionStart,
+        field.selectionEnd,
+      ]),
+    )
+    .toEqual([4, 4]);
+  await input(page).press("x");
+  await expect(input(page)).toHaveValue("Keepx this draft");
+  await input(page).fill("Keep this draft");
+  refused = false;
+  await input(page).press("Enter");
+  await expect(sidebar(page).getByRole("alert")).toBeVisible();
   const held = await holdDetails(page);
   try {
     await sidebar(page)
@@ -247,4 +271,59 @@ test("live conversion removes the old editor and permits renaming another Solo c
   await expect(input(page)).toHaveValue("Beta");
   await expect(input(page)).toBeFocused();
   await input(page).press("Escape");
+});
+
+// A DOM emulator cannot establish Collapsible's real hide/unmount transition
+// while the production signer owns a pending save.
+test("collapsing a workspace waits for its rename save before hiding the editor", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await newChat(page);
+  await row(page, alpha).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Move to", exact: true }).hover();
+  await page.getByRole("menuitem", { name: "New workspace…" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("textbox", { name: "Workspace name" }).fill("Work");
+  await dialog.getByRole("button", { name: "Create and move" }).click();
+  await expect(dialog).not.toBeVisible();
+  const work = sidebar(page).getByRole("button", { name: "Work", exact: true });
+  await expect(work).toHaveAttribute("aria-expanded", "true");
+  let release;
+  let started;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const requested = new Promise((resolve) => {
+    started = resolve;
+  });
+  await page.route("**/api/relay/**/channel-details-sign", async (route) => {
+    started();
+    await gate;
+    await route.continue();
+  });
+  try {
+    await row(page, alpha).dblclick();
+    await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+    await input(page).fill("Saved through collapse");
+    await input(page).press("Enter");
+    await requested;
+    await work.click();
+    await expect(input(page)).toBeVisible();
+    await expect(work).toHaveAttribute("aria-expanded", "true");
+    await row(page, beta).dblclick();
+    await expect(input(page)).toHaveValue("Saved through collapse");
+    release();
+    await expect(work).toHaveAttribute("aria-expanded", "false");
+    await expect(input(page)).toHaveCount(0);
+    await row(page, beta).dblclick();
+    await expect(input(page)).toHaveValue("Beta");
+    await input(page).press("Escape");
+    await work.click();
+    await expect(row(page, alpha)).toContainText("Saved through collapse");
+    expect(app.report.detailsPublications).toHaveLength(1);
+  } finally {
+    release();
+  }
 });

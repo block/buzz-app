@@ -147,6 +147,11 @@ export function SoloWorkspaces({
       rows: chats.filter((item) => !ids.has(assigned[item.id] ?? "")),
     },
   ];
+  // A collapse request takes effect after the editor closes. Keep its draft and
+  // save owner mounted and reachable, including when a save needs recovery.
+  const renamingProject = projects.find((project) =>
+    project.rows.some((item) => item.id === renaming),
+  )?.id;
   const move = (id: string, projectId?: string) => {
     const saving = preferences.assign(id, projectId);
     toggle(projectId ?? "", true);
@@ -249,7 +254,10 @@ export function SoloWorkspaces({
               key={project.id}
               className={`${styles.project} ${channelStyles.channelSection}`}
               data-project={project.id ? "" : undefined}
-              open={!collapsed.includes(project.id)}
+              open={
+                !collapsed.includes(project.id) ||
+                renamingProject === project.id
+              }
               onOpenChange={(open) => toggle(project.id, open)}
               data-animate={animate || undefined}
             >
@@ -305,7 +313,10 @@ export function SoloWorkspaces({
                 <Collapsible.Trigger
                   type="button"
                   className={`${channelStyles.sidebarSectionHeading} ${styles.projectHeading}`}
-                  aria-expanded={!collapsed.includes(project.id)}
+                  aria-expanded={
+                    !collapsed.includes(project.id) ||
+                    renamingProject === project.id
+                  }
                   onClick={(event) => setAnimate(event.detail > 0)}
                 >
                   <span className={channelStyles.sectionTitle}>

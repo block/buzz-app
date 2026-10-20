@@ -25,6 +25,7 @@ export function SoloChatName({
   const form = useRef<HTMLFormElement>(null);
   const active = useRef(true);
   const saving = useRef(false);
+  const selectedInitialName = useRef(false);
   useEffect(() => {
     active.current = true;
     return () => {
@@ -36,8 +37,9 @@ export function SoloChatName({
     input.current?.select();
   }, []);
   useEffect(() => {
-    if (name.base && document.activeElement === input.current)
-      input.current?.select();
+    if (!name.base || selectedInitialName.current) return;
+    selectedInitialName.current = true;
+    if (document.activeElement === input.current) input.current?.select();
   }, [name.base]);
   const finish = (focus: boolean) => {
     active.current = false;
@@ -85,8 +87,10 @@ export function SoloChatName({
           !event.currentTarget.contains(event.relatedTarget) &&
           !name.error &&
           !name.checkOnly
-        )
-          void save(false);
+        ) {
+          if (!name.base && !name.busy) finish(false);
+          else void save(false);
+        }
       }}
       onKeyDown={(event) => {
         event.stopPropagation();

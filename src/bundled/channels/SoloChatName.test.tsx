@@ -170,3 +170,31 @@ it("quietly disables the name while a real pending receipt is saving", async () 
   }
   await waitFor(() => expect(f.close).toHaveBeenCalledWith(true));
 });
+
+it("releases an abandoned initial read without restoring focus when it completes", async () => {
+  let release!: (
+    value: Awaited<ReturnType<ChannelDetailsCapability["load"]>>,
+  ) => void;
+  const loaded = new Promise<
+    Awaited<ReturnType<ChannelDetailsCapability["load"]>>
+  >((resolve) => {
+    release = resolve;
+  });
+  const f = setup({ load: vi.fn(() => loaded) });
+  await f.user.click(screen.getByRole("button", { name: "Elsewhere" }));
+  expect(f.close).toHaveBeenCalledWith(false);
+  await act(async () => {
+    release({
+      channelId: "chat",
+      name: "Plan",
+      description: "Keep this",
+      visibility: "private",
+      labels: ["buzz.solo"],
+      version: "one",
+      canEdit: true,
+    });
+    await loaded;
+  });
+  expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
+  expect(f.save).not.toHaveBeenCalled();
+});

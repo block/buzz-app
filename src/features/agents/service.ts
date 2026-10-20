@@ -3526,26 +3526,23 @@ export class AgentsService extends Service implements Agents {
   }
   /** Retires a side's local field once its exact value is the synced head.
    * Given `accepted`, this device's save just became the head: runtimes are
-   * told either way, and a newer local edit stays a draft. */
+   * told either way, and a newer local edit stays a draft. The value is
+   * checked again when the agent's earlier changes have saved, so a newer
+   * edit saved meanwhile also stays. */
   private stripLocal(pubkey: string, side: Side, accepted?: RelayEvent) {
     const identity = this.live(pubkey);
     if (!identity) return;
-    const record = this.recordOf(identity);
     // Runtimes take the accepted head as a local save, not the earlier token
     // they spent on the old head while it was sent.
     this.advance(pubkey);
-    if (
-      accepted &&
-      sideContent(
-        side,
-        this.configAgent(identity, record.config as object),
-        record.config as object,
-        accepted,
-      ) !== accepted.content
-    )
-      return this.update();
+    this.update();
+    const contentOf = (config: object) =>
+      sideContent(side, this.configAgent(identity, config), config, accepted);
+    const head =
+      accepted?.content ?? contentOf(this.recordOf(identity).config as object);
     void this.change(pubkey, (saved) => {
       const latest = saved ?? this.recordOf(identity);
+      if (contentOf(latest.config as object) !== head) return latest;
       const config = { ...(latest.config as Record<string, unknown>) };
       const fields =
         side === "instructions"

@@ -7890,6 +7890,53 @@ describe("Delete as a recoverable archive", () => {
     }
   });
 
+  it("keeps a newer draft whose local save was still saving when an earlier Save is accepted", async () => {
+    const g = await syncedGoose();
+    let accept!: () => void;
+    g.relay.held.value = new Promise((resolve) => {
+      accept = resolve;
+    });
+    const { set } = g.storage;
+    let release!: () => void;
+    const disk = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const before = g.relay.publishing.mock.calls.length;
+      const savingB = g.save("model-a");
+      await vi.waitFor(() =>
+        expect(g.relay.publishing.mock.calls.length).toBeGreaterThan(before),
+      );
+      // C's local save waits on disk while B is accepted.
+      let holding = false;
+      Object.assign(g.storage, {
+        set: async (key: string, value: string | null) => {
+          if (value?.includes("CONFIG C")) {
+            holding = true;
+            await disk;
+          }
+          return set(key, value);
+        },
+      });
+      const savingC = g.save("model-a", "CONFIG C").catch(() => {});
+      await vi.waitFor(() => expect(holding).toBe(true));
+      accept();
+      await savingB;
+      release();
+      await savingC;
+      await vi.waitFor(() =>
+        expect(g.storage.getItem(recordKey(bot))).toContain("CONFIG C"),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(g.storage.getItem(recordKey(bot))).toContain("CONFIG C");
+    } finally {
+      accept();
+      release();
+      g.relay.held.value = undefined;
+      await g.close();
+    }
+  });
+
   it.each([
     ["direct", "instructions"],
     ["reconnect", "instructions"],

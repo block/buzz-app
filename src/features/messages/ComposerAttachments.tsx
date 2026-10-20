@@ -53,6 +53,9 @@ export function ComposerAttachments({
   const instant =
     reducedMotion ||
     document.documentElement.hasAttribute("data-keyboard-navigation");
+  // Items present when the composer mounts are a returning draft, not new picks.
+  const [restored, setRestored] = useState(items.length > 0);
+  if (restored && !items.length) setRestored(false);
   if (selected && (!active || !items.some((item) => item.id === selected)))
     setSelected(undefined);
   return (
@@ -87,7 +90,7 @@ export function ComposerAttachments({
               className={`${styles.list} buzz-thin-scrollbar`}
               data-compact-media={mixed || undefined}
             >
-              <AnimatePresence initial={!instant} propagate>
+              <AnimatePresence initial={!instant && !restored} propagate>
                 {items.map((item) => (
                   <AttachmentItem
                     renderers={renderers}

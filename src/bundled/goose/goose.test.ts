@@ -681,6 +681,34 @@ describe("GooseProcess", () => {
     });
   });
 
+  it("keeps a newer result owner in another thread when a cancelled message leaves", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const thread = (activityScope: string) => ({
+      activityScope,
+      step: () => {},
+    });
+    const a = session.send("A", thread("X"));
+    await flush();
+    const controller = new AbortController();
+    const b = session.send(
+      "B",
+      thread("X"),
+      "o3",
+      undefined,
+      controller.signal,
+    );
+    const c = session.send("C", thread("Y"));
+    await flush();
+    controller.abort();
+    await expect(b).resolves.toEqual({ ok: true });
+    process.exit(1, "C PROCESS FAILURE\n");
+    // C, acknowledged after B, still owns the burst's error.
+    await expect(c).resolves.toEqual({ ok: false, error: "C PROCESS FAILURE" });
+    await expect(a).resolves.toEqual({ ok: false });
+  });
+
   it("gives a message cancelled during its own model lookup no later failure or steps", async () => {
     const { open, process } = await start();
     process.hold = true;

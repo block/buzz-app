@@ -37,16 +37,19 @@ const same = (a: SyncStatus | undefined, b: SyncStatus) =>
 /** Drains the known-community outbox to the account service and reconciles
  * its list, for one plugin lifetime. It runs only while signed in: each
  * sign-in merges the complete server list, then sends each destination's
- * latest intent one at a time. A newly queued intent, the window coming online
- * or becoming visible runs it again at once; a failure retries at 1·2·4… s,
- * capped at a minute, re-sending whatever intent then stands, which is safe
- * because the service's add and remove are idempotent. The service's refusals
- * are not retried: an account that cannot sync, or a list this client cannot
- * read, stops everything until the next sign-in, while a refused address, a
- * full account or another client error parks that one intent until it is
- * replaced or the next sign-in. A service without the routes (404 on any of
- * them) stops the same way but reports nothing to show. Signing out or
- * disposal abandons in-flight work and leaves the outbox intact. */
+ * latest intent one at a time. The merge is for the signed-in account: what
+ * an earlier sign-in as another account knew is not read as this one's list,
+ * so nothing is forgotten on its behalf. A newly queued intent, the window
+ * coming online or becoming visible runs it again at once; a failure retries
+ * at 1·2·4… s, capped at a minute, re-sending whatever intent then stands,
+ * which is safe because the service's add and remove are idempotent. The
+ * service's refusals are not retried: an account that cannot sync, or a list
+ * this client cannot read, stops everything until the next sign-in, while a
+ * refused address, a full account or another client error parks that one
+ * intent until it is replaced or the next sign-in. A service without the
+ * routes (404 on any of them) stops the same way but reports nothing to show.
+ * Signing out or disposal abandons in-flight work and leaves the outbox
+ * intact. */
 export function startKnownCommunitiesSync({
   client,
   session,
@@ -127,6 +130,7 @@ export function startKnownCommunitiesSync({
           current.sync,
           current.memberships,
           list.communities,
+          session.credential().account.subject,
         );
         await knownCommunities.apply(merged.state, {
           add: merged.add,
@@ -178,11 +182,17 @@ export function startKnownCommunitiesSync({
     }
   }
   /** A trigger resets the backoff and runs now, or again once the request in
-   * flight settles. Once the list has merged, nothing is waiting and no retry
-   * is due, there is no pass to run. */
+   * flight settles. Once the list has merged, no retry is due and nothing is
+   * waiting that is not parked, there is no pass to run: a parked intent
+   * moves again only when replaced or on the next sign-in. */
   const kick = () => {
     if (disposed || !controller || halted) return;
-    if (listed && !timer && knownCommunities.pending().length === 0) return;
+    if (
+      listed &&
+      !timer &&
+      knownCommunities.pending().every((op) => parked.has(key(op)))
+    )
+      return;
     failures = 0;
     clearTimeout(timer);
     timer = undefined;

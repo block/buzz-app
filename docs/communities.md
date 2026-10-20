@@ -154,9 +154,16 @@ exposes the record, the queue and these writes to one owner, the bundled
 Builderlab plugin, and carries that owner's report back as `syncStatus` on the snapshot.
 
 The list is account-scoped, but this state is still kept under the device
-record's viewer key (`buzz-client.v1:<viewer>`). Moving it to live with the
-Builderlab account is a follow-up; until then a device whose identity changes
-starts from an empty known set and re-merges on its next sign-in.
+record's viewer key (`buzz-client.v1:<viewer>`), where it outlives a
+Builderlab sign-out. So the record also names the account whose list the
+known set describes, and a merge for a different account (or for a record
+that names none) starts from nothing known, with the outbox kept: nothing of
+the previous account's list is read as removed elsewhere, and every saved
+membership the new account's list lacks is queued for it. Signing back in as
+the same account keeps the set, so a removal made elsewhere meanwhile is still
+applied. Moving the state to live with the Builderlab account is a follow-up;
+until then a device whose identity changes starts from an empty record and
+re-merges on its next sign-in.
 
 The plugin starts a sync owner only where signing in is possible: the native
 app with a configured Builderlab service. The owner syncs only while signed in.

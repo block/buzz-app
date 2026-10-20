@@ -10,7 +10,11 @@ import {
 
 const a = "wss://a.example";
 const b = "wss://b.example:8443";
-const withKnown = (...known: string[]): SyncState => ({ known, outbox: [] });
+const withKnown = (...known: string[]): SyncState => ({
+  known,
+  outbox: [],
+  account: "alice",
+});
 
 it("keeps one latest intent per destination: a newer intent replaces the older one", () => {
   const added = enqueue(emptySync(), a, false);
@@ -55,6 +59,11 @@ it("acknowledges by moving the destination in or out of the known set and droppi
   expect(acknowledge(withKnown(a, b), { url: a, removed: true }).known).toEqual(
     [b],
   );
+  // Both carry the account whose list the known set describes.
+  expect(enqueue(withKnown(a), b, false).account).toBe("alice");
+  expect(acknowledge(withKnown(a), { url: b, removed: false }).account).toBe(
+    "alice",
+  );
 });
 
 it("keeps an intent that replaced the acknowledged one while it was in flight", () => {
@@ -85,7 +94,7 @@ it.each([
     const changed = enqueue(intended, a, !first);
     expect(changed.outbox).toEqual([{ url: a, removed: !first }]);
     const done = acknowledge(changed, { url: a, removed: !first });
-    expect(done).toEqual({ known: first ? [a] : [], outbox: [] });
+    expect(done).toEqual({ ...start, known: first ? [a] : [], outbox: [] });
   },
 );
 
@@ -96,7 +105,12 @@ it("merges a server list: adds, removes what was removed elsewhere, uploads unsy
     { id: "https://b.example:8443" },
     { id: "https://gone.example" },
   ];
-  const merged = mergeList(state, memberships, ["wss://new.example", b]);
+  const merged = mergeList(
+    state,
+    memberships,
+    ["wss://new.example", b],
+    "alice",
+  );
   expect(merged.add).toEqual(["wss://new.example"]);
   // Known before and no longer listed: removed elsewhere. A destination the
   // service never held is not a removal, nor is one that is not saved here.
@@ -104,7 +118,34 @@ it("merges a server list: adds, removes what was removed elsewhere, uploads unsy
   expect(merged.state).toEqual({
     known: ["wss://new.example", b],
     outbox: [{ url: "wss://primary.example", removed: false }],
+    account: "alice",
   });
+});
+
+it("knows nothing on behalf of another account, or of none: its list forgets nothing and uploads what it lacks", () => {
+  const memberships = [
+    { id: "https://a.example" },
+    { id: "https://b.example:8443" },
+  ];
+  // The same account no longer lists b: removed elsewhere.
+  expect(mergeList(withKnown(a, b), memberships, [a], "alice")).toEqual({
+    state: { known: [a], outbox: [], account: "alice" },
+    add: [],
+    remove: [b],
+  });
+  // Another account signed in on this device: what alice's list held says
+  // nothing about bob's, so b is a membership bob has never seen, not one
+  // removed elsewhere, and the record now describes bob's list.
+  const bob = mergeList(withKnown(a, b), memberships, [a], "bob");
+  expect(bob).toEqual({
+    state: { known: [a], outbox: [{ url: b, removed: false }], account: "bob" },
+    add: [],
+    remove: [],
+  });
+  // A record that names no account reads the same way.
+  expect(
+    mergeList({ known: [a, b], outbox: [] }, memberships, [a], "alice").state,
+  ).toEqual({ ...bob.state, account: "alice" });
 });
 
 it("defers to the pending intent when merging: no add over a queued removal, no removal over a queued re-add, no duplicate upload", () => {
@@ -120,18 +161,27 @@ it("defers to the pending intent when merging: no add over a queued removal, no 
     state,
     [{ id: "https://b.example:8443" }, { id: "primary" }],
     [a],
+    "alice",
   );
   expect(merged.add).toEqual([]);
   expect(merged.remove).toEqual([]);
-  expect(merged.state).toEqual({ known: [a], outbox: state.outbox });
+  expect(merged.state).toEqual({
+    known: [a],
+    outbox: state.outbox,
+    account: "alice",
+  });
 });
 
 it("reads old or malformed saved sync fields as empty and drops malformed entries one by one", () => {
   expect(parseSync(undefined)).toEqual(emptySync());
   expect(parseSync("sync")).toEqual(emptySync());
-  expect(parseSync({ known: "a", outbox: {} })).toEqual(emptySync());
+  expect(parseSync({ known: "a", outbox: {}, account: "" })).toEqual(
+    emptySync(),
+  );
+  expect(parseSync({ known: [], outbox: [], account: 7 })).toEqual(emptySync());
   expect(
     parseSync({
+      account: "alice",
       known: [a, "https://b.example", a, 7, null],
       outbox: [
         { url: a, removed: false },
@@ -141,5 +191,9 @@ it("reads old or malformed saved sync fields as empty and drops malformed entrie
         null,
       ],
     }),
-  ).toEqual({ known: [a], outbox: [{ url: a, removed: false }] });
+  ).toEqual({
+    account: "alice",
+    known: [a],
+    outbox: [{ url: a, removed: false }],
+  });
 });

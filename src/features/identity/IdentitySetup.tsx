@@ -60,6 +60,7 @@ export function IdentitySetup({
       <main className={styles.landing} aria-labelledby="identity-landing-title">
         <header
           className={styles.titlebar}
+          data-buzz-window-drag=""
           data-tauri-drag-region={integratedWindowControls || undefined}
           {...(macDesktop ? macTitleBarDragHandlers : {})}
         >
@@ -124,6 +125,7 @@ export function IdentitySetup({
       {(macDesktop || integratedWindowControls) && (
         <header
           className={styles.titlebar}
+          data-buzz-window-drag=""
           data-tauri-drag-region={integratedWindowControls || undefined}
           {...(macDesktop ? macTitleBarDragHandlers : {})}
         >

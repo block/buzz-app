@@ -155,6 +155,8 @@ fn main() {
             "jev_classifier_set_key",
             "jev_classifier_clear_key",
             "jev_classify",
+            "app_agent_state_load",
+            "app_agent_state_set",
             "title_bar_double_click",
             "notification_show",
             "notification_permission_state",

@@ -32,6 +32,7 @@ import type {
   TeamPort,
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
+import { localStore } from "../../features/agents/state";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -347,6 +348,7 @@ function setup(
       };
       for (const listener of listeners) listener();
     }),
+    storage: localStore(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

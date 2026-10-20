@@ -7,6 +7,7 @@ import { subscribeRelayTraffic } from "./live";
 import { keypair, metadata, roster, signed } from "./testing";
 import { matchesEvent } from "./projection";
 import { SOLO_LABEL } from "../solo/labels";
+import { ownerCanvas } from "../agent-harness/project";
 import type { EventTemplate } from "nostr-tools";
 import type { ReadFilter, RelayEvent } from "./events";
 
@@ -328,7 +329,7 @@ it("messages held while their chat starts keep their whole deadline for after it
   for (const message of messages) expect(sent).toContain(message);
 });
 
-it("a chat's setup writes go while more messages than delivery slots wait for setup", async () => {
+it("a chat's Canvas save goes once the chat exists, alongside more messages than delivery slots", async () => {
   const id = "8888aaaa-8888-4888-8888-888888888888";
   const h = setup(id);
   await h.established();
@@ -338,8 +339,11 @@ it("a chat's setup writes go while more messages than delivery slots wait for se
     [h.agent.pubkey],
     undefined,
     false,
-    async () => {
-      await h.session.canvas.save(id, "# Brief", undefined);
+    {
+      canvas: "# Brief",
+      async apply() {
+        await h.session.canvas.save(id, "# Brief", undefined);
+      },
     },
   );
   const messages = ["one", "two", "three", "four"].map((text) =>
@@ -353,8 +357,6 @@ it("a chat's setup writes go while more messages than delivery slots wait for se
   expect(kinds).toContain(40100);
   const sent = h.publish.mock.calls.map(([event]) => event.id);
   for (const message of messages) expect(sent).toContain(message);
-  // The Canvas went before any message it holds.
-  expect(kinds.indexOf(40100)).toBeLessThan(kinds.indexOf(9));
 });
 
 it("a read waiting on a start the relay refuses fails here, without asking the relay", async () => {
@@ -405,7 +407,7 @@ it("a read of a chat that is still starting waits for the create instead of losi
   expect(h.publish.mock.calls.at(-1)?.[0].id).toBe(message);
 });
 
-it("a chat with setup holds its first message, for the relay and local agents, until setup runs", async () => {
+it("a chat's local agents get its first message and its Canvas before the relay has the chat", async () => {
   const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const h = setup(id);
   await h.established();
@@ -414,7 +416,7 @@ it("a chat with setup holds its first message, for the relay and local agents, u
     replay: true,
   });
   let finish = () => {};
-  const setupRan = vi.fn(
+  const apply = vi.fn(
     () =>
       new Promise<void>((resolve) => {
         finish = resolve;
@@ -426,23 +428,54 @@ it("a chat with setup holds its first message, for the relay and local agents, u
     [h.agent.pubkey],
     undefined,
     false,
-    setupRan,
+    { canvas: "# Brief", apply },
   );
   const message = h.session.messages.send(id, "@Agent go", [h.agent.pubkey]);
   await vi.advanceTimersByTimeAsync(0);
-  expect(heard).toEqual([]);
-  expect(setupRan).not.toHaveBeenCalled();
+  // As an agent's first turn reads it, without asking the relay.
+  const canvas = (channelId: string) =>
+    ownerCanvas(
+      h.session.canvas,
+      h.session.viewer ?? "",
+      channelId,
+      h.session.channelWrites.startingCanvas(channelId),
+    );
+  expect(heard.map((event) => event.id)).toEqual([message]);
+  await expect(canvas(id)).resolves.toBe("# Brief");
+  expect(
+    h.query.mock.calls.some(([filters]) =>
+      filters.some((filter) => filter["#h"]?.includes(id)),
+    ),
+  ).toBe(false);
   h.release();
   await settle(ready);
-  // The chat exists; setup runs, and the message still waits for it.
-  expect(setupRan).toHaveBeenCalledOnce();
-  expect(heard).toEqual([]);
-  expect(h.publish.mock.calls.map(([event]) => event.kind)).toEqual([9007]);
+  // The message goes with the chat; the Canvas save does not hold it.
+  expect(apply).toHaveBeenCalledOnce();
+  expect(h.publish.mock.calls.at(-1)?.[0].id).toBe(message);
+  expect(h.session.channelWrites.startingCanvas(id)).toBe("# Brief");
   finish();
   await vi.advanceTimersByTimeAsync(0);
-  await vi.advanceTimersByTimeAsync(0);
-  expect(heard.map((event) => event.id)).toEqual([message]);
-  expect(h.publish.mock.calls.at(-1)?.[0].id).toBe(message);
+  expect(h.session.channelWrites.startingCanvas(id)).toBeUndefined();
+});
+
+it("a plain chat's first turn knows at once that it has no Canvas", async () => {
+  const id = "aaaabbbb-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const h = setup(id);
+  await h.established();
+  const { ready } = h.session.channelWrites.start(id, "Start", [
+    h.agent.pubkey,
+  ]);
+  await expect(
+    ownerCanvas(
+      h.session.canvas,
+      h.session.viewer ?? "",
+      id,
+      h.session.channelWrites.startingCanvas(id),
+    ),
+  ).resolves.toBeUndefined();
+  h.release();
+  await settle(ready);
+  expect(h.session.channelWrites.startingCanvas(id)).toBeUndefined();
 });
 
 it("a create that never arrives backs off, then ends the start once the relay shows no chat", async () => {

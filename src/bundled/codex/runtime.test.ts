@@ -267,6 +267,7 @@ function fixture(
           ],
         }),
       },
+      channelWrites: { startingCanvas: () => undefined },
       canvas: {
         available: false,
         read: vi.fn(

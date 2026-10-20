@@ -315,16 +315,11 @@ export function createRelaySession(
             onReceipt: (event, message) => workflows.receipt(event, message),
             // A chat this device is starting takes its events once the relay
             // has its create; its local agents hear its owner's messages now.
-            // A chat being set up holds its messages, and the agents that hear
-            // them, until its Canvas and workspace are in place. The start's
-            // own create and member adds never wait.
+            // The start's own create and member adds never wait.
             holdPublish: (event) => {
               if (event.kind === 9007 || event.kind === 9000) return;
               const id = event.tags.find(([name]) => name === "h")?.[1];
               if (!id) return;
-              const setup =
-                event.kind === 9 ? channelWrites.settling(id) : undefined;
-              if (setup) return setup.then(() => hearStarting(event, id));
               const ready = channelWrites.starting(id);
               if (ready && event.kind === 9) hearStarting(event, id);
               return ready;

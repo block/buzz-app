@@ -77,7 +77,7 @@ function setup(available = true) {
         members: readonly string[],
         ttlSeconds?: number,
         named = false,
-        setup?: () => Promise<void>,
+        setup?: { canvas: string; apply(): Promise<void> },
       ) => {
         const create = channelWrites.create(
           id,
@@ -86,7 +86,7 @@ function setup(available = true) {
           named,
           members,
         );
-        void channelWrites.ready.then(() => setup?.()).catch(() => {});
+        void channelWrites.ready.then(() => setup?.apply()).catch(() => {});
         return { create, ready: channelWrites.ready };
       },
     ),
@@ -364,9 +364,9 @@ it.each([false, true])(
       await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
       expect(test.channelWrites.create).toHaveBeenCalledOnce();
       await waitFor(() =>
-        expect(sequence).toEqual(
-          failure ? ["send", "canvas"] : ["send", "canvas", "placement"],
-        ),
+        // The chat joins its workspace at once and its message goes out;
+        // the Canvas is saved behind them.
+        expect(sequence).toEqual(["placement", "send", "canvas"]),
       );
     } finally {
       vi.unstubAllGlobals();
@@ -489,7 +489,11 @@ it("opens and saves local draft settings in a fresh Solo project after a failed 
   try {
     const f = setup();
     const refreshSolo = vi.fn(async () => {});
-    refreshSolo.mockRejectedValueOnce(new Error("Settings unavailable"));
+    // Both the workspace's preload on mount and the settings dialog's read
+    // fail.
+    refreshSolo
+      .mockRejectedValueOnce(new Error("Settings unavailable"))
+      .mockRejectedValueOnce(new Error("Settings unavailable"));
     Object.assign(f.session, {
       soloPreferences: {
         writable: true,
@@ -531,9 +535,10 @@ it("opens and saves local draft settings in a fresh Solo project after a failed 
       release = resolve;
     });
     refreshSolo.mockImplementationOnce(() => held);
+    const reads = refreshSolo.mock.calls.length;
     try {
       await user.click(screen.getByRole("button", { name: "Retry settings" }));
-      await waitFor(() => expect(refreshSolo).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(refreshSolo).toHaveBeenCalledTimes(reads + 1));
       expect(screen.getByRole("status")).toHaveTextContent("Loading settings…");
       expect(screen.queryByRole("alert")).toBeNull();
       expect(
@@ -547,7 +552,7 @@ it("opens and saves local draft settings in a fresh Solo project after a failed 
       "Keep this Solo draft",
     );
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(refreshSolo).toHaveBeenCalledTimes(2);
+    expect(refreshSolo).toHaveBeenCalledTimes(reads + 1);
     mounted.unmount();
     render(view());
     await open();
@@ -893,9 +898,9 @@ it.each([{ fields: { name: 7 } }, { fields: { name: "x".repeat(121) } }])(
     );
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/name/i);
+    // The workspace's defaults load when it is picked; that is a read, not a
+    // start.
     for (const operation of [
-      refreshPreferences,
-      refreshSetup,
       readCanvas,
       saveCanvas,
       refreshAgents,

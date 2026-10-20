@@ -494,9 +494,9 @@ export function createChannelWrites(
   }
   /** Solo chats this device is starting, until they can take events. */
   const starts = new Map<string, Promise<void>>();
-  /** Started chats whose setup still runs once they exist; their messages
-   * wait for it. */
-  const setups = new Map<string, Promise<void>>();
+  /** The Canvas of each chat this device is starting ("" for none), until
+   * its save lands; see `startingCanvas`. */
+  const canvases = new Map<string, string>();
   /** Settles once the relay has the create, or rejects with ChatNotStarted
    * once it is known to have none. A lost acknowledgment resends the same
    * create, which the relay confirms; when the attempts run out, the relay is
@@ -645,9 +645,9 @@ export function createChannelWrites(
       members: readonly string[],
       ttlSeconds?: number,
       named = false,
-      /** Runs once the chat exists, before its messages go out or reach
-       * local agents; a failure leaves a working chat. */
-      setup?: () => Promise<void>,
+      /** The chat's Canvas, and the work that saves it once the chat
+       * exists; nothing waits for it, and a failure leaves a working chat. */
+      setup?: { canvas: string; apply(): Promise<unknown> },
     ) {
       const create = api.create(id, title, ttlSeconds, named, members);
       channels.start?.({
@@ -661,14 +661,14 @@ export function createChannelWrites(
       // once the create is OK.
       const ready = created(create);
       starts.set(id, ready);
+      canvases.set(id, setup?.canvas ?? "");
       const settled = setup
         ? ready.then(() =>
-            setup().catch((reason) => {
+            setup.apply().catch((reason) => {
               console.warn("Solo chat setup did not finish", reason);
             }),
           )
         : ready;
-      if (setup) setups.set(id, settled);
       void ready.then(
         // Confirming the chat only ends its pending listing.
         () => refresh(id).catch(() => {}),
@@ -687,7 +687,7 @@ export function createChannelWrites(
         },
       );
       void ready.catch(() => {}).finally(() => starts.delete(id));
-      void settled.catch(() => {}).finally(() => setups.delete(id));
+      void settled.catch(() => {}).finally(() => canvases.delete(id));
       return { create, ready };
     },
     /** Settles when a chat this device is starting exists on the relay, so it
@@ -695,10 +695,11 @@ export function createChannelWrites(
     starting(id: string): Promise<void> | undefined {
       return starts.get(id);
     },
-    /** Settles when a started chat's setup has run too; its messages, and
-     * the local agents that hear them, wait for this. */
-    settling(id: string): Promise<void> | undefined {
-      return setups.get(id);
+    /** The Canvas a chat this device is starting will have ("" for none),
+     * until its save lands: what a local agent's first turn reads, without
+     * waiting for the relay. */
+    startingCanvas(id: string): string | undefined {
+      return canvases.get(id);
     },
     failed(id: string) {
       return (

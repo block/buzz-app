@@ -8,7 +8,7 @@ import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { GearIcon } from "../../shared/design-system/icons";
-import { applyChatSetup, loadChatSetup, parseChatSetup } from "./workspace";
+import { loadChatSetup, parseChatSetup, type ChatSetup } from "./workspace";
 import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
@@ -141,6 +141,18 @@ export function SoloDraft({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const submitting = useRef(false);
+  // A workspace's defaults load as soon as it is picked, so starting a chat
+  // in it does not wait for them. A start uses them up, or loads them again
+  // if that load failed; the next start loads anew.
+  const workspace = useRef<{ id: string; setup: Promise<ChatSetup> }>(
+    undefined,
+  );
+  useEffect(() => {
+    if (!selectedProject || workspace.current?.id === selectedProject) return;
+    const setup = loadChatSetup(session, selectedProject);
+    setup.catch(() => {});
+    workspace.current = { id: selectedProject, setup };
+  });
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -178,10 +190,28 @@ export function SoloDraft({
       });
       if (errors.name) throw new Error(errors.name);
       if (errors.lifetime) throw new Error(errors.lifetime);
+      const loaded =
+        workspace.current?.id === project ? workspace.current.setup : undefined;
+      workspace.current = undefined;
+      let setup = project
+        ? await (loaded?.catch(() => loadChatSetup(session, project)) ??
+            loadChatSetup(session, project))
+        : undefined;
+      if (!mounted.current) return;
+      if (canvas !== undefined)
+        setup = parseChatSetup({
+          ...(setup ?? {
+            ...(project ? { projectId: project } : {}),
+            agents: [],
+          }),
+          canvas,
+        });
+      // The workspace's agents join in the create with the tagged ones.
+      const members = [...new Set([...recipients, ...(setup?.agents ?? [])])];
       // The agents already listed decide at once; only an unknown one waits
       // for a fresh list.
       const selectable = () =>
-        recipients.every((key) =>
+        members.every((key) =>
           session.agentChoices
             .snapshot()
             .selectable.some((agent) => agent.pubkey === key),
@@ -191,47 +221,36 @@ export function SoloDraft({
         if (!mounted.current) return;
         if (!selectable())
           throw new Error(
-            "Solo chats can only use your available agents. Check mentions.",
+            "Solo chats can only use your available agents. Check mentions and workspace defaults.",
           );
       }
       // Finish uploads before anything is created, so a failed file blocks
       // the start instead of leaving an empty chat behind.
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
-      // A workspace's defaults load while the chat is created; its Canvas and
-      // placement go in once the chat exists, before the first turn reads them.
-      const setup =
-        project || canvas !== undefined
-          ? (async () => {
-              let setup = project
-                ? await loadChatSetup(session, project)
-                : undefined;
-              if (canvas !== undefined)
-                setup = parseChatSetup({
-                  ...(setup ?? {
-                    ...(project ? { projectId: project } : {}),
-                    agents: [],
-                  }),
-                  canvas,
-                });
-              return setup;
-            })()
-          : undefined;
-      setup?.catch(() => {});
-      // The chat lists at once and its message goes out behind the create,
-      // so the agents start on it without waiting for the relay.
+      // The chat lists at once, in its workspace, and its message goes out
+      // behind the create, so the agents start on it without waiting for the
+      // relay. Its Canvas is saved once the chat exists; until then local
+      // agents read it from the start.
+      if (setup?.projectId)
+        void session.soloPreferences
+          .assign(channelId, setup.projectId)
+          .catch((reason) =>
+            console.warn("Solo chat could not join its workspace", reason),
+          );
       const { ready } = session.channelWrites.start(
         channelId,
         name,
-        recipients,
+        members,
         ttlSeconds,
         named,
-        setup &&
-          (async () => {
-            const loaded = await setup;
-            if (loaded)
-              await applyChatSetup(session, channelId, loaded, () => true);
-          }),
+        setup?.canvas
+          ? {
+              canvas: setup.canvas,
+              apply: () =>
+                session.canvas.save(channelId, setup.canvas, undefined),
+            }
+          : undefined,
       );
       try {
         session.messages.send(

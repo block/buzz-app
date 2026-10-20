@@ -112,7 +112,12 @@ export function ownerReads(
     soloChat: (owner: string, channelId: string, signal: AbortSignal) =>
       soloChat(() => relay, owner, channelId, signal),
     canvas: (channelId: string, owner: string) =>
-      ownerCanvas(session.canvas, owner, channelId),
+      ownerCanvas(
+        session.canvas,
+        owner,
+        channelId,
+        session.channelWrites.startingCanvas(channelId),
+      ),
     memoryListing: (signal: AbortSignal, slug?: string) =>
       session.agentMemories.read(pubkey, signal, slug),
   });

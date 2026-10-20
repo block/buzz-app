@@ -440,7 +440,13 @@ export class GooseRuntime {
     const reading = topLevel
       ? readProject(
           session && owner
-            ? () => ownerCanvas(session.canvas, owner, channelId)
+            ? () =>
+                ownerCanvas(
+                  session.canvas,
+                  owner,
+                  channelId,
+                  session.channelWrites.startingCanvas(channelId),
+                )
             : undefined,
         )
       : Promise.resolve(undefined);

@@ -114,6 +114,7 @@ function setup(
       snapshot: () => new Map(),
       event: vi.fn((_key: string): RelayEvent | undefined => undefined),
     },
+    channelWrites: { startingCanvas: () => undefined },
     canvas: {
       available: !!options.canvas,
       read: vi.fn(

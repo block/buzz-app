@@ -52,6 +52,8 @@ const time = (at: number) =>
     hour: "numeric",
     minute: "2-digit",
   });
+/** An entry's own time, to the second: turn entries are often seconds apart. */
+const clock = (at: number) => new Date(at).toLocaleTimeString();
 export function duration(ms: number) {
   if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
   const minutes = Math.floor(ms / 60_000);
@@ -152,6 +154,12 @@ function Turn({
       )}
       {turn.items.map((item) => (
         <div key={item.id} className={styles.item} data-type={item.type}>
+          <time
+            className={`text-body-sm ${styles.at}`}
+            dateTime={new Date(item.at).toISOString()}
+          >
+            {clock(item.at)}
+          </time>
           <Item item={item} agentName={agentName} />
         </div>
       ))}

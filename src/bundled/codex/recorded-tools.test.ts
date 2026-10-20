@@ -358,3 +358,42 @@ it("keeps a delayed completion in its own turn when another turn has an active s
   expect(mapped[1]?.items).toMatchObject([{ id: "new-script" }]);
   expect(mapped[1]?.items[0]).not.toHaveProperty("children");
 });
+
+it("uses each item's recorded start, keeping the turn start for an unrecorded item", () => {
+  const mapped = turns({
+    type: "commandExecution",
+    id: "nested",
+    command: "ls",
+    status: "completed",
+    durationMs: 500,
+    aggregatedOutput: "",
+  });
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        started_at_ms: 5000,
+        completed_at_ms: 7000,
+        item: { id: "nested" },
+      }),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        started_at_ms: 8000,
+        item: { id: "reply" },
+      }),
+    ].join("\n"),
+  );
+  const items = mapped[0]?.items ?? [];
+  expect(items.find((item) => item.id === "prompt")).toMatchObject({
+    at: 1000,
+  });
+  expect(items.find((item) => item.id === "nested")).toMatchObject({
+    at: 5000,
+    completedAt: 7000,
+  });
+  expect(items.find((item) => item.id === "reply")).toMatchObject({ at: 8000 });
+});

@@ -221,3 +221,35 @@ it("discloses tool arguments and results without raw details, including a posted
   expect(screen.getByText("Done")).toBeVisible();
   expect(screen.queryByText("Raw details")).not.toBeInTheDocument();
 });
+
+it("shows each entry's own time", () => {
+  const at = Date.UTC(2026, 9, 20, 20, 1, 28);
+  render(
+    <ActivityTranscript
+      transcript={{
+        unknownThread: 0,
+        turns: [
+          {
+            turnId: "t",
+            startedAt: at,
+            endedAt: at + 9000,
+            threadRootId: null,
+            config: [],
+            items: [
+              { id: "thought", at: at + 3000, type: "thought", text: "hmm" },
+              { id: "reply", at: at + 7000, type: "message", text: "done" },
+            ],
+          } as never,
+        ],
+      }}
+      agentName="Sol"
+      state={() => "ended"}
+    />,
+  );
+  for (const offset of [3000, 7000]) {
+    const stamp = new Date(at + offset);
+    expect(
+      screen.getByText(stamp.toLocaleTimeString(), { exact: true }),
+    ).toHaveAttribute("datetime", stamp.toISOString());
+  }
+});

@@ -12,10 +12,18 @@ import { createOAuthSession } from "./oauth/session";
 import { createAgentClient } from "./agents/client";
 import { RemoteAgents } from "./agents/RemoteAgents";
 import { builderlabType } from "./adapter-type";
+import { createKnownCommunitiesClient } from "./known-communities/client";
+import { startKnownCommunitiesSync } from "./known-communities/sync";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 
-export const inject = ["host", "settingsCards", "agents", "relay"];
+export const inject = [
+  "host",
+  "settingsCards",
+  "agents",
+  "relay",
+  "knownCommunities",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {
@@ -48,6 +56,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
       if (nativeIdentityEnabled()) handoffBackupSession("builderlab", null);
     };
   });
+  // The account's community list follows this sign-in; see docs/communities.md.
+  ctx.effect(() =>
+    startKnownCommunitiesSync({
+      client: createKnownCommunitiesClient(ctx.host, session),
+      session,
+      knownCommunities: ctx.knownCommunities,
+    }),
+  );
   const agents = createAgentClient(ctx.host, session);
   const loginAvailable = browserLoginAvailable() && !unavailable;
   if (!unavailable) {

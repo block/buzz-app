@@ -18,9 +18,7 @@ export const codexRun = (
 ): Pick<
   AgentType<Config>,
   | "models"
-  | "sessionActions"
-  | "sessionState"
-  | "session"
+  | "sessionControls"
   | "run"
   | "runOnce"
   | "timeoutMs"
@@ -28,9 +26,12 @@ export const codexRun = (
   | "resumes"
 > => ({
   models: (agent) => runtime.preview(agent),
-  sessionActions: (agent) => config(agent.config).scope,
-  sessionState: (agent, place) => runtime.sessionState(agent, place),
-  session: (agent, place, action) => runtime.session(agent, place, action),
+  sessionControls: {
+    scope: (agent) => config(agent.config).scope,
+    state: (agent, place) => runtime.sessionState(agent, place),
+    run: (agent, place, action) => runtime.session(agent, place, action),
+    subscribe: (listener) => runtime.subscribe(listener),
+  },
   run: async (delivery) => {
     await ready?.(delivery.signal);
     return runtime.run(delivery);

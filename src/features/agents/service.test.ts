@@ -85,9 +85,8 @@ async function setup({
   runOnce = undefined as AgentType<Config>["runOnce"],
   jev = undefined as ClassifierNative | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
-  sessionActions = false,
   sessionControls = undefined as
-    | Pick<AgentType<Config>, "sessionState" | "session">
+    | Pick<NonNullable<AgentType<Config>["sessionControls"]>, "state" | "run">
     | undefined,
   resumes = false,
   /** How `run` answers, from the first delivery on. */
@@ -178,8 +177,15 @@ async function setup({
     }),
     run,
     ...(runOnce ? { runOnce } : {}),
-    ...sessionControls,
-    ...(sessionActions ? { sessionActions: () => "thread" as const } : {}),
+    ...(sessionControls
+      ? {
+          sessionControls: {
+            scope: () => "thread" as const,
+            subscribe: () => () => {},
+            ...sessionControls,
+          },
+        }
+      : {}),
     ...(resumes ? { resumes } : {}),
   };
   plugin.agents.register(type);
@@ -1274,7 +1280,9 @@ it("passes the model and effort its owner asked for, and no other", async () => 
 });
 
 it("ignores session tags even for a type with immediate session controls", async () => {
-  const { service, run, emit } = await setup({ sessionActions: true });
+  const { service, run, emit } = await setup({
+    sessionControls: { state: () => "idle", run: async () => {} },
+  });
   await service.create({ type: "example/echo", name: "Echo" });
   const asked = (id: string, pubkey: string, ...tags: string[][]) =>
     event(id, { pubkey, tags: [["h", channel], ["p", bot], ...tags] });
@@ -1507,11 +1515,11 @@ it("drops its events while another copy of the app holds the agent, and runs onc
 it.each([false, new Error("Custody unavailable")])(
   "rechecks native custody before an immediate session mutation: %s",
   async (denied) => {
-    const session = vi.fn<NonNullable<AgentType<Config>["session"]>>(
-      async () => {},
-    );
+    const session = vi.fn<
+      NonNullable<AgentType<Config>["sessionControls"]>["run"]
+    >(async () => {});
     const { service, native } = await setup({
-      sessionControls: { sessionState: () => "idle", session },
+      sessionControls: { state: () => "idle", run: session },
     });
     await service.create({ type: "example/echo", name: "Echo" });
     await vi.waitFor(() =>
@@ -1530,7 +1538,10 @@ it.each([false, new Error("Custody unavailable")])(
     ).rejects.toThrow();
     expect(session).toHaveBeenCalledOnce();
     unsubscribe();
-    expect(availability).toContain("unavailable");
+    if (denied instanceof Error) {
+      expect(availability).not.toContain("unavailable");
+      expect(service.sessionState(bot, { channelId: channel })).toBe("idle");
+    } else expect(availability).toContain("unavailable");
   },
 );
 
@@ -1650,8 +1661,8 @@ it("hands out an agent's handle only to its new type's plugin once a change of t
 it("keeps running an agent while another community is selected, and gives it only its community's events", async () => {
   const { service, run, emit, second, select } = await setup({
     sessionControls: {
-      sessionState: () => "compacting",
-      session: async () => {},
+      state: () => "compacting",
+      run: async () => {},
     },
   });
   await service.create({ type: "example/echo", name: "Echo" });

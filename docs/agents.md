@@ -133,7 +133,7 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
-A type with `sessionActions` (Claude, Codex and goose) offers three immediate
+A type with `sessionControls` (Claude, Codex and goose) offers three immediate
 session controls in the composer's gauge popover: **Compact session**,
 **Start a new session**, and **Interrupt**. A side rail keeps all three visible.
 Compact and New are enabled while that harness session is idle; Interrupt is
@@ -148,7 +148,7 @@ the draft remains editable and Interrupt remains available. Send returns when
 compaction finishes, fails or is interrupted. The block applies to messages
 targeting that harness session; other sessions remain usable.
 
-`sessionActions(agent)` returns the agent's session scope. Controls appear in a
+`sessionControls.scope(agent)` returns the agent's session scope. Controls appear in a
 thread, DM or Solo chat, and at a channel's top level for a channel-scoped agent.
 A thread-scoped agent's top-level message starts a thread of its own, so it has
 no existing session to control. goose compacts only a session still open. A new

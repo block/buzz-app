@@ -123,7 +123,7 @@ function QueuedSend({
       title={
         compacting
           ? "Wait for compaction to finish, or interrupt it."
-          : undefined
+          : "Send now"
       }
     >
       Send

@@ -63,7 +63,7 @@ export function ComposerModels({
 }) {
   const [open, setOpen] = useState(false);
   const mentioned = useMentionModels(pubkeys);
-  const choices = useMemo(
+  const choices = useMemo<readonly MentionModelChoice[]>(
     () =>
       startsThread
         ? mentioned.flatMap((choice) => {
@@ -123,6 +123,9 @@ export function ComposerModels({
     const { [pubkey]: _, ...rest } = value;
     onChange(next.model || next.effort ? { ...rest, [pubkey]: next } : rest);
   };
+  const label = choices.some((choice) => choice.session)
+    ? "Model, effort, and session controls"
+    : "Model and effort for the next run";
   return (
     <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
       <Popover.Trigger
@@ -134,11 +137,9 @@ export function ComposerModels({
             type="button"
             disabled={disabled}
             data-selected={picked.length ? "" : undefined}
-            aria-label="Model and effort for the next run"
+            aria-label={label}
             title={
-              picked.length
-                ? `Next run: ${picked.join(", ")}`
-                : "Model and effort for the next run"
+              picked.length ? `${label}. Next run: ${picked.join(", ")}` : label
             }
             icon={<GaugeIcon size={18} aria-hidden="true" />}
           />
@@ -156,7 +157,7 @@ export function ComposerModels({
         >
           <Popover.Popup
             className={styles.popup}
-            aria-label="Model and effort for the next run"
+            aria-label={label}
             initialFocus={thumb}
           >
             {choices.map((choice, index) => (
@@ -410,7 +411,7 @@ function SessionRail({
             : state === "idle";
         const title =
           state === "unavailable"
-            ? `${label}: use the Buzz app running this agent.`
+            ? `${label}: session controls unavailable. Check the agent's connection and the app running it.`
             : state === "compacting"
               ? action === "interrupt"
                 ? "Interrupt compaction"

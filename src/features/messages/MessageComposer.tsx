@@ -386,9 +386,8 @@ function Composer({
   }, []);
   const mentionRoster = useContext(DraftMentionRoster);
   const solo = !!soloConversation || ownSoloConversation;
-  const channelType = list.channels.find(
-    (channel) => channel.id === channelId,
-  )?.channelType;
+  const channel = list.channels.find((channel) => channel.id === channelId);
+  const channelType = channel?.channelType;
   // A DM or Solo chat is one conversation; elsewhere a top-level message
   // starts a thread of its own.
   const startsThread =
@@ -454,16 +453,27 @@ function Composer({
     }),
     [channelId, solo, channelType, threadRootId],
   );
+  // A one-to-one DM wakes its other member without an explicit mention.
+  // Include that session in both the rendered state and late send rechecks.
+  const sessionTargets = (pubkeys: readonly string[]) =>
+    channel?.channelType === "dm" && channel.members?.length === 2
+      ? [
+          ...new Set([
+            ...pubkeys,
+            ...channel.members.filter((key) => key !== session.viewer),
+          ]),
+        ]
+      : pubkeys;
   const sessionState = useSessionState(
     agents,
-    value.recipients.map((item) => item.pubkey),
+    sessionTargets(value.recipients.map((item) => item.pubkey)),
     sessionPlace,
   );
   const compacting = sessionState === "compacting";
   const compactingNow = (
     recipients = valueRef.current.recipients.map((item) => item.pubkey),
   ) =>
-    recipients.some(
+    sessionTargets(recipients).some(
       (pubkey) => agents?.sessionState(pubkey, sessionPlace) === "compacting",
     );
 

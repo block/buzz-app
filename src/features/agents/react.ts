@@ -78,7 +78,7 @@ export function useSessionState(
     (listener: () => void) => {
       const stops = [
         agents?.subscribe(listener),
-        ...types.map((type) => type.sessions?.subscribe(listener)),
+        ...types.map((type) => type.sessionControls?.subscribe(listener)),
       ];
       return () => {
         for (const stop of stops) stop?.();
@@ -115,8 +115,7 @@ export type MentionModelChoice = Models &
     pubkey: string;
     name: string;
     loading?: boolean;
-    /** Its type can compact a session or start a new one before a run, in
-     * sessions of this scope. */
+    /** Its type offers immediate controls for sessions of this scope. */
     session?: "thread" | "channel";
   }>;
 /** The mentioned agents, of the viewer's own, whose type offers a choice of
@@ -159,32 +158,29 @@ export function useMentionModels(
                 );
                 const type =
                   agent && types?.find((item) => item.key === agent.type);
-                if (!agent || !type?.models) return [];
+                if (!agent || !type) return [];
+                const session = type.sessionControls?.scope(agent);
+                let found: Models = { current: "", models: [] };
                 try {
-                  const { current, models, sendDefaults } =
-                    await type.models(agent);
-                  const session = type.sessionActions?.(agent);
-                  return models.length > 1 ||
-                    models.some((m) => m.efforts.length) ||
-                    session
-                    ? [
-                        {
-                          pubkey,
-                          name: agent.name,
-                          current,
-                          models,
-                          ...(sendDefaults ? { sendDefaults: true } : {}),
-                          ...(session ? { session } : {}),
-                        },
-                      ]
-                    : [];
+                  if (type.models) found = await type.models(agent);
                 } catch (error) {
                   console.warn(
                     `Agent type ${type.key} could not list its models`,
                     error,
                   );
-                  return [];
                 }
+                return found.models.length > 1 ||
+                  found.models.some((m) => m.efforts.length) ||
+                  session
+                  ? [
+                      {
+                        pubkey,
+                        name: agent.name,
+                        ...found,
+                        ...(session ? { session } : {}),
+                      },
+                    ]
+                  : [];
               }),
           ).then((choices) => choices.flat())
     ).then((choices) => {
@@ -203,7 +199,8 @@ export function useMentionModels(
     : key.split(":").flatMap((pubkey) => {
         const agent = snapshot?.agents.find((item) => item.pubkey === pubkey);
         const type = agent && types?.find((item) => item.key === agent.type);
-        return agent && type?.models
+        const session = agent && type?.sessionControls?.scope(agent);
+        return agent && (type?.models || session)
           ? [
               {
                 pubkey,
@@ -211,6 +208,7 @@ export function useMentionModels(
                 current: "",
                 models: [],
                 loading: true,
+                ...(session ? { session } : {}),
               },
             ]
           : [];

@@ -1445,7 +1445,7 @@ it.each(["never", "before the failure", "after the failure"])(
     });
     const picker = () =>
       screen.findByRole("button", {
-        name: "Model and effort for the next run",
+        name: /Model.*effort/,
       });
     attachByPaste(h.input(), attachmentFile("tuned.txt"));
     await userEvent.type(h.input(), "think hard");
@@ -2434,9 +2434,7 @@ it("opens the model picker while discovery is pending, then fills its controls",
   } as unknown as Agents;
   const h = mount({}, undefined, undefined, agents);
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
-  await h.user.click(
-    screen.getByRole("button", { name: "Model and effort for the next run" }),
-  );
+  await h.user.click(screen.getByRole("button", { name: /Model.*effort/ }));
   expect(
     screen.getByText("Loading model and effort…").closest("[role=status]"),
   ).toHaveAttribute("aria-busy", "true");
@@ -2474,8 +2472,12 @@ const sessionAgents = (
     {
       key: "test/agent",
       models: () => ({ current: "fast", models }),
-      sessionActions: () => scope,
-      sessions: { subscribe },
+      sessionControls: {
+        scope: () => scope,
+        state: () => state,
+        run: async () => {},
+        subscribe,
+      },
     },
   ];
   const session = vi.fn<Agents["session"]>(async () => {});
@@ -2541,7 +2543,7 @@ it("refreshes unavailable session buttons when runner ownership changes without 
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   await h.user.click(
     await screen.findByRole("button", {
-      name: "Model and effort for the next run",
+      name: /Model.*effort/,
     }),
   );
   const compact = await screen.findByRole("button", {
@@ -2571,7 +2573,7 @@ it("acts on the idle session immediately and keeps Send independent while active
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   await h.user.click(
     await screen.findByRole("button", {
-      name: "Model and effort for the next run",
+      name: /Model.*effort/,
     }),
   );
   const compact = await screen.findByRole("button", {
@@ -2632,7 +2634,7 @@ it.each(["success", "failure", "interrupt"] as const)(
     await h.user.click(screen.getByRole("button", { name: "First Honey" }));
     await h.user.click(
       await screen.findByRole("button", {
-        name: "Model and effort for the next run",
+        name: /Model.*effort/,
       }),
     );
     const compact = await screen.findByRole("button", {
@@ -2666,7 +2668,7 @@ it.each(["success", "failure", "interrupt"] as const)(
       if (outcome === "interrupt") {
         await h.user.click(
           screen.getByRole("button", {
-            name: "Model and effort for the next run",
+            name: /Model.*effort/,
           }),
         );
         await h.user.click(screen.getByRole("button", { name: "Interrupt" }));
@@ -2701,6 +2703,96 @@ it.each(["success", "failure", "interrupt"] as const)(
   },
 );
 
+it("blocks plain-text DM sends during compaction even after removing the mention", async () => {
+  const agents = sessionAgents("thread");
+  const pending = deferred<void>();
+  agents.session.mockReturnValueOnce(pending.promise);
+  const h = mount({}, undefined, second.pubkey, agents);
+  const dm = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "channel",
+        name: "Honey DM",
+        channelType: "dm" as const,
+        members: [first.pubkey, second.pubkey],
+      },
+    ],
+  };
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        list: () => dm,
+        get: () => dm.channels[0],
+      },
+    },
+  });
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(
+    await screen.findByRole("button", { name: /Model.*effort/ }),
+  );
+  await h.user.click(
+    await screen.findByRole("button", { name: "Compact session" }),
+  );
+  expect(agents.session).toHaveBeenCalledWith(
+    first.pubkey,
+    { channelId: "channel" },
+    "compact",
+  );
+  act(() => agents.setSessionState("compacting"));
+  try {
+    await h.user.keyboard("{Escape}");
+    await h.user.clear(h.input());
+    await h.user.type(h.input(), "plain text");
+    const send = screen.getByRole("button", { name: "Send message" });
+    expect(send).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Compacting session…")).toBeVisible();
+    await h.user.keyboard("{Enter}");
+    await h.user.click(send);
+    fireEvent.submit(screen.getByRole("form"));
+    expect(h.messages.send).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      pending.resolve();
+      agents.setSessionState("idle");
+    });
+  }
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "plain text", [], []);
+});
+
+it("keeps session controls available when model discovery fails", async () => {
+  const agents = sessionAgents("channel");
+  const type = agents.types()[0];
+  if (!type) throw new Error("Missing fixture type");
+  vi.spyOn(type, "models").mockImplementation(() => {
+    throw new Error("Catalog unavailable");
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", { name: /Model.*effort/ }),
+    );
+    await h.user.click(
+      await screen.findByRole("button", { name: "Start a new session" }),
+    );
+    expect(agents.session).toHaveBeenCalledWith(
+      first.pubkey,
+      { channelId: "channel" },
+      "new",
+    );
+    expect(
+      screen.getByRole("button", { name: /Model.*effort/ }),
+    ).toHaveAccessibleName("Model, effort, and session controls");
+  } finally {
+    warn.mockRestore();
+  }
+});
+
 it("shows action failures and lets an idle session retry", async () => {
   const agents = sessionAgents("channel");
   agents.session.mockRejectedValueOnce(new Error("Disk is full"));
@@ -2708,7 +2800,7 @@ it("shows action failures and lets an idle session retry", async () => {
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   await h.user.click(
     await screen.findByRole("button", {
-      name: "Model and effort for the next run",
+      name: /Model.*effort/,
     }),
   );
   await h.user.click(
@@ -2736,7 +2828,7 @@ it("offers a thread-scoped agent session actions in a thread, not on a message t
     await h.user.click(screen.getByRole("button", { name: "First Honey" }));
     await h.user.click(
       await screen.findByRole("button", {
-        name: "Model and effort for the next run",
+        name: /Model.*effort/,
       }),
     );
     await screen.findByRole("button", { name: "Model for Honey's next run" });
@@ -2796,7 +2888,7 @@ it.each([
     await h.user.click(screen.getByRole("button", { name: "First Honey" }));
     await h.user.click(
       await screen.findByRole("button", {
-        name: "Model and effort for the next run",
+        name: /Model.*effort/,
       }),
     );
     expect(
@@ -2871,7 +2963,7 @@ it("keeps an active Claude model when a follow-up composer picker is untouched",
     await h.user.click(screen.getByRole("button", { name: "First Honey" }));
     await h.user.click(
       await screen.findByRole("button", {
-        name: "Model and effort for the next run",
+        name: /Model.*effort/,
       }),
     );
     expect(
@@ -2921,7 +3013,7 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   await h.user.click(
     await screen.findByRole("button", {
-      name: "Model and effort for the next run",
+      name: /Model.*effort/,
     }),
   );
   expect(
@@ -2993,7 +3085,7 @@ it.each(["settings refresh", "model pick"])(
     await h.user.type(h.input(), "follow the shown defaults");
     await h.user.click(screen.getByRole("button", { name: "First Honey" }));
     const trigger = await screen.findByRole("button", {
-      name: "Model and effort for the next run",
+      name: /Model.*effort/,
     });
     await h.user.click(trigger);
     expect(
@@ -3077,13 +3169,13 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
   const h = mount({}, undefined, undefined, agents);
   const picker = () =>
     screen.queryByRole("button", {
-      name: "Model and effort for the next run",
+      name: /Model.*effort/,
     });
   const open = async () => {
     // Choices load asynchronously each time the agent is mentioned again.
     await h.user.click(
       await screen.findByRole("button", {
-        name: "Model and effort for the next run",
+        name: /Model.*effort/,
       }),
     );
     // The edge-aligned thumb stays hidden until it is measured, which jsdom
@@ -3198,7 +3290,7 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
   const open = async () => {
     await h.user.click(
       await screen.findByRole("button", {
-        name: "Model and effort for the next run",
+        name: /Model.*effort/,
       }),
     );
     return screen.findByLabelText("Effort for Honey's next run");

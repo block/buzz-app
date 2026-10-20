@@ -564,13 +564,16 @@ export type AgentType<Config = unknown> = {
    * a channel's top-level message joins the channel's one session, and under
    * `thread` it starts a thread of its own, with no session to act on. A DM or
    * Solo chat is one session either way. */
-  sessionActions?(agent: Agent<Config>): "thread" | "channel";
-  sessionState?(agent: Agent<Config>, place: SessionPlace): SessionState;
-  session?(
-    agent: Agent<Config>,
-    place: SessionPlace,
-    action: SessionControlAction,
-  ): Promise<void>;
+  sessionControls?: {
+    scope(agent: Agent<Config>): "thread" | "channel";
+    state(agent: Agent<Config>, place: SessionPlace): SessionState;
+    run(
+      agent: Agent<Config>,
+      place: SessionPlace,
+      action: SessionControlAction,
+    ): Promise<void>;
+    subscribe(listener: () => void): () => void;
+  };
   /** Read-only: snapshots of the sessions the agent ran from Buzz on this
    * device with activity since `since` (milliseconds). `since` only bounds
    * activity time; it is no checkpoint, and a session last active before it
@@ -2019,7 +2022,7 @@ export class AgentsService extends Service implements Agents {
       this.runners.transitioning(pubkey)
     )
       return "unavailable";
-    return type?.sessionState?.(agent, place) ?? "unavailable";
+    return type?.sessionControls?.state(agent, place) ?? "unavailable";
   }
   async session(
     pubkey: string,
@@ -2030,7 +2033,7 @@ export class AgentsService extends Service implements Agents {
     const type = agent && this.types().find((kind) => kind.key === agent.type);
     if (
       !agent ||
-      !type?.session ||
+      !type?.sessionControls ||
       this.sessionState(pubkey, place) === "unavailable"
     )
       throw new Error(
@@ -2040,7 +2043,7 @@ export class AgentsService extends Service implements Agents {
       const current = this.find(pubkey);
       if (current?.type !== agent.type || !this.types().includes(type))
         throw new Error("The agent's harness changed. Try again.");
-      await type.session?.(current, place, action);
+      await type.sessionControls?.run(current, place, action);
     });
   }
 

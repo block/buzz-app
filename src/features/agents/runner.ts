@@ -2207,15 +2207,10 @@ export class AgentRunners {
   /** Claims exclusively for a provider migration. Unlike turn execution,
    * uncertainty is unsafe here because changing native type is destructive. */
   private async claimForRetype(runner: Runner) {
-    try {
-      return this.claimed(
-        runner,
-        (await this.host.custody?.claim(runner.pubkey)) ?? false,
-      );
-    } catch (error) {
-      this.claimed(runner, false);
-      throw error;
-    }
+    return this.claimed(
+      runner,
+      (await this.host.custody?.claim(runner.pubkey)) ?? false,
+    );
   }
   private async release(runner: Runner) {
     if (!runner.mayHold) return;

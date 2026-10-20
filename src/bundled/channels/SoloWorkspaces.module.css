@@ -78,21 +78,27 @@
   flex: 1;
   min-width: 0;
 }
-/* Show more keeps the row's geometry; Show less sits at its trailing edge. */
+/* Show more spans the full row like a chat; Show less overlays its trailing
+   edge on the row inset inside the gutter fill, like the overflow glyph. */
 .showMore {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-1);
-  /* Ends on the row inset inside the gutter fill, like the overflow glyph. */
-  padding-inline-end: calc(
-    var(--session-row-inset) +
-    var(--channel-row-fill-end, 0%)
-  );
+  min-height: var(--size-row);
 }
 .showMore > [data-variant="row"] {
   flex: 1;
   min-width: 0;
+}
+.showMore > :not([data-variant="row"]) {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  inset-inline-end: calc(
+    var(--session-row-inset) +
+    var(--channel-row-fill-end, 0%)
+  );
 }
 .sidebarContents .organizedRow > div > [data-variant="row"] {
   /* Status paints in the row-owned action slot outside the select button.

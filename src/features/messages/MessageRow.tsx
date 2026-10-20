@@ -647,6 +647,9 @@ function MessageRowContent({
       )}
     </>
   );
+  // Accessories may only point at a thread the row could open or start.
+  const summaryThread =
+    startsThreads || row.replyCount > 0 ? onOpenThread : undefined;
   const renderMessageSummary = (activity?: MessageSummaryActivity) => {
     const remainingThreadAgents = threadAgents.filter(
       (agent) => !activity?.participants.includes(agent.pubkey),
@@ -1097,7 +1100,7 @@ function MessageRowContent({
             <ComposerAccessories
               registry={extensions.accessories}
               renderMessageSummary={
-                onOpenThread ? renderMessageSummary : undefined
+                summaryThread ? renderMessageSummary : undefined
               }
               session={session}
               scope={scope}
@@ -1108,9 +1111,9 @@ function MessageRowContent({
                 menuTrigger.current?.focus({ preventScroll: true })
               }
               openThread={
-                onOpenThread
+                summaryThread
                   ? () => {
-                      onOpenThread(row.id, row.threadRootId ?? row.id);
+                      summaryThread(row.id, row.threadRootId ?? row.id);
                       return true;
                     }
                   : undefined

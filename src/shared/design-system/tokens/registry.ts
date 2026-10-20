@@ -833,7 +833,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "bg-affordance-chrome",
         variable: "--affordance-chrome",
         pointsAt:
-          "affordance-subtle; accent step 3 once the shell takes the accent",
+          "neutral-3 light / affordance-subtle dark; accent step 3 once the shell takes the accent",
         use: "The grouped chrome capsule on the app shell, such as Solo and Multiplayer.",
         status: "proposed",
       },

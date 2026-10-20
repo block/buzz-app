@@ -386,6 +386,15 @@
       background: var(--affordance-backdrop-hover);
     }
   }
+  @media (hover: hover) and (pointer: fine) {
+    .chrome-navigation
+      .buzz-button[data-icon-variant="chrome"]:hover:not(
+        [data-disabled],
+        [aria-current="page"]
+      ) {
+      background: var(--affordance-chrome-hover);
+    }
+  }
   .buzz-button[data-icon-variant="chrome"]:is(
     :active,
     [aria-expanded="true"]:not([data-highlight-expanded="false"])

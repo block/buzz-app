@@ -510,9 +510,11 @@ Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
-Chrome tab and route-navigation groups use the shell's `affordance-chrome` capsule,
+Chrome tab and route-navigation groups use the shell's `affordance-chrome` capsule
+(neutral 3 in light mode, distinct from the app background),
 with `affordance-chrome-hover` for an inactive item and `text-chrome-subtle` labels. Selection uses the pane color
 in light mode and neutral 5 in dark mode, where it stays stronger than hover.
+Chrome icon controls inside the shared track use the same hover fill as its tabs.
 Standalone chrome icon controls remain unfilled and use backdrop hover/pressed
 fills. No blur or glass rim is added.
 A chrome selection can blend into a white panel; choose the appropriate variant

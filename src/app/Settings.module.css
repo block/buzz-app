@@ -437,6 +437,10 @@
     var(--ease-out, ease-out);
 }
 
+.navigationPane .pluginAside {
+  background: var(--surface-popover);
+}
+
 @keyframes plugin-side-in {
   from {
     opacity: 0;

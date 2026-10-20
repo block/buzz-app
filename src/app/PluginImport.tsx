@@ -587,11 +587,21 @@ export function PluginImport({
         }
         size={error || (reviewing && updating) ? "default" : "wide"}
         leadingActions={
+          !error &&
+          !showUnchanged &&
           reviewing &&
+          updateId &&
           candidate &&
-          !updateId &&
-          (!existing || loading) &&
-          !error ? (
+          existing?.source === "external" &&
+          !existing.enabled ? (
+            <p className="m-0 text-body-sm text-muted">
+              This plugin will stay disabled.
+            </p>
+          ) : reviewing &&
+            candidate &&
+            !updateId &&
+            (!existing || loading) &&
+            !error ? (
             <Switch
               label="Enable plugin"
               checked={enableOnInstall}
@@ -1003,17 +1013,9 @@ export function PluginImport({
                 {reviewing &&
                   updateId &&
                   candidate &&
-                  existing?.source === "external" && (
-                    <>
-                      {!existing.enabled && (
-                        <p className="m-0 text-body-sm text-muted">
-                          This plugin will stay disabled.
-                        </p>
-                      )}
-                      {rollbackWarning && (
-                        <p className="m-0 text-body-sm">{rollbackWarning}</p>
-                      )}
-                    </>
+                  existing?.source === "external" &&
+                  rollbackWarning && (
+                    <p className="m-0 text-body-sm">{rollbackWarning}</p>
                   )}
               </div>
             </section>

@@ -675,6 +675,36 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
     page.getByRole("status").filter({ hasText: "Up to date" }),
   ).toBeVisible();
   await expect(button(page, "Update")).toHaveCount(0);
+  const pane = page.getByRole("complementary", { name: "Example two details" });
+  const paneActions = pane.getByRole("button", {
+    name: /^(Disable|Check for updates|Roll back|Delete)$/,
+  });
+  await expect(paneActions).toHaveCount(4);
+  for (const [width, theme] of [
+    [1440, "light"],
+    [480, "dark"],
+  ]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.emulateMedia({ colorScheme: theme });
+    await expect
+      .poll(() =>
+        paneActions.evaluateAll((buttons) => {
+          const rects = buttons.map((node) => node.getBoundingClientRect());
+          const group = buttons[0].parentElement.getBoundingClientRect();
+          return rects.every(
+            (rect, index) =>
+              Math.abs(rect.left - group.left) < 1 &&
+              Math.abs(rect.right - group.right) < 1 &&
+              (index === 0 || rect.top >= rects[index - 1].bottom),
+          );
+        }),
+      )
+      .toBe(true);
+    await pane.screenshot({
+      path: info.outputPath(`plugin-actions-${theme}-${width}.png`),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
   await button(page, "Delete").click();
   const deletion = page.getByRole("alertdialog", {
     name: "Delete Example two?",

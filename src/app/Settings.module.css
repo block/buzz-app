@@ -572,9 +572,9 @@
 }
 
 .pluginStatus {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: var(--space-3);
 }
 

@@ -249,7 +249,7 @@ function SoloConversationRow({
   selected: boolean;
   working: boolean;
   onSelect: () => void;
-  onRename: () => void;
+  onRename: (() => boolean) | undefined;
 } & Pick<
   ComponentProps<typeof ChannelActivityPopover>,
   "onOpenThread" | "onOpenWorkingAgent" | "onOpenAgentActivity"
@@ -288,6 +288,7 @@ function SoloConversationRow({
             pointer.current = undefined;
             if (
               event.detail === 1 &&
+              onRename &&
               !touch &&
               window.matchMedia("(max-width: 650px)").matches
             ) {
@@ -299,10 +300,14 @@ function SoloConversationRow({
               }, 500);
             } else onSelect();
           }}
-          onDoubleClick={() => {
-            clearTimeout(pendingClick.current);
-            onRename();
-          }}
+          onDoubleClick={
+            onRename
+              ? () => {
+                  clearTimeout(pendingClick.current);
+                  if (!onRename()) onSelect();
+                }
+              : undefined
+          }
           onContextMenu={() => clearTimeout(pendingClick.current)}
           icon={
             <span className={styles.conversationIcon} aria-hidden="true">

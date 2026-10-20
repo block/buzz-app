@@ -70,7 +70,10 @@ export function SoloWorkspaces({
   navigator?: Navigation | undefined;
   scope: string;
   chats: readonly ChatListItem[];
-  renderChat: (item: ChatListItem, rename: () => void) => ReactNode;
+  renderChat: (
+    item: ChatListItem,
+    rename: (() => boolean) | undefined,
+  ) => ReactNode;
   onNew?: (projectId?: string) => void;
 }) {
   useChatConversions(session);
@@ -416,15 +419,23 @@ export function SoloWorkspaces({
                         channelId={item.id}
                         sectionKey={DROP + project.id}
                       >
-                        {renderChat(item, () => {
-                          if (
-                            renaming ||
-                            deleting === project.id ||
-                            !canEditLifetime(session, channel)
-                          )
-                            return;
-                          setRenaming(item.id);
-                        })}
+                        {renderChat(
+                          item,
+                          !renaming &&
+                            deleting !== project.id &&
+                            canEditLifetime(session, channel)
+                            ? () => {
+                                if (
+                                  renaming ||
+                                  deleting === project.id ||
+                                  !canEditLifetime(session, channel)
+                                )
+                                  return false;
+                                setRenaming(item.id);
+                                return true;
+                              }
+                            : undefined,
+                        )}
                       </DraggableChannel>
                     </ChatActionsMenu>
                   );

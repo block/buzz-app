@@ -276,6 +276,35 @@ test("narrow mouse double-click renames while single-click and keyboard still na
   await expect(
     page.locator(`[data-solo-channel-id="${alpha}"]`),
   ).toHaveAttribute("aria-current", "page");
+  let releaseSave;
+  let startSave;
+  const saveGate = new Promise((resolve) => {
+    releaseSave = resolve;
+  });
+  const saveStarted = new Promise((resolve) => {
+    startSave = resolve;
+  });
+  await page.route("**/api/relay/**/channel-details-sign", async (route) => {
+    startSave();
+    await saveGate;
+    await route.continue();
+  });
+  try {
+    await show.tap();
+    await row(page, alpha).dblclick();
+    await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+    await input(page).fill("Pending narrow rename");
+    await input(page).press("Enter");
+    await saveStarted;
+    // Another active editor makes Beta navigation-only, even on double-click.
+    await row(page, beta).dblclick();
+    await expect(sidebar(page)).not.toBeVisible();
+    await expect(
+      page.locator(`[data-solo-channel-id="${beta}"]`),
+    ).toHaveAttribute("aria-current", "page");
+  } finally {
+    releaseSave();
+  }
 });
 
 test("live conversion removes the old editor and permits renaming another Solo chat", async ({

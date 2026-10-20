@@ -454,26 +454,53 @@ it("shifts the app-server duration to the recorded start when no finish is recor
   });
 });
 
+const withDuration = {
+  type: "commandExecution",
+  id: "nested",
+  command: "ls",
+  status: "completed",
+  durationMs: 500,
+  aggregatedOutput: "",
+};
+
 it.each([
-  ["no", {}],
-  ["a zero", { started_at_ms: 0 }],
-])("uses a recorded finish when the log has %s start", (_, recordedStart) => {
-  const mapped = turns();
-  restoreRecordedTools(
-    mapped,
-    [
-      start(),
-      record("event_msg", {
-        type: "item_completed",
-        turn_id: "turn",
-        ...recordedStart,
-        completed_at_ms: 7000,
-        item: { id: "nested" },
-      }),
-    ].join("\n"),
-  );
-  expect(mapped[0]?.items.find((item) => item.id === "nested")).toMatchObject({
-    at: 1000,
-    completedAt: 7000,
-  });
-});
+  ["no start, an app-server duration", {}, withDuration, 6500, 7000],
+  [
+    "a zero start, an app-server duration",
+    { started_at_ms: 0 },
+    withDuration,
+    6500,
+    7000,
+  ],
+  ["no start, no duration", {}, undefined, 1000, undefined],
+  [
+    "a zero start, no duration",
+    { started_at_ms: 0 },
+    undefined,
+    1000,
+    undefined,
+  ],
+] as const)(
+  "never invents a duration from a recorded finish with %s",
+  (_, recordedStart, item, at, completedAt) => {
+    const mapped = item ? turns(item) : turns();
+    restoreRecordedTools(
+      mapped,
+      [
+        start(),
+        record("event_msg", {
+          type: "item_completed",
+          turn_id: "turn",
+          ...recordedStart,
+          completed_at_ms: 7000,
+          item: { id: "nested" },
+        }),
+      ].join("\n"),
+    );
+    const nested = mapped[0]?.items.find((entry) => entry.id === "nested");
+    expect(nested).toMatchObject({ at });
+    expect(
+      nested && "completedAt" in nested ? nested.completedAt : undefined,
+    ).toBe(completedAt);
+  },
+);

@@ -81,10 +81,18 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       // Zero is the rollout's unknown-start sentinel, not a real time.
       const startedAt = ms(payload.started_at_ms) || undefined;
       const completedAt = ms(payload.completed_at_ms) || undefined;
+      // Never invent a duration: a lone recorded time moves an existing
+      // app-server duration rather than measuring from the turn start.
       if (item.type === "tool") {
-        if (completedAt !== undefined) item.completedAt = completedAt;
-        else if (startedAt !== undefined && item.completedAt !== undefined)
-          item.completedAt = startedAt + item.completedAt - item.at;
+        const known = item.completedAt;
+        if (startedAt !== undefined && completedAt !== undefined)
+          item.completedAt = completedAt;
+        else if (known !== undefined && startedAt !== undefined)
+          item.completedAt = startedAt + known - item.at;
+        else if (known !== undefined && completedAt !== undefined) {
+          item.at = completedAt - (known - item.at);
+          item.completedAt = completedAt;
+        }
       }
       if (startedAt !== undefined) item.at = startedAt;
       // There is no parent id in these records. Associate only inside a

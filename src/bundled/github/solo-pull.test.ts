@@ -2,6 +2,10 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { EventData } from "../../features/relay/events";
+import { uuidv5 } from "../../features/agents/agent-config-artifacts";
+import type { ReadFilter } from "../../features/relay/events";
+import { createRelaySession } from "../../features/relay/session";
+import { keypair } from "../../features/relay/testing";
 import { GhUnavailable, GitHubError, type GitHubCli } from "./gh";
 import {
   createSoloPulls,
@@ -257,6 +261,55 @@ it("goes back to gh once it is available again", async () => {
   await vi.advanceTimersByTimeAsync(5 * SOLO_REFRESH_MS);
   expect(gh).toHaveBeenCalledTimes(2);
   expect(pulls.get(chat)?.state?.checks).toBe("success");
+});
+
+it("reads links within the session reader's limit, only the link artifacts", async () => {
+  const query = vi.fn(async (_filters: readonly ReadFilter[]) => []);
+  const owner = createRelaySession({
+    viewer: keypair().pubkey,
+    relayAuthor: keypair().pubkey,
+    media: () => undefined,
+    query,
+    subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
+  });
+  try {
+    const pulls = createSoloPulls(owner.session, undefined);
+    pulls.watch(chat, () => {});
+    await vi.waitFor(() => expect(query).toHaveBeenCalled());
+    const [filter] = query.mock.calls[0]?.[0] ?? [];
+    expect(filter).toMatchObject({
+      "#h": [chat],
+      "#d": [await uuidv5(chat, SOLO_PULL_TYPE)],
+    });
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("keeps a refresh that was given up on from marking pull requests unavailable", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const relay = session([revision(chat, pull)]);
+  let answer: (value: unknown) => void = () => {};
+  const gh = vi.fn(
+    (_query: string, _variables: unknown, signal?: AbortSignal) =>
+      new Promise((resolve, reject) => {
+        answer = resolve;
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      }),
+  ) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
+  const pulls = createSoloPulls(relay.session, gh);
+  const unwatch = pulls.watch(chat, () => {});
+  await vi.waitFor(() => expect(gh).toHaveBeenCalledOnce());
+  // The last row goes away mid-read, then comes back.
+  unwatch();
+  await vi.advanceTimersByTimeAsync(0);
+  pulls.watch(chat, () => {});
+  expect(pulls.get(chat)?.failed).toBeUndefined();
+  await vi.waitFor(() => expect(gh).toHaveBeenCalledTimes(2));
+  answer({ r0: rollup("OPEN", {}, "SUCCESS") });
+  await vi.waitFor(() =>
+    expect(pulls.get(chat)?.state?.checks).toBe("success"),
+  );
 });
 
 it("shows a link this device wrote before the next read", async () => {

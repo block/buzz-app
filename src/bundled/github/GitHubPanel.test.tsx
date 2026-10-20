@@ -629,6 +629,36 @@ it("closes the merge confirmation when a refresh brings a newer push", async () 
   }
 });
 
+it("closes the merge confirmation when the pull request is retargeted", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    let base = "main";
+    const gh = vi.fn(async () =>
+      pullData({
+        baseRefName: base,
+        ...(base !== "main" && { title: "Retargeted" }),
+      }),
+    );
+    render(
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Private change #9" });
+    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+    const dialog = await screen.findByRole("alertdialog");
+    base = "release";
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    await screen.findByRole("heading", { name: "Retargeted #9" });
+    expect(dialog).not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("says when threads beyond the latest 100 went unread, and gates actions on GitHub's viewer flags", async () => {
   const gh = vi.fn(async () =>
     pullData({

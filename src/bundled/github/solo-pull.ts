@@ -16,8 +16,10 @@ export const SOLO_PULL_TYPE = "buzz.solo.pr";
 export const SOLO_REFRESH_MS = 60_000;
 /** Without `gh`, GitHub allows 60 public reads an hour. */
 const PUBLIC_REFRESH_MS = 5 * 60_000;
-/** The relay's limit on values in one tag filter. */
-const CHANNELS_PER_READ = 256;
+/** Chats per link read. Each has one link artifact, so a read of 500, the
+ * session reader's cap, leaves room for concurrent revisions. */
+const CHANNELS_PER_READ = 100;
+const LINKS_PER_READ = 500;
 
 export type PullState = Readonly<{
   state: "open" | "draft" | "merged" | "closed";
@@ -52,6 +54,17 @@ export function linkOf(event: EventData): string | null | undefined {
   }
 }
 
+/** Each chat's link artifact `d`, worked out once. */
+const linkIds = new Map<string, Promise<string>>();
+const linkId = (channel: string) => {
+  let id = linkIds.get(channel);
+  if (!id) {
+    id = uuidv5(channel, SOLO_PULL_TYPE);
+    linkIds.set(channel, id);
+  }
+  return id;
+};
+
 async function readLinks(
   session: RelaySession,
   channels: readonly string[],
@@ -62,13 +75,16 @@ async function readLinks(
   if (!read) return links;
   for (let at = 0; at < channels.length; at += CHANNELS_PER_READ) {
     const page = channels.slice(at, at + CHANNELS_PER_READ);
+    // Only the chats' link artifacts, not their other artifacts.
+    const ids = await Promise.all(page.map(linkId));
     const events = await read(
       [
         {
           kinds: [ARTIFACT_KIND],
           "#h": page,
+          "#d": ids,
           artifact: "current",
-          limit: 1000,
+          limit: LINKS_PER_READ,
         },
       ],
       { signal },
@@ -96,7 +112,7 @@ export async function writeLink(
   const writer = session.configArtifactWriter;
   if (!read || !writer)
     throw new Error("Linking a pull request needs the Buzz desktop app.");
-  const d = await uuidv5(channel, SOLO_PULL_TYPE);
+  const d = await linkId(channel);
   const [head] = await read(
     [
       {
@@ -265,6 +281,8 @@ export function createSoloPulls(
     ]);
     try {
       const read = await readLinks(session, [...listeners.keys()], signal);
+      // A refresh that was given up on, or replaced, changes nothing.
+      if (signal.aborted) return;
       for (const [channel, url] of read)
         if (listeners.has(channel)) links.set(channel, url);
       notify();
@@ -276,6 +294,7 @@ export function createSoloPulls(
         ),
       ];
       const found = await readAll(urls, signal);
+      if (signal.aborted) return;
       for (const [i, url] of urls.entries())
         states.set(url, found[i] ?? "failed");
       notify();
@@ -326,7 +345,8 @@ export function createSoloPulls(
       if (!set) {
         set = new Set();
         listeners.set(channel, set);
-        if (!links.has(channel)) schedule();
+        const url = links.get(channel);
+        if (!links.has(channel) || (url && !states.has(url))) schedule();
         else if (!controller && timer === undefined) later();
       }
       set.add(listener);

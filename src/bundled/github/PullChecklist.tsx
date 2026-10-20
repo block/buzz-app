@@ -231,11 +231,16 @@ function Actions({
   const [busy, setBusy] = useState<PullAction["type"]>();
   const [error, setError] = useState<string>();
   // What the merge was confirmed against. A refresh that brings a newer push,
-  // or changes whether the merge bypasses branch rules, closes the dialog,
-  // and the merge itself names the confirmed head.
+  // a new base branch, or a change in whether the merge bypasses branch rules
+  // closes the dialog, and the merge itself names the confirmed head.
   const [asked, setConfirming] =
     useState<
-      Readonly<{ method: MergeMethod; head: string; bypass: boolean }>
+      Readonly<{
+        method: MergeMethod;
+        head: string;
+        base: string;
+        bypass: boolean;
+      }>
     >();
   const alive = useRef(true);
   useEffect(() => {
@@ -261,10 +266,18 @@ function Actions({
   // A new confirmation starts without an earlier action's error.
   const confirm = (method: MergeMethod) => {
     setError(undefined);
-    setConfirming({ method, head: pull.head, bypass: merge.bypass });
+    setConfirming({
+      method,
+      head: pull.head,
+      base: pull.base,
+      bypass: merge.bypass,
+    });
   };
   const confirming =
-    merge.now && asked?.head === pull.head && asked.bypass === merge.bypass
+    merge.now &&
+    asked?.head === pull.head &&
+    asked.base === pull.base &&
+    asked.bypass === merge.bypass
       ? asked
       : undefined;
   const canAutoMerge =

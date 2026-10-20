@@ -1,6 +1,6 @@
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
-import { SoloShare, ChatAccessIndicator } from "./SoloShare";
+import { SoloShare, ChatSharedMark } from "./SoloShare";
 import { SoloChatName } from "./SoloChatName";
 import { canEditLifetime } from "../../features/solo/Lifetime";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
@@ -375,11 +375,7 @@ export function SoloWorkspaces({
                       id={item.id}
                       title={item.title}
                       indicator={
-                        <ChatAccessIndicator
-                          session={session}
-                          channel={channel}
-                          onClick={() => setSharing({ id: item.id, visit })}
-                        />
+                        <ChatSharedMark session={session} channel={channel} />
                       }
                       className={styles.organizedRow}
                       content={

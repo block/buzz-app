@@ -70,10 +70,8 @@ it("opens the chat if rename admission changes before the double-click completes
 it("keeps unread state while owned thread typing and observer working signals start and stop", () => {
   const f = fixture();
   const row = screen.getByRole("button", { name: /^Planning/ });
-  expect(
-    row.querySelector('[data-channel-unread-title="true"]'),
-  ).toBeInTheDocument();
-  expect(row.querySelector("[data-channel-priority]")).toBeInTheDocument();
+  const bold = () => row.querySelector('[data-channel-unread-title="true"]');
+  expect(bold()).toBeInTheDocument();
   f.typing([{ channelId: id, threadRootId: root, pubkey: outsider }]);
   expect(within(row).queryByRole("img", { name: /working/ })).toBeNull();
   f.typing([{ channelId: other, pubkey: agent }]);
@@ -82,7 +80,7 @@ it("keeps unread state while owned thread typing and observer working signals st
   expect(
     within(row).getByRole("img", { name: "Owned Agent working in Planning" }),
   ).toBeInTheDocument();
-  expect(row.querySelector("[data-channel-priority]")).toBeInTheDocument();
+  expect(bold()).toBeInTheDocument();
   expect(row).toHaveAccessibleName(/observed unread messages/);
   expect(row).toHaveAccessibleName(/Owned Agent working in Planning/);
   f.activity({
@@ -103,7 +101,7 @@ it("keeps unread state while owned thread typing and observer working signals st
   expect(within(row).getByRole("img", { name: /working/ })).toBeInTheDocument();
   f.activity(f.activitySnapshot);
   expect(within(row).queryByRole("img", { name: /working/ })).toBeNull();
-  expect(row.querySelector("[data-channel-priority]")).toBeInTheDocument();
+  expect(bold()).toBeInTheDocument();
   f.clearUnread();
   expect(row.querySelector("[data-channel-unread]")).toBeNull();
   cleanup();
@@ -179,16 +177,14 @@ it.each([
   { observedCount: 1, attentionCount: 1 },
   { observedCount: 1, attentionCount: 0 },
 ])(
-  "bolds a Solo chat for any unread message, keeping its dot for attention only ($observedCount unread, $attentionCount attention)",
+  "bolds a Solo chat for any unread message, without an attention dot ($observedCount unread, $attentionCount attention)",
   (counts) => {
     const f = fixture(false, false, undefined, counts);
     const row = screen.getByRole("button", { name: /^Planning/ });
     expect(
       row.querySelector('[data-channel-unread-title="true"]'),
     ).toBeInTheDocument();
-    expect(!!row.querySelector("[data-channel-priority]")).toBe(
-      counts.attentionCount > 0,
-    );
+    expect(row.querySelector("[data-channel-priority]")).toBeNull();
     f.clearUnread();
     expect(row.querySelector('[data-channel-unread-title="true"]')).toBeNull();
   },

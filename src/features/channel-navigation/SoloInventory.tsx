@@ -134,8 +134,8 @@ export function SoloInventory({
                     <IconButton
                       ref={trigger}
                       size="compact"
-                      aria-label="New in Solo"
-                      title="New in Solo"
+                      aria-label="New chat or workspace"
+                      title="New chat or workspace"
                       icon={<PlusIcon size={15} strokeWidth={2.5} />}
                     />
                   }

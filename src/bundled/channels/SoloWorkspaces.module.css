@@ -154,6 +154,14 @@
 .organizedRow:has([aria-current="page"])::before {
   background: var(--surface-navigation-selected);
 }
+/* Bold is Solo's only unread cue, as on Team rows. */
+.organizedRow [data-channel-unread-title="true"] {
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-semibold);
+}
+.organizedRow:has([aria-current="page"]) [data-channel-unread-title="true"] {
+  color: var(--text-row-selected);
+}
 
 .organizedRow {
   margin-bottom: var(--space-half);
@@ -190,11 +198,11 @@
   );
 }
 
-/* Activity and the row menu share a fixed trailing slot. */
+/* Status and the row menu share one fixed trailing slot. */
 .organizedRow {
   position: relative;
 }
-.organizedRow :is([data-channel-priority], [data-channel-activity]) {
+.organizedRow [data-channel-activity] {
   position: absolute;
   inset-inline-end: calc(
     (var(--session-action-size) - 0.375rem) /
@@ -212,11 +220,11 @@
     :has(:focus-visible),
     :has([aria-expanded="true"][aria-haspopup="menu"])
   )
-  :is([data-channel-priority], [data-channel-activity]) {
+  :is([data-channel-activity], [data-solo-shared]) {
   opacity: 0;
 }
 @media (hover: none) {
-  .organizedRow :is([data-channel-priority], [data-channel-activity]) {
+  .organizedRow [data-channel-activity] {
     opacity: 0;
   }
 }
@@ -238,23 +246,80 @@
   opacity: 1;
 }
 
-/* Working replaces the overflow glyph on hover. Its pill is wider than the
-   glyph, so it shares the glyph's trailing edge (the row inset, mirroring the
-   leading inset) rather than its center. */
+/* Working flows in the row, so the title reserves exactly the pill. */
+.organizedRow [class~="navigation-item-trailing"] {
+  display: flex;
+  align-items: center;
+}
 .organizedRow [data-solo-working-indicator] {
-  position: absolute;
-  inset-inline-end: calc(
-    var(--session-row-inset) +
-    var(--channel-row-fill-end, 0%)
-  );
-  top: 50%;
-  transform: translateY(-50%);
   pointer-events: none;
 }
 .organizedRow [data-solo-working-indicator]:empty {
   display: none;
 }
+.organizedRow [data-solo-shared] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--session-action-size);
+  height: var(--session-action-size);
+  color: var(--text-subtle);
+}
+.organizedRow:has([aria-current="page"]) [data-solo-shared] {
+  color: var(--text-row-selected-subtle);
+}
+
+/* Pointer rows show one trailing occupant: working, then thread activity,
+   then Shared at rest; the menu replaces it on hover, focus or open. Nothing
+   reserves title width unless it is visible. Touch keeps status and the menu
+   side by side in the flow above. */
 @media (hover: hover) {
+  .organizedRow :is([data-solo-row-action], [data-solo-shared]) {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    inset-inline-end: var(--session-trailing-end);
+    margin: 0;
+  }
+  .organizedRow:has([data-channel-activity]) [data-solo-shared],
+  .organizedRow:has([data-solo-working-indicator]:not(:empty))
+    :is([data-channel-activity], [data-solo-shared]) {
+    opacity: 0;
+  }
+  .sidebarContents
+    .organizedRow:has([data-channel-activity], [data-solo-shared])
+    > div
+    > [data-variant="row"] {
+    padding-inline-end: calc(
+      var(--session-action-size) +
+      var(--session-trailing-end)
+    );
+  }
+  /* The pill ends on the row inset, the overflow glyph's trailing edge. */
+  .sidebarContents
+    .organizedRow
+    > div
+    > [data-variant="row"]:has([data-solo-working-indicator]:not(:empty)) {
+    padding-inline-end: calc(
+      var(--session-row-inset) +
+      var(--channel-row-fill-end, 0%)
+    );
+  }
+  .sidebarContents
+    .organizedRow:is(
+      :hover,
+      [data-context-menu-present],
+      :has(:focus-visible),
+      :has([aria-expanded="true"][aria-haspopup="menu"])
+    )
+    > div
+    > [data-variant="row"] {
+    padding-inline-end: calc(
+      var(--session-action-size) +
+      var(--session-trailing-end)
+    );
+  }
   .organizedRow:is(
       :hover,
       [data-context-menu-present],
@@ -262,18 +327,6 @@
       :has([aria-expanded="true"][aria-haspopup="menu"])
     )
     [data-solo-working-indicator] {
-    opacity: 0;
-  }
-}
-@media (hover: none) {
-  /* Touch keeps status and actions visible together. Let the real trailing
-     content lay out beside Shared/overflow instead of counting action slots. */
-  .organizedRow [class~="navigation-item-trailing"] {
-    display: flex;
-    align-items: center;
-  }
-  .organizedRow [data-solo-working-indicator] {
-    position: static;
-    transform: none;
+    display: none;
   }
 }

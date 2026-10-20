@@ -59,21 +59,12 @@
 }
 
 .actions {
-  --affordance-prominent: #000;
-  --affordance-prominent-hover: #202020;
-  --affordance-prominent-pressed: #333;
-  --text-on-prominent: #fff;
-
   width: 100%;
   max-width: 27.5rem;
   margin-inline: auto;
   display: grid;
   gap: var(--space-2);
   text-align: center;
-  /* Shared subtle/ghost controls retain their states on the artwork. */
-  --interaction-fill: #ffffff85;
-  --interaction-hover: #ffffff9e;
-  --interaction-pressed: #ffffffb8;
 }
 
 .setup {
@@ -120,12 +111,6 @@
 
 [data-color-mode="dark"] .wordmark img {
   filter: invert(1);
-}
-
-[data-color-mode="dark"] .actions {
-  --interaction-fill: #1c1c1c85;
-  --interaction-hover: #1c1c1ca8;
-  --interaction-pressed: #1c1c1ccc;
 }
 
 @media (forced-colors: active) {

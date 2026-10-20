@@ -50,26 +50,11 @@ const failures = [];
 // Product artwork retains its literal hues. Exceptions name exact files and
 // colors; all other values and foundation rules remain checked.
 const artworkColors = new Map([
-  // Desktop onboarding intentionally matches mobile artwork. Its primary action
-  // stays black with white text in both themes, as approved in native iteration.
+  // Only the mobile onboarding background artwork retains literal hues.
+  // Controls use the shared semantic roles without local overrides.
   [
     "features/identity/IdentitySetup.module.css",
-    new Set([
-      "#e7f0ef",
-      "#000",
-      "#202020",
-      "#333",
-      "#fff",
-      "#ffffff85",
-      "#ffffff9e",
-      "#ffffffb8",
-      "#203d53",
-      "#39304b",
-      "#11181d",
-      "#1c1c1c85",
-      "#1c1c1ca8",
-      "#1c1c1ccc",
-    ]),
+    new Set(["#e7f0ef", "#203d53", "#39304b", "#11181d"]),
   ],
   [
     "features/profiles/AvatarCustomColor.module.css",

@@ -298,9 +298,13 @@ after destination content is presented. Git browsing uses a narrow host-owned,
 authenticated Git capability in the native host and development broker; plugins cannot choose a signer or
 remote URL. See [entity links and limits](deep-links.md).
 GitHub recognizes repository,
-pull request, issue, and commit URLs and loads public object details on demand.
-Unsupported URLs retain ordinary link behavior. Private GitHub connections and
-agent execution remain future shared capabilities.
+pull request, issue, and commit URLs and loads object details on demand. Its
+manifest declares `gh api graphql --hostname github.com --input -` as a host
+process, so on desktop it reads and changes pull requests as the user's
+signed-in `gh` account. That allows any query or mutation the account may make;
+the token stays inside `gh`. Without `gh` it reads public data only. Unsupported
+URLs retain ordinary link behavior. A host-owned GitHub connection with narrower scopes, and agent
+execution, remain future shared capabilities.
 
 ### Optional channel menu panels
 

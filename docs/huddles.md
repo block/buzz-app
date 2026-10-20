@@ -1,6 +1,6 @@
 # Huddles plugin
 
-**Huddles** is enabled by default on macOS desktop and can be turned off in
+**Huddles** is enabled by default on desktop (macOS, Linux and Windows) and can be turned off in
 Settings → Plugins. Click the headphone button immediately after members in a
 channel or DM header to join the latest available Huddle or start one when none
 is found. The Huddle window opens and receives focus by default once connected. The mini
@@ -254,9 +254,9 @@ still rechecks current room access on the relay.
 ## Room classification
 
 Only a signed kind-9007 creation receipt with the exact room ID, matching the
-creator recorded in relay-signed metadata, establishes a Huddle. The receipt
+creator recorded in relay-signed metadata, establishes a verified Huddle parent relationship. The receipt
 must declare a private stream with the Huddle parent marker. Later edits to the
-name, description or lifetime cannot turn an ordinary channel into a Huddle or
+name, description or lifetime cannot establish that relationship or
 change an established Huddle's parent. Receipts are retained with signed discovery
 metadata in the local cache. Strong exact-channel resolution awaits creation
 proof from the writer, even after an earlier replica lookup found no receipt.
@@ -264,6 +264,10 @@ Proof-read failures reject that resolution so invitation recovery can use its
 existing bounded retries; newer accepted metadata remains the proof source.
 
 Rooms without that evidence, including legacy Huddles whose creation events did
-not include their room ID, remain accessible as ordinary channels. A missing or
-failed receipt lookup never removes channel access. Relays without creator
-identity metadata also use this fallback.
+not include their room ID, retain ordinary channel access. For presentation only,
+relay-signed metadata identifying a private, expiring stream named exactly
+`huddle-<first eight room-ID characters>` hides that room from ordinary navigation.
+This legacy exception assigns no parent relationship; parent verification still
+requires independent signed evidence. Other unproven rooms remain ordinary
+navigation destinations. A missing or failed receipt lookup never removes channel
+access. Relays without creator identity metadata also use this fallback.

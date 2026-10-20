@@ -3,6 +3,7 @@ import { sessionReferenceIds } from "../sessions/shared-session-marker";
 import { ComposerSessionCards } from "./ComposerSessionCards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
+import { useTypingBroadcast } from "./useTypingBroadcast";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageDeletion } from "./MessageManagement";
@@ -598,6 +599,12 @@ function Composer({
     !!submission?.locked ||
     (editing.target && (editing.locked || editDisabled)) ||
     false;
+  const notifyTyping = useTypingBroadcast(
+    session.typing?.send,
+    channelId,
+    threadRootId,
+    active && !editingDisabled && !editing.target && !submission && !cached,
+  );
   const label = editing.target
     ? "Edit message"
     : (customLabel ??
@@ -1841,6 +1848,7 @@ function Composer({
                 if (!editing.target) automaticTag.current = undefined;
                 saveDraft(next);
                 completion.observe(true);
+                if (next.text.trim()) notifyTyping();
               }}
               onFormatsChange={setActiveFormats}
               onEditLink={setLinkEdit}

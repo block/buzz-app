@@ -1185,6 +1185,56 @@ it("rechecks Git with fresh authorization before opening a requested row review"
   expect(manager.installImport).not.toHaveBeenCalled();
 });
 
+it("uses the live enabled state after checking a saved Git update", async () => {
+  let finish!: (preview: ImportPreview) => void;
+  const git = vi.fn(
+    () =>
+      new Promise<ImportPreview>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const manager = {
+    imports: { git, discard: vi.fn(async () => {}) },
+    installImport: vi.fn(async () => true),
+    change: vi.fn(),
+  } as unknown as PluginManager;
+  const updateSource = {
+    repository: "https://example.com/plugin.git",
+    reference: "main",
+    path: "dist",
+  };
+  const props = {
+    plugins: manager,
+    busy: false,
+    updateId: rememberedManifest.id,
+  };
+  const catalog = (enabled: boolean): Catalog => ({
+    profile: "test",
+    location: "test",
+    plugins: [{ ...rememberedPlugin, enabled, updateSource }],
+  });
+  const view = render(<PluginImport {...props} catalog={catalog(false)} />);
+  fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+  await waitFor(() => expect(git).toHaveBeenCalledOnce());
+  await act(async () => finish(rememberedPreview));
+  await screen.findByRole("button", { name: "Update" });
+  view.rerender(<PluginImport {...props} catalog={catalog(true)} />);
+  fireEvent.click(screen.getByRole("button", { name: "Update" }));
+  await screen.findByRole("dialog", { name: "Update Remembered" });
+  expect(screen.queryByText("This plugin will stay disabled.")).toBeNull();
+  view.rerender(<PluginImport {...props} catalog={catalog(false)} />);
+  expect(screen.getByText("This plugin will stay disabled.")).toBeVisible();
+  view.rerender(<PluginImport {...props} catalog={catalog(true)} />);
+  expect(screen.queryByText("This plugin will stay disabled.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Update" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(
+    "remembered",
+    "dist",
+  );
+  expect(manager.change).not.toHaveBeenCalled();
+});
+
 it.each([
   { root: "/plugins", path: "dist" },
   {

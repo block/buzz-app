@@ -82,9 +82,10 @@ export function PluginImport({
   const [dragging, setDragging] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const checkAgain = useRef<HTMLButtonElement>(null);
-  const savedSource = catalog.plugins.find(
+  const currentPlugin = catalog.plugins.find(
     (item) => item.manifest.id === updateId,
-  )?.updateSource;
+  );
+  const savedSource = currentPlugin?.updateSource;
   const [repository, setRepository] = useState(
     savedSource && "repository" in savedSource ? savedSource.repository : "",
   );
@@ -592,8 +593,8 @@ export function PluginImport({
           reviewing &&
           updateId &&
           candidate &&
-          existing?.source === "external" &&
-          !existing.enabled ? (
+          currentPlugin?.source === "external" &&
+          !currentPlugin.enabled ? (
             <p className="m-0 text-body-sm text-muted">
               This plugin will stay disabled.
             </p>

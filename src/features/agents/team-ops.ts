@@ -323,6 +323,19 @@ export function teamRunner(deps: RunnerDeps) {
   /** An unknown outcome on the team, in a record other than `except`. */
   const fenced = (teamId: string, except: string) =>
     onTeam(teamId).some((op) => op.id !== except && unresolved(op));
+  /** Saves `next` over `prior` only while the record is still exactly
+   * `prior` as saved and its team unfenced, and whether it did. The caller
+   * dispatches right after, with no await between, so a Discard, Delete or
+   * revision saved meanwhile is never overtaken. */
+  async function claim(prior: TeamOp, next: TeamOp) {
+    const applied = await ops.update((records) =>
+      records[prior.id] === prior && !fenced(prior.teamId, prior.id)
+        ? { [prior.id]: next }
+        : undefined,
+    );
+    if (applied) deps.changed();
+    return applied && ops.get(prior.id) === next;
+  }
 
   /** Runs `work` after the team's earlier steps settle: one step per team
    * at a time, so no two overlap across signing, delivery or a command. */
@@ -336,7 +349,6 @@ export function teamRunner(deps: RunnerDeps) {
     });
     return run;
   }
-  /** Stores `changes` and reports them; resolves once they are saved. */
   /** Stores `changes` and reports them once saved. Throws when they can't
    * fit now. */
   function put(changes: Readonly<Record<string, TeamOp | undefined>>) {
@@ -690,7 +702,8 @@ export function teamRunner(deps: RunnerDeps) {
     if (!now || held?.event.id !== eventId || fenced(now.teamId, now.id))
       return ops.get(op.id);
     const sends = held.sends + 1;
-    await save({ ...now, candidate: { ...held, sends } });
+    if (!(await claim(now, { ...now, candidate: { ...held, sends } })))
+      return ops.get(op.id);
     const sent = await deliver(
       deps.writer,
       held.event,
@@ -804,19 +817,20 @@ export function teamRunner(deps: RunnerDeps) {
         fenced(now.teamId, now.id)
       )
         return ops.get(start.id);
+      const marked = (base: TeamOp, state: CommandState, error?: string) => ({
+        ...base,
+        commands: base.commands.map((c) =>
+          same(command)(c)
+            ? { action: c.action, pubkey, state, ...(error ? { error } : {}) }
+            : c,
+        ),
+      });
       const at = async (state: CommandState, error?: string) => {
         const base = ops.get(start.id);
-        if (!base) return undefined;
-        return await save({
-          ...base,
-          commands: base.commands.map((c) =>
-            same(command)(c)
-              ? { action: c.action, pubkey, state, ...(error ? { error } : {}) }
-              : c,
-          ),
-        });
+        return base && (await save(marked(base, state, error)));
       };
-      await at("maybe-sent");
+      if (!(await claim(now, marked(now, "maybe-sent"))))
+        return ops.get(start.id);
       const result = await (command.action === "add"
         ? channels.addMember(channel, pubkey, signal)
         : channels.removeMember(channel, pubkey)
@@ -872,18 +886,18 @@ export function teamRunner(deps: RunnerDeps) {
     const [command] = now?.commands ?? [];
     if (!now || !command || command.state === "maybe-sent")
       return ops.get(op.id);
+    const marked = (base: TeamOp, s: CommandState, error?: string) => ({
+      ...base,
+      commands: [
+        { action: command.action, state: s, ...(error ? { error } : {}) },
+      ],
+      ...(error ? { error } : {}),
+    });
     const state = async (s: CommandState, error?: string) => {
       const base = ops.get(op.id);
-      if (!base) return undefined;
-      return await save({
-        ...base,
-        commands: [
-          { action: command.action, state: s, ...(error ? { error } : {}) },
-        ],
-        ...(error ? { error } : {}),
-      });
+      return base && (await save(marked(base, s, error)));
     };
-    await state("maybe-sent");
+    if (!(await claim(now, marked(now, "maybe-sent")))) return ops.get(op.id);
     try {
       await channels[archive ? "archive" : "unarchive"](channel, signal);
     } catch (error) {
@@ -943,11 +957,13 @@ export function teamRunner(deps: RunnerDeps) {
     },
     /** Stops automatic sending; the evidence stays for reconciliation. */
     async discard(id: string) {
-      const op = ops.get(id);
-      if (op && op.mode === "may-send")
-        await put({
-          [id]: { ...op, mode: "reconcile-only", stop: "discarded" },
-        });
+      const stopped = await ops.update((records) => {
+        const op = records[id];
+        return op?.mode === "may-send"
+          ? { [id]: { ...op, mode: "reconcile-only", stop: "discarded" } }
+          : undefined;
+      });
+      if (stopped) deps.changed();
     },
     /** Removes a stopped record; only once nothing in it is unresolved. */
     async dismiss(id: string) {

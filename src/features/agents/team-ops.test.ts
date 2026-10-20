@@ -1123,6 +1123,100 @@ describe("team operations: saved before sending", () => {
     expect(await w.runner.revise(op.id, team)).toBe("absent");
   });
 
+  /** Releases `prior` (a held save), lets `act` save `match` and holds
+   * it until the step's next record write has queued behind it: that
+   * write was decided before `act` landed. */
+  const landsMeanwhile = async (
+    w: ReturnType<typeof world>,
+    prior: { release(): void },
+    match: string,
+    act: () => Promise<unknown>,
+  ) => {
+    const save = hold(w, (value) => value.includes(match));
+    const acted = act();
+    prior.release();
+    await save.reached;
+    const queued = gate();
+    const write = w.ops.write.bind(w.ops);
+    const update = w.ops.update.bind(w.ops);
+    const spies = [
+      vi.spyOn(w.ops, "write").mockImplementation((changes) => {
+        queued.open();
+        return write(changes);
+      }),
+      vi.spyOn(w.ops, "update").mockImplementation((decide) => {
+        queued.open();
+        return update(decide);
+      }),
+    ];
+    await queued.promise;
+    for (const spy of spies) spy.mockRestore();
+    save.release();
+    await acted;
+  };
+
+  it("never publishes a revision discarded while its send was being prepared", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const candidate = hold(w, (value) => value.includes('"candidate"'));
+    const { op, done } = edit(w, teamId, { name: "Renamed" });
+    await candidate.reached;
+    await landsMeanwhile(w, candidate, '"discarded"', () =>
+      w.runner.discard(op.id),
+    );
+    await done;
+    expect(w.writer.publish).not.toHaveBeenCalled();
+    expect(w.ops.get(op.id)?.stop).toBe("discarded");
+  });
+
+  it("never adds a member discarded or dropped while its add was being prepared", async () => {
+    const drops = [
+      [
+        '"discarded"',
+        (w: ReturnType<typeof world>, id: string) => w.runner.discard(id),
+      ],
+      [
+        '"DROPPED"',
+        (w: ReturnType<typeof world>, id: string) =>
+          w.runner.revise(id, {
+            ...team,
+            instructions: "DROPPED",
+            members: [],
+          }),
+      ],
+    ] as const;
+    for (const [match, drop] of drops) {
+      const w = world();
+      const teamId = await existing(w, []);
+      const plan = hold(w, (value) => value.includes('"planned"'));
+      const { op, done } = edit(w, teamId, { members: [a] });
+      await plan.reached;
+      await landsMeanwhile(w, plan, match, () => drop(w, op.id));
+      await done;
+      expect(w.channels.addMember).not.toHaveBeenCalled();
+      expect(w.relay.roster.has(a)).toBe(false);
+    }
+  });
+
+  it("never archives for a Delete discarded while its archive was being prepared", async () => {
+    const w = world();
+    const teamId = await existing(w, []);
+    const submitted = hold(w, (value) => value.includes('"delete"'));
+    const del = w.runner.start({
+      kind: "delete",
+      teamId,
+      channel: CH,
+      intent: { name: "", instructions: "", members: [] },
+    });
+    await submitted.reached;
+    await landsMeanwhile(w, submitted, '"discarded"', () =>
+      w.runner.discard(del.op.id),
+    );
+    await del.done;
+    expect(w.channels.archive).not.toHaveBeenCalled();
+    expect(w.relay.archived).toBe(false);
+  });
+
   it("saves records in the order they were written", async () => {
     const w = world();
     const teamId = await existing(w);

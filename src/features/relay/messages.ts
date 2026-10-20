@@ -25,19 +25,12 @@ export const REPORT_TYPES = [
   "other",
 ] as const;
 export type ReportType = (typeof REPORT_TYPES)[number];
-/** `["effort", agentPubkey, level]`, `["model", agentPubkey, model]` and
- * `["session", agentPubkey, "compact" | "new"]`: what a mentioned agent's
- * owner asks of its next run. Only the owner is honoured. */
+/** `["effort", agentPubkey, level]` and `["model", agentPubkey, model]`: what
+ * a mentioned agent's owner asks of its next run. Only the owner is honoured. */
 export const EFFORT_TAG = "effort";
 export const MODEL_TAG = "model";
-export const SESSION_TAG = "session";
-export type RunPick = Readonly<{
-  model?: string;
-  effort?: string;
-  session?: "compact" | "new";
-}>;
-/** The model, effort and session action picked for each mentioned agent, by
- * pubkey. */
+export type RunPick = Readonly<{ model?: string; effort?: string }>;
+/** The model and effort picked for each mentioned agent, by pubkey. */
 export type MentionPicks = Readonly<Record<string, RunPick>>;
 
 /** Domain convenience only. Delivery and read reconciliation remain session-owned. */
@@ -87,18 +80,16 @@ export function createMessages(
     return [...new Set(pubkeys)].map((key) => ["mention", key]);
   };
   const pickTags = (mentions: readonly string[], picks: MentionPicks) =>
-    Object.entries(picks).flatMap(([key, { model, effort, session }]) => {
+    Object.entries(picks).flatMap(([key, { model, effort }]) => {
       if (
         !mentions.includes(key) ||
         (model !== undefined && !/^[\w.:/[\]-]{1,64}$/.test(model)) ||
-        (effort !== undefined && !/^[a-z0-9-]{1,32}$/.test(effort)) ||
-        (session !== undefined && session !== "compact" && session !== "new")
+        (effort !== undefined && !/^[a-z0-9-]{1,32}$/.test(effort))
       )
         throw new Error("A model or effort applies only to a mentioned agent");
       return [
         ...(model === undefined ? [] : [[MODEL_TAG, key, model]]),
         ...(effort === undefined ? [] : [[EFFORT_TAG, key, effort]]),
-        ...(session === undefined ? [] : [[SESSION_TAG, key, session]]),
       ];
     });
   return Object.freeze({

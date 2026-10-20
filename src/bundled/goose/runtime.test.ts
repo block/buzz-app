@@ -353,26 +353,6 @@ describe("GooseRuntime", () => {
     expect(memoryOpen).not.toHaveBeenCalled();
   });
 
-  it("starts a new session for a thread when asked", async () => {
-    const { deliver, goose } = setup();
-    const one = message("1", "@Gander look");
-    await deliver(one);
-    await flush(100);
-    const reply = message("2", "@Gander start over", {
-      tags: [
-        ["h", channel],
-        ["e", one.id, "", "reply"],
-        ["p", self],
-      ],
-    });
-    await deliver(reply, { session: "new" });
-    await flush(100);
-    const process = goose();
-    expect(process?.closed).toEqual(["session-1"]);
-    expect(process?.turns[1]?.sessionId).toBe("session-2");
-    expect(process?.turns[1]?.text).toContain("@Gander start over");
-  });
-
   it("posts goose's own text in the thread, or at a Solo chat's top level", async () => {
     const plain = setup({ reply: "Plain answer" });
     await plain.deliver(message("1", "@Gander hi"));
@@ -698,3 +678,67 @@ it("hands Goose its own community repositories while retaining the session works
     runtime.dispose();
   }
 });
+
+it.each(["completed", "stopped"])(
+  "keeps an accepted Goose handoff past its deadline and respects its lifetime (%s)",
+  async (outcome) => {
+    const f = setup({ hold: true, reply: "Compaction complete" });
+    const root = message("1", "hello");
+    const place = { channelId: channel, root: root.id };
+    const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+    const handover = new AbortController();
+    const held: PromiseLike<unknown>[] = [];
+    try {
+      await f.deliver(root);
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const goose = f.goose();
+      if (!goose) throw new Error("Expected Goose process");
+      goose.turns[0]?.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      const compacted = f.runtime
+        .session(agent, place, "compact")
+        .catch((error) => error);
+      await vi.waitFor(() => expect(goose.turns[1]?.text).toBe("/compact"));
+      let returned = false;
+      const reply = message("2", "queued after compact", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+      const admitted = f
+        .deliver(reply, {
+          signal: handover.signal,
+          workingUntil: (done) => held.push(done),
+        })
+        .then(() => {
+          returned = true;
+        });
+      try {
+        await vi.waitFor(() => expect(returned).toBe(true));
+        handover.abort(new Error("Handover expired"));
+      } finally {
+        if (outcome === "stopped") f.runtime.sync([]);
+        else goose.turns[1]?.finish();
+        const result = await compacted;
+        if (outcome === "stopped") expect(result).toBeInstanceOf(Error);
+        else expect(result).toBeUndefined();
+        await admitted;
+      }
+      if (outcome === "stopped") {
+        await Promise.all(held);
+        expect(goose.turns).toHaveLength(2);
+        expect(f.fake.geese).toHaveLength(1);
+        return;
+      }
+      await vi.waitFor(() => expect(goose.turns).toHaveLength(3));
+      expect(goose.turns[2]?.text).toContain("queued after compact");
+      goose.turns[2]?.finish();
+      await Promise.all(held);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);

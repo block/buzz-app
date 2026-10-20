@@ -282,7 +282,6 @@ export class GooseRuntime {
     channelId,
     team,
     model,
-    session,
     workingUntil,
     ignored,
     signal,
@@ -354,46 +353,59 @@ export class GooseRuntime {
       };
     };
     const { key, text, place } = await prompt(false);
-    return this.controls.deliver(`${agent.pubkey}/${key}`, async () => {
-      signal.throwIfAborted();
-      entry.contexts.set(
-        key,
-        topLevel
-          ? { channel, topLevel }
-          : key === channel
-            ? { channel }
-            : { channel, root: threadReference(event)?.rootId ?? event.id },
-      );
-      const done = entry.sessions.deliver(key, text, event.created_at, {
-        steer: steerPrompt(text),
-        fresh: async () => (await prompt(true)).text,
-        title: sessionTitle(entry.name, place, key.split("/")[1]),
-        signal,
-        ...(model ? { model } : {}),
-        ...(session ? { session } : {}),
-        activityScope: topLevel
-          ? channel
-          : (threadReference(event)?.rootId ?? event.id),
-        ...(step ? { step } : {}),
-        ...(acknowledged ? { acknowledged } : {}),
-        ...(superseded ? { superseded } : {}),
-      });
-      workingUntil(done);
-      interruptible?.(() => entry.sessions.interrupt(key));
-      this.notify();
-      void done
-        .then((result) => {
-          // Of the messages one turn answered, only one has its error or text.
-          if (result.error !== undefined)
-            return this.report(agent, channel, event, result.error, topLevel);
-          // An answer goose wrote without `send` is posted for it, so the
-          // thread is not left waiting.
-          if (result.text)
-            return this.post(agent, channel, event, result.text, topLevel);
-        })
-        .catch((error) => console.warn("goose turn failed", error))
-        .finally(() => this.notify());
-    });
+    signal.throwIfAborted();
+    const handoff = this.controls.deliver(
+      `${agent.pubkey}/${key}`,
+      async (deferred) => {
+        // Accepted deferred work belongs to the captured agent lifetime, not
+        // the short deadline for handing a message to the harness.
+        if (this.agents.get(agent.pubkey) !== entry) return;
+        if (!deferred) signal.throwIfAborted();
+        entry.contexts.set(
+          key,
+          topLevel
+            ? { channel, topLevel }
+            : key === channel
+              ? { channel }
+              : { channel, root: threadReference(event)?.rootId ?? event.id },
+        );
+        const done = entry.sessions.deliver(key, text, event.created_at, {
+          steer: steerPrompt(text),
+          fresh: async () => (await prompt(true)).text,
+          title: sessionTitle(entry.name, place, key.split("/")[1]),
+          ...(!deferred ? { signal } : {}),
+          ...(model ? { model } : {}),
+          activityScope: topLevel
+            ? channel
+            : (threadReference(event)?.rootId ?? event.id),
+          ...(step ? { step } : {}),
+          ...(acknowledged ? { acknowledged } : {}),
+          ...(superseded ? { superseded } : {}),
+        });
+        workingUntil(done);
+        interruptible?.(() => entry.sessions.interrupt(key));
+        this.notify();
+        void done
+          .then((result) => {
+            // Of the messages one turn answered, only one has its error or text.
+            if (result.error !== undefined)
+              return this.report(agent, channel, event, result.error, topLevel);
+            // An answer goose wrote without `send` is posted for it, so the
+            // thread is not left waiting.
+            if (result.text)
+              return this.post(agent, channel, event, result.text, topLevel);
+          })
+          .catch((error) => console.warn("goose turn failed", error))
+          .finally(() => this.notify());
+      },
+    );
+    if (!handoff.deferred) return handoff.done;
+    workingUntil(handoff.done);
+    void handoff.done
+      .catch((error) =>
+        this.report(agent, channel, event, String(error), topLevel),
+      )
+      .catch((error) => console.warn("goose handover failed", error));
   }
 
   /** Runs a standalone turn, such as a watch's or a timer's, in a one-off

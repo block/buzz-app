@@ -179,9 +179,7 @@ export class AgentSessions {
   /** Sends `text` into the conversation `key`, and resolves when the session
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again for a new session when the saved one is lost;
-   * `pick` is the model and effort the turn was asked to run with; `renew`
-   * starts a new session in place of the one it has, whose id the new one's
-   * replaces where it was saved. */
+   * `pick` is the model and effort the turn was asked to run with. */
   async deliver(
     key: string,
     text: string,
@@ -190,7 +188,6 @@ export class AgentSessions {
       steer = text,
       fresh,
       pick = {},
-      renew,
       step,
       acknowledged,
       superseded,
@@ -199,7 +196,6 @@ export class AgentSessions {
       steer?: string;
       fresh?: () => Promise<string>;
       pick?: TurnPick;
-      renew?: true;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
@@ -211,8 +207,7 @@ export class AgentSessions {
     let live = this.live.get(key);
     if (
       live &&
-      (renew ||
-        !live.process.running ||
+      (!live.process.running ||
         (live.fingerprint !== this.options.fingerprint(key) &&
           !live.process.busy))
     ) {
@@ -229,7 +224,7 @@ export class AgentSessions {
         ...(superseded ? { superseded } : {}),
       });
     }
-    const saved = renew ? undefined : this.options.store.get(key);
+    const saved = this.options.store.get(key);
     const opened = await this.open(key, saved?.id, seen);
     if (!("process" in opened)) return opened;
     live = opened;

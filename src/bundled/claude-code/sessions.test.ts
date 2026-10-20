@@ -505,27 +505,6 @@ it("keeps the live session if its durable reset fails, then forgets it on retry"
   }
 });
 
-it("starts a new session when asked, whose id replaces the saved one's", async () => {
-  const store = memoryStore();
-  store.set("c/root", { id: "old", seen: 4, at: 1 });
-  const { pool, claudes } = sessions({ store, hold: true });
-  // Its saved session is not resumed.
-  const first = pool.deliver("c/root", "first", 5, { renew: true });
-  await flush();
-  expect(claudes()[0]?.options.args).not.toContain("--resume");
-  expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 5 });
-  claudes()[0]?.finish();
-  await first;
-  // Nor is the one its running process has.
-  const next = pool.deliver("c/root", "again", 6, { renew: true });
-  await flush();
-  expect(claudes()[0]?.killed).toBe(true);
-  expect(claudes().at(-1)?.options.args).toContain("--session-id");
-  claudes().at(-1)?.finish();
-  await next;
-  expect(store.get("c/root")).toMatchObject({ id: "new-2", seen: 6 });
-});
-
 it("runs a turn with the model and effort it was delivered with, starting over included", async () => {
   const store = memoryStore();
   store.set("c/root", { id: "lost", seen: 4, at: 1 });

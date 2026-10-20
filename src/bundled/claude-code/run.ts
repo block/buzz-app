@@ -23,6 +23,7 @@ export const claudeRun = (
   | "runOnce"
   | "timeoutMs"
   | "syncedSettings"
+  | "resumes"
 > => ({
   models: (agent) => runtime.models(agent.pubkey),
   sessionActions: (agent) => config(agent.config).scope,
@@ -41,4 +42,7 @@ export const claudeRun = (
     schema: syncedSettingsSchema,
     withSynced: withSyncedSettings,
   },
+  // Closing or reloading the app stops its turns; each resumed one carries on
+  // in its saved session.
+  resumes: true,
 });

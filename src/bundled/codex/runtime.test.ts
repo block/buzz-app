@@ -5,6 +5,7 @@ import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -1002,6 +1003,18 @@ it.each([
     ).toMatchObject({ model: expected });
   },
 );
+it("tells a turn a reload stopped to carry on where it left off", async () => {
+  const f = fixture();
+  const fresh = f.delivery("@Codex fix the build");
+  await f.runtime.run({
+    ...fresh,
+    trigger: { ...fresh.trigger, resumed: true } as Delivery["trigger"],
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toContain("fix the build");
+  expect(params.input[0]?.text).toContain(RESUMED_PROMPT);
+});
 it("starts a turn at the effort its owner picked when the model supports it", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });
@@ -3575,6 +3588,71 @@ const canvasHead = (content: string, author = owner) => ({
   tags: [],
   content,
 });
+it.each(["completed", "failed"])(
+  "accepts a mention during compaction without blocking another conversation or expiring its handover (%s)",
+  async (outcome) => {
+    const f = fixture();
+    const first = f.delivery("first");
+    const agent = { ...first.agent, config: first.config } as unknown as Agent;
+    await f.runtime.run(first);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete();
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.sessionState(agent, { channelId: "channel", root }),
+      ).toBe("idle"),
+    );
+    const compacted = f.runtime
+      .session(agent, { channelId: "channel", root }, "compact")
+      .catch((error) => error);
+    await vi.waitFor(() =>
+      expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(
+        true,
+      ),
+    );
+    const handover = new AbortController();
+    let returned = false;
+    const accepted = f.runtime
+      .run({ ...f.delivery("queued after compact"), signal: handover.signal })
+      .then(() => {
+        returned = true;
+      });
+    try {
+      await vi.waitFor(() => expect(returned).toBe(true));
+      handover.abort(new Error("Handover expired"));
+      await f.runtime.run(f.delivery("another conversation", "d".repeat(64)));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+      expect(inputText(f.starts()[1])).toContain("another conversation");
+      await f.complete(1);
+    } finally {
+      f.emit({
+        method: "turn/started",
+        params: { threadId: "thread-1", turn: { id: "compact" } },
+      });
+      f.emit({
+        method: "turn/completed",
+        params: {
+          threadId: "thread-1",
+          turn: {
+            id: "compact",
+            status: outcome,
+            ...(outcome === "failed"
+              ? { error: { message: "Compaction failed" } }
+              : {}),
+          },
+        },
+      });
+      const result = await compacted;
+      if (outcome === "failed") expect(result).toBeInstanceOf(Error);
+      else expect(result).toBeUndefined();
+      await accepted;
+    }
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+    expect(inputText(f.starts()[2])).toContain("queued after compact");
+    await f.complete(2);
+  },
+);
+
 describe("session actions", () => {
   const methods = (f: ReturnType<typeof fixture>) =>
     f.sent.flatMap((wire) => (wire.method ? [wire.method] : []));
@@ -3659,55 +3737,6 @@ describe("session actions", () => {
     await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
     expect(f.starts()[2]?.params).toMatchObject({ threadId: "thread-2" });
     await f.complete();
-  });
-
-  it("compacts a conversation's thread before the turn, after the one working", async () => {
-    const f = fixture();
-    await f.runtime.run(f.delivery("first"));
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    // Asked while the turn works, it runs as the next turn, not a steer.
-    await f.runtime.run({ ...f.delivery("second"), session: "compact" });
-    await f.complete();
-    await vi.waitFor(() =>
-      expect(methods(f)).toContain("thread/compact/start"),
-    );
-    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Compacting");
-    expect(f.starts()).toHaveLength(1);
-    f.emit({
-      method: "turn/started",
-      params: { threadId: "thread-1", turn: { id: "compact" } },
-    });
-    f.emit({
-      method: "turn/completed",
-      params: {
-        threadId: "thread-1",
-        turn: { id: "compact", status: "completed" },
-      },
-    });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    const since = methods(f).slice(methods(f).lastIndexOf("thread/resume"));
-    expect(since.slice(0, 2)).toEqual([
-      "thread/resume",
-      "thread/compact/start",
-    ]);
-    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-1" });
-    expect(methods(f)).not.toContain("turn/steer");
-  });
-
-  it("starts a new thread for the conversation", async () => {
-    const f = fixture();
-    await f.runtime.run(f.delivery("first"));
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    await f.complete();
-    await f.runtime.run({ ...f.delivery("second"), session: "new" });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
-    expect(methods(f)).not.toContain("thread/resume");
-    expect(f.starts()[1]?.params).toMatchObject({ threadId: "thread-2" });
-    await f.complete();
-    // The conversation keeps the new thread.
-    await f.runtime.run(f.delivery("third"));
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
-    expect(f.starts()[2]?.params).toMatchObject({ threadId: "thread-2" });
   });
 });
 

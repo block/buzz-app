@@ -15,21 +15,23 @@ export class SessionControls {
   compacting(key: string) {
     return this.changes.get(key)?.action === "compact";
   }
-  async deliver(key: string, handoff: () => Promise<void>) {
-    // Admission is synchronous when no action owns the session. Steering
-    // handoffs can overlap; Compact/New cannot enter between them.
-    while (this.changes.has(key))
-      await this.changes.get(key)?.done.catch(() => undefined);
+  deliver(key: string, handoff: (deferred: boolean) => Promise<void>) {
+    const deferred = this.changes.has(key);
+    // Reserve admission before waiting, so another action cannot slip between
+    // compaction and these messages. Ordinary steering handoffs may overlap.
     this.handoffs.set(key, (this.handoffs.get(key) ?? 0) + 1);
     this.changed();
-    try {
-      await handoff();
-    } finally {
+    const done = (async () => {
+      while (this.changes.has(key))
+        await this.changes.get(key)?.done.catch(() => undefined);
+      await handoff(deferred);
+    })().finally(() => {
       const count = (this.handoffs.get(key) ?? 1) - 1;
       if (count) this.handoffs.set(key, count);
       else this.handoffs.delete(key);
       this.changed();
-    }
+    });
+    return { deferred, done };
   }
   interrupt(key: string) {
     const change = this.changes.get(key);

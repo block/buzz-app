@@ -6,6 +6,7 @@
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
 import type { Context } from "../../buzz-mcp/client";
+import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { type Listing, respond } from "../../buzz-mcp/rpc";
 import {
   type AddedTool,
@@ -403,7 +404,6 @@ export class ClaudeRuntime {
     channelId,
     model,
     effort,
-    session,
     team,
     workingUntil,
     ignored,
@@ -445,13 +445,17 @@ export class ClaudeRuntime {
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
-    return this.controls.deliver(`${agent.pubkey}/${key}`, async () => {
-      signal.throwIfAborted();
-      // `fresh` is for a session that has been shown nothing yet.
-      const prompt = async (fresh: boolean) =>
-        this.review(
-          entry,
-          turnPrompt({
+    signal.throwIfAborted();
+    const handoff = this.controls.deliver(
+      `${agent.pubkey}/${key}`,
+      async (deferred) => {
+        // Accepted deferred work belongs to the captured agent lifetime, not
+        // the short deadline for handing a message to the harness.
+        if (this.agents.get(agent.pubkey) !== entry) return;
+        if (!deferred) signal.throwIfAborted();
+        // `fresh` is for a session that has been shown nothing yet.
+        const prompt = async (fresh: boolean) => {
+          const text = turnPrompt({
             ...(await this.turn(
               entry,
               agent.pubkey,
@@ -463,98 +467,102 @@ export class ClaudeRuntime {
             )),
             agent: agent.pubkey,
             label: "@mention",
-          }),
-        );
-      // A turn keeps the posting policy it was admitted with: a request under
-      // the other policy waits for the conversation's turns to settle rather
-      // than steering into them and changing their tools' context. So does one
-      // that compacts or replaces their session.
-      const prior = entry.policies.get(key);
-      const same = prior?.topLevel === topLevel && !session;
-      const wait = prior && (same ? prior.handed : prior.settled);
-      let delivered!: Promise<Settled>;
-      let interrupted = false;
-      const handed = (async () => {
-        await wait;
-        if (interrupted) {
-          delivered = Promise.resolve({ ok: true });
-          return;
-        }
-        if (session === "compact") {
-          const compacted = await entry.sessions.compact(key);
-          if (!compacted.ok) {
-            delivered = Promise.resolve(compacted);
+          });
+          return this.review(
+            entry,
+            trigger.resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
+          );
+        };
+        // A turn keeps the posting policy it was admitted with: a request under
+        // the other policy waits for the conversation's turns to settle rather
+        // than steering into them and changing their tools' context.
+        const prior = entry.policies.get(key);
+        const same = prior?.topLevel === topLevel;
+        const wait = prior && (same ? prior.handed : prior.settled);
+        let delivered!: Promise<Settled>;
+        let interrupted = false;
+        const handed = (async () => {
+          await wait;
+          if (interrupted) {
+            delivered = Promise.resolve({ ok: true });
             return;
           }
-        }
-        // A new session is shown the conversation so far.
-        const text = await prompt(session === "new");
-        if (interrupted) {
-          delivered = Promise.resolve({ ok: true });
-          return;
-        }
-        // A conversation's tools default to its thread; a session shared by
-        // several threads is told which to reply in instead.
-        entry.contexts.set(
-          key,
-          topLevel
-            ? { channel, topLevel }
-            : key === channel
-              ? { channel }
-              : { channel, root: threadReference(event)?.rootId ?? event.id },
+          const text = await prompt(false);
+          if (interrupted) {
+            delivered = Promise.resolve({ ok: true });
+            return;
+          }
+          // A conversation's tools default to its thread; a session shared by
+          // several threads is told which to reply in instead.
+          entry.contexts.set(
+            key,
+            topLevel
+              ? { channel, topLevel }
+              : key === channel
+                ? { channel }
+                : { channel, root: threadReference(event)?.rootId ?? event.id },
+          );
+          delivered = entry.sessions.deliver(key, text, event.created_at, {
+            steer: steerPrompt(text),
+            fresh: () => prompt(true),
+            activityScope: topLevel
+              ? channel
+              : (threadReference(event)?.rootId ?? event.id),
+            ...(step ? { step } : {}),
+            ...(acknowledged ? { acknowledged } : {}),
+            ...(superseded ? { superseded } : {}),
+            pick: {
+              ...(model ? { model } : {}),
+              ...(effort ? { effort } : {}),
+            },
+          });
+        })();
+        const done = handed.then(
+          () => delivered,
+          (error: unknown): Settled => ({ ok: false, error: String(error) }),
         );
-        delivered = entry.sessions.deliver(key, text, event.created_at, {
-          steer: steerPrompt(text),
-          fresh: () => prompt(true),
-          activityScope: topLevel
-            ? channel
-            : (threadReference(event)?.rootId ?? event.id),
-          ...(step ? { step } : {}),
-          ...(acknowledged ? { acknowledged } : {}),
-          ...(superseded ? { superseded } : {}),
-          pick: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
-          ...(session === "new" ? { renew: true } : {}),
+        const policy = {
+          topLevel,
+          cancel() {
+            interrupted = true;
+            prior?.cancel();
+          },
+          handed: handed.catch(() => undefined),
+          settled: Promise.all([same ? prior.settled : undefined, done]).then(
+            () => undefined,
+          ),
+        };
+        entry.policies.set(key, policy);
+        void policy.settled.then(() => {
+          if (entry.policies.get(key) === policy) entry.policies.delete(key);
         });
-      })();
-      const done = handed.then(
-        () => delivered,
-        (error: unknown): Settled => ({ ok: false, error: String(error) }),
-      );
-      const policy = {
-        topLevel,
-        cancel() {
-          interrupted = true;
-          prior?.cancel();
-        },
-        handed: handed.catch(() => undefined),
-        settled: Promise.all([same ? prior.settled : undefined, done]).then(
-          () => undefined,
-        ),
-      };
-      entry.policies.set(key, policy);
-      void policy.settled.then(() => {
-        if (entry.policies.get(key) === policy) entry.policies.delete(key);
-      });
-      // Deliveries keep their order: a later one waits on this handover, and
-      // one with nothing to wait for is handed over before `run` returns. A
-      // compaction is work of its own, so `run` does not wait for it.
-      if (!wait && !session) await handed;
-      // The turn outlives `run`, which the host is told so it shows it as working.
-      workingUntil(done);
-      interruptible?.(() => entry.sessions.interrupt(key));
-      this.notify();
-      this.watch(done, async (error) => {
-        if (error) await this.report(agent, channel, event, error, topLevel);
-      });
-      if (topLevel && named)
-        void this.offerTitle(
-          done,
-          agent.pubkey,
-          key,
-          settings.workspace,
-          named,
-        );
-    });
+        // Deliveries keep their order: a later one waits on this handover, and
+        // one with nothing to wait for is handed over before `run` returns.
+        if (!wait) await handed;
+        // The turn outlives `run`, which the host is told so it shows it as working.
+        workingUntil(done);
+        interruptible?.(() => entry.sessions.interrupt(key));
+        this.notify();
+        this.watch(done, async (error) => {
+          if (error) await this.report(agent, channel, event, error, topLevel);
+        });
+        if (topLevel && named)
+          void this.offerTitle(
+            done,
+            agent.pubkey,
+            key,
+            settings.workspace,
+            named,
+          );
+      },
+    );
+    if (!handoff.deferred) return handoff.done;
+    workingUntil(handoff.done);
+    void handoff.done
+      .catch((error) =>
+        this.report(agent, channel, event, String(error), topLevel),
+      )
+      .catch((error) => console.warn("Claude handover failed", error));
   }
 
   /** After a Solo chat's turn, offers the host the title Claude Code generated

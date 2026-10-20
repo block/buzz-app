@@ -15,7 +15,7 @@ import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { MemoryEntry } from "../../features/agents/memory";
 import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
-import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { localSessions } from "./sessions";
@@ -206,7 +206,7 @@ function setup(
   const objects = new Map<string, Record<string, unknown>>();
   const deliver = (
     trigger: Delivery["trigger"],
-    picks: Partial<Pick<Delivery, "session">> = {},
+    picks: Partial<Delivery> = {},
   ) => {
     if (trigger.type !== "mention") {
       const value = trigger.type === "timer" ? trigger.timer : trigger.watch;
@@ -325,6 +325,7 @@ it("hands a mention to its thread's session", async () => {
     `Alice (${alice}) (1970-01-01T00:01:40.000Z): Build is red`,
   );
   expect(prompt).toContain("Content: @Claude can you look?");
+  expect(prompt).not.toContain(RESUMED_PROMPT);
   // The process holds no key: it acts through the tools.
   expect(claude?.options).not.toHaveProperty("agent");
   expect(claude?.options.args).toContain("--mcp-config");
@@ -368,94 +369,20 @@ it("hands the host a stopper that interrupts the mention's running turn", async 
   await flush(10);
 });
 
-it("compacts a thread's session, or starts a new one, once its turn ends", async () => {
-  const root = message("1", "Build is red");
-  const reply = (id: string, text: string, created_at: number) =>
-    message(id, text, {
-      created_at,
-      tags: [
-        ["h", channel],
-        ["e", root.id, "", "reply"],
-        ["p", self],
-      ],
-    });
-  const first = reply("2", "@Claude can you look?", 110);
-  const second = reply("3", "@Claude and now?", 120);
-  const third = reply("4", "@Claude start over", 130);
-  const { deliver, claudes, data } = setup([root, first, second, third], {
-    hold: true,
+it("tells a turn a reload stopped to carry on where it left off", async () => {
+  const mention = message("2", "@Claude fix the build", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
   });
-  const saved = () =>
-    JSON.parse(data.get(`buzz.claude-code.sessions.v1:${self}`) ?? "{}")[
-      `${channel}/${root.id}`
-    ];
-  await deliver({ type: "mention", event: first });
+  const { deliver, claudes } = setup([mention]);
+  await deliver({ type: "mention", event: mention, resumed: true });
   await flush(10);
-  const claude = claudes().find((process) => process.prompts.length);
-  // Asked while the turn works, it waits rather than steering into it.
-  await deliver({ type: "mention", event: second }, { session: "compact" });
-  await flush(10);
-  expect(claude?.prompts).toHaveLength(1);
-  claude?.finish();
-  await flush(10);
-  expect(claude?.prompts.at(-1)).toBe("/compact");
-  claude?.finish();
-  await flush(10);
-  expect(claude?.prompts.at(-1)).toContain("@Claude and now?");
-  claude?.finish();
-  await flush(10);
-  const before = saved()?.id;
-  await deliver({ type: "mention", event: third }, { session: "new" });
-  await flush(10);
-  expect(claude?.killed).toBe(true);
-  const next = claudes().at(-1);
-  expect(next).not.toBe(claude);
-  expect(next?.options.args).toContain("--session-id");
-  // A new session is shown the thread again.
-  expect(next?.prompts.at(-1)).toContain("Build is red");
-  next?.finish();
-  await flush(10);
-  expect(saved()?.id).not.toBe(before);
-});
-
-it("returns from a run that compacts an idle conversation while it compacts", async () => {
-  const root = message("1", "Build is red");
-  const reply = (id: string, text: string, created_at: number) =>
-    message(id, text, {
-      created_at,
-      tags: [
-        ["h", channel],
-        ["e", root.id, "", "reply"],
-        ["p", self],
-      ],
-    });
-  const first = reply("2", "@Claude can you look?", 110);
-  const second = reply("3", "@Claude and now?", 120);
-  const { deliver, claudes, workingUntil } = setup([root, first, second], {
-    hold: true,
-  });
-  await deliver({ type: "mention", event: first });
-  await flush(10);
-  const claude = claudes().find((process) => process.prompts.length);
-  claude?.finish();
-  await flush(10);
-  workingUntil.mockClear();
-  let returned = false;
-  void deliver(
-    { type: "mention", event: second },
-    { session: "compact" },
-  )?.then(() => {
-    returned = true;
-  });
-  await flush(10);
-  expect(claude?.prompts.at(-1)).toBe("/compact");
-  // The host shows it working, and can run the agent's other conversations.
-  expect(returned).toBe(true);
-  expect(workingUntil).toHaveBeenCalledTimes(1);
-  claude?.finish();
-  await flush(10);
-  expect(claude?.prompts.at(-1)).toContain("@Claude and now?");
-  claude?.finish();
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toContain("Content: @Claude fix the build");
+  expect(prompt).toContain(RESUMED_PROMPT);
 });
 
 const EFFORTS = [
@@ -1948,5 +1875,55 @@ it("hands a session its own community repositories without changing its workspac
     expect(process?.options.cwd).toBe("~/.buzz");
   } finally {
     runtime.dispose();
+  }
+});
+
+it("keeps an accepted Claude handoff past its deadline while compaction runs", async () => {
+  const f = setup([], { hold: true });
+  const root = message("1", "hello");
+  const place = { channelId: channel, root: root.id };
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  const handover = new AbortController();
+  let finishCompaction: (() => void) | undefined;
+  try {
+    await f.deliver({ type: "mention", event: root });
+    const process = f.claudes()[0];
+    if (!process) throw new Error("Expected Claude process");
+    await vi.waitFor(() => expect(process.prompts).toHaveLength(1));
+    process.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime.session(agent, place, "compact");
+    await vi.waitFor(() => expect(process.prompts.at(-1)).toBe("/compact"));
+    finishCompaction = () => process.finish();
+    const reply = message("2", "queued after compact", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+    let returned = false;
+    const admitted = Promise.resolve(
+      f.deliver({ type: "mention", event: reply }, { signal: handover.signal }),
+    ).then(() => {
+      returned = true;
+    });
+    try {
+      await vi.waitFor(() => expect(returned).toBe(true));
+      handover.abort(new Error("Handover expired"));
+    } finally {
+      process.finish();
+      finishCompaction = undefined;
+      await compacted;
+      await admitted;
+    }
+    await vi.waitFor(() => expect(process.prompts).toHaveLength(3));
+    expect(process.prompts[2]).toContain("queued after compact");
+    process.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+  } finally {
+    finishCompaction?.();
+    f.runtime.dispose();
   }
 });

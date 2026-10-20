@@ -25,6 +25,7 @@ export const codexRun = (
   | "runOnce"
   | "timeoutMs"
   | "syncedSettings"
+  | "resumes"
 > => ({
   models: (agent) => runtime.preview(agent),
   sessionActions: (agent) => config(agent.config).scope,
@@ -43,4 +44,7 @@ export const codexRun = (
     schema: syncedSettingsSchema,
     withSynced: withSyncedSettings,
   },
+  // Closing or reloading the app stops its turns; each resumed one carries on
+  // in its saved session.
+  resumes: true,
 });

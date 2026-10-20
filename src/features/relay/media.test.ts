@@ -115,6 +115,10 @@ it("bounds opening frames by encoded size and forgets them with session media", 
   expect(openingFrame("frame-3")).toBeUndefined();
   expect(openingFrame("frame-4")).toBeDefined();
   expect(openingFrame("frame-19")).toBeDefined();
+  expect(openingFrame("frame-4")).toBeDefined();
+  rememberOpeningFrame("frame-20", frame(250 * 1024), capture);
+  expect(openingFrame("frame-4")).toBeDefined();
+  expect(openingFrame("frame-5")).toBeUndefined();
 
   createMediaPreparation().dispose();
   expect(openingFrame("frame-19")).toBeUndefined();

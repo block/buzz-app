@@ -44,7 +44,12 @@ const openingFrames = new Map<string, OpeningFrame>();
 let openingFrameBytes = 0;
 let openingFrameScope = 0;
 export function openingFrame(source: string): OpeningFrame | undefined {
-  return openingFrames.get(source);
+  const frame = openingFrames.get(source);
+  if (!frame) return undefined;
+  // Least recently used is evicted first: a reused frame is never recaptured.
+  openingFrames.delete(source);
+  openingFrames.set(source, frame);
+  return frame;
 }
 export function openingFrameCapture(): number {
   return openingFrameScope;
@@ -176,6 +181,8 @@ export function createMediaPreparation() {
     }),
     dispose() {
       disposed = true;
+      // Frames are module-wide, so disposing any session's media (including a
+      // handed-off or stale successor) forgets them all. That only costs reuse.
       openingFrames.clear();
       openingFrameBytes = 0;
       openingFrameScope++;

@@ -129,6 +129,8 @@ fn main() {
             "plugin_host_mcp_serve",
             "plugin_host_mcp_reply",
             "plugin_host_mcp_close",
+            "plugin_host_read_file",
+            "plugin_host_resolve_directory",
             "oauth_callback_begin",
             "oauth_callback_wait",
             "oauth_callback_cancel",

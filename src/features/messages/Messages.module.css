@@ -2660,9 +2660,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
   color: var(--text-standard);
   overflow-wrap: anywhere;
 }
-/* Reuse the toolbar state so the target stays marked during pointer travel. */
+/* Own bubbles retain their toolbar hover treatment; received bubbles stay
+   on the same quiet surface as their reaction strip. */
 @media (hover: hover) and (pointer: fine) {
-  .message[data-actions-revealed]
+  .message[data-own][data-actions-revealed]
     > .messageBody
     > .messageContent
     .messageBubble:not([data-emoji-only])::after {

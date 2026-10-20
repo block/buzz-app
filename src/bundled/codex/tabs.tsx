@@ -41,7 +41,7 @@ import {
   type Config,
   type Model,
 } from "./config";
-import { AppServer, listModels, type Spawn } from "./rpc";
+import { AppServer, listModels, needsSignIn, type Spawn } from "./rpc";
 import type { CodexRuntime, SavedConversation } from "./runtime";
 import type { CodexSetup } from "./setup";
 import { readTranscript, TURN_LIMIT, type CodexTranscript } from "./transcript";
@@ -55,7 +55,6 @@ type Read =
 
 type Catalog = {
   models: Model[];
-  account: string;
 };
 type ProviderDefaults = Readonly<{ model: string; effort: string }>;
 type ProviderState = AgentProviderSnapshot &
@@ -80,15 +79,8 @@ async function catalog(spawn: Spawn, signal: AbortSignal) {
     signal.throwIfAborted();
     await rpc.open(spawn, defaults.workspace);
     signal.throwIfAborted();
-    const account = await rpc.request<{
-      account: { type: string; email?: string } | null;
-    }>("account/read");
-    if (!account.account) throw new Error(SIGN_IN_ERROR);
-    const models = await listModels(rpc);
-    return {
-      models,
-      account: account.account.email ?? account.account.type,
-    };
+    if (await needsSignIn(rpc)) throw new Error(SIGN_IN_ERROR);
+    return { models: await listModels(rpc) };
   } finally {
     signal.removeEventListener("abort", abort);
     await rpc.close();

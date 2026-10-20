@@ -397,3 +397,59 @@ it("uses each item's recorded start, keeping the turn start for an unrecorded it
   });
   expect(items.find((item) => item.id === "reply")).toMatchObject({ at: 8000 });
 });
+
+it("uses a recorded finish even for a tool without a prior duration, and ignores a zero start", () => {
+  const mapped = turns();
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        started_at_ms: 5000,
+        completed_at_ms: 7000,
+        item: { id: "nested" },
+      }),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        started_at_ms: 0,
+        item: { id: "reply" },
+      }),
+    ].join("\n"),
+  );
+  const items = mapped[0]?.items ?? [];
+  expect(items.find((item) => item.id === "nested")).toMatchObject({
+    at: 5000,
+    completedAt: 7000,
+  });
+  expect(items.find((item) => item.id === "reply")).toMatchObject({ at: 1000 });
+});
+
+it("shifts the app-server duration to the recorded start when no finish is recorded", () => {
+  const mapped = turns({
+    type: "commandExecution",
+    id: "nested",
+    command: "ls",
+    status: "completed",
+    durationMs: 500,
+    aggregatedOutput: "",
+  });
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        started_at_ms: 5000,
+        item: { id: "nested" },
+      }),
+    ].join("\n"),
+  );
+  expect(mapped[0]?.items.find((item) => item.id === "nested")).toMatchObject({
+    at: 5000,
+    completedAt: 5500,
+  });
+});

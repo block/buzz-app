@@ -260,3 +260,42 @@ it("shows each entry's time under it, with the full date on hover, except the pr
     expect(stamp.title).toContain("2026");
   }
 });
+
+it("shows no time for an entry with a zero, non-finite or invalid time", () => {
+  const { container } = render(
+    <ActivityTranscript
+      transcript={{
+        unknownThread: 0,
+        turns: [
+          {
+            turnId: "t",
+            startedAt: 0,
+            endedAt: 0,
+            threadRootId: null,
+            config: [],
+            items: [
+              { id: "zero", at: 0, type: "thought", text: "a" },
+              { id: "inf", at: Infinity, type: "thought", text: "b" },
+              { id: "nan", at: NaN, type: "message", text: "c" },
+              {
+                id: "script",
+                at: 0,
+                type: "tool",
+                title: "exec",
+                status: "completed",
+                paths: [],
+                diffs: [],
+                children: [
+                  { id: "child", at: 1e20, type: "message", text: "d" },
+                ],
+              },
+            ],
+          } as never,
+        ],
+      }}
+      agentName="Sol"
+      state={() => "ended"}
+    />,
+  );
+  expect(container.querySelectorAll("time")).toHaveLength(0);
+});

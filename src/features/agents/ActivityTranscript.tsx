@@ -63,8 +63,10 @@ const FULL: Intl.DateTimeFormatOptions = {
 };
 /** An entry's time under it; the turn header already dates the prompt. */
 function Stamp({ item }: { item: TranscriptItem }) {
-  if (item.type === "prompt") return null;
+  if (item.type === "prompt" || !item.at) return null;
   const date = new Date(item.at);
+  // Unknown or invalid times show nothing rather than 1970 or a throw.
+  if (Number.isNaN(date.getTime())) return null;
   return (
     <time
       className={`text-body-sm ${styles.at}`}

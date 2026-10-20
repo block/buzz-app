@@ -78,12 +78,15 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       draft.seen.add(id);
       // App-server history stamps every item with its turn's start. The
       // rollout records when each item actually ran.
-      const startedAt = ms(payload.started_at_ms);
-      const completedAt = ms(payload.completed_at_ms);
+      // Zero is the rollout's unknown-start sentinel, not a real time.
+      const startedAt = ms(payload.started_at_ms) || undefined;
+      const completedAt = ms(payload.completed_at_ms) || undefined;
       if (startedAt !== undefined) {
-        if (item.type === "tool" && item.completedAt !== undefined)
-          item.completedAt =
-            completedAt ?? startedAt + item.completedAt - item.at;
+        if (item.type === "tool") {
+          if (completedAt !== undefined) item.completedAt = completedAt;
+          else if (item.completedAt !== undefined)
+            item.completedAt = startedAt + item.completedAt - item.at;
+        }
         item.at = startedAt;
       }
       // There is no parent id in these records. Associate only inside a

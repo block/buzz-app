@@ -77,7 +77,7 @@ it("validates and saves a chosen folder, preserves drafts on failure, and restor
   native.invoke.mockResolvedValueOnce("/Users/you/Development");
   await user.click(screen.getByRole("button", { name: "Save folder" }));
   expect(await screen.findByRole("status")).toHaveTextContent(
-    "saved on this device",
+    "Repositories folder saved on this device. Claude and Goose use it in new sessions; Codex uses it on future turns.",
   );
   expect(readRepositoriesFolder(community, viewer)).toBe(
     "/Users/you/Development",

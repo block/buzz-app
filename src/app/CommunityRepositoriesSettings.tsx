@@ -228,8 +228,8 @@ export function CommunityRepositoriesSettings({
           )}
           {saved && (
             <p role="status" className="m-0 text-body-sm text-muted">
-              Repositories folder saved on this device. Existing sessions are
-              unchanged.
+              Repositories folder saved on this device. Claude and Goose use it
+              in new sessions; Codex uses it on future turns.
             </p>
           )}
         </SettingsGroup>

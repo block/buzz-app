@@ -984,7 +984,7 @@ it("limits row updates to the selected plugin without modifying the source previ
   expect(preview.candidates).toHaveLength(2);
 });
 
-it("redirects duplicate Add candidates to their row without update copy", async () => {
+it("reviews duplicate Add candidates as updates without reacquiring the package", async () => {
   const manifest = {
     id: "example.duplicate",
     name: "Duplicate",
@@ -1000,6 +1000,8 @@ it("redirects duplicate Add candidates to their row without update copy", async 
     error: null,
   };
   const manager = {
+    installImport: vi.fn(async () => true),
+    change: vi.fn(),
     imports: {
       folder: vi.fn(async () => ({
         token: "duplicate",
@@ -1020,15 +1022,19 @@ it("redirects duplicate Add candidates to their row without update copy", async 
   );
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
   fireEvent.click(screen.getByRole("button", { name: "Browse plugin folder" }));
-  expect(
-    await screen.findByText(/This plugin is already installed/),
-  ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Install plugin" })).toBeDisabled();
-  expect(screen.queryByText(/This replaces/)).toBeNull();
-  expect(
-    screen.queryByText(/Computer access changes with this update/),
-  ).toBeNull();
-  expect(screen.queryByRole("region", { name: "Computer access" })).toBeNull();
+  const update = await screen.findByRole("button", { name: "Update plugin" });
+  expect(update).toBeEnabled();
+  expect(screen.getByText(/This replaces Duplicate/)).toBeVisible();
+  expect(screen.getByRole("region", { name: "Computer access" })).toBeVisible();
+  expect(screen.queryByRole("switch", { name: "Enable plugin" })).toBeNull();
+  fireEvent.click(update);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(
+    "duplicate",
+    ".",
+  );
+  expect(manager.imports?.folder).toHaveBeenCalledTimes(1);
+  expect(manager.change).not.toHaveBeenCalled();
 });
 
 it("keeps install review stable while the saved catalog arrives before enabling", async () => {
@@ -1094,4 +1100,192 @@ it("keeps install review stable while the saved catalog arrives before enabling"
   expect(screen.queryByText(/Reading plugin folders/)).toBeNull();
   finish(true);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+const rememberedManifest = {
+  id: "example.remembered",
+  name: "Remembered",
+  apiVersion: 1 as const,
+};
+const rememberedPlugin = {
+  manifest: rememberedManifest,
+  source: "external" as const,
+  enabled: false,
+  revision: "old",
+  previous: null,
+  reloadable: true,
+  error: null,
+};
+const rememberedPreview = {
+  token: "remembered",
+  source: "/plugins",
+  commit: null,
+  warnings: [],
+  candidates: [
+    { path: "dist", revision: "new", manifest: rememberedManifest },
+    { path: "alternate", revision: "alternate", manifest: rememberedManifest },
+  ],
+};
+
+it.each([
+  { root: "/plugins", path: "dist" },
+  {
+    repository: "https://git.example.com/plugins",
+    reference: "release/one",
+    path: "dist",
+  },
+])(
+  "checks the remembered source and build path with a fresh review: %j",
+  async (updateSource) => {
+    const user = userEvent.setup();
+    const manager = {
+      imports: {
+        folder: vi.fn(async () => rememberedPreview),
+        git: vi.fn(async () => rememberedPreview),
+        discard: vi.fn(async () => {}),
+      },
+      installImport: vi.fn(async () => true),
+      change: vi.fn(),
+    } as unknown as PluginManager;
+    const authorizeGit = vi.fn(async (repository: string) => ({
+      repository,
+      token: "fresh-authorization",
+    }));
+    render(
+      <PluginImport
+        plugins={manager}
+        catalog={{
+          profile: "test",
+          location: "test",
+          plugins: [{ ...rememberedPlugin, updateSource }],
+        }}
+        busy={false}
+        updateId={rememberedManifest.id}
+        authorizeGit={authorizeGit}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Browse plugin folder" }),
+    ).toBeNull();
+    await user.click(
+      screen.getByRole("button", {
+        name:
+          "root" in updateSource
+            ? "Check this folder"
+            : "Check this repository",
+      }),
+    );
+    expect(await screen.findByText(/It stays off/)).toBeVisible();
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(manager.installImport).not.toHaveBeenCalled();
+    if ("root" in updateSource)
+      expect(manager.imports?.folder).toHaveBeenCalledExactlyOnceWith(
+        "/plugins",
+      );
+    else {
+      expect(authorizeGit).toHaveBeenCalledExactlyOnceWith(
+        updateSource.repository,
+      );
+      expect(manager.imports?.git).toHaveBeenCalledExactlyOnceWith(
+        updateSource.repository,
+        "release/one",
+        "fresh-authorization",
+      );
+    }
+    await user.click(screen.getByRole("button", { name: "Update plugin" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(
+      "remembered",
+      "dist",
+    );
+    expect(manager.change).not.toHaveBeenCalled();
+  },
+);
+
+it("recovers from an unavailable remembered folder by choosing another source", async () => {
+  const user = userEvent.setup();
+  const folder = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Folder no longer exists"))
+    .mockResolvedValueOnce({
+      ...rememberedPreview,
+      candidates: [rememberedPreview.candidates[0]],
+    });
+  const manager = {
+    imports: { folder, discard: vi.fn(async () => {}) },
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            ...rememberedPlugin,
+            updateSource: { root: "/moved", path: "dist" },
+          },
+        ],
+      }}
+      busy={false}
+      updateId={rememberedManifest.id}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Check this folder" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Folder no longer exists",
+  );
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(
+    screen.getByRole("button", { name: "Choose another source" }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Browse plugin folder" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Update plugin" }),
+  ).toBeEnabled();
+  expect(folder.mock.calls).toEqual([["/moved"], []]);
+});
+
+it("keeps wrong-plugin sources out of a remembered-source update", async () => {
+  const user = userEvent.setup();
+  const discard = vi.fn(async () => {});
+  const manager = {
+    imports: {
+      folder: vi.fn(async () => ({
+        ...rememberedPreview,
+        candidates: [
+          {
+            ...rememberedPreview.candidates[0],
+            manifest: { ...rememberedManifest, id: "example.wrong" },
+          },
+        ],
+      })),
+      discard,
+    },
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            ...rememberedPlugin,
+            updateSource: { root: "/plugins", path: "dist" },
+          },
+        ],
+      }}
+      busy={false}
+      updateId={rememberedManifest.id}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Check this folder" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "does not contain the selected plugin",
+  );
+  expect(discard).toHaveBeenCalledExactlyOnceWith("remembered");
+  expect(screen.queryByRole("button", { name: "Update plugin" })).toBeNull();
 });

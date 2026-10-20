@@ -41,6 +41,7 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
         plugins: structuredClone(plugins),
       },
     });
+    let importSource = null;
     const preview = {
       token: "preview-one",
       source: "https://github.com/example/plugins",
@@ -98,6 +99,12 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
             });
           if (args?.repository === "bad")
             throw new Error("Repository unavailable");
+          importSource =
+            command === "plugin_import_git"
+              ? { repository: args.repository, reference: args.reference }
+              : args?.upload
+                ? null
+                : { root: args?.directory ?? "/fixture/plugins" };
           if (window.importCategory)
             for (const candidate of preview.candidates)
               candidate.manifest.discovery = {
@@ -123,6 +130,9 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
             existing.manifest = structuredClone(candidate.manifest);
             existing.previous = existing.revision;
             existing.revision = candidate.revision;
+            existing.updateSource = importSource
+              ? { ...importSource, path: candidate.path }
+              : null;
           } else
             plugins.push({
               ...candidate,
@@ -130,6 +140,9 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
               enabled: false,
               previous: null,
               reloadable: true,
+              updateSource: importSource
+                ? { ...importSource, path: candidate.path }
+                : null,
               error: null,
             });
           return ready();
@@ -616,6 +629,21 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
     window.importCategory = "productivity";
   });
   await button(page, "Update Example two").click();
+  // Real modal focus handoff when the remembered-source step is replaced.
+  await button(page, "Check this folder").click();
+  await expect(button(page, "Update plugin")).toBeEnabled();
+  expect(
+    await page.evaluate(
+      () =>
+        window.importCalls
+          .filter((c) => c.command === "plugin_import_folder")
+          .at(-1).args,
+    ),
+  ).toEqual({ directory: "/fixture/plugins" });
+  await button(page, "Back").click();
+  await expect(button(page, "Check this folder")).toBeFocused();
+  await button(page, "Choose another source").click();
+  await expect(button(page, "Browse plugin folder")).toBeFocused();
   await button(page, "Browse plugin folder").click();
   await expect(page.getByRole("radio")).toHaveCount(0);
   await expect(

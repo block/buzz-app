@@ -1,7 +1,7 @@
 //! Read-only acquisition. Preview owns immutable artifacts; installation never rereads a source.
 use crate::{
-    artifact_from_parts, err, hash, icon_revision, Catalog, Manager, Manifest, Release,
-    ReloadSource, Result, BASE64, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
+    artifact_from_parts, err, hash, icon_revision, Catalog, GitSource, InstallSource, Manager,
+    Manifest, Release, ReloadSource, Result, BASE64, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
 };
 use base64::Engine as _;
 use nostr::event::Event;
@@ -45,6 +45,7 @@ pub struct Preview {
 pub struct PreparedImport {
     pub preview: Preview,
     folder_root: Option<PathBuf>,
+    git_source: Option<GitSource>,
     artifacts: BTreeMap<String, Release>,
     unbuilt: Vec<(String, Option<String>, String)>,
 }
@@ -61,6 +62,7 @@ impl PreparedImport {
                 warnings: vec![],
             },
             folder_root,
+            git_source: None,
             artifacts: BTreeMap::new(),
             unbuilt: vec![],
         })
@@ -147,8 +149,14 @@ impl PreparedImport {
         let source = self
             .folder_root
             .clone()
-            .map(|root| ReloadSource::folder(root, path.to_owned()))
-            .transpose()?;
+            .map(|root| ReloadSource::folder(root, path.to_owned()).map(InstallSource::Folder))
+            .transpose()?
+            .or_else(|| {
+                self.git_source.clone().map(|mut source| {
+                    source.path = path.to_owned();
+                    InstallSource::Git(source)
+                })
+            });
         manager.install_artifact(release, source)
     }
 }
@@ -843,7 +851,13 @@ pub fn prepare_git(
     }
     args.extend(["--", &url, "repository"]);
     git.run(&args, LIMIT)?;
-    git.read_plugins(url)
+    let mut prepared = git.read_plugins(url.clone())?;
+    prepared.git_source = Some(GitSource {
+        repository: url,
+        reference: reference.into(),
+        path: ".".into(),
+    });
+    Ok(prepared)
 }
 fn read_output(mut file: File, limit: u64) -> Result<Vec<u8>> {
     use std::io::{Seek, SeekFrom};
@@ -926,6 +940,7 @@ mod tests {
             .unwrap();
         assert!(!plugin.enabled);
         assert!(!plugin.reloadable);
+        assert!(plugin.update_source.is_none());
         manager.change("enable", "example.drop").unwrap();
         assert_eq!(
             manager.module("example.drop", &plugin.revision).unwrap(),
@@ -1248,6 +1263,89 @@ mod tests {
             .unwrap();
         assert!(installed.enabled);
         assert!(installed.previous.is_some());
+    }
+    #[test]
+    fn remembered_sources_follow_revision_updates_rollback_and_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let source = plugin(root.path(), "dist", "example.remembered");
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let folder = prepare_folder(root.path()).unwrap();
+        let first = folder
+            .install(&manager, &folder.preview.token, "dist")
+            .unwrap();
+        let first = first
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.remembered")
+            .unwrap();
+        let folder_source = first.update_source.clone();
+        assert!(first.reloadable);
+        // The serialized folder shape is unchanged, so pre-existing registry entries still read.
+        let old_shape =
+            serde_json::json!({"root": root.path().canonicalize().unwrap(), "path": "dist"});
+        assert_eq!(
+            serde_json::from_value::<InstallSource>(old_shape).unwrap(),
+            folder_source.clone().unwrap()
+        );
+        manager.change("enable", "example.remembered").unwrap();
+        fs::write(source.join("plugin.js"), "export const updated = true;").unwrap();
+        let mut git = prepare_folder(root.path()).unwrap();
+        git.folder_root = None;
+        git.git_source = Some(GitSource {
+            repository: "https://example.com/plugins".into(),
+            reference: "release/one".into(),
+            path: ".".into(),
+        });
+        let next = git.install(&manager, &git.preview.token, "dist").unwrap();
+        let next = next
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.remembered")
+            .unwrap();
+        assert!(next.enabled);
+        assert!(!next.reloadable);
+        let git_source = Some(InstallSource::Git(GitSource {
+            repository: "https://example.com/plugins".into(),
+            reference: "release/one".into(),
+            path: "dist".into(),
+        }));
+        assert_eq!(next.update_source, git_source);
+        let reopened = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let catalog = reopened.catalog().unwrap();
+        assert_eq!(
+            catalog
+                .plugins
+                .iter()
+                .find(|p| p.manifest.id == "example.remembered")
+                .unwrap()
+                .update_source,
+            git_source
+        );
+        assert!(reopened
+            .reload_live("example.remembered")
+            .err()
+            .unwrap()
+            .contains("reloadable folder"));
+        let rolled = reopened.change("rollback", "example.remembered").unwrap();
+        let rolled = rolled
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.remembered")
+            .unwrap();
+        assert!(rolled.enabled);
+        assert!(rolled.reloadable);
+        assert_eq!(rolled.update_source, folder_source);
+        let forward = reopened.change("rollback", "example.remembered").unwrap();
+        assert_eq!(
+            forward
+                .plugins
+                .iter()
+                .find(|p| p.manifest.id == "example.remembered")
+                .unwrap()
+                .update_source,
+            git_source
+        );
     }
     #[test]
     fn folder_skips_hidden_descendants_but_accepts_a_hidden_selection() {

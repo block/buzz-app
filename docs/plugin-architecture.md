@@ -843,15 +843,16 @@ HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional bran
 or tag is separate from the repository URL; GitHub `tree` URLs are rejected with
 guidance rather than ambiguously splitting branch names and subfolders. Discovery
 lists built plugin folders by path, name and manifest ID, including nested `dist`
-folders. Choose one and explicitly install/update; the same preview can install
-another plugin without fetching again. New plugins stay disabled. Updates match
+folders. Choose one and explicitly install/update. Add opens update review directly
+when the plugin is already installed. New plugins enable by default, with an opt-out
+in the review footer; successful installation closes the dialog. Updates match
 **manifest ID**, even across repositories, and preserve the saved enabled state:
 an enabled update may activate immediately except in safe mode. The UI warns before
 that action and shows declared host access, including changes. Installed artifacts do
 not watch/pull the source. Plugins installed from a folder keep the selected folder
 path for Settings → Plugins → Manage plugins → Reload while disabled;
 reloading reads the recorded candidate folder and requires the manifest ID to stay the
-same. Reload rejects changed host declarations; use Load from folder to review and
+same. Reload rejects changed host declarations; use Update to review and
 install that revision. Enabled plugins must be disabled before reload so memory-only
 plugin state, such as credentials, is not discarded by replacing the running module.
 For development, `buzzodz plugin reload ID` explicitly allows replacing an enabled
@@ -864,7 +865,16 @@ access and reports the previous and updated declarations. Rejected builds leave
 the installed revision unchanged. Replacing an active plugin ends its in-memory
 work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.
-Git installs and older installs without saved folder metadata must be imported again.
+
+Update on an installed row offers to check its remembered folder or Git repository,
+branch/tag and candidate path, with a choice to use another source. Each check creates
+an immutable preview and requires explicit confirmation. Git authorization is acquired
+again for each check; credentials/tokens are never saved with source metadata. The
+source follows the current revision through update and rollback. Existing folder
+metadata remains readable; older Git installs and dropped-folder snapshots without
+saved source information ask for a replacement folder or repository. A missing source
+or a source without the selected plugin leaves the installation unchanged and allows
+choosing another source. Git sources remain ineligible for folder Reload.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
 single pending preview per native process. Replacing/closing a preview discards it;

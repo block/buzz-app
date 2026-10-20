@@ -10,6 +10,10 @@ export type PluginInfo = {
   publisher?: string | null;
   rollbackBlockedReason?: string | null;
   reloadable: boolean;
+  updateSource?:
+    | { root: string; path: string }
+    | { repository: string; reference: string; path: string }
+    | null;
   error: string | null;
   readmeRevision?: string | null;
   iconPngRevision?: string | null;
@@ -49,7 +53,7 @@ export type ImportFile = { path: string } & (
   | { base64: string; text?: never }
 );
 export type PluginImports = {
-  folder(): Promise<ImportPreview | null>;
+  folder(directory?: string): Promise<ImportPreview | null>;
   files(source: string, files: ImportFile[]): Promise<ImportPreview | null>;
   /** `authorization` is a NIP-98 token signed for exactly `repository`. */
   git(

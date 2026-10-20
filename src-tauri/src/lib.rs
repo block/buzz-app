@@ -304,10 +304,14 @@ async fn plugin_import_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     imports: tauri::State<'_, Imports>,
     upload: Option<FolderUpload>,
+    directory: Option<String>,
 ) -> Result<Option<Preview>, String> {
     prepare_import(imports.inner().clone(), move || {
         if let Some(upload) = upload {
             return prepare_upload(upload).map(Some);
+        }
+        if let Some(directory) = directory {
+            return prepare_folder(std::path::Path::new(&directory)).map(Some);
         }
         app.dialog()
             .file()

@@ -18,7 +18,7 @@ import {
   MonitorIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
-import type { Catalog, ImportPreview } from "../plugins/types";
+import type { Catalog, ImportPreview, PluginInfo } from "../plugins/types";
 import type { PluginManifest } from "../plugins/api";
 
 function importLocation(preview: ImportPreview, path: string | undefined) {
@@ -157,8 +157,19 @@ export function PluginImport({
   const [open, setOpen] = useState(!!updateId);
   const [dragging, setDragging] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const [repository, setRepository] = useState("");
-  const [reference, setReference] = useState("");
+  const savedSource = catalog.plugins.find(
+    (item) => item.manifest.id === updateId,
+  )?.updateSource;
+  const [chooseSource, setChooseSource] = useState(!savedSource);
+  const [repository, setRepository] = useState(
+    savedSource && "repository" in savedSource ? savedSource.repository : "",
+  );
+  const [reference, setReference] = useState(
+    savedSource && "reference" in savedSource ? savedSource.reference : "",
+  );
+  // Snapshot at review entry: our own install catalog refresh must not turn a
+  // new install into an update while its enable operation is still pending.
+  const [existing, setExisting] = useState<PluginInfo>();
   const [loading, setLoading] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
@@ -187,6 +198,10 @@ export function PluginImport({
       sourceTrigger.current = null;
     }
   }, [open, preview, loading, discarding, reviewing]);
+  const hasSavedSource = !!savedSource;
+  useLayoutEffect(() => {
+    if (chooseSource && hasSavedSource) browse.current?.focus();
+  }, [chooseSource, hasSavedSource]);
   const errorTrigger = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     if (busy || loading || discarding) return;
@@ -235,7 +250,7 @@ export function PluginImport({
     setEnableOnInstall(true);
     try {
       const result = await operation();
-      const next =
+      let next =
         result && updateId
           ? {
               ...result,
@@ -244,6 +259,19 @@ export function PluginImport({
               ),
             }
           : result;
+      if (
+        next &&
+        savedSource &&
+        !chooseSource &&
+        next.candidates.some((item) => item.path === savedSource.path)
+      ) {
+        next = {
+          ...next,
+          candidates: next.candidates.filter(
+            (item) => item.path === savedSource.path,
+          ),
+        };
+      }
       if (!current.active) {
         if (next) await imports?.discard(next.token);
         return;
@@ -260,6 +288,13 @@ export function PluginImport({
       }
       setPreview(next);
       setReviewing(next?.candidates.length === 1);
+      setExisting(
+        next?.candidates.length === 1
+          ? catalog.plugins.find(
+              (item) => item.manifest.id === next.candidates[0]?.manifest.id,
+            )
+          : undefined,
+      );
       setSelected(
         next?.candidates.length === 1 ? (next.candidates[0]?.path ?? "") : "",
       );
@@ -308,9 +343,7 @@ export function PluginImport({
     }
   }
   const candidate = preview?.candidates.find((p) => p.path === selected);
-  const existing = catalog.plugins.find(
-    (p) => p.manifest.id === candidate?.manifest.id,
-  );
+  const updating = !!existing;
   const rollbackNotice =
     candidate?.publisher && existing && !existing.hasSignature
       ? "You cannot roll back to the unsigned revision after this update."
@@ -332,7 +365,7 @@ export function PluginImport({
     removed = false,
   ) {
     const changed =
-      !!updateId &&
+      updating &&
       !!existing &&
       !removed &&
       !previousGrants.includes(grant.signature);
@@ -458,7 +491,14 @@ export function PluginImport({
                   variant="prominent"
                   type="button"
                   disabled={blocked || !candidate}
-                  onClick={() => setReviewing(true)}
+                  onClick={() => {
+                    setExisting(
+                      catalog.plugins.find(
+                        (item) => item.manifest.id === candidate?.manifest.id,
+                      ),
+                    );
+                    setReviewing(true);
+                  }}
                 >
                   Continue
                 </Button>
@@ -468,7 +508,7 @@ export function PluginImport({
                   ref={installButton}
                   variant="prominent"
                   type="button"
-                  disabled={blocked || (!!existing && !updateId)}
+                  disabled={blocked || existing?.source === "bundled"}
                   onClick={async () => {
                     if (blocked || pending.current) return;
                     const current = lifetime.current;
@@ -504,7 +544,7 @@ export function PluginImport({
                     }
                   }}
                 >
-                  {updateId ? "Update plugin" : "Install plugin"}
+                  {updating ? "Update plugin" : "Install plugin"}
                 </Button>
               )}
             </>
@@ -521,116 +561,178 @@ export function PluginImport({
         )}
         <div hidden={!!error}>
           <div hidden={!!preview}>
-            <p className="mb-4 mt-0 text-body-sm text-muted">
-              Load built plugins containing manifest.json and plugin.js. Buzz
-              doesn’t build source code or run install scripts.
-            </p>
-            <div className={styles.columns}>
-              <section
-                aria-label="Add from folder"
-                className={styles.folder}
-                data-dragging={dragging || undefined}
-                onDragOver={(event) => {
-                  if (!event.dataTransfer.types.includes("Files")) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  event.dataTransfer.dropEffect = blocked ? "none" : "copy";
-                  setDragging(!blocked);
-                }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setDragging(false);
-                  const items = Array.from(event.dataTransfer.items);
-                  const entry =
-                    items.length === 1 ? items[0]?.webkitGetAsEntry?.() : null;
-                  const current = lifetime.current;
-                  void load(async () => {
-                    if (!entry?.isDirectory)
-                      throw new Error("Drop one folder, or choose Browse.");
-                    const upload = await readPluginFolder(entry);
-                    if (!current.active) return null;
-                    const next = await imports.files(
-                      upload.source,
-                      upload.files,
-                    );
-                    return next
-                      ? {
-                          ...next,
-                          warnings: [...upload.warnings, ...next.warnings],
-                        }
-                      : null;
-                  });
-                }}
-              >
-                <FolderOpenIcon size={32} aria-hidden="true" />
-                <p className="m-0 text-body-sm">Drop a plugin folder here</p>
-                <Button
-                  size="sm"
-                  ref={browse}
-                  aria-label="Browse plugin folder"
-                  disabled={blocked}
-                  onClick={() => void load(imports.folder)}
-                >
-                  Browse
-                </Button>
-              </section>
-              <form
-                aria-label="Add from Git"
-                className={styles.git}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (repository.trim())
-                    void load(async () => {
-                      const signed = await authorizeGit?.(repository);
-                      return signed
-                        ? imports.git(
-                            signed.repository,
-                            reference,
-                            signed.token,
-                          )
-                        : imports.git(repository, reference);
-                    });
-                }}
-              >
-                <SettingsGroup layout="form">
-                  <Field label="Git or GitHub repository">
-                    <Input
-                      required
-                      value={repository}
-                      disabled={blocked}
-                      placeholder="https://github.com/owner/repository"
-                      onChange={(event) => setRepository(event.target.value)}
-                    />
-                  </Field>
-                  <Field label="Branch or tag (optional)">
-                    <Input
-                      value={reference}
-                      disabled={blocked}
-                      placeholder="Repository default"
-                      onChange={(event) => setReference(event.target.value)}
-                    />
-                  </Field>
-                  <p className="m-0 text-caption text-muted">
-                    HTTPS or SSH; GitHub owner/repository also works. SSH uses
-                    your agent and known hosts. Password prompts and credential
-                    helpers are not used. Buzz git repositories in this
-                    community sign in with your account.
+            {updateId && savedSource && !chooseSource ? (
+              <section aria-label="Saved plugin source">
+                <p className="mt-0 mb-2 text-body-sm break-words">
+                  {"root" in savedSource
+                    ? savedSource.root
+                    : savedSource.repository}
+                </p>
+                <p className="mt-0 mb-4 text-body-sm text-muted break-words">
+                  Plugin folder: {savedSource.path}
+                </p>
+                {"reference" in savedSource && (
+                  <p className="mt-0 mb-4 text-body-sm text-muted">
+                    Branch or tag:{" "}
+                    {savedSource.reference || "Repository default"}
                   </p>
-                  <div className="justify-self-start">
+                )}
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    disabled={blocked}
+                    onClick={() =>
+                      void load(async () => {
+                        if ("root" in savedSource)
+                          return imports.folder(savedSource.root);
+                        const signed = await authorizeGit?.(
+                          savedSource.repository,
+                        );
+                        return imports.git(
+                          signed?.repository ?? savedSource.repository,
+                          savedSource.reference,
+                          signed?.token,
+                        );
+                      })
+                    }
+                  >
+                    {"root" in savedSource
+                      ? "Check this folder"
+                      : "Check this repository"}
+                  </Button>
+                  <Button
+                    disabled={blocked}
+                    onClick={() => setChooseSource(true)}
+                  >
+                    Choose another source
+                  </Button>
+                </div>
+              </section>
+            ) : (
+              <>
+                {updateId && !savedSource && (
+                  <p className="mt-0 mb-4 text-body-sm text-muted">
+                    Buzz needs the source again. Choose or drop the replacement
+                    folder, or enter its repository.
+                  </p>
+                )}
+                <p className="mb-4 mt-0 text-body-sm text-muted">
+                  Load built plugins containing manifest.json and plugin.js.
+                  Buzz doesn’t build source code or run install scripts.
+                </p>
+                <div className={styles.columns}>
+                  <section
+                    aria-label="Add from folder"
+                    className={styles.folder}
+                    data-dragging={dragging || undefined}
+                    onDragOver={(event) => {
+                      if (!event.dataTransfer.types.includes("Files")) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      event.dataTransfer.dropEffect = blocked ? "none" : "copy";
+                      setDragging(!blocked);
+                    }}
+                    onDragLeave={() => setDragging(false)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setDragging(false);
+                      const items = Array.from(event.dataTransfer.items);
+                      const entry =
+                        items.length === 1
+                          ? items[0]?.webkitGetAsEntry?.()
+                          : null;
+                      const current = lifetime.current;
+                      void load(async () => {
+                        if (!entry?.isDirectory)
+                          throw new Error("Drop one folder, or choose Browse.");
+                        const upload = await readPluginFolder(entry);
+                        if (!current.active) return null;
+                        const next = await imports.files(
+                          upload.source,
+                          upload.files,
+                        );
+                        return next
+                          ? {
+                              ...next,
+                              warnings: [...upload.warnings, ...next.warnings],
+                            }
+                          : null;
+                      });
+                    }}
+                  >
+                    <FolderOpenIcon size={32} aria-hidden="true" />
+                    <p className="m-0 text-body-sm">
+                      Drop a plugin folder here
+                    </p>
                     <Button
-                      type="submit"
                       size="sm"
-                      aria-label="Find plugins"
-                      disabled={blocked || !repository.trim()}
+                      ref={browse}
+                      aria-label="Browse plugin folder"
+                      disabled={blocked}
+                      onClick={() => void load(() => imports.folder())}
                     >
-                      Find
+                      Browse
                     </Button>
-                  </div>
-                </SettingsGroup>
-              </form>
-            </div>
+                  </section>
+                  <form
+                    aria-label="Add from Git"
+                    className={styles.git}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (repository.trim())
+                        void load(async () => {
+                          const signed = await authorizeGit?.(repository);
+                          return signed
+                            ? imports.git(
+                                signed.repository,
+                                reference,
+                                signed.token,
+                              )
+                            : imports.git(repository, reference);
+                        });
+                    }}
+                  >
+                    <SettingsGroup layout="form">
+                      <Field label="Git or GitHub repository">
+                        <Input
+                          required
+                          value={repository}
+                          disabled={blocked}
+                          placeholder="https://github.com/owner/repository"
+                          onChange={(event) =>
+                            setRepository(event.target.value)
+                          }
+                        />
+                      </Field>
+                      <Field label="Branch or tag (optional)">
+                        <Input
+                          value={reference}
+                          disabled={blocked}
+                          placeholder="Repository default"
+                          onChange={(event) => setReference(event.target.value)}
+                        />
+                      </Field>
+                      <p className="m-0 text-caption text-muted">
+                        HTTPS or SSH; GitHub owner/repository also works. SSH
+                        uses your agent and known hosts. Password prompts and
+                        credential helpers are not used. Buzz git repositories
+                        in this community sign in with your account.
+                      </p>
+                      <div className="justify-self-start">
+                        <Button
+                          type="submit"
+                          size="sm"
+                          aria-label="Find plugins"
+                          disabled={blocked || !repository.trim()}
+                        >
+                          Find
+                        </Button>
+                      </div>
+                    </SettingsGroup>
+                  </form>
+                </div>
+              </>
+            )}
           </div>
           {loading && !preview && (
             <p role="status">
@@ -639,7 +741,7 @@ export function PluginImport({
           )}
           {loading && preview && (
             <p role="status">
-              {updateId ? "Updating plugin…" : "Installing plugin…"}
+              {updating ? "Updating plugin…" : "Installing plugin…"}
             </p>
           )}
           {preview && (
@@ -716,7 +818,7 @@ export function PluginImport({
                   )}
                 {reviewing &&
                   candidate &&
-                  (!existing || updateId || loading) && (
+                  (existing?.source !== "bundled" || loading) && (
                     <section
                       aria-label="Computer access"
                       className="text-body-sm"
@@ -768,7 +870,7 @@ export function PluginImport({
                           },
                         ]}
                       />
-                      {updateId &&
+                      {updating &&
                         existing &&
                         (declaredGrants.some(
                           (grant) => !previousGrants.includes(grant),
@@ -796,7 +898,7 @@ export function PluginImport({
                           No additional capabilities declared.
                         </p>
                       )}
-                      {updateId && removedDetails.length > 0 && (
+                      {updating && removedDetails.length > 0 && (
                         <section
                           aria-label="Removed declarations"
                           className="mt-4"
@@ -812,13 +914,13 @@ export function PluginImport({
                       )}
                     </section>
                   )}
-                {reviewing && existing && !updateId && !loading && (
+                {reviewing && existing?.source === "bundled" && !loading && (
                   <p className="m-0 text-body-sm">
-                    This plugin is already installed. Use Update from its row on
-                    the Plugins page.
+                    This plugin is included with Buzz. Update Buzz to get its
+                    latest version.
                   </p>
                 )}
-                {reviewing && candidate && existing && updateId && (
+                {reviewing && candidate && existing?.source === "external" && (
                   <p className="m-0 text-body-sm">
                     {`This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays on and may run immediately unless this launch is in safe mode." : "It stays off."} ${rollbackNotice}`}
                   </p>

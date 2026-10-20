@@ -111,7 +111,8 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
 
   const imports: PluginImports | undefined = desktop
     ? {
-        folder: () => invoke("plugin_import_folder"),
+        folder: (directory) =>
+          invoke("plugin_import_folder", directory ? { directory } : {}),
         files: (source, files) =>
           invoke("plugin_import_folder", { upload: { source, files } }),
         git: (repository, reference, authorization) =>

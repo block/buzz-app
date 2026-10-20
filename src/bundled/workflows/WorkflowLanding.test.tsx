@@ -92,6 +92,8 @@ function mount(
   const element = () => (
     <StrictMode>
       <WorkflowLanding
+        filter=""
+        onFilterChange={() => {}}
         key={mountKey}
         capability={owner.capability}
         channels={channels}
@@ -730,6 +732,8 @@ function landing() {
     }, []);
     return (
       <WorkflowLanding
+        filter=""
+        onFilterChange={() => {}}
         capability={fixture.capability}
         channels={[
           { id: fixtureChannel, name: "General", channelType: "stream" },
@@ -916,9 +920,27 @@ it("keeps run feedback after the card leaves the filtered view", async () => {
     { id: fixtureChannel, name: "General", channelType: "stream" as const },
     { id: "other-channel", name: "Other", channelType: "stream" as const },
   ];
+  fixture.definitions.update({
+    status: "ready",
+    data: {
+      partial: false,
+      items: [
+        fixtureDefinition,
+        {
+          ...fixtureDefinition,
+          channelId: "other-channel",
+          yaml: fixtureDefinition.yaml.replace(
+            "Message helper",
+            "Other helper",
+          ),
+        },
+      ],
+    },
+  });
   const element = (filter: string) => (
     <ToastProvider>
       <WorkflowLanding
+        onFilterChange={() => {}}
         capability={fixture.capability}
         channels={channels}
         filter={filter}

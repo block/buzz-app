@@ -123,8 +123,6 @@ export function WorkflowCommunity({
     return () => narrow.removeEventListener("change", handoff);
   }, [open, detailTarget]);
   const channel = eligible.find((item) => item.id === selected);
-  // A filtered channel that leaves the list shows every workflow again.
-  const shown = eligible.some((item) => item.id === filter) ? filter : "";
   useEffect(() => {
     if (
       !selected ||
@@ -252,7 +250,7 @@ export function WorkflowCommunity({
                 <WorkflowLanding
                   capability={capability}
                   channels={eligible}
-                  filter={shown}
+                  filter={filter}
                   onFilterChange={setFilter}
                   detailTarget={detailTarget}
                   selected={detail?.key}

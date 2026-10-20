@@ -896,7 +896,7 @@ const workflowKey = (definition: WorkflowDefinition) =>
 export function WorkflowLanding({
   capability,
   channels,
-  filter = "",
+  filter,
   onFilterChange,
   refreshRequest,
   saveReadback,
@@ -915,10 +915,9 @@ export function WorkflowLanding({
   selected: string | undefined;
   /** Reports the selected workflow and its name, or clears the selection. */
   onSelect: (key: string | undefined, name?: string) => void;
-  /** Channel ID to show; every channel is still read. Empty shows all.
-   * Without onFilterChange, callers may also select an empty channel. */
-  filter?: string;
-  onFilterChange?: (channelId: string) => void;
+  /** Channel ID to show; every channel is still read. Empty shows all. */
+  filter: string;
+  onFilterChange: (channelId: string) => void;
   refreshRequest: number;
   saveReadback?: Pick<WorkflowDefinition, "channelId" | "revision"> | undefined;
   viewer: string;
@@ -974,19 +973,21 @@ export function WorkflowLanding({
     operationRefreshKey,
     saveReadback,
   );
-  const populated = channels
-    .filter((channel) => snapshots[channel.id]?.data.items.length)
-    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-  const shown =
-    onFilterChange && !populated.some((channel) => channel.id === filter)
-      ? ""
-      : filter;
+  const ordered = [...channels].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+  );
+  const populated = ordered.filter(
+    (channel) => snapshots[channel.id]?.data.items.length,
+  );
+  const shown = !populated.some((channel) => channel.id === filter)
+    ? ""
+    : filter;
   useEffect(() => {
-    if (filter !== shown) onFilterChange?.(shown);
+    if (filter !== shown) onFilterChange(shown);
   }, [filter, shown, onFilterChange]);
   const visible = shown
-    ? channels.filter((channel) => channel.id === shown)
-    : channels;
+    ? ordered.filter((channel) => channel.id === shown)
+    : ordered;
   const reading = visible.some(
     (channel) =>
       !snapshots[channel.id] || snapshots[channel.id]?.status === "loading",
@@ -1022,27 +1023,25 @@ export function WorkflowLanding({
     );
   return (
     <>
-      {onFilterChange && (
-        <div className="workflow-page-filter">
-          <Select
-            label="Channel"
-            value={shown}
-            groups={[
-              {
-                label: "Channels with workflows",
-                options: [
-                  { value: "", label: "All workflows" },
-                  ...populated.map((channel) => ({
-                    value: channel.id,
-                    label: channel.name,
-                  })),
-                ],
-              },
-            ]}
-            onValueChange={onFilterChange}
-          />
-        </div>
-      )}
+      <div className="workflow-page-filter">
+        <Select
+          label="Channel"
+          value={shown}
+          groups={[
+            {
+              label: "Channels with workflows",
+              options: [
+                { value: "", label: "All workflows" },
+                ...populated.map((channel) => ({
+                  value: channel.id,
+                  label: channel.name,
+                })),
+              ],
+            },
+          ]}
+          onValueChange={onFilterChange}
+        />
+      </div>
       <WorkflowDeletionNotices
         operations={operations}
         snapshots={snapshots}
@@ -1054,7 +1053,7 @@ export function WorkflowLanding({
       {settledEmpty ? (
         <EmptyState
           icon={<LightningIcon size="1.5rem" aria-hidden="true" />}
-          title={shown ? "No workflows in this channel yet." : "Workflows"}
+          title="Workflows"
           description="Automations that keep your community moving."
           action={
             capability.availability.save && (
@@ -1084,28 +1083,23 @@ export function WorkflowLanding({
             }
           }}
         >
-          {[...visible]
-            .sort(
-              (a, b) =>
-                a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
-            )
-            .map((channel) => (
-              <WorkflowChannelCards
-                capability={capability}
-                channel={channel}
-                detailTarget={detailTarget}
-                key={channel.id}
-                onOpen={onOpen}
-                onDelete={onDelete}
-                onSelect={onSelect}
-                onRun={runRequest}
-                onError={setError}
-                operations={operations}
-                selected={selected}
-                snapshot={snapshots[channel.id]}
-                viewer={viewer}
-              />
-            ))}
+          {visible.map((channel) => (
+            <WorkflowChannelCards
+              capability={capability}
+              channel={channel}
+              detailTarget={detailTarget}
+              key={channel.id}
+              onOpen={onOpen}
+              onDelete={onDelete}
+              onSelect={onSelect}
+              onRun={runRequest}
+              onError={setError}
+              operations={operations}
+              selected={selected}
+              snapshot={snapshots[channel.id]}
+              viewer={viewer}
+            />
+          ))}
         </div>
       )}
       <p

@@ -81,14 +81,12 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       // Zero is the rollout's unknown-start sentinel, not a real time.
       const startedAt = ms(payload.started_at_ms) || undefined;
       const completedAt = ms(payload.completed_at_ms) || undefined;
-      if (startedAt !== undefined) {
-        if (item.type === "tool") {
-          if (completedAt !== undefined) item.completedAt = completedAt;
-          else if (item.completedAt !== undefined)
-            item.completedAt = startedAt + item.completedAt - item.at;
-        }
-        item.at = startedAt;
+      if (item.type === "tool") {
+        if (completedAt !== undefined) item.completedAt = completedAt;
+        else if (startedAt !== undefined && item.completedAt !== undefined)
+          item.completedAt = startedAt + item.completedAt - item.at;
       }
+      if (startedAt !== undefined) item.at = startedAt;
       // There is no parent id in these records. Associate only inside a
       // single unfinished exec; concurrent/ambiguous calls stay independent.
       const parents = [...active].filter(

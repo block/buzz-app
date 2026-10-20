@@ -25,6 +25,7 @@ import {
   WarningCircleIcon,
   WrenchIcon,
 } from "../../shared/design-system/icons/index";
+import { formatFullTimestamp, formatTime } from "../../shared/datetime";
 import styles from "./ActivityTranscript.module.css";
 
 type TurnState = "working" | "unknown" | "ended";
@@ -47,20 +48,7 @@ const STATUS: Record<string, string> = {
   yielded: "Yielded",
 };
 const line = (text: string) => text.split("\n").find(Boolean)?.trim() ?? "";
-const time = (at: number) =>
-  new Date(at).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-const FULL: Intl.DateTimeFormatOptions = {
-  weekday: "long",
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  second: "2-digit",
-};
+const time = (at: number) => formatTime(at / 1000);
 /** An entry's time under it; the turn header already dates the prompt. */
 function Stamp({ item }: { item: TranscriptItem }) {
   if (item.type === "prompt" || !item.at) return null;
@@ -71,7 +59,7 @@ function Stamp({ item }: { item: TranscriptItem }) {
     <time
       className={`text-body-sm ${styles.at}`}
       dateTime={date.toISOString()}
-      title={date.toLocaleString(undefined, FULL)}
+      title={formatFullTimestamp(item.at / 1000)}
     >
       {time(item.at)}
     </time>

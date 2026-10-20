@@ -453,3 +453,27 @@ it("shifts the app-server duration to the recorded start when no finish is recor
     completedAt: 5500,
   });
 });
+
+it.each([
+  ["no", {}],
+  ["a zero", { started_at_ms: 0 }],
+])("uses a recorded finish when the log has %s start", (_, recordedStart) => {
+  const mapped = turns();
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      record("event_msg", {
+        type: "item_completed",
+        turn_id: "turn",
+        ...recordedStart,
+        completed_at_ms: 7000,
+        item: { id: "nested" },
+      }),
+    ].join("\n"),
+  );
+  expect(mapped[0]?.items.find((item) => item.id === "nested")).toMatchObject({
+    at: 1000,
+    completedAt: 7000,
+  });
+});

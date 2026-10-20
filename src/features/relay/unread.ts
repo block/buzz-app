@@ -945,6 +945,7 @@ export function createUnread({
         if (!groups.size) continue;
         const rows = foldMessages(channel.id, "", [...events.values()], {
           includeReplies: true,
+          signingAuthority,
         });
         const content = new Map(rows.map((row) => [row.id, row.content]));
         // A session's top-level row shows its newest message from someone

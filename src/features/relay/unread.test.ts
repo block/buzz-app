@@ -2786,6 +2786,44 @@ it("inbox describes a row by its newest message within the same second", () => {
     });
 });
 
+it("inbox leaves a Solo chat message its attributed author deleted out of the row's preview", () => {
+  const h = setup({}, true, undefined, true);
+  h.grant("chat");
+  h.emit([
+    metadata(h.relay, "chat", "Solo chat", 11, [
+      ["t", "stream"],
+      ["private"],
+      ["t", SOLO_LABEL],
+    ]),
+  ]);
+  const agent = keypair();
+  const deleted = signed(h.relay, {
+    kind: 9,
+    content: "Deleted body",
+    created_at: 21,
+    tags: [
+      ["actor", agent.pubkey],
+      ["h", "chat"],
+    ],
+  });
+  h.emit([
+    message(h.alice, "chat", "Ping", 20, [["p", h.viewer.pubkey]]),
+    deleted,
+    signed(agent, {
+      kind: 9005,
+      content: "",
+      created_at: 22,
+      tags: [
+        ["h", "chat"],
+        ["e", deleted.id],
+      ],
+    }),
+  ]);
+  expect(
+    h.session.unread.inbox().items.find((item) => item.id === "chat:chat"),
+  ).toMatchObject({ preview: "Ping", createdAt: 20 });
+});
+
 it.each([true, false])(
   "inbox leaves a Solo chat root that has its own thread row out of the timeline row's preview (mentioned root: %s)",
   (mentioned) => {

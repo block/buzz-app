@@ -1969,21 +1969,15 @@ it("retains both local drafts across section navigation but retires them with th
       <Settings {...host} cards={cards} communities={communities} />,
     );
     const user = userEvent.setup();
-    await user.click(
-      screen.getByRole("button", { name: "Local settings", exact: true }),
-    );
+    await user.click(screen.getByRole("button", { name: "Local settings" }));
     await user.type(screen.getByLabelText("Display name"), "Unsaved name");
     await user.type(
       screen.getByLabelText("Repositories folder"),
       "/unsaved/repos",
     );
-    await user.click(
-      screen.getByRole("button", { name: "Profile", exact: true }),
-    );
+    await user.click(screen.getByRole("button", { name: "Profile" }));
     expect(screen.queryByRole("region", { name: "Local settings" })).toBeNull();
-    await user.click(
-      screen.getByRole("button", { name: "Local settings", exact: true }),
-    );
+    await user.click(screen.getByRole("button", { name: "Local settings" }));
     expect(screen.getByLabelText("Display name")).toHaveValue("Unsaved name");
     expect(screen.getByLabelText("Repositories folder")).toHaveValue(
       "/unsaved/repos",

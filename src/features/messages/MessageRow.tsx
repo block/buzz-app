@@ -480,21 +480,12 @@ function MessageRowContent({
       channelId={row.channelId}
       target={target}
       onOpen={openLink}
+      onFocusChange={setAvatarFocused}
       trigger={
         <IconButton
           size={layout === "timeline" ? "default" : "sm"}
           shape="round"
           aria-label={`View ${name} profile`}
-          onFocus={() => setAvatarFocused(true)}
-          onBlur={(event) => {
-            // A window blur keeps this element as the browser's return-focus target.
-            if (
-              event.relatedTarget === null &&
-              document.activeElement === event.currentTarget
-            )
-              return;
-            setAvatarFocused(false);
-          }}
           aria-describedby={presence !== "unknown" ? presenceId : undefined}
           onClick={(event) => {
             event.currentTarget.focus();
@@ -672,6 +663,7 @@ function MessageRowContent({
     const remainingWorkingLabel = remainingThreadAgents.length
       ? `${remainingThreadAgents.map(({ pubkey, name }) => resolveName(pubkey, name)).join(", ")} ${threadWaiting ? "waiting" : "working"}`
       : undefined;
+    const activityOnly = !!activity && row.replyCount === 0;
     return (
       ((row.replyCount > 0 ||
         (startsThreads && !row.threadRootId && threadAgents.length > 0) ||
@@ -679,9 +671,10 @@ function MessageRowContent({
         onOpenThread && (
           <Button
             ref={activity?.ref}
-            variant="ghost"
-            size="sm"
+            variant={activityOnly ? "subtle" : "ghost"}
+            size={activityOnly ? "xs" : "sm"}
             data-thread-summary=""
+            data-activity-summary={activityOnly ? "" : undefined}
             data-reply-connector={row.replyCount > 0 || undefined}
             data-first-participant-shape={
               agentPubkeys?.has(row.participants[0] ?? "")
@@ -700,6 +693,7 @@ function MessageRowContent({
             }}
           >
             <ReplySummary
+              hideEmptyLabel={activityOnly}
               count={row.replyCount}
               participants={row.participants}
               profiles={participantProfiles}

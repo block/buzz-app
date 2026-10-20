@@ -11,6 +11,7 @@ import {
   useId,
   cloneElement,
   type ReactElement,
+  type FocusEvent,
 } from "react";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import { AgentAvatar } from "../agents/AgentAvatar";
@@ -31,6 +32,7 @@ type ProfilePeekProps = {
   viewer: string | undefined;
   target: string;
   onOpen(target: string): boolean;
+  onFocusChange?(focused: boolean): void;
 };
 
 /** A lightweight look at the same identity the avatar opens in the profile panel. */
@@ -45,10 +47,27 @@ export function ProfilePeek({
   session,
   channelId,
   viewer,
+  onFocusChange,
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
   const profileButton = useRef<HTMLButtonElement>(null);
   const triggerId = useId();
+  const previewId = useId();
+  const focusRegion = {
+    onFocus: () => onFocusChange?.(true),
+    onBlur: (event: FocusEvent<HTMLElement>) => {
+      const next = event.relatedTarget;
+      // Window blur retains the browser's return-focus target.
+      if (!next && document.activeElement === event.target) return;
+      if (
+        next instanceof Node &&
+        (document.getElementById(triggerId)?.contains(next) ||
+          document.getElementById(previewId)?.contains(next))
+      )
+        return;
+      onFocusChange?.(false);
+    },
+  };
   const presence = usePresenceStatus(
     open ? session?.presence : undefined,
     pubkey,
@@ -68,9 +87,14 @@ export function ProfilePeek({
   });
   return (
     <PreviewCard
-      trigger={cloneElement(trigger as ReactElement<{ id?: string }>, {
-        id: triggerId,
-      })}
+      trigger={cloneElement(
+        trigger as ReactElement<{ id?: string } & typeof focusRegion>,
+        {
+          id: triggerId,
+          ...focusRegion,
+        },
+      )}
+      id={previewId}
       open={open}
       onOpenChange={(next, details) => {
         if (!next && message.opening && details.reason === "trigger-hover") {
@@ -85,7 +109,7 @@ export function ProfilePeek({
       actionRef={profileButton}
       delay={250}
     >
-      <div className={styles.content}>
+      <div className={styles.content} {...focusRegion}>
         <div className={styles.lockup} data-no-picture={!picture || undefined}>
           <div className={styles.backdrop}>
             <ProfileBackdrop src={picture} kind={agent ? "agent" : "human"} />

@@ -118,6 +118,44 @@ it("keeps concurrent calls independent and does not associate a later turn with 
   expect(mapped[0]?.items[2]).not.toHaveProperty("children");
 });
 
+it.each(["yielded", "overlapping"])(
+  "keeps delayed calls independent after %s scripts make ownership uncertain",
+  (ordering) => {
+    const mapped = turns();
+    const firstResult = record("response_item", {
+      type: "custom_tool_call_output",
+      call_id: "a",
+      output: "Script running with cell ID cell-a",
+    });
+    restoreRecordedTools(
+      mapped,
+      [
+        start(),
+        completed("prompt"),
+        record("response_item", call("a")),
+        ...(ordering === "yielded" ? [firstResult] : []),
+        record("response_item", {
+          ...call("b"),
+          input: "text(await tools.clock__curr_time({}));",
+        }),
+        ...(ordering === "overlapping"
+          ? [record("response_item", result("a"))]
+          : []),
+        completed("nested"),
+        record("response_item", result("b")),
+      ].join("\n"),
+    );
+    expect(mapped[0]?.items.map((item) => item.id)).toEqual([
+      "prompt",
+      "a",
+      "b",
+      "nested",
+      "reply",
+    ]);
+    expect(mapped[0]?.items[2]).not.toHaveProperty("children");
+  },
+);
+
 it("retains yielded exec and wait inputs and outputs, including the explicit cell handle", () => {
   const mapped = turns();
   const yielded = {
@@ -156,8 +194,8 @@ it("retains yielded exec and wait inputs and outputs, including the explicit cel
       title: "wait",
       input: wait.arguments,
       output: finished.output,
-      children: [{ id: "nested" }],
     },
+    { id: "nested" },
     { id: "reply" },
   ]);
 });

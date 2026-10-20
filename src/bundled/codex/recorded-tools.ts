@@ -36,10 +36,11 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
         existing: new Map(turn.items.map((item) => [item.id, item])),
         ordered: [] as TranscriptItem[],
         seen: new Set<string>(),
+        ambiguous: false,
       },
     ]),
   );
-  const calls = new Map<string, ToolItem>();
+  const calls = new Map<string, { item: ToolItem; owner: string }>();
   const active = new Map<ToolItem, string>();
   let turnId = "";
   for (const line of file.split("\n")) {
@@ -73,7 +74,8 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       const parents = [...active].filter(
         ([, owner]) => owner === draft.turn.turnId,
       );
-      const parent = parents.length === 1 ? parents[0]?.[0] : undefined;
+      const parent =
+        !draft.ambiguous && parents.length === 1 ? parents[0]?.[0] : undefined;
       if (
         parent &&
         (item.type === "tool" || (item.type === "message" && item.posted))
@@ -91,15 +93,20 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
     ) {
       const found = calls.get(callId);
       if (!found) continue;
-      found.output = output(payload.output);
+      const item = found.item;
+      item.output = output(payload.output);
       // A yielded exec has returned a cell handle, not its final result.
       // Its separately recorded wait calls retain that handle and output.
-      found.status = found.output.includes("Script running with cell ID")
+      item.status = item.output.includes("Script running with cell ID")
         ? "yielded"
         : "completed";
+      // Yielding returns before inner calls finish. Their later events cannot
+      // safely be assigned to a subsequently active script in this turn.
+      const owner = drafts.get(found.owner);
+      if (owner && item.status === "yielded") owner.ambiguous = true;
       const at = Date.parse(str(record.timestamp));
-      if (Number.isFinite(at)) found.completedAt = at;
-      active.delete(found);
+      if (Number.isFinite(at)) item.completedAt = at;
+      active.delete(item);
       continue;
     }
     if (
@@ -132,7 +139,11 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       diffs: [],
       truncated: false,
     };
-    calls.set(callId, item);
+    // Overlap remains ambiguous after one call returns: its completion events
+    // can arrive while another script is the only active call.
+    if ([...active.values()].includes(draft.turn.turnId))
+      draft.ambiguous = true;
+    calls.set(callId, { item, owner: draft.turn.turnId });
     draft.ordered.push(item);
     active.set(item, draft.turn.turnId);
   }

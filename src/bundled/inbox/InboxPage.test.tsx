@@ -3475,6 +3475,18 @@ it("Inbox Solo chat activity with multiple agents requires an explicit recipient
   expect(editor).toHaveValue("Choose someone first");
 });
 
+it("a Solo chat row shows, and is ordered by, a later agent reply that is not Inbox evidence", async () => {
+  const h = fixture({ soloChannel: true, memberAgents: 1 });
+  const progress = message(h.agent, "room", "Agent progress", 30);
+  h.addEvent(progress);
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  act(() => h.emit([progress]));
+  await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
+  expect(rows()[1]).toHaveTextContent("A thread update");
+  expect(screen.queryByText("Please review this")).not.toBeInTheDocument();
+});
+
 it("Inbox keeps an open Solo chat timeline when a late reply regroups its mention", async () => {
   const h = fixture({
     withWriter: true,

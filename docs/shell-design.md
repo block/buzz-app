@@ -398,10 +398,14 @@ On macOS, Cmd+Shift+H focuses the main pane and Cmd+Shift+L the side pane.
 On Windows/Linux, F8 and Shift+F8 cycle between visible panes. Pane focus resumes
 the writable composer directly, falling back to the selected tab for tools without
 a composer. On that tab strip, arrow keys move between tabs and Enter selects one.
+Pane focus also works from the terminal, which captures Tab. When a destination is
+available, Buzz consumes F8/Shift+F8 before terminal input; rebind Focus next pane
+in Settings if a terminal application needs those keys.
 Covered targets, hidden tabs and collapsed panes are skipped. These shortcuts preserve
 drafts and selection and yield to modals and editor-owned key handling.
-Settings → Shortcuts lists Message and the platform's pane focus actions. Each
-action supports a device-local override and reset. F6 retains notification focus.
+Settings → Shortcuts lists Focus message box and the platform's pane focus actions
+(Focus next pane on Windows/Linux). Each action supports a device-local override
+and reset. F6 retains notification focus.
 Browser builds may reserve Cmd/Ctrl+L for the address bar; choose another binding
 in Settings when using Buzz in a browser. Native key delivery is a separate host check.
 On desktop, Cmd+W on macOS or Ctrl+W on Windows/Linux closes the selected

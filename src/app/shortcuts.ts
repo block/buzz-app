@@ -37,7 +37,7 @@ export function registerAppShortcuts(
   const remove = [
     shortcuts.registerHost({
       id: "focus-composer",
-      title: "Message",
+      title: "Focus message box",
       binding: { key: "l", mod: true },
       order: HOST_SHORTCUT_ORDER.focus,
       allowInEditable: true,
@@ -48,7 +48,7 @@ export function registerAppShortcuts(
     ...(apple ? (["main", "side"] as const) : [undefined]).map((pane) =>
       shortcuts.registerHost({
         id: pane ? `focus-${pane}-pane` : "focus-pane",
-        title: pane ? `Focus ${pane} pane` : "Focus",
+        title: pane ? `Focus ${pane} pane` : "Focus next pane",
         binding: pane
           ? {
               key: { main: "h", side: "l" }[pane],

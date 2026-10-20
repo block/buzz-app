@@ -386,13 +386,13 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       ).toEqual(
         apple
           ? [
-              ["focus-composer", "Message"],
+              ["focus-composer", "Focus message box"],
               ["focus-main-pane", "Focus main pane"],
               ["focus-side-pane", "Focus side pane"],
             ]
           : [
-              ["focus-composer", "Message"],
-              ["focus-pane", "Focus"],
+              ["focus-composer", "Focus message box"],
+              ["focus-pane", "Focus next pane"],
             ],
       );
       const chord = {
@@ -434,6 +434,21 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
       const mainKey = apple
         ? { ...paneKey, key: "H" }
         : { ...paneKey, shiftKey: true };
+      // Pane focus is the keyboard escape from xterm, which captures Tab.
+      for (const [key, target] of [
+        [paneKey, apple ? side : main],
+        [mainKey, main],
+      ] as const) {
+        terminal.focus();
+        const event = new KeyboardEvent("keydown", {
+          ...key,
+          bubbles: true,
+          cancelable: true,
+        });
+        expect(forwardTerminalKey(window, event)).toBe(false);
+        expect(event.defaultPrevented).toBe(true);
+        expect(target).toHaveFocus();
+      }
       main.focus();
       if (apple) {
         // Command+arrows retain native line navigation while typing.

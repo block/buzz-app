@@ -2761,11 +2761,21 @@ it("shows the saved teams after a team save agent storage could not write", asyn
   await service.saveTeam({ name: "Crew", instructions: "", members: [bot] });
   failing = true;
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  await expect(
-    service.saveTeam({ name: "Solo", instructions: "", members: [bot] }),
-  ).rejects.toThrow("disk full");
+  const saving = service.saveTeam({
+    name: "Solo",
+    instructions: "",
+    members: [bot],
+  });
+  // A turn started on the unsaved teams, while they were saving.
+  const unsaved = service.find(bot);
+  expect(unsaved?.settings.team).toContain("Solo");
+  await expect(saving).rejects.toThrow("disk full");
   error.mockRestore();
   expect(service.snapshot().teams.map((team) => team.name)).toEqual(["Crew"]);
+  // It can't hand off, and agents run on the saved teams again.
+  expect(service.find(bot)?.epoch).not.toBe(unsaved?.epoch);
+  expect(service.find(bot)?.settings.team).toContain("Crew");
+  expect(service.find(bot)?.settings.team).not.toContain("Solo");
 });
 
 it("saves nothing when native create fails", async () => {

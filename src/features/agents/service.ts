@@ -2602,7 +2602,12 @@ export class AgentsService extends Service implements Agents {
     const shown = this.setTeams(teams);
     if (reached.size) this.update();
     return saving.catch((error: unknown) => {
-      if (this.teamList === shown) this.setTeams(readTeams(this.storage));
+      if (this.teamList === shown) {
+        // Back to the saved teams: what the unsaved ones started is stale.
+        for (const pubkey of reached) this.advance(pubkey);
+        this.setTeams(readTeams(this.storage));
+        if (reached.size) this.update();
+      }
       throw error;
     });
   }

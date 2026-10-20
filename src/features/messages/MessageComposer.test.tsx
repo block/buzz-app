@@ -7911,7 +7911,9 @@ it("recovers an uploaded follow-up instead of queuing it after its chat disappea
     screen.queryByRole("region", { name: "Queued follow-ups" }),
   ).toBeNull();
   expect(h.input()).toHaveValue("@Honey Follow up with attachment");
-  expect(
-    screen.getByRole("button", { name: "Remove notes.txt" }),
-  ).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Remove notes.txt" }),
+    ).toBeVisible(),
+  );
 });

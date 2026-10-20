@@ -51,8 +51,8 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   expect(
     await name.evaluate(
       (element, portrait) =>
-        element.getBoundingClientRect().left >=
-        portrait.getBoundingClientRect().right,
+        element.getBoundingClientRect().top >=
+        portrait.getBoundingClientRect().bottom,
       await portrait.elementHandle(),
     ),
   ).toBe(true);
@@ -144,30 +144,30 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(
     identity.getByRole("button", { name: "Open owner profile: Viewer (you)" }),
   ).toBeVisible();
-  // Existing navigation journey also proves row hover/focus affordances and host toast wiring.
+  // Existing navigation journey also proves keyboard copy and host toast wiring.
   await expect(panel.getByRole("tab", { name: "Memories" })).toHaveCount(0);
   await expect(panel.getByRole("tab", { name: "Runtime" })).toHaveCount(0);
   await expect(
     panel.getByRole("button", { name: /^Copy Agent type:/ }),
   ).toHaveCount(0);
   const nip05 = panel.getByRole("button", { name: /^Copy NIP-05:/ });
-  await expect(nip05).toHaveText("NIP-05pinky@example.test");
-  // Keyboard modality, so :focus-visible reveals the copy affordance.
+  await expect(
+    panel.getByText("pinky@example.test", { exact: true }),
+  ).toBeVisible();
+  await expect(nip05).toHaveText("Copy");
+  // The explicit copy action remains keyboard reachable.
   await nip05.focus();
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Tab");
   await expect(nip05).toBeFocused();
-  await expect(nip05.locator("[data-copied]")).toHaveCSS("opacity", "1");
+  await expect(nip05).toBeVisible();
   await page.evaluate(() => {
     navigator.clipboard.writeText = async (value) =>
       window.profileCopies.push(value);
   });
   await nip05.press("Enter");
   await expect(page.getByText("Copied nip-05", { exact: true })).toBeVisible();
-  await expect(nip05.locator("[data-copied]")).toHaveAttribute(
-    "data-copied",
-    "true",
-  );
+  await expect(nip05).toHaveText("Copied");
   expect(await page.evaluate(() => window.profileCopies.slice(-1))).toEqual([
     "pinky@example.test",
   ]);

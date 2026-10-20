@@ -932,6 +932,12 @@
     padding-inline: var(--space-1);
   }
 
+  /* The painted band includes the outer rim above and excludes the separator
+     below. Center its controls one hairline above the layout box's center. */
+  .panel-header > * {
+    translate: 0 -1px;
+  }
+
   .panel-header::after {
     position: absolute;
     inset-block-end: 0;

@@ -1955,11 +1955,13 @@ test("portraits can be tossed within the stage and return home, with reduced mot
 }) => {
   await page.clock.install();
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.goto(`${origin}/tests/fixtures/huddles.html?playground`);
-  await page.getByRole("button", { name: "Join", exact: true }).press("Enter");
+  await page.goto(`${origin}/tests/fixtures/huddles.html`);
   await page
-    .getByRole("button", { name: "Solo participant", exact: true })
-    .press("Enter");
+    .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
+    .click();
+  await page.evaluate(() =>
+    window.huddleFixture.participants(["ab".repeat(32)]),
+  );
   const stage = page.getByRole("region", { name: "Huddle participants" });
   // Measure the circular layout, not the rotated artwork's rectangular bounding box.
   const portrait = stage.locator("[data-huddle-avatar]");

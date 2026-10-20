@@ -277,27 +277,7 @@ not include their room ID, remain accessible as ordinary channels. A missing or
 failed receipt lookup never removes channel access. Relays without creator
 identity metadata also use this fallback.
 
-## Interactive design playground
-
-With the development server running, open
-`/tests/fixtures/huddles.html?playground`. This mode uses the real message row,
-Huddle card, mini player, window, audio settings, discussion, and composer with
-local simulated services. It never connects a call or sends a message to a relay.
-
-Select **Join** to open the window, then **Huddle chat** to inspect the thread and
-transcript states. The playground controls switch themes, narrow the window,
-enlarge text, populate or empty the thread, and change participants. The scenario
-buttons simulate arrivals, speech, incoming calls, and connection failure.
-**Leave** produces the ended card; **View** opens its saved local conversation.
-**Reset playground** clears the simulation. Audio routing, signing, native window
-behavior, and real two-person calls still require production-app verification.
-
-In the playground, **Simulate me speaking** exercises the solo portrait and respects
-mute. **Simulate Alex speaking** exercises the remote speaker. **Simulate group
-conversation** overlaps up to four participants with staggered speech activity.
-Playground profiles mix colorful generated portraits with the existing photo. Active-card waveform
-bars have a gentle decorative pulse; actual portrait emphasis and compact-player
-levels continue to follow the call’s audio activity.
+## Portrait interactions and controls
 
 Window portraits support temporary drag-and-toss play: direct pointer tracking,
 release momentum, damped wall bounces inside the participant stage, and a spring
@@ -314,9 +294,6 @@ occupy opposite edges of a second row.
 
 Window artwork has a stable per-person tilt within ±10°. Speech gently nudges
 that angle; reduced motion keeps the resting tilt without speech-driven rotation.
-The playground's **People in huddle** selector chooses 1–12 people (including
-you), with **Add person** and **Remove person** for stepping through arrivals and
-departures. These controls share the same simulated roster as the presets.
 
 With four or more participants, the local portrait anchors the center and peers
 form a surrounding ring. The whole composition fits the participant stage’s

@@ -8,13 +8,6 @@ import {
 import { foldMessages } from "../../src/features/relay/fold";
 import { createRoot } from "react-dom/client";
 import { useState, useSyncExternalStore } from "react";
-import { MessageRow } from "../../src/features/messages/MessageRow";
-import {
-  applyStoredColorScheme,
-  useColorScheme,
-} from "../../src/shared/design-system/theme/useColorScheme";
-import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
-import "./huddles-playground.css";
 import { MessageBody } from "../../src/features/conversation/MessageBody";
 import { TargetOpenerProvider } from "../../src/features/conversation/opener";
 import type {
@@ -60,11 +53,7 @@ import type {
 import type { RelayData } from "../../src/features/relay/service";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { Button } from "../../src/shared/design-system/ui/Button";
-import { Select } from "../../src/shared/design-system/ui/Select";
 import "../../src/shared/styles/globals.css";
-
-const playground = new URLSearchParams(location.search).has("playground");
-if (playground) applyStoredColorScheme();
 
 const viewer = "ab".repeat(32),
   peer = "cd".repeat(32);
@@ -77,22 +66,6 @@ const destination = {
 };
 const store = createRelaySession(null);
 const guestKeys = ["de", "ef", "fa", "bc"].map((key) => key.repeat(32));
-const extraGuests = ["01", "02", "03", "04", "05", "06"].map((key) =>
-  key.repeat(32),
-);
-const playgroundPeople = [viewer, peer, ...guestKeys, ...extraGuests];
-function demoPortrait(index: number, name: string) {
-  const colors = [
-    "#dd795c",
-    "#788bd5",
-    "#4f9b83",
-    "#b678b4",
-    "#d29c42",
-    "#4d99b4",
-  ];
-  const color = colors[index % colors.length];
-  return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" fill="${color}"/><circle cx="135" cy="25" r="65" fill="white" opacity=".18"/><circle cx="12" cy="150" r="70" fill="black" opacity=".12"/><text x="80" y="100" text-anchor="middle" fill="white" font-family="system-ui,sans-serif" font-size="64" font-weight="600">${name[0]}</text></svg>`)}`;
-}
 const profiles = new Map<string, Profile>([
   [viewer, { name: "Kenneth" }],
   [
@@ -104,50 +77,11 @@ const profiles = new Map<string, Profile>([
       picture: "https://fixture.example/media/avatar.png",
     },
   ],
-  ...extraGuests.map((key, index): [string, Profile] => [
-    key,
-    {
-      name:
-        ["Morgan", "Casey", "Avery", "Riley", "Jordan", "Drew"][index] ??
-        "Guest",
-    },
-  ]),
   ...guestKeys.map((key, index): [string, Profile] => [
     key,
     { name: ["Sam", "Jo", "Robin", "Taylor"][index] ?? "Guest" },
   ]),
 ]);
-if (playground) {
-  for (const [index, key] of playgroundPeople.entries()) {
-    const profile = profiles.get(key);
-    if (profile && !profile.picture)
-      profile.picture = demoPortrait(index, profile.name ?? "Guest");
-  }
-}
-
-function simulateSpeech(speakers: string[]) {
-  let frames = 0;
-  const speech = setInterval(() => {
-    const snapshot = huddles.snapshot();
-    if (snapshot.phase !== "connected" || frames++ >= 60) {
-      clearInterval(speech);
-      return;
-    }
-    speakers.forEach((speaker, index) => {
-      if (
-        !snapshot.participants.includes(speaker) ||
-        (speaker === viewer && snapshot.muted)
-      )
-        return;
-      // Staggered phrases overlap, with a different cadence for each person.
-      if ((frames + index * 7) % 28 < 20)
-        window.huddleFixture.speak(
-          speaker,
-          0.035 + Math.abs(Math.sin(frames / 3 + index * 2)) * 0.08,
-        );
-    });
-  }, 100);
-}
 const dmId = "00000000-0000-4000-8000-000000000003";
 const channelList = {
   status: "ready" as const,
@@ -218,8 +152,6 @@ let discussionRows: ChannelMessage[] = [
     participants: [],
   },
 ];
-const initialDiscussionRows = discussionRows;
-if (playground) discussionRows = [];
 const discussionListeners = new Set<() => void>();
 const session = {
   ...store.session,
@@ -623,11 +555,6 @@ const cardRegistry: ContributionReader<MessageRenderer> = {
   subscribe: () => () => {},
 };
 function Fixture() {
-  useKeyboardFocusVisibility();
-  const { scheme, toggle } = useColorScheme();
-  const [narrow, setNarrow] = useState(false);
-  const [largeText, setLargeText] = useState(false);
-  const [emptyThread, setEmptyThread] = useState(true);
   useSyncExternalStore(
     (listener) => {
       windowListeners.add(listener);
@@ -652,119 +579,12 @@ function Fixture() {
   const call = useSyncExternalStore(huddles.subscribe, huddles.snapshot);
   return (
     <main
-      className={playground ? "huddle-playground" : undefined}
-      data-narrow={narrow || undefined}
       style={{
         minHeight: "100vh",
         background: "var(--surface-base)",
         padding: 24,
       }}
     >
-      {playground && (
-        <section
-          className="playground-controls"
-          aria-label="Playground controls"
-        >
-          <div>
-            <h1 className="text-heading">Huddles playground</h1>
-            <p className="text-body-sm text-secondary">
-              Real components, simulated calls. Nothing is sent to a community.
-            </p>
-          </div>
-          <div className="playground-actions">
-            <Button onClick={toggle}>
-              {scheme === "dark" ? "Light theme" : "Dark theme"}
-            </Button>
-            <Button aria-pressed={narrow} onClick={() => setNarrow(!narrow)}>
-              Narrow window
-            </Button>
-            <Button
-              aria-pressed={largeText}
-              onClick={() => {
-                setLargeText(!largeText);
-                document.documentElement.style.fontSize = largeText
-                  ? ""
-                  : "125%";
-              }}
-            >
-              Enlarge text
-            </Button>
-            <Button
-              onClick={() => {
-                discussionRows = emptyThread ? initialDiscussionRows : [];
-                setEmptyThread(!emptyThread);
-                for (const listener of discussionListeners) listener();
-              }}
-            >
-              {emptyThread ? "Populate thread" : "Empty thread"}
-            </Button>
-            <Button
-              disabled={call.phase !== "connected"}
-              onClick={() => window.huddleFixture.participants([viewer])}
-            >
-              Solo participant
-            </Button>
-            <Button
-              disabled={call.phase !== "connected"}
-              onClick={() =>
-                window.huddleFixture.participants([viewer, peer, ...guestKeys])
-              }
-            >
-              Group call
-            </Button>
-            <Select
-              label="People in huddle"
-              value={String(call.participants.length || 1)}
-              disabled={call.phase !== "connected"}
-              groups={[
-                {
-                  label: "Including you",
-                  options: playgroundPeople.map((_, index) => ({
-                    value: String(index + 1),
-                    label: `${index + 1} ${index === 0 ? "person" : "people"}`,
-                  })),
-                },
-              ]}
-              onValueChange={(value) =>
-                window.huddleFixture.participants(
-                  playgroundPeople.slice(0, Number(value)),
-                )
-              }
-            />
-            <Button
-              disabled={
-                call.phase !== "connected" ||
-                call.participants.length >= playgroundPeople.length
-              }
-              onClick={() => {
-                const next = playgroundPeople.find(
-                  (key) => !call.participants.includes(key),
-                );
-                if (next)
-                  window.huddleFixture.participants([
-                    ...call.participants,
-                    next,
-                  ]);
-              }}
-            >
-              Add person
-            </Button>
-            <Button
-              disabled={
-                call.phase !== "connected" || call.participants.length <= 1
-              }
-              onClick={() =>
-                window.huddleFixture.participants(
-                  call.participants.slice(0, -1),
-                )
-              }
-            >
-              Remove person
-            </Button>
-            <Button onClick={() => location.reload()}>Reset playground</Button>
-          </div>
-        </section>
-      )}
       <p className="text-caption text-secondary">
         Huddles fixture ·{" "}
         {realAudio ? "local microphone capture" : "simulated call"} · no relay
@@ -810,10 +630,8 @@ function Fixture() {
       {view && (
         <aside
           aria-label="Huddle window preview"
-          className={playground ? "huddle-playground-window" : undefined}
-          data-narrow={narrow || undefined}
           style={{
-            width: playground ? undefined : windowWidth,
+            width: windowWidth,
             maxWidth: "100%",
             height: 560,
             margin: "24px 0",
@@ -859,26 +677,9 @@ function Fixture() {
               return true;
             }}
           >
-            {playground ? (
-              <MessageRow
-                row={message}
-                profile={profiles.get(message.authorId)}
-                viewer={viewer}
-                media={session.media}
-                day={false}
-                retry={undefined}
-                extensions={{ ...composerExtensions, messages: cardRegistry }}
-                canOpenLink={(target) => !!parseHuddleTarget(target)}
-                onOpenLink={(target) => {
-                  setChatTarget(target);
-                  return true;
-                }}
-              />
-            ) : (
-              <MessageBody registry={cardRegistry} message={message}>
-                Huddle started
-              </MessageBody>
-            )}
+            <MessageBody registry={cardRegistry} message={message}>
+              Huddle started
+            </MessageBody>
           </TargetOpenerProvider>
         ))}
         {chatTarget && (
@@ -937,31 +738,27 @@ function Fixture() {
         </Button>
         {call.phase === "connected" && (
           <>
-            {(playground ? [viewer, peer] : [peer]).map((speaker) => (
-              <Button
-                key={speaker}
-                disabled={
-                  !call.participants.includes(speaker) ||
-                  (speaker === viewer && call.muted)
-                }
-                variant="ghost"
-                onClick={() => {
-                  simulateSpeech([speaker]);
-                }}
-              >
-                {speaker === viewer
-                  ? "Simulate me speaking"
-                  : "Simulate Alex speaking"}
-              </Button>
-            ))}
-            {playground && (
-              <Button
-                variant="ghost"
-                onClick={() => simulateSpeech(call.participants.slice(0, 4))}
-              >
-                Simulate group conversation
-              </Button>
-            )}
+            <Button
+              variant="ghost"
+              onClick={() => {
+                let frames = 0;
+                const speech = setInterval(() => {
+                  if (
+                    huddles.snapshot().phase !== "connected" ||
+                    frames++ >= 30
+                  ) {
+                    clearInterval(speech);
+                    return;
+                  }
+                  window.huddleFixture.speak(
+                    peer,
+                    0.035 + Math.abs(Math.sin(frames / 3)) * 0.08,
+                  );
+                }, 100);
+              }}
+            >
+              Simulate Alex speaking
+            </Button>
             <Button
               variant="ghost"
               disabled={guestKeys.every((key) =>

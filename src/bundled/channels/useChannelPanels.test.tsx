@@ -134,6 +134,8 @@ it("opens the host member picker only while the launcher binding is current", as
     subscribe: () => () => {},
     register: () => {},
     resolve: () => panel,
+    requestOpen: () => false,
+    handleOpenRequests: () => () => {},
   };
   function Harness() {
     return useChannelPanels(

@@ -184,6 +184,7 @@ it.each([undefined, false, true])(
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
+    provideApps(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
@@ -322,6 +323,7 @@ it.each([
     const root = new Context();
     const runtime = new PluginRuntime(root, async () => builderlab);
     new HostService(root);
+    provideApps(root);
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);

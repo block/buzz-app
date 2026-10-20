@@ -15,11 +15,18 @@ const json = (status: number, body: unknown): HostResponse => ({
   headers: {},
   body: JSON.stringify(body),
 });
+const contract = (profiles = ["static", "fetch-js"], minimum = "0.2.0") =>
+  json(200, {
+    minimum_client_version: minimum,
+    runtime_info: {
+      supported_runtime_profiles: profiles.map((profile) => ({ profile })),
+    },
+  });
 
 async function setup(responses: HostResponse[], signedIn = true) {
   const session = createOAuthSession(async () => ({
     value: "secret-session",
-    account: { subject: "auth0|owner", email: "" },
+    account: { subject: "auth0|owner", email: "", canUseRemoteAgents: true },
   }));
   if (signedIn) await session.signIn();
   const requests: (HostRequest | HostUpload)[] = [];
@@ -35,6 +42,7 @@ async function setup(responses: HostResponse[], signedIn = true) {
 
 it("plans and reserves a static app with the Builderlab session", async () => {
   const { client, requests } = await setup([
+    contract(),
     json(200, {
       app_id: "demo-1a2b",
       display_name: "Demo",
@@ -49,6 +57,7 @@ it("plans and reserves a static app with the Builderlab session", async () => {
     external_url: "https://demo-1a2b--bpsites.apps.builderlabstaging.xyz/",
   });
   expect(requests).toMatchObject([
+    { url: `${BASE}/v1/agent/contract`, method: "GET" },
     {
       url: `${BASE}/v1/agent/apps/plan`,
       method: "POST",
@@ -59,16 +68,123 @@ it("plans and reserves a static app with the Builderlab session", async () => {
     },
     { url: `${BASE}/v1/agent/apps/demo-1a2b/reserve`, method: "POST" },
   ]);
-  const [plan, reserve] = requests as HostRequest[];
+  const [, plan, reserve] = requests as HostRequest[];
   expect(JSON.parse(plan?.body ?? "")).toEqual({
     name: "Demo",
     runtime_profile: "static",
     client_version: "0.2.0",
   });
   expect(JSON.parse(reserve?.body ?? "")).toEqual({
+    runtime_profile: "static",
     environment: "production",
     name: "Demo",
   });
+});
+
+it("keeps permission failures distinct from expired sign-in", async () => {
+  const { client } = await setup([
+    json(403, {
+      error: {
+        code: "publisher_not_approved",
+        message: "Workspace is not enabled",
+      },
+      next_action: "Ask an owner",
+    }),
+  ]);
+  await expect(client.list()).rejects.toThrow(
+    "Listing apps failed (HTTP 403): publisher_not_approved: Workspace is not enabled: next_action: Ask an owner",
+  );
+});
+
+it("rejects unsupported runtimes and newer minimum clients before mutations", async () => {
+  for (const response of [
+    contract(["fetch-js"]),
+    contract(["static"], "0.3.0"),
+  ]) {
+    const { client, requests } = await setup([response]);
+    await expect(client.create("Demo")).rejects.toThrow(
+      /does not advertise static|requires client 0.3.0/,
+    );
+    expect(requests).toHaveLength(1);
+    expect((requests[0] as HostRequest).method).toBe("GET");
+  }
+});
+
+it("copies the executable plan into reserve and initialize", async () => {
+  const { client, requests } = await setup([
+    contract(["fetch-js"]),
+    json(200, {
+      app_id: "demo",
+      runtime_profile: "fetch-js",
+      environment: "production",
+      initialize: { required: true, recommended: true },
+    }),
+    json(201, { app_id: "demo" }),
+    json(200, { app_id: "demo", external_url: "https://demo.example/" }),
+  ]);
+  await expect(client.create("Demo", "fetch-js")).resolves.toMatchObject({
+    app_id: "demo",
+  });
+  for (const request of requests.slice(2) as HostRequest[])
+    expect(JSON.parse(request.body ?? "")).toMatchObject({
+      runtime_profile: "fetch-js",
+      environment: "production",
+    });
+  expect((requests[3] as HostRequest).timeoutMs).toBe(180_000);
+  expect((requests[2] as HostRequest).timeoutMs).toBeUndefined();
+});
+
+it("refuses incomplete initialization decisions before reserving", async () => {
+  const { client, requests } = await setup([
+    contract(),
+    json(200, { app_id: "demo", initialize: { required: false } }),
+  ]);
+  await expect(client.create("Demo")).rejects.toThrow(
+    /no complete initialization decision/,
+  );
+  expect(requests).toHaveLength(2);
+});
+
+it("preserves the planned app ID when reservation is ambiguous", async () => {
+  const { client } = await setup([
+    contract(),
+    json(200, {
+      app_id: "demo",
+      initialize: { required: false, recommended: false },
+    }),
+    json(502, { error: { message: "upstream unavailable" } }),
+  ]);
+  await expect(client.create("Demo")).rejects.toThrow(
+    /during reserve for app_id=demo.*reservation may already exist/,
+  );
+});
+
+it("preserves the reservation when initialization fails or substitutes an app", async () => {
+  for (const response of [
+    json(503, { error: { message: "rollout failed" } }),
+    json(200, { app_id: "other" }),
+  ]) {
+    const { client } = await setup([
+      contract(),
+      json(200, {
+        app_id: "demo",
+        initialize: { required: true, recommended: false },
+      }),
+      json(201, { app_id: "demo" }),
+      response,
+    ]);
+    await expect(client.create("Demo")).rejects.toThrow(
+      /during initialize for app_id=demo.*inspect or resume/,
+    );
+  }
+});
+
+it("pins readiness to version, deployment and rollout IDs", async () => {
+  const { client, requests } = await setup([json(200, { ready: true })]);
+  await client.ready("demo", "v1", "d1", "r1");
+  expect(requests[0]?.url).toBe(
+    `${BASE}/v1/agent/apps/demo/ready?version_id=v1&deployment_id=d1&rollout_id=r1`,
+  );
 });
 
 it("uploads the artifact to the app's deploy endpoint", async () => {

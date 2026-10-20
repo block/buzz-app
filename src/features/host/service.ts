@@ -8,6 +8,8 @@ export type HostRequest = Readonly<{
   method?: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
   headers?: Readonly<Record<string, string>>;
   body?: string;
+  /** Native deadline in milliseconds, 1–180000. Defaults to 30000. */
+  timeoutMs?: number;
 }>;
 /** A multipart POST of one local `.tar.gz` file in the home directory, with
  * text fields beside it, to an origin the plugin declares. */

@@ -7,6 +7,7 @@ import type { OAuthSession } from "../oauth/session";
 
 /** The Apps protocol `bl` speaks, which the control plane checks. */
 const PROTOCOL = "0.2.0";
+export type RuntimeProfile = "static" | "fetch-js";
 export const SIGN_IN =
   "Ask your owner to sign in to Builderlab at Settings → Integrations → Builderlab, then try again.";
 
@@ -43,7 +44,7 @@ export function createAppsClient(
     } catch {
       // A failure without JSON still reports its status.
     }
-    if (response.status === 401 || response.status === 403)
+    if (response.status === 401)
       throw new Error(
         `Builderlab refused the sign-in for ${what} (HTTP ${response.status}). ${SIGN_IN}`,
       );
@@ -81,50 +82,106 @@ export function createAppsClient(
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
+      ...(path.endsWith("/initialize") ? { timeoutMs: 180_000 } : {}),
     });
     return answer(secret, response, what);
   };
   const app = (id: string, resource = "") =>
     `/v1/agent/apps/${encodeURIComponent(id)}${resource && `/${resource}`}`;
+  const contract = async () => {
+    const result = await call("GET", "/v1/agent/contract", "Reading contract");
+    const minimum = text(result.minimum_client_version);
+    if (!minimum || !/^\d+\.\d+\.\d+$/.test(minimum))
+      throw new Error("Apps Platform returned no valid minimum_client_version");
+    const current = PROTOCOL.split(".").map(Number);
+    const required = minimum.split(".").map(Number);
+    const difference = current
+      .map((part, i) => part - (required[i] ?? 0))
+      .find((part) => part !== 0);
+    if (difference !== undefined && difference < 0)
+      throw new Error(
+        `Apps Platform requires client ${minimum}; update Buzz before creating or deploying apps`,
+      );
+    return result;
+  };
 
   return {
+    contract,
     list: () => call("GET", "/v1/agent/apps?scope=owned", "Listing apps"),
-    /** Plans and reserves a new static app, as `bl apps create` does. */
-    async create(name: string) {
+    /** Plans and reserves the exact runtime advertised by this tenant. */
+    async create(name: string, profile: RuntimeProfile = "static") {
+      const secret = credential();
+      const info = object((await contract()).runtime_info);
+      const profiles = info.supported_runtime_profiles;
+      if (
+        !Array.isArray(profiles) ||
+        !profiles.some((item) => object(item).profile === profile)
+      )
+        throw new Error(
+          `This Apps Platform does not advertise ${profile}; read apps_contract and select a supported runtime`,
+        );
       const plan = await call("POST", "/v1/agent/apps/plan", "Planning", {
         name,
-        runtime_profile: "static",
+        runtime_profile: profile,
         client_version: PROTOCOL,
       });
       const id = text(plan.app_id);
       if (!id) throw new Error("Apps Platform planned no app_id");
+      // Older servers omit runtime_profile in the plan. Repeat our explicit
+      // choice rather than letting reserve pick an executable default.
+      if (text(plan.runtime_profile) && plan.runtime_profile !== profile)
+        throw new Error(
+          "Apps Platform planned a different runtime; no app was reserved",
+        );
+      const initialize = object(plan.initialize);
+      if (
+        typeof initialize.required !== "boolean" ||
+        typeof initialize.recommended !== "boolean"
+      )
+        throw new Error(
+          "Apps Platform returned no complete initialization decision; no app was reserved",
+        );
       // The reservation repeats what the plan settled.
-      const request: Json = {};
+      const request: Json = { runtime_profile: profile };
       for (const field of ["environment", "persistence", "runtime_class"])
         if (text(plan[field])) request[field] = plan[field];
       if (text(plan.display_name)) request.name = plan.display_name;
-      const reserved = await call(
-        "POST",
-        app(id, "reserve"),
-        "Reserving",
-        request,
-      );
-      if (reserved.app_id !== id)
-        throw new Error(
-          `Apps Platform reserved ${String(reserved.app_id)}, not the planned ${id}`,
+      let step = "reserve";
+      try {
+        const reserved = await call(
+          "POST",
+          app(id, "reserve"),
+          "Reserving",
+          request,
         );
-      const initialize = object(plan.initialize);
-      const initialized =
-        initialize.required === true || initialize.recommended === true
-          ? await call("POST", app(id, "initialize"), "Initializing", request)
-          : undefined;
-      return {
-        app_id: id,
-        external_url:
-          text(initialized?.external_url) ??
-          text(reserved.external_url) ??
-          text(plan.external_url),
-      };
+        if (reserved.app_id !== id)
+          throw new Error(
+            `Apps Platform reserved ${String(reserved.app_id)}, not the planned ${id}`,
+          );
+        step = "initialize";
+        const initialized =
+          initialize.required === true || initialize.recommended === true
+            ? await call("POST", app(id, "initialize"), "Initializing", request)
+            : undefined;
+        if (initialized && initialized.app_id !== id)
+          throw new Error("Apps Platform initialized a different app_id");
+        return {
+          app_id: id,
+          external_url:
+            text(initialized?.external_url) ??
+            text(reserved.external_url) ??
+            text(plan.external_url),
+        };
+      } catch (error) {
+        const detail =
+          error instanceof Error ? error.message : "Request failed";
+        throw new Error(
+          `Create stopped during ${step} for app_id=${id}: ${detail}. The reservation may already exist; inspect or resume this exact app before creating a replacement.`.replaceAll(
+            secret,
+            "[redacted]",
+          ),
+        );
+      }
     },
     /** Uploads `artifact` as the app's next version. */
     async deploy(id: string, artifact: string) {
@@ -142,10 +199,15 @@ export function createAppsClient(
       });
       return answer(secret, response, "Deploying") as Json;
     },
-    ready: (id: string, version: string) =>
+    ready: (
+      id: string,
+      version: string,
+      deployment?: string,
+      rollout?: string,
+    ) =>
       call(
         "GET",
-        `${app(id, "ready")}?version_id=${encodeURIComponent(version)}`,
+        `${app(id, "ready")}?${new URLSearchParams({ version_id: version, ...(deployment ? { deployment_id: deployment } : {}), ...(rollout ? { rollout_id: rollout } : {}) })}`,
         "Checking readiness",
       ),
     /** Lets a Builderlab workspace's members view the app, as `bl apps share

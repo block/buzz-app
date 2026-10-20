@@ -956,9 +956,16 @@ origin without changing the renderer CSP. URLs must use a declared origin; redir
 are not followed and cookies are not forwarded. Requests accept up to 1 MiB of text
 body and 8 KiB of headers; responses return status, up to 64 headers totaling
 16 KiB (excluding `Set-Cookie`), and up to 16 MiB of UTF-8 body. The full request
-has a 30-second deadline. Browser calls cannot use these native operations.
+defaults to a 30-second deadline; `timeoutMs` may select 1–180000 milliseconds
+for long operations such as Apps initialization. Archive uploads have a
+180-second deadline. Browser calls cannot use these native operations.
 Existing bundled GitHub requests retain their first-party renderer fetch and CSP
 entry.
+
+`host.upload` sends a multipart archive to a declared origin. It reads one absolute
+regular `.tar.gz` file under home, up to 100 MiB. This is local-file access in
+addition to ordinary network requests. The archive suffix and path checks are
+guardrails for trusted plugins, not a sandbox or a content classification check.
 
 New-install review lists declarations. Update review compares against the installed
 revision and leads with added, changed and removed declarations; changed commands and

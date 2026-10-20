@@ -1,17 +1,21 @@
 // Builderlab Apps for local agents: tools that create, deploy and share a
-// static web app with the plugin's Builderlab sign-in, and a side panel that
+// web app with the plugin's Builderlab sign-in, and a side panel that
 // shows a deployed app in Buzz's browser view.
 import { createElement } from "react";
 import type { PluginModule } from "../../../plugins/api";
 import type { PanelProps } from "../../../features/panels/service";
 import type { OAuthSession } from "../oauth/session";
-import { createAppsClient } from "./client";
+import { createAppsClient, type RuntimeProfile } from "./client";
 import { appName, controlPlane, isAppUrl } from "./environment";
 
 type Ctx = Parameters<PluginModule["apply"]>[0];
 /** How long `apps_deploy` waits for the new version to serve. */
-const READY_WAIT_MS = 90_000;
-const READY_POLL_MS = 3_000;
+const READY_WAIT_MS = 120_000;
+const READY_POLL_MS = 500;
+const positive = (value: unknown, fallback: number) =>
+  typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : fallback;
 
 const string = (args: Record<string, unknown>, name: string) => {
   const value = args[name];
@@ -23,13 +27,12 @@ const string = (args: Record<string, unknown>, name: string) => {
  * rejected. */
 const COMPATIBILITY_DATE = "2026-08-14";
 
-const DEPLOY_RECIPE = `Deploy a static web app: plain HTML, CSS and JavaScript, or a framework's exported build. Steps:
-1. apps_create once per app, which returns its app_id and URL.
-2. In a build directory, put the site under public/ (public/index.html is the entry) and write hotpod.manifest.json beside it:
-{"schema":"hotpod.manifest.v1","app":{"app_id":"<app_id>"},"version":{"version_id":null,"compatibility_date":"${COMPATIBILITY_DATE}"},"runtime":{"profile":"static","root":"public","not_found_handling":"404"}}
+const DEPLOY_RECIPE = `Deploy a Builderlab app. Read apps_contract before choosing a runtime; creating apps requires the signed-in workspace's Builderlab access (including the server's bb-public early-preview gate). Steps:
+1. apps_create once per app, selecting static or fetch-js from the contract. Preserve its app_id and returned manifest.
+2. Write the returned manifest as hotpod.manifest.json at the build directory root. For static, put the built site in public/index.html. For fetch-js, write the returned assets_manifest as assets-manifest.json and implement server/index.mjs with a default-exported { async fetch(request, env, ctx) { return new Response("..."); } } handler; its imports must all be in the archive. The returned ASSETS and HOTPOD bindings are required. Do not add hosted tool capabilities in this workflow.
 3. Package it with the manifest at the archive root: tar -C <build-dir> -czf <build-dir>/../artifact.tar.gz .
 4. Call this with the archive's absolute path; it must be in your owner's home directory.
-It returns once the new version serves, or says it is not ready yet. Redeploy the same app_id after changes; a validation error names what to fix in the archive.`;
+It returns the version/deployment IDs once accepted, even if readiness checking fails. Use apps_status for that exact version; do not redeploy to retry readiness. Redeploy the same app_id after source changes; a validation error names what to fix in the archive.`;
 
 export function applyApps(ctx: Ctx, session: OAuthSession) {
   ctx.panels.register({
@@ -52,31 +55,77 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
   const apps = createAppsClient(ctx.host, session, base);
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
+    name: "apps_contract",
+    description:
+      "Read this tenant's Apps Platform contract, supported runtimes, schema location, client requirements and readiness policy before building. This does not grant app or workspace access.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    call: async () => reply(await apps.contract()),
+  });
+  ctx.agents.addTool({
     name: "apps_create",
     description:
-      "Create a new Builderlab app: a static web app your owner's Builderlab workspace can view. Returns its app_id, URL and the hotpod.manifest.json to deploy it with; then follow apps_deploy. Create once per app, not per deploy.",
+      "Create a new Builderlab app in your owner's authorized workspace. Read apps_contract first, then choose static or fetch-js. Returns the exact app_id, URL and manifest; then follow apps_deploy. Create once per app, not per deploy. If creation partially fails, preserve its app_id and inspect/resume it rather than creating a replacement.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "A short display name." },
+        runtime_profile: {
+          type: "string",
+          enum: ["static", "fetch-js"],
+          description:
+            "A runtime advertised by apps_contract. Defaults to static.",
+        },
       },
       required: ["name"],
       additionalProperties: false,
     },
     async call(_client, _context, args) {
-      const created = await apps.create(string(args, "name"));
+      const profile = (args.runtime_profile ?? "static") as RuntimeProfile;
+      if (profile !== "static" && profile !== "fetch-js")
+        throw new Error("runtime_profile must be static or fetch-js");
+      const created = await apps.create(string(args, "name"), profile);
       return reply({
         ...created,
         manifest: {
           schema: "hotpod.manifest.v1",
           app: { app_id: created.app_id },
           version: { version_id: null, compatibility_date: COMPATIBILITY_DATE },
-          runtime: {
-            profile: "static",
-            root: "public",
-            not_found_handling: "404",
-          },
+          ...(profile === "static"
+            ? {
+                runtime: {
+                  profile: "static",
+                  root: "public",
+                  not_found_handling: "404",
+                },
+              }
+            : {
+                runtime: { profile, entrypoint: "server/index.mjs" },
+                assets: {
+                  binding: "ASSETS",
+                  manifest_path: "assets-manifest.json",
+                },
+                bindings: [
+                  {
+                    name: "ASSETS",
+                    type: "static_assets",
+                    resource_ref: "local-artifact",
+                    permissions: ["read"],
+                  },
+                  {
+                    name: "HOTPOD",
+                    type: "runtime_metadata",
+                    permissions: ["read"],
+                  },
+                ],
+              }),
         },
+        ...(profile === "fetch-js"
+          ? { assets_manifest: { schema: "hotpod.assets.v1", assets: [] } }
+          : {}),
       });
     },
   });
@@ -97,29 +146,93 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
     },
     async call(_client, _context, args) {
       const id = string(args, "app_id");
+      const contract = await apps.contract();
+      const policy = contract.readiness as Record<string, unknown> | undefined;
       const deployed = await apps.deploy(id, string(args, "artifact"));
       const version =
         typeof deployed.version_id === "string" ? deployed.version_id : "";
       const result = {
         app_id: id,
         version_id: version,
+        deployment_id: deployed.deployment_id,
+        rollout_id: deployed.rollout_id,
         external_url: deployed.external_url,
       };
       if (!version) return reply({ ...result, ready: false, deployed });
-      const until = Date.now() + READY_WAIT_MS;
+      const until =
+        Date.now() + positive(policy?.default_timeout_ms, READY_WAIT_MS);
       for (;;) {
-        const ready = await apps.ready(id, version);
-        if (ready.ready === true) return reply({ ...result, ready: true });
-        if (Date.now() >= until)
+        let ready: Record<string, unknown>;
+        try {
+          ready = await apps.ready(
+            id,
+            version,
+            typeof result.deployment_id === "string"
+              ? result.deployment_id
+              : undefined,
+            typeof result.rollout_id === "string"
+              ? result.rollout_id
+              : undefined,
+          );
+        } catch (error) {
           return reply({
             ...result,
             ready: false,
-            note: "Deployed but not serving yet. Wait a minute before opening it; do not redeploy for this.",
+            readiness_error:
+              error instanceof Error
+                ? error.message
+                : "Readiness request failed",
+            note: "Deployment was accepted. Check this exact version with apps_status; do not redeploy to retry readiness.",
+          });
+        }
+        if (ready.ready === true) return reply({ ...result, ready: true });
+        if (
+          (Array.isArray(policy?.terminal_statuses) &&
+            policy.terminal_statuses.includes(ready.status)) ||
+          ready.status === "callback_timeout" ||
+          Date.now() >= until
+        )
+          return reply({
+            ...result,
+            ready: false,
+            note: "Deployment was accepted but is not ready. Inspect readiness diagnostics and check this exact version with apps_status; do not redeploy to retry readiness.",
             readiness: ready,
           });
-        await new Promise((resolve) => setTimeout(resolve, READY_POLL_MS));
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            positive(policy?.default_interval_ms, READY_POLL_MS),
+          ),
+        );
       }
     },
+  });
+  ctx.agents.addTool({
+    name: "apps_status",
+    description:
+      "Check an accepted deployment's exact version without creating or deploying anything. Use after a readiness timeout or error.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app_id: { type: "string" },
+        version_id: { type: "string" },
+        deployment_id: { type: "string" },
+        rollout_id: { type: "string" },
+      },
+      required: ["app_id", "version_id"],
+      additionalProperties: false,
+    },
+    call: async (_client, _context, args) =>
+      reply(
+        await apps.ready(
+          string(args, "app_id"),
+          string(args, "version_id"),
+          typeof args.deployment_id === "string"
+            ? args.deployment_id
+            : undefined,
+          typeof args.rollout_id === "string" ? args.rollout_id : undefined,
+        ),
+      ),
   });
   ctx.agents.addTool({
     name: "apps_list",

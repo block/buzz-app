@@ -29,6 +29,15 @@ pub(crate) struct HostRequest {
     #[serde(default)]
     headers: BTreeMap<String, String>,
     body: Option<String>,
+    timeout_ms: Option<u64>,
+}
+
+fn request_deadline(timeout_ms: Option<u64>) -> Result<Duration, String> {
+    match timeout_ms {
+        None => Ok(DEADLINE),
+        Some(value @ 1..=180_000) => Ok(Duration::from_millis(value)),
+        Some(_) => Err("Host request timeout must be between 1 and 180000 milliseconds".into()),
+    }
 }
 
 fn default_method() -> String {
@@ -73,6 +82,7 @@ pub(crate) async fn plugin_host_request(
     revision: String,
     request: HostRequest,
 ) -> Result<HostResponse, String> {
+    let deadline = request_deadline(request.timeout_ms)?;
     let (url, method, headers) = validate_request(&request)?;
     let operation = async {
         let grants = with_manager(manager, move |manager| manager.host_grants(&id, &revision))
@@ -81,9 +91,9 @@ pub(crate) async fn plugin_host_request(
         if !allows_origin(&grants, &url) {
             return Err("Host request origin is not declared".into());
         }
-        send_request(url, method, headers, request.body).await
+        send_request(url, method, headers, request.body, deadline).await
     };
-    tokio::time::timeout(DEADLINE, operation)
+    tokio::time::timeout(deadline, operation)
         .await
         .map_err(|_| "Host request timed out")?
 }
@@ -103,6 +113,7 @@ pub(crate) async fn plugin_host_upload(
         method: "POST".into(),
         headers: upload.headers.clone(),
         body: None,
+        timeout_ms: None,
     })?;
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let path = upload_path(&upload.file.path, home.as_deref())?;
@@ -279,10 +290,11 @@ async fn send_request(
     method: reqwest::Method,
     headers: HeaderMap,
     body: Option<String>,
+    deadline: Duration,
 ) -> Result<HostResponse, String> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(DEADLINE)
+        .timeout(deadline)
         .build()
         .map_err(|_| "Host request client is unavailable")?;
     let mut request = client.request(method, url).headers(headers);
@@ -359,7 +371,25 @@ mod tests {
             method: "POST".into(),
             headers: BTreeMap::new(),
             body: Some("{}".into()),
+            timeout_ms: None,
         }
+    }
+
+    #[test]
+    fn bounds_explicit_request_deadlines_and_keeps_the_default() {
+        assert_eq!(request_deadline(None).unwrap(), Duration::from_secs(30));
+        assert_eq!(
+            request_deadline(Some(180_000)).unwrap(),
+            Duration::from_secs(180)
+        );
+        assert!(request_deadline(Some(0)).is_err());
+        assert!(request_deadline(Some(180_001)).is_err());
+        let parsed: HostRequest =
+            serde_json::from_str(r#"{"url":"https://example.test/","timeoutMs":180000}"#).unwrap();
+        assert_eq!(
+            request_deadline(parsed.timeout_ms).unwrap(),
+            Duration::from_secs(180)
+        );
     }
 
     #[test]
@@ -526,6 +556,7 @@ mod tests {
             reqwest::Method::POST,
             HeaderMap::new(),
             Some("{}".into()),
+            DEADLINE,
         )
         .await
         .unwrap();
@@ -549,7 +580,8 @@ mod tests {
         .into_bytes();
         response.extend(body);
         let (url, server) = local_response(response);
-        let result = send_request(url, reqwest::Method::POST, HeaderMap::new(), None).await;
+        let result =
+            send_request(url, reqwest::Method::POST, HeaderMap::new(), None, DEADLINE).await;
         server.join().unwrap();
         assert_eq!(result.err().as_deref(), Some("Host response is too large"));
     }
@@ -562,7 +594,8 @@ mod tests {
         }
         response.extend(b"\r\n");
         let (url, server) = local_response(response);
-        let result = send_request(url, reqwest::Method::POST, HeaderMap::new(), None).await;
+        let result =
+            send_request(url, reqwest::Method::POST, HeaderMap::new(), None, DEADLINE).await;
         server.join().unwrap();
         assert_eq!(
             result.err().as_deref(),

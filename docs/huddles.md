@@ -164,12 +164,14 @@ opens the saved Huddle conversation in a side panel. Archived rooms remain
 read-only. The display is bounded to the latest 200 visible messages (excluding membership and Huddle notices) and says when history
 is limited; it does not delete earlier messages.
 
-New rooms carry a parent marker in their relay-owned metadata. Marked rooms stay
+New rooms carry a parent marker in their signed creation record. Verified rooms stay
 out of ordinary sidebar destinations; destinations without metadata are withheld
 until they can be classified, preventing temporary unnamed room rows. The discussion reader verifies that
-marker before reading or sending. Older trial rooms named `Huddle` or
+marker before reading or sending. Older trial rooms named exactly
 `huddle-<first eight room-ID characters>` are also hidden when relay-signed metadata
 identifies them as private, expiring streams. Names alone never hide a channel.
+This legacy presentation rule does not establish a parent relationship; an ordinary
+channel configured with that same name, visibility and lifetime is also hidden.
 This only changes presentation: membership and messages remain intact. Unmarked
 rooms can open when one of the latest 500 relay-signed join/leave/end events in
 the parent identifies that exact room. User-authored cards and room names do not

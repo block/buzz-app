@@ -104,36 +104,59 @@ test("button titles use the shared hint while preserving refs and activation", a
   expect(button).toHaveAccessibleName("Send");
 });
 
-test("pending dialogs reject outside click, close and Escape, then allow dismissal once released", async () => {
-  const user = userEvent.setup();
-  const change = vi.fn();
-  const content = (pending: boolean) => (
-    <Dialog
-      open
-      onOpenChange={change}
-      preventClose={pending}
-      title="Edit notes"
-    >
+test.each(["dialog", "alertdialog"] as const)(
+  "pending %s rejects outside click, close and Escape, then allows dismissal once released",
+  async (role) => {
+    const user = userEvent.setup();
+    const change = vi.fn();
+    const fields = (
       <Field label="Name">
         <Input />
       </Field>
-    </Dialog>
-  );
-  const view = render(content(true));
-  expect(screen.getByRole("dialog", { name: "Edit notes" })).toBeVisible();
-  expect(screen.getByRole("dialog", { name: "Edit notes" })).toHaveAttribute(
-    "aria-modal",
-    "true",
-  );
-  expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
-  await user.click(document.querySelector(".buzz-dialog-backdrop") as Element);
-  await user.click(screen.getByRole("textbox", { name: "Name" }));
-  await user.keyboard("{Escape}");
-  expect(change).not.toHaveBeenCalled();
-  view.rerender(content(false));
-  await user.keyboard("{Escape}");
-  expect(change).toHaveBeenCalledWith(false);
-});
+    );
+    const content = (pending: boolean) =>
+      role === "dialog" ? (
+        <Dialog
+          open
+          onOpenChange={change}
+          preventClose={pending}
+          title="Edit notes"
+        >
+          {fields}
+        </Dialog>
+      ) : (
+        <AlertDialog
+          title="Edit notes"
+          description="Confirm your changes."
+          pending={pending}
+          onClose={() => change(false)}
+          actions={<Button>Save</Button>}
+        >
+          {fields}
+        </AlertDialog>
+      );
+    const view = render(content(true));
+    expect(screen.getByRole(role, { name: "Edit notes" })).toBeVisible();
+    expect(screen.getByRole(role, { name: "Edit notes" })).toHaveAttribute(
+      "aria-modal",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(
+      document.querySelector(".buzz-dialog-backdrop") as Element,
+    );
+    await user.click(screen.getByRole("textbox", { name: "Name" }));
+    await user.keyboard("{Escape}");
+    expect(change).not.toHaveBeenCalled();
+    view.rerender(content(false));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(change).toHaveBeenCalledWith(false);
+    change.mockClear();
+    await user.keyboard("{Escape}");
+    expect(change).toHaveBeenCalledWith(false);
+  },
+);
 
 test("dialog close button closes the controlled frame", async () => {
   const user = userEvent.setup();

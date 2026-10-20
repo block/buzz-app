@@ -235,6 +235,7 @@ export function NewWorkspaceDialog({
   const input = useRef<HTMLInputElement>(null);
   return (
     <Dialog
+      size="compact"
       open
       onOpenChange={(open) => {
         if (!open) close();

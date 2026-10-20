@@ -1,4 +1,6 @@
 import { AlertDialog as BaseAlertDialog } from "@base-ui/react/alert-dialog";
+import { XIcon } from "../icons";
+import { IconButton } from "./IconButton";
 import { useModalWindowDrag } from "./ModalWindowDrag";
 import type { ComponentProps, ReactNode } from "react";
 
@@ -39,20 +41,44 @@ export function AlertDialog({
           onLostPointerCapture={windowDrag.onLostPointerCapture}
           data-buzz-ui=""
           className="buzz-dialog-backdrop"
+          data-motion="default"
         />
         <BaseAlertDialog.Popup
           data-buzz-ui=""
-          className="buzz-dialog"
+          className="buzz-dialog gap-0"
+          data-size="compact"
+          data-height="content"
+          data-motion="default"
           aria-modal="true"
           finalFocus={finalFocus}
         >
-          <BaseAlertDialog.Title className="text-heading">
-            {title}
-          </BaseAlertDialog.Title>
-          <BaseAlertDialog.Description className="buzz-dialog-description">
-            {description}
-          </BaseAlertDialog.Description>
-          {children}
+          <header className="buzz-dialog-header">
+            <div className="buzz-dialog-heading">
+              <BaseAlertDialog.Title className="text-label">
+                {title}
+              </BaseAlertDialog.Title>
+              <BaseAlertDialog.Description className="buzz-dialog-description">
+                {description}
+              </BaseAlertDialog.Description>
+            </div>
+            <BaseAlertDialog.Close
+              render={
+                <IconButton
+                  aria-label="Close"
+                  variant="subtle"
+                  size="compact"
+                  disabled={pending}
+                  icon={<XIcon size={16} aria-hidden="true" />}
+                />
+              }
+              disabled={pending}
+            />
+          </header>
+          {children && (
+            <div className="buzz-dialog-body buzz-dialog-content flex flex-col gap-4">
+              {children}
+            </div>
+          )}
           <div className="buzz-dialog-actions">{actions}</div>
         </BaseAlertDialog.Popup>
       </BaseAlertDialog.Portal>

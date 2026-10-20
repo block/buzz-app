@@ -1173,8 +1173,8 @@ export class AgentsService extends Service implements Agents {
       },
       interrupted: {
         read: () => readInterrupted(this.storage),
-        write: (turns) => {
-          void writeInterrupted(this.storage, turns).catch((error) =>
+        write: (pubkey, turns) => {
+          void writeInterrupted(this.storage, pubkey, turns).catch((error) =>
             console.warn("Agent turns in progress were not saved", error),
           );
         },
@@ -3033,7 +3033,10 @@ export class AgentsService extends Service implements Agents {
       new Map(this.types().map((type) => [type.key, type])),
     );
     const left = this.runners.interrupted();
-    const interrupted = running.filter((agent) => left.has(agent.pubkey));
+    // Only the copy that holds an agent may resume or forget its turns.
+    const interrupted = running.filter(
+      (agent) => left.has(agent.pubkey) && this.runners.runs(agent.pubkey),
+    );
     const same = (next: readonly Agent[], prior: readonly Agent[]) =>
       next.length === prior.length &&
       next.every((agent, index) => agent === prior[index]);

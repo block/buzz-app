@@ -180,7 +180,7 @@ process status, so a stopped agent is as selectable as a running one.
 Claude and Codex (`AgentType.resumes`) run their turns in the page, so closing or
 reloading the app stops them; the native host then sends no exit for them. The
 runner keeps each mention turn working then in agent storage
-(`buzz.agents.interrupted.v1`) until it settles. On the next start Agents lists
+(`buzz.agents.interrupted.v1:<pubkey>`) until it settles. On the next start Agents lists
 those agents as `interrupted` and `InterruptedNotice` asks the owner: **Resume**
 reads each mention again and gives it to `run` marked `resumed`, which tells the
 agent to carry on in its saved session; **Don’t resume** forgets them. Either

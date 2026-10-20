@@ -4418,10 +4418,8 @@ describe("a turn closing or reloading the app stopped", () => {
       message(author, channel, "Birch, go on", nowSeconds(), [["p", sibling]]),
     );
     const storage = memoryStorage() as AgentStore;
-    await writeInterrupted(storage, {
-      [bot]: { [asked.id]: channel },
-      [sibling]: { [other.id]: channel },
-    });
+    await writeInterrupted(storage, bot, { [asked.id]: channel });
+    await writeInterrupted(storage, sibling, { [other.id]: channel });
     const birch = {
       ...echo,
       pubkey: sibling,
@@ -4487,19 +4485,87 @@ describe("a turn closing or reloading the app stopped", () => {
     }
   });
 
-  it("is forgotten when another copy of the app holds the agent", async () => {
+  it("is left to the copy of the app that holds the agent", async () => {
     const asked = mention();
-    const second = await setup({
+    const other = await setup({
       storage: await stopped(asked),
       identities: [echo],
       resumes: true,
       history: [asked],
     });
     await settle();
-    second.native.claim.mockResolvedValue(false);
-    second.service.resumeInterrupted();
-    await vi.waitFor(() => expect(readInterrupted(second.storage)).toEqual({}));
-    expect(second.run).not.toHaveBeenCalled();
+    other.native.claim.mockResolvedValue(false);
+    const claims = other.native.claim.mock.calls.length;
+    other.connect(false);
+    other.connect(true);
+    await vi.waitFor(() =>
+      expect(other.native.claim.mock.calls.length).toBeGreaterThan(claims),
+    );
+    await settle();
+    expect(other.service.snapshot().interrupted).toEqual([]);
+    other.service.dismissInterrupted();
+    other.service.resumeInterrupted();
+    await settle();
+    expect(other.run).not.toHaveBeenCalled();
+    expect(readInterrupted(other.storage)).toEqual({
+      [bot]: { [asked.id]: channel },
+    });
+  });
+
+  it("saves each agent's turns apart, so another program's agents keep theirs", async () => {
+    const storage = memoryStorage() as AgentStore;
+    const birch = { ...echo, pubkey: sibling, name: "Birch" };
+    const ours = await setup({ storage, identities: [echo], resumes: true });
+    const theirs = await setup({ storage, identities: [birch], resumes: true });
+    theirs.run.mockImplementation(({ workingUntil }) =>
+      workingUntil(working()),
+    );
+    const asked = eventDto(
+      message(author, channel, "Birch, go on", nowSeconds(), [["p", sibling]]),
+    );
+    theirs.emit({ events: [asked], channelId: channel });
+    await vi.waitFor(() => expect(theirs.run).toHaveBeenCalledOnce());
+    let finish = () => {};
+    ours.run.mockImplementation(({ workingUntil }) =>
+      workingUntil(new Promise<void>((resolve) => (finish = resolve))),
+    );
+    ours.emit({ events: [mention()], channelId: channel });
+    await vi.waitFor(() => expect(ours.run).toHaveBeenCalledOnce());
+    finish();
+    await settle();
+    expect(readInterrupted(storage)).toEqual({
+      [sibling]: { [asked.id]: channel },
+    });
+  });
+
+  it("resumes an agent's saved mentions oldest first", async () => {
+    const older = eventDto(
+      message(author, channel, "Echo, do X", nowSeconds() - 1, [["p", bot]]),
+    );
+    const newer = eventDto(
+      message(author, channel, "Echo, do Y instead", nowSeconds(), [
+        ["p", bot],
+      ]),
+    );
+    const storage = memoryStorage() as AgentStore;
+    await writeInterrupted(storage, bot, {
+      [newer.id]: channel,
+      [older.id]: channel,
+    });
+    // The relay answers newest first.
+    const app = await setup({
+      storage,
+      identities: [echo],
+      resumes: true,
+      history: [newer, older],
+    });
+    await settle();
+    app.service.resumeInterrupted();
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(2));
+    expect(resumedOf(app.run)).toEqual([
+      "Echo, do X (resumed)",
+      "Echo, do Y instead (resumed)",
+    ]);
   });
 
   it("is not saved for a type that does not resume", async () => {

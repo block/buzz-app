@@ -327,8 +327,8 @@ export type RunnerHost = {
   /** Mention turns working when the page went away, as saved. */
   interrupted: {
     read(): Interrupted;
-    /** Throws when storage refuses it. */
-    write(turns: Interrupted): void;
+    /** Saves the agent's turns. Throws when storage refuses it. */
+    write(pubkey: string, turns: Readonly<Record<string, string>>): void;
   };
   /** The partition its community's activity is kept under, while live. */
   scope(agent: Agent): string | undefined;
@@ -458,7 +458,7 @@ export class AgentRunners {
   dismissInterrupted(pubkeys: readonly string[]) {
     for (const pubkey of pubkeys) {
       const { [pubkey]: turns, ...rest } = this.left;
-      if (!turns) continue;
+      if (!turns || !this.runs(pubkey)) continue;
       this.unmark(pubkey, Object.keys(turns));
       this.left = rest;
     }
@@ -638,7 +638,7 @@ export class AgentRunners {
     this.passes.get(runner.pubkey)?.controller.abort();
     this.passes.delete(runner.pubkey);
     this.host.activity.clear(undefined, runner.pubkey);
-    this.dropMentions(runner);
+    this.dropMentions(runner, true);
     this.dropWatchWork(runner);
     runner.held.clear();
     runner.backlog.length = 0;
@@ -977,7 +977,13 @@ export class AgentRunners {
         (events) => {
           // A turn's own run forgets it when it settles.
           const kept = new Set<string>();
-          for (const event of events.filter(hasEventProof) as RelayEvent[]) {
+          // Oldest first, as they were sent: a later correction stays last.
+          const proven = (events.filter(hasEventProof) as RelayEvent[]).sort(
+            (a, b) =>
+              a.created_at - b.created_at ||
+              (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+          );
+          for (const event of proven) {
             const channel = left[event.id];
             if (channel === undefined) continue;
             if (!this.hasSeen(runner, event.id, channelOf(event)))
@@ -1005,7 +1011,7 @@ export class AgentRunners {
   }
   /** Saves the mention `id` as working, in `channel` or "" without one. */
   private mark(pubkey: string, id: string, channel: string) {
-    this.saveTurns({
+    this.saveTurns(pubkey, {
       ...this.turns,
       [pubkey]: { ...this.turns[pubkey], [id]: channel },
     });
@@ -1016,13 +1022,15 @@ export class AgentRunners {
       Object.entries(turns).filter(([id]) => !ids.includes(id)),
     );
     this.saveTurns(
+      pubkey,
       Object.keys(kept).length ? { ...rest, [pubkey]: kept } : rest,
     );
   }
-  private saveTurns(turns: Interrupted) {
+  /** Saves `pubkey`'s turns only: another program may run the others. */
+  private saveTurns(pubkey: string, turns: Interrupted) {
     this.turns = turns;
     try {
-      this.host.interrupted.write(turns);
+      this.host.interrupted.write(pubkey, turns[pubkey] ?? {});
     } catch (error) {
       console.warn("Agent turns in progress were not saved", error);
     }
@@ -1789,13 +1797,14 @@ export class AgentRunners {
     void this.drain(runner);
     return true;
   }
-  /** Drops the queued mentions, forgetting the resumed ones saved as working. */
-  private dropMentions(runner: Runner) {
+  /** Drops the queued mentions. `forget` forgets the resumed ones saved as
+   * working too; otherwise they stay saved for the copy that runs the agent. */
+  private dropMentions(runner: Runner, forget = false) {
     const resumed = runner.queues.mention.flatMap(({ trigger }) =>
       trigger.type === "mention" && trigger.resumed ? [trigger.event.id] : [],
     );
     runner.queues.mention.length = 0;
-    if (resumed.length) this.unmark(runner.pubkey, resumed);
+    if (forget && resumed.length) this.unmark(runner.pubkey, resumed);
   }
 
   private showWork(runner: Runner, job: Job) {

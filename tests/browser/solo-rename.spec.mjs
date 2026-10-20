@@ -317,12 +317,65 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
     release();
     await expect(work).toHaveAttribute("aria-expanded", "false");
     await expect(input(page)).toHaveCount(0);
+    await expect(row(page, beta)).toBeFocused();
     await row(page, beta).dblclick();
     await expect(input(page)).toHaveValue("Beta");
     await input(page).press("Escape");
     await work.click();
     await expect(row(page, alpha)).toContainText("Saved through collapse");
     expect(app.report.detailsPublications).toHaveLength(1);
+    await page.unroute("**/api/relay/**/channel-details-sign");
+    await page.route("**/api/relay/**/channel-details-sign", (route) =>
+      route.fulfill({ json: {} }),
+    );
+    for (const cancellation of ["Escape", "Cancel rename"]) {
+      await row(page, alpha).dblclick();
+      await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+      await input(page).fill("Retain until cancelled");
+      await input(page).press("Enter");
+      await expect(sidebar(page).getByRole("alert")).toBeVisible();
+      await work.click();
+      await expect(work).toHaveAttribute("aria-expanded", "true");
+      await input(page).focus();
+      if (cancellation === "Escape") await input(page).press("Escape");
+      else
+        await sidebar(page)
+          .getByRole("button", { name: cancellation, exact: true })
+          .click();
+      // Wait for the closing transition's actual unmount, not just aria-expanded.
+      await expect(row(page, alpha)).toHaveCount(0);
+      await expect(work).toBeFocused();
+      await work.click();
+      await expect(row(page, alpha)).toBeVisible();
+    }
+    await page.unroute("**/api/relay/**/channel-details-sign");
+    let finishSave;
+    let startSave;
+    const pendingSave = new Promise((resolve) => {
+      finishSave = resolve;
+    });
+    const saveStarted = new Promise((resolve) => {
+      startSave = resolve;
+    });
+    await page.route("**/api/relay/**/channel-details-sign", async (route) => {
+      startSave();
+      await pendingSave;
+      await route.continue();
+    });
+    try {
+      await row(page, alpha).dblclick();
+      await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+      await input(page).fill("Focused save through collapse");
+      await input(page).press("Enter");
+      await saveStarted;
+      await work.click();
+      await input(page).focus();
+      finishSave();
+      await expect(row(page, alpha)).toHaveCount(0);
+      await expect(work).toBeFocused();
+    } finally {
+      finishSave();
+    }
   } finally {
     release();
   }

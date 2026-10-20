@@ -123,11 +123,20 @@ export function SoloWorkspaces({
   const [rowFocus, setRowFocus] = useState<string>();
   useLayoutEffect(() => {
     if (!rowFocus) return;
+    const project =
+      snapshot.data?.sections.find(
+        (section) => section.id === snapshot.data?.assignments[rowFocus],
+      )?.id ?? "";
+    // Resolve against current visibility when focus is restored, including when
+    // collapse was requested after the asynchronous save began.
+    const target = collapsed.includes(project)
+      ? `project-${project}`
+      : rowFocus;
     document
-      .querySelector<HTMLElement>(`[data-solo-menu-id="${rowFocus}"] button`)
+      .querySelector<HTMLElement>(`[data-solo-menu-id="${target}"] button`)
       ?.focus({ preventScroll: true });
     setRowFocus(undefined);
-  }, [rowFocus]);
+  }, [rowFocus, collapsed, snapshot.data]);
   const [creatingFor, setCreatingFor] = useState<ChatListItem>();
   const [settingsFor, setSettingsFor] = useState<{
     id: string;
@@ -584,7 +593,7 @@ function ChatActionsMenu({
     false;
   if (!enabled)
     return (
-      <div className={className}>
+      <div className={className} data-solo-menu-id={id}>
         {children}
         {trailing}
       </div>

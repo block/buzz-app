@@ -20,6 +20,7 @@ import {
   type AddedTool,
   addedKey,
   callSessionTool,
+  sessionHint,
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
@@ -862,8 +863,14 @@ export class CodexRuntime {
     const reads = this.reads(request.agent.pubkey);
     if (reads?.scope !== request.scope)
       throw new Error("The community changed");
-    return conversationHistory(request.event, request.conversation, (filters) =>
-      reads.read(filters, signal),
+    // A chat its owner is still creating has nothing earlier to read.
+    const starting = (await reads.channel(request.conversation.channelId))
+      ?.starting;
+    return conversationHistory(
+      request.event,
+      request.conversation,
+      (filters) =>
+        starting ? Promise.resolve([]) : reads.read(filters, signal),
     );
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
@@ -1352,15 +1359,19 @@ function follow(
     },
   };
 }
-/** The Buzz tools, with those plugins add, that a new thread gets. */
+/** The Buzz tools, with those plugins add, that a new thread gets. Codex
+ * keeps a deferred tool from the model until its tool search finds it. Every
+ * model in Codex's catalog has tool search (supports_search_tool); one
+ * without it would not see deferred tools. */
 const dynamicTools = (added: readonly AddedTool[]) => [
   {
     type: "namespace",
     name: "buzz",
-    description: "Read and act in Buzz as this agent.",
-    tools: sessionTools(added).map((tool) => ({
+    description: sessionHint(added),
+    tools: sessionTools(added).map(({ load, ...tool }) => ({
       type: "function",
       ...tool,
+      ...(load === "search" ? { deferLoading: true } : {}),
     })),
   },
 ];

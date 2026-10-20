@@ -348,8 +348,9 @@ test.describe("Members on an unsupported Solo chat destination", () => {
       name: "Channel members",
       exact: true,
     });
+    // As in a channel, the exact message opens in its thread.
     const row = page
-      .getByRole("region", { name: "Selected chat message", exact: true })
+      .getByRole("region", { name: "Thread messages", exact: true })
       .locator(`[data-message-id="${target.messageId}"]`);
     await expect(row).toBeFocused();
     await expect(dialog).toHaveCount(0);

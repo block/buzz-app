@@ -160,6 +160,7 @@ function setup(
     classifierKey: "missing",
     agents: saved,
     running: saved,
+    interrupted: [],
     teams: [],
   };
   const listeners = new Set<() => void>();
@@ -358,6 +359,8 @@ function setup(
       for (const listener of listeners) listener();
     }),
     storage: localStore(),
+    resumeInterrupted: vi.fn(),
+    dismissInterrupted: vi.fn(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

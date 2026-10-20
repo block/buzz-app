@@ -2040,9 +2040,10 @@
   }
   /* A compact choice ellipsizes its value, so a long one, such as a model
    * name, takes at most 60% of the row and the title keeps its words. Fixed
-   * controls, such as pickers and swatches, keep their full width. */
+   * controls, such as pickers and swatches, and trailings that only contain
+   * a choice beside other content keep their full width. */
   .buzz-preference-row:has(
-    > .buzz-preference-row-trailing .buzz-select[data-variant="compact"]
+    > .buzz-preference-row-trailing > .buzz-select[data-variant="compact"]
   ) {
     --preference-row-trailing: fit-content(60%);
   }

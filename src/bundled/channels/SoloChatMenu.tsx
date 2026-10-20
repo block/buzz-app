@@ -81,9 +81,11 @@ export function SoloChatMenuItems({
   const grouped = groups.some((group) => group.id === assigned);
   // Archived chats keep only what still applies, including Unarchive.
   const active = !channel.archived;
+  const readable = session.unread.sync().capability === "frontier-sync";
+  const renameable = canEditLifetime(session, channel);
   return (
     <>
-      {session.unread.sync().capability === "frontier-sync" && (
+      {readable && (
         <ChannelReadMenuItem
           unread={session.unread}
           channelId={channel.id}
@@ -113,7 +115,7 @@ export function SoloChatMenuItems({
           Share
         </MenuItem>
       )}
-      {canEditLifetime(session, channel) && (
+      {renameable && (
         <MenuItem onClick={onRename}>
           <MenuIcon>
             <PencilSimpleIcon size={16} />
@@ -134,7 +136,7 @@ export function SoloChatMenuItems({
           {conversionLabel(session, channel.id)}
         </MenuItem>
       )}
-      <MenuSeparator />
+      {(readable || active || renameable) && <MenuSeparator />}
       {active && (
         <MenuSubmenu>
           <MenuSubmenuTrigger disabled={!preferences.writable}>

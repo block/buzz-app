@@ -53,7 +53,9 @@ export function QueuedFollowUps({
         {entries.map((entry) => (
           <li key={entry.id} className={styles.row}>
             <div className={styles.content}>
-              <p className={styles.preview}>{entry.text || "Attachment"}</p>
+              <p className={`text-caption ${styles.preview}`}>
+                {entry.text || "Attachment"}
+              </p>
               {entry.error && (
                 <p role="alert" className="text-body-sm text-danger">
                   {entry.error}

@@ -44,9 +44,6 @@
   min-width: 0;
 }
 .preview {
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
   color: var(--text-standard);
   margin: 0;
   overflow-wrap: anywhere;

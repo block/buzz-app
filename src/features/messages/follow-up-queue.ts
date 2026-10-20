@@ -223,7 +223,8 @@ function createQueue(session: RelaySession) {
         listeners.delete(listener);
       };
     },
-    submit(entry: Omit<Entry, "id">) {
+    /** `validated` means the caller checked recipients just now; only a later release revalidates. */
+    submit(entry: Omit<Entry, "id">, validated = false) {
       // Upload completion can arrive after the removal notification, even before
       // this queue exists. Reject before allocating a slot so upload recovery runs.
       if (
@@ -237,7 +238,7 @@ function createQueue(session: RelaySession) {
         throw new Error("This chat is no longer available for sending.");
       watch();
       if (
-        !entry.beforeRelease &&
+        (validated || !entry.beforeRelease) &&
         !blockers(entry.channelId) &&
         !entries.some((item) => item.channelId === entry.channelId)
       )

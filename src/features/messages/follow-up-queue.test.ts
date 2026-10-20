@@ -94,10 +94,13 @@ function fixture(extra: Partial<RelaySession> = {}) {
 
 it("sends idle messages immediately and holds rapid follow-ups through the start gap", () => {
   const h = fixture(),
-    first = h.entry("first"),
+    first = { ...h.entry("first"), beforeRelease: vi.fn(async () => {}) },
     second = h.entry("second"),
     third = h.entry("third");
-  expect(h.queue.submit(first)).toBe("first");
+  // Freshly validated idle sends never flash a queued row or revalidate.
+  expect(h.queue.submit(first, true)).toBe("first");
+  expect(first.beforeRelease).not.toHaveBeenCalled();
+  expect(h.queue.snapshot()).toEqual([]);
   h.queue.submit(second);
   h.queue.submit(third);
   expect(second.publish).not.toHaveBeenCalled();

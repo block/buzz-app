@@ -1434,25 +1434,31 @@ function Composer({
               )
             : sender.messages.send(channelId, content, recipients, uploaded);
       }
-      const publish = (uploaded: readonly UploadedAttachment[]) =>
+      const publish = (
+        uploaded: readonly UploadedAttachment[],
+        validated = false,
+      ) =>
         queueFollowUp && host
-          ? followUpQueue(host).submit({
-              channelId,
-              text: content,
-              recipients,
-              beforeRelease: async () => {
-                const channel =
-                  await session.channelWrites.refreshMembership(channelId);
-                if (recipients.some((key) => !channel.members?.includes(key)))
-                  throw new Error(
-                    "A queued recipient is no longer a member of this chat.",
-                  );
+          ? followUpQueue(host).submit(
+              {
+                channelId,
+                text: content,
+                recipients,
+                beforeRelease: async () => {
+                  const channel =
+                    await session.channelWrites.refreshMembership(channelId);
+                  if (recipients.some((key) => !channel.members?.includes(key)))
+                    throw new Error(
+                      "A queued recipient is no longer a member of this chat.",
+                    );
+                },
+                publish: () => publishNow(uploaded, host),
+                onSend: (id) => {
+                  if (live.current) onSend?.(id);
+                },
               },
-              publish: () => publishNow(uploaded, host),
-              onSend: (id) => {
-                if (live.current) onSend?.(id);
-              },
-            })
+              validated,
+            )
           : publishNow(uploaded, session);
       let id: string | undefined;
       if (capturedAttachments.length && !fullSession(session)) {
@@ -1540,7 +1546,8 @@ function Composer({
           attachments.store,
         );
       } else {
-        const result = publish([]);
+        // prepareRecipients just refreshed membership; nothing awaited since.
+        const result = publish([], true);
         if (typeof result !== "string") setSending(true);
         id = typeof result === "string" ? result : await result;
       }

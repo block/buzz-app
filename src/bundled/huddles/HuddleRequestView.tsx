@@ -1,10 +1,10 @@
+import { HuddleMinimizeIcon } from "./HuddleMinimizeIcon";
 import type { useHuddleRequestFocus } from "./useHuddleRequestFocus";
 import { HuddleAvatarMotion } from "./HuddleAvatarMotion";
 import type { HuddleAction, HuddleView } from "../../features/huddle/window";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { ArrowsInSimpleIcon } from "../../shared/design-system/icons";
 import styles from "./Huddles.module.css";
 
 export function HuddleRequestView({
@@ -28,11 +28,11 @@ export function HuddleRequestView({
       <header className={styles.windowHeader}>
         <div className={styles.windowMinimize}>
           <IconButton
-            size="large"
-            variant="subtle"
+            size="toolbar"
+            variant="ghost"
             aria-label="Minimize Huddle request"
             onClick={() => act("minimize")}
-            icon={<ArrowsInSimpleIcon size={22} />}
+            icon={<HuddleMinimizeIcon size={16} />}
           />
         </div>
       </header>

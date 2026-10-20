@@ -55,17 +55,25 @@ New arrivals slide
 and scale into the front of the stack; reduced motion removes that movement. The
 latest four avatars remain visible, with a matching avatar showing the count for other participants. Click the
 waveform or avatars once connected to open the
-separate Huddle window. The window borrows mobile’s avatar-cloud layout: you are centered alone, then
-move left as other participants gather on the right. Up to ten peers use the
-mobile-inspired cluster’s varied avatar sizes, with an overflow count for larger calls.
-Names appear on hover or keyboard focus. Nearby portraits shift aside for the
-active name capsule, then settle back when it closes. Only one name is shown
+separate Huddle window. You are centered alone; in two- and three-person calls,
+you move left as peers gather on the right in a mobile-inspired cluster. With
+four or more participants, you anchor the center of a surrounding peer ring.
+Up to ten peers appear, with an overflow count for larger calls.
+Names appear on hover or keyboard focus. In small calls, nearby portraits shift
+aside for the active name capsule, then settle back when it closes. In the ring,
+names sit inside portraits without moving neighbors. Only one name is shown
 at a time; reduced motion makes the layout change immediate.
-A soft halo around each speaker eases between audio levels with a restrained expansion,
+An organic, softly blurred halo around each speaker eases between audio levels with a restrained expansion,
 responding to their own microphone or received audio,
 then fades after speech stops. The window uses these halos instead of a footer
-waveform; the compact player keeps its waveform. Muting clears only your halo.
-Arrivals fade and scale in; reduced motion removes those transitions. Closing that window or navigating to another conversation
+waveform; the compact player keeps its waveform. Photo halos reuse the avatar artwork;
+initials use the neutral tint of the fallback avatar. The shape gently changes while
+speaking and stays still with reduced motion. Muting clears only your halo.
+Window portraits fill the stage: solo artwork can reach 320px; duets use roughly
+42% of the stage width per portrait, and groups retain a tightly packed cloud of
+varied sizes. Portraits gently grow with their audio level.
+Arrivals fade in with a slight rotation and a spring that overshoots before settling.
+Reduced motion removes the rotation, scale, and speaker growth. Closing that window or navigating to another conversation
 keeps audio connected. Leave releases the microphone and closes the companion.
 Native call completion also retires it after a renderer reload/crash. The companion
 has no identity, signing or microphone permissions. Failed companion updates also report their error in the main app toast stack,
@@ -86,8 +94,8 @@ conversation/community changes. Microphone capture still requires an explicit cl
 
 ## Audio settings
 
-The gear beside the compact microphone (before the Leave divider) and the matching
-button opposite minimize in the companion open the same Audio settings popover.
+The gear beside the compact microphone (before the Leave divider) and the
+ghost button at the companion’s bottom left open the same Audio settings popover.
 Choose a microphone or speakers, or follow the system default. Choices apply to the
 current call and update both views; changing the microphone preserves mute. Device
 lists refresh when hardware changes and whenever the popover opens. If switching
@@ -143,7 +151,10 @@ to send and Shift+Enter for a new line. The detached window sends typed requests
 through a per-room capability to the main app, which retains upload preparation,
 membership checks, signing, and outbox admission. GIF discovery and search also
 run through this owner, using its community and the enabled emoji contribution;
-the companion has no direct relay HTTP permission. The tabs stay above the scrolling content. Thread uses
+the companion has no direct relay HTTP permission. The tabs stay above the scrolling content. Discussion opening uses the shared
+PanelDock curve; closing finishes before requesting the native window resize.
+Reopening interrupts the exit. Keyboard and reduced-motion toggles are immediate.
+The regular composer owns its inset without extra huddle-wrapper padding. Thread uses
 the existing relay session for message history, sending, and failed-message
 Retry/Discard. Closing this panel or minimizing the window does not end audio or
 cancel an accepted message delivery. Text drafts survive tab changes and reopening. Attachment drafts survive tab changes,
@@ -265,3 +276,52 @@ Rooms without that evidence, including legacy Huddles whose creation events did
 not include their room ID, remain accessible as ordinary channels. A missing or
 failed receipt lookup never removes channel access. Relays without creator
 identity metadata also use this fallback.
+
+## Interactive design playground
+
+With the development server running, open
+`/tests/fixtures/huddles.html?playground`. This mode uses the real message row,
+Huddle card, mini player, window, audio settings, discussion, and composer with
+local simulated services. It never connects a call or sends a message to a relay.
+
+Select **Join** to open the window, then **Huddle chat** to inspect the thread and
+transcript states. The playground controls switch themes, narrow the window,
+enlarge text, populate or empty the thread, and change participants. The scenario
+buttons simulate arrivals, speech, incoming calls, and connection failure.
+**Leave** produces the ended card; **View** opens its saved local conversation.
+**Reset playground** clears the simulation. Audio routing, signing, native window
+behavior, and real two-person calls still require production-app verification.
+
+In the playground, **Simulate me speaking** exercises the solo portrait and respects
+mute. **Simulate Alex speaking** exercises the remote speaker. **Simulate group
+conversation** overlaps up to four participants with staggered speech activity.
+Playground profiles mix colorful generated portraits with the existing photo. Active-card waveform
+bars have a gentle decorative pulse; actual portrait emphasis and compact-player
+levels continue to follow the call’s audio activity.
+
+Window portraits support temporary drag-and-toss play: direct pointer tracking,
+release momentum, damped wall bounces inside the participant stage, and a spring
+back to their current layout positions, with a firm return and restrained rebounds. Re-grabbing interrupts the throw;
+resizing clears displacement. Reduced motion keeps dragging but returns portraits
+immediately on release. None of this changes participant order or call state.
+
+The connected window's bottom bar keeps mute, chat, and leave centered. Audio
+settings sits at the left padded edge and minimize at the right, vertically
+aligned with the main controls. Both are large ghost buttons with matching 22px
+icons in the secondary text color. When the call area cannot fit all five
+controls, the main controls stay centered on the first row and settings/minimize
+occupy opposite edges of a second row.
+
+Window artwork has a stable per-person tilt within ±10°. Speech gently nudges
+that angle; reduced motion keeps the resting tilt without speech-driven rotation.
+The playground's **People in huddle** selector chooses 1–12 people (including
+you), with **Add person** and **Remove person** for stepping through arrivals and
+departures. These controls share the same simulated roster as the presets.
+
+With four or more participants, the local portrait anchors the center and peers
+form a surrounding ring. The whole composition fits the participant stage’s
+width and height, with space reserved for speech emphasis and names. Dense calls
+reduce peer diameters to preserve separation; the existing overflow indicator
+remains. Solo, duet, and three-person calls retain their small-call arrangement.
+Names in the centered layout reveal inside the portrait’s lower edge without
+moving the group or covering neighboring portraits.

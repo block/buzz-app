@@ -65,6 +65,7 @@
   color: var(--text-secondary);
 }
 .window {
+  container: huddle-call / inline-size;
   height: 100%;
   min-height: 0;
   display: flex;
@@ -75,19 +76,14 @@
 }
 .windowHeader {
   min-height: 1.75rem;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  justify-content: flex-end;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   text-align: center;
 }
-.windowSettings {
-  grid-area: 1 / 1;
-  justify-self: start;
-}
 .windowMinimize {
-  grid-area: 1 / 1;
-  justify-self: end;
+  display: flex;
 }
 .windowFooter {
   display: flex;
@@ -99,6 +95,18 @@
 .windowControls {
   display: flex;
   gap: var(--space-3);
+}
+.windowControlBar {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+}
+.windowControlBar > :first-child {
+  justify-self: start;
+}
+.windowControlBar > :last-child {
+  justify-self: end;
 }
 .windowLayout {
   display: flex;
@@ -230,15 +238,21 @@
   position: absolute;
   left: 0;
   top: 50%;
-  width: clamp(48px, min(20cqw, 55cqh), 100px);
+  width: min(72cqw, 78cqh, 320px);
   transform: translate(calc(50cqw - 50%), -50%);
-  transition: transform var(--duration-settle) var(--easing-enter);
+  transition:
+    transform var(--duration-settle) var(--easing-enter),
+    width var(--duration-settle) var(--easing-enter);
 }
 .avatarStage[data-has-peers="true"] .selfBubble {
+  width: min(34cqw, 70cqh, 200px);
   transform: translate(
     calc(17cqw - 50% + var(--cloud-shift-x, 0px)),
     calc(-50% + var(--cloud-shift-y, 0px))
   );
+}
+.avatarStage[data-duet="true"] .selfBubble {
+  width: min(42cqw, 70cqh, 240px);
 }
 .remoteCloud {
   position: absolute;
@@ -268,7 +282,9 @@
     calc(-50% + var(--bubble-x)),
     calc(-50% + var(--bubble-y))
   );
-  transition: transform var(--duration-settle) var(--easing-enter);
+  transition:
+    transform var(--duration-settle) var(--easing-enter),
+    width var(--duration-settle) var(--easing-enter);
 }
 .bubbleArtwork {
   position: relative;
@@ -277,7 +293,7 @@
   width: 100%;
   aspect-ratio: 1;
   opacity: 1;
-  transform: scale(1);
+  transform: scale(var(--voice-scale, 1));
   transition:
     opacity var(--duration-state) var(--easing-enter),
     transform var(--duration-settle) var(--easing-enter);
@@ -294,8 +310,11 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  border-radius: var(--radius-pill);
+  /* Organic artwork mask, not a control or surface corner. */
+  border-radius: 43% 57% 62% 38% / 55% 38% 62% 45%;
   background: var(--affordance-selected);
+  overflow: hidden;
+  filter: blur(8px);
   opacity: 0;
   transform: scale(1);
   transition:
@@ -303,8 +322,27 @@
     transform 280ms var(--easing-settle);
 }
 .speakingHalo[data-speaking="true"] {
-  opacity: 1;
+  opacity: 0.8;
   transform: scale(var(--speaker-scale));
+}
+.speakingArtwork {
+  position: absolute;
+  inset: -25%;
+  display: grid;
+  filter: blur(8px);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .speakingHalo[data-speaking="true"] {
+    animation: speaking-shape 2400ms ease-in-out infinite alternate;
+  }
+}
+@keyframes speaking-shape {
+  from {
+    border-radius: 43% 57% 62% 38% / 55% 38% 62% 45%;
+  }
+  to {
+    border-radius: 60% 40% 42% 58% / 42% 59% 41% 58%;
+  }
 }
 .bubbleName {
   pointer-events: none;
@@ -329,12 +367,6 @@
 .avatarStage [data-name-active="true"] .bubbleName {
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
-}
-@starting-style {
-  .bubbleArtwork {
-    opacity: 0;
-    transform: scale(0.95);
-  }
 }
 .cloudOverflow {
   display: grid;
@@ -438,4 +470,87 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.windowDiscussionBody {
+  height: 100%;
+  min-height: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bubbleArtwork {
+    transform: none;
+  }
+}
+html[data-keyboard-input] :is(.selfBubble, .cloudBubble, .bubbleName) {
+  transition: none;
+}
+
+@starting-style {
+  .bubbleArtwork {
+    opacity: 0;
+  }
+}
+
+.avatarToss {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  isolation: isolate;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.avatarToss:active {
+  cursor: grabbing;
+}
+.avatarToss img {
+  pointer-events: none;
+}
+.avatarToss > .speakingHalo {
+  z-index: -1;
+}
+.avatarForeground:has([data-avatar-moving]) {
+  z-index: 2;
+}
+
+/* Larger calls share one fitted composition around the local participant. */
+.avatarStage[data-centered] .selfBubble {
+  width: var(--self-size);
+  transform: translate(calc(50cqw - 50%), -50%);
+}
+.avatarStage[data-centered] .remoteCloud {
+  width: 100%;
+  transform: translateY(-50%);
+}
+.avatarStage[data-centered] [data-name-active="true"] {
+  z-index: 3;
+}
+.avatarStage[data-centered] .bubbleName {
+  top: auto;
+  bottom: 8%;
+  max-width: 90%;
+  transform: translate(-50%, 0) scale(0.95);
+}
+.avatarStage[data-centered] [data-name-active="true"] .bubbleName {
+  transform: translate(-50%, 0) scale(1);
+}
+
+@container huddle-call (max-width: 18rem) {
+  .windowControlBar {
+    row-gap: var(--space-2);
+  }
+  .windowControls {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    justify-self: center;
+  }
+  .windowControlBar > :first-child {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .windowControlBar > :last-child {
+    grid-column: 3;
+    grid-row: 2;
+  }
 }

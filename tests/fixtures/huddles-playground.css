@@ -1,0 +1,66 @@
+.huddle-playground {
+  color: var(--text-primary);
+}
+.playground-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-block-end: var(--space-6);
+}
+.playground-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.huddle-playground > [aria-label="Conversation"] {
+  padding: var(--space-4);
+  border-radius: var(--radius-panel);
+}
+.huddle-playground > [aria-label="Huddle window preview"] {
+  border-radius: var(--radius-panel);
+}
+
+/* The browser preview animates the resize supplied by the native host. Keep
+   its reveal in step with PanelDock so the participant stage does not jump. */
+.huddle-playground-window {
+  width: 520px;
+  transition: width var(--duration-panel-enter) var(--easing-enter);
+}
+.huddle-playground-window [data-panel-dock] {
+  transition-property: width, transform, opacity;
+}
+.huddle-playground-window [data-panel-dock][data-closing] {
+  width: 0;
+}
+.huddle-playground-window:has([data-panel-dock][data-closing]):not(
+  [data-narrow]
+) {
+  width: 520px;
+  transition-duration: var(--duration-fast);
+}
+@starting-style {
+  .huddle-playground-window [data-panel-dock] {
+    width: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .huddle-playground-window,
+  .huddle-playground-window [data-panel-dock] {
+    transition: none;
+  }
+}
+html[data-keyboard-input] .huddle-playground-window {
+  transition: none;
+}
+
+.huddle-playground-window:has([data-chat]):not(:has([data-closing])):not(
+  [data-narrow]
+) {
+  width: 880px;
+}
+.huddle-playground-window[data-narrow] {
+  width: 680px;
+}
+.huddle-playground-window [aria-label="Huddle chat panel"] {
+  width: 360px;
+}

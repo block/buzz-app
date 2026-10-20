@@ -664,9 +664,12 @@ function MessageRowContent({
         onOpenThread && (
           <Button
             ref={activity?.ref}
-            variant="ghost"
-            size="sm"
+            variant={activity && row.replyCount === 0 ? "subtle" : "ghost"}
+            size={activity && row.replyCount === 0 ? "xs" : "sm"}
             data-thread-summary=""
+            data-activity-summary={
+              activity && row.replyCount === 0 ? "" : undefined
+            }
             data-reply-connector={row.replyCount > 0 || undefined}
             data-first-participant-shape={
               agentPubkeys?.has(row.participants[0] ?? "")
@@ -685,6 +688,7 @@ function MessageRowContent({
             }}
           >
             <ReplySummary
+              hideEmptyLabel={!!activity}
               count={row.replyCount}
               participants={row.participants}
               profiles={participantProfiles}

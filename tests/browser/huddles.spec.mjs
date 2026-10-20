@@ -1967,6 +1967,15 @@ test("portraits can be tossed within the stage and return home, with reduced mot
   const portrait = stage.locator("[data-huddle-avatar]");
   await expect(portrait).toBeVisible();
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await page.clock.runFor(1000);
+  await portrait.evaluate(async (element) => {
+    await Promise.all(
+      element
+        .closest("[data-self]")
+        .getAnimations({ subtree: true })
+        .map((animation) => animation.finished),
+    );
+  });
   const home = await portrait.boundingBox();
   const area = await stage.boundingBox();
   const start = { x: home.x + home.width / 2, y: home.y + home.height / 2 };

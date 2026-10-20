@@ -30,6 +30,50 @@ export function wasIntended(url: string): boolean {
   }
   return true;
 }
+/** Opening frames captured by video previews, so a remounted virtualized row
+ * reuses its poster instead of seeking and re-encoding. Bounded by encoded
+ * size; disposing session media (cache clear, access purge, teardown) forgets
+ * them and refuses captures that began before. */
+export type OpeningFrame = Readonly<{
+  poster: string;
+  width: number;
+  height: number;
+}>;
+const OPENING_FRAME_BUDGET = 4 * 1024 * 1024;
+const openingFrames = new Map<string, OpeningFrame>();
+let openingFrameBytes = 0;
+let openingFrameScope = 0;
+export function openingFrame(source: string): OpeningFrame | undefined {
+  return openingFrames.get(source);
+}
+export function openingFrameCapture(): number {
+  return openingFrameScope;
+}
+function forgetOpeningFrame(source: string) {
+  const frame = openingFrames.get(source);
+  if (!frame) return;
+  openingFrames.delete(source);
+  openingFrameBytes -= frame.poster.length;
+}
+export function rememberOpeningFrame(
+  source: string,
+  frame: OpeningFrame,
+  capture: number,
+) {
+  if (
+    capture !== openingFrameScope ||
+    frame.poster.length > OPENING_FRAME_BUDGET / 16
+  )
+    return;
+  forgetOpeningFrame(source);
+  openingFrames.set(source, frame);
+  openingFrameBytes += frame.poster.length;
+  for (const oldest of openingFrames.keys()) {
+    if (openingFrameBytes <= OPENING_FRAME_BUDGET) break;
+    forgetOpeningFrame(oldest);
+  }
+}
+
 /** Avatar request warming, the react-native-web Image model: fetch and
  * decode() into detached images, then retain nothing. The browser's own HTTP
  * and decoded-image caches serve the real <img> mounts. Never warms
@@ -132,6 +176,9 @@ export function createMediaPreparation() {
     }),
     dispose() {
       disposed = true;
+      openingFrames.clear();
+      openingFrameBytes = 0;
+      openingFrameScope++;
       queue = [];
       for (const image of active) {
         image.src = "";

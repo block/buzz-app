@@ -171,8 +171,9 @@ it("groups repeated workflows by channel identity in channel-name order", async 
     expect(
       groups.map(
         (group) =>
-          within(group).getAllByRole("button", { name: "Open Message helper" })
-            .length,
+          within(group).getAllByRole("button", {
+            name: /^Open Message helper:/,
+          }).length,
       ),
     ).toEqual([2, 1, 1]);
   } finally {
@@ -220,7 +221,7 @@ it("adds only new IDs, cancels removed batches, ignores late completion, and ref
     await fixture.finish(0, [event(b.id)]);
     await fixture.finish(1, [event(a.id)]);
     expect(
-      screen.getAllByRole("button", { name: "Open Message helper" }),
+      screen.getAllByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveLength(1);
     expect(fixture.reads.map((r) => r.ids)).toEqual([
       [a.id, b.id],
@@ -230,7 +231,7 @@ it("adds only new IDs, cancels removed batches, ignores late completion, and ref
     await fixture.finish(2);
     expect(fixture.reads[2]?.ids).toEqual([a.id, c.id, d.id]);
     expect(
-      screen.queryByRole("button", { name: "Open Message helper" }),
+      screen.queryByRole("button", { name: /^Open Message helper:/ }),
     ).toBeNull();
   } finally {
     fixture.close();
@@ -246,7 +247,7 @@ it("purges globally without automatic reads and recovers remaining channels on m
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
     fixture.change([a, c], true);
     expect(
-      screen.queryByRole("button", { name: "Open Message helper" }),
+      screen.queryByRole("button", { name: /^Open Message helper:/ }),
     ).toBeNull();
     expect(fixture.reads[1]?.signal?.aborted).toBe(true);
     await fixture.finish(1, [event(b.id)]);
@@ -254,7 +255,7 @@ it("purges globally without automatic reads and recovers remaining channels on m
     expect(fixture.reads[2]?.ids).toEqual([a.id, c.id]);
     act(() => fixture.owner.clear());
     expect(
-      screen.queryByRole("button", { name: "Open Message helper" }),
+      screen.queryByRole("button", { name: /^Open Message helper:/ }),
     ).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent(
       "cleared or unavailable",
@@ -301,7 +302,7 @@ it("finishes paging before the next batch, resets its cursor, and retains loaded
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(fixture.reads).toHaveLength(4));
     expect(
-      screen.getAllByRole("button", { name: "Open Message helper" }),
+      screen.getAllByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveLength(2);
     const nextPage = Array.from({ length: 100 }, (_, i) =>
       event(channel(129).id, 200 + i),
@@ -319,7 +320,7 @@ it("finishes paging before the next batch, resets its cursor, and retains loaded
     ]);
     await fixture.finish(4);
     expect(
-      screen.getAllByRole("button", { name: "Open Message helper" }),
+      screen.getAllByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveLength(3);
     expect(screen.queryByText(/returned a partial workflow list/)).toBeNull();
     expect(screen.getByRole("status")).toBeEmptyDOMElement();
@@ -340,7 +341,7 @@ it("stops queued batches on interruption, retains cards and resumes on refresh",
     expect(fixture.reads[1]?.signal?.aborted).toBe(true);
     expect(fixture.reads).toHaveLength(2);
     expect(
-      screen.getAllByRole("button", { name: "Open Message helper" }),
+      screen.getAllByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveLength(1);
     expect(screen.queryByText("Reading workflows…")).toBeNull();
     fixture.refresh();
@@ -361,13 +362,13 @@ it("keeps session purge coverage after removing a completed batch member without
     fixture.change([a]);
     act(() => fixture.owner.clear());
     expect(
-      screen.queryByRole("button", { name: "Open Message helper" }),
+      screen.queryByRole("button", { name: /^Open Message helper:/ }),
     ).toBeNull();
     expect(fixture.reads).toHaveLength(1);
     fixture.refresh();
     await fixture.finish(1, [event(a.id)]);
     expect(
-      screen.getByRole("button", { name: "Open Message helper" }),
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
     ).toBeVisible();
   } finally {
     fixture.close();
@@ -383,7 +384,7 @@ it("retains cards and explicit retry after removing a completed batch member the
     expect(fixture.reads).toHaveLength(1);
     act(() => fixture.owner.interrupt());
     expect(
-      screen.getAllByRole("button", { name: "Open Message helper" }),
+      screen.getAllByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveLength(2);
     expect(screen.getByRole("status")).toHaveTextContent(
       "Workflow discovery paused.",
@@ -392,11 +393,11 @@ it("retains cards and explicit retry after removing a completed batch member the
     await fixture.finish(1, [event(a.id)]);
     expect(fixture.reads[1]?.ids).toEqual([a.id]);
     expect(
-      screen.getAllByRole("button", { name: "Open Message helper" }),
+      screen.getAllByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveLength(2);
     act(() => fixture.owner.clear());
     expect(
-      screen.queryByRole("button", { name: "Open Message helper" }),
+      screen.queryByRole("button", { name: /^Open Message helper:/ }),
     ).toBeNull();
     expect(fixture.reads).toHaveLength(2);
   } finally {
@@ -413,13 +414,13 @@ it("retains a batch's loaded cards when its refresh fails", async () => {
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
     await act(async () => fixture.reads[1]?.reject(new Error("offline")));
     expect(
-      screen.getAllByRole("button", { name: "Open Message helper" }),
+      screen.getAllByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
     fixture.refresh();
     await fixture.finish(2);
     expect(
-      screen.queryByRole("button", { name: "Open Message helper" }),
+      screen.queryByRole("button", { name: /^Open Message helper:/ }),
     ).toBeNull();
   } finally {
     fixture.close();
@@ -479,7 +480,7 @@ for (const interrupt of [false, true]) {
       );
       expect(screen.getByRole("status")).toBeEmptyDOMElement();
       expect(
-        screen.getByRole("button", { name: "Open Message helper" }),
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
       ).toBeVisible();
     } finally {
       fixture.close();
@@ -530,7 +531,7 @@ it("queues verified readback after an older pending read and rereads only the sa
       [a.id],
     ]);
     expect(
-      screen.getByRole("button", { name: "Open Message helper" }),
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
     ).toBeVisible();
     fixture.change([b, a]);
     expect(fixture.reads).toHaveLength(3);
@@ -539,7 +540,7 @@ it("queues verified readback after an older pending read and rereads only the sa
     expect(fixture.reads[3]?.ids).toEqual([a.id]);
     act(() => fixture.owner.clear());
     expect(
-      screen.queryByRole("button", { name: "Open Message helper" }),
+      screen.queryByRole("button", { name: /^Open Message helper:/ }),
     ).toBeNull();
     fixture.change([a, b]);
     expect(fixture.reads).toHaveLength(4);
@@ -564,7 +565,7 @@ it("drops queued readback for a removed membership without restoring its card", 
     fixture.readback(a.id, "late-revision");
     expect(fixture.reads).toHaveLength(3);
     expect(
-      screen.queryByRole("button", { name: "Open Message helper" }),
+      screen.queryByRole("button", { name: /^Open Message helper:/ }),
     ).toBeNull();
     expect(screen.getByRole("status")).toBeEmptyDOMElement();
   } finally {
@@ -586,7 +587,7 @@ it("reuses fresh session cache and does not replay readback on landing remount",
     );
     expect(fixture.reads).toHaveLength(1);
     expect(
-      screen.getByRole("button", { name: "Open Message helper" }),
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
     ).toBeVisible();
   } finally {
     fixture.close();
@@ -609,7 +610,7 @@ it("rereads an overlapping landing batch after queued verified readback", async 
       [a.id],
     ]);
     expect(
-      screen.getByRole("button", { name: "Open Message helper" }),
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
     ).toBeVisible();
 
     fixture.remount();
@@ -617,7 +618,7 @@ it("rereads an overlapping landing batch after queued verified readback", async 
     expect(fixture.reads[2]?.ids).toEqual([a.id, b.id]);
     await fixture.finish(2, [saved]);
     expect(
-      screen.getByRole("button", { name: "Open Message helper" }),
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
     ).toBeVisible();
   } finally {
     fixture.close();
@@ -640,7 +641,7 @@ it("reuses fresh cached results for every completed batch after navigation", asy
     );
     expect(fixture.reads).toHaveLength(2);
     expect(
-      screen.getAllByRole("button", { name: "Open Message helper" }),
+      screen.getAllByRole("button", { name: /^Open Message helper:/ }),
     ).toHaveLength(2);
   } finally {
     fixture.close();
@@ -658,11 +659,11 @@ it("shows stale cached cards on remount while refreshing and retrying", async ()
     fixture.remount();
     await waitFor(() => expect(fixture.reads).toHaveLength(2));
     expect(
-      screen.getByRole("button", { name: "Open Message helper" }),
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
     ).toBeVisible();
     await act(async () => fixture.reads[1]?.reject(new Error("offline")));
     expect(
-      screen.getByRole("button", { name: "Open Message helper" }),
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
   } finally {
@@ -826,7 +827,7 @@ it("renders the selected card's detail into the target and toggles the selection
   const { target, selections } = landing();
   try {
     const open = await screen.findByRole("button", {
-      name: "Open Message helper",
+      name: /^Open Message helper:/,
     });
     expect(target).toBeEmptyDOMElement();
     fireEvent.click(open);
@@ -865,7 +866,7 @@ it("clears the selection on Escape from the card or its detail", async () => {
   const { target, selections } = landing();
   try {
     const open = await screen.findByRole("button", {
-      name: "Open Message helper",
+      name: /^Open Message helper:/,
     });
     fireEvent.click(open);
     const detail = await within(target).findByRole("region", {
@@ -889,7 +890,7 @@ it("rereads the selected workflow's history after a created run", async () => {
   const { fixture, target } = landing();
   try {
     fireEvent.click(
-      await screen.findByRole("button", { name: "Open Message helper" }),
+      await screen.findByRole("button", { name: /^Open Message helper:/ }),
     );
     const detail = await within(target).findByRole("region", {
       name: "Message helper",
@@ -957,7 +958,7 @@ it("shows a synchronous detail action failure outside the card grid", async () =
       throw new Error("Refresh channel membership before running.");
     });
     fireEvent.click(
-      await screen.findByRole("button", { name: "Open Message helper" }),
+      await screen.findByRole("button", { name: /^Open Message helper:/ }),
     );
     const detail = await within(target).findByRole("region", {
       name: "Message helper",
@@ -977,7 +978,7 @@ it("keeps the detail mounted and focused across a revision readback", async () =
   const { fixture, target } = landing();
   try {
     fireEvent.click(
-      await screen.findByRole("button", { name: "Open Message helper" }),
+      await screen.findByRole("button", { name: /^Open Message helper:/ }),
     );
     const detail = await within(target).findByRole("region", {
       name: "Message helper",
@@ -1009,7 +1010,7 @@ it("rereads history only once a later run is created", async () => {
   const { fixture, target } = landing();
   try {
     fireEvent.click(
-      await screen.findByRole("button", { name: "Open Message helper" }),
+      await screen.findByRole("button", { name: /^Open Message helper:/ }),
     );
     const detail = await within(target).findByRole("region", {
       name: "Message helper",

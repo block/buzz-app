@@ -735,7 +735,7 @@ function WorkflowCard({
         <div className="workflow-card-row">
           <NavigationItem
             ref={openRef}
-            aria-label={`Open ${name}`}
+            aria-label={`Open ${name}: ${presentation.description}`}
             aria-describedby={`${descriptionId} ${statusId}`}
             aria-current={false}
             aria-pressed={selected}

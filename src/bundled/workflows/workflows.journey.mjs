@@ -533,7 +533,7 @@ test("real session page under StrictMode fences community changes, warns before 
     page.getByRole("heading", { name: "Workflows", exact: true }),
   ).toBeVisible();
   await expect(button("New workflow")).toBeDisabled();
-  await expect(button("Open Fixture A helper")).toBeVisible();
+  await expect(button(/^Open Fixture A helper:/)).toBeVisible();
   await expect(
     page.getByRole("switch", {
       name: "Enabled in configuration: Fixture A helper",
@@ -543,7 +543,7 @@ test("real session page under StrictMode fences community changes, warns before 
   await editor.open("Fixture A helper");
   await expect(editor.region).toBeVisible();
   await button("Close editor").click();
-  await expect(button("Open Fixture A helper")).toBeVisible();
+  await expect(button(/^Open Fixture A helper:/)).toBeVisible();
   await choose("First channel");
   await expect(button("New workflow")).toBeDisabled();
   await editor.open("Fixture A helper");
@@ -611,7 +611,7 @@ test("landing batches 129 channels into two workflow reads", async ({
   const errors = watchPageErrors(page);
   await page.goto(url.replace("/fixture.html", "/session-fixture.html?many"));
   await expect(
-    page.getByRole("button", { name: "Open Fixture A helper", exact: true }),
+    page.getByRole("button", { name: /^Open Fixture A helper:/, exact: true }),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -640,7 +640,7 @@ test("landing scan survives channel presentation churn without restarting", asyn
     exact: true,
   });
   const open = page.getByRole("button", {
-    name: "Open Fixture A helper",
+    name: /^Open Fixture A helper:/,
     exact: true,
   });
   await expect(open).toBeVisible();
@@ -700,7 +700,7 @@ test("a failed landing scan shows one recovery action instead of an error-card g
     )
     .toBe(true);
   const open = page.getByRole("button", {
-    name: "Open Fixture A helper",
+    name: /^Open Fixture A helper:/,
     exact: true,
   });
   await expect(open).toBeVisible();
@@ -743,7 +743,7 @@ test("keyboard focus follows an open detail into the narrow layout and back", as
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(url.replace("/fixture.html", "/session-fixture.html"));
   const open = page.getByRole("button", {
-    name: "Open Fixture A helper",
+    name: /^Open Fixture A helper:/,
     exact: true,
   });
   const tab = page
@@ -768,7 +768,7 @@ test("clearing the session cache purges landing workflow definitions", async ({
 }) => {
   await page.goto(url.replace("/fixture.html", "/session-fixture.html"));
   const open = page.getByRole("button", {
-    name: "Open Fixture A helper",
+    name: /^Open Fixture A helper:/,
     exact: true,
   });
   await expect(open).toBeVisible();
@@ -797,7 +797,7 @@ test("landing discards an opened definition when channel access is revoked", asy
     "Revoked landing draft",
   );
   await page.evaluate(() => window.workflowSessionFixture.restoreAccess());
-  await expect(button("Open Fixture A helper")).toBeVisible();
+  await expect(button(/^Open Fixture A helper:/)).toBeVisible();
   await editor.open("Fixture A helper");
   await editor.expectName("Fixture A helper");
 });
@@ -844,7 +844,7 @@ test("restricted cards and read-only editors keep keyboard controls without disc
       ? "Alt+Tab"
       : "Tab";
   const open = page.getByRole("button", {
-    name: "Open Fixture A helper",
+    name: /^Open Fixture A helper:/,
     exact: true,
   });
   const actions = page.getByRole("button", {
@@ -1057,7 +1057,7 @@ for (const from of ["grid", "detail"]) {
       await expect(
         page.getByRole("alertdialog", { name: "Leave this draft?" }),
       ).toHaveCount(0);
-      await expect(button("Open Fixture A helper")).toBeDisabled();
+      await expect(button(/^Open Fixture A helper:/)).toBeDisabled();
       await expect(page.getByText("Deleting…", { exact: true })).toBeVisible();
       expect(
         await page.evaluate(
@@ -1082,7 +1082,7 @@ for (const from of ["grid", "detail"]) {
         ),
       )
       .toBe("succeeded");
-    await expect(button("Open Fixture A helper")).toHaveCount(0);
+    await expect(button(/^Open Fixture A helper:/)).toHaveCount(0);
     await expect(landingStatus(page)).toHaveText("");
     await expect(page.getByText(/^Couldn't confirm deletion/)).toHaveCount(0);
     if (from === "grid")
@@ -1124,7 +1124,7 @@ test("rejected deletion shows a toast, restores the card, and permits one delibe
   await expect(
     page.getByText("Couldn't delete Fixture A helper", { exact: true }),
   ).toBeVisible();
-  await expect(button("Open Fixture A helper")).toBeEnabled();
+  await expect(button(/^Open Fixture A helper:/)).toBeEnabled();
   await expect(
     page.getByRole("switch", {
       name: "Enabled in configuration: Fixture A helper",
@@ -1156,7 +1156,7 @@ test("rejected deletion shows a toast, restores the card, and permits one delibe
     page.getByText("Couldn't delete Fixture A helper", { exact: true }),
   ).toHaveCount(0);
   await page.evaluate(() => window.workflowSessionFixture.settleDelete(true));
-  await expect(button("Open Fixture A helper")).toHaveCount(0);
+  await expect(button(/^Open Fixture A helper:/)).toHaveCount(0);
   await expect(page.getByText(/^Couldn't delete/)).toHaveCount(0);
   expect(
     await page.evaluate(() => window.workflowSessionFixture.publications()),
@@ -1335,7 +1335,7 @@ test("legacy deletion offers durable recovery on the grid without claiming remov
       exact: true,
     }),
   ).toBeVisible();
-  await expect(button("Open Fixture A helper")).toBeDisabled();
+  await expect(button(/^Open Fixture A helper:/)).toBeDisabled();
   await expect(page.getByText(/Saved workflow deleted/)).toHaveCount(0);
   const reads = await page.evaluate(() =>
     window.workflowSessionFixture.definitionQueries(),
@@ -1349,7 +1349,7 @@ test("legacy deletion offers durable recovery on the grid without claiming remov
   await expect(button("Check saved configuration")).toBeEnabled();
   await button("Dismiss notice").click();
   await button("Dismiss notice and continue").click();
-  await expect(button("Open Fixture A helper")).toBeEnabled();
+  await expect(button(/^Open Fixture A helper:/)).toBeEnabled();
   await expect(editorDialog(page)).toHaveCount(0);
   expect(
     await page.evaluate(() => window.workflowSessionFixture.publications()),
@@ -2015,7 +2015,7 @@ for (const lateReadback of [false, true]) {
     );
     const editor = editorControls(page);
     const { button } = editor;
-    await button("Open Fixture A helper").waitFor();
+    await button(/^Open Fixture A helper:/).waitFor();
     await button("New workflow").click();
     await page
       .getByRole("option", { name: "First channel", exact: true })

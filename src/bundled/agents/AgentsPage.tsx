@@ -12,6 +12,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import styles from "./AgentsPage.module.css";
 import cardStyles from "./AgentCard.module.css";
 import {
@@ -146,8 +147,9 @@ export function AgentsPage({
     sharedSelection?.session === connection.session
       ? sharedSelection
       : undefined;
+  // Commit first: a narrow layout hides the list, and its tile, while open.
   const closeShared = () => {
-    setSharedSelection(undefined);
+    flushSync(() => setSharedSelection(undefined));
     sharedTrigger.current?.focus();
   };
   const [selectedKey, setSelectedKey] = useState<string>();
@@ -500,9 +502,14 @@ export function AgentsPage({
                         selection={shared}
                         agents={agents}
                         types={runnable}
+                        // The panel and its trigger go with it, so focus
+                        // follows to the tab now shown.
                         onImported={() => {
-                          setSharedSelection(undefined);
-                          returnToAgents();
+                          flushSync(() => {
+                            setSharedSelection(undefined);
+                            returnToAgents();
+                          });
+                          document.getElementById("agents-yours-tab")?.focus();
                         }}
                       />
                     ),

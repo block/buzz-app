@@ -2156,9 +2156,19 @@ it("announces the default agent and presents its menu status without a fake togg
   expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
 });
 
-it("opens a Marketplace tile in the profile pane and returns focus on close", async () => {
+it("opens a Marketplace tile in the profile pane and returns focus on close and import", async () => {
   const user = userEvent.setup();
-  const view = setup([]);
+  const view = setup([], {
+    more: [
+      {
+        key: "test/shared",
+        id: "shared",
+        title: "Shared",
+        defaults: () => ({ config: {} }),
+        importShared: () => ({}),
+      } as unknown as RegisteredAgentType,
+    ],
+  });
   const owner = createRelaySession(null);
   const session = {
     ...owner.session,
@@ -2201,6 +2211,19 @@ it("opens a Marketplace tile in the profile pane and returns focus on close", as
     expect(
       screen.queryByRole("heading", { name: "Marketplace helper" }),
     ).not.toBeInTheDocument();
+    // Importing removes the panel and its trigger, so focus follows the tab.
+    await user.click(tile);
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Import Marketplace helper",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Import" }));
+    await vi.waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Your agents" })).toHaveFocus(),
+    );
+    expect(view.agents.port).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "test/shared", config: {} }),
+    );
   } finally {
     view.unmount();
     owner.dispose();

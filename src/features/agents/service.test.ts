@@ -362,14 +362,20 @@ it("imports a shared agent as a new identity with its name and picture, adopting
     picture: "https://example.test/baymax.png",
     config: { reply: "Open drafts only." },
   });
-  // Without instructions it starts from the type's defaults.
+  // Without instructions it starts from the type's defaults, or the given config.
   const { agent: plain } = await service.port({
     source: "shared",
     type: "example/echo",
     name: "Plain",
+  });
+  expect(plain.config).toEqual({ reply: "ok" });
+  const { agent: configured } = await service.port({
+    source: "shared",
+    type: "example/echo",
+    name: "Configured",
     config: { reply: "Shared model configuration" },
   });
-  expect(plain.config).toEqual({ reply: "Shared model configuration" });
+  expect(configured.config).toEqual({ reply: "Shared model configuration" });
   await expect(
     service.port({ source: "shared", type: "example/echo", name: "  " }),
   ).rejects.toThrow("Name the agent");

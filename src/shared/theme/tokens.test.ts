@@ -214,6 +214,7 @@ it.each(ACCENTS)(
           ["--text-message-link-own", "--surface-message-own"],
           ["--text-on-prominent", "--affordance-prominent"],
           ["--text-navigation-selected", "--surface-navigation-selected"],
+          ["--text-control-selected", "--surface-control-selected"],
           ["--text-navigation-selected", "--bg-chrome-selected"],
           // Supported legacy/plugin markup must keep the same paired ink.
           ["--on-primary", "--primary"],
@@ -230,7 +231,7 @@ it.each(ACCENTS)(
 it("the default Lime accent keeps its strong fill and paired black ink", () => {
   for (const mode of ["light", "dark"] as const) {
     const palette = resolvedPalette(mode);
-    expect(palette["--affordance-prominent"]).toBe("#6ccf01");
+    expect(palette["--affordance-prominent"]).toBe("#a1dc45");
     expect(palette["--text-on-prominent"]).toBe("#000000");
   }
 });
@@ -264,9 +265,14 @@ it.each(ACCENTS)(
       const low = resolvedPalette(mode, accent, "low");
       const quiet = resolvedPalette(mode, accent, "quiet");
       expect(quiet["--surface-message-own"]).toBe(quiet["--bubble-neutral"]);
+      expect(quiet["--surface-control-selected"]).toBe(
+        quiet["--surface-panel"],
+      );
+      expect(quiet["--text-control-selected"]).toBe(quiet["--text-standard"]);
       for (const role of [
         "--surface-message-own",
         "--surface-navigation-selected",
+        "--surface-control-selected",
         "--bg-chrome-selected",
       ]) {
         expect(high[role]).toBe(high["--accent-9"]);

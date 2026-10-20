@@ -610,6 +610,8 @@
   --text-row-metadata: var(--text-metadata);
   /* Primary navigation text on a hovered or selected row. */
   --text-row: var(--text-navigation);
+  --surface-control-selected: var(--surface-panel);
+  --text-control-selected: var(--text-standard);
   --surface-navigation-selected: var(--affordance-selected);
   --text-navigation-selected: var(--text-standard);
   --text-row-selected: var(--text-navigation-selected);
@@ -733,6 +735,8 @@
   --text-row-metadata: var(--text-metadata);
   /* Primary navigation text on a hovered or selected row. */
   --text-row: var(--text-navigation);
+  --surface-control-selected: var(--surface-panel);
+  --text-control-selected: var(--text-standard);
   --surface-navigation-selected: var(--affordance-selected);
   --text-navigation-selected: var(--text-standard);
   --text-row-selected: var(--text-navigation-selected);
@@ -1036,39 +1040,39 @@
 [data-accent="lime"],
 :root {
   --accent-1-light: #fbfdf9;
-  --accent-2-light: #f6fbf4;
-  --accent-3-light: #ebf8e4;
-  --accent-4-light: #dff2d6;
-  --accent-5-light: #d4edc8;
-  --accent-6-light: #c7e4ba;
-  --accent-7-light: #b8d7a7;
-  --accent-8-light: #a2c88e;
-  --accent-9-light: #6ccf01;
-  --accent-10-light: #74d71c;
-  --accent-11-light: #335121;
-  --accent-12-light: #24331c;
+  --accent-2-light: #f7fbf3;
+  --accent-3-light: #edf8e2;
+  --accent-4-light: #e2f1d3;
+  --accent-5-light: #d8ecc4;
+  --accent-6-light: #cce3b6;
+  --accent-7-light: #bed6a3;
+  --accent-8-light: #aac688;
+  --accent-9-light: #a1dc45;
+  --accent-10-light: #a9e44f;
+  --accent-11-light: #3a501b;
+  --accent-12-light: #273219;
   --accent-contrast-light: #000000;
   --accent-ink-light: #000000;
-  --accent-pressed-light: #7de030;
-  --accent-link-light: #285401;
-  --accent-link-hover-light: #ebf8e4;
+  --accent-pressed-light: #b1ed5a;
+  --accent-link-light: #365101;
+  --accent-link-hover-light: #edf8e2;
   --accent-1-dark: #0e100d;
   --accent-2-dark: #141612;
-  --accent-3-dark: #1e241b;
-  --accent-4-dark: #252f21;
-  --accent-5-dark: #2e3a27;
-  --accent-6-dark: #394731;
-  --accent-7-dark: #47593d;
-  --accent-8-dark: #59714e;
-  --accent-9-dark: #6ccf01;
-  --accent-10-dark: #74d71c;
-  --accent-11-dark: #b8daa7;
-  --accent-12-dark: #e9f5e4;
+  --accent-3-dark: #1f241a;
+  --accent-4-dark: #272f1f;
+  --accent-5-dark: #313a25;
+  --accent-6-dark: #3b472f;
+  --accent-7-dark: #4b583a;
+  --accent-8-dark: #5e704a;
+  --accent-9-dark: #a1dc45;
+  --accent-10-dark: #a9e44f;
+  --accent-11-dark: #bed9a2;
+  --accent-12-dark: #ebf5e2;
   --accent-contrast-dark: #000000;
   --accent-ink-dark: #000000;
-  --accent-pressed-dark: #7de030;
-  --accent-link-dark: #89ec41;
-  --accent-link-hover-dark: #1e241b;
+  --accent-pressed-dark: #b1ed5a;
+  --accent-link-dark: #a4e72b;
+  --accent-link-hover-dark: #1f241a;
 }
 :root[data-accent="magenta"],
 [data-accent="magenta"] {
@@ -1181,116 +1185,42 @@
   --accent-link-dark: #afd1fe;
   --accent-link-hover-dark: #1c232c;
 }
-:root[data-accent="jade"],
-[data-accent="jade"] {
-  --accent-1-light: #f9fdfb;
-  --accent-2-light: #f3fcf7;
-  --accent-3-light: #e4f9ed;
-  --accent-4-light: #d5f4e2;
-  --accent-5-light: #c7eed8;
-  --accent-6-light: #b7e7cc;
-  --accent-7-light: #a4dbbd;
-  --accent-8-light: #87cca8;
-  --accent-9-light: #20c886;
-  --accent-10-light: #2fd18e;
-  --accent-11-light: #145539;
-  --accent-12-light: #193527;
-  --accent-contrast-light: #000000;
-  --accent-ink-light: #000000;
-  --accent-pressed-light: #40d896;
-  --accent-link-light: #045637;
-  --accent-link-hover-light: #e4f9ed;
-  --accent-1-dark: #0d100f;
-  --accent-2-dark: #121614;
-  --accent-3-dark: #1a251f;
-  --accent-4-dark: #1f3027;
-  --accent-5-dark: #263b30;
-  --accent-6-dark: #2f493b;
-  --accent-7-dark: #3b5b4a;
-  --accent-8-dark: #4a735d;
-  --accent-9-dark: #20c886;
-  --accent-10-dark: #2fd18e;
-  --accent-11-dark: #a4ddbe;
-  --accent-12-dark: #e4f6eb;
-  --accent-contrast-dark: #000000;
-  --accent-ink-dark: #000000;
-  --accent-pressed-dark: #40d896;
-  --accent-link-dark: #1af2a2;
-  --accent-link-hover-dark: #1a251f;
-}
 :root[data-accent="bee"],
 [data-accent="bee"] {
   --accent-1-light: #fdfcf8;
   --accent-2-light: #fcf9f1;
-  --accent-3-light: #fbf3df;
-  --accent-4-light: #f6eace;
+  --accent-3-light: #faf3df;
+  --accent-4-light: #f5eace;
   --accent-5-light: #f1e3be;
-  --accent-6-light: #ead8af;
-  --accent-7-light: #dfca98;
-  --accent-8-light: #d1b879;
-  --accent-9-light: #e8b60a;
-  --accent-10-light: #f1be16;
-  --accent-11-light: #5a4404;
-  --accent-12-light: #372d13;
+  --accent-6-light: #e8d9af;
+  --accent-7-light: #ddcb98;
+  --accent-8-light: #d0b979;
+  --accent-9-light: #f5c518;
+  --accent-10-light: #fdcd2a;
+  --accent-11-light: #584504;
+  --accent-12-light: #362d13;
   --accent-contrast-light: #000000;
   --accent-ink-light: #000000;
-  --accent-pressed-light: #f5c74c;
+  --accent-pressed-light: #ffd763;
   --accent-link-light: #594501;
-  --accent-link-hover-light: #fbf3df;
-  --accent-1-dark: #110f0c;
+  --accent-link-hover-light: #faf3df;
+  --accent-1-dark: #100f0c;
   --accent-2-dark: #171511;
-  --accent-3-dark: #262118;
+  --accent-3-dark: #252118;
   --accent-4-dark: #312b1c;
   --accent-5-dark: #3d3521;
-  --accent-6-dark: #4b412a;
-  --accent-7-dark: #5e5134;
+  --accent-6-dark: #4a412a;
+  --accent-7-dark: #5c5234;
   --accent-8-dark: #766842;
-  --accent-9-dark: #e8b60a;
-  --accent-10-dark: #f1be16;
-  --accent-11-dark: #e2cc97;
-  --accent-12-dark: #f7f0df;
+  --accent-9-dark: #f5c518;
+  --accent-10-dark: #fdcd2a;
+  --accent-11-dark: #e0cd97;
+  --accent-12-dark: #f6f0df;
   --accent-contrast-dark: #000000;
   --accent-ink-dark: #000000;
-  --accent-pressed-dark: #f5c74c;
-  --accent-link-dark: #f4c84e;
-  --accent-link-hover-dark: #262118;
-}
-:root[data-accent="flame"],
-[data-accent="flame"] {
-  --accent-1-light: #fffbfa;
-  --accent-2-light: #fff8f5;
-  --accent-3-light: #fff0e9;
-  --accent-4-light: #fee5db;
-  --accent-5-light: #fedccc;
-  --accent-6-light: #facfbd;
-  --accent-7-light: #f3bfa9;
-  --accent-8-light: #e9a98e;
-  --accent-9-light: #ff9364;
-  --accent-10-light: #ffa178;
-  --accent-11-light: #6b371f;
-  --accent-12-light: #42271b;
-  --accent-contrast-light: #000000;
-  --accent-ink-light: #000000;
-  --accent-pressed-light: #fdad8c;
-  --accent-link-light: #782c01;
-  --accent-link-hover-light: #fff0e9;
-  --accent-1-dark: #120f0d;
-  --accent-2-dark: #191412;
-  --accent-3-dark: #2a1f1b;
-  --accent-4-dark: #382720;
-  --accent-5-dark: #463026;
-  --accent-6-dark: #553c30;
-  --accent-7-dark: #6b4b3c;
-  --accent-8-dark: #875e4c;
-  --accent-9-dark: #ff9364;
-  --accent-10-dark: #ffa178;
-  --accent-11-dark: #f5c0a9;
-  --accent-12-dark: #feece5;
-  --accent-contrast-dark: #000000;
-  --accent-ink-dark: #000000;
-  --accent-pressed-dark: #fdad8c;
-  --accent-link-dark: #febca0;
-  --accent-link-hover-dark: #2a1f1b;
+  --accent-pressed-dark: #ffd763;
+  --accent-link-dark: #f2c94e;
+  --accent-link-hover-dark: #252118;
 }
 :root[data-accent="mono"],
 [data-accent="mono"] {
@@ -1383,6 +1313,34 @@
   --text-row: var(--accent-12);
 }
 
+:root[data-color-level="quiet"],
+[data-color-level="quiet"] .light {
+  --affordance-row-hover: var(--affordance-subtle);
+  --affordance-panel-hover: var(--affordance-subtle-hover);
+  --affordance-navigation-quiet: var(--neutral-navigation-quiet);
+  --affordance-selected: var(--neutral-3);
+  --affordance-floating-hover: var(--neutral-2);
+  --affordance-popover-selected: var(--neutral-3);
+  --affordance-floating-selected: var(--neutral-3);
+  --text-row-subtle: var(--text-subtle);
+  --text-row-metadata: var(--text-metadata);
+  --text-row: var(--text-navigation);
+}
+
+:root[data-color-level="quiet"][data-color-mode="dark"],
+[data-color-level="quiet"] .dark {
+  --affordance-row-hover: var(--affordance-subtle);
+  --affordance-panel-hover: var(--affordance-subtle-hover);
+  --affordance-navigation-quiet: var(--neutral-navigation-quiet);
+  --affordance-selected: var(--neutral-5);
+  --affordance-floating-hover: var(--neutral-5);
+  --affordance-popover-selected: var(--neutral-6);
+  --affordance-floating-selected: var(--neutral-6);
+  --text-row-subtle: var(--text-subtle);
+  --text-row-metadata: var(--text-metadata);
+  --text-row: var(--text-navigation);
+}
+
 /* Low contrast carries the accent through personal and selected states,
    while the surrounding app surfaces retain their neutral roles. */
 :root[data-color-level="touch"],
@@ -1390,6 +1348,8 @@
   --surface-message-own: var(--accent-4);
   --text-message-own: var(--accent-12);
   --text-message-link-own: var(--accent-link);
+  --surface-control-selected: var(--accent-4);
+  --text-control-selected: var(--accent-11);
   --surface-navigation-selected: var(--accent-4);
   --text-navigation-selected: var(--accent-11);
   --bg-chrome-selected: var(--accent-4);
@@ -1400,6 +1360,8 @@
   --surface-message-own: var(--accent-4);
   --text-message-own: var(--accent-12);
   --text-message-link-own: var(--accent-link);
+  --surface-control-selected: var(--accent-4);
+  --text-control-selected: var(--accent-11);
   --surface-navigation-selected: var(--accent-4);
   --text-navigation-selected: var(--accent-11);
   --bg-chrome-selected: var(--accent-4);
@@ -1413,6 +1375,8 @@
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);
+  --surface-control-selected: var(--accent-9);
+  --text-control-selected: var(--accent-contrast);
   --surface-navigation-selected: var(--accent-9);
   --text-navigation-selected: var(--accent-contrast);
   --bg-chrome-selected: var(--accent-9);
@@ -1426,6 +1390,8 @@
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
   --text-message-link-own: var(--accent-ink);
+  --surface-control-selected: var(--accent-9);
+  --text-control-selected: var(--accent-contrast);
   --surface-navigation-selected: var(--accent-9);
   --text-navigation-selected: var(--accent-contrast);
   --bg-chrome-selected: var(--accent-9);
@@ -1442,6 +1408,8 @@
   /* Semantic utilities. Text and border stay in their own namespaces. */
   --text-color-link: var(--text-link);
   --text-color-swatch-selection: var(--text-swatch-selection);
+  --color-surface-control-selected: var(--surface-control-selected);
+  --text-color-control-selected: var(--text-control-selected);
   --text-color-navigation-selected: var(--text-navigation-selected);
   --text-color-message-own: var(--text-message-own);
   --text-color-message-link-own: var(--text-message-link-own);

@@ -372,11 +372,15 @@
     );
   }
 
-  .buzz-button[data-icon-variant="ghost"][data-selected],
+  .buzz-button[data-icon-variant="ghost"][data-selected]:not(
+    [data-disabled],
+    :disabled
+  ),
   .buzz-button[data-icon-variant="ghost"][data-selected]:hover:not(
     [data-disabled]
   ) {
-    background: var(--interaction-selected);
+    background: var(--surface-control-selected);
+    color: var(--text-control-selected);
   }
 
   /* Bare controls stay unfilled. Glyph-state toggles keep their larger
@@ -848,12 +852,12 @@
     color: var(--text-standard);
   }
   .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-control-selected);
   }
   .buzz-tabs[data-variant="segmented"] .buzz-tabs-indicator {
     inset-block: 0;
     border-radius: var(--radius-pill);
-    background: var(--surface-panel);
+    background: var(--surface-control-selected);
     box-shadow: var(--shadow-xs);
   }
 
@@ -904,7 +908,7 @@
   }
 
   .buzz-tabs[data-variant="panel"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-accent);
   }
 
   /* Sits on the tab's bottom edge and spans the tab exactly. `height` is
@@ -915,7 +919,7 @@
     bottom: var(--space-1);
     height: 2px;
     border-radius: var(--radius-pill);
-    background: var(--text-standard);
+    background: var(--affordance-prominent-mark);
   }
 
   .buzz-tabs-item[data-closable] .buzz-tabs-tab {

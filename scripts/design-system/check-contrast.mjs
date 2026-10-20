@@ -155,6 +155,7 @@ const TEXT_ROLES = [
  * every fill it can actually sit on, and hover is one of them.
  */
 const PAIRS = [
+  ["--text-control-selected", "--surface-control-selected"],
   ...[
     "affordance-call-join",
     "affordance-call-join-hover",

@@ -1392,19 +1392,32 @@ to remain visible on conversation surfaces in both modes.
 ### Accent color
 
 One device-local accent choice colors actions, links, and selection states.
-The picker presents eight families in one row: Lime, Honey,
-Flame, Magenta, Iris, Cobalt, Jade, and Mono. An inset white ring marks the selected
+The picker presents six families in one row: Honey, Magenta, Iris, Cobalt, Lime, and Mono. An inset white ring marks the selected
 swatch. Lime is the default; Mono stays last. Saved Chartreuse and Citron choices fall back to Lime.
 Chromatic ramps blend 90% of the original palette with 10% of the Honey-based
 OKLCH lightness/chroma treatment, with solid fills adjusted for readable ink.
-Honey (`#e8b60a`) remains exact; Mono remains achromatic.
-Honey uses golden yellow-green fills with black ink; Mono uses charcoal fills in light
+Honey is a brighter golden yellow (`#f5c518`); Lime combines the former Lime and Pear ramps at their OKLCH midpoint.
+Saved Pear and Jade choices map to Lime; Flame maps to Honey. Their ramps keep a consistent hue in OKLCH and retain the established step roles.
+Mono remains achromatic.
+Honey uses golden yellow fills with black ink; Mono uses charcoal fills in light
 mode and pale gray fills in dark mode. Vibe level offers three device-local choices:
 Snoozin’ keeps your messages neutral, with accent actions, links, and subtle row states.
 Hummin’ (the default) adds soft accent fills to your messages and selected navigation.
 Buzzin’ uses solid accent fills for those same states. Received messages, app
 backgrounds, panels, and popovers stay neutral at every level. Saved Low/High
 contrast choices retain their behavior as Hummin’/Buzzin’. Older vibe values are ignored.
+
+Persistent control selections use `surface-control-selected` with
+`text-control-selected`: neutral at Snoozin’, soft accent at Hummin’, and solid
+accent with paired ink at Buzzin’. Segmented filters and selected ghost icon
+buttons share this pair. Their tracks stay neutral. Panel tabs retain an
+underline, using the readable accent mark rather than a filled background.
+Snoozin’ keeps transient row/hover states neutral; Hummin’ and Buzzin’ use soft
+accent hover states. Hover never becomes a competing solid selection. Menus,
+choice cards, disabled controls, focus rings, and semantic status colors retain
+their existing treatments. Primary actions and checked controls carry the accent
+at all three levels; increasing the vibe adds persistent selection, not more
+competing primary actions.
 
 Use `surface-navigation-selected` with `text-navigation-selected` for selected
 navigation. High contrast pairs solid fills with the family’s contrast ink;

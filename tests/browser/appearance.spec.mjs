@@ -108,7 +108,13 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await expectMode(page, "light", true);
   await system.focus();
   await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("option", { name: "Light", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByRole("option", { name: "Dark", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(system).toHaveText("Dark");
   await expect(system).toBeFocused();
@@ -263,11 +269,11 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await page.reload();
   await expectMode(page, "dark", true);
   await reopenedSettings(page);
-  await expect(dark).toHaveText("Dark");
+  await expect(system).toHaveText("Dark");
 });
 
-// Browser-only boundary: the actual shared slider's painted track/thumb,
-// Real CSS cascade and pre-paint bootstrap cannot be established in jsdom.
+// Browser-only boundary: real CSS cascade and pre-paint bootstrap cannot
+// be established in jsdom.
 test("saved vibe levels cannot tint the shell after choosing an accent or reloading", async ({
   page,
   app,

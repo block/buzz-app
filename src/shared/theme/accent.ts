@@ -3,13 +3,11 @@ import type { CSSProperties } from "react";
 // One device-local accent for actions, links and selection.
 // App surfaces stay neutral; contrast controls messages and selected navigation.
 export const ACCENTS = [
-  "lime",
   "bee",
-  "flame",
   "magenta",
   "iris",
   "cobalt",
-  "jade",
+  "lime",
   "mono",
 ] as const;
 export type Accent = (typeof ACCENTS)[number];
@@ -19,6 +17,8 @@ export const ACCENT_KEY = "buzz-accent.v1";
 export const LEGACY_BUBBLE_KEY = "buzz-bubble-color.v1";
 
 export function parseAccent(value: unknown): Accent {
+  if (value === "pear" || value === "jade") return "lime";
+  if (value === "flame") return "bee";
   if (value === "gray") return "mono";
   return ACCENTS.includes(value as Accent) ? (value as Accent) : DEFAULT_ACCENT;
 }
@@ -28,8 +28,8 @@ const LEGACY_BUBBLE_ACCENTS: Readonly<Record<string, Accent>> = {
   blue: "cobalt",
   cyan: "cobalt",
   indigo: "cobalt",
-  green: "jade",
-  orange: "flame",
+  green: "lime",
+  orange: "bee",
   pink: "magenta",
   red: "magenta",
   lilac: "iris",

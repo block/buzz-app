@@ -743,6 +743,22 @@ export const ROLE_GROUPS: RoleGroup[] = [
     description: "Shared affordance roles, with values for both themes.",
     roles: [
       {
+        token: "bg-surface-control-selected",
+        variable: "--surface-control-selected",
+        pointsAt:
+          "neutral panel at Snoozin’; accent 4 at Hummin’; accent 9 at Buzzin’",
+        use: "Persistent segmented and icon-button selection; pair with text-control-selected.",
+        status: "core",
+      },
+      {
+        token: "text-control-selected",
+        variable: "--text-control-selected",
+        pointsAt:
+          "standard ink at Snoozin’; accent 11 at Hummin’; accent contrast at Buzzin’",
+        use: "Labels and icons on surface-control-selected.",
+        status: "core",
+      },
+      {
         token: "--surface-navigation-selected",
         variable: "--surface-navigation-selected",
         pointsAt: "accent 4 at low contrast; accent 9 at high contrast",

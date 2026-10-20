@@ -15,16 +15,7 @@
   document.documentElement.dataset.colorMode = mode;
   let accent = "lime";
   try {
-    const accents = [
-      "lime",
-      "bee",
-      "flame",
-      "magenta",
-      "iris",
-      "cobalt",
-      "jade",
-      "mono",
-    ];
+    const accents = ["bee", "magenta", "iris", "cobalt", "lime", "mono"];
     let value = localStorage.getItem("buzz-accent.v1");
     if (value === null) {
       // The former bubble color carries over; its old "Default" does not.
@@ -32,8 +23,8 @@
         blue: "cobalt",
         cyan: "cobalt",
         indigo: "cobalt",
-        green: "jade",
-        orange: "flame",
+        green: "lime",
+        orange: "bee",
         pink: "magenta",
         red: "magenta",
         lilac: "iris",
@@ -41,6 +32,8 @@
       };
       value = legacy[localStorage.getItem("buzz-bubble-color.v1")] ?? null;
     }
+    if (value === "pear" || value === "jade") value = "lime";
+    if (value === "flame") value = "bee";
     if (value === "gray") value = "mono";
     if (accents.includes(value)) accent = value;
   } catch {

@@ -10,7 +10,7 @@
 import { absoluteWorkspace } from "../../../bundled/codex/config";
 import type { AcpProcess } from "./process";
 import type { AcpSession } from "./session";
-import { codeOf } from "./steps";
+import { codeOf, HintedError } from "./steps";
 import type {
   ActivityReceipt,
   Choice,
@@ -268,6 +268,7 @@ export class AgentSessions {
         ok: false,
         error: `${this.options.label} could not start: ${message(error)}`,
         ...(code === undefined ? {} : { code }),
+        ...(error instanceof HintedError ? { hint: error.hint } : {}),
       };
     }
   }

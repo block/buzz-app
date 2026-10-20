@@ -922,7 +922,7 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   act(() =>
     fixture.definitions.update({
       status: "loading",
-      data: { partial: false, items: [fixtureDefinition, otherDefinition] },
+      data: { partial: false, items: [] },
     }),
   );
   expect(screen.getByRole("combobox", { name: "Channel" })).toHaveTextContent(

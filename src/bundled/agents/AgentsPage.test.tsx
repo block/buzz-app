@@ -41,6 +41,11 @@ import { PlugIcon, RobotIcon } from "../../shared/design-system/icons";
 import { AgentSettings } from "../../app/AgentSettings";
 import { AgentsPage } from "./AgentsPage";
 
+vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
+  ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
+  paintEmojiAvatar: vi.fn(),
+}));
+
 afterEach(cleanup);
 
 const agent = (name: string, n: number): Agent => ({
@@ -1693,6 +1698,28 @@ it("opens avatar and name editing from the profile menu", async () => {
     await screen.findByRole("textbox", { name: "Agent name" }),
   ).toHaveValue("Ada");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(agents.save).not.toHaveBeenCalled();
+});
+
+it("leaves an open emoji picker by Back or Cancel without saving", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
+  await user.click(
+    screen.getByRole("button", { name: "Agent profile actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Change avatar" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
+  await user.click(within(dialog).getByRole("button", { name: "Use emoji" }));
+  expect(within(dialog).getByRole("tab", { name: "Emoji" })).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Back" }));
+  await user.click(within(dialog).getByRole("button", { name: "Use emoji" }));
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
   expect(agents.save).not.toHaveBeenCalled();
 });
 

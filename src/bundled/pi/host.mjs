@@ -657,13 +657,25 @@ export function serve({
         await prior?.catch(() => undefined);
         const { harness } = opened;
         const place = (await harness.snapshot(Places, context))?.[key];
-        const conversation =
-          (place &&
-            (await harness.conversation(place.conversation, context))) ||
-          (await harness.createConversation(
+        let conversation =
+          place && (await harness.conversation(place.conversation, context));
+        if (!conversation) {
+          conversation = await harness.createConversation(
             { ownership: { kind: "ownerless" } },
             context,
-          ));
+          );
+          // Recorded before it has the turn, so a host that stops before it
+          // answers leaves the next one the conversation to find the turn in,
+          // by its request, when it is asked again.
+          await harness.commit(async (tx) => {
+            const places = await tx.doc(Places);
+            places[key] = {
+              conversation: conversation.id,
+              context: tools,
+              seen: 0,
+            };
+          }, context);
+        }
         opened.contexts.set(conversation.id, tools);
         const { busy } = await watch(opened, conversation.id);
         const submitted = await submit(conversation, turn, busy);

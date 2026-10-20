@@ -738,6 +738,50 @@ it("waits for a turn again in a new host when the host stops", async () => {
   expect(published.map((item) => item.content)).toEqual(["Resumed."]);
 });
 
+it("hands a turn to the next host when the host stops before it answers", async () => {
+  let hosts = 0;
+  const { host, deliver, settled } = setup({
+    // The first host may have taken the turn; the next finds it by request.
+    deliver: (_params, process) => {
+      if (++hosts === 1) {
+        queueMicrotask(() => process.exit(1, "Killed\n"));
+        return new Promise(() => {});
+      }
+      return { submission: 1, conversation: CONVERSATION };
+    },
+    wait: () => ({ status: "done", answer: 5, text: "Done." }),
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  const delivered = host.requests("deliver");
+  expect(delivered).toHaveLength(2);
+  expect(delivered[1]?.params).toEqual(delivered[0]?.params);
+  expect(host.processes[1]?.requests[0]?.method).toBe("open");
+});
+
+it("hands over no queued mention of an agent removed while it waited", async () => {
+  const first = deferred<object>();
+  let delivers = 0;
+  const { runtime, host, deliver, settled, published } = setup({
+    deliver: () =>
+      ++delivers === 1
+        ? first.promise
+        : { submission: 2, conversation: CONVERSATION },
+  });
+  const one = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(1));
+  const two = deliver({ type: "mention", event: reply("3", "@Pi and this") });
+  await two.run;
+  runtime.sync([]);
+  first.resolve({ submission: 1, conversation: CONVERSATION });
+  await one.run;
+  await expect(settled(two)).resolves.toEqual({ ok: true });
+  expect(host.requests("deliver")).toHaveLength(1);
+  expect(host.requests("open")).toHaveLength(1);
+  expect(published).toEqual([]);
+});
+
 it("leaves a removed agent's turn in Pi's storage without a report", async () => {
   const closing = deferred();
   const { runtime, host, deliver, settled, published } = setup({

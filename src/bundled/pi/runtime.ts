@@ -364,6 +364,7 @@ export class PiRuntime {
     let sends = 0;
     const handed = (async () => {
       await wait;
+      this.live(entry, agent.pubkey);
       await this.open(agent.pubkey);
       const { seen } = await this.pi.request<{ seen: number }>("place", {
         agent: agent.pubkey,
@@ -399,7 +400,9 @@ export class PiRuntime {
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
       });
-      submitted = await this.pi.request("deliver", {
+      const picked = await this.turnOf(entry, agent.pubkey, model, effort);
+      this.live(entry, agent.pubkey);
+      submitted = await this.deliver(entry, agent.pubkey, {
         agent: agent.pubkey,
         key,
         at: event.created_at,
@@ -407,7 +410,7 @@ export class PiRuntime {
         text,
         steer: steerPrompt(text),
         request,
-        ...(await this.turnOf(entry, agent.pubkey, model, effort)),
+        ...picked,
       });
       sends = entry.sends.get(submitted.conversation) ?? 0;
       if (
@@ -637,6 +640,34 @@ export class PiRuntime {
    * now: those loaded on search are deferred until Pi's tool search loads
    * them, and the hint says what to search for. The host does nothing for one
    * already open with these tools. */
+  /** Throws for a removed agent, whose queued mention Pi must not run:
+   * Pi's coding tools have no sandbox. Its storage, opened again by the
+   * handover, closes. */
+  private live(entry: Entry, pubkey: string) {
+    if (!entry.closed) return;
+    if (!this.running.has(pubkey) && !this.agents.has(pubkey))
+      void this.pi.request("close", { agent: pubkey }).catch(() => undefined);
+    throw new Error("The agent was removed");
+  }
+
+  /** Hands a turn to Pi. A host that stops before it answers may have taken
+   * the turn already; the next one, asked again, finds it by its request
+   * rather than taking it twice. */
+  private async deliver(
+    entry: Entry,
+    pubkey: string,
+    params: object,
+  ): Promise<{ submission: number; conversation: number }> {
+    try {
+      return await this.pi.request("deliver", params);
+    } catch (error) {
+      if (!(error instanceof PiStopped) || entry.closed) throw error;
+      await this.open(pubkey);
+      this.live(entry, pubkey);
+      return this.pi.request("deliver", params);
+    }
+  }
+
   private async open(pubkey: string) {
     await this.pi.request("open", {
       agent: pubkey,

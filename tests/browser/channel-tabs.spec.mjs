@@ -64,6 +64,38 @@ test("middle-click closes a content tab without selecting it", async ({
   ).toBeFocused();
 });
 
+test("Open in channel takes a content tab to its conversation with its composer focused", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const main = page.getByRole("article", { name: "Conversation", exact: true });
+  const link = app.append(
+    "primary",
+    "alpha",
+    "[Open Beta](buzz://channel/beta)",
+  );
+  await main
+    .locator(`[data-message-id="${link.id}"]`)
+    .getByRole("link", { name: "Open Session: beta" })
+    .click();
+  await page
+    .locator("[data-panel-workspace]")
+    .getByRole("tab", { name: "Beta", exact: true })
+    .click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Open in channel", exact: true })
+    .click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(
+    page.evaluate(() => history.state.buzzNavigationV1.entry.target),
+  ).resolves.toMatchObject({ kind: "conversation", channelId: "beta" });
+  // The menu hands focus back before navigating, so the destination takes it.
+  await expect(
+    main.getByRole("textbox", { name: "Message your agents", exact: true }),
+  ).toBeFocused();
+});
+
 test("content-opened tabs restore drafts without offering blank-tab creation", async ({
   page,
   app,

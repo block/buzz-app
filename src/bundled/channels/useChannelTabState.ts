@@ -232,7 +232,7 @@ const named = (tab: ConversationTab, name: string): ConversationTab =>
   tab.kind === "thread" ? { ...tab, name: name.trim() || undefined } : tab;
 // Until its reader verifies the root, a tab's id holds the root it was opened
 // with, before any disambiguating suffix.
-const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
+export const rootOfTab = (tab: Extract<ConversationTab, { kind: "thread" }>) =>
   tab.rootId ??
   (tab.id.slice(`thread:${tab.channelId}:`.length).split(":")[0] as string);
 /** A channel's own thread tabs in its workspace, changed from outside the

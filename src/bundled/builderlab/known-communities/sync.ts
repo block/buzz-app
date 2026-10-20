@@ -72,8 +72,9 @@ export function startKnownCommunitiesSync({
   let unavailable = false;
   let error: string | undefined;
   let reported: SyncStatus | undefined;
-  // Refused intents wait for the next sign-in, counted as pending meanwhile.
-  const parked = new Set<string>();
+  // Refused intents wait for the next sign-in, counted as pending meanwhile,
+  // each with the reason it was refused.
+  const parked = new Map<string, string>();
   let outbox = knownCommunities.snapshot().sync.outbox;
   let ready = knownCommunities.snapshot().status === "ready";
 
@@ -151,17 +152,16 @@ export function startKnownCommunitiesSync({
           );
         else if (result.kind === "forbidden" || missing(result))
           return refuse(result);
-        else {
-          parked.add(key(op));
-          error = reason(result);
-        }
+        else parked.set(key(op), reason(result));
       }
       failures = 0;
       // A parked intent that was replaced or withdrawn no longer counts.
       const pending = knownCommunities.pending().map(key);
-      for (const entry of parked)
+      for (const entry of parked.keys())
         if (!pending.includes(entry)) parked.delete(entry);
-      if (parked.size === 0) error = undefined;
+      // The pass went through, so an earlier failure is over: what remains
+      // wrong is only what is still parked.
+      error = parked.values().next().value;
     } catch (reason) {
       if (
         signal.aborted ||

@@ -570,6 +570,66 @@ it("sends a parked intent again on the next sign-in", async () => {
   h.dispose();
 });
 
+it("reports a parked intent's refusal again once a failed upload beside it goes through", async () => {
+  const full = "Builderlab can’t save more communities for this account.";
+  const h = await fixture({
+    snapshot: { sync: queued(primary, secondary) },
+    arrange: (client) =>
+      client.add
+        .mockResolvedValueOnce({ kind: "limit_reached" })
+        .mockRejectedValueOnce(reachError()),
+  });
+  await until(() =>
+    expect(h.status).toHaveBeenLastCalledWith({
+      phase: "error",
+      pending: 2,
+      error: "Couldn’t reach Builderlab.",
+    }),
+  );
+  // The retry sends only the failed upload; the parked one is what remains.
+  await vi.advanceTimersByTimeAsync(1000);
+  await until(() =>
+    expect(h.status).toHaveBeenLastCalledWith({
+      phase: "error",
+      pending: 1,
+      error: full,
+    }),
+  );
+  expect(h.sent()).toEqual([
+    { url: primary, removed: false },
+    { url: secondary, removed: false },
+    { url: secondary, removed: false },
+  ]);
+  h.dispose();
+});
+
+it("reports the refusal of the intent still parked once another parked intent is withdrawn", async () => {
+  const h = await fixture({
+    snapshot: { sync: queued(primary, secondary) },
+    arrange: (client) =>
+      client.add.mockImplementation(async (url) =>
+        url === primary
+          ? { kind: "invalid_request" }
+          : { kind: "limit_reached" },
+      ),
+  });
+  await until(() =>
+    expect(h.status).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: "error", pending: 2 }),
+    ),
+  );
+  h.enqueue(secondary, true);
+  await until(() => expect(h.client.remove).toHaveBeenCalledTimes(1));
+  await until(() =>
+    expect(h.status).toHaveBeenLastCalledWith({
+      phase: "error",
+      pending: 1,
+      error: "Builderlab refused one of your community addresses.",
+    }),
+  );
+  h.dispose();
+});
+
 it.each([
   { name: "join, lost acknowledgement, leave", first: false },
   { name: "leave, lost acknowledgement, rejoin", first: true },

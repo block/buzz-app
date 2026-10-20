@@ -344,8 +344,9 @@ no repeated report, parked and halting refusals including rejections named by
 status, an unreadable list (through the real client, keeping every membership)
 and the quiet 404 on the list or an upload for a service without the routes,
 addresses the list left out, a parked add replaced by the removal that then
-goes out and re-sent on the next sign-in, both lost-acknowledgement orders
-against a set service, an abandoned upload on sign-out that keeps the queue, a
+goes out and re-sent on the next sign-in, a parked refusal reported again
+after a failed upload beside it or another parked intent clears, both
+lost-acknowledgement orders against a set service, an abandoned upload on sign-out that keeps the queue, a
 session ended
 by the service and disposal. `index.test.tsx` runs the real plugin wiring
 through to the list request under the signed-in credential, and that an

@@ -1966,16 +1966,9 @@ it("checks updates only in the open detail pane and keeps matching status off th
   );
   expect(await screen.findByText("Checking for updates…")).toBeVisible();
   expect(imports.folder).toHaveBeenCalledExactlyOnceWith("/plugins");
-  const check = screen.getByRole("button", { name: "Check for updates" });
   expect(
-    screen.getByRole("complementary", { name: "Zebra external details" }),
-  ).toContainElement(check);
-  expect(check.closest("article")).toBeNull();
-  expect(check.parentElement?.parentElement).toContainElement(
-    within(
-      screen.getByRole("complementary", { name: "Zebra external details" }),
-    ).getByRole("button", { name: /^Disable$/ }),
-  );
+    screen.queryByRole("button", { name: "Check for updates" }),
+  ).toBeNull();
   await act(async () =>
     finish({
       token: "same",

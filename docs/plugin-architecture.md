@@ -856,7 +856,7 @@ enable by default, with an opt-out in the review footer; successful installation
 **manifest ID** and preserve the saved enabled state:
 an enabled update may activate immediately except in safe mode. Review shows declared host access, including changes. Installed artifacts do
 not watch/pull the source. Plugins installed from a folder keep the selected folder
-path for Settings → Plugins → Manage plugins → Check for updates. Changed packages
+path for automatic checks in Settings → Plugins → Manage plugins. Changed packages
 open access review before explicit Update confirmation, preserving the saved enabled
 state. Settings does not expose the immediate Reload shortcut.
 For development, `buzzodz plugin reload ID` explicitly allows replacing an enabled
@@ -871,9 +871,10 @@ work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.
 
 Opening an installed plugin's details checks its remembered folder. A matching
-package shows Up to date in the pane with Check for updates for a manual recheck;
-a changed package replaces that action with Update, which opens
-access review before explicit confirmation. The list row shows neither status nor
+package shows Up to date in the pane. Local folders are checked every five seconds
+while the pane is open and the app is visible, and again when the app becomes active.
+Checks pause during review or pending management operations. A changed package offers
+Update, which opens access review before explicit confirmation. The list row shows neither status nor
 an Update action. Failed activation shows Retry beside the error for an enabled,
 unpaused plugin. Retry activates the installed revision after its previous cleanup
 finishes; it does not acquire source files, install a package, or change saved state.

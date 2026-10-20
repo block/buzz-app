@@ -187,14 +187,14 @@ export function PluginImport({
   const [existing, setExisting] = useState<PluginInfo>();
   const [loading, setLoading] = useState(false);
   const [checkingVisible, setCheckingVisible] = useState(false);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
   useEffect(() => {
-    if (!loading || open || !updateId) return;
+    if (!loading || open || !updateId || preview) return;
     const timer = setTimeout(() => setCheckingVisible(true), 200);
     return () => clearTimeout(timer);
-  }, [loading, open, updateId]);
+  }, [loading, open, updateId, preview]);
 
   const [discarding, setDiscarding] = useState(false);
-  const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [selected, setSelected] = useState("");
   const [reviewing, setReviewing] = useState(false);
   const [showUnchanged, setShowUnchanged] = useState(false);
@@ -257,9 +257,23 @@ export function PluginImport({
   const lifetime = useRef({ active: true, token: "" });
   const pending = useRef(false);
   const startSavedFolder = useEffectEvent(() => {
-    if (imports && savedSource && "root" in savedSource) {
+    if (
+      imports &&
+      savedSource &&
+      "root" in savedSource &&
+      !open &&
+      !busy &&
+      !discarding &&
+      document.visibilityState !== "hidden"
+    ) {
       const directory = savedSource.root;
-      void load(() => imports.folder(directory));
+      void load(async () => {
+        if (lifetime.current.token) {
+          await imports.discard(lifetime.current.token);
+          lifetime.current.token = "";
+        }
+        return imports.folder(directory);
+      }, true);
     }
   });
   useEffect(() => {
@@ -275,19 +289,38 @@ export function PluginImport({
     };
   }, [imports]);
 
+  const localFolder = !!savedSource && "root" in savedSource;
+  useEffect(() => {
+    if (!localFolder) return;
+    const timer = setInterval(() => startSavedFolder(), 5_000);
+    const resume = () => startSavedFolder();
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("focus", resume);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("focus", resume);
+    };
+  }, [localFolder]);
+
   const blocked = busy || loading || discarding;
   if (!imports) return null;
 
-  async function load(operation: () => Promise<ImportPreview | null>) {
+  async function load(
+    operation: () => Promise<ImportPreview | null>,
+    automatic = false,
+  ) {
     if (pending.current || blocked) return;
     const returnTo = document.activeElement as HTMLElement | null;
-    sourceTrigger.current = returnTo;
+    if (!automatic) sourceTrigger.current = returnTo;
     pending.current = true;
     const current = lifetime.current;
     setLoading(true);
     setCheckingVisible(false);
-    setError(null);
-    setPreview(null);
+    if (!automatic) {
+      setError(null);
+      setPreview(null);
+    }
     setShowUnchanged(false);
     setEnableOnInstall(true);
     try {
@@ -317,6 +350,7 @@ export function PluginImport({
           );
         }
       }
+      setError(null);
       setPreview(next);
       setReviewing(next?.candidates.length === 1);
       setExisting(
@@ -331,7 +365,7 @@ export function PluginImport({
       );
     } catch (reason) {
       if (current.active) {
-        showError(reason, returnTo);
+        showError(reason, automatic ? null : returnTo);
       }
     } finally {
       pending.current = false;
@@ -502,33 +536,33 @@ export function PluginImport({
   );
   const updateActions = (
     <>
-      {savedSource && !(preview && !error && !upToDate) && (
-        <Button
-          ref={checkAgain}
-          variant="subtle"
-          size="sm"
-          loading={loading && !open && checkingVisible}
-          disabled={blocked}
-          onClick={() =>
-            void load(async () => {
-              if (lifetime.current.token) {
-                await imports.discard(lifetime.current.token);
-                lifetime.current.token = "";
-              }
-              if ("root" in savedSource)
-                return imports.folder(savedSource.root);
-              const signed = await authorizeGit?.(savedSource.repository);
-              return imports.git(
-                signed?.repository ?? savedSource.repository,
-                savedSource.reference,
-                signed?.token,
-              );
-            })
-          }
-        >
-          Check for updates
-        </Button>
-      )}
+      {savedSource &&
+        "repository" in savedSource &&
+        !(preview && !error && !upToDate) && (
+          <Button
+            ref={checkAgain}
+            variant="subtle"
+            size="sm"
+            loading={loading && !open && checkingVisible}
+            disabled={blocked}
+            onClick={() =>
+              void load(async () => {
+                if (lifetime.current.token) {
+                  await imports.discard(lifetime.current.token);
+                  lifetime.current.token = "";
+                }
+                const signed = await authorizeGit?.(savedSource.repository);
+                return imports.git(
+                  signed?.repository ?? savedSource.repository,
+                  savedSource.reference,
+                  signed?.token,
+                );
+              })
+            }
+          >
+            Check for updates
+          </Button>
+        )}
       {preview && !error && !upToDate && (
         <Button
           ref={trigger}

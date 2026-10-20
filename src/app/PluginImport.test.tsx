@@ -1201,8 +1201,8 @@ it.each([
   },
 );
 
-it("retries an unavailable folder without offering a different source", async () => {
-  const user = userEvent.setup();
+it("retries an unavailable folder automatically without offering a different source", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   const folder = vi
     .fn()
     .mockRejectedValueOnce(new Error("Folder no longer exists"))
@@ -1237,8 +1237,9 @@ it("retries an unavailable folder without offering a different source", async ()
   expect(
     screen.queryByRole("button", { name: "Browse plugin folder" }),
   ).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Check for updates" }));
+  await act(async () => vi.advanceTimersByTime(5_000));
   expect(await screen.findByRole("button", { name: "Update" })).toBeEnabled();
+  vi.useRealTimers();
   expect(folder.mock.calls).toEqual([["/moved"], ["/moved"]]);
 });
 
@@ -1497,8 +1498,10 @@ it("does not substitute another folder with the same plugin identity", async () 
   );
 });
 
-it("delays checking feedback, cancels it for fast reads, and resets it for the next check", async () => {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+it("delays initial checking feedback and keeps periodic checks quiet", async () => {
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
   let finish!: (preview: ImportPreview) => void;
   const folder = vi.fn(
     () =>
@@ -1534,30 +1537,161 @@ it("delays checking feedback, cancels it for fast reads, and resets it for the n
   );
   try {
     await act(async () => {});
-    const check = screen.getByRole("button", { name: "Check for updates" });
+    expect(
+      screen.queryByRole("button", { name: "Check for updates" }),
+    ).toBeNull();
     expect(folder).toHaveBeenCalledTimes(1);
-    expect(check).toBeDisabled();
-    expect(check).not.toHaveAttribute("data-loading");
     await act(async () => vi.advanceTimersByTime(199));
     expect(screen.queryByText("Checking for updates…")).toBeNull();
     await act(async () => finish(same));
     await act(async () => vi.advanceTimersByTime(1));
     expect(screen.queryByText("Checking for updates…")).toBeNull();
-    expect(check).not.toHaveAttribute("data-loading");
     expect(screen.getByText("Up to date")).toBeVisible();
 
-    fireEvent.click(check);
-    await act(async () => {});
+    await act(async () => vi.advanceTimersByTime(4_800));
     expect(folder).toHaveBeenCalledTimes(2);
     await act(async () => vi.advanceTimersByTime(199));
     expect(screen.queryByText("Checking for updates…")).toBeNull();
-    expect(check).not.toHaveAttribute("data-loading");
     await act(async () => vi.advanceTimersByTime(1));
-    expect(screen.getByText("Checking for updates…")).toBeVisible();
-    expect(check).toHaveAttribute("data-loading", "true");
+    expect(screen.queryByText("Checking for updates…")).toBeNull();
+    expect(screen.getByText("Up to date")).toBeVisible();
     await act(async () => finish(same));
     expect(screen.queryByText("Checking for updates…")).toBeNull();
-    expect(check).not.toHaveAttribute("data-loading");
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it("polls visible local folders without overlap, preserves review, and cleans up on close", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const visibility = vi
+    .spyOn(document, "visibilityState", "get")
+    .mockReturnValue("visible");
+  const same = {
+    ...rememberedPreview,
+    token: "same",
+    candidates: [
+      { path: "dist", revision: "old", manifest: rememberedManifest },
+    ],
+  };
+  let finish!: (preview: ImportPreview) => void;
+  const folder = vi
+    .fn()
+    .mockResolvedValueOnce(same)
+    .mockImplementationOnce(
+      () =>
+        new Promise<ImportPreview>((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue({ ...rememberedPreview, token: "latest" });
+  const discard = vi.fn(async () => {});
+  const manager = {
+    imports: { folder, discard },
+    installImport: vi.fn(),
+  } as unknown as PluginManager;
+  const props = {
+    plugins: manager,
+    catalog: {
+      profile: "test",
+      location: "test",
+      plugins: [
+        {
+          ...rememberedPlugin,
+          updateSource: { root: "/plugins", path: "dist" },
+        },
+      ],
+    },
+    busy: false,
+    updateId: rememberedManifest.id,
+  };
+  render(<button type="button">Keep focus</button>);
+  const view = render(<PluginImport {...props} />);
+  try {
+    await act(async () => {});
+    screen.getByRole("button", { name: "Keep focus" }).focus();
+    await act(async () => vi.advanceTimersByTime(4_999));
+    expect(folder).toHaveBeenCalledTimes(1);
+    visibility.mockReturnValue("hidden");
+    await act(async () => vi.advanceTimersByTime(10_001));
+    expect(folder).toHaveBeenCalledTimes(1);
+    visibility.mockReturnValue("visible");
+    await act(async () => {
+      fireEvent(document, new Event("visibilitychange"));
+    });
+    expect(folder).toHaveBeenCalledTimes(2);
+    expect(discard).toHaveBeenCalledWith("same");
+    expect(screen.getByText("Up to date")).toBeVisible();
+    await act(async () => vi.advanceTimersByTime(10_000));
+    expect(folder).toHaveBeenCalledTimes(2);
+    await act(async () => finish(rememberedPreview));
+    expect(screen.getByRole("button", { name: "Keep focus" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    await act(async () => vi.advanceTimersByTime(10_000));
+    expect(folder).toHaveBeenCalledTimes(2);
+    expect(discard).not.toHaveBeenCalledWith("remembered");
+    expect(manager.installImport).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }),
+    );
+    await act(async () => {});
+    view.rerender(<PluginImport {...props} busy />);
+    await act(async () => vi.advanceTimersByTime(5_000));
+    expect(folder).toHaveBeenCalledTimes(2);
+    view.rerender(<PluginImport {...props} />);
+    await act(async () => {
+      fireEvent(window, new Event("focus"));
+    });
+    expect(folder).toHaveBeenCalledTimes(3);
+    view.unmount();
+    expect(discard).toHaveBeenCalledWith("latest");
+    await act(async () => vi.advanceTimersByTime(10_000));
+    expect(folder).toHaveBeenCalledTimes(3);
+  } finally {
+    finish?.(rememberedPreview);
+    view.unmount();
+    visibility.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+it("keeps Git checks explicit across timer ticks and window activation", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const git = vi.fn(async () => rememberedPreview);
+  const manager = {
+    imports: { git, discard: vi.fn(async () => {}) },
+  } as unknown as PluginManager;
+  const view = render(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            ...rememberedPlugin,
+            updateSource: {
+              repository: "https://git.example.com/plugins",
+              reference: "",
+              path: "dist",
+            },
+          },
+        ],
+      }}
+      busy={false}
+      updateId={rememberedManifest.id}
+    />,
+  );
+  try {
+    await act(async () => vi.advanceTimersByTime(15_000));
+    await act(async () => {
+      fireEvent(window, new Event("focus"));
+    });
+    expect(git).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    await act(async () => {});
+    expect(git).toHaveBeenCalledTimes(1);
   } finally {
     view.unmount();
     vi.useRealTimers();

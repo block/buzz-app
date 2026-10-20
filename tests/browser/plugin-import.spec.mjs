@@ -456,6 +456,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   page,
   app,
 }, info) => {
+  await page.clock.install();
   await nativeImports(
     page,
     ["one", "two"].map((name, index) => ({
@@ -623,12 +624,11 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await enabled.click();
   await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Reload")).toHaveCount(0);
-  await button(page, "Close plugin details").click();
   await page.evaluate(() => {
     window.importCategory = "productivity";
   });
-  await button(page, "View Example two details").click();
-  // The pane checks the folder before offering a review action.
+  await page.clock.runFor(5_000);
+  // The open pane detects folder changes without a manual check.
   await expect(button(page, "Update")).toBeEnabled();
   expect(
     await page.evaluate(
@@ -674,15 +674,10 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await expect(button(page, "Update")).toHaveCount(0);
   const pane = page.getByRole("complementary", { name: "Example two details" });
   const paneActions = pane.getByRole("button", {
-    name: /^(Disable|Check for updates|Roll back|Delete)$/,
+    name: /^(Disable|Roll back|Delete)$/,
   });
-  await expect(paneActions).toHaveCount(4);
-  await expect(paneActions).toHaveText([
-    "Disable",
-    "Check for updates",
-    "Roll back",
-    "Delete",
-  ]);
+  await expect(paneActions).toHaveCount(3);
+  await expect(paneActions).toHaveText(["Disable", "Roll back", "Delete"]);
   for (const [width, theme] of [
     [1440, "light"],
     [480, "dark"],

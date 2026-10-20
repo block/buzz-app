@@ -40,7 +40,10 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let file = root.join("checkout.txt");
         std::fs::write(&file, "keep this checkout").unwrap();
-        assert!(validate("~/", Some(&root)).is_ok());
+        let home = root.canonicalize().unwrap();
+        for value in ["~", "~/", home.to_str().unwrap()] {
+            assert_eq!(validate(value, Some(&home)).unwrap(), "~");
+        }
         assert!(validate("relative", Some(&root)).is_err());
         assert!(validate(file.to_str().unwrap(), Some(&root)).is_err());
         assert!(validate(root.join("missing").to_str().unwrap(), Some(&root)).is_err());

@@ -15,7 +15,7 @@ export function repositoriesPath(value: string) {
     [...path].some(
       (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
     ) ||
-    (path && !/^(?:\/|~\/|[a-z]:[\\/]|\\\\)/i.test(path))
+    (path && !/^(?:~$|\/|~\/|[a-z]:[\\/]|\\\\)/i.test(path))
   )
     throw new Error("Choose an absolute folder path or a path under ~/.");
   return path;

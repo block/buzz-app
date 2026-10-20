@@ -89,6 +89,27 @@ it("validates and saves a chosen folder, preserves drafts on failure, and restor
   expect(readRepositoriesFolder(community, "b".repeat(64))).toBe("/other");
 });
 
+it.each(["picker", "typed"])(
+  "saves the native home-directory result from a %s selection",
+  async (source) => {
+    const { user } = await setup();
+    const input = screen.getByLabelText("Repositories folder");
+    if (source === "picker") {
+      native.invoke.mockResolvedValueOnce("~");
+      await user.click(screen.getByRole("button", { name: "Choose folder…" }));
+    } else {
+      await user.type(input, "/Users/you");
+    }
+    native.invoke.mockResolvedValueOnce("~");
+    await user.click(screen.getByRole("button", { name: "Save folder" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "saved on this device",
+    );
+    expect(input).toHaveValue("~");
+    expect(readRepositoriesFolder(community, viewer)).toBe("~");
+  },
+);
+
 it("blocks a late native result after community removal and keeps dirty drafts through another window’s change", async () => {
   const { user, communities } = await setup();
   const input = screen.getByLabelText("Repositories folder");

@@ -88,7 +88,8 @@ export function createKnownCommunitiesClient(
   }
   /** Posts under the current credential and parses the body on every status:
    * the service answers its refusals in JSON, while the framework's own
-   * refusals are plain text. */
+   * refusals are plain text. `value` is absent when the body is not a JSON
+   * object, which a refusal's status still explains and a success does not. */
   async function request(path: string, body: unknown, signal: AbortSignal) {
     signal.throwIfAborted();
     const credential = session.credential();
@@ -122,14 +123,18 @@ export function createKnownCommunitiesClient(
     }
     return {
       status: response.status,
-      value: (value && typeof value === "object" && !Array.isArray(value)
-        ? value
-        : {}) as Record<string, unknown>,
+      value:
+        value && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)
+          : undefined,
     };
   }
-  const refusal = (status: number, value: Record<string, unknown>): Refusal => {
+  const refusal = (
+    status: number,
+    value: Record<string, unknown> | undefined,
+  ): Refusal => {
     const code =
-      typeof value.error === "string" ? value.error : BY_STATUS[status];
+      typeof value?.error === "string" ? value.error : BY_STATUS[status];
     return isRefusal(code) ? { kind: code } : unexpected(status);
   };
   /** Both edits are idempotent, so a lost answer is retried as sent. */
@@ -150,6 +155,9 @@ export function createKnownCommunitiesClient(
     async list(signal: AbortSignal): Promise<ListResult> {
       const { status, value } = await request("list", {}, signal);
       if (status !== 200) return refusal(status, value);
+      // An empty or non-JSON body (a proxy's block page, say) is not an
+      // empty list: reading it as one would forget every synced community.
+      if (!value) return { kind: "invalid_response" };
       // Protobuf JSON can omit an empty repeated field.
       const rows = value.communities ?? [];
       if (!Array.isArray(rows)) return { kind: "invalid_response" };

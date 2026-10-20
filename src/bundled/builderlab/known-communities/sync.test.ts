@@ -11,12 +11,14 @@ import type {
   ClientSnapshot,
   KnownCommunities,
 } from "../../../features/communities/service";
+import type { Host } from "../../../features/host/service";
 import { createOAuthSession } from "../oauth/session";
 import { deferred } from "../test-helpers";
-import type {
-  KnownCommunitiesClient,
-  ListResult,
-  UpdateResult,
+import {
+  createKnownCommunitiesClient,
+  type KnownCommunitiesClient,
+  type ListResult,
+  type UpdateResult,
 } from "./client";
 import { startKnownCommunitiesSync } from "./sync";
 
@@ -32,6 +34,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 /** Settles pending promise chains without moving the fake clock. */
@@ -267,6 +270,13 @@ it.each([
       error: "This Builderlab account can’t sync communities.",
     },
   },
+  {
+    // A partly routed service is as quiet as one without any route.
+    name: "an upload meets no route",
+    arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
+      h.client.add.mockResolvedValue({ kind: "rejected", status: 404 }),
+    status: { phase: "unavailable", pending: 1 },
+  },
 ])("halts until the next sign-in when $name", async ({ arrange, status }) => {
   const h = await fixture({
     signedIn: false,
@@ -292,6 +302,43 @@ it.each([
   await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
   expect(h.outbox()).toEqual([]);
   h.dispose();
+});
+
+it("halts on a 200 list the real client cannot read, forgetting no membership", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const s = store({
+    memberships: [{ id: "https://primary.example", name: "Primary" }],
+    sync: { known: [primary], outbox: [] },
+  });
+  const session = createOAuthSession(async () => ({
+    value: "secret",
+    account: { subject: "user", email: "a@example.com" },
+  }));
+  // A proxy's block page, a truncated or an empty body: a 200 that is no list.
+  const host: Host = {
+    runCommand: vi.fn(),
+    request: vi.fn(async () => ({ status: 200, headers: {}, body: "" })),
+  };
+  const dispose = startKnownCommunitiesSync({
+    client: createKnownCommunitiesClient(host, session),
+    session,
+    knownCommunities: s.knownCommunities,
+  });
+  await session.signIn();
+  await until(() =>
+    expect(s.status).toHaveBeenLastCalledWith({
+      phase: "error",
+      pending: 0,
+      error: "Builderlab returned an invalid response.",
+    }),
+  );
+  // Nothing merged: the account was not taken to hold nothing.
+  expect(s.apply).not.toHaveBeenCalled();
+  expect(s.known()).toEqual([primary]);
+  window.dispatchEvent(new Event("online"));
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(host.request).toHaveBeenCalledTimes(1);
+  dispose();
 });
 
 it("runs no pass and reports nothing on a trigger once synced with an empty queue, and never repeats a report", async () => {

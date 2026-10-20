@@ -125,9 +125,7 @@ service spells them, `wss://host[:port]` with a lowercase host, no default
 port and no trailing slash; a configured alias resolves to its origin first and
 never leaves the device. Records from before this field existed, or a field
 this reader cannot understand, read as empty, and a malformed entry is dropped
-on its own. The shape saved by builds before the service became a set (records
-with revisions, several operations per destination) reads as its live records
-and each destination's newest operation.
+on its own.
 
 The account's list is a set: the service's add and remove are idempotent, so
 the outbox holds at most one intent per destination, the latest. Joining queues
@@ -175,8 +173,9 @@ full or any other client error (named with its HTTP status) parks that one
 intent until it is replaced or the next sign-in while the rest continue, an
 account that cannot sync or a list this client cannot read (a shape the two
 sides no longer share) stops until then, and a session the service has ended
-signs the plugin out. A service that answers the list with 404 has no
-known-communities routes yet: sync stops quietly until the next sign-in. A listed address this device could never save is left out and
+signs the plugin out. A service that answers any of the routes with 404 has no
+known-communities routes yet, or not all of them: sync stops quietly until the
+next sign-in. A listed address this device could never save is left out and
 counted in a console warning, so one bad row cannot stop the account's sync.
 Signing out or disabling the plugin abandons the request in flight and leaves
 the queue intact.
@@ -318,11 +317,11 @@ tolerant reader of saved state.
 `src/bundled/builderlab/known-communities/client.test.ts` covers the account
 service's three routes against the native host transport: the exact request
 shapes, the device's spelling of listed addresses, omitted repeated fields,
-unsaveable addresses dropped and counted, rows of another shape answered as an
-invalid response, every named refusal in JSON and in the framework's plain
-text, unnamed client errors returned as rejections on every route while
-timeouts, rate limits and server errors remain failures, a 401 that ends the
-session and an unreachable service. `sync.test.ts` covers the owner under a
+unsaveable addresses dropped and counted, rows of another shape and a success
+without a JSON object body answered as an invalid response, every named refusal
+in JSON and in the framework's plain text, unnamed client errors returned as
+rejections on every route while timeouts, rate limits and server errors remain
+failures, a 401 that ends the session and an unreachable service. `sync.test.ts` covers the owner under a
 controlled clock: sign-in and a loading record, the complete list merged once
 per sign-in and an intent queued while it is in flight, the removed-elsewhere
 and never-uploaded rules on
@@ -331,7 +330,8 @@ retries at each backoff boundary and the reset after a success, a device record
 that will not take an answer backing off and replaying, the `online` and
 `visibilitychange` triggers and their silence once synced with an empty queue,
 no repeated report, parked and halting refusals including rejections named by
-status, an unreadable list and the quiet 404 for a service without the routes,
+status, an unreadable list (through the real client, keeping every membership)
+and the quiet 404 on the list or an upload for a service without the routes,
 addresses the list left out, a parked add replaced by the removal that then
 goes out and re-sent on the next sign-in, both lost-acknowledgement orders
 against a set service, an abandoned upload on sign-out that keeps the queue, a

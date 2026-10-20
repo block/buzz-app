@@ -6,7 +6,12 @@ import {
 } from "../../../features/communities/known-communities";
 import type { KnownCommunities } from "../../../features/communities/service";
 import type { OAuthSession } from "../oauth/session";
-import type { KnownCommunitiesClient, Refusal } from "./client";
+import type {
+  KnownCommunitiesClient,
+  ListResult,
+  Refusal,
+  UpdateResult,
+} from "./client";
 
 /** Why the service refused, in the viewer's terms. */
 const REASONS: Record<Exclude<Refusal["kind"], "rejected">, string> = {
@@ -20,6 +25,9 @@ const reason = (refusal: Refusal) =>
     ? `Builderlab refused this request (HTTP ${refusal.status}).`
     : REASONS[refusal.kind];
 const backoff = (failures: number) => Math.min(60_000, 1000 * 2 ** failures);
+/** The service has no such route: not yet deployed, or only partly. */
+const missing = (result: ListResult | UpdateResult) =>
+  result.kind === "rejected" && result.status === 404;
 /** An intent's identity for parking: the newer intent that replaces a parked
  * one is a different request and goes out. */
 const key = (op: PendingOp) => `${op.removed ? "-" : "+"}${op.url}`;
@@ -36,8 +44,8 @@ const same = (a: SyncStatus | undefined, b: SyncStatus) =>
  * are not retried: an account that cannot sync, or a list this client cannot
  * read, stops everything until the next sign-in, while a refused address, a
  * full account or another client error parks that one intent until it is
- * replaced or the next sign-in. A service without the routes (404 on the
- * list) stops the same way but reports nothing to show. Signing out or
+ * replaced or the next sign-in. A service without the routes (404 on any of
+ * them) stops the same way but reports nothing to show. Signing out or
  * disposal abandons in-flight work and leaves the outbox intact. */
 export function startKnownCommunitiesSync({
   client,
@@ -91,7 +99,8 @@ export function startKnownCommunitiesSync({
   };
   const refuse = (refusal: Refusal) => {
     halted = true;
-    error = reason(refusal);
+    if (missing(refusal)) unavailable = true;
+    else error = reason(refusal);
   };
   async function run() {
     if (disposed || !controller || halted || running) return;
@@ -107,13 +116,6 @@ export function startKnownCommunitiesSync({
     try {
       if (!listed) {
         const list = await client.list(signal);
-        if (list.kind === "rejected" && list.status === 404) {
-          // The service has no known-communities routes yet: nothing to
-          // show and nothing to do until the next sign-in.
-          halted = true;
-          unavailable = true;
-          return;
-        }
         if (list.kind !== "listed") return refuse(list);
         signal.throwIfAborted();
         if (list.dropped)
@@ -145,7 +147,8 @@ export function startKnownCommunitiesSync({
           await knownCommunities.apply(
             acknowledge(knownCommunities.snapshot().sync, op),
           );
-        else if (result.kind === "forbidden") return refuse(result);
+        else if (result.kind === "forbidden" || missing(result))
+          return refuse(result);
         else {
           parked.add(key(op));
           error = reason(result);

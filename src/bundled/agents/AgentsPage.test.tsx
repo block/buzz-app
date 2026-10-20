@@ -977,7 +977,7 @@ it("imports an earlier agent as the chosen type and shows it in Your agents", as
   const dialog = screen.getByRole("dialog", { name: "Import an agent" });
   expect(
     await within(dialog).findByRole("button", { name: "Bea imported" }),
-  ).toBeDisabled();
+  ).toHaveAttribute("aria-disabled", "true");
   expect(
     within(dialog).getByRole("button", { name: "Import Ada" }),
   ).toBeEnabled();
@@ -1014,10 +1014,10 @@ it("queues several imports in a row and keeps the dialog open until they finish"
   finish();
   expect(
     await within(dialog).findByRole("button", { name: "Bea imported" }),
-  ).toBeDisabled();
+  ).toHaveAttribute("aria-disabled", "true");
   expect(
     within(dialog).getByRole("button", { name: "Ada imported" }),
-  ).toBeDisabled();
+  ).toHaveAttribute("aria-disabled", "true");
   expect(agents.port).toHaveBeenCalledTimes(2);
   expect(agents.port).toHaveBeenLastCalledWith({
     source: "installed",
@@ -1028,6 +1028,61 @@ it("queues several imports in a row and keeps the dialog open until they finish"
   expect(
     screen.queryByRole("dialog", { name: "Import an agent" }),
   ).not.toBeInTheDocument();
+});
+
+it("keeps keyboard focus on an import when it finishes", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  let finish = () => {};
+  agents.port.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ agent: agent("Ada", 1), notes: [] });
+      }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /Import them now/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  const ada = await within(dialog).findByRole("button", { name: "Import Ada" });
+  ada.focus();
+  await user.keyboard("{Enter}");
+  finish();
+  const done = await within(dialog).findByRole("button", {
+    name: "Ada imported",
+  });
+  expect(done).toHaveFocus();
+  // The next import is one Tab away.
+  await user.tab();
+  await user.tab();
+  expect(
+    within(dialog).getByRole("button", { name: "Import Bea" }),
+  ).toHaveFocus();
+});
+
+it("drops imports still waiting their turn when the page goes away", async () => {
+  const user = userEvent.setup();
+  const view = setup([]);
+  let finish = () => {};
+  view.agents.port.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ agent: agent("Ada", 1), notes: [] });
+      }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /Import them now/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Import Ada" }),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
+  view.unmount();
+  finish();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // Bea would otherwise land in whatever community was selected by then.
+  expect(view.agents.port).toHaveBeenCalledTimes(1);
 });
 
 it("keeps importing the rest after one fails, and clears the failure on a retry", async () => {
@@ -1044,14 +1099,14 @@ it("keeps importing the rest after one fails, and clears the failure on a retry"
   await user.click(within(dialog).getByRole("button", { name: "Import Bea" }));
   expect(
     await within(dialog).findByRole("button", { name: "Bea imported" }),
-  ).toBeDisabled();
+  ).toHaveAttribute("aria-disabled", "true");
   expect(within(dialog).getByRole("alert")).toHaveTextContent(
     "Ada wasn't imported. Keychain access was denied.",
   );
   await user.click(within(dialog).getByRole("button", { name: "Import Ada" }));
   expect(
     await within(dialog).findByRole("button", { name: "Ada imported" }),
-  ).toBeDisabled();
+  ).toHaveAttribute("aria-disabled", "true");
   expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   expect(

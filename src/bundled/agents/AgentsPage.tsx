@@ -1066,6 +1066,15 @@ function ImportAgents({
   const [said, setSaid] = useState<ReadonlyMap<string, string>>(new Map());
   const chosenPorts = useRef(new Set<string>());
   const portLine = useRef(Promise.resolve());
+  // An import still waiting its turn when the dialog goes away is dropped:
+  // it would otherwise land in whatever community is selected by then.
+  const open = useRef(true);
+  useEffect(() => {
+    open.current = true;
+    return () => {
+      open.current = false;
+    };
+  }, []);
   const queued = [...ports.values()].includes("queued");
   useEffect(() => onPendingChange(queued), [queued, onPendingChange]);
   useEffect(() => {
@@ -1104,6 +1113,7 @@ function ImportAgents({
     say(agent.pubkey);
     const type = chosen.key;
     portLine.current = portLine.current.then(async () => {
+      if (!open.current) return;
       try {
         const { notes } = await agents.port({
           source: agent.source,
@@ -1279,6 +1289,8 @@ function ImportAgents({
                       variant="outline"
                       aria-label={`${agent.name} imported`}
                       disabled
+                      // Keeps the owner's place for the next import.
+                      focusableWhenDisabled
                     >
                       <CheckIcon size={16} aria-hidden="true" /> Imported
                     </Button>

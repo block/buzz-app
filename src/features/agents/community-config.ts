@@ -922,8 +922,13 @@ export function agentConfigs(
       const team = ownTeam(id);
       if (team.archived) throw new Error("No such team");
       const { done } = await accepted(id, change, (create) => {
-        // A form opened without a readable head never saves over one.
-        if (team.unreadable || base === undefined)
+        // A form opened without a readable head never saves over one. It
+        // keeps that missing head, so only reopening the team can recover.
+        if (base === undefined)
+          throw new Error(
+            "This team couldn't be read when it was opened; close it and open it again",
+          );
+        if (team.unreadable)
           throw new Error("This team can't be read right now; try again");
         // While its Create is unfinished, the Save revises that Create: a
         // separate Edit would leave its older intent to replay.

@@ -7959,7 +7959,7 @@ describe("Delete as a recoverable archive", () => {
           members: [alder],
           ...baseOf(opened),
         }),
-      ).rejects.toThrow("can't be read");
+      ).rejects.toThrow("close it and open it again");
       const head = [...relay.heads.values()].find((h) =>
         h.tags.some(([name, value]) => name === "team" && value === id),
       );

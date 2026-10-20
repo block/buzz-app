@@ -44,7 +44,7 @@ import {
   CheckCircleIcon,
   SparklesIcon,
   SquaresFourIcon,
-  XIcon,
+  SidebarRightIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
@@ -350,7 +350,7 @@ function PluginDetails({
           ref={close}
           aria-label="Close plugin details"
           size="sm"
-          icon={<XIcon size={16} aria-hidden="true" />}
+          icon={<SidebarRightIcon size={16} aria-hidden="true" />}
           onClick={onClose}
         />
       </div>

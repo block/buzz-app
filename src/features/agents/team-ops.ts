@@ -970,10 +970,15 @@ export function teamRunner(deps: RunnerDeps) {
         ...(old.channel ? { channel: old.channel } : {}),
       };
       if (!move) await deps.done(old);
-      await ops.update((records) => ({
-        [old.id]: undefined,
-        [op.id]: { ...op, seq: nextSeq(records) },
-      }));
+      // Consumes `old` only as read here: a second Resubmit, or any change
+      // saved meanwhile, finds it gone or changed and replaces nothing.
+      const claimed = await ops.update((records) =>
+        records[old.id] === old
+          ? { [old.id]: undefined, [op.id]: { ...op, seq: nextSeq(records) } }
+          : undefined,
+      );
+      if (!claimed)
+        throw new Error("This change was already resubmitted or changed");
       deps.changed();
       return { op, done: run(op.id) };
     },

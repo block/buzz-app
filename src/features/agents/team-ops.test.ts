@@ -1018,6 +1018,30 @@ describe("team operations: saved before sending", () => {
     expect(record(v, after.op.id)).toMatchObject({ mode: "may-send", seq: 1 });
   });
 
+  it("two Resubmits of one stopped change replace it once", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const { op } = w.runner.submit({
+      kind: "edit",
+      teamId,
+      channel: CH,
+      base: w.relay.head?.id ?? null,
+      intent: { ...team, name: "Renamed" },
+    });
+    await w.ops.settled();
+    await w.runner.discard(op.id);
+    const save = hold(w, (value) => !value.includes(op.id));
+    const first = w.runner.resubmit(op.id, w.relay.head?.id ?? null);
+    await save.reached;
+    const second = w.runner.resubmit(op.id, w.relay.head?.id ?? null);
+    save.release();
+    const replaced = await first;
+    await expect(second).rejects.toThrow("already resubmitted");
+    expect(await replaced.done).toBeUndefined();
+    expect(w.ops.every()).toEqual([]);
+    expect(w.writer.publish).toHaveBeenCalledOnce();
+  });
+
   it("saves records in the order they were written", async () => {
     const w = world();
     const teamId = await existing(w);

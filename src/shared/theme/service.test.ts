@@ -287,6 +287,7 @@ it("font writes clamp, round, recover from failure, sync and preserve color stor
 
 it.each<[string, string | null, string]>([
   ...ACCENTS.map((color): [string, null, string] => [color, null, color]),
+  ["chartreuse", null, "citrus"],
   ["lime", null, "citrus"],
   ["invalid", null, "citrus"],
   ["citron", null, "citrus"],

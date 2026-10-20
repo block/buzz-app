@@ -8,7 +8,6 @@ export const ACCENTS = [
   "iris",
   "cobalt",
   "citrus",
-  "chartreuse",
   "mono",
 ] as const;
 export type Accent = (typeof ACCENTS)[number];
@@ -18,7 +17,13 @@ export const ACCENT_KEY = "buzz-accent.v1";
 export const LEGACY_BUBBLE_KEY = "buzz-bubble-color.v1";
 
 export function parseAccent(value: unknown): Accent {
-  if (value === "lime" || value === "pear" || value === "jade") return "citrus";
+  if (
+    value === "chartreuse" ||
+    value === "lime" ||
+    value === "pear" ||
+    value === "jade"
+  )
+    return "citrus";
   if (value === "flame") return "bee";
   if (value === "gray") return "mono";
   return ACCENTS.includes(value as Accent) ? (value as Accent) : DEFAULT_ACCENT;

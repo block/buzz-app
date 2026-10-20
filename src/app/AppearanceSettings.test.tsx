@@ -258,7 +258,7 @@ it("selects and restores an accent color, including retry after a failed save", 
   );
   expect(
     screen.getAllByRole("button", { name: / accent color$/ }),
-  ).toHaveLength(7);
+  ).toHaveLength(6);
 
   expect(
     screen.getByRole("button", { name: "Citrus accent color" }),

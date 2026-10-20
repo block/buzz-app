@@ -30,6 +30,12 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
   await expect(preference).toContainText("Send immediately");
   await preference.click();
   await page.getByRole("option", { name: "Queue", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Close Settings", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Settings", exact: true }),
+  ).toBeHidden();
   await openPage(page, "Messages");
   await page
     .getByRole("navigation", { name: "Solo conversations" })

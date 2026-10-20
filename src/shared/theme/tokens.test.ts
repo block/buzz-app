@@ -269,6 +269,10 @@ it.each(ACCENTS)(
         quiet["--surface-panel"],
       );
       expect(quiet["--text-control-selected"]).toBe(quiet["--text-standard"]);
+      // Ghost buttons sit directly on panels; segmented indicators sit on inset tracks.
+      expect(quiet["--surface-navigation-selected"]).not.toBe(
+        quiet["--surface-panel"],
+      );
       for (const role of [
         "--surface-message-own",
         "--surface-navigation-selected",

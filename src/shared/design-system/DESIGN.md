@@ -1409,8 +1409,10 @@ contrast choices retain their behavior as Hummin’/Buzzin’. Older vibe values
 
 Persistent control selections use `surface-control-selected` with
 `text-control-selected`: neutral at Snoozin’, soft accent at Hummin’, and solid
-accent with paired ink at Buzzin’. Segmented filters and selected ghost icon
-buttons share this pair. Their tracks stay neutral. Panel tabs retain an
+accent with paired ink at Buzzin’. Segmented filters use this pair on neutral
+tracks. Selected ghost icon buttons use `surface-navigation-selected` with
+`text-navigation-selected`, keeping a distinct neutral fill against panels at
+Snoozin’ and the same accent treatment at higher levels. Panel tabs retain an
 underline, using the readable accent mark rather than a filled background.
 Snoozin’ keeps transient row/hover states neutral; Hummin’ and Buzzin’ use soft
 accent hover states. Hover never becomes a competing solid selection. Menus,
@@ -1437,8 +1439,10 @@ never follow the accent. Shared controls inside a nested dark scope use the dark
 ramp even when the app is light; gallery comments follow the app mode.
 
 Do not mix colors or use opacity to invent lighter shades; choose a ramp step.
-Swatches carry `data-accent` and `data-color-mode`. ThemePicker previews use their
-`.light`/`.dark` scopes. The contrast check audits every family in both modes.
+Swatches carry `data-accent` and `data-color-mode`; their inset selection rings
+use the family’s paired `text-on-accent` ink. Appearance uses a compact Mode
+Select for System, Light, and Dark, with a live illustrative preview. The
+contrast check audits every family in both modes.
 
 
 ## Density and rhythm

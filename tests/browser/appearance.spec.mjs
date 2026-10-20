@@ -90,6 +90,24 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     } finally {
       await page.mouse.up();
     }
+    await page.mouse.move(0, 0);
+    await expect(swatch).toHaveAttribute("aria-pressed", "true");
+    const selectedColors = await swatch.evaluate((node) => {
+      const hex = (value) =>
+        "#" +
+        value
+          .match(/\d+/g)
+          .slice(0, 3)
+          .map((part) => Number(part).toString(16).padStart(2, "0"))
+          .join("");
+      return {
+        ink: hex(getComputedStyle(node.querySelector("svg")).color),
+        fill: hex(getComputedStyle(node).backgroundColor),
+      };
+    });
+    expect(
+      wcagRatio(selectedColors.ink, selectedColors.fill),
+    ).toBeGreaterThanOrEqual(3);
   }
   await button(page, "Cobalt accent color").focus();
   await page.keyboard.press("Enter");

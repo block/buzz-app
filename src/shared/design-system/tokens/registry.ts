@@ -289,13 +289,6 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
-        token: "text-swatch-selection",
-        variable: "--text-swatch-selection",
-        pointsAt: "white in both modes",
-        use: "Inset selection ring on accent color swatches.",
-        status: "core",
-      },
-      {
         token: "bg-surface-message",
         variable: "--surface-message",
         pointsAt: "bubble-received in both modes",
@@ -747,7 +740,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--surface-control-selected",
         pointsAt:
           "neutral panel at Snoozin’; accent 4 at Hummin’; accent 9 at Buzzin’",
-        use: "Persistent segmented and icon-button selection; pair with text-control-selected.",
+        use: "Persistent segmented selection; pair with text-control-selected.",
         status: "core",
       },
       {

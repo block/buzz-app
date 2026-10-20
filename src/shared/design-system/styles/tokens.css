@@ -596,7 +596,6 @@
   /* Ink on a prominent fill, and a prominent mark standing alone on a
      surface (dots, insertion lines), which must stay visible by itself. */
   --text-on-prominent: var(--text-inverse);
-  --text-swatch-selection: var(--neutral-1);
   --affordance-prominent-mark: var(--affordance-prominent);
   --affordance-subtle: var(--neutral-2);
   --affordance-subtle-hover: var(--neutral-quiet-hover);
@@ -723,7 +722,6 @@
   /* Ink on a prominent fill, and a prominent mark standing alone on a
      surface (dots, insertion lines), which must stay visible by itself. */
   --text-on-prominent: var(--text-inverse);
-  --text-swatch-selection: var(--neutral-12);
   --affordance-prominent-mark: var(--affordance-prominent);
   --affordance-subtle: var(--neutral-4);
   --affordance-subtle-hover: var(--neutral-quiet-hover);
@@ -1444,7 +1442,6 @@
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
   --text-color-link: var(--text-link);
-  --text-color-swatch-selection: var(--text-swatch-selection);
   --color-surface-control-selected: var(--surface-control-selected);
   --text-color-control-selected: var(--text-control-selected);
   --text-color-navigation-selected: var(--text-navigation-selected);

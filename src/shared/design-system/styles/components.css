@@ -300,7 +300,7 @@
   }
 
   .buzz-button[data-color-swatch] .buzz-button-label {
-    color: var(--text-swatch-selection);
+    color: var(--text-on-accent);
   }
 
   .buzz-button[data-color-swatch] .buzz-button-label > svg {
@@ -379,8 +379,8 @@
   .buzz-button[data-icon-variant="ghost"][data-selected]:hover:not(
     [data-disabled]
   ) {
-    background: var(--surface-control-selected);
-    color: var(--text-control-selected);
+    background: var(--surface-navigation-selected);
+    color: var(--text-navigation-selected);
   }
 
   /* Bare controls stay unfilled. Glyph-state toggles keep their larger

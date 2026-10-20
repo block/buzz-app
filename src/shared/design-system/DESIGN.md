@@ -587,6 +587,12 @@ Opaque contrast checks do not validate translucent materials over arbitrary
 content. Inspect the actual background, text and interaction states wherever
 glass remains; the flat shell does not establish a general glass contrast guarantee.
 
+Proposed for profile artwork: `Button variant="glass"` uses the complete
+`glass-secondary` material, with a stronger fill on hover and an opaque pressed
+state. It retains shared focus, loading, and disabled behavior. Reduced
+transparency, forced colors, and missing backdrop-filter support use an opaque
+panel fill. Use it over artwork, not on ordinary neutral profile headers.
+
 ### Match controls to their surface
 
 The shell groups creation, page tabs, and search in one `chrome-navigation`

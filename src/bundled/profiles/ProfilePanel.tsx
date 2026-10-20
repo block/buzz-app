@@ -40,6 +40,10 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
+import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
+import hero from "../../features/profiles/ProfileHero.module.css";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentDelete } from "../../features/agents/AgentManage";
 import { useAgent, useChannelChoices } from "../../features/agents/react";
 import type { Agents } from "../../features/agents/service";
@@ -145,14 +149,15 @@ function OwnedAgentProfile({
           ...(context.rootId && { rootId: context.rootId }),
         }
       }
-      messageAction={
+      messageAction={(variant) => (
         <AgentMessageButton
+          variant={variant}
           pubkey={pubkey}
           relay={relay}
           navigator={navigation}
           navigation={undefined}
         />
-      }
+      )}
     />
   );
 }
@@ -368,7 +373,11 @@ function ProfileDetails({
       className={styles.root}
     >
       <div className={styles.profileContents}>
-        <div className={styles.identity}>
+        <div className={hero.hero}>
+          <ProfileBackdrop
+            src={picture}
+            kind={displayAgent ? "agent" : "human"}
+          />
           <div className={styles.portrait}>
             <AgentAvatar
               session={session}
@@ -382,10 +391,10 @@ function ProfileDetails({
               statusBadge={presence === "unknown" ? undefined : presence}
             />
           </div>
-          <div className="min-w-0">
+          <div className={styles.identity}>
             <h2 className="text-heading">{name}</h2>
             {presence !== "unknown" && (
-              <p className="text-body-sm text-secondary">
+              <p className="text-body-sm text-primary">
                 {
                   { online: "Active", away: "Away", offline: "Offline" }[
                     presence
@@ -393,7 +402,25 @@ function ProfileDetails({
                 }
               </p>
             )}
+            <UserStatusDisplay session={session} userId={pubkey} />
           </div>
+          {canMessage && (
+            <div className={hero.actions}>
+              <Button
+                size="sm"
+                variant={picture ? "glass" : "subtle"}
+                loading={openingMessage}
+                onClick={() => void openMessage()}
+              >
+                Message
+              </Button>
+            </div>
+          )}
+          {messageError && (
+            <p role="alert" className="text-body-sm text-danger">
+              {messageError}
+            </p>
+          )}
         </div>
         <Tabs
           value={selectedTab}
@@ -411,21 +438,10 @@ function ProfileDetails({
                 sections.find((item) => item.value === selected)?.render()
               ) : selected === "info" ? (
                 <>
-                  <UserStatusDisplay session={session} userId={pubkey} />
-                  {canMessage && (
-                    <div>
-                      <Button
-                        size="compact"
-                        loading={openingMessage}
-                        onClick={() => void openMessage()}
-                      >
-                        Message
-                      </Button>
-                      {messageError && <p role="alert">{messageError}</p>}
-                    </div>
-                  )}
                   {profile?.about && (
-                    <p className={styles.about}>{profile.about}</p>
+                    <SettingsGroup layout="form">
+                      <p className={styles.about}>{profile.about}</p>
+                    </SettingsGroup>
                   )}
                   {plugin && agents && plugin.agent.place !== "elsewhere" && (
                     <div>
@@ -437,30 +453,36 @@ function ProfileDetails({
                     </div>
                   )}
                   <div className={styles.publicKey}>
-                    <div className={styles.keyHeading}>
-                      <h3 className="text-body">Public key</h3>
-                      <Button
-                        size="compact"
-                        variant="ghost"
-                        aria-label="Copy npub"
-                        onClick={() => {
-                          setCopyStatus("");
-                          void Promise.resolve()
-                            .then(() => navigator.clipboard.writeText(npub))
-                            .then(
-                              () => setCopyStatus("Public key copied."),
-                              () =>
-                                setCopyStatus(
-                                  "Could not copy. Select the public key above to copy it.",
-                                ),
-                            );
-                        }}
-                      >
-                        <CopyIcon size={16} aria-hidden="true" />
-                        Copy
-                      </Button>
-                    </div>
-                    <code className="font-mono text-mono">{npub}</code>
+                    <SettingsGroup>
+                      <PreferenceRow
+                        title="Public key"
+                        subtitle={
+                          <code className={styles.keyValue}>{npub}</code>
+                        }
+                        trailing={
+                          <Button
+                            size="compact"
+                            variant="ghost"
+                            aria-label="Copy npub"
+                            onClick={() => {
+                              setCopyStatus("");
+                              void Promise.resolve()
+                                .then(() => navigator.clipboard.writeText(npub))
+                                .then(
+                                  () => setCopyStatus("Public key copied."),
+                                  () =>
+                                    setCopyStatus(
+                                      "Could not copy. Select the public key above to copy it.",
+                                    ),
+                                );
+                            }}
+                          >
+                            <CopyIcon size={16} aria-hidden="true" />
+                            Copy
+                          </Button>
+                        }
+                      />
+                    </SettingsGroup>
                     <span role="status" className={styles.feedback}>
                       {copyStatus}
                     </span>

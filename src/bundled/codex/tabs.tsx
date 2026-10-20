@@ -1,3 +1,5 @@
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
@@ -819,6 +821,7 @@ export function createTabs(
     const { open, show, back } = useOpenTranscript(conversation, label);
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
+    const unbound = sessions.filter((view) => !saved.has(view.key));
     const detail = (text: string) => (
       <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap text-caption">
         {text}
@@ -838,50 +841,50 @@ export function createTabs(
           />
         )}
         <section className="grid gap-1">
-          <h3 className="m-0 text-body">Recent conversations</h3>
-          {recent.length || sessions.length ? (
-            <ul className="m-0 grid list-none gap-4 p-0">
+          <InlineHeader title="Recent conversations" />
+          {recent.length || unbound.length ? (
+            <SettingsGroup>
               {/* Work that failed before Codex started a thread has no binding. */}
-              {sessions
-                .filter((view) => !saved.has(view.key))
-                .map((view) => (
-                  <li key={view.key}>
-                    <p className="m-0">
-                      <code>{view.key}</code> · {view.status}
-                    </p>
-                    {view.detail && detail(view.detail)}
-                  </li>
-                ))}
+              {unbound.map((view) => (
+                <PreferenceRow
+                  key={view.key}
+                  title={<code className="break-all">{view.key}</code>}
+                  subtitle={
+                    <>
+                      {view.status}
+                      {view.detail && detail(view.detail)}
+                    </>
+                  }
+                />
+              ))}
               {recent.map((conversation) => {
                 const view = views.get(conversation.key);
                 return (
-                  <li key={conversation.key} className="grid gap-2">
-                    <p className="m-0">
-                      {label(conversation)}
-                      {[
-                        view?.status,
-                        conversation.at
-                          ? new Date(conversation.at).toLocaleString()
-                          : undefined,
-                      ]
-                        .filter(Boolean)
-                        .map((part) => ` · ${part}`)
-                        .join("")}
-                    </p>
-                    {view?.detail && detail(view.detail)}
-                    <div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => show(conversation)}
-                      >
+                  <PreferenceRow
+                    key={conversation.key}
+                    title={label(conversation)}
+                    subtitle={
+                      <>
+                        {[
+                          view?.status,
+                          conversation.at
+                            ? new Date(conversation.at).toLocaleString()
+                            : undefined,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                        {view?.detail && detail(view.detail)}
+                      </>
+                    }
+                    trailing={
+                      <Button size="sm" onClick={() => show(conversation)}>
                         View transcript
                       </Button>
-                    </div>
-                  </li>
+                    }
+                  />
                 );
               })}
-            </ul>
+            </SettingsGroup>
           ) : (
             <p className="m-0 text-body-sm text-subtle">
               None. A conversation's session starts when the agent is mentioned.

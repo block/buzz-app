@@ -12,8 +12,10 @@ const playingAvatars = new Map<string, Set<HTMLVideoElement>>();
 /** Animated avatar with a still fallback for reduced motion or playback failure. */
 export function PackedAgentAvatar({
   avatar,
+  fit = "contain",
 }: {
   avatar: (typeof agentAvatars)[number];
+  fit?: "contain" | "cover";
 }) {
   const reducedMotion = useReducedMotion();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -36,8 +38,14 @@ export function PackedAgentAvatar({
   }, [avatar.id, reducedMotion]);
   const [failed, setFailed] = useState<string>();
   const media = avatarAnimation(avatar.id);
-  if (reducedMotion || failed === avatar.id)
-    return <img src={avatar.preview} alt={avatar.label} />;
+  if (reducedMotion || failed === avatar.id || (!media.webm && !media.hevc))
+    return (
+      <img
+        src={avatar.preview}
+        alt={avatar.label}
+        style={{ width: "100%", height: "100%", objectFit: fit }}
+      />
+    );
   // Prefer Apple's alpha HEVC only on Apple WebKit. Linux WebKit can
   // advertise HEVC decoding without Apple's alpha-video support.
   const appleWebkit =
@@ -69,7 +77,7 @@ export function PackedAgentAvatar({
             position: "absolute",
             width: "100%",
             height: "100%",
-            objectFit: "contain",
+            objectFit: fit,
           }}
         />
       )}
@@ -87,7 +95,7 @@ export function PackedAgentAvatar({
         style={{
           width: "100%",
           height: "100%",
-          objectFit: "contain",
+          objectFit: fit,
           opacity: ready === avatar.id ? 1 : 0,
           pointerEvents: "none",
         }}

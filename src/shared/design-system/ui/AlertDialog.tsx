@@ -2,7 +2,7 @@ import { AlertDialog as BaseAlertDialog } from "@base-ui/react/alert-dialog";
 import { XIcon } from "../icons";
 import { IconButton } from "./IconButton";
 import { useModalWindowDrag } from "./ModalWindowDrag";
-import type { ComponentProps, ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 
 /** Confirmations keep alert-dialog semantics and focus behavior owned by Base UI. */
 export function AlertDialog({
@@ -25,6 +25,8 @@ export function AlertDialog({
   finalFocus?: ComponentProps<typeof BaseAlertDialog.Popup>["finalFocus"];
 }) {
   const windowDrag = useModalWindowDrag();
+  // Preserve Base UI’s body/action default; Close joins the tab order afterward.
+  const [focusEntered, setFocusEntered] = useState(false);
   return (
     <BaseAlertDialog.Root
       open
@@ -54,6 +56,7 @@ export function AlertDialog({
           aria-modal="true"
           finalFocus={finalFocus}
           initialFocus={initialFocus}
+          onFocusCapture={() => setFocusEntered(true)}
         >
           <header className="buzz-dialog-header">
             <div className="buzz-dialog-heading">
@@ -68,6 +71,9 @@ export function AlertDialog({
               render={
                 <IconButton
                   aria-label="Close"
+                  tabIndex={
+                    initialFocus === undefined && !focusEntered ? -1 : undefined
+                  }
                   variant="subtle"
                   size="compact"
                   disabled={pending}

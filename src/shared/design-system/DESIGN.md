@@ -175,8 +175,10 @@ Modals start `8rem` from the viewport top, with a `1rem` bottom/side gutter and
 viewport-capped scrolling. Below `40rem` viewport height, the top gutter becomes
 `1rem` so actions remain reachable, including with enlarged text.
 Expanded modals support tables, two-column content, or integrated navigation.
-Navigation headers and each pane use the same inset; list rows retain their
-shared padding and align through the existing wrapper offset.
+When a short window or enlarged text leaves too little room below navigation
+chrome, the whole modal scrolls while retaining at least one control-height pane
+inside its insets. Navigation headers and each pane use the same inset; list
+rows retain their shared padding and align through the existing wrapper offset.
 
 Surface and contents enter together with a `0.75rem` upward fade over
 `duration-settle` (`220ms`) and `easing-enter`. Exit moves only `0.25rem` and uses
@@ -207,6 +209,11 @@ held mouse moves beyond the shared gesture threshold. A stationary click there
 remains an outside dismissal; actual dragging keeps the modal open without enabling
 blocked controls underneath. The host owns
 platform APIs and exact drag-region hit testing, not the design system.
+
+AlertDialog leaves initial focus selection to Base UI, excluding header Close
+until focus enters. This preserves body-field or first-action focus; Base UI
+retains ownership of touch behavior. Explicit `initialFocus` overrides remain
+authoritative. Close then participates in the normal Tab cycle.
 
 Preserve initial focus, return focus, Escape, outside-click, dirty-draft, and pending
 behavior explicitly. An asynchronous operation must not gain a dismissal path that

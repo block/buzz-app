@@ -304,6 +304,8 @@
   }
   /* A navigated modal has one surface. Its flush panes own scrolling, not Panels. */
   .buzz-dialog[data-navigation] {
+    /* When enlarged chrome consumes the frame, scroll the whole surface. */
+    overflow: auto;
     padding: 0;
     container-type: inline-size;
   }
@@ -325,6 +327,8 @@
     padding: var(--dialog-padding);
   }
   .buzz-dialog[data-navigation] > .buzz-dialog-body {
+    /* Retain a usable pane before falling back to outer scrolling. */
+    min-height: calc(2 * var(--dialog-padding) + var(--size-control));
     padding: 0;
     margin: 0;
     overflow: hidden;

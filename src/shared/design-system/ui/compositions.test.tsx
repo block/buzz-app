@@ -104,6 +104,70 @@ test("button titles use the shared hint while preserving refs and activation", a
   expect(button).toHaveAccessibleName("Send");
 });
 
+test.each(["body", "actions", "override"] as const)(
+  "confirmation preserves %s initial focus and keeps Close keyboard reachable",
+  async (target) => {
+    const user = userEvent.setup();
+    const confirm = createRef<HTMLButtonElement>();
+    function Example() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <Button onClick={() => setOpen(true)}>Open confirmation</Button>
+          {open && (
+            <AlertDialog
+              title="Confirm change"
+              description="Review before continuing."
+              onClose={() => setOpen(false)}
+              initialFocus={target === "override" ? confirm : undefined}
+              actions={
+                <>
+                  <Button onClick={() => setOpen(false)}>Cancel</Button>
+                  <Button ref={confirm}>Confirm</Button>
+                </>
+              }
+            >
+              {target === "body" && <Input aria-label="Private key" />}
+            </AlertDialog>
+          )}
+        </>
+      );
+    }
+    render(<Example />);
+    await user.tab();
+    await user.keyboard("{Enter}");
+    const expected =
+      target === "body"
+        ? screen.getByRole("textbox", { name: "Private key" })
+        : screen.getByRole("button", {
+            name: target === "override" ? "Confirm" : "Cancel",
+          });
+    await waitFor(() => expect(expected).toHaveFocus());
+    if (target === "override") await user.tab({ shift: true });
+    await user.tab({ shift: true });
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(
+      screen.getByRole("button", { name: "Open confirmation" }),
+    ).toHaveFocus();
+  },
+);
+
+test("pending confirmation with no available actions focuses the popup", async () => {
+  render(
+    <AlertDialog
+      title="Saving"
+      description="Please wait."
+      pending
+      onClose={() => {}}
+      actions={<Button disabled>Cancel</Button>}
+    />,
+  );
+  await waitFor(() => expect(screen.getByRole("alertdialog")).toHaveFocus());
+  expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+});
+
 test.each(["dialog", "alertdialog"] as const)(
   "pending %s rejects outside click, close and Escape, then allows dismissal once released",
   async (role) => {

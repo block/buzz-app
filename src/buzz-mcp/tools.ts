@@ -1179,7 +1179,8 @@ class Tools {
   }
 
   /** Messages oldest first with their latest edits, a line each: its ID,
-   * author and agent owner, channel and thread, omitting what `scope` names. */
+   * author and its claimed (unverified) agent owner, channel and thread,
+   * omitting what `scope` names. */
   async messages(
     events: readonly BuzzEvent[],
     scope: Readonly<{ channel?: string; root?: string }>,
@@ -1201,7 +1202,7 @@ class Tools {
         event.id,
         `from ${event.pubkey}`,
         name && JSON.stringify(name),
-        owner && `owner ${owner}`,
+        owner && `claimed owner ${owner}`,
         channel && channel !== scope.channel && `in ${channel}`,
         thread && thread !== scope.root && `re ${thread}`,
         reference &&

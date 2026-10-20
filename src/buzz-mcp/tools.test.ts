@@ -334,7 +334,7 @@ it.each([
     expect(response.result.isError).not.toBe(true);
     const text = response.result.content.map((item) => item.text).join("\n");
     const line = text.split("\n").find((line) => line.startsWith(id));
-    expect(line).toContain(`from ${alice} "Alice Smith" owner ${bob}`);
+    expect(line).toContain(`from ${alice} "Alice Smith" claimed owner ${bob}`);
     expect(line).toContain(`reply_to ${nested}`);
     expect(line).toContain("hello, edited");
     if ("channel" in args || "q" in args) expect(line).toContain(`re ${root}`);

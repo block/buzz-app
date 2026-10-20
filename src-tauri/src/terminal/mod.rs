@@ -7,7 +7,6 @@ mod tests;
 mod unix;
 
 pub(crate) use context::TerminalContext;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -19,10 +18,19 @@ const MAX_SESSIONS: usize = 20;
 pub(super) const MAX_BYTES: usize = 64 * 1024;
 pub(super) const MAX_PENDING_INPUT: usize = 1024 * 1024;
 
-#[derive(Serialize)]
+#[cfg(unix)]
 pub(crate) struct ReadResult {
     data: Vec<u8>,
     exited: bool,
+}
+#[cfg(unix)]
+impl ReadResult {
+    /// Raw IPC body: output bytes, then one exit flag byte. JSON would encode
+    /// every output byte as a decimal number in an array.
+    fn into_body(mut self) -> Vec<u8> {
+        self.data.push(u8::from(self.exited));
+        self.data
+    }
 }
 
 #[cfg(unix)]
@@ -236,12 +244,14 @@ pub(crate) async fn terminal_read(
     state: tauri::State<'_, Terminals>,
     owner: String,
     id: String,
-) -> Result<ReadResult, String> {
+) -> Result<tauri::ipc::Response, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(unix)]
         {
-            state.with_session(&owner, &id, Session::read)
+            state
+                .with_session(&owner, &id, Session::read)
+                .map(|result| tauri::ipc::Response::new(result.into_body()))
         }
         #[cfg(not(unix))]
         {

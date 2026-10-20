@@ -156,8 +156,7 @@ export function createSessions(
       while (live(entry) && entry.status === "running") {
         const result = await bridge.read(token, id);
         if (!live(entry)) break;
-        if (result.data.length)
-          await entry.screen.output(Uint8Array.from(result.data));
+        if (result.data.length) await entry.screen.output(result.data);
         if (!live(entry) || entry.status !== "running") break;
         if (result.exited) {
           await bridge.close(token, id);

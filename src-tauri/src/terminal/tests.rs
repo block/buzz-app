@@ -203,6 +203,19 @@ fn context_and_dimensions_reject_bad_boundary_inputs() {
 }
 
 #[test]
+fn read_body_appends_the_exit_flag_after_output() {
+    let body = |data: &[u8], exited| {
+        ReadResult {
+            data: data.to_vec(),
+            exited,
+        }
+        .into_body()
+    };
+    assert_eq!(body(b"AB", true), b"AB\x01");
+    assert_eq!(body(b"", false), [0]);
+}
+
+#[test]
 fn large_final_output_is_fully_drained_before_exited() {
     let state = Terminals::default();
     let owner = state.create_owner().unwrap();

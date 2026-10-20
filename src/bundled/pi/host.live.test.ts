@@ -75,16 +75,16 @@ out.places = (await pi.rpc("places", { agent })).places;
 out.entries = (await pi.rpc("entries", { agent, conversation: a.conversation })).entries.map((entry) => [entry.kind, ...(entry.model ?? []).map((message) => message.role + (message.usage ? "+usage" : ""))]);
 // A request while the run works steers it.
 const c = held();
-let saw = [];
+let saw = [], results = [];
 faux.setResponses([
   async () => { await c.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
-  (context) => { saw = context.messages.filter((m) => m.role === "user").map((m) => m.content); return fauxAssistantMessage("Answer to both"); },
+  (context) => { saw = context.messages.filter((m) => m.role === "user").map((m) => m.content); results = context.messages.filter((m) => m.role === "toolResult").map((m) => m.content); return fauxAssistantMessage("Answer to both"); },
 ]);
 const c1 = await pi.rpc("deliver", turn("C1", "third"));
 await started(pi.events, "C1");
 const c2 = await pi.rpc("deliver", turn("C2", "fourth"));
 c.release();
-out.c = { waits: await Promise.all([c1, c2].map((x) => pi.rpc("wait", { agent, submission: x.submission }))), saw, placed: pi.events.filter((e) => e.type === "placed").map((e) => [e.request, e.entry]), steps: pi.events.filter((e) => e.type === "step").map((e) => e.tool) };
+out.c = { waits: await Promise.all([c1, c2].map((x) => pi.rpc("wait", { agent, submission: x.submission }))), saw, results, placed: pi.events.filter((e) => e.type === "placed").map((e) => [e.request, e.entry]), steps: pi.events.filter((e) => e.type === "step").map((e) => e.tool) };
 // A run the host stops in continues in the next host.
 const d = held(), calling = held();
 faux.setResponses([
@@ -107,6 +107,13 @@ await started(pi.events, "E1");
 const e2 = await pi.rpc("deliver", turn("E2", "seventh"));
 e.release();
 out.e = await Promise.all([e1, e2].map((x) => pi.rpc("wait", { agent, submission: x.submission })));
+// The owner's Stop aborts the run.
+const g = held(), asking = held();
+faux.setResponses([async (_context, options) => { asking.release(); await abortable(g.gate, options?.signal); return fauxAssistantMessage("never"); }]);
+const g1 = await pi.rpc("deliver", turn("G", "ninth"));
+await asking.gate;
+await pi.rpc("abort", { agent, conversation: g1.conversation });
+out.aborted = await pi.rpc("wait", { agent, submission: g1.submission });
 out.place = await pi.rpc("place", { agent, key: "chan/root" });
 // A turn Pi could not start leaves what the conversation was shown.
 out.unstarted = await pi.rpc("deliver", { ...turn("F", "eighth"), at: 200, model: "nope" }).catch((error) => error.message);
@@ -198,6 +205,8 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(c1).toBeLessThan(c2);
     expect(c2).toBeLessThan(first.answer);
     expect(out.c.steps).toContain("send");
+    // What a Buzz tool answered is what the model reads.
+    expect(out.c.results.at(-1)).toEqual([{ type: "text", text: "sent" }]);
     expect(out.stopped).toEqual({ status: "closed" });
     expect(out.resumed).toMatchObject({
       status: "done",
@@ -209,6 +218,10 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       detail: expect.stringContaining("400 Bad model"),
     });
     expect(withdrawn).toEqual(failed);
+    expect(out.aborted).toMatchObject({
+      status: "unanswered",
+      reason: "aborted",
+    });
     expect(out.place).toEqual({ seen: 100 });
     expect(out.unstarted).toMatch(/Pi has no model nope/);
     expect(out.unstartedPlace).toEqual({ seen: 100 });

@@ -319,11 +319,24 @@ export function serve({
   function opening(agent) {
     let started = agents.get(agent);
     if (!started) {
-      started = open(agent);
-      agents.set(agent, started);
-      started.catch(() => {
-        if (agents.get(agent) === started) agents.delete(agent);
-      });
+      const opened = open(agent);
+      started = opened;
+      agents.set(agent, opened);
+      const forget = () => {
+        if (agents.get(agent) === opened) agents.delete(agent);
+      };
+      // Storage that fails closes its Harness for good: the next request
+      // opens it again.
+      void opened.then(
+        (ready) =>
+          ready.harness.closed.then((end) => {
+            if (end.reason !== "failed") return;
+            console.error("Pi's storage failed for an agent", end.error);
+            forget();
+            void shut(ready);
+          }),
+        forget,
+      );
     }
     return started;
   }
@@ -358,7 +371,7 @@ export function serve({
               signalled,
             );
             return {
-              content: (result.content ?? []).map((part) =>
+              output: (result.content ?? []).map((part) =>
                 part.type === "image" || part.type === "text"
                   ? part
                   : { type: "text", text: JSON.stringify(part) },

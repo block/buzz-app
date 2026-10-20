@@ -396,20 +396,31 @@ export function teamRunner(deps: RunnerDeps) {
           seq: nextSeq(records),
           ...input,
         };
-        const changes: Record<string, TeamOp> = { [id]: op };
-        if (op.kind === "delete")
-          for (const older of Object.values(records))
-            if (
-              older.owner === op.owner &&
-              older.community === op.community &&
-              older.teamId === op.teamId &&
-              older.mode === "may-send"
-            )
-              changes[older.id] = {
-                ...older,
-                mode: "reconcile-only",
-                stop: "deleted",
-              };
+        const changes: Record<string, TeamOp | undefined> = { [id]: op };
+        for (const older of Object.values(records)) {
+          if (
+            older.owner !== op.owner ||
+            older.community !== op.community ||
+            older.teamId !== op.teamId ||
+            older.mode !== "may-send"
+          )
+            continue;
+          if (op.kind === "delete")
+            changes[older.id] = {
+              ...older,
+              mode: "reconcile-only",
+              stop: "deleted",
+            };
+          // A Recover retires an older Delete known never to have sent, so
+          // it can't archive the recovered team later. One that may have
+          // sent stays, fencing the Recover until it resolves.
+          else if (
+            op.kind === "recover" &&
+            older.kind === "delete" &&
+            !unresolved(older)
+          )
+            changes[older.id] = undefined;
+        }
         return changes;
       })
       .then(() => deps.changed());

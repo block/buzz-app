@@ -491,6 +491,36 @@ describe("team operations: witnesses", () => {
     expect(w.log).toEqual(["archive"]);
   });
 
+  it("a Recover retires an older Delete that never sent, so it can't archive the team again", async () => {
+    const w = world();
+    const teamId = await existing(w, []);
+    w.hooks.archive = async () => {
+      throw new Error("busy");
+    };
+    const lifecycle = { name: "", instructions: "", members: [] };
+    const del = w.runner.start({
+      kind: "delete",
+      teamId,
+      channel: CH,
+      intent: lifecycle,
+    });
+    expect((await del.done)?.commands[0]?.state).toBe("planned");
+    w.hooks.archive = undefined;
+    // Another device archives the team; Recover brings it back.
+    w.relay.archived = true;
+    expect(
+      await w.runner.start({
+        kind: "recover",
+        teamId,
+        channel: CH,
+        intent: lifecycle,
+      }).done,
+    ).toBeUndefined();
+    await w.runner.resume();
+    expect(w.relay.archived).toBe(false);
+    expect(w.ops.get(del.op.id)).toBeUndefined();
+  });
+
   it("13: a restart between sending a member change and recording it: maybe-sent until a roster read shows it", async () => {
     const w = world();
     const teamId = await existing(w, []);

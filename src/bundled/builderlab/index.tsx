@@ -16,7 +16,14 @@ import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { applyApps } from "./apps";
 
-export const inject = ["host", "settingsCards", "agents", "relay", "panels", "browser"];
+export const inject = [
+  "host",
+  "settingsCards",
+  "agents",
+  "relay",
+  "panels",
+  "browser",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   let unavailable = "";
   try {

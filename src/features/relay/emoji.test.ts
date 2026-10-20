@@ -752,7 +752,7 @@ it("serializes concurrent adds so a stale own-set read cannot drop an earlier ad
     ["emoji", "two", "https://a.test/2.png"],
   ]);
 });
-it("exposes authoring only with upload and 30030 write capability", async () => {
+it("requires 30030 writing for removal and an uploader for additions", async () => {
   const h = authoring();
   const file = new File(["png"], "party.png", { type: "image/png" });
   await expect(

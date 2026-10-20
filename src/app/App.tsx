@@ -374,6 +374,14 @@ function ConnectedApp({ services }: { services: AppServices }) {
               if (settingsUnsaved) setConfirmSettingsDiscard(true);
               else route.leaveSettings();
             }}
+            initialFocus={() => {
+              // A destination that already focused a setting keeps it.
+              const active = document.activeElement;
+              return active instanceof HTMLElement &&
+                document.getElementById("settings-content")?.contains(active)
+                ? active
+                : true;
+            }}
             finalFocus={() => {
               // Only a return to the visit Settings covered restores the prior
               // focus; a destination opened from Settings starts at main.

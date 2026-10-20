@@ -1,6 +1,9 @@
 import { expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
-import type { LocalWork } from "../agents/local-activity";
+import {
+  createLocalAgentActivity,
+  type LocalWork,
+} from "../agents/local-activity";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { createOutbox } from "../relay/outbox";
 import { createAgentActivity } from "../agents/activity";
@@ -517,3 +520,94 @@ it.each(["missing", "read-only", "denied-error"])(
     expect(entry.publish).not.toHaveBeenCalled();
   },
 );
+
+it("retires stopped local waits after independent work clears and ignores late completion", async () => {
+  const h = fixture();
+  const owner = createLocalAgentActivity();
+  const off = owner.reader.subscribeWork(() => {
+    for (const row of owner.reader.work()) h.work(row.messageId, row.state);
+  });
+  try {
+    h.queue.submit(h.entry("first"));
+    const work = owner.begin({
+      scope: "scope",
+      agent: "agent",
+      channelId: "chat",
+      messageId: "first",
+      threadRootId: "",
+    });
+    work.step("Read");
+    work.interruptible(async () => {});
+    h.remote("working");
+    h.typing([
+      {
+        agent: "agent",
+        channelId: "chat",
+        startedAt: 1,
+        timestamp: 1,
+        working: true,
+        expiresAt: 8001,
+      },
+    ]);
+    const next = h.entry("next");
+    h.queue.submit(next);
+    expect(next.publish).not.toHaveBeenCalled();
+    await owner.reader.interrupt?.({
+      scope: "scope",
+      agent: "agent",
+      messageId: "first",
+    });
+    work.finish({ ok: true });
+    expect(owner.reader.work()[0]?.state).toBe("stopped");
+    expect(next.publish).not.toHaveBeenCalled();
+    h.remote("ended");
+    expect(next.publish).not.toHaveBeenCalled();
+    h.typing([]);
+    expect(next.publish).toHaveBeenCalledOnce();
+    h.work("next", "done");
+    await vi.waitFor(() => expect(h.deactivate).toHaveBeenCalledOnce());
+    expect(h.queue.snapshot()).toEqual([]);
+  } finally {
+    off();
+  }
+});
+
+it("rejects late upload admission to confirmed read-only destinations before activation", () => {
+  const h = fixture({
+    channels: { list: () => ({ channels: [{ id: "chat", readOnly: true }] }) },
+  } as unknown as Partial<RelaySession>);
+  const activate = vi.spyOn(h.session.agentActivity, "activate");
+  const entry = h.entry("late upload");
+  expect(() => h.queue.submit(entry)).toThrow(
+    "This chat is no longer available for sending.",
+  );
+  expect(entry.publish).not.toHaveBeenCalled();
+  expect(h.queue.snapshot()).toEqual([]);
+  expect(activate).not.toHaveBeenCalled();
+});
+
+it("keeps cached read-only destinations pending fresh release validation", async () => {
+  const h = fixture({
+    channels: {
+      list: () => ({
+        channels: [{ id: "chat", readOnly: true, cached: true }],
+      }),
+    },
+  } as unknown as Partial<RelaySession>);
+  const validation = deferred();
+  const entry = {
+    ...h.entry("cached"),
+    beforeRelease: () => validation.promise,
+  };
+  try {
+    expect(h.queue.submit(entry)).toBeUndefined();
+    expect(h.queue.snapshot()).toHaveLength(1);
+    expect(entry.publish).not.toHaveBeenCalled();
+    const queued = h.queue.snapshot()[0];
+    if (queued) h.queue.remove(queued.id);
+  } finally {
+    validation.resolve();
+  }
+  await vi.waitFor(() => expect(h.deactivate).toHaveBeenCalledOnce());
+  expect(entry.publish).not.toHaveBeenCalled();
+});

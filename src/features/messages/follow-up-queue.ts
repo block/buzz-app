@@ -44,7 +44,8 @@ function createQueue(session: RelaySession) {
         return (
           local.state === "done" ||
           local.state === "error" ||
-          local.state === "superseded"
+          local.state === "superseded" ||
+          local.state === "stopped"
         );
       const turns = activity.turns.filter(
         (turn) =>
@@ -228,7 +229,10 @@ function createQueue(session: RelaySession) {
       if (
         !session.channels
           .list()
-          .channels.some((row) => row.id === entry.channelId)
+          .channels.some(
+            (row) =>
+              row.id === entry.channelId && (!row.readOnly || row.cached),
+          )
       )
         throw new Error("This chat is no longer available for sending.");
       watch();

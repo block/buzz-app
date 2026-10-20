@@ -67,6 +67,7 @@ export function AppearanceSettings({
         <InlineHeader title="Interface" />
         <SettingsGroup>
           <PreferenceRow
+            id="setting-mode"
             title="Mode"
             trailing={
               <Select

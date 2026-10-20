@@ -457,6 +457,42 @@ export const groups: Group[] = [
     ],
   },
   {
+    id: "diagrams",
+    title: "Mermaid diagrams",
+    description:
+      "Fenced mermaid blocks drawn by the bundled plugin inside the host code frame.",
+    examples: [
+      single(
+        "diagram-flowchart",
+        "Flowchart with a subgraph",
+        "Nodes, edges and a subgraph between surrounding prose.",
+        "Here is the release flow:\n\n```mermaid\nflowchart LR\n  draft[Draft PR] --> review{Review}\n  review -->|changes| draft\n  review -->|approved| ci\n  subgraph Checks\n    ci[CI] --> e2e[Browser tests]\n  end\n  e2e --> merge((Merge))\n```\n\nPing me if a step is unclear.",
+        { authorId: agent },
+      ),
+      single(
+        "diagram-sequence",
+        "Sequence diagram",
+        "Participants, messages and a note.",
+        "```mermaid\nsequenceDiagram\n  participant App\n  participant Relay\n  App->>Relay: Publish event\n  Relay-->>App: OK\n  Note over App,Relay: Signed and verified\n```",
+        { authorId: agent },
+      ),
+      single(
+        "diagram-pie",
+        "Pie chart",
+        "Series colors on the message surface.",
+        '```mermaid\npie title Review time\n  "Waiting" : 45\n  "Reviewing" : 30\n  "Fixing" : 15\n  "Merging" : 10\n```',
+        { authorId: agent },
+      ),
+      single(
+        "diagram-invalid",
+        "Invalid source",
+        "The parse error and the source replace the diagram.",
+        "```mermaid\nflowchart LR\n  A --> (\n```",
+        { authorId: agent },
+      ),
+    ],
+  },
+  {
     id: "conversation",
     title: "Conversation context",
     description: "Date separators, reactions, thread summaries, and replies.",

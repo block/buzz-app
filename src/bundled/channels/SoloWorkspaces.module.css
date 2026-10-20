@@ -49,6 +49,9 @@
 }
 .sidebarContents .organizedRow > div > [data-variant="row"] {
   padding-inline-start: var(--session-row-inset);
+  /* Status paints in the row-owned action slot outside the select button.
+     Only the label clips text; clipping the button would hide that status. */
+  overflow: visible;
 }
 
 .sidebarContents {
@@ -63,6 +66,11 @@
     var(--session-row-inset) -
     (var(--session-action-size) - 1rem) /
     2
+  );
+  /* One row-edge coordinate for status and overflow, including the gutter. */
+  --session-trailing-end: calc(
+    var(--session-trailing-offset) +
+    var(--channel-row-fill-end, 0%)
   );
 }
 [data-solo-row-action] {
@@ -94,12 +102,6 @@
 /* The surface paints beneath the row's content without positioning it, so the
    trailing indicators measure from the row's end, under the hover action. */
 .organizedRow {
-  /* The trailing slot's inset from the row's painted end, shared by every
-     trailing indicator and the hover action. */
-  --session-trailing-end: calc(
-    var(--session-trailing-offset) +
-    var(--channel-row-fill-end, 0%)
-  );
   position: relative;
   isolation: isolate;
   border-radius: var(--radius-row);
@@ -208,14 +210,21 @@
   opacity: 1;
 }
 
-/* Working occupies the same trailing action slot as attention, as in Messages. */
+/* Working replaces the overflow glyph on hover. Its pill is wider than the
+   glyph, so it shares the glyph's trailing edge (the row inset, mirroring the
+   leading inset) rather than its center. */
 .organizedRow [data-solo-working-indicator] {
   position: absolute;
-  inset-inline-end: var(--session-trailing-end);
+  inset-inline-end: calc(
+    var(--session-row-inset) +
+    var(--channel-row-fill-end, 0%)
+  );
   top: 50%;
   transform: translateY(-50%);
-  width: var(--session-action-size);
   pointer-events: none;
+}
+.organizedRow [data-solo-working-indicator]:empty {
+  display: none;
 }
 @media (hover: hover) {
   .organizedRow:is(
@@ -229,15 +238,15 @@
   }
 }
 @media (hover: none) {
-  /* Touch always shows the overflow action; reserve a separate visible slot. */
-  .organizedRow [data-solo-working-indicator] {
-    inset-inline-end: calc(
-      var(--session-action-size) +
-      var(--session-trailing-end)
-    );
+  /* Touch keeps status and actions visible together. Let the real trailing
+     content lay out beside Shared/overflow instead of counting action slots. */
+  .organizedRow [class~="navigation-item-trailing"] {
+    display: flex;
+    align-items: center;
   }
-  .organizedRow:has([data-channel-working]) .chatRow {
-    padding-inline-end: var(--session-action-size);
+  .organizedRow [data-solo-working-indicator] {
+    position: static;
+    transform: none;
   }
 }
 

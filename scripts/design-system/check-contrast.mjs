@@ -89,6 +89,7 @@ const META_ROLES = new Set([
   "--text-tertiary",
   "--text-metadata",
   "--text-row-metadata",
+  "--text-row-selected-metadata",
 ]);
 
 /**
@@ -179,9 +180,18 @@ const PAIRS = [
   ]),
   ...["--affordance-row-hover", "--affordance-selected"].flatMap((fill) => [
     ["--text-row", fill],
+    ["--text-navigation-unread", fill],
     ["--text-row-subtle", fill],
     ["--text-row-metadata", fill],
   ]),
+  // The selected sidebar destination and every ink on it.
+  ...[
+    "--text-row-selected",
+    "--text-row-selected-subtle",
+    "--text-row-selected-metadata",
+  ].map((role) => [role, "--affordance-navigation-selected"]),
+  // Small status/count badges on a selected row keep their own readable pair.
+  ["--text-row-selected-detail", "--surface-row-selected-detail"],
   ["--text-subtle", "--affordance-popover-selected"],
   ...["control", "control-hover", "control-pressed", "selected"].map(
     (state) => ["--text-standard", `--affordance-floating-${state}`],
@@ -190,6 +200,12 @@ const PAIRS = [
   ["--text-danger", "--affordance-floating-hover"],
   ["--text-inverse", "--surface-inverse"],
   ["--text-link", "--affordance-link-hover"],
+  // Mentions: ink on the highlight, and the own-bubble pairing, at rest and hover.
+  ...["", "-hover"].flatMap((state) => [
+    ["--text-mention", `--affordance-mention${state}`],
+    ["--text-mention-own", `--affordance-mention-own${state}`],
+    ["--text-mention-self", `--affordance-mention-self${state}`],
+  ]),
   ...["subtle", "subtle-hover", "subtle-pressed"].map((state) => [
     "--text-standard",
     `--affordance-${state}`,
@@ -232,6 +248,11 @@ const BOUNDARY_ROLES = [
   "--status-avatar-online-border",
   "--status-away",
   "--status-offline",
+  // Chart marks need 3:1 against the surfaces a chart sits on.
+  "--chart-series-1",
+  "--chart-series-2",
+  "--chart-series-3",
+  "--chart-series-4",
 ];
 
 const TINT_PAIRS = [
@@ -379,7 +400,12 @@ function audit(mode, map, baseline) {
             "--affordance-floating-hover",
             "--neutral-4",
           ]
-        : BOUNDARY_SURFACES;
+        : role.startsWith("--chart-series-")
+          ? // Charts sit on panels; a popover only shows a swatch beside its label.
+            BOUNDARY_SURFACES.filter(
+              (surface) => surface !== "--surface-popover",
+            )
+          : BOUNDARY_SURFACES;
     for (const surface of surfaces) {
       const borderColor = resolve(map, role);
       const surfaceColor = resolve(map, surface);
@@ -513,9 +539,11 @@ function oklch(hex) {
   };
 }
 const isAccent = (hex) => oklch(hex).chroma >= 0.02;
+// Black ink is allowed on accent fills, including the near-black unread ink
+// (#262626, lightness 0.27); mid grays from #525252 (0.44) up are not.
 const isGray = (hex) => {
   const { lightness, chroma } = oklch(hex);
-  return chroma < 0.02 && lightness > 0.25 && lightness < 0.9;
+  return chroma < 0.02 && lightness > 0.3 && lightness < 0.9;
 };
 const on = (foregrounds, grounds) =>
   grounds.flatMap((ground) => foregrounds.map((fg) => [fg, ground]));
@@ -526,6 +554,7 @@ const GROUNDED = [
     [
       "--text-standard",
       "--text-row",
+      "--text-navigation-unread",
       "--text-row-subtle",
       "--text-row-metadata",
     ],
@@ -535,6 +564,14 @@ const GROUNDED = [
       "--affordance-navigation-quiet",
       "--affordance-selected",
     ],
+  ),
+  ...on(
+    [
+      "--text-row-selected",
+      "--text-row-selected-subtle",
+      "--text-row-selected-metadata",
+    ],
+    ["--affordance-navigation-selected"],
   ),
   ...on(
     ["--text-standard"],

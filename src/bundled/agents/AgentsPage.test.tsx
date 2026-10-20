@@ -32,6 +32,7 @@ import type {
   TeamPort,
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
+import { localStore } from "../../features/agents/state";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -263,6 +264,7 @@ function setup(
     },
     find: (pubkey: string) => snapshot.agents.find((a) => a.pubkey === pubkey),
     relay: () => undefined,
+    handle: () => undefined,
     register: vi.fn(),
     addTool: vi.fn(),
     tools: () => [],
@@ -324,6 +326,8 @@ function setup(
     }),
     remove: vi.fn(async (_pubkey: string): Promise<void> => {}),
     unarchive: vi.fn(async (): Promise<string | undefined> => undefined),
+    interruptible: () => false,
+    interrupt: vi.fn(async () => false),
     classifier: () => "unavailable",
     setClassifierKey: vi.fn(async () => {}),
     clearClassifierKey: vi.fn(async () => {}),
@@ -344,6 +348,7 @@ function setup(
       };
       for (const listener of listeners) listener();
     }),
+    storage: localStore(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

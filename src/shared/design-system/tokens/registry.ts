@@ -359,6 +359,53 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "proposed",
       },
       {
+        token: "text-row-selected",
+        variable: "--text-row-selected",
+        pointsAt:
+          "text-row; the accent's contrast ink in light and accent step 11 in dark from Hummin’",
+        use: "Navigation label on the selected row. Dark rows keep neutral fills, so the selected label carries the accent.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-selected-subtle",
+        variable: "--text-row-selected-subtle",
+        pointsAt:
+          "text-row-subtle; the accent's contrast ink in light from Hummin’; text-subtle in dark",
+        use: "Icons and supporting text on the selected sidebar destination.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-selected-metadata",
+        variable: "--text-row-selected-metadata",
+        pointsAt:
+          "text-row-metadata; the accent's contrast ink in light from Hummin’; text-metadata in dark",
+        use: "Counts and metadata on the selected sidebar destination.",
+        status: "proposed",
+      },
+      {
+        token: "bg-affordance-navigation-selected",
+        variable: "--affordance-navigation-selected",
+        pointsAt:
+          "affordance-selected; accent 9 in light from Hummin’; neutral-5 in dark",
+        use: "The one selected sidebar destination. Only one is selected at a time, so light mode can spend the brand fill on it.",
+        status: "proposed",
+      },
+      {
+        token: "bg-surface-row-selected-detail",
+        variable: "--surface-row-selected-detail",
+        pointsAt:
+          "neutral-2 light; accent 3 light from Hummin’; neutral-6 dark",
+        use: "Quiet fill for working, typing and count badges on a selected sidebar row.",
+        status: "proposed",
+      },
+      {
+        token: "text-row-selected-detail",
+        variable: "--text-row-selected-detail",
+        pointsAt: "neutral standard ink light / text-row-selected dark",
+        use: "Readable marks on surface-row-selected-detail, independent of the row's strong fill.",
+        status: "proposed",
+      },
+      {
         token: "text-row-subtle",
         variable: "--text-row-subtle",
         pointsAt: "text-subtle; accent step 11 once rows take the accent",
@@ -447,8 +494,8 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-link",
         variable: "--text-link",
-        pointsAt: "blue-11 light / blue-11 dark",
-        use: "Inline links and mentions in prose.",
+        pointsAt: "the family link partner at every vibe level",
+        use: "Inline links in prose. Mentions use text-mention on a highlight instead.",
         status: "core",
       },
       {
@@ -462,8 +509,31 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-message-link-own",
         variable: "--text-message-link-own",
-        pointsAt: "text-link at low contrast; accent ink at high contrast",
-        use: "Links and mentions on the selected outgoing message surface.",
+        pointsAt:
+          "text-link on neutral bubbles; accent ink on solid Buzzin’ bubbles",
+        use: "Links on the selected outgoing message surface.",
+        status: "core",
+      },
+      {
+        token: "text-mention",
+        variable: "--text-mention",
+        pointsAt: "text-standard",
+        use: "Ordinary mention labels, paired with bg-affordance-mention. Mentions are people, not links.",
+        status: "core",
+      },
+      {
+        token: "text-mention-own",
+        variable: "--text-mention-own",
+        pointsAt:
+          "text-mention; the own bubble's ink at Buzzin’ (tone-on-tone chip)",
+        use: "Mention labels inside your own bubble, paired with bg-affordance-mention-own.",
+        status: "core",
+      },
+      {
+        token: "text-mention-self",
+        variable: "--text-mention-self",
+        pointsAt: "text-on-prominent light / affordance-prominent-mark dark",
+        use: "A mention of you, paired with bg-affordance-mention-self. It asks for your attention, so it joins the strong group.",
         status: "core",
       },
       {
@@ -556,6 +626,24 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
     ],
+  },
+  {
+    id: "chart",
+    name: "Chart series",
+    description:
+      "Marks that tell chart series apart, assigned in order and never cycled. Labels and values keep text roles.",
+    roles: [
+      "blue-10 light / blue-9 dark",
+      "orange-10 light / orange-8 dark",
+      "green-10 light / green-9 dark",
+      "purple-9 light / purple-10 dark",
+    ].map((pointsAt, index) => ({
+      token: `chart-series-${index + 1}`,
+      variable: `--chart-series-${index + 1}`,
+      pointsAt,
+      use: `Series ${index + 1} bars, lines and legend swatches; 3:1 against panels.`,
+      status: "core",
+    })),
   },
   {
     id: "scrollbars",
@@ -766,7 +854,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "bg-affordance-chrome",
         variable: "--affordance-chrome",
         pointsAt:
-          "affordance-subtle; accent step 3 once the shell takes the accent",
+          "neutral-3 light / affordance-subtle dark; accent step 3 once the shell takes the accent",
         use: "The grouped chrome capsule on the app shell, such as Solo and Multiplayer.",
         status: "proposed",
       },
@@ -935,6 +1023,48 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--affordance-accent",
         pointsAt: "accent step 3",
         use: "A quiet identity or selection fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention",
+        variable: "--affordance-mention",
+        pointsAt: "neutral-4 light / neutral-6 dark",
+        use: "Ordinary mention chip fill, paired with text-mention. Frequent, so it stays neutral at every level.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-hover",
+        variable: "--affordance-mention-hover",
+        pointsAt: "neutral-5 light / neutral-5 dark",
+        use: "Mention chip under the pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-own",
+        variable: "--affordance-mention-own",
+        pointsAt: "affordance-mention; accent 10 at Buzzin’",
+        use: "Mention chip fill inside your own bubble, paired with text-mention-own.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-own-hover",
+        variable: "--affordance-mention-own-hover",
+        pointsAt: "affordance-mention-hover; accent pressed at Buzzin’",
+        use: "Own-bubble mention chip under the pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-self",
+        variable: "--affordance-mention-self",
+        pointsAt: "affordance-prominent light / neutral-6 dark",
+        use: "Chip fill for a mention of you, paired with text-mention-self.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-mention-self-hover",
+        variable: "--affordance-mention-self-hover",
+        pointsAt: "affordance-prominent-hover light / neutral-5 dark",
+        use: "A mention of you under the pointer.",
         status: "core",
       },
       {
@@ -1555,44 +1685,44 @@ export const RADII = [
   {
     token: "radius-chip",
     variable: "--radius-chip",
-    value: "4px",
+    value: "12px",
     use: "Small chips and tight details.",
   },
   {
     token: "radius-row",
     variable: "--radius-row",
-    value: "8px",
+    value: "16px",
     use: "Dense navigator rows, compact selected regions and compact floating surfaces.",
   },
   {
     token: "radius-icon-button",
     variable: "--radius-icon-button",
-    value: "10px",
+    value: "18px",
     use: "Independent icon controls, including top-bar and content-toolbar actions, with the same radius on every corner.",
   },
   {
     token: "radius-control",
     variable: "--radius-control",
-    value: "12px",
+    value: "20px",
     use: "Inputs, rounded cue buttons and the message action toolbar. Icon controls use radius-icon-button; text buttons default to radius-capsule.",
   },
   {
     token: "radius-container",
     variable: "--radius-container",
-    value: "16px",
+    value: "24px",
     use: "Medium containers, including menus, content popovers, pickers and the media review frame.",
   },
   {
     token: "radius-panel",
     variable: "--radius-panel",
-    value: "20px",
+    value: "28px",
     use: "Major workspace panels and dialogs. Maximum standalone container radius.",
   },
   {
     token: "radius-capsule",
     variable: "--radius-capsule",
-    value: "26px",
-    use: "Text buttons and similarly sized actions: capsule-shaped through large (52px), bounded on taller controls.",
+    value: "34px",
+    use: "Text buttons and similarly sized actions: capsule-shaped through 68px, bounded on taller controls.",
   },
   {
     token: "radius-pill",

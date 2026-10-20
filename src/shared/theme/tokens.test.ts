@@ -209,6 +209,7 @@ it.each(ACCENTS)(
           palette["--affordance-accent"],
         );
         for (const [text, fill] of [
+          ["--text-row-selected-detail", "--surface-row-selected-detail"],
           ["--text-message-own", "--surface-message-own"],
           ["--text-message-link-own", "--surface-message-own"],
           ["--text-on-prominent", "--affordance-prominent"],
@@ -273,5 +274,49 @@ it.each(ACCENTS)(
         expect(low[role]).not.toBe(high[role]);
       }
     }
+  },
+);
+
+it.each(ACCENTS)(
+  "%s mention chips stay readable and apart from every bubble",
+  (color) => {
+    for (const level of ["quiet", "low", "high"] as const)
+      for (const mode of ["light", "dark"] as const) {
+        const palette = resolvedPalette(mode, color, level);
+        const where = `${color}/${level}/${mode}`;
+        for (const [text, fill] of [
+          ["--text-mention", "--affordance-mention"],
+          ["--text-mention", "--affordance-mention-hover"],
+          ["--text-mention-own", "--affordance-mention-own"],
+          ["--text-mention-own", "--affordance-mention-own-hover"],
+          ["--text-mention-self", "--affordance-mention-self"],
+          ["--text-mention-self", "--affordance-mention-self-hover"],
+        ] as const)
+          expect(
+            contrast(palette[text], palette[fill]),
+            `${text} on ${fill} in ${where}`,
+          ).toBeGreaterThanOrEqual(4.5);
+        // The own chip never repaints the bubble it sits on.
+        expect(palette["--affordance-mention-own"], where).not.toBe(
+          palette["--surface-message-own"],
+        );
+        // Hovering a chip in your own bubble always shows a change.
+        expect(palette["--affordance-mention-own-hover"], where).not.toBe(
+          palette["--affordance-mention-own"],
+        );
+        // Ordinary mentions stay neutral at every level; a mention of you
+        // takes the strong group (a fill in light, the mark as ink in dark).
+        expect(palette["--affordance-mention"], where).toBe(
+          resolvedPalette(mode, color, "quiet")["--affordance-mention"],
+        );
+        if (mode === "light")
+          expect(palette["--affordance-mention-self"], where).toBe(
+            palette["--affordance-prominent"],
+          );
+        else
+          expect(palette["--text-mention-self"], where).toBe(
+            palette["--affordance-prominent-mark"],
+          );
+      }
   },
 );

@@ -685,7 +685,11 @@ it("shows and changes the device default from the compact control without stripp
   const fake = fakeSpawn({
     providers: PROVIDERS.map((provider) =>
       provider.providerId === "databricks"
-        ? { ...provider, providerId: "databricks_v2" }
+        ? {
+            ...provider,
+            providerId: "databricks_v2",
+            models: [{ id: "goose-gpt-5-5" }],
+          }
         : provider,
     ),
     defaults: { providerId: "databricks_v2", modelId: "goose-gpt-6" },
@@ -1047,7 +1051,9 @@ it.each([false, true])(
         : trigger,
     ).toHaveFocus();
     await user.click(trigger);
-    expect(await screen.findByRole("menuitem", { name: "GPT" })).toBeVisible();
+    expect(
+      await screen.findByRole("menuitem", { name: "OpenAI" }),
+    ).toBeVisible();
     expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
   },
 );

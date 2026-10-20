@@ -88,7 +88,7 @@ To inspect a saved session, see [View a Codex session](../../../docs/view-codex-
 
 The `buzz` dynamic-tool namespace exposes the same handlers as the Claude plugin:
 `send`, `edit`, `react`, `read`, `channels`, `channel`, `members`, `users`, `dm`, `mem_get`,
-`mem_set`, `canvas`, and `media_get`, which answers with the image itself. These run inside Buzz through the agent's native-backed
+`mem_set`, `canvas`, and `media_get`, which saves the file and gives its path, and answers with an image itself. These run inside Buzz through the agent's native-backed
 handle; no MCP process or Buzz credentials go to Codex. Shared file tools use the
 workspace where the turn started, through the declared `base64` reader. Memory
 reads use the owner's encrypted-memory view; writes use the agent handle.
@@ -159,8 +159,9 @@ Buzz checks when the agents load and every 6 hours; the first download (about
 ## Limits and boundaries
 
 - Only the owner's mentions start conversation work. The agent always has the
-  attention tools and guidance. Each turn ends with the attention review, or,
-  when attention is off, a note that those tools refuse. Its watches and timers run
+  attention tools, loaded on search, with their guidance in their descriptions.
+  Each turn ends with the attention review, a line that there are no Interests,
+  or, when attention is off, a note that those tools refuse. Its watches and timers run
   as one-off turns on an ephemeral Codex thread of their own, queued per
   Interest by the Agents runner; a watch's event can come from
   anyone and is framed as observed data. These turns save no binding, have no

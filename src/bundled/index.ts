@@ -10,6 +10,8 @@ import * as builderlab from "./builderlab";
 import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
+import mermaidManifest from "./mermaid/manifest.json";
+import * as mermaid from "./mermaid";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -38,6 +40,8 @@ import * as channels from "./channels";
 import * as github from "./github";
 import bestieManifest from "./bestie/manifest.json";
 import * as bestie from "./bestie";
+import usageManifest from "./usage/manifest.json";
+import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import remindersManifest from "./reminders/manifest.json";
@@ -93,6 +97,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...mermaidManifest, apiVersion: 1 },
+    module: mermaid,
+    enabledByDefault: true,
+  },
+  {
     manifest: { ...namingManifest, apiVersion: 1 },
     module: naming,
     enabledByDefault: true,
@@ -140,6 +149,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...bestieManifest, apiVersion: 1 },
     module: bestie,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...usageManifest, apiVersion: 1 },
+    module: usage,
     enabledByDefault: false,
   },
   {

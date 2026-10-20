@@ -1235,11 +1235,26 @@ it("moves the card from Install Codex to Sign in once the install succeeds", asy
   expect(signIn).toHaveFocus();
   fireEvent.click(signIn);
   await waitFor(() => expect(f.logins).toHaveLength(1));
+  // Holds the provider's check after sign-in, so Codex reads as ready while
+  // its models still load, as in the app.
+  const loading = deferred<void>();
+  vi.spyOn(f.setup, "check").mockImplementationOnce(async () => {
+    await loading.promise;
+    return check();
+  });
   f.disk.signedIn = true;
   f.logins[0]?.resolve(0);
   const model = await screen.findByRole("combobox", { name: "Model" });
-  expect(model).toHaveTextContent("Model A");
-  // The dialog leaves with setup; its focus moves to the model field.
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  // A browser cannot focus the field while it is disabled.
+  expect(model).toBeDisabled();
+  expect(model).not.toHaveFocus();
+  loading.resolve();
+  await waitFor(() => expect(model).toHaveTextContent("Model A"));
+  // The dialog left with setup; its focus moves to the model field once it
+  // can take it.
   await waitFor(() => expect(model).toHaveFocus());
 });
 

@@ -456,15 +456,21 @@ export function createTabs(
           : undefined;
     const field = useRef<HTMLDivElement>(null);
     const hadStep = useRef(false);
+    const handoff = useRef(false);
     // Setup's dialog and button leave once Codex is ready; focus they held
-    // moves to the model field, not to the page.
+    // moves to the model field, not to the page. The field takes it once
+    // the models load, as it is disabled until then.
     useEffect(() => {
-      const ended = hadStep.current && !step;
+      const unfocused = () =>
+        !document.activeElement || document.activeElement === document.body;
+      if (step) handoff.current = false;
+      else if (hadStep.current) handoff.current = unfocused();
       hadStep.current = Boolean(step);
-      const active = document.activeElement;
-      if (ended && (!active || active === document.body))
+      if (!handoff.current || checking) return;
+      handoff.current = false;
+      if (unfocused())
         field.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
-    }, [step]);
+    }, [step, checking]);
     if (step)
       return (
         <CodexSignIn

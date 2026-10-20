@@ -28,6 +28,8 @@ it.each(["here", "hosted"] as const)(
       owner: "c".repeat(64),
       relay: "wss://example.com",
       config: {},
+      settings: { config: {}, synced: {}, revisions: [], name: "", team: "" },
+      epoch: 0,
       attention: {},
       skipped: {},
       timers: {},
@@ -35,7 +37,9 @@ it.each(["here", "hosted"] as const)(
     };
     render(
       <AgentTabs
-        agents={{ save: vi.fn() } as unknown as Agents}
+        agents={
+          { save: vi.fn(), configHistory: () => undefined } as unknown as Agents
+        }
         agent={agent}
         type={undefined}
         channels={[]}

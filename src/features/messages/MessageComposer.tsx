@@ -1408,8 +1408,9 @@ function Composer({
       const next = rememberedMentions(session, captured, recipients);
       // Only agents still notified by this message are asked for a model or effort.
       const sentPicks: MentionPicks = Object.fromEntries(
-        Object.entries(capturedRunPicks).filter(([key]) =>
-          recipients.includes(key),
+        Object.entries(capturedRunPicks).filter(
+          ([key, { model, effort }]) =>
+            recipients.includes(key) && (model || effort),
         ),
       );
       const tuned = Object.keys(sentPicks).length > 0;

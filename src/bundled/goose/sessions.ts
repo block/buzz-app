@@ -13,12 +13,23 @@ import {
   type Choice,
   type GooseHost,
   type GooseSession,
+  type Handoff,
   type ServeMcp,
   type Settled,
   type ToolServer,
 } from "./goose";
 import type { SessionAction } from "../../features/agents/service";
 import { absoluteWorkspace } from "../codex/config";
+import {
+  Refused,
+  inputsFit,
+  prompting,
+  refusal,
+  type Applied,
+  type Inputs,
+  type SettingsAttempt,
+} from "../../features/agents/settings";
+import type { Models } from "../../features/agents/service";
 
 /** A conversation's session closes after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
@@ -126,6 +137,9 @@ export type Launch = Readonly<{
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
   systemPrompt: string;
+  /** The provider, model and thinking level each of the session's turns
+   * runs on. */
+  choice: Choice;
 }>;
 
 export type SessionsOptions = Readonly<{
@@ -139,22 +153,61 @@ export type SessionsOptions = Readonly<{
   pool: ServerPool;
   /** The agent's current settings, for a new session. */
   launch(): Promise<Launch>;
-  /** The agent's provider, model and thinking level now, which each new
-   * turn runs on. */
-  choice(): Choice;
-  /** Changes when a setting a session was opened with has changed. */
+  /** Changes when an open session must be replaced: a local save or Restart
+   * to apply. A remote edit leaves it, so a conversation keeps the config it
+   * started with. */
   fingerprint(): string;
+  /** The team text and name a session opened now runs on, read with
+   * `fingerprint`; see `Inputs`. */
+  inputs(): string;
   /** Where each conversation's last use is saved. */
   store?: SessionStore;
+  /** The config a session opened now runs on, read with `fingerprint` before
+   * `launch`, which must use the same config. */
+  snapshot(): string;
+  /** The settings and epoch a session opened now is pinned to, read with
+   * `snapshot`. A session pinned to an older epoch is replaced. */
+  applied(): Applied;
+  /** The models each turn's provider and model can be asked to run on; see
+   * `GooseSession`. */
+  models?: (choice: Choice) => Promise<Models>;
   /** Called when a conversation's session opens, is sent a message, or
    * closes. */
   onChange?(): void;
 }>;
 
-type Live = {
+/** A local save of a choice; `next` is the save after it, and `applied` the
+ * settings and epoch it saved. A session `same` accepts was opened on what
+ * it saved but the choice, so once switched it runs the saved settings. */
+type Chosen = {
+  choice: Choice;
+  same: (snapshot: string) => boolean;
+  after: string;
+  applied: Applied;
+  next?: Chosen;
+};
+
+/** Switches a session to a saved choice; one opened as the save was now
+ * runs on the config saved, at its epoch. Any other keeps its older epoch,
+ * which replaces it. */
+const switchTo = (live: Live, { choice, same, after, applied }: Chosen) => {
+  live.choice = choice;
+  if (!same(live.snapshot)) return;
+  live.snapshot = after;
+  live.applied = applied;
+};
+
+type Live = Inputs & {
   session: GooseSession;
   process: GooseProcess;
   fingerprint: string;
+  /** The config it opened on; only a local save of its choice
+   * changes it while it is open. */
+  snapshot: string;
+  /** The settings it is pinned to, which each new turn hands off through. */
+  applied: Applied;
+  /** The provider, model and thinking level its turns run on. */
+  choice: Choice;
   slot: Slot;
   /** When it last took in a message or ended a turn. */
   at: number;
@@ -179,6 +232,9 @@ export class AgentSessions {
    * prompted for the old one. */
   private readonly had = new Set<string>();
   private disposed = false;
+  /** The latest local save of a choice, or none yet; a session opening
+   * replays each save after the one it read with its settings. */
+  private chosen: { next?: Chosen } = {};
 
   constructor(private readonly options: SessionsOptions) {}
 
@@ -212,9 +268,12 @@ export class AgentSessions {
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again when the session it was built for was closed;
    * `title` names a session opened for it; `model`, one of the agent's
-   * provider's, is what its turn runs on. Once `signal` aborts, it stops
-   * waiting for a session to open, which is then kept for the next message,
-   * and sends nothing. */
+   * provider's, is what its turn runs on; `attempt` the settings it was
+   * admitted with, which a new turn hands off through. A message that can't
+   * steer into a busy session opened on superseded settings waits for its
+   * turn to end, then opens a new one: it never prompts the old one. Once
+   * `signal` aborts, it stops waiting for a session to open, which is then
+   * kept for the next message, and sends nothing. */
   async deliver(
     key: string,
     text: string,
@@ -225,6 +284,7 @@ export class AgentSessions {
       title,
       signal,
       model,
+      attempt,
       ...activity
     }: Readonly<{
       steer?: string;
@@ -232,8 +292,9 @@ export class AgentSessions {
       title?: string;
       signal?: AbortSignal;
       model?: string;
+      attempt: SettingsAttempt;
     }> &
-      ActivityReceipt = {},
+      ActivityReceipt,
   ): Promise<Settled> {
     for (;;) {
       if (this.disposed) return STOPPED;
@@ -257,6 +318,25 @@ export class AgentSessions {
         this.drop(key, live);
         break;
       }
+      if (live.session.busy && this.stale(live)) {
+        const steered = await live.session.steerOnly(
+          steer,
+          activity,
+          model,
+          signal,
+        );
+        if (steered) {
+          this.touch(key, live, seen);
+          return this.settled(key, live, steered.settled);
+        }
+        // Not into the old session: once its turn ends, it is replaced.
+        try {
+          await abortable(live.session.idle(), signal);
+        } catch {
+          return LATE;
+        }
+        continue;
+      }
       this.touch(key, live, seen);
       return this.answer(
         key,
@@ -264,6 +344,8 @@ export class AgentSessions {
         live.session.busy ? steer : text,
         activity,
         model,
+        attempt,
+        signal,
       );
     }
     // Reserved before anything is awaited, so a message that comes meanwhile
@@ -282,7 +364,9 @@ export class AgentSessions {
       }
       if (signal?.aborted) return {};
       this.touch(key, live, seen);
-      return { settled: this.answer(key, live, text, activity, model) };
+      return {
+        settled: this.answer(key, live, text, activity, model, attempt, signal),
+      };
     })();
     this.opening.set(key, starting);
     const opened = () => {
@@ -295,6 +379,7 @@ export class AgentSessions {
     } catch (error) {
       if (this.disposed) return STOPPED;
       if (signal?.aborted) return LATE;
+      if (error instanceof Refused) return refusal(error);
       console.warn("goose could not start", error);
       return { ok: false, error: `goose could not start: ${message(error)}` };
     }
@@ -335,6 +420,7 @@ export class AgentSessions {
   async runOnce(
     label: string,
     prompt: () => string | undefined | Promise<string | undefined>,
+    attempt: SettingsAttempt,
     {
       signal,
       title,
@@ -358,9 +444,18 @@ export class AgentSessions {
       if (this.disposed) return STOPPED;
       const text = await abortable(Promise.resolve(prompt()), signal);
       if (text === undefined || this.disposed) return { ok: true };
-      return await abortable(live.session.send(text), signal);
+      return await abortable(
+        live.session.send(
+          text,
+          {},
+          undefined,
+          handoffOf(live, attempt, this.options.inputs),
+        ),
+        signal,
+      );
     } catch (error) {
       if (signal?.aborted) return { ok: false, error: message(signal.reason) };
+      if (error instanceof Refused) return refusal(error);
       console.warn("goose could not start a one-off session", error);
       return { ok: false, error: `goose could not start: ${message(error)}` };
     } finally {
@@ -370,6 +465,31 @@ export class AgentSessions {
       else void opening.then((late) => this.close(late)).catch(() => undefined);
       this.options.onChange?.();
     }
+  }
+
+  /** A local save of only the provider, model or thinking level: open and
+   * opening sessions switch to it from their next turn. Those opened on
+   * what `same` accepts now run on the config saved, pinned to `applied`. */
+  choose(
+    choice: Choice,
+    same: (snapshot: string) => boolean,
+    applied: Applied,
+  ) {
+    const chosen: Chosen = {
+      choice,
+      same,
+      after: this.options.snapshot(),
+      applied,
+    };
+    this.chosen.next = chosen;
+    this.chosen = chosen;
+    for (const live of this.live.values()) switchTo(live, chosen);
+  }
+
+  /** Whether a conversation's session is pinned to settings other than the
+   * ones `current` accepts. */
+  outdated(current: (pin: Applied) => boolean) {
+    return [...this.live.values()].some((live) => !current(live.applied));
   }
 
   /** Closes idle sessions opened with old settings; busy ones close when they
@@ -387,12 +507,23 @@ export class AgentSessions {
     for (const live of this.once.values()) if (live) void this.close(live);
   }
 
-  /** Opened with old settings, or on a thinking level when goose's own is
-   * chosen now, which only a new session runs on. */
+  /** Opened with old settings, pinned to an older epoch than a choice could
+   * switch it to, or on a thinking level when goose's own is chosen now,
+   * which only a new session runs on. */
+  /** The settings `key`'s open session is pinned to once it has sent its
+   * first prompt; undefined while it has none or hasn't prompted. */
+  pinOf(key: string) {
+    const live = this.live.get(key);
+    return live?.session.open && live.inputs === undefined
+      ? live.applied
+      : undefined;
+  }
   private stale(live: Live) {
     return (
       live.fingerprint !== this.options.fingerprint() ||
-      Boolean(live.session.effort && !this.options.choice().effort)
+      !inputsFit(live, this.options.inputs()) ||
+      live.applied.epoch !== this.options.applied().epoch ||
+      Boolean(live.session.effort && !live.choice.effort)
     );
   }
 
@@ -406,6 +537,10 @@ export class AgentSessions {
     const { pool, resolveDirectory } = this.options;
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint();
+    const inputs = this.options.inputs();
+    const snapshot = this.options.snapshot();
+    const applied = this.options.applied();
+    const chosen = this.chosen;
     const launch = await this.options.launch();
     // Removed meanwhile: a goose started now would outlive it.
     if (this.disposed) throw new Error("goose was stopped");
@@ -423,13 +558,16 @@ export class AgentSessions {
     // Busy until it is adopted as a conversation's.
     const slot: Slot = { idle: () => false, evict: async () => undefined };
     const room = pool.take(slot);
+    // Asked as the session opens and before each turn.
+    let live: Live | undefined;
     const start = () =>
       process.open({
         cwd,
         systemPrompt: launch.systemPrompt,
         ...(title ? { title } : {}),
         tools: this.options.tools,
-        choice: this.options.choice,
+        choice: () => live?.choice ?? launch.choice,
+        ...(this.options.models ? { models: this.options.models } : {}),
       });
     let session: GooseSession;
     try {
@@ -450,8 +588,24 @@ export class AgentSessions {
     const released = () => pool.release(slot);
     void (session.server?.closed ?? Promise.resolve()).then(released, released);
     session.conversation = key;
-    const live = { session, process, fingerprint, slot, at: Date.now() };
-    if (fingerprint !== this.options.fingerprint() && !this.disposed) {
+    live = {
+      session,
+      process,
+      fingerprint,
+      inputs,
+      snapshot,
+      applied,
+      choice: launch.choice,
+      slot,
+      at: Date.now(),
+    };
+    for (let next = chosen.next; next; next = next.next) switchTo(live, next);
+    if (
+      (fingerprint !== this.options.fingerprint() ||
+        inputs !== this.options.inputs() ||
+        live.applied.epoch !== this.options.applied().epoch) &&
+      !this.disposed
+    ) {
       // Settings saved while it opened: it would work with the old ones.
       void this.close(live);
       return this.open(key, title, use);
@@ -476,14 +630,28 @@ export class AgentSessions {
     this.countdown(key, live);
     this.options.onChange?.();
   }
-  private async answer(
+  private answer(
     key: string,
     live: Live,
     text: string,
     activity: ActivityReceipt,
     model: string | undefined,
+    attempt?: SettingsAttempt,
+    signal?: AbortSignal,
   ) {
-    const sent = live.session.send(text, activity, model);
+    return this.settled(
+      key,
+      live,
+      live.session.send(
+        text,
+        activity,
+        model,
+        attempt && handoffOf(live, attempt, this.options.inputs),
+        signal,
+      ),
+    );
+  }
+  private async settled(key: string, live: Live, sent: Promise<Settled>) {
     // A final Buzz send can answer before goose finishes its model work.
     void live.session.idle().then(() => {
       if (this.live.get(key) === live) this.options.onChange?.();
@@ -529,6 +697,13 @@ export class AgentSessions {
     return live.process.close(live.session);
   }
 }
+
+/** How a new turn in `live` hands off: through `attempt`, with the pin `live`
+ * holds when the turn's prompt is written. */
+const handoffOf =
+  (live: Live, attempt: SettingsAttempt, inputs: () => string): Handoff =>
+  (send) =>
+    attempt.handoff(live.applied, prompting(live, inputs, send));
 
 /** Conversations saved in local storage, by agent and then conversation. */
 export function localSessions(

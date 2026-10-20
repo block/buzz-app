@@ -70,6 +70,9 @@ export type LiveRoute = Readonly<{
   replay: "unknown" | "limited";
   error?: string;
 }>;
+/** The routes `config`, `config:N` that carry live config traffic. */
+export const isConfigRoute = (id: string) =>
+  id === "config" || id.startsWith("config:");
 export type LiveSnapshot = Readonly<{
   status: "unavailable" | "connecting" | "connected" | "retrying" | "error";
   routes: readonly LiveRoute[];
@@ -121,6 +124,8 @@ export type LiveCallbacks = {
   /** Decoded host DTO on the browser transport. */
   observer?(frame: ObserverFrame, generation: number): void;
   presence?(event: VerifiedEvent): void;
+  /** Config-route traffic (routes `config`, `config:N`), never chat history. */
+  config?(event: VerifiedEvent): void;
   state(snapshot: LiveSnapshot): void;
   established(channels?: string | readonly string[]): void;
   /** Periodic repair hint, not membership or historical-completeness evidence. */
@@ -144,6 +149,9 @@ export type LiveSubscription = {
     signal: AbortSignal,
   ): Promise<boolean | null | { retryAfterMs: number }>;
   watchPresence?(authors: readonly string[]): void;
+  /** Live-only config traffic for these config channels plus discovery of the
+   * viewer's config channels; null removes the route. */
+  configScope?(scope: Readonly<{ channels: readonly string[] }> | null): void;
   retry(): void;
   dispose(): void;
 };
@@ -172,6 +180,11 @@ export function liveChannels(input: unknown): string[] {
   return [...new Set(input as string[])].sort();
 }
 
+/** A config route scope: bounded channel IDs, or null for no route. */
+export function liveConfigScope(input: unknown): string[] | null {
+  return input === null ? null : liveChannels(input);
+}
+
 /** Batchability is part of the same interest snapshot, not a priority hint. */
 export function liveJoined(
   channels: readonly string[],
@@ -183,8 +196,32 @@ export function liveJoined(
   return joined;
 }
 
+/** Fixed config kinds: artifact revisions, move-removals and redactions by
+ * `#h`; metadata and roster by `#d`; discovery by the viewer's `#P`. */
+export function configFilters(viewer: string, channels: readonly string[]) {
+  const filters: Record<string, unknown>[] = [
+    { kinds: [39000], "#P": [viewer] },
+  ];
+  for (let i = 0; i < channels.length; i += LIVE_BATCH_SIZE) {
+    const ids = channels.slice(i, i + LIVE_BATCH_SIZE);
+    filters.push(
+      { kinds: [45010, 45011, 9005], "#h": ids },
+      { kinds: [39000, 39002], "#d": ids },
+    );
+  }
+  // One REQ holds at most LIVE_BATCH_SIZE filters.
+  const requests = new Map<string, readonly Record<string, unknown>[]>();
+  for (let i = 0; i < filters.length; i += LIVE_BATCH_SIZE)
+    requests.set(
+      i ? `config:${i / LIVE_BATCH_SIZE}` : "config",
+      filters.slice(i, i + LIVE_BATCH_SIZE),
+    );
+  return requests;
+}
+
 type Route = {
   id: string;
+  config?: readonly Record<string, unknown>[];
   channelId?: string;
   channelIds?: readonly string[];
   status: LiveRoute["status"];
@@ -236,10 +273,10 @@ export function subscribeRelayTraffic(
   let denying: Set<string> | undefined;
   let priority: string[] = [];
   let observer: number | null = null;
+  let configChannels: readonly string[] | null = null;
   let presenceAuthors: readonly string[] = [];
   let presenceReceipt:
-    | { id: string; finish(accepted: boolean): void }
-    | undefined;
+    { id: string; finish(accepted: boolean): void } | undefined;
   const routes = new Map<string, Route>();
   const wires = new Map<string, Route>();
   const notify = () => {
@@ -346,6 +383,9 @@ export function subscribeRelayTraffic(
   }
   function sync() {
     if (denying || closed) return;
+    const configs = configChannels
+      ? configFilters(viewer, configChannels)
+      : new Map<string, readonly Record<string, unknown>[]>();
     const ranked = [
       ...new Set([
         ...priority.filter((id) => interests.includes(id)),
@@ -357,7 +397,8 @@ export function subscribeRelayTraffic(
         0,
         LIVE_CHANNEL_CAPACITY -
           (observer !== null ? 1 : 0) -
-          (presenceAuthors.length ? 1 : 0),
+          (presenceAuthors.length ? 1 : 0) -
+          configs.size,
       ),
     );
     const remaining = new Set(interests);
@@ -379,7 +420,10 @@ export function subscribeRelayTraffic(
                 (route.status === "limited") === admitted.has(id) ||
                 (!!route.channelIds && !joined.includes(id)),
             )
-          : !globals.has(route.id)
+          : route.config
+            ? JSON.stringify(route.config) !==
+              JSON.stringify(configs.get(route.id))
+            : !globals.has(route.id)
       ) {
         const survivors = ids.filter(
           (id) => remaining.has(id) && admitted.has(id) && joined.includes(id),
@@ -395,6 +439,7 @@ export function subscribeRelayTraffic(
       } else {
         for (const id of ids) remaining.delete(id);
         globals.delete(route.id);
+        configs.delete(route.id);
       }
     }
     const add = (id: string, ids: readonly string[] = [], batch = false) => {
@@ -413,6 +458,11 @@ export function subscribeRelayTraffic(
     for (const id of globals) {
       const route = add(id);
       if (id === "presence") route.liveOnly = true;
+    }
+    for (const [id, filters] of configs) {
+      const route = add(id);
+      route.config = filters;
+      route.liveOnly = true; // Snapshot reads own catch-up.
     }
     const batch: string[] = [];
     for (const id of remaining) {
@@ -563,7 +613,7 @@ export function subscribeRelayTraffic(
       send([
         "REQ",
         wire,
-        ...filters.map((filter) => ({
+        ...(route.config ?? filters).map((filter) => ({
           ...filter,
           // Each channel retains its original replay allowance. Replacements
           // are live-only on every actual dispatch, including cooldown retries.
@@ -815,7 +865,8 @@ export function subscribeRelayTraffic(
         // The session still verifies access and auxiliary target evidence.
         if (incoming.kind === 20002 && !channelId) return;
         if (route.status === "pending" && !route.liveOnly) route.count++;
-        if (route.id === "presence") {
+        if (route.config) callbacks.config?.(incoming);
+        else if (route.id === "presence") {
           if (
             incoming.kind === 20001 &&
             presenceAuthors.includes(incoming.pubkey)
@@ -850,7 +901,7 @@ export function subscribeRelayTraffic(
         route.replay = route.count >= LIVE_REPLAY_LIMIT ? "limited" : "unknown";
         notify();
         if (!valid() || wires.get(route.wire ?? "") !== route) return;
-        if (route.id !== "observer" && route.id !== "presence")
+        if (route.id !== "observer" && route.id !== "presence" && !route.config)
           callbacks.established(route.channelIds ?? route.channelId);
         if (valid()) pump();
       } else if (data[0] === "CLOSED") {
@@ -966,6 +1017,13 @@ export function subscribeRelayTraffic(
       observer = next;
       const route = routes.get("observer");
       if (route) remove(route); // Fence the old wire before enabling a new generation.
+      sync();
+    },
+    configScope(input) {
+      const next = liveConfigScope(input ? input.channels : null);
+      if (closed || JSON.stringify(next) === JSON.stringify(configChannels))
+        return;
+      configChannels = next;
       sync();
     },
     prioritize(input) {

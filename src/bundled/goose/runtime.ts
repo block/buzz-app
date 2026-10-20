@@ -28,6 +28,15 @@ import {
   type StandaloneTurn,
   type TurnResult,
 } from "../../features/agents/service";
+import { localKey, type Models } from "../../features/agents/service";
+import {
+  inputsOf,
+  Refused,
+  refusal,
+  unsupportedSetting,
+  type AgentSettings,
+  type Applied,
+} from "../../features/agents/settings";
 import { soloChat } from "../../features/agents/solo-chat";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import type {
@@ -47,7 +56,7 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import { ownerCanvas, readProject } from "../../features/agent-harness/project";
-import type { ServeMcp, ToolServer } from "./goose";
+import type { Choice, ServeMcp, Settled, ToolServer } from "./goose";
 import {
   AgentSessions,
   localSessions,
@@ -109,13 +118,20 @@ export function sessionTitle(
 
 type Entry = {
   sessions: AgentSessions;
-  config: Config;
-  /** The team sections of the latest run; a change reopens idle sessions. */
-  team: string;
+  /** What a conversation opened from here on runs with, its config resolved:
+   * from the latest delivery, local save or Restart, never an older one. An
+   * open session keeps its own until its epoch moves. */
+  applied: Applied<Config>;
+  /** Advanced by Restart to apply, which replaces every session opened
+   * before, even one a choice switched to the new epoch. */
+  restarts: number;
   /** The agent's name, for its prompt; a rename reopens idle sessions. */
   name?: string;
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
+  /** The local row's key as last synced; only its change replaces `applied`
+   * here. */
+  local?: string;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
 };
@@ -151,6 +167,9 @@ export class GooseRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
+    /** The models a provider and model can be asked to run a turn on, as
+     * the composer lists them (`GooseSetup.picks`). */
+    private readonly models?: (choice: Choice) => Promise<Models>,
   ) {}
 
   /** The desktop host's methods goose agents run with. */
@@ -179,7 +198,8 @@ export class GooseRuntime {
   defaultsChanged() {
     this.defaultsRevision++;
     for (const entry of this.agents.values())
-      if (!entry.config.provider.trim()) entry.sessions.reconfigure();
+      if (!entry.applied.settings.config.provider.trim())
+        entry.sessions.reconfigure();
   }
 
   sync(agents: readonly Agent[]) {
@@ -191,17 +211,48 @@ export class GooseRuntime {
       }
     if (!this.agents.size) this.goose.stop();
     for (const agent of agents) {
-      const next = config(agent.config);
+      const current = resolved({
+        settings: agent.settings,
+        epoch: agent.epoch,
+      });
+      const local = localKey(agent);
       const entry = this.agents.get(agent.pubkey);
-      if (!entry) this.entry(agent.pubkey, next).name = agent.name;
-      else if (
-        JSON.stringify(entry.config) !== JSON.stringify(next) ||
-        entry.name !== agent.name
-      ) {
-        entry.config = next;
-        entry.name = agent.name;
-        entry.sessions.reconfigure();
+      if (!entry) {
+        Object.assign(this.entry(agent.pubkey, current), {
+          name: agent.name,
+          local,
+        });
+        continue;
       }
+      if (entry.local === local && entry.name === agent.name) continue;
+      // Only a change of the local row replaces delivered settings; its epoch
+      // replaces the sessions opened before, and a remote edit leaves them.
+      if (
+        entry.local !== undefined &&
+        entry.local !== local &&
+        current.epoch >= entry.applied.epoch
+      ) {
+        const prior = entry.applied.settings.config;
+        const next = current.settings.config;
+        // A local team or name change reopens the sessions; a remote one
+        // reaches only those that haven't prompted (`Inputs`).
+        if (
+          inputsOf(entry.applied, entry.name) !== inputsOf(current, agent.name)
+        )
+          entry.restarts++;
+        entry.applied = current;
+        // A provider, model or thinking level alone switches in the open
+        // sessions, which take its epoch; any other change reopens them.
+        if (opened(prior) === opened(next))
+          entry.sessions.choose(
+            choiceOf(next),
+            (live) => JSON.parse(live)[0] === opened(next),
+            current,
+          );
+      }
+      entry.local = local;
+      entry.name = agent.name;
+      entry.sessions.reconfigure();
     }
     this.notify();
   }
@@ -253,7 +304,12 @@ export class GooseRuntime {
   ) {
     const key = this.controlKey(agent, place);
     const control = `${agent.pubkey}/${key}`;
-    const entry = this.entry(agent.pubkey, config(agent.config));
+    const entry =
+      this.agents.get(agent.pubkey) ??
+      this.entry(
+        agent.pubkey,
+        resolved({ settings: agent.settings, epoch: agent.epoch }),
+      );
     if (action === "interrupt") {
       this.controls.interrupt(control);
       await entry.sessions.interrupt(key);
@@ -278,10 +334,10 @@ export class GooseRuntime {
   async run({
     trigger,
     agent,
-    config: raw,
+    attempt,
     channelId,
-    team,
     model,
+    effort,
     workingUntil,
     ignored,
     signal,
@@ -290,7 +346,9 @@ export class GooseRuntime {
     superseded,
     interruptible,
   }: Delivery) {
-    const settings = config(raw);
+    // Read before anything waits: the scope it was admitted with picks its
+    // conversation, for its first prompt and any rebuilt one.
+    const { scope: admitted } = config(attempt.settings.config);
     // Watches and timers come as standalone turns (`runOnce`).
     if (trigger.type !== "mention") return ignored?.();
     // goose runs commands as you; mentions need owner or delegated authority.
@@ -314,9 +372,8 @@ export class GooseRuntime {
       }
       signal.throwIfAborted();
     }
-    const entry = this.entry(agent.pubkey, settings);
+    const entry = this.delivery(agent.pubkey, attempt);
     entry.handle = agent;
-    entry.team = team ?? "";
     const { event } = trigger;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
@@ -328,6 +385,21 @@ export class GooseRuntime {
       channel,
       signal,
     );
+    // A conversation pinned since the last local Save keeps the key its own
+    // scope gave it, so a remote scope change never moves it; the thread's
+    // wins. Chosen once, so a rebuilt prompt goes to the same conversation.
+    const root = `${channel}/${threadReference(event)?.rootId ?? event.id}`;
+    const pinnedAs = (key: string, as: Scope) => {
+      const pin = entry.sessions.pinOf(key);
+      return (
+        pin?.epoch === attempt.epoch && config(pin.settings.config).scope === as
+      );
+    };
+    const scope = pinnedAs(root, "thread")
+      ? "thread"
+      : pinnedAs(channel, "channel")
+        ? "channel"
+        : admitted;
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) => {
       const turn = await this.turn(
@@ -336,6 +408,7 @@ export class GooseRuntime {
         event,
         channel,
         topLevel,
+        scope,
         fresh,
       );
       const { channel: where } = turn;
@@ -369,19 +442,32 @@ export class GooseRuntime {
               ? { channel }
               : { channel, root: threadReference(event)?.rootId ?? event.id },
         );
-        const done = entry.sessions.deliver(key, text, event.created_at, {
-          steer: steerPrompt(text),
-          fresh: async () => (await prompt(true)).text,
-          title: sessionTitle(entry.name, place, key.split("/")[1]),
-          ...(!deferred ? { signal } : {}),
-          ...(model ? { model } : {}),
-          activityScope: topLevel
-            ? channel
-            : (threadReference(event)?.rootId ?? event.id),
-          ...(step ? { step } : {}),
-          ...(acknowledged ? { acknowledged } : {}),
-          ...(superseded ? { superseded } : {}),
-        });
+        // goose takes no effort per turn, only its own thinking level setting,
+        // so a picked one is refused rather than quietly dropped.
+        const done: Promise<Settled> = effort
+          ? Promise.resolve(
+              refusal(
+                unsupportedSetting(
+                  "effort",
+                  effort,
+                  `goose can't run the picked effort "${effort}": it uses the thinking level in its settings. Send without an effort pick.`,
+                ),
+              ),
+            )
+          : entry.sessions.deliver(key, text, event.created_at, {
+              attempt,
+              steer: steerPrompt(text),
+              fresh: async () => (await prompt(true)).text,
+              title: sessionTitle(entry.name, place, key.split("/")[1]),
+              ...(!deferred ? { signal } : {}),
+              ...(model ? { model } : {}),
+              activityScope: topLevel
+                ? channel
+                : (threadReference(event)?.rootId ?? event.id),
+              ...(step ? { step } : {}),
+              ...(acknowledged ? { acknowledged } : {}),
+              ...(superseded ? { superseded } : {}),
+            });
         workingUntil(done);
         interruptible?.(() => entry.sessions.interrupt(key));
         this.notify();
@@ -416,10 +502,9 @@ export class GooseRuntime {
     signal,
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
-    const { agent, team } = delivery;
-    const entry = this.entry(agent.pubkey, config(delivery.config));
+    const { agent, attempt } = delivery;
+    const entry = this.delivery(agent.pubkey, attempt);
     entry.handle = agent;
-    entry.team = team ?? "";
     const done = entry.sessions.runOnce(
       key,
       async () => {
@@ -428,6 +513,7 @@ export class GooseRuntime {
           ? undefined
           : standalonePrompt(agent.pubkey, text);
       },
+      attempt,
       { signal, title: sessionTitle(entry.name, key) },
     );
     this.notify();
@@ -490,6 +576,8 @@ export class GooseRuntime {
     event: EventData,
     channelId: string,
     topLevel: boolean,
+    /** The scope the turn was admitted with. */
+    scope: Scope,
     fresh = false,
   ) {
     const snapshot = this.relay(self)?.snapshot();
@@ -502,11 +590,9 @@ export class GooseRuntime {
     const rootId = thread?.rootId ?? event.id;
     // A Solo chat is one conversation, as a DM is.
     const key =
-      topLevel || dm || entry.config.scope === "channel"
+      topLevel || dm || scope === "channel"
         ? channelId
         : `${channelId}/${rootId}`;
-    // The conversation it was admitted to, not the scope as it is now.
-    const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const owner = entry.handle?.owner;
@@ -569,7 +655,7 @@ export class GooseRuntime {
     return {
       key,
       event,
-      scope,
+      scope: (key === channelId ? "channel" : "thread") as Scope,
       topLevel,
       channel: {
         id: channelId,
@@ -587,12 +673,39 @@ export class GooseRuntime {
     };
   }
 
-  private entry(pubkey: string, initial: Config): Entry {
+  /** Whether a conversation is pinned to settings other than `settings`,
+   * what the host now resolves for the agent: it shows Restart to apply. */
+  outdated(pubkey: string, settings: AgentSettings) {
+    const key = pinKey(settings);
+    return !!this.agents
+      .get(pubkey)
+      ?.sessions.outdated((pin) => pinKey(pin.settings) === key);
+  }
+  /** Restart to apply: idle conversations close now, busy ones once idle,
+   * and each opens again on `applied`, which the host just applied. */
+  restart(pubkey: string, applied: Applied) {
+    const entry =
+      this.agents.get(pubkey) ?? this.entry(pubkey, resolved(applied));
+    install(entry, applied);
+    entry.restarts++;
+    entry.sessions.reconfigure();
+  }
+
+  /** The agent's entry for a delivery: a conversation opened from here on
+   * uses its settings, unless a newer epoch already replaced them. One
+   * already open keeps its pin until its epoch moves. */
+  private delivery(pubkey: string, applied: Applied): Entry {
+    const entry = this.entry(pubkey, resolved(applied));
+    install(entry, applied);
+    return entry;
+  }
+
+  private entry(pubkey: string, initial: Applied<Config>): Entry {
     const existing = this.agents.get(pubkey);
     if (existing) return existing;
     const entry: Entry = {
-      config: initial,
-      team: "",
+      applied: initial,
+      restarts: 0,
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
     };
@@ -608,7 +721,9 @@ export class GooseRuntime {
           signingAuthority:
             this.relay(pubkey)?.snapshot().session.workflowAuthority,
           read: async (path) =>
-            this.desktop.readFile(path, { cwd: entry.config.workspace }),
+            this.desktop.readFile(path, {
+              cwd: entry.applied.settings.config.workspace,
+            }),
           memories: (slug) => this.memories(pubkey, slug),
         }),
         remember: async (slug: string, body: string, after: number) => {
@@ -626,24 +741,24 @@ export class GooseRuntime {
       pool: this.pool,
       store: localSessions(this.storage, pubkey),
       onChange: () => this.notify(),
-      // Read as each turn starts, so a change needs no restart.
-      choice: () => ({
-        provider: entry.config.provider.trim(),
-        model: entry.config.model.trim(),
-        effort: entry.config.effort,
-      }),
       fingerprint: () =>
         JSON.stringify([
-          entry.config.provider.trim() ? 0 : this.defaultsRevision,
-          entry.config.workspace,
-          entry.config.instructions,
-          entry.config.scope,
-          entry.team,
-          entry.name,
+          entry.restarts,
+          entry.applied.settings.config.provider.trim()
+            ? 0
+            : this.defaultsRevision,
           addedKey(this.added()),
         ]),
+      inputs: () => inputsOf(entry.applied, entry.name),
+      snapshot: () => snapshot(entry.applied.settings.config),
+      applied: () => entry.applied,
+      ...(this.models ? { models: this.models } : {}),
       launch: async () => {
-        const { workspace, instructions, scope } = entry.config;
+        // Every input is read before anything is awaited, as `snapshot` was.
+        const { config, team, blocked } = entry.applied.settings;
+        const { name } = entry;
+        if (blocked) throw new Refused(blocked);
+        const { workspace, instructions, scope } = config;
         const memory = await this.core(pubkey);
         return {
           workspace,
@@ -653,11 +768,12 @@ export class GooseRuntime {
             repositories: this.repositories(
               this.relay(pubkey)?.snapshot().scope,
             ),
-            ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
+            ...(name ? { agent: { name, pubkey } } : {}),
             instructions,
-            team: entry.team,
+            team,
             ...(memory === undefined ? {} : { memory }),
           }),
+          choice: choiceOf(config),
         };
       },
     });
@@ -697,3 +813,36 @@ export class GooseRuntime {
     );
   }
 }
+
+/** What a session is opened with: changing it reopens the session. */
+const opened = (config: Config) =>
+  JSON.stringify([config.workspace, config.instructions, config.scope]);
+const choiceOf = ({
+  provider,
+  model,
+  effort,
+}: Pick<Config, "provider" | "model" | "effort">) => ({
+  provider: provider.trim(),
+  model: model.trim(),
+  effort,
+});
+/** The settings a session runs on. */
+const snapshot = (config: Config) =>
+  JSON.stringify([opened(config), choiceOf(config)]);
+/** Everything a pin carries, as compared for Restart to apply. */
+const pinKey = (settings: AgentSettings) =>
+  JSON.stringify([
+    snapshot(config(settings.config)),
+    settings.synced,
+    settings.blocked ?? null,
+    settings.name,
+    settings.team,
+  ]);
+const resolved = ({ settings, epoch }: Applied): Applied<Config> => ({
+  settings: { ...settings, config: config(settings.config) },
+  epoch,
+});
+/** Replaces the entry's settings with `applied`, unless it is older. */
+const install = (entry: Entry, applied: Applied) => {
+  if (applied.epoch >= entry.applied.epoch) entry.applied = resolved(applied);
+};

@@ -62,33 +62,63 @@ export function ComposerModels({
   place: SessionPlace;
 }) {
   const [open, setOpen] = useState(false);
-  const mentioned = useMentionModels(pubkeys);
-  const choices = useMemo<readonly MentionModelChoice[]>(
-    () =>
-      startsThread
-        ? mentioned.flatMap((choice) => {
-            if (choice.session !== "thread") return [choice];
-            const { session: _, ...rest } = choice;
-            return rest.loading ||
-              rest.models.length > 1 ||
-              rest.models.some((model) => model.efforts.length)
-              ? [rest]
-              : [];
-          })
-        : mentioned,
-    [mentioned, startsThread],
-  );
+  const listed = useMentionModels(pubkeys);
+  const choices = useMemo<readonly MentionModelChoice[]>(() => {
+    const visible = listed.filter((choice) => !choice.hidden);
+    return startsThread
+      ? visible.flatMap((choice) => {
+          if (choice.session !== "thread") return [choice];
+          const { session: _, ...rest } = choice;
+          return rest.loading ||
+            rest.models.length > 1 ||
+            rest.models.some((model) => model.efforts.length)
+            ? [rest]
+            : [];
+        })
+      : visible;
+  }, [listed, startsThread]);
+  /** The type each agent's picks were last checked against. */
+  const checked = useRef(new Map<string, string>());
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   // Publish the displayed defaults separately from the user's draft picks.
   // A settings refresh or model-only pick must still follow the new default.
   useLayoutEffect(() => {
-    const resolved: Record<string, RunPick> = Object.fromEntries(
-      Object.entries(value).map(([pubkey, { model, effort }]) => [
-        pubkey,
-        { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
-      ]),
-    );
+    // A pick the agent no longer offers, as after a change of its type, is
+    // never sent: it keeps only what a successful listing includes. Without
+    // one (an unknown agent or type, loading, failed) the pick is sent for the
+    // agent to check, unless it was checked against another type.
+    const resolved: Record<string, RunPick> = {};
+    for (const [pubkey, saved] of Object.entries(value)) {
+      const choice = listed.find((item) => item.pubkey === pubkey);
+      const was = checked.current.get(pubkey);
+      if (
+        (choice?.loading || choice?.failed) &&
+        was !== undefined &&
+        was !== choice.type
+      )
+        resolved[pubkey] = {};
+      else if (!choice || choice.loading || choice.failed)
+        resolved[pubkey] = {
+          ...(saved.model ? { model: saved.model } : {}),
+          ...(saved.effort ? { effort: saved.effort } : {}),
+        };
+      else {
+        checked.current.set(pubkey, choice.type);
+        const model = choice.models.some((item) => item.id === saved.model)
+          ? saved.model
+          : undefined;
+        const effort = runModel(choice, model).efforts.some(
+          (item) => item.id === saved.effort,
+        )
+          ? saved.effort
+          : undefined;
+        resolved[pubkey] = {
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+        };
+      }
+    }
     for (const choice of choices) {
       if (choice.loading || !choice.sendDefaults) continue;
       const saved = value[choice.pubkey] ?? {};
@@ -106,7 +136,7 @@ export function ComposerModels({
     }
     onResolved(resolved);
     return () => onResolved({});
-  }, [choices, value, onResolved]);
+  }, [listed, choices, value, onResolved]);
   if (!choices.length) return null;
   const picked = choices.flatMap((choice) => {
     const { model, effort } = value[choice.pubkey] ?? {};

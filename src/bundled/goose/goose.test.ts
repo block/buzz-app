@@ -5,7 +5,11 @@ import {
   stepLabel,
   type ToolServer,
 } from "./goose";
+import type { Handoff } from "./goose";
+import type { Models } from "../../features/agents/service";
 import { fakeSpawn, flush } from "./goose-testing";
+import { SUPERSEDED } from "../../features/agents/settings";
+import { settingsClock } from "../../features/agents/settings-testing";
 
 const ok: ToolServer = async (_conversation, message) => ({
   jsonrpc: "2.0",
@@ -430,6 +434,291 @@ describe("GooseProcess", () => {
     });
   });
 
+  it("switches and sends nothing for a requeued message given up on behind another turn", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const list = async (): Promise<Models> => ({
+      current: "",
+      models: ["o3", "o4"].map((id) => ({ id, label: id, efforts: [] })),
+    });
+    let lookups = 0;
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "base-unlisted" }),
+      // The second lookup, o4's, waits until released.
+      models: async () => {
+        if (++lookups === 2) await held;
+        return list();
+      },
+    });
+    const first = session.send("one", {}, "o3");
+    await flush();
+    // "two" steers too late; "three" queues ahead of its fallback.
+    process.turns[0]?.finish();
+    const controller = new AbortController();
+    const second = session.send(
+      "two",
+      {},
+      undefined,
+      undefined,
+      controller.signal,
+    );
+    const third = session.send("three", {}, "o4");
+    await flush();
+    // "two" is requeued, its signal still live, behind o4's held lookup.
+    controller.abort();
+    release();
+    await flush();
+    process.turns[1]?.finish();
+    await expect(Promise.all([first, second, third])).resolves.toEqual([
+      { ok: true },
+      { ok: true },
+      { ok: true },
+    ]);
+    expect(process.configured).toEqual([
+      "session-1 model=o3",
+      "session-1 model=o4",
+    ]);
+    expect(process.turns.map((turn) => turn.text)).toEqual(["one", "three"]);
+    const next = session.send("four");
+    await flush();
+    process.turns[2]?.finish();
+    await expect(next).resolves.toEqual({ ok: true });
+    expect(process.turns.map((turn) => [turn.sessionId, turn.text])).toEqual([
+      ["session-1", "one"],
+      ["session-1", "three"],
+      ["session-1", "four"],
+    ]);
+  });
+
+  it("gives a refused pick's refusal to its own message, not a plain one waiting behind it", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      models: async () => {
+        await held;
+        return {
+          current: "",
+          models: [{ id: "o3", label: "o3", efforts: [] }],
+        };
+      },
+    });
+    const bad = session.send("bad", { step: () => {} }, "o9");
+    await flush();
+    // A plain message arrives while the pick is checked.
+    const plain = session.send("plain", { step: () => {} });
+    await flush();
+    release();
+    await flush();
+    await expect(bad).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('picked model "o9"'),
+      failure: { kind: "unsupported-setting", setting: "model", value: "o9" },
+    });
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Plain answer" },
+    });
+    await flush();
+    process.turns[0]?.finish();
+    await expect(plain).resolves.toEqual({ ok: true, text: "Plain answer" });
+    expect(process.turns.map((turn) => turn.text)).toEqual(["plain"]);
+    expect(process.configured).toEqual(["session-1 model=gpt-4.1"]);
+  });
+
+  it("gives a cancelled later message neither an earlier refusal nor the burst's text", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      models: async () => ({
+        current: "",
+        models: [{ id: "o3", label: "o3", efforts: [] }],
+      }),
+    });
+    const activity = () => ({ step: () => {} });
+    const first = session.send("one", activity());
+    await flush();
+    const bad = session.send("bad", activity(), "o9");
+    const controller = new AbortController();
+    const later = session.send(
+      "later",
+      activity(),
+      undefined,
+      undefined,
+      controller.signal,
+    );
+    await flush();
+    // "later" was acknowledged last, then given up on.
+    controller.abort();
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "First answer" },
+    });
+    await flush();
+    process.turns[0]?.finish();
+    await expect(later).resolves.toEqual({ ok: true });
+    await expect(bad).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('picked model "o9"'),
+    });
+    await expect(first).resolves.toEqual({ ok: true, text: "First answer" });
+    expect(process.turns.map((turn) => turn.text)).toEqual(["one"]);
+  });
+
+  it("gives a refusal at handoff to its own message, not the next", async () => {
+    const { open, process } = await start();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      models: async () => {
+        await held;
+        return {
+          current: "",
+          models: [{ id: "o3", label: "o3", efforts: [] }],
+        };
+      },
+    });
+    const steps: string[] = [];
+    const activity = (name: string) => ({
+      step: (tool: string) => steps.push(`${name}:${tool}`),
+    });
+    const refuse: Handoff = () => {
+      throw new Error("settings changed");
+    };
+    const a = session.send("A", activity("A"), "o3", refuse);
+    const b = session.send("B", activity("B"));
+    release();
+    await expect(a).resolves.toEqual({ ok: false, error: "settings changed" });
+    process.update(session.id, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "B text" },
+    });
+    await expect(b).resolves.toEqual({ ok: true, text: "B text" });
+    expect(process.turns.map((turn) => turn.text)).toEqual(["B"]);
+    expect(steps).toEqual(["B:Writing reply"]);
+  });
+
+  it("gives a cancelled queued message no later failure or steps", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const steps: string[] = [];
+    const activity = (name: string) => ({
+      step: (tool: string) => steps.push(`${name}:${tool}`),
+    });
+    const a = session.send("A", activity("A"));
+    await flush();
+    const controller = new AbortController();
+    const b = session.send(
+      "B",
+      activity("B"),
+      "o3",
+      undefined,
+      controller.signal,
+    );
+    await flush();
+    controller.abort();
+    await expect(b).resolves.toEqual({ ok: true });
+    process.update(session.id, { sessionUpdate: "agent_thought_chunk" });
+    await flush();
+    process.exit(1, "A PROCESS FAILURE\n");
+    await expect(a).resolves.toEqual({ ok: false, error: "A PROCESS FAILURE" });
+    // B superseded A's activity, then left: no step reaches B.
+    expect(steps).toEqual([]);
+  });
+
+  it("gives a message cancelled during its own model lookup no later failure or steps", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let looked = false;
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      models: async () => {
+        looked = true;
+        await held;
+        return {
+          current: "",
+          models: [{ id: "o3", label: "o3", efforts: [] }],
+        };
+      },
+    });
+    const steps: string[] = [];
+    const activity = (name: string) => ({
+      step: (tool: string) => steps.push(`${name}:${tool}`),
+    });
+    const a = session.send("A", activity("A"));
+    await flush();
+    const controller = new AbortController();
+    const b = session.send(
+      "B",
+      activity("B"),
+      "o3",
+      undefined,
+      controller.signal,
+    );
+    await flush();
+    // A finishes, so B leaves the queue and waits on its model lookup.
+    process.turns[0]?.finish();
+    await flush();
+    expect(looked).toBe(true);
+    controller.abort();
+    await expect(b).resolves.toEqual({ ok: true });
+    process.update(session.id, { sessionUpdate: "agent_thought_chunk" });
+    await flush();
+    process.exit(1, "A PROCESS FAILURE\n");
+    release();
+    await expect(a).resolves.toEqual({ ok: false, error: "A PROCESS FAILURE" });
+    expect(steps).toEqual([]);
+    expect(process.turns.map((turn) => turn.text)).toEqual(["A"]);
+  });
+
+  it("sends nothing for a message cancelled while its handoff is held", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let handed = false;
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      models: async () => ({
+        current: "",
+        models: [{ id: "o3", label: "o3", efforts: [] }],
+      }),
+    });
+    const steps: string[] = [];
+    const activity = (name: string) => ({
+      step: (tool: string) => steps.push(`${name}:${tool}`),
+    });
+    const hold = (<T>(send: () => T): T => {
+      handed = true;
+      return held.then(send) as T;
+    }) as Handoff;
+    const a = session.send("A", activity("A"));
+    await flush();
+    const controller = new AbortController();
+    const b = session.send("B", activity("B"), "o3", hold, controller.signal);
+    await flush();
+    // A finishes; B's lookup resolves and its handoff waits.
+    process.turns[0]?.finish();
+    await flush();
+    expect(handed).toBe(true);
+    controller.abort();
+    await expect(b).resolves.toEqual({ ok: true });
+    release();
+    await flush();
+    await expect(a).resolves.toEqual({ ok: true });
+    expect(process.turns.map((turn) => turn.text)).toEqual(["A"]);
+    expect(steps).toEqual([]);
+  });
+
   it("keeps a pick whose steer came too late, for its own turn", async () => {
     const { open, process } = await start();
     process.hold = true;
@@ -801,5 +1090,45 @@ describe("stepLabel", () => {
         rawInput: { text: "hi", path: "/a/b/notes.md" },
       }),
     ).toEqual({ tool: "send", target: "notes.md" });
+  });
+});
+
+describe("a failed steer that becomes a new turn hands off", () => {
+  /** A turn running "one", and "two" sent to steer into it just as it ends,
+   * so goose has no run to take the steer and "two" runs as the next turn
+   * through a handoff at epoch 0. `save` lands a Save before that. */
+  const lateSteer = async (save: boolean) => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const clock = settingsClock();
+    const attempt = clock.attempt({});
+    const first = session.send("one");
+    await flush();
+    process.turns[0]?.finish();
+    const second = session.send("two", {}, undefined, (send) =>
+      attempt.handoff(clock.applied({}, {}, 0), send),
+    );
+    if (save) clock.advance();
+    await flush();
+    process.turns[1]?.finish();
+    // A refused handoff is only its own message's answer.
+    await expect(first).resolves.toEqual({ ok: true });
+    return { process, second: await second };
+  };
+  it("refuses it when a Save landed, writing no prompt", async () => {
+    const { process, second } = await lateSteer(true);
+    expect(second).toMatchObject({ ok: false, error: SUPERSEDED });
+    expect(process.turns.map((turn) => [turn.text, turn.steered])).toEqual([
+      ["one", []],
+    ]);
+  });
+  it("runs it as the next turn when nothing landed", async () => {
+    const { process, second } = await lateSteer(false);
+    expect(second).toEqual({ ok: true });
+    expect(process.turns.map((turn) => [turn.text, turn.steered])).toEqual([
+      ["one", []],
+      ["two", []],
+    ]);
   });
 });

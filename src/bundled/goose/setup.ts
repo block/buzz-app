@@ -82,6 +82,9 @@ const PREFIXES: Readonly<Record<string, readonly string[]>> = {
 
 const TEST_PROMPT = "Reply with exactly: OK";
 const TEST_TIMEOUT_MS = 60_000;
+/** How long a list read may take. One that times out stops its goose and is
+ * read again next time, so a stuck one holds a picked turn only this long. */
+export const LIST_TIMEOUT_MS = 15_000;
 
 export class GooseSetup {
   private listing: Promise<Providers> | undefined;
@@ -230,8 +233,12 @@ export class GooseSetup {
   providers(): Promise<Providers> {
     this.listing ??= this.with(async (goose) => {
       const [{ entries }, defaults] = (await Promise.all([
-        goose.request("_goose/unstable/providers/list", { providerIds: [] }),
-        goose.request("_goose/unstable/defaults/read", {}),
+        goose.request(
+          "_goose/unstable/providers/list",
+          { providerIds: [] },
+          LIST_TIMEOUT_MS,
+        ),
+        goose.request("_goose/unstable/defaults/read", {}, LIST_TIMEOUT_MS),
       ])) as [
         { entries: Entry[] },
         { providerId?: string | null; modelId?: string | null },
@@ -282,6 +289,7 @@ export class GooseSetup {
         const { models } = (await goose.request(
           "_goose/unstable/providers/supported-models/list",
           { providerId: id },
+          LIST_TIMEOUT_MS,
         )) as { models: string[] };
         return models.map((model) => ({ id: model, label: model }));
       });

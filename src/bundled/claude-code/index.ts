@@ -84,6 +84,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   agents.register<Config>({
     id: TYPE_ID,
+    defaultsChanged: (listener) => providerDefaults.subscribe(listener),
     title: "Claude",
     icon: ClaudeLogoIcon,
     description:

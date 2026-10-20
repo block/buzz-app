@@ -49,7 +49,14 @@ it("loads models and their effort levels asynchronously before an agent runs", a
     wrapper,
   });
   expect(result.current).toEqual([
-    { pubkey: "agent", name: "Codex", current: "", models: [], loading: true },
+    {
+      pubkey: "agent",
+      name: "Codex",
+      type: "codex",
+      current: "",
+      models: [],
+      loading: true,
+    },
   ]);
   await act(async () => {
     pending.resolve({ ...models("GPT test"), sendDefaults: true });
@@ -57,6 +64,7 @@ it("loads models and their effort levels asynchronously before an agent runs", a
   expect(result.current).toEqual([
     {
       pubkey: "agent",
+      type: "codex",
       name: "Codex",
       ...models("GPT test"),
       sendDefaults: true,
@@ -92,7 +100,9 @@ it("offers nothing for a single model without effort levels", async () => {
   });
   // Both lookups settle together, so the tunable one is the barrier.
   await waitFor(() =>
-    expect(result.current.map((choice) => choice.pubkey)).toEqual(["tunable"]),
+    expect(
+      result.current.filter((c) => !c.hidden).map((c) => c.pubkey),
+    ).toEqual(["tunable"]),
   );
 });
 

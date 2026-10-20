@@ -17,6 +17,7 @@ export const codexRun = (
   ready?: (signal: AbortSignal) => Promise<void>,
 ): Pick<
   AgentType<Config>,
+  | "restart"
   | "models"
   | "sessionControls"
   | "run"
@@ -25,6 +26,11 @@ export const codexRun = (
   | "syncedSettings"
   | "resumes"
 > => ({
+  restart: {
+    outdated: (pubkey, settings) => runtime.outdated(pubkey, settings),
+    apply: (pubkey, applied) => runtime.restart(pubkey, applied),
+    subscribe: runtime.subscribe,
+  },
   models: (agent) => runtime.preview(agent),
   sessionControls: {
     scope: (agent) => config(agent.config).scope,

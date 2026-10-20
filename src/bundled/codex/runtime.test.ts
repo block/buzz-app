@@ -7,6 +7,10 @@ import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
+import {
+  settingsClock,
+  settingsOf,
+} from "../../features/agents/settings-testing";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
@@ -14,13 +18,28 @@ import { keypair, signed } from "../../features/relay/testing";
 import type { HostProcessOptions } from "../../features/host/service";
 import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { CodexRuntime, codexStep, programs } from "./runtime";
-import { config } from "./config";
+import { config, type Config } from "./config";
+import { codexRun } from "./run";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { wake } from "../../features/agent-harness/wakes";
 import type { Wire } from "./rpc";
 
 // The plugin registers only in the Mac/Linux desktop app.
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
+const ownerGate = vi.hoisted(() => ({
+  hold: undefined as (() => Promise<void>) | undefined,
+}));
+vi.mock("../../features/agents/owner-attestation", async (actual) => {
+  const real =
+    await actual<typeof import("../../features/agents/owner-attestation")>();
+  return {
+    ...real,
+    fromOwner: async (...args: Parameters<typeof real.fromOwner>) => {
+      await ownerGate.hold?.();
+      return real.fromOwner(...args);
+    },
+  };
+});
 
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
@@ -34,6 +53,19 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const runtimes: CodexRuntime[] = [];
+const TEST_CONFIG = {
+  workspace: "/tmp/codex-test",
+  model: "test-model",
+  effort: "low",
+  instructions: "TEST_INSTRUCTIONS",
+};
+/** A test delivery: its settings as plain fields, from which the fixture
+ * builds the attempt. */
+type Carrying = Delivery & {
+  config?: object;
+  synced?: Record<string, string>;
+  team?: string;
+};
 afterEach(() => {
   for (const runtime of runtimes) runtime.dispose();
   runtimes.length = 0;
@@ -99,6 +131,7 @@ function fixture(
         });
         return;
       }
+      if (request.method) await held.get(request.method);
       const params = request.params as Record<string, unknown>;
       let result: unknown = {};
       if (request.method === "model/list")
@@ -310,7 +343,7 @@ function fixture(
   );
   /** The tools plugins add, as the runtime reads them at each use. */
   const added: AddedTool[] = [];
-  const runtime = new CodexRuntime(
+  const real = new CodexRuntime(
     spawn,
     (pubkey) => ownerReads(relay, pubkey),
     core,
@@ -319,7 +352,56 @@ function fixture(
     () => added,
     repositories,
   );
-  runtimes.push(runtime);
+  runtimes.push(real);
+  /** The agent's epoch, which a Save or Restart moves as the host would. */
+  const clock = settingsClock();
+  /** A delivery carrying its settings as plain fields, which `run` turns
+   * into the attempt the host would capture at the delivery's epoch. */
+  const admit = ({ config, synced, team, ...rest }: Carrying): Delivery => {
+    const { settings, epoch } = rest.attempt;
+    return {
+      ...rest,
+      attempt: clock.attempt(
+        config ?? settings.config,
+        {
+          synced: synced ?? settings.synced,
+          team: team ?? settings.team,
+          name: settings.name,
+        },
+        epoch,
+      ),
+    };
+  };
+  const runtime = new Proxy(real, {
+    get(target, prop) {
+      if (prop === "run")
+        return (delivery: Carrying) => target.run(admit(delivery));
+      if (prop === "restart")
+        return (key: string, settings: object = TEST_CONFIG) => {
+          clock.advance();
+          target.restart(key, clock.applied(settings, { name: "Codex" }));
+        };
+      if (prop === "outdated")
+        return (key: string, settings: object) =>
+          target.outdated(key, settingsOf(settings, { name: "Codex" }));
+      const value = Reflect.get(target, prop);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as Omit<CodexRuntime, "run" | "restart" | "outdated"> & {
+    run(delivery: Carrying): Promise<void>;
+    /** Restart to apply `settings`, which the host resolved. */
+    restart(key: string, settings?: object): void;
+    outdated(key: string, settings: object): boolean;
+  };
+  /** A local Save: the host advances the epoch and syncs it. */
+  const save = (settings: object = TEST_CONFIG) =>
+    runtime.sync([
+      {
+        pubkey,
+        settings: settingsOf(settings, { name: "Codex" }),
+        epoch: clock.advance(),
+      } as unknown as Agent,
+    ]);
   const events: EventData[] = [];
   const query = vi.fn(async (filters: readonly Record<string, unknown>[]) =>
     events.filter((event) =>
@@ -393,8 +475,8 @@ function fixture(
   };
   runtime.sync([{ pubkey } as Agent]);
   let id = 0;
-  const delivery = (content: string, threadRoot = root): Delivery => {
-    const result: Delivery = {
+  const delivery = (content: string, threadRoot = root): Carrying => {
+    const result: Carrying = {
       trigger: {
         type: "mention",
         event: {
@@ -411,12 +493,8 @@ function fixture(
       },
       channelId: "channel",
       agent: agent as unknown as Delivery["agent"],
-      config: {
-        workspace: "/tmp/codex-test",
-        model: "test-model",
-        effort: "low",
-        instructions: "TEST_INSTRUCTIONS",
-      },
+      config: TEST_CONFIG,
+      attempt: clock.attempt(TEST_CONFIG, { name: "Codex" }),
       signal: new AbortController().signal,
       workingUntil,
       current: () => true,
@@ -533,6 +611,10 @@ function fixture(
   };
   return {
     runtime,
+    real,
+    clock,
+    admit,
+    save,
     added,
     wake: wakeTurn,
     tool,
@@ -549,7 +631,7 @@ function fixture(
     upload,
     running,
     media,
-    runPlugin: (delivery: Delivery) => runPlugin(delivery),
+    runPlugin: (delivery: Carrying) => runPlugin(admit(delivery)),
     notify: () =>
       listeners.forEach((listener) => {
         listener();
@@ -972,6 +1054,204 @@ it("previews each model at the configured effort when it has it", async () => {
   const { models } = await f.runtime.preview(agent);
   expect(models.map((model) => model.effort)).toEqual(["low", "high"]);
 });
+it("starts each new session from the config its delivery carries, never the local row", async () => {
+  const f = fixture();
+  f.runtime.sync([
+    {
+      pubkey,
+      config: { workspace: "/tmp/codex-test", instructions: "LOCAL" },
+    } as Agent,
+  ]);
+  const carrying = (
+    content: string,
+    threadRoot: string,
+    instructions: string,
+  ) => {
+    const delivery = f.delivery(content, threadRoot);
+    return {
+      ...delivery,
+      config: { ...(delivery.config as object), instructions },
+    };
+  };
+  await f.runtime.run(carrying("@Codex one", "a".repeat(64), "SYNCED A"));
+  await f.runtime.run(carrying("@Codex two", "b".repeat(64), "SYNCED B"));
+  const starts = () => f.starts().map((start) => JSON.stringify(start.params));
+  await vi.waitFor(() => expect(starts()).toHaveLength(2));
+  expect(starts()[0]).toContain("SYNCED A");
+  expect(starts()[1]).toContain("SYNCED B");
+  expect(starts().join()).not.toContain("LOCAL");
+});
+it("keeps a thread on its pinned config until Restart to apply, across a reload", async () => {
+  const f = fixture();
+  const root = "a".repeat(64);
+  const carrying = (content: string, instructions: string, thread = root) => {
+    const delivery = f.delivery(content, thread);
+    return {
+      ...delivery,
+      config: { ...(delivery.config as object), instructions },
+    };
+  };
+  const starts = () => f.starts().map((start) => JSON.stringify(start.params));
+  const config = (instructions: string) => ({
+    workspace: "/tmp/codex-test",
+    model: "test-model",
+    effort: "low",
+    instructions,
+  });
+  await f.runtime.run(carrying("@Codex one", "SYNCED A"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(1));
+  f.complete(0, "ONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.runtime.outdated(pubkey, config("SYNCED A"))).toBe(false);
+  // An edit from another device reaches the thread's next turn, which
+  // still runs on the version the thread was pinned to.
+  await f.runtime.run(carrying("@Codex two", "SYNCED B"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(2));
+  expect(starts()[1]).toContain("SYNCED A");
+  expect(starts()[1]).not.toContain("SYNCED B");
+  f.complete(1, "TWO");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+  expect(f.runtime.outdated(pubkey, config("SYNCED B"))).toBe(true);
+  // A new conversation starts on the current copy.
+  await f.runtime.run(carrying("@Codex new", "SYNCED B", "b".repeat(64)));
+  await vi.waitFor(() => expect(starts()).toHaveLength(3));
+  expect(starts()[2]).toContain("SYNCED B");
+  f.complete(2, "NEW");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(3));
+  // The pin survives a reload; Restart to apply re-pins on the next turn.
+  f.runtime.dispose();
+  await f.exits.promise;
+  const restored = fixture();
+  for (const [key, value] of f.storage) restored.storage.set(key, value);
+  const again = (content: string) => {
+    const delivery = restored.delivery(content, root);
+    return {
+      ...delivery,
+      config: { ...(delivery.config as object), instructions: "SYNCED B" },
+    };
+  };
+  const restarts = () =>
+    restored.starts().map((start) => JSON.stringify(start.params));
+  expect(restored.runtime.outdated(pubkey, config("SYNCED B"))).toBe(true);
+  await restored.runtime.run(again("@Codex three"));
+  await vi.waitFor(() => expect(restarts()).toHaveLength(1));
+  expect(restarts()[0]).toContain("SYNCED A");
+  restored.complete(0, "THREE");
+  await vi.waitFor(() => expect(restored.publish).toHaveBeenCalledTimes(1));
+  restored.runtime.restart(pubkey);
+  expect(restored.runtime.outdated(pubkey, config("SYNCED B"))).toBe(false);
+  await restored.runtime.run(again("@Codex four"));
+  await vi.waitFor(() => expect(restarts()).toHaveLength(2));
+  expect(restarts()[1]).toContain("SYNCED B");
+});
+it("checks a synced effort only for a thread that will run on it", async () => {
+  const f = fixture();
+  const root = "a".repeat(64);
+  const carrying = (content: string, model: string, effort: string) => {
+    const delivery = f.delivery(content, root);
+    return {
+      ...delivery,
+      config: { ...(delivery.config as object), model, effort },
+      synced: { effort },
+    };
+  };
+  const starts = () => f.starts().map((start) => start.params);
+  await f.runtime.run(carrying("@Codex one", "test-model", "low"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(1));
+  f.complete(0, "ONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  // A remote edit to a model the pinned one lacks the effort of.
+  await f.runtime.run(carrying("@Codex two", "deep-model", "xhigh"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(2));
+  expect(starts()[1]).toMatchObject({ model: "test-model", effort: "low" });
+});
+it("leaves a thread unpinned when a local save lands while its turn starts", async () => {
+  const f = fixture();
+  const root = "a".repeat(64);
+  const carrying = (content: string, instructions: string) => {
+    const delivery = f.delivery(content, root);
+    return {
+      ...delivery,
+      config: { ...(delivery.config as object), instructions },
+    };
+  };
+  const starts = () => f.starts().map((start) => JSON.stringify(start.params));
+  await f.runtime.run(carrying("@Codex one", "SYNCED A"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(1));
+  f.complete(0, "ONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  // The second turn starts on the thread's pin while a save clears it.
+  const turn = deferred<void>();
+  f.held.set("turn/start", turn.promise);
+  await f.runtime.run(carrying("@Codex two", "SYNCED B"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(2));
+  expect(starts()[1]).toContain("SYNCED A");
+  f.runtime.restart(pubkey);
+  f.held.delete("turn/start");
+  turn.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  f.complete(1, "TWO");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+  await f.runtime.run(carrying("@Codex three", "SYNCED B"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(3));
+  expect(starts()[2]).toContain("SYNCED B");
+});
+it("refuses a turn whose prompt was still being built when a local save landed", async () => {
+  const f = fixture();
+  const root = "a".repeat(64);
+  await f.runtime.run(f.delivery("@Codex one", root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.complete(0, "ONE");
+  let built!: () => void;
+  f.read.mockImplementationOnce(async () => {
+    await new Promise<void>((resolve) => {
+      built = resolve;
+    });
+    return [];
+  });
+  const sent = f.runtime.run(f.delivery("@Codex two", root));
+  await vi.waitFor(() => expect(built).toBeTypeOf("function"));
+  f.runtime.restart(pubkey, { ...TEST_CONFIG, instructions: "SYNCED B" });
+  built();
+  await sent;
+  await vi.waitFor(() =>
+    expect(JSON.stringify(f.publish.mock.calls)).toContain(
+      "settings changed before it started",
+    ),
+  );
+  expect(f.starts()).toHaveLength(1);
+});
+it("refuses a queued turn captured before a local save, and unpins the thread", async () => {
+  const f = fixture();
+  const root = "a".repeat(64);
+  const carrying = (content: string, instructions: string, effort?: string) => {
+    const delivery = f.delivery(content, root);
+    return {
+      ...delivery,
+      config: { ...(delivery.config as object), instructions },
+      ...(effort ? { effort } : {}),
+    };
+  };
+  const starts = () => f.starts().map((start) => JSON.stringify(start.params));
+  await f.runtime.run(carrying("@Codex one", "SYNCED A"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(1));
+  // A differing pick queues the second turn behind the first, holding
+  // settings A while a save clears the pins.
+  await f.runtime.run(carrying("@Codex two", "SYNCED A", "high"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  f.runtime.restart(pubkey, { ...TEST_CONFIG, instructions: "SYNCED B" });
+  f.complete(0, "ONE");
+  // Admitted before the save, it never starts on settings A.
+  await vi.waitFor(() =>
+    expect(JSON.stringify(f.publish.mock.calls)).toContain(
+      "settings changed before it started",
+    ),
+  );
+  expect(starts()).toHaveLength(1);
+  await f.runtime.run(carrying("@Codex three", "SYNCED B"));
+  await vi.waitFor(() => expect(starts()).toHaveLength(2));
+  expect(starts()[1]).toContain("SYNCED B");
+});
 it.each([
   ["", "", "test-model", "medium"],
   ["test-model", "high", "test-model", "high"],
@@ -1075,14 +1355,9 @@ it("starts a turn at the effort its owner picked when the model supports it", as
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.runtime.run({
-    ...f.delivery("@Codex other", "e".repeat(64)),
-    effort: "max",
-  });
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   expect(
     f.starts().map((wire) => (wire.params as { effort?: string }).effort),
-  ).toEqual(["high", "low"]);
+  ).toEqual(["high"]);
 });
 it("starts a turn on the model its owner picked, at an effort that model supports", async () => {
   const f = fixture();
@@ -1097,8 +1372,6 @@ it("starts a turn on the model its owner picked, at an effort that model support
   await run("a".repeat(64), { model: "deep-model", effort: "xhigh" });
   // The configured `low` is not one of its levels, so it runs at its default.
   await run("b".repeat(64), { model: "deep-model" });
-  // A model Codex no longer lists falls back to the agent's own.
-  await run("c".repeat(64), { model: "gone-model" });
   expect(
     f.starts().map((wire) => {
       const { model, effort } = wire.params as {
@@ -1110,7 +1383,6 @@ it("starts a turn on the model its owner picked, at an effort that model support
   ).toEqual([
     { model: "deep-model", effort: "xhigh" },
     { model: "deep-model", effort: "high" },
-    { model: "test-model", effort: "low" },
   ]);
 });
 it("runs a mid-turn pick that differs from the running turn as the next turn instead of steering", async () => {
@@ -1354,8 +1626,12 @@ it.each([
         f.sent.filter((wire) => wire.method === "turn/steer"),
       ).toHaveLength(1),
     );
-    const after = JSON.stringify((await f.tool("read", {}))?.result);
-    expect(after).toContain("LATEST_REQUEST");
+    // The steered message owns the turn's tools once Codex accepts it.
+    let after = "";
+    await vi.waitFor(async () => {
+      after = JSON.stringify((await f.tool("read", {}))?.result);
+      expect(after).toContain("LATEST_REQUEST");
+    });
     expect(after.includes("CURRENT_REQUEST")).toBe(whole || scope === "thread");
     expect(after.includes("OTHER_THREAD_CONTEXT")).toBe(
       whole || scope === "channel",
@@ -1923,6 +2199,8 @@ it("restores a persisted binding after reload and starts fresh in a different wo
   await vi.waitFor(() =>
     expect(restored.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
   );
+  // Each change is saved on this device, which re-pins the thread.
+  restored.runtime.restart(pubkey);
   const useDefaults = restored.delivery("defaults");
   await restored.runtime.run({
     ...useDefaults,
@@ -1935,6 +2213,7 @@ it("restores a persisted binding after reload and starts fresh in a different wo
   });
   restored.complete();
   await vi.waitFor(() => expect(restored.publish).toHaveBeenCalledTimes(2));
+  restored.runtime.restart(pubkey);
   const changed = restored.delivery("new workspace");
   await restored.runtime.run({
     ...changed,
@@ -2055,6 +2334,8 @@ it("uses the default after changing away from a custom workspace on an existing 
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   f.complete(0, "CUSTOM");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  // Saved on this device, which re-pins the thread.
+  f.runtime.restart(pubkey);
   await f.runtime.run({ ...f.delivery("default"), config: {} });
   await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
   const threads = f.sent.filter((wire) => wire.method === "thread/start");
@@ -3469,7 +3750,7 @@ it("continues an owner's Solo chat as one channel conversation posted at the top
 it("finishes a Solo turn under its policy when the chat is converted mid-turn", async () => {
   const f = fixture();
   const soloChannels = asSoloChat(f);
-  const channelScope = (delivery: Delivery) => ({
+  const channelScope = (delivery: Carrying) => ({
     ...delivery,
     config: { ...(delivery.config as object), scope: "channel" },
   });
@@ -3814,4 +4095,459 @@ it("updates Codex repository context from the agent’s captured community, incl
   const turns = f.sent.filter((wire) => wire.method === "turn/start");
   expect(JSON.stringify(turns.at(-1))).toContain("REPOS in your own workspace");
   expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
+});
+
+it("refuses a pinned synced effort never validated on its configured model", async () => {
+  const f = fixture();
+  const carrying = (content: string) => {
+    const delivery = f.delivery(content);
+    return {
+      ...delivery,
+      config: {
+        ...(delivery.config as object),
+        model: "test-model",
+        effort: "xhigh",
+      },
+      synced: { effort: "xhigh" },
+    };
+  };
+  await f.runtime.run({ ...carrying("@Codex first"), model: "deep-model" });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.starts()[0]?.params).toMatchObject({
+    model: "deep-model",
+    effort: "xhigh",
+  });
+  await f.complete(0, "ONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(carrying("@Codex next"));
+  await vi.waitFor(() =>
+    expect(f.starts().length === 2 || f.publish.mock.calls.length === 2).toBe(
+      true,
+    ),
+  );
+  expect(f.starts()).toHaveLength(1);
+  expect(JSON.stringify(f.publish.mock.calls)).toContain("synced effort");
+});
+
+it("a first turn held at startup cannot undo a local Save", async () => {
+  const f = fixture();
+  const turn = deferred<void>();
+  f.held.set("turn/start", turn.promise);
+  const carrying = (content: string, instructions: string) => {
+    const d = f.delivery(content);
+    return { ...d, config: { ...(d.config as object), instructions } };
+  };
+  try {
+    await f.runtime.run(carrying("@Codex first", "OLD"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    f.save(carrying("", "NEW").config);
+    f.held.delete("turn/start");
+    turn.resolve();
+    await vi.waitFor(() =>
+      expect(JSON.stringify([...f.storage.values()])).toContain("thread-1"),
+    );
+    await f.complete(0, "ONE");
+    await f.runtime.run(carrying("@Codex next", "NEW"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    const next = JSON.stringify(f.starts()[1]?.params);
+    expect(next).toContain("NEW");
+    expect(next).not.toContain("OLD");
+  } finally {
+    f.held.delete("turn/start");
+    turn.resolve();
+  }
+});
+
+it("a Save made while the agent is stopped clears its pins on the next start", async () => {
+  const f = fixture();
+  const carrying = (content: string, instructions: string) => {
+    const d = f.delivery(content);
+    return { ...d, config: { ...(d.config as object), instructions } };
+  };
+  await f.runtime.run(carrying("@Codex first", "OLD"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "ONE");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  // Another agent keeps the server up while this one is stopped.
+  f.runtime.sync([{ pubkey: "z".repeat(64) } as Agent]);
+  const epoch = f.clock.advance();
+  f.runtime.sync([
+    {
+      pubkey,
+      settings: settingsOf(TEST_CONFIG, { name: "Codex" }),
+      epoch,
+    } as unknown as Agent,
+  ]);
+  await f.runtime.run(carrying("@Codex next", "NEW"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const next = JSON.stringify(f.starts()[1]?.params);
+  expect(next).toContain("NEW");
+  expect(next).not.toContain("OLD");
+  await f.complete(1, "TWO");
+});
+
+it.each(["readable", "unreadable until a later sync"])(
+  "a Save made after reopening, before the agent's first start, clears its pins (bindings %s)",
+  async (mode) => {
+    const f = fixture();
+    const carrying = (
+      which: ReturnType<typeof fixture>,
+      content: string,
+      instructions: string,
+    ) => {
+      const d = which.delivery(content);
+      return { ...d, config: { ...(d.config as object), instructions } };
+    };
+    await f.runtime.run(carrying(f, "@Codex first", "OLD"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete(0, "ONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    f.runtime.dispose();
+    await f.exits.promise;
+    const reopened = fixture();
+    for (const [key, value] of f.storage) reopened.storage.set(key, value);
+    // Saved while the agent is stopped: the plugin has seen no epoch yet.
+    if (mode !== "readable") reopened.snapshot.status = "connecting";
+    reopened.save(carrying(reopened, "", "NEW").config);
+    if (mode !== "readable") {
+      expect(reopened.storage.values().next().value).toContain("OLD");
+      reopened.snapshot.status = "ready";
+      reopened.runtime.sync([
+        { pubkey, epoch: reopened.clock.epoch } as unknown as Agent,
+      ]);
+    }
+    expect([...reopened.storage.values()].join()).not.toContain("OLD");
+    await reopened.runtime.run(carrying(reopened, "@Codex next", "NEW"));
+    await vi.waitFor(() => expect(reopened.starts()).toHaveLength(1));
+    const next = JSON.stringify(reopened.starts()[0]?.params);
+    expect(next).toContain("NEW");
+    expect(next).not.toContain("OLD");
+    await reopened.complete(0, "TWO");
+  },
+);
+
+it("fences a Save made while the owner check is held", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const entered = deferred<void>();
+  ownerGate.hold = async () => {
+    entered.resolve();
+    await gate.promise;
+  };
+  const carrying = (text: string, instructions: string) => {
+    const d = f.delivery(text);
+    return { ...d, config: { ...(d.config as object), instructions } };
+  };
+  try {
+    const first = f.runtime.run(carrying("first", "OLD BEFORE CHECK"));
+    await entered.promise;
+    ownerGate.hold = undefined;
+    f.save();
+    gate.resolve();
+    await first;
+    // Captured before the Save, it never starts on the old settings.
+    await vi.waitFor(() =>
+      expect(JSON.stringify(f.publish.mock.calls)).toContain(
+        "settings changed before it started",
+      ),
+    );
+    expect(f.starts()).toHaveLength(0);
+    await f.runtime.run(carrying("next", "NEW AFTER SAVE"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(JSON.stringify(f.starts()[0]?.params)).toContain("NEW AFTER SAVE");
+    expect(JSON.stringify(f.starts()[0]?.params)).not.toContain(
+      "OLD BEFORE CHECK",
+    );
+    await f.complete(0, "TWO");
+  } finally {
+    ownerGate.hold = undefined;
+    gate.resolve();
+  }
+});
+
+it("fences a Save before the first entry exists during a held channel read", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const entered = deferred<void>();
+  const reads = ownerReads(
+    { snapshot: () => f.snapshot } as unknown as RelayData,
+    pubkey,
+  );
+  if (!reads) throw new Error("no reads");
+  const channel = reads.channel;
+  const seam = {
+    ...reads,
+    channel: async (id: string) => {
+      entered.resolve();
+      await gate.promise;
+      return channel(id);
+    },
+  };
+  const runtime = f.runtime as unknown as {
+    reads: (key: string) => typeof seam;
+  };
+  runtime.reads = () => seam;
+  const carrying = (text: string, instructions: string) => {
+    const d = f.delivery(text);
+    return { ...d, config: { ...(d.config as object), instructions } };
+  };
+  try {
+    const first = f.runtime.run(carrying("first", "OLD BEFORE ENTRY"));
+    await entered.promise;
+    f.save();
+    gate.resolve();
+    await first;
+    // Captured before the Save, it never starts on the old settings.
+    await vi.waitFor(() =>
+      expect(JSON.stringify(f.publish.mock.calls)).toContain(
+        "settings changed before it started",
+      ),
+    );
+    expect(f.starts()).toHaveLength(0);
+    await f.runtime.run(carrying("next", "NEW AFTER SAVE"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(JSON.stringify(f.starts()[0]?.params)).toContain("NEW AFTER SAVE");
+    expect(JSON.stringify(f.starts()[0]?.params)).not.toContain(
+      "OLD BEFORE ENTRY",
+    );
+    await f.complete(0, "TWO");
+  } finally {
+    gate.resolve();
+  }
+});
+
+it.each(["reload", "entry recreation"])(
+  "retains invalid synced pin provenance across %s and clears it on Save",
+  async (mode) => {
+    const f = fixture();
+    const carrying = (
+      which: ReturnType<typeof fixture>,
+      text: string,
+      effort = "xhigh",
+    ) => {
+      const d = which.delivery(text);
+      return {
+        ...d,
+        config: { ...(d.config as object), effort },
+        synced: { effort },
+      };
+    };
+    await f.runtime.run({ ...carrying(f, "first"), model: "deep-model" });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await f.complete(0, "ONE");
+    const stored = [...f.storage.values()].map((value) => JSON.parse(value));
+    expect(
+      stored.some((rows) =>
+        Object.values(rows).some(
+          (v) =>
+            (v as { pin?: { synced?: { effort?: string } } } | null)?.pin
+              ?.synced?.effort === "xhigh",
+        ),
+      ),
+    ).toBe(true);
+    let restored = f;
+    if (mode === "reload") {
+      f.runtime.dispose();
+      await f.exits.promise;
+      restored = fixture();
+      for (const [key, value] of f.storage) restored.storage.set(key, value);
+    } else {
+      f.runtime.sync([{ pubkey: "z".repeat(64) } as Agent]);
+      f.runtime.sync([{ pubkey, epoch: f.clock.epoch } as Agent]);
+    }
+    const before = restored.starts().length;
+    await restored.runtime.run(carrying(restored, "unpicked", "low"));
+    await vi.waitFor(() =>
+      expect(JSON.stringify(restored.publish.mock.calls)).toContain(
+        "synced effort",
+      ),
+    );
+    expect(restored.starts()).toHaveLength(before);
+    restored.save();
+    expect([...restored.storage.values()].join()).not.toContain('"synced"');
+    await restored.runtime.run(carrying(restored, "after Save", "low"));
+    await vi.waitFor(() => expect(restored.starts()).toHaveLength(before + 1));
+    expect(restored.starts().at(-1)?.params).toMatchObject({
+      model: "test-model",
+      effort: "low",
+    });
+    await restored.complete(before, "DONE");
+  },
+);
+
+it("fences a Save while the registered Codex readiness wrapper waits", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const entered = deferred<void>();
+  let firstReady = true;
+  const type = codexRun(f.real, async () => {
+    if (!firstReady) return;
+    firstReady = false;
+    entered.resolve();
+    await gate.promise;
+  });
+  const run = type.run;
+  if (!run) throw new Error("no run");
+  const carrying = (text: string, instructions: string) => {
+    const d = f.delivery(text);
+    return f.admit({
+      ...d,
+      config: { ...(d.config as Config), instructions },
+    }) as Parameters<typeof run>[0];
+  };
+  try {
+    const first = run(carrying("first", "OLD BEFORE READY"));
+    await entered.promise;
+    f.save();
+    gate.resolve();
+    await first;
+    // Captured before the Save, it never starts on the old settings.
+    await vi.waitFor(() =>
+      expect(JSON.stringify(f.publish.mock.calls)).toContain(
+        "settings changed before it started",
+      ),
+    );
+    expect(f.starts()).toHaveLength(0);
+    await run(carrying("next", "NEW AFTER SAVE"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(JSON.stringify(f.starts()[0]?.params)).toContain("NEW AFTER SAVE");
+    expect(JSON.stringify(f.starts()[0]?.params)).not.toContain(
+      "OLD BEFORE READY",
+    );
+    await f.complete(0, "TWO");
+  } finally {
+    gate.resolve();
+  }
+});
+
+describe("Codex keeps a pinned thread's key across a remote scope change", () => {
+  const scoped = (
+    f: ReturnType<typeof fixture>,
+    text: string,
+    threadRoot: string,
+    scope: "thread" | "channel",
+  ) => {
+    const d = f.delivery(text, threadRoot);
+    return { ...d, config: { ...(d.config as object), scope } };
+  };
+  const threadOf = (f: ReturnType<typeof fixture>, index: number) =>
+    (f.starts()[index]?.params as { threadId: string } | undefined)?.threadId;
+  const turn = async (
+    f: ReturnType<typeof fixture>,
+    delivery: Carrying,
+    index: number,
+  ) => {
+    await f.runtime.run(delivery);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(index + 1));
+    await f.complete(index);
+    return threadOf(f, index);
+  };
+
+  it("continues a channel conversation after a remote change to thread scope, across an app restart, until a local Save", async () => {
+    const f = fixture();
+    const a = await turn(f, scoped(f, "one", "a".repeat(64), "channel"), 0);
+    expect(await turn(f, scoped(f, "two", "b".repeat(64), "thread"), 1)).toBe(
+      a,
+    );
+    f.runtime.dispose();
+    await f.exits.promise;
+    const restored = fixture();
+    for (const [key, value] of f.storage) restored.storage.set(key, value);
+    expect(
+      await turn(
+        restored,
+        scoped(restored, "three", "c".repeat(64), "thread"),
+        0,
+      ),
+    ).toBe(a);
+    const opened = () =>
+      restored.sent.filter((wire) => wire.method === "thread/start").length;
+    expect(opened()).toBe(0);
+    restored.save({ ...TEST_CONFIG, scope: "thread" });
+    await turn(restored, scoped(restored, "four", "d".repeat(64), "thread"), 1);
+    expect(opened()).toBe(1);
+  });
+
+  it("continues a channel conversation when a remote delete falls back to thread-scoped local settings", async () => {
+    const f = fixture();
+    const a = await turn(f, scoped(f, "one", "a".repeat(64), "channel"), 0);
+    const d = scoped(f, "two", "b".repeat(64), "thread");
+    expect(
+      await turn(
+        f,
+        {
+          ...d,
+          attempt: {
+            ...d.attempt,
+            settings: { ...d.attempt.settings, blocked: "deleted" },
+          },
+        },
+        1,
+      ),
+    ).toBe(a);
+  });
+
+  it("keeps a thread's conversation after a remote change to channel scope; the thread wins over the channel's", async () => {
+    const f = fixture();
+    const t = await turn(f, scoped(f, "one", "a".repeat(64), "thread"), 0);
+    const c = await turn(f, scoped(f, "two", "b".repeat(64), "channel"), 1);
+    expect(c).not.toBe(t);
+    expect(
+      await turn(f, scoped(f, "three", "a".repeat(64), "channel"), 2),
+    ).toBe(t);
+    expect(await turn(f, scoped(f, "four", "c".repeat(64), "channel"), 3)).toBe(
+      c,
+    );
+    f.save({ ...TEST_CONFIG, scope: "channel" });
+    expect(await turn(f, scoped(f, "five", "a".repeat(64), "channel"), 4)).toBe(
+      c,
+    );
+  });
+});
+
+describe("Codex refuses a model it can't run with the typed failure", () => {
+  const once = (f: ReturnType<typeof fixture>, extra: Partial<Carrying>) => {
+    const d = f.delivery("standalone");
+    return f.runtime.runOnce({
+      delivery: f.admit({ ...d, ...extra }),
+      key: "timer/daily",
+      signal: d.signal,
+      prompt: async () => "Post the summary.",
+    });
+  };
+  it("standalone: a synced model it doesn't offer", async () => {
+    const f = fixture();
+    const result = await once(f, {
+      config: { ...TEST_CONFIG, model: "gone-model" },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "unsupported-setting",
+        setting: "model",
+        value: "gone-model",
+      },
+    });
+    expect(f.starts()).toHaveLength(0);
+  });
+  it("in a conversation: an explicit effort the model doesn't offer starts no turn", async () => {
+    const f = fixture();
+    await f.runtime.run({
+      ...f.delivery("@Codex one"),
+      model: "test-model",
+      effort: "xhigh",
+    });
+    await vi.waitFor(() =>
+      expect(JSON.stringify(f.publish.mock.calls)).toContain("xhigh"),
+    );
+    expect(f.starts()).toHaveLength(0);
+  });
+  it("in a conversation: an explicit pick it doesn't offer starts no turn", async () => {
+    const f = fixture();
+    await f.runtime.run({ ...f.delivery("@Codex one"), model: "gone-model" });
+    await vi.waitFor(() =>
+      expect(JSON.stringify(f.publish.mock.calls)).toContain("gone-model"),
+    );
+    expect(f.starts()).toHaveLength(0);
+  });
 });

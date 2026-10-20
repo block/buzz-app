@@ -27,16 +27,33 @@ import type {
   StandaloneTurn,
   TurnResult,
 } from "../../features/agents/service";
+import { localKey } from "../../features/agents/service";
+import {
+  inputsOf,
+  unsupportedSetting,
+  type AgentSettings,
+  type Applied,
+} from "../../features/agents/settings";
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
-import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
+import type {
+  ClaudeModel,
+  ClaudeProcess,
+  Settled,
+  Spawn,
+  ToolServer,
+  TurnPick,
+} from "./claude";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
-import { readProject } from "../../features/agent-harness/project";
+import {
+  type Project,
+  readProject,
+} from "../../features/agent-harness/project";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import type {
   SessionPlace,
@@ -50,7 +67,7 @@ import {
   systemPrompt,
   turnPrompt,
 } from "./prompt";
-import { AgentSessions, localSessions, Spare } from "./sessions";
+import { AgentSessions, localSessions, Refused, Spare } from "./sessions";
 import {
   readSessionTitle,
   readTranscript,
@@ -70,6 +87,39 @@ export const effortLabel = (id: string) =>
 /** The effort levels a listed model takes. */
 export const effortLevels = (model: ClaudeModel) =>
   model.supportsEffort === false ? [] : (model.supportedEffortLevels ?? []);
+
+/** Why `process` can't run an explicit pick: a model it doesn't list, or an
+ * effort that model lacks. Waits for the list the process reports when it
+ * starts; an empty list can't confirm a refusal, so the pick goes to Claude
+ * as asked. */
+export const refusedPick = async (
+  process: Pick<ClaudeProcess, "models" | "readModel">,
+  { model, effort }: TurnPick,
+): Promise<Refused | undefined> => {
+  const listed = (await process.models()).filter(
+    (row) => row.value !== "default",
+  );
+  if (!listed.length) return undefined;
+  const runs = model ?? (await process.readModel());
+  const row = listed.find(
+    (item) => item.value === runs || item.resolvedModel === runs,
+  );
+  if (model && !row)
+    return unsupportedSetting(
+      "model",
+      model,
+      `Claude can't run the picked model "${model}" here. Pick an available model.`,
+    );
+  // An own model Claude doesn't list runs at any effort a listed one has.
+  const levels = row ? effortLevels(row) : listed.flatMap(effortLevels);
+  if (effort && !effortChoices(levels).some((level) => level.id === effort))
+    return unsupportedSetting(
+      "effort",
+      effort,
+      `The picked effort "${effort}" isn't available for ${runs ? modelName(runs) : "this model"}. Pick a supported effort.`,
+    );
+  return undefined;
+};
 
 export type Config = Readonly<{
   /** A Claude model or alias; empty uses Claude's own default. */
@@ -108,16 +158,21 @@ const CHAT = [9, 40002];
 
 type Entry = {
   sessions: AgentSessions;
-  config: Config;
-  /** The team sections of the latest run; a change restarts idle sessions. */
-  team: string;
-  /** The agent's name, for its prompt; a rename restarts idle sessions. */
+  /** What a conversation started from here on runs with, its config
+   * resolved: from the latest delivery or local change, never an older one.
+   * A running process keeps its own until its epoch moves. */
+  applied: Applied<Config>;
+  /** The agent's name as last synced; a rename restarts idle sessions. */
   name?: string;
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
+  /** The local row's key as last synced; only its change replaces
+   * `applied` here. */
+  local?: string;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
-  /** The project folders each Solo chat's latest turn named, for its process. */
+  /** The project folders each Solo chat's latest process started in, kept
+   * by a turn whose Canvas couldn't be read. */
   directories: Map<string, readonly string[]>;
   /** Each conversation's latest posting policy: when its turns were handed
    * over, and when all of them settled. */
@@ -205,20 +260,29 @@ export class ClaudeRuntime {
         this.agents.delete(pubkey);
       }
     for (const agent of agents) {
-      const next = this.resolveConfig(agent.config);
+      const local = localKey(agent, this.resolveConfig({}));
+      const current = { settings: agent.settings, epoch: agent.epoch };
       const entry = this.agents.get(agent.pubkey);
       if (!entry) {
-        this.entry(agent.pubkey, next).name = agent.name;
+        Object.assign(this.entry(agent.pubkey, current), {
+          name: agent.name,
+          local,
+        });
         continue;
       }
-      if (
-        JSON.stringify(entry.config) !== JSON.stringify(next) ||
-        entry.name !== agent.name
-      ) {
-        entry.config = next;
-        entry.name = agent.name;
-        entry.sessions.reconfigure();
-      }
+      if (entry.local === local && entry.name === agent.name) continue;
+      // Only a change of the local row replaces delivered settings, and its
+      // epoch restarts the agent; a remote edit waits for a delivery.
+      if (entry.local !== undefined && entry.local !== local)
+        this.install(entry, current);
+      else if (entry.name !== agent.name)
+        entry.applied = {
+          ...entry.applied,
+          settings: { ...entry.applied.settings, name: agent.name },
+        };
+      entry.local = local;
+      entry.name = agent.name;
+      entry.sessions.reconfigure();
     }
     this.spare.warm(
       ...agents.map((agent) => where(this.resolveConfig(agent.config))),
@@ -228,15 +292,21 @@ export class ClaudeRuntime {
 
   /** The models the agent's next turn can run on, with their effort levels.
    * Without a pick it uses its own: the configured one, or else the one its
-   * sessions report. `default` duplicates a listed model, so it is not offered. */
-  async models(pubkey: string): Promise<Models> {
-    const entry = this.agents.get(pubkey);
-    const configured = entry?.config.model.trim();
+   * sessions report. `default` duplicates a listed model, so it is not offered.
+   * It describes the settings the host has for `agent` now, which a running
+   * conversation may not have applied yet, and applies nothing. */
+  async models(agent: Pick<Agent, "pubkey" | "config">): Promise<Models> {
+    const entry = this.agents.get(agent.pubkey);
+    const settings = this.resolveConfig(agent.config);
+    const configured = settings.model.trim();
     const {
       models: listed,
       model: reported,
       effort,
-    } = (await entry?.sessions.metadata()) ?? { models: [] };
+    } = (await entry?.sessions.metadata(undefined, {
+      snapshot: snapshot(settings),
+      where: where(settings),
+    })) ?? { models: [] };
     // A turn without a pick keeps the session's effort on any model.
     const resting = (efforts: readonly Effort[]) =>
       effort && efforts.some((level) => level.id === effort) ? { effort } : {};
@@ -272,6 +342,45 @@ export class ClaudeRuntime {
         ...models,
       ],
     };
+  }
+
+  /** Why a synced effort refuses a turn that runs on current config: the
+   * model doesn't offer it, which Claude would otherwise run at another
+   * level, or Claude's model list can't confirm it (NIP-AP "Settings"). */
+  private async refusedEffort(
+    entry: Entry,
+    settings: Config,
+    synced: AgentSettings["synced"],
+    key?: string,
+  ): Promise<Refused | undefined> {
+    const effort = synced.effort;
+    if (!effort) return undefined;
+    // Claude's defaults for these settings, not whatever the agent has now.
+    const { models, model: reported } = await entry.sessions.metadata(key, {
+      snapshot: snapshot(settings),
+      where: where(settings),
+    });
+    const wanted = settings.model.trim() || reported;
+    const listed = models.find(
+      (model) =>
+        model.value !== "default" &&
+        (model.value === wanted || model.resolvedModel === wanted),
+    );
+    if (!listed)
+      return unsupportedSetting(
+        "effort",
+        effort,
+        `The synced effort "${effort}" couldn't be checked: Claude doesn't list ${wanted ? `the model ${wanted}` : "its model"}.`,
+      );
+    if (
+      effortChoices(effortLevels(listed)).some((level) => level.id === effort)
+    )
+      return undefined;
+    return unsupportedSetting(
+      "effort",
+      effort,
+      `The synced effort "${effort}" isn't available for ${modelName(listed.resolvedModel ?? listed.value)}. Choose a supported effort in Settings.`,
+    );
   }
 
   /** Conversations each agent has running, for its status view. */
@@ -371,7 +480,12 @@ export class ClaudeRuntime {
   ) {
     const key = this.controlKey(agent, place);
     const control = `${agent.pubkey}/${key}`;
-    const entry = this.entry(agent.pubkey, config(agent.config));
+    const entry =
+      this.agents.get(agent.pubkey) ??
+      this.entry(agent.pubkey, {
+        settings: agent.settings,
+        epoch: agent.epoch,
+      });
     if (action === "interrupt") {
       this.controls.interrupt(control);
       entry.policies.get(key)?.cancel();
@@ -400,11 +514,10 @@ export class ClaudeRuntime {
   async run({
     trigger,
     agent,
-    config: raw,
+    attempt,
     channelId,
     model,
     effort,
-    team,
     workingUntil,
     ignored,
     signal,
@@ -414,7 +527,8 @@ export class ClaudeRuntime {
     interruptible,
     named,
   }: Delivery) {
-    const settings = this.resolveConfig(raw);
+    const settings = this.resolveConfig(attempt.settings.config);
+    const { synced } = attempt.settings;
     // Watches and timers come as standalone turns (`runOnce`).
     if (trigger.type !== "mention") return ignored?.();
     // Claude runs commands as you; mentions need owner or delegated authority.
@@ -429,9 +543,9 @@ export class ClaudeRuntime {
       return;
     }
     signal.throwIfAborted();
-    const entry = this.entry(agent.pubkey, settings);
+    const entry = this.delivery(agent.pubkey, attempt);
+    // Set before `key` and the effort check read the fingerprint.
     entry.handle = agent;
-    entry.team = team ?? "";
     const { event } = trigger;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
@@ -444,7 +558,28 @@ export class ClaudeRuntime {
       )) ?? false;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
-    const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
+    const key = await this.key(
+      entry,
+      attempt,
+      agent.pubkey,
+      event,
+      channel,
+      topLevel,
+    );
+    // Only a Solo chat's Canvas is handed over; its folders go with the
+    // prompt that describes them to the process it runs in.
+    const canvas = async () =>
+      topLevel ? this.project(entry, agent.pubkey, channel) : undefined;
+    const project = await canvas();
+    const folders = project?.directories;
+    // Checked again where the turn is delivered; refused now when it can't
+    // keep its process, so the host is told.
+    const refused =
+      (!model &&
+        !effort &&
+        (await this.refusedEffort(entry, settings, synced, key))) ||
+      undefined;
+    if (refused && !entry.sessions.pinned(key, folders)) throw refused;
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.pubkey}/${key}`,
@@ -454,7 +589,7 @@ export class ClaudeRuntime {
         if (this.agents.get(agent.pubkey) !== entry) return;
         if (!deferred) signal.throwIfAborted();
         // `fresh` is for a session that has been shown nothing yet.
-        const prompt = async (fresh: boolean) => {
+        const prompt = async (fresh: boolean, read?: Project) => {
           const text = turnPrompt({
             ...(await this.turn(
               entry,
@@ -463,6 +598,7 @@ export class ClaudeRuntime {
               channel,
               key,
               topLevel,
+              read,
               fresh,
             )),
             agent: agent.pubkey,
@@ -487,7 +623,7 @@ export class ClaudeRuntime {
             delivered = Promise.resolve({ ok: true });
             return;
           }
-          const text = await prompt(false);
+          const text = await prompt(false, project);
           if (interrupted) {
             delivered = Promise.resolve({ ok: true });
             return;
@@ -504,7 +640,15 @@ export class ClaudeRuntime {
           );
           delivered = entry.sessions.deliver(key, text, event.created_at, {
             steer: steerPrompt(text),
-            fresh: () => prompt(true),
+            fresh: async () => {
+              const read = await canvas();
+              return {
+                text: await prompt(true, read),
+                folders: read?.directories,
+              };
+            },
+            folders,
+            attempt,
             activityScope: topLevel
               ? channel
               : (threadReference(event)?.rootId ?? event.id),
@@ -610,11 +754,10 @@ export class ClaudeRuntime {
     key,
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
-    const { agent, team } = delivery;
-    const entry = this.entry(agent.pubkey, this.resolveConfig(delivery.config));
+    const { agent, attempt } = delivery;
+    const entry = this.delivery(agent.pubkey, attempt);
     entry.handle = agent;
-    entry.team = team ?? "";
-    const done = entry.sessions.runOnce(key, prompt);
+    const done = entry.sessions.runOnce(key, prompt, attempt);
     this.notify();
     return done.finally(() => this.notify());
   }
@@ -663,21 +806,46 @@ export class ClaudeRuntime {
   }
 
   /** The conversation the event's turn goes to: a Solo chat or DM is one
-   * conversation, as is a channel for an agent with channel scope. */
+   * conversation, as is a channel for an agent with channel scope. A
+   * conversation pinned since the last local Save keeps the key its own scope
+   * gave it, so a remote scope change never moves it; the thread's wins. */
   private async key(
     entry: Entry,
+    attempt: Applied,
     self: string,
     event: EventData,
     channelId: string,
     topLevel: boolean,
   ) {
     const summary = await this.reads(self)?.channel(channelId);
-    return topLevel || summary?.dm === true || entry.config.scope === "channel"
+    if (topLevel || summary?.dm === true) return channelId;
+    const thread = `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
+    const pinnedAs = (key: string, scope: Config["scope"]) => {
+      const pin = entry.sessions.pinOf(key);
+      return (
+        pin?.epoch === attempt.epoch &&
+        this.resolveConfig(pin.settings.config).scope === scope
+      );
+    };
+    if (pinnedAs(thread, "thread")) return thread;
+    if (pinnedAs(channelId, "channel")) return channelId;
+    return this.resolveConfig(attempt.settings.config).scope === "channel"
       ? channelId
-      : `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
+      : thread;
   }
 
-  /** Where the event's turn goes, and what its prompt needs. */
+  /** A Solo chat's Canvas; undefined when it couldn't be read. */
+  private project(entry: Entry, self: string, channelId: string) {
+    const reads = this.reads(self);
+    const canvas = reads?.canvas?.bind(reads);
+    const owner = entry.handle?.owner;
+    return readProject(
+      canvas && owner ? () => canvas(channelId, owner) : undefined,
+    );
+  }
+
+  /** Where the event's turn goes, and what its prompt needs, `project` its
+   * Solo chat's Canvas. */
   private async turn(
     entry: Entry,
     self: string,
@@ -685,6 +853,7 @@ export class ClaudeRuntime {
     channelId: string,
     key: string,
     topLevel: boolean,
+    project: Project | undefined,
     fresh = false,
   ) {
     const reads = this.reads(self);
@@ -695,14 +864,6 @@ export class ClaudeRuntime {
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
     const seen = fresh ? 0 : entry.sessions.seen(key);
-    // Read alongside the conversation: only a Solo chat's Canvas is handed over.
-    const canvas = reads?.canvas?.bind(reads);
-    const owner = entry.handle?.owner;
-    const reading = topLevel
-      ? readProject(
-          canvas && owner ? () => canvas(channelId, owner) : undefined,
-        )
-      : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
     // A chat its owner is still creating has nothing earlier to read.
     if (reads && !summary?.starting && (thread || dm || topLevel))
@@ -746,11 +907,6 @@ export class ClaudeRuntime {
         new Promise((resolve) => setTimeout(resolve, NAMES_TIMEOUT_MS)),
       ]);
     const members = summary?.members ?? [];
-    const project = await reading;
-    // An unread Canvas keeps the folders the chat had, not restarting it.
-    if (project?.directories.length)
-      entry.directories.set(key, project.directories);
-    else if (project) entry.directories.delete(key);
     return {
       key,
       event,
@@ -769,12 +925,47 @@ export class ClaudeRuntime {
     };
   }
 
-  private entry(pubkey: string, initial: Config): Entry {
+  /** Whether a conversation is pinned to settings other than `settings`,
+   * what the host now resolves for the agent: it shows Restart to apply. */
+  outdated(pubkey: string, settings: AgentSettings) {
+    const key = pinKey(this.resolved({ settings, epoch: 0 }).settings);
+    return !!this.agents
+      .get(pubkey)
+      ?.sessions.outdated((pin) => pinKey(pin.settings) === key);
+  }
+  /** Restart to apply: idle conversations stop now, busy ones once idle, and
+   * each starts again on `applied`, which the host just applied. */
+  restart(pubkey: string, applied: Applied) {
+    const entry = this.agents.get(pubkey) ?? this.entry(pubkey, applied);
+    this.install(entry, applied);
+    entry.sessions.reconfigure();
+  }
+
+  /** The agent's entry for a delivery: a conversation started from here on
+   * uses its settings, unless a newer epoch already replaced them. One
+   * already running keeps its pin until its epoch moves. */
+  private delivery(pubkey: string, applied: Applied): Entry {
+    const entry = this.entry(pubkey, applied);
+    this.install(entry, applied);
+    return entry;
+  }
+  /** Replaces the entry's settings with `applied`, unless it is older. */
+  private install(entry: Entry, applied: Applied) {
+    if (applied.epoch >= entry.applied.epoch)
+      entry.applied = this.resolved(applied);
+  }
+  private resolved({ settings, epoch }: Applied): Applied<Config> {
+    return {
+      settings: { ...settings, config: this.resolveConfig(settings.config) },
+      epoch,
+    };
+  }
+
+  private entry(pubkey: string, initial: Applied): Entry {
     const existing = this.agents.get(pubkey);
     if (existing) return existing;
     const entry: Entry = {
-      config: initial,
-      team: "",
+      applied: this.resolved(initial),
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
       policies: new Map(),
@@ -812,33 +1003,49 @@ export class ClaudeRuntime {
       spare: this.spare,
       store: localSessions(this.storage, pubkey),
       onChange: () => this.notify(),
-      fingerprint: (key) =>
+      fingerprint: (key, folders) =>
         JSON.stringify([
-          key ? (entry.directories.get(key) ?? []) : [],
-          entry.config.model,
-          entry.config.effort,
-          entry.config.workspace,
-          entry.config.instructions,
-          entry.config.scope,
-          entry.team,
-          entry.name,
+          key ? (folders ?? entry.directories.get(key) ?? []) : [],
+          entry.applied.epoch,
           addedKey(this.added()),
         ]),
-      launch: async (key) => {
-        const { workspace, instructions, scope } = entry.config;
+      inputs: () => inputsOf(entry.applied),
+      snapshot: () => snapshot(entry.applied.settings.config),
+      applied: () => entry.applied,
+      refusedPick: (process, pick) => refusedPick(process, pick),
+      launch: async (key, folders, skipEffort) => {
+        // Read before anything is awaited, as `snapshot` and `fingerprint`
+        // were: the settings checked and recorded are the ones it starts with.
+        const { config, synced, blocked, name, team } = entry.applied.settings;
+        const { workspace, instructions, scope } = config;
+        // An unread Canvas keeps the folders the chat's process had.
+        const directories = !key
+          ? undefined
+          : folders
+            ? folders.length
+              ? folders
+              : undefined
+            : entry.directories.get(key);
+        // Every process a turn runs on starts here, retries included; a pick
+        // doesn't run on settings admission would refuse either.
+        if (blocked) throw new Refused(blocked);
+        const refused =
+          !skipEffort && (await this.refusedEffort(entry, config, synced, key));
+        if (refused) throw refused;
+        if (key && directories) entry.directories.set(key, directories);
+        else if (key) entry.directories.delete(key);
         const memory = await this.core(pubkey);
-        const directories = key ? entry.directories.get(key) : undefined;
         return {
-          ...where(entry.config),
+          ...where(config),
           ...(directories ? { directories } : {}),
           tools: tools(workspace),
           systemPrompt: systemPrompt({
             scope,
             cwd: workspace,
             repositories: this.repositories(this.reads(pubkey)?.scope),
-            ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
+            ...(name ? { agent: { name, pubkey } } : {}),
             instructions,
-            team: entry.team,
+            team,
             ...(memory === undefined ? {} : { memory }),
           }),
         };
@@ -865,6 +1072,26 @@ export class ClaudeRuntime {
     if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }
+
+/** Everything a pin carries, as compared for Restart to apply. */
+const pinKey = (settings: AgentSettings) =>
+  JSON.stringify([
+    snapshot(config(settings.config)),
+    settings.synced,
+    settings.blocked ?? null,
+    settings.name,
+    settings.team,
+  ]);
+
+/** The settings a process starts with. */
+const snapshot = (config: Config) =>
+  JSON.stringify([
+    config.model,
+    config.effort,
+    config.workspace,
+    config.instructions,
+    config.scope,
+  ]);
 
 /** `claude-opus-5-5` reads as `Opus 5.5`, and an alias such as `opus` as
  * `Opus`. Anything else is shown as it is. */

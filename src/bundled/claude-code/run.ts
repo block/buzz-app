@@ -15,6 +15,7 @@ export const claudeRun = (
   ready?: (signal: AbortSignal) => Promise<void>,
 ): Pick<
   AgentType<Config>,
+  | "restart"
   | "models"
   | "sessionControls"
   | "run"
@@ -23,7 +24,12 @@ export const claudeRun = (
   | "syncedSettings"
   | "resumes"
 > => ({
-  models: (agent) => runtime.models(agent.pubkey),
+  restart: {
+    outdated: (pubkey, settings) => runtime.outdated(pubkey, settings),
+    apply: (pubkey, applied) => runtime.restart(pubkey, applied),
+    subscribe: (listener) => runtime.subscribe(listener),
+  },
+  models: (agent) => runtime.models(agent),
   sessionControls: {
     scope: (agent) => config(agent.config).scope,
     state: (agent, place) => runtime.sessionState(agent, place),

@@ -15,6 +15,11 @@ import {
   Spare,
   type SessionStore,
 } from "./sessions";
+import { settingsClock } from "../../features/agents/settings-testing";
+import {
+  type SettingsAttempt,
+  unsupportedSetting,
+} from "../../features/agents/settings";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -30,6 +35,46 @@ const memoryStore = (): SessionStore & { all: Map<string, SavedSession> } => {
   };
 };
 
+type Deliver = AgentSessions["deliver"];
+type Options = Omit<NonNullable<Parameters<Deliver>[3]>, "attempt"> & {
+  attempt?: SettingsAttempt;
+};
+/** `sessions`, whose turns are admitted at the agent's epoch now unless a
+ * test passes its own attempt. */
+const withAttempt = (sessions: AgentSessions, attempt: () => SettingsAttempt) =>
+  new Proxy(sessions, {
+    get(target, property) {
+      if (property === "deliver")
+        return (
+          key: string,
+          text: string,
+          seen: number,
+          options: Options = {},
+        ) =>
+          target.deliver(key, text, seen, { attempt: attempt(), ...options });
+      if (property === "runOnce")
+        return (
+          label: string,
+          prompt: Parameters<AgentSessions["runOnce"]>[1],
+          deadline?: number,
+        ) => target.runOnce(label, prompt, attempt(), deadline);
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as Omit<AgentSessions, "deliver" | "runOnce"> & {
+    deliver(
+      key: string,
+      text: string,
+      seen: number,
+      options?: Options,
+    ): ReturnType<Deliver>;
+    runOnce(
+      label: string,
+      prompt: Parameters<AgentSessions["runOnce"]>[1],
+      deadline?: number,
+    ): ReturnType<AgentSessions["runOnce"]>;
+  };
+
 function sessions(
   options: Partial<{
     known: Set<string>;
@@ -41,11 +86,21 @@ function sessions(
     /** The shared spare its new conversations look for. */
     spare: Spare;
     tools: ToolServer;
+    /** The model each launch runs, when config sets one apart from `model`. */
+    launchModel: () => string | undefined;
+    /** Each conversation's own folders, which its process is fixed to. */
+    folders: Map<string, string>;
+    /** Refuses every explicit model pick it names. */
+    unoffered: string;
+    /** Holds each pick check, as the process's model list does. */
+    checked: Promise<void>;
   }> = {},
 ) {
   const fake = fakeSpawn(options.known);
   const store = options.store ?? memoryStore();
   let model = "opus";
+  let config: string | undefined;
+  let inputs = "";
   let ids = 0;
   const spawn = (id: string, spawnOptions?: object) => {
     // The fake records each process as the call begins.
@@ -54,33 +109,63 @@ function sessions(
     if (options.hold && started) started.hold = true;
     return process;
   };
-  const pool = new AgentSessions({
+  const clock = settingsClock();
+  const real = new AgentSessions({
     spawn,
     ...(options.spare ? { spare: options.spare } : {}),
     store,
-    launch: async () => {
-      const current = model;
+    launch: async (_key, folders) => {
+      const current = options.launchModel?.() ?? model;
       await options.launched;
       return {
         cwd: "/work",
         systemPrompt: "prompt",
         model: current,
+        // A turn's own folders, which its process is started in.
+        ...(folders ? { directories: [...folders] } : {}),
         ...(options.tools ? { tools: options.tools } : {}),
       };
     },
-    fingerprint: () => model,
+    inputs: () => inputs,
+    fingerprint: (key, turnFolders) => {
+      const folders = turnFolders?.join() || (key && options.folders?.get(key));
+      return folders ? `${model} ${folders}` : model;
+    },
+    snapshot: () => config ?? model,
+    applied: () => clock.applied(config ?? model),
     newId: () => `new-${++ids}`,
+    refusedPick: async (_process, pick) => {
+      await options.checked;
+      return options.unoffered && pick.model === options.unoffered
+        ? unsupportedSetting("model", options.unoffered, "not offered")
+        : undefined;
+    },
   });
+  const pool = withAttempt(real, () => clock.attempt(config ?? model));
   const claudes = () =>
     fake.processes.filter((process) => process.id === "claude");
   return {
     pool,
+    clock,
     store,
     spawn,
     claudes,
     live: () => claudes().filter((process) => !process.killed),
+    /** The current settings, captured as a metadata caller does. */
+    at: () => ({
+      snapshot: config ?? model,
+      where: { cwd: "/work", model: options.launchModel?.() ?? model },
+    }),
     setModel: (next: string) => {
       model = next;
+    },
+    /** A remote edit: new config that restarts nothing. */
+    setConfig: (next: string) => {
+      config = next;
+    },
+    /** A remote edit to the team text: new inputs at the same epoch. */
+    setInputs: (next: string) => {
+      inputs = next;
     },
   };
 }
@@ -433,7 +518,7 @@ it("starts over when a saved session no longer loads", async () => {
   const { pool, claudes } = sessions({ store });
   await expect(
     pool.deliver("c/root", "hello", 9, {
-      fresh: async () => "hello, with the thread so far",
+      fresh: async () => ({ text: "hello, with the thread so far" }),
     }),
   ).resolves.toEqual({ ok: true });
   const [failed, fresh] = claudes();
@@ -505,12 +590,126 @@ it("keeps the live session if its durable reset fails, then forgets it on retry"
   }
 });
 
+it.each([
+  ["Save", false],
+  ["Restart", true],
+])(
+  "keeps a saved session a %s refuses while its resume launches, and resumes it next",
+  async (_, restart) => {
+    const store = memoryStore();
+    store.set("c/root", { id: "saved", seen: 4, at: 1 });
+    let launch!: () => void;
+    const launched = new Promise<void>((resolve) => (launch = resolve));
+    const { pool, claudes, clock, setModel } = sessions({
+      store,
+      known: new Set(["saved"]),
+      launched,
+    });
+    const stale = pool.deliver("c/root", "stale", 9, {
+      fresh: async () => ({ text: "stale, with the thread so far" }),
+    });
+    await flush();
+    setModel("sonnet");
+    clock.advance();
+    if (restart) pool.reconfigure();
+    launch();
+    expect(await stale).toMatchObject({ ok: false });
+    expect(claudes().flatMap((process) => process.prompts)).toEqual([]);
+    expect(store.get("c/root")).toMatchObject({ id: "saved" });
+    await expect(pool.deliver("c/root", "later", 10)).resolves.toEqual({
+      ok: true,
+    });
+    const resumed = claudes().at(-1);
+    expect(resumed?.options.args).toEqual(
+      expect.arrayContaining(["--resume", "saved"]),
+    );
+    expect(resumed?.prompts).toEqual(["later"]);
+  },
+);
+
+it("refuses an unoffered pick in a saved conversation without losing it", async () => {
+  const store = memoryStore();
+  store.set("c/root", { id: "saved", seen: 4, at: 1 });
+  const { pool, claudes } = sessions({
+    store,
+    known: new Set(["saved"]),
+    unoffered: "bogus",
+  });
+  expect(
+    await pool.deliver("c/root", "hello", 9, {
+      fresh: async () => ({ text: "hello, with the thread so far" }),
+      pick: { model: "bogus" },
+    }),
+  ).toMatchObject({
+    ok: false,
+    failure: { kind: "unsupported-setting", setting: "model", value: "bogus" },
+  });
+  expect(store.get("c/root")).toMatchObject({ id: "saved" });
+  await pool.deliver("c/root", "plain", 10);
+  expect(
+    claudes().every((process) => process.options.args?.includes("saved")),
+  ).toBe(true);
+  expect(claudes().flatMap((process) => process.prompts)).toEqual(["plain"]);
+});
+
+it("writes a picked turn before a plain message that arrives while its pick is checked", async () => {
+  let check!: () => void;
+  const checked = new Promise<void>((resolve) => (check = resolve));
+  const { pool, claudes } = sessions({ hold: true, checked });
+  const picked = pool.deliver("c/root", "picked", 1, {
+    pick: { model: "haiku" },
+  });
+  await flush();
+  const plain = pool.deliver("c/root", "plain", 2, { steer: "steer" });
+  await flush();
+  const process = claudes()[0];
+  expect(process?.prompts).toEqual([]);
+  check();
+  await flush();
+  expect(process?.prompts).toEqual(["picked", "steer"]);
+  expect(process?.models[0]).toBe("haiku");
+  process?.finish();
+  await expect(picked).resolves.toEqual({ ok: true });
+  await expect(plain).resolves.toEqual({ ok: true });
+});
+
+it("runs a turn waiting for other folders before a later one in the busy process's folders", async () => {
+  const { pool, claudes } = sessions({ hold: true });
+  const a = pool.deliver("c/1", "A in a", 0, { folders: ["a"] });
+  await flush();
+  const b = pool.deliver("c/1", "B in b", 0, { folders: ["b"] });
+  await flush();
+  // C fits the busy process, but B asked first.
+  const c = pool.deliver("c/1", "C in a", 0, { folders: ["a"] });
+  await flush();
+  expect(claudes()[0]?.prompts).toEqual(["A in a"]);
+  claudes()[0]?.finish();
+  await flush();
+  expect(claudes().map((process) => process.prompts)).toEqual([
+    ["A in a"],
+    ["B in b"],
+  ]);
+  claudes()[1]?.finish();
+  await flush();
+  claudes()[2]?.finish();
+  await expect(Promise.all([a, b, c])).resolves.toMatchObject([
+    { ok: true },
+    { ok: true },
+    { ok: true },
+  ]);
+  expect(claudes().map((process) => process.prompts)).toEqual([
+    ["A in a"],
+    ["B in b"],
+    ["C in a"],
+  ]);
+});
+
 it("runs a turn with the model and effort it was delivered with, starting over included", async () => {
   const store = memoryStore();
   store.set("c/root", { id: "lost", seen: 4, at: 1 });
   const { pool, claudes } = sessions({ store });
   await pool.deliver("c/root", "hello", 9, {
-    fresh: async () => "hello again",
+    fresh: async () => ({ text: "hello again" }),
     pick: { model: "haiku", effort: "low" },
   });
   await pool.deliver("c/root", "next", 10);
@@ -558,6 +757,24 @@ it("asks a one-off turn for its prompt only once its process is ready", async ()
   release();
   await expect(waiting).resolves.toEqual({ ok: true });
   expect(prompt).toHaveBeenCalledTimes(1);
+  expect(claudes().some((process) => process.prompts.includes("wake"))).toBe(
+    false,
+  );
+});
+
+it("sends no one-off turn whose team text changed while its prompt was built", async () => {
+  const { pool, claudes, setInputs } = sessions();
+  let release!: () => void;
+  const built = new Promise<void>((resolve) => (release = resolve));
+  const waiting = pool.runOnce("watch/a", async () => {
+    await built;
+    return "wake";
+  });
+  await flush();
+  // A remote edit lands at the same epoch while the prompt is built.
+  setInputs("B");
+  release();
+  await expect(waiting).resolves.toMatchObject({ ok: false });
   expect(claudes().some((process) => process.prompts.includes("wake"))).toBe(
     false,
   );
@@ -746,32 +963,107 @@ it("keeps an agent in the shared sessions value until its own is saved", async (
 });
 
 it("shares a temporary metadata lookup, releases its process, and refreshes after settings change", async () => {
-  const { pool, claudes, live, setModel } = sessions();
-  const [first, second] = await Promise.all([pool.metadata(), pool.metadata()]);
+  const { pool, claudes, live, setModel, at } = sessions();
+  const [first, second] = await Promise.all([
+    pool.metadata(undefined, at()),
+    pool.metadata(undefined, at()),
+  ]);
   expect(first).toEqual(second);
   expect(first.model).toBe("claude-opus-5-5");
   expect(claudes()).toHaveLength(1);
   expect(live()).toHaveLength(0);
-  await pool.metadata();
+  await pool.metadata(undefined, at());
   expect(claudes()).toHaveLength(1);
   setModel("haiku");
   pool.reconfigure();
-  expect((await pool.metadata()).model).toBe("claude-haiku-5-5");
+  expect((await pool.metadata(undefined, at())).model).toBe("claude-haiku-5-5");
   expect(live()).toHaveLength(0);
   pool.dispose();
 });
 
-it("does not start metadata discovery after its agent is disposed during launch", async () => {
-  let release!: () => void;
-  const launched = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const { pool, claudes } = sessions({ launched });
-  const result = pool.metadata();
-  await flush();
+it("does not start metadata discovery after its agent is disposed", async () => {
+  const { pool, claudes, at } = sessions();
+  const result = pool.metadata(undefined, at());
+  // Before its discovery process starts.
   pool.dispose();
-  const stopped = expect(result).rejects.toThrow("stopped");
-  release();
-  await stopped;
+  await expect(result).rejects.toThrow("stopped");
   expect(claudes()).toHaveLength(0);
+});
+
+it("counts a conversation as pinned only while its process runs on config other than current", async () => {
+  const { pool, setConfig, setModel } = sessions();
+  await pool.deliver("c/kept", "hello", 10);
+  await flush();
+  expect(pool.pinned("c/kept")).toBe(false);
+  setConfig("remote");
+  expect(pool.pinned("c/kept")).toBe(true);
+  // A conversation with no process starts on current config.
+  expect(pool.pinned("c/new")).toBe(false);
+  // A local save replaces it, so its next turn starts on current.
+  setModel("sonnet");
+  expect(pool.pinned("c/kept")).toBe(false);
+});
+
+it("reads the reported model only from a process on current config", async () => {
+  // The older config ran haiku; the current one runs the agent's opus.
+  let older: string | undefined = "haiku";
+  const { pool, at, live, setConfig } = sessions({ launchModel: () => older });
+  await pool.deliver("c/old", "hello", 10);
+  await flush();
+  older = undefined;
+  setConfig("remote");
+  await pool.deliver("c/current", "hello", 10);
+  await flush();
+  expect(pool.pinned("c/old")).toBe(true);
+  expect(live()).toHaveLength(2);
+  // A conversation with no process yet runs on current config.
+  expect((await pool.metadata("c/new", at())).model).toBe("claude-opus-5-5");
+  pool.dispose();
+});
+
+it("reads a Solo conversation's own process, fixed to its folders, for metadata", async () => {
+  const { pool, at, claudes } = sessions({
+    folders: new Map([["c/solo", "~/Development/app"]]),
+  });
+  await pool.deliver("c/solo", "hello", 10);
+  await flush();
+  expect(claudes()).toHaveLength(1);
+  try {
+    expect((await pool.metadata("c/solo", at())).model).toBe("claude-opus-5-5");
+    // No discovery process was started.
+    expect(claudes()).toHaveLength(1);
+  } finally {
+    pool.dispose();
+  }
+});
+
+it("refreshes metadata discovery after remote config changes", async () => {
+  let launched = "haiku";
+  const { pool, at, setConfig } = sessions({ launchModel: () => launched });
+  expect((await pool.metadata("c/first", at())).model).toBe("claude-haiku-5-5");
+  launched = ""; // A remote edit clears the explicit model; Claude now reports its default, opus.
+  setConfig("remote");
+  try {
+    expect((await pool.metadata("c/new", at())).model).toBe("claude-opus-5-5");
+  } finally {
+    pool.dispose();
+  }
+});
+
+it("reads the model chooser's defaults from current config, not a pinned conversation", async () => {
+  let launched: string | undefined = "haiku";
+  const { pool, at, setConfig } = sessions({ launchModel: () => launched });
+  await pool.deliver("c/old", "hello", 10);
+  await flush();
+  launched = undefined;
+  setConfig("remote");
+  try {
+    expect(pool.pinned("c/old")).toBe(true);
+    // The next new conversation runs on current config, so its model leads.
+    expect((await pool.metadata(undefined, at())).model).toBe(
+      "claude-opus-5-5",
+    );
+  } finally {
+    pool.dispose();
+  }
 });

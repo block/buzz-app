@@ -45,6 +45,9 @@ import type { Outbox, OutgoingEvent } from "../relay/outbox";
 import { createMessages } from "../relay/messages";
 import { ClaudeProcess } from "../../bundled/claude-code/claude";
 import { fakeSpawn } from "../../bundled/claude-code/claude-testing";
+import { fakeSpawn as fakeGooseSpawn } from "../../bundled/goose/goose-testing";
+import { GooseSetup } from "../../bundled/goose/setup";
+import { config as gooseConfig } from "../../bundled/goose/runtime";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { AgentsContext } from "../agents/react";
 import type { Agents } from "../agents/service";
@@ -3054,6 +3057,315 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
     { [first.pubkey]: { model: "gpt-6.1-sol", effort: "high" } },
   );
 });
+
+it("drops an effort a retyped agent no longer offers before sending", async () => {
+  let snapshot = {
+    status: "ready",
+    agents: [
+      {
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+        config: {},
+      },
+    ],
+  };
+  // goose's own registration: its models offer no efforts.
+  const goose = new GooseSetup(
+    fakeGooseSpawn({
+      providers: [
+        {
+          providerId: "ollama",
+          providerName: "Ollama",
+          configured: true,
+          visibleInSetup: true,
+          configKeys: [],
+        },
+      ],
+      defaults: { providerId: "ollama", modelId: "qwen3" },
+      supported: ["qwen3", "llama4"],
+    }),
+  );
+  const listeners = new Set<() => void>();
+  const types = [
+    {
+      key: "test/agent",
+      models: () => ({
+        current: "fast",
+        models: [
+          {
+            id: "fast",
+            label: "Fast",
+            efforts: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+        ],
+      }),
+    },
+    {
+      key: "goose",
+      models: (agent: { config: unknown }) =>
+        goose.picks(gooseConfig(agent.config)),
+    },
+  ];
+  const agents = {
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
+  await h.user.type(h.input(), "after the retype");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    }),
+  );
+  const slider = await screen.findByLabelText("Effort for Honey's next run");
+  slider.focus();
+  await h.user.keyboard("{ArrowRight}");
+  expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await h.user.keyboard("{Escape}");
+  await act(async () => {
+    snapshot = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) => ({ ...agent, type: "goose" })),
+    };
+    for (const listener of listeners) listener();
+  });
+  await h.user.click(
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Model for Honey's next run" }),
+  ).toHaveTextContent("qwen3");
+  await h.user.keyboard("{Escape}");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(h.messages.send.mock.lastCall)).not.toContain("high");
+});
+
+it.each([
+  ["while its models load", () => new Promise<never>(() => {})],
+  ["after its discovery fails", () => Promise.reject(new Error("no models"))],
+] as const)(
+  "sends no effort from a retyped agent's previous type %s",
+  async (_, discover) => {
+    let snapshot = {
+      status: "ready",
+      agents: [
+        { pubkey: first.pubkey, name: "Honey", type: "test/agent", config: {} },
+      ],
+    };
+    const listeners = new Set<() => void>();
+    const types = [
+      {
+        key: "test/agent",
+        models: () => ({
+          current: "fast",
+          models: [
+            {
+              id: "fast",
+              label: "Fast",
+              efforts: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+        }),
+      },
+      { key: "goose", models: discover },
+    ];
+    const agents = {
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.type(h.input(), "during discovery");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    const slider = await screen.findByLabelText("Effort for Honey's next run");
+    slider.focus();
+    await h.user.keyboard("{ArrowRight}");
+    expect(slider).toHaveAttribute("aria-valuetext", "High");
+    await h.user.keyboard("{Escape}");
+    await act(async () => {
+      snapshot = {
+        ...snapshot,
+        agents: snapshot.agents.map((agent) => ({ ...agent, type: "goose" })),
+      };
+      for (const listener of listeners) listener();
+    });
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(h.messages.send.mock.lastCall)).not.toContain("high");
+  },
+);
+
+it.each([
+  ["keeps", "its type is not registered", "unregistered"],
+  ["keeps", "it is missing from the agent list", "missing"],
+  ["clears", "its type is registered without models", "modelless"],
+] as const)(
+  "%s an explicit model pick when, before sending, %s",
+  async (outcome, _, state) => {
+    let snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    };
+    const tunable = {
+      key: "test/agent",
+      models: () => ({
+        current: "fast",
+        models: [
+          { id: "fast", label: "Fast", efforts: [] },
+          { id: "solo", label: "Solo", efforts: [] },
+        ],
+      }),
+    };
+    let types: readonly object[] = [tunable];
+    const listeners = new Set<() => void>();
+    const agents = {
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.type(h.input(), "pinned model");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    await h.user.click(
+      await screen.findByRole("button", { name: "Model for Honey's next run" }),
+    );
+    await h.user.click(
+      await screen.findByRole("menuitemradio", { name: "Solo" }),
+    );
+    await h.user.keyboard("{Escape}");
+    await act(async () => {
+      // A plugin swap unregisters the type; a reload drops the agent.
+      if (state === "unregistered") types = [];
+      if (state === "modelless") types = [{ key: "test/agent" }];
+      snapshot =
+        state === "missing"
+          ? { ...snapshot, agents: [] }
+          : { ...snapshot, agents: [...snapshot.agents] };
+      for (const listener of listeners) listener();
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", {
+          name: "Model and effort for the next run",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledTimes(1);
+    if (outcome === "keeps")
+      expect(h.messages.send.mock.lastCall?.at(-1)).toEqual({
+        [first.pubkey]: { model: "solo" },
+      });
+    else
+      expect(JSON.stringify(h.messages.send.mock.lastCall)).not.toContain(
+        "solo",
+      );
+  },
+);
+
+it.each([
+  ["a model lookup that fails", () => Promise.reject(new Error("offline"))],
+  [
+    "a one-model menu",
+    () => ({
+      current: "solo",
+      models: [{ id: "solo", label: "Solo", efforts: [] }],
+    }),
+  ],
+])(
+  "keeps an explicit model pick after a same-type refresh to %s",
+  async (_, refreshed) => {
+    let snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    };
+    let listing: () => unknown = () => ({
+      current: "fast",
+      models: [
+        {
+          id: "fast",
+          label: "Fast",
+          efforts: [{ id: "high", label: "High" }],
+        },
+        { id: "solo", label: "Solo", efforts: [] },
+      ],
+    });
+    const listeners = new Set<() => void>();
+    const types = [{ key: "test/agent", models: () => listing() }];
+    const agents = {
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.type(h.input(), "pinned model");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    await h.user.click(
+      await screen.findByRole("button", { name: "Model for Honey's next run" }),
+    );
+    await h.user.click(
+      await screen.findByRole("menuitemradio", { name: "Solo" }),
+    );
+    await h.user.keyboard("{Escape}");
+    await act(async () => {
+      listing = refreshed;
+      snapshot = { ...snapshot, agents: [...snapshot.agents] };
+      for (const listener of listeners) listener();
+    });
+    // The picker hides once the refreshed lookup settles.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", {
+          name: "Model and effort for the next run",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledTimes(1);
+    expect(h.messages.send.mock.lastCall?.at(-1)).toEqual({
+      [first.pubkey]: { model: "solo" },
+    });
+  },
+);
 
 it.each(["settings refresh", "model pick"])(
   "follows the new model's effort after %s without inheriting an untouched effort",

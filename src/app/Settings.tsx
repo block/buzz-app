@@ -17,6 +17,12 @@ import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Button } from "../shared/design-system/ui/Button";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../shared/design-system/ui/Menu";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { SurfaceButton } from "../shared/design-system/ui/SurfaceButton";
 import { IconButton } from "../shared/design-system/ui/IconButton";
@@ -43,6 +49,7 @@ import {
   SparklesIcon,
   SquaresFourIcon,
   XIcon,
+  DotsThreeIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
@@ -301,7 +308,7 @@ function PluginDetails({
       className={styles.pluginAside}
       aria-label={`${plugin.manifest.name} details`}
       onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
+        if (event.defaultPrevented || event.key !== "Escape") return;
         event.stopPropagation();
         onClose();
       }}
@@ -361,52 +368,86 @@ function PluginDetails({
             {access === "checking" ? "Checking…" : "Unavailable"}
           </span>
         )}
-        {/* Channels is required and has no enable/disable control. */}
-        {plugin.manifest.id === "buzz.channels" ? (
-          <Button variant="outline" size="sm" disabled>
-            Required
-          </Button>
-        ) : (
-          <Tooltip
-            content={
-              access === "error"
-                ? "Could not check access. Try again."
-                : accessReason
-            }
-            {...(accessReason ? {} : { open: false })}
-            disableHoverablePopup
-          >
-            <Button
-              variant={
-                plugin.enabled
-                  ? "subtle"
-                  : accessReason
-                    ? "outline"
-                    : "prominent"
-              }
-              size="sm"
-              disabled={
-                busy ||
-                (!plugin.enabled &&
-                  restrictedPlugin(plugin) &&
-                  access !== "allowed")
-              }
-              loading={
-                !plugin.enabled &&
-                restrictedPlugin(plugin) &&
-                access === "checking"
-              }
-              aria-describedby={
-                accessReason ? "plugin-detail-access" : undefined
-              }
-              focusableWhenDisabled
-              ref={toggle}
-              onClick={onToggle}
-            >
-              {pluginActionLabel(plugin, access)}
+        <div className={styles.pluginPrimaryActions}>
+          {/* Channels is required and has no enable/disable control. */}
+          {plugin.manifest.id === "buzz.channels" ? (
+            <Button variant="outline" size="sm" disabled>
+              Required
             </Button>
-          </Tooltip>
-        )}
+          ) : (
+            <Tooltip
+              content={
+                access === "error"
+                  ? "Could not check access. Try again."
+                  : accessReason
+              }
+              {...(accessReason ? {} : { open: false })}
+              disableHoverablePopup
+            >
+              <Button
+                variant={
+                  plugin.enabled
+                    ? "subtle"
+                    : accessReason
+                      ? "outline"
+                      : "prominent"
+                }
+                size="sm"
+                disabled={
+                  busy ||
+                  (!plugin.enabled &&
+                    restrictedPlugin(plugin) &&
+                    access !== "allowed")
+                }
+                loading={
+                  !plugin.enabled &&
+                  restrictedPlugin(plugin) &&
+                  access === "checking"
+                }
+                aria-describedby={
+                  accessReason ? "plugin-detail-access" : undefined
+                }
+                focusableWhenDisabled
+                ref={toggle}
+                onClick={onToggle}
+              >
+                {pluginActionLabel(plugin, access)}
+              </Button>
+            </Tooltip>
+          )}
+          {plugin.source === "external" && (
+            <MenuRoot>
+              <MenuTrigger
+                render={
+                  <IconButton
+                    ref={deleteTrigger}
+                    aria-label="More plugin actions"
+                    size="sm"
+                    disabled={busy}
+                    icon={<DotsThreeIcon size={16} aria-hidden="true" />}
+                  />
+                }
+              />
+              <MenuPopup
+                size="compact"
+                align="end"
+                aria-label="Plugin actions"
+                finalFocus={confirmDelete ? false : deleteTrigger}
+              >
+                <MenuItem
+                  tone="danger"
+                  disabled={busy}
+                  onClick={() => {
+                    setDeleteError(null);
+                    setConfirmDelete(true);
+                  }}
+                >
+                  Delete
+                </MenuItem>
+              </MenuPopup>
+            </MenuRoot>
+          )}
+        </div>
         <div ref={setActionTarget} className={styles.pluginExtraActions} />
         {accessReason && access === "error" && (
           <Button
@@ -434,21 +475,6 @@ function PluginDetails({
           <span className="text-body-sm text-muted">
             {plugin.rollbackBlockedReason}
           </span>
-        )}
-        {plugin.source === "external" && (
-          <Button
-            size="sm"
-            type="button"
-            ref={deleteTrigger}
-            variant="destructive"
-            disabled={busy}
-            onClick={() => {
-              setDeleteError(null);
-              setConfirmDelete(true);
-            }}
-          >
-            Delete
-          </Button>
         )}
       </div>
       {plugin.source === "external" && plugins.imports && (

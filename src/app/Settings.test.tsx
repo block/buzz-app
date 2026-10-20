@@ -986,12 +986,14 @@ it.each(["row", "pane"])(
 );
 
 it("keeps a rejected plugin deletion open for retry", async () => {
+  const user = userEvent.setup();
   const fixture = reviewPluginFixture();
   vi.mocked(fixture.manager.change).mockResolvedValueOnce(false);
   fireEvent.click(
     screen.getByRole("button", { name: "View Zebra external details" }),
   );
-  fireEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+  await user.click(screen.getByRole("button", { name: "More plugin actions" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
   fireEvent.click(screen.getByRole("button", { name: "Delete plugin" }));
   const confirmation = screen.getByRole("alertdialog");
   expect(await within(confirmation).findByRole("alert")).toHaveTextContent(
@@ -1009,6 +1011,7 @@ it("keeps a rejected plugin deletion open for retry", async () => {
 });
 
 it("returns focus to the Plugins section when the selected plugin is deleted", async () => {
+  const user = userEvent.setup();
   const fixture = reviewPluginFixture();
   fireEvent.click(
     screen.getByRole("button", { name: "View Zebra external details" }),
@@ -1016,10 +1019,12 @@ it("returns focus to the Plugins section when the selected plugin is deleted", a
   const details = screen.getByRole("complementary", {
     name: "Zebra external details",
   });
-  const remove = screen.getByRole("button", { name: "Delete" });
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  const remove = screen.getByRole("button", { name: "More plugin actions" });
   expect(details).toContainElement(remove);
   remove.focus();
-  fireEvent.click(remove);
+  await user.click(remove);
+  await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
   expect(fixture.manager.change).not.toHaveBeenCalledWith(
     "remove",
     "example.external",
@@ -1029,7 +1034,8 @@ it("returns focus to the Plugins section when the selected plugin is deleted", a
   });
   fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("alertdialog")).toBeNull();
-  fireEvent.click(remove);
+  await user.click(remove);
+  await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
   fireEvent.click(screen.getByRole("button", { name: "Delete plugin" }));
   expect(fixture.manager.change).toHaveBeenCalledWith(
     "remove",

@@ -674,10 +674,11 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await expect(button(page, "Update")).toHaveCount(0);
   const pane = page.getByRole("complementary", { name: "Example two details" });
   const paneActions = pane.getByRole("button", {
-    name: /^(Disable|Roll back|Delete)$/,
+    name: /^(Disable|Roll back)$/,
   });
-  await expect(paneActions).toHaveCount(3);
-  await expect(paneActions).toHaveText(["Disable", "Roll back", "Delete"]);
+  await expect(paneActions).toHaveCount(2);
+  await expect(paneActions).toHaveText(["Disable", "Roll back"]);
+  await expect(button(page, "Delete")).toHaveCount(0);
   for (const [width, theme] of [
     [1440, "light"],
     [480, "dark"],
@@ -688,15 +689,25 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
       .poll(() =>
         paneActions.evaluateAll((buttons) => {
           const rects = buttons.map((node) => node.getBoundingClientRect());
-          let groupNode = buttons[0].parentElement;
-          while (getComputedStyle(groupNode).display === "contents")
-            groupNode = groupNode.parentElement;
-          const group = groupNode.getBoundingClientRect();
-          return rects.every(
-            (rect, index) =>
-              Math.abs(rect.left - group.left) < 1 &&
-              Math.abs(rect.right - group.right) < 1 &&
-              (index === 0 || rect.top >= rects[index - 1].bottom),
+          const row = buttons[0].parentElement;
+          const group = row.parentElement.getBoundingClientRect();
+          const primary = row.getBoundingClientRect();
+          const more = row
+            .querySelector('[aria-label="More plugin actions"]')
+            .getBoundingClientRect();
+          return (
+            Math.abs(primary.left - group.left) < 1 &&
+            Math.abs(primary.right - group.right) < 1 &&
+            Math.abs(more.top - rects[0].top) < 1 &&
+            rects[0].right <= more.left &&
+            Math.abs(more.right - group.right) < 1 &&
+            rects.every(
+              (rect, index) =>
+                Math.abs(rect.left - group.left) < 1 &&
+                (index === 0 ||
+                  (Math.abs(rect.right - group.right) < 1 &&
+                    rect.top >= primary.bottom)),
+            )
           );
         }),
       )
@@ -704,9 +715,26 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
     await pane.screenshot({
       path: info.outputPath(`plugin-actions-${theme}-${width}.png`),
     });
+    await button(page, "More plugin actions").click();
+    const menu = page.getByRole("menu", { name: "Plugin actions" });
+    await expect(menu).toBeInViewport();
+    await menu.screenshot({
+      path: info.outputPath(`plugin-menu-${theme}-${width}.png`),
+    });
+    await page.keyboard.press("Escape");
+    await expect(button(page, "More plugin actions")).toBeFocused();
   }
   await page.setViewportSize({ width: 1440, height: 950 });
-  await button(page, "Delete").click();
+  await button(page, "More plugin actions").focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("menuitem", { name: "Delete", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(pane).toBeVisible();
+  await expect(button(page, "More plugin actions")).toBeFocused();
+  await button(page, "More plugin actions").click();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   const deletion = page.getByRole("alertdialog", {
     name: "Delete Example two?",
   });
@@ -718,7 +746,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
     path: info.outputPath("plugin-delete-confirmation.png"),
   });
   await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(button(page, "Delete")).toBeFocused();
+  await expect(button(page, "More plugin actions")).toBeFocused();
   await button(page, "Close plugin details").click();
   await page
     .getByRole("region", { name: "Manage plugins", exact: true })
@@ -762,7 +790,8 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await expect(page.getByLabel("Git or GitHub repository")).toHaveValue("bad");
   await page.keyboard.press("Escape");
   await button(page, "View Example two details").click();
-  await button(page, "Delete").click();
+  await button(page, "More plugin actions").click();
+  await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
   await page
     .getByRole("alertdialog")
     .getByRole("button", { name: "Delete plugin", exact: true })

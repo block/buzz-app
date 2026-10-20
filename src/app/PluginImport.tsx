@@ -42,6 +42,7 @@ export type PluginPreviewControl = {
 export function PluginImport({
   previewControl,
   onBeforeOpen,
+  suspended = false,
   plugins,
   catalog,
   busy,
@@ -58,6 +59,7 @@ export function PluginImport({
 }: {
   previewControl?: Ref<PluginPreviewControl>;
   onBeforeOpen?: () => Promise<void>;
+  suspended?: boolean;
   plugins: PluginManager;
   catalog: Catalog;
   busy: boolean;
@@ -189,6 +191,7 @@ export function PluginImport({
       "root" in savedSource &&
       !open &&
       !paused.current &&
+      !suspended &&
       !busy &&
       !discarding &&
       document.visibilityState !== "hidden"
@@ -293,7 +296,7 @@ export function PluginImport({
     operation: () => Promise<ImportPreview | null>,
     automatic = false,
   ) {
-    if (paused.current || pending.current || blocked) return;
+    if (suspended || paused.current || pending.current || blocked) return;
     const work = loadPreview(operation, automatic);
     inFlight.current = work;
     return work;
@@ -356,11 +359,15 @@ export function PluginImport({
         next?.candidates.length === 1 ? (next.candidates[0]?.path ?? "") : "",
       );
     } catch (reason) {
+      // Native Imports::try_lock wording: src-tauri/src/lib.rs (prepare_import).
       const contended =
         (reason instanceof Error ? reason.message : String(reason)) ===
         "Another import is in progress";
-      if (current.active && !(automatic && contended)) {
-        showError(reason, automatic ? null : returnTo);
+      if (current.active) {
+        if (automatic && contended) {
+          // A skipped read cannot leave an already-discarded token actionable.
+          if (!current.token) setPreview(null);
+        } else showError(reason, automatic ? null : returnTo);
       }
     } finally {
       pending.current = false;
@@ -444,6 +451,7 @@ export function PluginImport({
           : undefined
       }
       disabled={blocked}
+      loading={discarding && !open}
       onClick={async () => {
         if (blocked || pending.current) return;
         pending.current = true;

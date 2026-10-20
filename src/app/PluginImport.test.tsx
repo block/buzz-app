@@ -1803,3 +1803,54 @@ it("skips a contended automatic check and retries without a source-unavailable e
     vi.useRealTimers();
   }
 });
+
+it("clears a discarded preview when an automatic acquisition is contended", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const folder = vi
+    .fn()
+    .mockResolvedValueOnce(rememberedPreview)
+    .mockRejectedValueOnce(new Error("Another import is in progress"))
+    .mockResolvedValue(rememberedPreview);
+  const manager = {
+    imports: { folder, discard: vi.fn(async () => {}) },
+  } as unknown as PluginManager;
+  const view = render(
+    <PluginImport
+      plugins={manager}
+      busy={false}
+      updateId={rememberedManifest.id}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            ...rememberedPlugin,
+            updateSource: { root: "/plugins", path: "dist" },
+          },
+        ],
+      }}
+    />,
+  );
+  try {
+    await act(async () => {});
+    expect(folder).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Update" })).toBeEnabled();
+    await act(async () => vi.advanceTimersByTime(5_000));
+    expect(folder).toHaveBeenCalledTimes(2);
+    expect(manager.imports?.discard).toHaveBeenCalledWith(
+      rememberedPreview.token,
+    );
+    expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+    expect(
+      screen.queryByText(
+        /Source folder unavailable|Another import is in progress/,
+      ),
+    ).toBeNull();
+    await act(async () => vi.advanceTimersByTime(5_000));
+    expect(folder).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole("button", { name: "Update" })).toBeEnabled();
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+});

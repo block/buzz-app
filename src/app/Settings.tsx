@@ -266,6 +266,7 @@ function PluginDetails({
   reviewRequested,
   onReviewHandled,
   previewControl,
+  importSessionActive,
 }: {
   plugin: PluginInfo;
   failure: string | null;
@@ -283,6 +284,7 @@ function PluginDetails({
   reviewRequested: boolean;
   onReviewHandled(): void;
   previewControl: RefObject<PluginPreviewControl | null>;
+  importSessionActive: boolean;
 }) {
   const accessReason = restrictedPlugin(plugin)
     ? accessMessage(plugin, access)
@@ -475,6 +477,7 @@ function PluginDetails({
         <PluginImport
           key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
           previewControl={previewControl}
+          suspended={importSessionActive}
           actionTarget={updateAvailable ? primaryActionTarget : actionTarget}
           onUpdateAvailableChange={(available) => {
             setUpdateAvailable(available);
@@ -771,6 +774,7 @@ export function Settings({
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
   const panePreview = useRef<PluginPreviewControl>(null);
+  const [importSessionActive, setImportSessionActive] = useState(false);
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
     Record<string, { revision: string; available: boolean }>
@@ -1264,9 +1268,13 @@ export function Settings({
               <PluginImport
                 actionTarget={pluginImportActions}
                 onBeforeOpen={async () => {
+                  setImportSessionActive(true);
                   await panePreview.current?.pause();
                 }}
-                onClosed={() => panePreview.current?.resume()}
+                onClosed={() => {
+                  setImportSessionActive(false);
+                  panePreview.current?.resume();
+                }}
                 plugins={plugins}
                 catalog={catalog}
                 busy={busy}
@@ -1382,6 +1390,7 @@ export function Settings({
           plugin={selectedPlugin}
           catalog={catalog}
           previewControl={panePreview}
+          importSessionActive={importSessionActive}
           authorizeGit={authorizePluginGit}
           reviewRequested={reviewPluginId === selectedPlugin.manifest.id}
           onReviewHandled={() => setReviewPluginId(undefined)}

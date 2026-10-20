@@ -2049,9 +2049,13 @@ it("offers Retry beside a failed installed revision without changing saved state
   expect(within(pane).queryByRole("button", { name: /^Retry$/ })).toBeNull();
 });
 
-it.each([false, true])(
-  "hands the native preview slot from the pane to Add (scan pending: %s)",
-  async (holdScan) => {
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+])(
+  "hands the native preview slot from the pane to Add (scan pending: %s, remount: %s)",
+  async (holdScan, remount) => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const visibility = vi
       .spyOn(document, "visibilityState", "get")
@@ -2141,6 +2145,10 @@ it.each([false, true])(
       ).toBeVisible();
       const token = activeToken();
       const calls = folder.mock.calls.length;
+      if (remount) {
+        fixture.external.revision = "cli-reloaded";
+        await act(async () => fixture.publish());
+      }
       await act(async () => {
         vi.advanceTimersByTime(15_000);
         fireEvent(window, new Event("focus"));

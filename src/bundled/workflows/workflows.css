@@ -81,11 +81,12 @@
   gap: var(--space-1);
   min-width: 0;
   text-align: start;
-  white-space: normal;
 }
 .workflow-card-name,
 .workflow-card-description {
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .workflow-card-meta {
   display: flex;
@@ -132,18 +133,6 @@
 }
 .workflow-state-card {
   padding: var(--space-3) var(--space-4);
-}
-@container (max-width: 32rem) {
-  .workflow-card {
-    flex-wrap: wrap;
-  }
-  .workflow-card > .navigation-item {
-    flex-basis: 100%;
-  }
-  .workflow-card-switch {
-    margin-inline-start: auto;
-    margin-bottom: var(--space-2);
-  }
 }
 .workflows-page h1,
 .workflows-page h2,

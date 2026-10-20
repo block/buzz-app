@@ -757,8 +757,13 @@ function WorkflowCard({
           }
           label={
             <span className="workflow-row-copy">
-              <span className="workflow-card-name text-label">{name}</span>
-              <span className="workflow-card-description text-body-sm text-secondary">
+              <span className="workflow-card-name text-label" title={name}>
+                {name}
+              </span>
+              <span
+                className="workflow-card-description text-body-sm text-secondary"
+                title={presentation.description}
+              >
                 {presentation.description}
               </span>
               <span className="workflow-card-meta text-caption text-subtle">

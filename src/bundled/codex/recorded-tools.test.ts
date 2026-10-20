@@ -1,0 +1,190 @@
+import { expect, it } from "vitest";
+import { codexTurns } from "./transcript";
+import { restoreRecordedTools } from "./recorded-tools";
+
+const call = (id: string) => ({
+  type: "custom_tool_call",
+  call_id: id,
+  name: "exec",
+  input: "text(await tools.buzz__read({limit: 2}));",
+});
+const result = (id: string) => ({
+  type: "custom_tool_call_output",
+  call_id: id,
+  output: [
+    { type: "input_text", text: "Script completed\nOutput:" },
+    { type: "input_text", text: "two messages" },
+    { type: "image", image_url: "data:image/png;base64,AA==" },
+  ],
+});
+const record = (type: string, payload: unknown) =>
+  JSON.stringify({ type, timestamp: "2026-10-20T12:00:00Z", payload });
+const start = (turn_id = "turn") =>
+  record("event_msg", { type: "task_started", turn_id });
+const completed = (id: string, turn_id = "turn") =>
+  record("event_msg", { type: "item_completed", turn_id, item: { id } });
+function turns() {
+  return codexTurns(
+    [
+      {
+        id: "turn",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        items: [
+          {
+            type: "userMessage",
+            id: "prompt",
+            content: [{ type: "text", text: "read messages" }],
+          },
+          {
+            type: "dynamicToolCall",
+            id: "nested",
+            namespace: "buzz",
+            tool: "read",
+            arguments: { limit: 2 },
+            status: "completed",
+            contentItems: [{ type: "inputText", text: "two messages" }],
+          },
+          { type: "agentMessage", id: "reply", text: "Done" },
+        ],
+      },
+    ],
+    { channelId: "channel" },
+  );
+}
+
+it("restores the actual exec script and results around its recorded calls, without flattening them", () => {
+  const mapped = turns();
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      completed("prompt"),
+      record("response_item", call("script")),
+      completed("nested"),
+      record("response_item", result("script")),
+      completed("reply"),
+      '{"type":',
+    ].join("\n"),
+  );
+  expect(mapped[0]?.items.map((item) => item.id)).toEqual([
+    "prompt",
+    "script",
+    "reply",
+  ]);
+  const script = mapped[0]?.items[1];
+  expect(script).toMatchObject({
+    type: "tool",
+    title: "exec",
+    status: "completed",
+    input: call("script").input,
+    output:
+      'Script completed\nOutput:\ntwo messages\n{\n  "type": "image",\n  "image_url": "data:image/png;base64,AA=="\n}',
+    children: [
+      {
+        id: "nested",
+        title: "buzz.read",
+        input: JSON.stringify({ limit: 2 }, null, 2),
+      },
+    ],
+  });
+});
+
+it("keeps concurrent calls independent and does not associate a later turn with an unfinished script", () => {
+  const mapped = turns();
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      completed("prompt"),
+      record("response_item", call("a")),
+      record("response_item", call("b")),
+      completed("nested"),
+      start("another-turn"),
+      record("response_item", call("outside")),
+    ].join("\n"),
+  );
+  expect(mapped[0]?.items.map((item) => item.id)).toEqual([
+    "prompt",
+    "a",
+    "b",
+    "nested",
+    "reply",
+  ]);
+  expect(mapped[0]?.items[1]).toMatchObject({ status: "unknown" });
+  expect(mapped[0]?.items[1]).not.toHaveProperty("children");
+  expect(mapped[0]?.items[2]).not.toHaveProperty("children");
+});
+
+it("retains yielded exec and wait inputs and outputs, including the explicit cell handle", () => {
+  const mapped = turns();
+  const yielded = {
+    type: "custom_tool_call_output",
+    call_id: "script",
+    output: "Script running with cell ID cell-1",
+  };
+  const wait = {
+    type: "function_call",
+    call_id: "wait",
+    namespace: "functions",
+    name: "wait",
+    arguments: '{"cell_id":"cell-1"}',
+  };
+  const finished = {
+    type: "function_call_output",
+    call_id: "wait",
+    output: "Script completed: final result",
+  };
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      completed("prompt"),
+      record("response_item", call("script")),
+      record("response_item", yielded),
+      record("response_item", wait),
+      completed("nested"),
+      record("response_item", finished),
+    ].join("\n"),
+  );
+  expect(mapped[0]?.items).toMatchObject([
+    { id: "prompt" },
+    { title: "exec", status: "yielded", output: yielded.output },
+    {
+      title: "wait",
+      input: wait.arguments,
+      output: finished.output,
+      children: [{ id: "nested" }],
+    },
+    { id: "reply" },
+  ]);
+});
+
+it("keeps a delayed completion in its own turn when another turn has an active script", () => {
+  const mapped = turns();
+  const original = mapped[0];
+  if (!original) throw new Error("Missing turn");
+  mapped.push({ ...original, turnId: "new", items: [] });
+  restoreRecordedTools(
+    mapped,
+    [
+      start(),
+      completed("prompt"),
+      record("response_item", call("old-script")),
+      record("response_item", result("old-script")),
+      start("new"),
+      record("response_item", call("new-script")),
+      completed("nested", "turn"),
+    ].join("\n"),
+  );
+  expect(mapped[0]?.items.map((item) => item.id)).toEqual([
+    "prompt",
+    "old-script",
+    "nested",
+    "reply",
+  ]);
+  expect(mapped[1]?.items).toMatchObject([{ id: "new-script" }]);
+  expect(mapped[1]?.items[0]).not.toHaveProperty("children");
+});

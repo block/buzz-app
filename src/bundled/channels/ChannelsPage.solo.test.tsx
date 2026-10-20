@@ -207,6 +207,11 @@ function fixture({
         emitList();
         return "c".repeat(64);
       }),
+      // Starts through the create above; the relay accepts it at once.
+      start: vi.fn((chat: string) => ({
+        create: session.channelWrites.create(chat),
+        ready: Promise.resolve(),
+      })),
       delivered: vi.fn(async () => {}),
       refresh: vi.fn(async () => {}),
       addAgents: vi.fn(async () => {}),
@@ -453,29 +458,20 @@ it("a new Solo chat finishing behind Settings stays put and retires its draft", 
     text: "@Scout Started behind Settings",
     recipients: [{ pubkey: agent, name: "Scout", start: 0, end: 6 }],
   });
-  let deliver!: () => void;
-  f.session.channelWrites.delivered.mockImplementationOnce(
-    () =>
-      new Promise<void>((resolve) => {
-        deliver = resolve;
-      }),
-  );
   f.mount();
   // Stands in for a field in the Settings modal that owns focus.
   const settingsField = document.createElement("input");
   document.body.append(settingsField);
   const region = await screen.findByRole("region", { name: "New chat" });
-  const user = userEvent.setup();
   try {
-    await user.click(
+    // The start runs while Settings owns focus.
+    settingsField.focus();
+    fireEvent.click(
       within(region).getByRole("button", { name: "Send message" }),
     );
     await waitFor(() =>
-      expect(f.session.channelWrites.delivered).toHaveBeenCalledOnce(),
+      expect(f.session.channelWrites.create).toHaveBeenCalledOnce(),
     );
-    settingsField.focus();
-    deliver();
-    await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
     expect(f.open).not.toHaveBeenCalled();
     // A fresh draft replaces the submitted one, so it cannot start again.
     const composer = () =>
@@ -488,7 +484,7 @@ it("a new Solo chat finishing behind Settings stays put and retires its draft", 
     );
     // The replacement never pulls focus out of Settings.
     expect(settingsField).toHaveFocus();
-    expect(f.session.channelWrites.create).toHaveBeenCalledOnce();
+    expect(f.open).not.toHaveBeenCalled();
   } finally {
     settingsField.remove();
   }

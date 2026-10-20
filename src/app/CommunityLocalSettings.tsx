@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CommunityDialog } from "../features/communities/CommunityDialog";
 import { CommunityRepositoriesSettings } from "./CommunityRepositoriesSettings";
 import type { Communities, Membership } from "../features/communities/service";
@@ -42,6 +42,7 @@ export function CommunityLocalSettings({
     }
   };
   const [editingConnection, setEditingConnection] = useState(false);
+  const nameInput = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -58,6 +59,8 @@ export function CommunityLocalSettings({
       setDraft(null);
       setError("");
       setSaved(true);
+      if (nameInput.current?.form?.contains(document.activeElement))
+        nameInput.current.focus();
     } catch (error) {
       setError(
         error instanceof Error
@@ -86,6 +89,7 @@ export function CommunityLocalSettings({
             error={error}
           >
             <Input
+              ref={nameInput}
               value={value}
               placeholder={communityDefaultName(community)}
               maxLength={COMMUNITY_NAME_MAX_LENGTH}
@@ -112,6 +116,7 @@ export function CommunityLocalSettings({
                 setDraft(null);
                 setError("");
                 setSaved(false);
+                nameInput.current?.focus();
               }}
             >
               Cancel

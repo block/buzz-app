@@ -1,5 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { Communities } from "../features/communities/service";
 import {
   DEFAULT_REPOSITORIES_FOLDER,
@@ -42,14 +48,18 @@ export function CommunityRepositoriesSettings({
   const [saved, setSaved] = useState(false);
   const alive = useRef(true);
   const browse = useRef<HTMLElement>(null);
+  const input = useRef<HTMLInputElement>(null);
   const desktop = isTauri();
-  const restoreFocus = useRef(false);
-  useEffect(() => {
-    if (!busy && restoreFocus.current) {
-      restoreFocus.current = false;
-      browse.current?.focus();
-    }
-  }, [busy]);
+  const restoreFocus = useRef<{
+    from: Element | null;
+    to: HTMLElement | null;
+  } | null>(null);
+  useLayoutEffect(() => {
+    if (busy) return;
+    const pending = restoreFocus.current;
+    restoreFocus.current = null;
+    if (pending && document.activeElement === pending.from) pending.to?.focus();
+  });
   useEffect(() => {
     alive.current = true;
     const sync = (event: StorageEvent) => {
@@ -85,6 +95,7 @@ export function CommunityRepositoriesSettings({
   };
   const save = async (path: string) => {
     if (busy) return;
+    const focused = document.activeElement;
     setBusy(true);
     setSaved(false);
     setError("");
@@ -106,11 +117,15 @@ export function CommunityRepositoriesSettings({
       if (alive.current)
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      if (alive.current) setBusy(false);
+      if (alive.current) {
+        restoreFocus.current = { from: focused, to: input.current };
+        setBusy(false);
+      }
     }
   };
   const pick = async () => {
     if (busy) return;
+    const focused = document.activeElement;
     setBusy(true);
     setError("");
     setSaved(false);
@@ -127,8 +142,8 @@ export function CommunityRepositoriesSettings({
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       if (alive.current) {
+        restoreFocus.current = { from: focused, to: browse.current };
         setBusy(false);
-        restoreFocus.current = true;
       }
     }
   };
@@ -152,9 +167,9 @@ export function CommunityRepositoriesSettings({
             }
           >
             <Input
+              ref={input}
               value={value}
-              readOnly={!desktop}
-              disabled={busy}
+              readOnly={!desktop || busy}
               placeholder="Default REPOS folder in each agent’s workspace"
               maxLength={2048}
               autoCorrect="off"
@@ -173,6 +188,7 @@ export function CommunityRepositoriesSettings({
                 ref={browse}
                 type="button"
                 disabled={busy}
+                focusableWhenDisabled={busy}
                 onClick={() => void pick()}
               >
                 Choose folder…
@@ -180,6 +196,7 @@ export function CommunityRepositoriesSettings({
               <Button
                 type="button"
                 variant="ghost"
+                focusableWhenDisabled={busy}
                 disabled={busy || (!stored.value && !draft)}
                 onClick={() => void save("")}
               >
@@ -187,11 +204,13 @@ export function CommunityRepositoriesSettings({
               </Button>
               <Button
                 type="button"
+                focusableWhenDisabled={busy}
                 disabled={busy || draft === null}
                 onClick={() => {
                   setDraft(null);
                   setError("");
                   setSaved(false);
+                  input.current?.focus();
                 }}
               >
                 Cancel
@@ -200,6 +219,7 @@ export function CommunityRepositoriesSettings({
                 type="submit"
                 variant="primary"
                 loading={busy}
+                focusableWhenDisabled={busy}
                 disabled={busy || value.trim() === stored.value}
               >
                 Save folder

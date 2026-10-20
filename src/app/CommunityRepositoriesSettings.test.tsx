@@ -135,7 +135,10 @@ it("blocks a late native result after community removal and keeps dirty drafts t
     }),
   );
   await user.click(screen.getByRole("button", { name: "Save folder" }));
-  expect(screen.getByRole("button", { name: "Save folder" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save folder" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   try {
     await act(async () => {
       await communities.leave(community, { purge: false });

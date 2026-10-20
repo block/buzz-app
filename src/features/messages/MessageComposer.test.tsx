@@ -8016,11 +8016,19 @@ it.each(["thread", "solo"])(
   },
 );
 
-it.each(["available", "archived", "readOnly", "removed", "converted"] as const)(
+it.each([
+  "available",
+  "archived",
+  "readOnly",
+  "removed",
+  "converted",
+  "compacting",
+] as const)(
   "revalidates a queued Solo follow-up when the chat is %s at completion",
   async (mode) => {
     localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
-    const h = mount();
+    const agents = mode === "compacting" ? sessionAgents("channel") : undefined;
+    const h = mount({}, undefined, undefined, agents);
     h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
     const listeners = new Set<() => void>();
     let state = "working";
@@ -8088,11 +8096,19 @@ it.each(["available", "archived", "readOnly", "removed", "converted"] as const)(
     expect(h.messages.send).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Send" })).toBeVisible();
     h.fill("Keep typing");
+    if (mode === "compacting") {
+      act(() => agents?.setSessionState("compacting"));
+      expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+    }
     if (mode === "removed") members = [];
     else if (mode === "converted") {
       channel.channelType = "group";
       h.retarget({ ownSoloConversation: false });
-    } else if (mode !== "available") channel[mode] = true;
+    } else if (mode !== "available" && mode !== "compacting")
+      channel[mode] = true;
     act(() => {
       state = "done";
       activity = snapshot();
@@ -8100,16 +8116,25 @@ it.each(["available", "archived", "readOnly", "removed", "converted"] as const)(
     });
     if (mode !== "available") {
       await screen.findByText(
-        mode === "removed"
-          ? "A queued recipient is no longer a member of this chat."
-          : mode === "converted"
-            ? "This Solo chat or its recipients are no longer available."
-            : "This chat is no longer available for sending.",
+        mode === "compacting"
+          ? "Wait for compaction to finish, or interrupt it."
+          : mode === "removed"
+            ? "A queued recipient is no longer a member of this chat."
+            : mode === "converted"
+              ? "This Solo chat or its recipients are no longer available."
+              : "This chat is no longer available for sending.",
       );
       expect(h.messages.send).not.toHaveBeenCalled();
       expect(
         screen.getByRole("region", { name: "Queued follow-ups" }),
       ).toContainElement(screen.getByText("@Honey Follow up"));
+      if (mode === "compacting") {
+        act(() => agents?.setSessionState("idle"));
+        fireEvent.click(screen.getByRole("button", { name: "Send" }));
+        await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+        expect(h.input()).toHaveValue("Keep typing");
+        return;
+      }
       fireEvent.click(
         screen.getByRole("button", { name: "Remove queued message" }),
       );

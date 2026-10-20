@@ -117,6 +117,15 @@
   .landing {
     background: Canvas;
   }
+  /* Paint the artwork's shape in the palette's text color, whatever the theme. */
+  .logoLayers {
+    forced-color-adjust: none;
+    background: CanvasText;
+    mask: url("/buzz-wordmark.png") center / 100% 100% no-repeat;
+  }
+  .logoLayers img {
+    visibility: hidden;
+  }
 }
 
 .importSetup {

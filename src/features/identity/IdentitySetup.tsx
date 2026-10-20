@@ -81,6 +81,7 @@ export function IdentitySetup({
             {legacyAvailable && (
               <Button
                 size="lg"
+                variant="prominent"
                 disabled={state.busy}
                 onClick={() => void identity.importLegacy()}
               >
@@ -89,7 +90,7 @@ export function IdentitySetup({
             )}
             <Button
               size="lg"
-              variant="prominent"
+              variant={legacyAvailable ? "subtle" : "prominent"}
               disabled={state.busy}
               onClick={() => void identity.create()}
             >
@@ -173,7 +174,11 @@ export function IdentitySetup({
                     void identity.importKey(supplied);
                   }}
                 >
-                  <Field label="Private key (nsec)" controlId="import-nsec">
+                  <Field
+                    label="Private key (nsec)"
+                    controlId="import-nsec"
+                    description="Copy this from Identity details in your old Buzz app. Never share it with anyone."
+                  >
                     <Input
                       id="import-nsec"
                       type="password"

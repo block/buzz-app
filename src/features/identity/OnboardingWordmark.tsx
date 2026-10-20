@@ -76,6 +76,7 @@ export function OnboardingWordmark() {
     const phase = gl.getUniformLocation(program, "uPhase");
     const color = gl.getUniformLocation(program, "uColor");
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+    const forced = matchMedia("(forced-colors: active)");
     const image = new Image();
     let loaded = false;
     const draw = (time: number) => {
@@ -105,6 +106,7 @@ export function OnboardingWordmark() {
         loaded &&
         !disposed &&
         !reduced.matches &&
+        !forced.matches &&
         !document.hidden &&
         !gl.isContextLost();
       setAnimated(active);
@@ -134,12 +136,14 @@ export function OnboardingWordmark() {
     };
     image.src = "/buzz-wordmark.png";
     reduced.addEventListener("change", sync);
+    forced.addEventListener("change", sync);
     document.addEventListener("visibilitychange", sync);
     canvas.addEventListener("webglcontextlost", sync);
     return () => {
       disposed = true;
       image.onload = null;
       reduced.removeEventListener("change", sync);
+      forced.removeEventListener("change", sync);
       document.removeEventListener("visibilitychange", sync);
       canvas.removeEventListener("webglcontextlost", sync);
       release();

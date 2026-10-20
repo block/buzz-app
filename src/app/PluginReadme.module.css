@@ -75,7 +75,7 @@
 }
 
 .readme code {
-  font-family: var(--font-system-mono);
+  font-family: var(--font-mono);
   font-size: var(--text-mono-sm);
   line-height: var(--text-mono-sm--line-height);
   letter-spacing: var(--text-mono-sm--letter-spacing);

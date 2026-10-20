@@ -237,6 +237,72 @@ fn large_final_output_is_fully_drained_before_exited() {
 }
 
 #[test]
+fn coalesced_reads_return_sparse_output_promptly() {
+    let state = Terminals::default();
+    let owner = state.create_owner().unwrap();
+    let id = state
+        .spawn_with(
+            &owner,
+            |_| Ok(script("printf a; sleep 1; printf b")),
+            80,
+            24,
+        )
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let first = loop {
+        let result = state.with_session(&owner, &id, Session::read).unwrap();
+        if !result.data.is_empty() {
+            break result.data;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    // The second write is a second away; coalescing must not wait for it.
+    assert_eq!(first, b"a");
+    // Bytes written just before exit still precede the exit report.
+    assert_eq!(read_all(&state, &owner, &id), b"b");
+    state.close_owner(&owner).unwrap();
+}
+
+#[test]
+fn each_coalesced_read_is_bounded_while_a_child_writes_continuously() {
+    // A slow continuous writer and one that keeps the PTY readable.
+    for child in ["while :; do printf x; done", "yes"] {
+        let state = Terminals::default();
+        let owner = state.create_owner().unwrap();
+        let id = state
+            .spawn_with(&owner, |_| Ok(script(child)), 80, 24)
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while state
+            .with_session(&owner, &id, Session::read)
+            .unwrap()
+            .data
+            .is_empty()
+        {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        for _ in 0..20 {
+            let started = Instant::now();
+            let result = state.with_session(&owner, &id, Session::read).unwrap();
+            let elapsed = started.elapsed();
+            assert!(result.data.len() <= MAX_BYTES && !result.exited);
+            // Slack is for scheduling only; without the budget, filling 64 KiB
+            // at the printf loop's rate takes hundreds of milliseconds.
+            assert!(
+                elapsed < unix::COALESCE_BUDGET + Duration::from_millis(100),
+                "{child}: {elapsed:?}"
+            );
+        }
+        let started = Instant::now();
+        state.close(&owner, &id).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(3));
+        state.close_owner(&owner).unwrap();
+    }
+}
+
+#[test]
 fn interactive_input_resize_and_owner_isolation() {
     let state = Terminals::default();
     let owner = state.create_owner().unwrap();

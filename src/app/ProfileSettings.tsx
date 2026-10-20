@@ -302,7 +302,7 @@ export function ProfileSettings({
                   />
                 </div>
                 <div className={styles.previewCopy}>
-                  <h3 className="text-heading">
+                  <h3 className="text-body-lg">
                     {profile.name.trim() || "Your profile"}
                   </h3>
                   {profile.about?.trim() ? (

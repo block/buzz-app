@@ -373,7 +373,7 @@ function ProfileDetails({
       className={styles.root}
     >
       <div className={styles.profileContents}>
-        <div className={hero.hero}>
+        <div className={`${hero.hero} ${hero.panelHero}`}>
           <ProfileBackdrop
             src={picture}
             kind={displayAgent ? "agent" : "human"}
@@ -392,7 +392,7 @@ function ProfileDetails({
             />
           </div>
           <div className={styles.identity}>
-            <h2 className="text-heading">{name}</h2>
+            <h2 className="text-body-lg">{name}</h2>
             {presence !== "unknown" && (
               <p className="text-body-sm text-primary">
                 {

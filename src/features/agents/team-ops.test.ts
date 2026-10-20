@@ -879,11 +879,7 @@ describe("team operations: saved before sending", () => {
         }
         return set(key, value);
       });
-    // Reached, and everything that could run meanwhile has run.
-    const settled = reached.promise.then(
-      () => new Promise((resolve) => setTimeout(resolve, 10)),
-    );
-    return { reached: settled, release: held.open };
+    return { reached: reached.promise, release: held.open };
   };
 
   it("sends a revision only once its held bytes are saved", async () => {

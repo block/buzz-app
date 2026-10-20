@@ -439,7 +439,7 @@
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-4) var(--space-5) var(--space-6);
-  border-left: 1px solid var(--border-standard);
+  border: 1px solid var(--border-standard);
   background: var(--surface-panel);
   animation: plugin-side-in var(--duration-fast, 160ms)
     var(--ease-out, ease-out);
@@ -638,7 +638,6 @@
     z-index: 1;
     inset: 0;
     width: auto;
-    border-left: 0;
   }
 }
 

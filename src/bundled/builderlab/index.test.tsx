@@ -35,15 +35,13 @@ import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 stubAvatarBrowserApis();
-/** `viewer` is the device's identity, which the account must be bound to
- * before its community list follows the sign-in. */
 function provideKnownCommunities(root: Context, viewer: string) {
   const knownCommunities: KnownCommunities = {
     snapshot: () => ({
       status: "ready",
       relayAvailable: true,
       profile: { name: "", picture: "" },
-      sync: { known: {}, outbox: [] },
+      sync: { known: [], outbox: [] },
       viewer,
       selected: null,
       memberships: [],
@@ -580,8 +578,8 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
       id: "native-attempt-id",
     });
     // Sign-in also checks the account's linked Buzz identity, and the
-    // account's community list follows through the same wiring: the binding
-    // is checked, then the complete list is read.
+    // account's community list follows through the same wiring: the complete
+    // list is read under the session credential.
     await waitFor(() =>
       expect(knownCommunities.status).toHaveBeenLastCalledWith({
         phase: "synced",
@@ -593,19 +591,14 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
         hostRequests()
           .map((input) => input.request.url.split("/").at(-1))
           .sort(),
-      ).toEqual([
-        "current",
-        "current",
-        "exchange",
-        "list",
-        "list-agents",
-        "me",
-      ]),
+      ).toEqual(["current", "exchange", "list", "list-agents", "me"]),
     );
     const requests = hostRequests();
     const [account, sync] = [
       requests.filter((input) => !input.request.url.includes("/v1/buzz/")),
-      requests.filter((input) => input.request.url.includes("/v1/buzz/")),
+      requests.filter((input) =>
+        input.request.url.includes("/v1/buzz/known-communities/"),
+      ),
     ];
     expect(account).toHaveLength(3);
     expect(
@@ -618,23 +611,13 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
     expect(account.at(-1).request.headers["X-BB-Session-Credential"]).toBe(
       "private-token",
     );
-    // Linking and sync each check the binding.
-    expect(sync.map((input) => input.request.url).sort()).toEqual([
+    expect(sync.map((input) => input.request.url)).toEqual([
       "https://builderlab.example/api/goose/v1/buzz/known-communities/list",
-      "https://builderlab.example/api/goose/v1/buzz/nostr-identities/current",
-      "https://builderlab.example/api/goose/v1/buzz/nostr-identities/current",
     ]);
-    expect(
-      sync.every(
-        (input) =>
-          input.request.headers["X-BB-Session-Credential"] === "private-token",
-      ),
-    ).toBe(true);
-    expect(
-      sync.find((input) =>
-        input.request.url.endsWith("/known-communities/list"),
-      )?.request.body,
-    ).toBe(JSON.stringify({ pubkey_hex: community.viewer }));
+    expect(sync[0].request.headers["X-BB-Session-Credential"]).toBe(
+      "private-token",
+    );
+    expect(sync[0].request.body).toBe("{}");
     // Both writes happen after Beekeeper has returned the identity. Neither
     // failure may turn a retry into a second backend creation.
     for (const failedKey of [

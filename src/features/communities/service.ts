@@ -581,7 +581,7 @@ export function createCommunities(
       return failures;
     },
     pendingSync: () => state.sync.outbox,
-    /** The sync owner's report for the rail: in the snapshot, never the record. */
+    /** The sync owner's report: in the snapshot, never the record. */
     setSyncStatus(syncStatus: SyncStatus | undefined) {
       update({ syncStatus }, false);
     },

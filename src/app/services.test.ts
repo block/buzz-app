@@ -482,6 +482,7 @@ it("seeds a packaged native community after onboarding and preserves the user's 
     profile: { name: "", picture: "", about: "" },
     memberships: [membership],
     selected: membership.id,
+    sync: { known: [], outbox: [] },
   });
   // A later build's default cannot change the saved selection.
   await services.dispose();

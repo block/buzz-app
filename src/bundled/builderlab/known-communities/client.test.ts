@@ -20,7 +20,11 @@ const response = (body: unknown, status = 200): HostResponse => ({
 async function fixture(reply: HostResponse | (() => Promise<HostResponse>)) {
   const session = createOAuthSession(async () => ({
     value: "secret",
-    account: { subject: "user", email: "a@example.com" },
+    account: {
+      subject: "user",
+      email: "a@example.com",
+      canUseRemoteAgents: false,
+    },
   }));
   await session.signIn();
   const host: Host = {

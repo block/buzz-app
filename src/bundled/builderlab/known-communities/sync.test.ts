@@ -132,7 +132,11 @@ async function fixture({
   const account = { subject: "user" };
   const session = createOAuthSession(async () => ({
     value: "secret",
-    account: { subject: account.subject, email: "a@example.com" },
+    account: {
+      subject: account.subject,
+      email: "a@example.com",
+      canUseRemoteAgents: false,
+    },
   }));
   const dispose = startKnownCommunitiesSync({
     client,
@@ -256,7 +260,7 @@ it.each([
     },
   },
   {
-    // Routes not yet deployed: quiet, with nothing for the rail to show.
+    // Routes not yet deployed: quiet, with no reason to report.
     name: "the service has no known-communities routes",
     arrange: (h: Awaited<ReturnType<typeof fixture>>) =>
       h.client.list.mockResolvedValue({ kind: "rejected", status: 404 }),
@@ -314,7 +318,11 @@ it("halts on a 200 list the real client cannot read, forgetting no membership", 
   });
   const session = createOAuthSession(async () => ({
     value: "secret",
-    account: { subject: "user", email: "a@example.com" },
+    account: {
+      subject: "user",
+      email: "a@example.com",
+      canUseRemoteAgents: false,
+    },
   }));
   // A proxy's block page, a truncated or an empty body: a 200 that is no list.
   const host: Host = {

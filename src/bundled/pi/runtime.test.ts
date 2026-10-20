@@ -650,7 +650,7 @@ it("stops a mention's run when the owner stops it, and posts nothing", async () 
 it("lists the agent's sessions from Pi's storage, and whether each works", async () => {
   const answered = deferred<unknown>();
   const key = `${channel}/${root.id}`;
-  const { runtime, deliver, settled } = setup({
+  const { runtime, deliver, settled, host, agent } = setup({
     places: () => ({
       places: [
         { key, conversation: CONVERSATION, seen: 105 },
@@ -674,6 +674,10 @@ it("lists the agent's sessions from Pi's storage, and whether each works", async
   });
   const listener = vi.fn();
   runtime.subscribe(listener);
+  // An agent that does not run here keeps its storage closed.
+  expect(runtime.sessions(self)).toEqual([]);
+  expect(host.requests("places")).toEqual([]);
+  runtime.sync([{ ...agent, config: DEFAULT_CONFIG } as unknown as Agent]);
   // Read from storage on first ask; subscribers hear when it is in.
   expect(runtime.sessions(self)).toEqual([]);
   await vi.waitFor(() => expect(listener).toHaveBeenCalled());
@@ -692,6 +696,22 @@ it("lists the agent's sessions from Pi's storage, and whether each works", async
   await vi.waitFor(() =>
     expect(runtime.sessions(self)[0]?.status).toBe("Idle"),
   );
+});
+
+it("waits for a turn again once the agent's failed storage is opened again", async () => {
+  let waits = 0;
+  const { host, deliver, settled, published } = setup({
+    wait: () =>
+      ++waits === 1
+        ? { status: "reopen" }
+        : { status: "done", answer: 5, text: "Resumed." },
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  expect(host.requests("open")).toHaveLength(2);
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.content).toBe("Resumed.");
 });
 
 it("waits for a turn again in a new host when the host stops", async () => {

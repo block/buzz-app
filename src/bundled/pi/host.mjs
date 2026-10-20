@@ -26,6 +26,7 @@ import {
   defineExtension,
   defineTool,
   Harness,
+  SessionFailed,
   section,
   watchEvents,
 } from "@earendil-works/pi-durable";
@@ -437,12 +438,18 @@ export function serve({
   }
 
   async function settle(opened, id) {
-    const submission = await opened.harness.submission(id, context);
-    if (!submission) throw new Error("Pi has no record of this request");
     let record;
     try {
+      const submission = await opened.harness.submission(id, context);
+      if (!submission) throw new Error("Pi has no record of this request");
       record = await submission.wait(context);
     } catch (error) {
+      // Storage that failed closed the Harness, with the run in it: the
+      // plugin opens the agent again, and waits for the run there.
+      if (error instanceof SessionFailed) {
+        await opened.harness.closed;
+        return { status: "reopen" };
+      }
       if (opened.closing) return { status: "closed" };
       throw error;
     }

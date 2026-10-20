@@ -1,3 +1,15 @@
+# Pi
+
+Create agents that run Pi on your computer, with any provider Pi supports, and answer you in Buzz. Each conversation continues its own Pi conversation.
+
+## Getting started
+
+1. Turn on **Pi** in **Settings** → **Plugins**. Pi needs Node.js 22.19 or later on this computer.
+2. Choose **New agent** → **Create a new agent**, pick **Pi** as the **Harness**, and choose its provider and model.
+3. Mention your agent in a conversation to give it work.
+
+---
+
 # Pi for Agents
 
 A desktop plugin that ships with Buzz on macOS and Linux, off until turned on

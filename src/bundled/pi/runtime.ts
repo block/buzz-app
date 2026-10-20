@@ -147,6 +147,8 @@ export class PiRuntime {
   private readonly listeners = new Set<() => void>();
   /** Each agent's working conversations, as last read, for a stable view. */
   private readonly views = new Map<string, readonly number[]>();
+  /** The agents of this type that run here now. */
+  private running = new Set<string>();
   /** Each agent's conversations as Pi's storage and this app run's
    * deliveries know them, by key; read from storage once, when first asked. */
   private readonly known = new Map<
@@ -178,12 +180,15 @@ export class PiRuntime {
    * storage closes; its unfinished runs continue when it is back. */
   sync(agents: readonly Agent[]) {
     const current = new Set(agents.map((agent) => agent.pubkey));
-    for (const [pubkey, entry] of this.agents)
+    // Its storage may be open for a turn or only for listing its sessions.
+    for (const pubkey of new Set([...this.running, ...this.agents.keys()]))
       if (!current.has(pubkey)) {
-        entry.closed = true;
+        const entry = this.agents.get(pubkey);
+        if (entry) entry.closed = true;
         this.agents.delete(pubkey);
         void this.pi.request("close", { agent: pubkey }).catch(() => undefined);
       }
+    this.running = current;
     for (const agent of agents) {
       const entry = this.agents.get(agent.pubkey);
       if (!entry) continue;
@@ -243,6 +248,8 @@ export class PiRuntime {
    * storage, and tells subscribers when they are in. */
   sessions(pubkey: string): AgentSession[] {
     const known = this.known.get(pubkey);
+    // Reading opens its storage, which only an agent running here may hold.
+    if (!known && !this.running.has(pubkey)) return [];
     if (!known) {
       this.known.set(pubkey, new Map());
       // One that failed is read again when next asked.
@@ -403,12 +410,15 @@ export class PiRuntime {
         ...(await this.turnOf(entry, agent.pubkey, model, effort)),
       });
       sends = entry.sends.get(submitted.conversation) ?? 0;
-      this.remember(
-        agent.pubkey,
-        key,
-        submitted.conversation,
-        event.created_at,
-      );
+      if (
+        this.remember(
+          agent.pubkey,
+          key,
+          submitted.conversation,
+          event.created_at,
+        )
+      )
+        this.notify();
     })();
     const settled = handed
       .then(async (): Promise<TurnResult> => {
@@ -636,20 +646,28 @@ export class PiRuntime {
     });
   }
 
-  /** How a request settles. A host that stopped is started again once: its
-   * run continues there, from Pi's storage. */
-  private async settle(entry: Entry, pubkey: string, submission: number) {
-    for (let attempt = 0; ; attempt++)
+  /** How a request settles. A host that stopped, or an agent whose storage
+   * failed, is opened again once: its run continues there, from Pi's
+   * storage. */
+  private async settle(
+    entry: Entry,
+    pubkey: string,
+    submission: number,
+  ): Promise<Waited> {
+    for (let attempt = 0; ; attempt++) {
+      let waited: Waited | { status: "reopen" };
       try {
         if (attempt) await this.open(pubkey);
-        return await this.pi.request<Waited>("wait", {
-          agent: pubkey,
-          submission,
-        });
+        waited = await this.pi.request("wait", { agent: pubkey, submission });
       } catch (error) {
         if (attempt || !(error instanceof PiStopped) || entry.closed)
           throw error;
+        continue;
       }
+      if (waited.status !== "reopen") return waited;
+      if (attempt || entry.closed)
+        throw new Error("Pi's storage for this agent keeps failing");
+    }
   }
 
   /** What a turn runs with: the agent's model and thinking level or the

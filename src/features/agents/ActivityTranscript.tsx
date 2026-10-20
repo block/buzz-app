@@ -25,7 +25,11 @@ import {
   WarningCircleIcon,
   WrenchIcon,
 } from "../../shared/design-system/icons/index";
-import { formatFullTimestamp, formatTime } from "../../shared/datetime";
+import {
+  formatFullTimestamp,
+  formatItemTimestamp,
+  formatTime,
+} from "../../shared/datetime";
 import styles from "./ActivityTranscript.module.css";
 
 type TurnState = "working" | "unknown" | "ended";
@@ -49,16 +53,16 @@ const STATUS: Record<string, string> = {
 };
 const line = (text: string) => text.split("\n").find(Boolean)?.trim() ?? "";
 const time = (at: number) => formatTime(at / 1000);
+/** Zero, non-finite and out-of-range times are unknown: show nothing rather
+ * than 1970 or a formatter throw. */
+const known = (at: number) => !!at && !Number.isNaN(new Date(at).getTime());
 /** An entry's time under it; the turn header already dates the prompt. */
 function Stamp({ item }: { item: TranscriptItem }) {
-  if (item.type === "prompt" || !item.at) return null;
-  const date = new Date(item.at);
-  // Unknown or invalid times show nothing rather than 1970 or a throw.
-  if (Number.isNaN(date.getTime())) return null;
+  if (item.type === "prompt" || !known(item.at)) return null;
   return (
     <time
       className={`text-body-sm ${styles.at}`}
-      dateTime={date.toISOString()}
+      dateTime={new Date(item.at).toISOString()}
       title={formatFullTimestamp(item.at / 1000)}
     >
       {time(item.at)}
@@ -143,14 +147,19 @@ function Turn({
   return (
     <article
       className={styles.turn}
-      aria-label={`Turn ${time(turn.startedAt)}`}
+      aria-label={
+        known(turn.startedAt) ? `Turn ${time(turn.startedAt)}` : "Turn"
+      }
     >
       <p className={`text-body-sm ${styles.session}`}>
         {[
           "Turn",
-          new Date(turn.startedAt).toLocaleString(),
+          known(turn.startedAt) &&
+            formatItemTimestamp(turn.startedAt / 1000, { withTime: true }),
           ...turn.config,
-        ].join(" · ")}
+        ]
+          .filter(Boolean)
+          .join(" · ")}
       </p>
       <header className={`text-body-sm ${styles.turnHeader}`}>
         <span data-state={turn.error ? "error" : state}>{status}</span>

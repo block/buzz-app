@@ -6,6 +6,7 @@ import { afterEach, expect, it } from "vitest";
 import { ActivityTranscript } from "./ActivityTranscript";
 import { codexTurns } from "../../bundled/codex/transcript";
 import { restoreRecordedTools } from "../../bundled/codex/recorded-tools";
+import { formatItemTimestamp } from "../../shared/datetime";
 
 afterEach(cleanup);
 
@@ -298,4 +299,27 @@ it("shows no time for an entry with a zero, non-finite or invalid time", () => {
     />,
   );
   expect(container.querySelectorAll("time")).toHaveLength(0);
+});
+
+it("dates the turn heading in the shared format, and omits an unknown start", () => {
+  const at = Date.UTC(2026, 9, 20, 20, 1, 28);
+  const turn = (startedAt: number) =>
+    ({
+      turnId: `t${startedAt}`,
+      startedAt,
+      endedAt: startedAt,
+      threadRootId: null,
+      config: ["gpt-6"],
+      items: [],
+    }) as never;
+  render(
+    <ActivityTranscript
+      transcript={{ unknownThread: 0, turns: [turn(at), turn(0), turn(NaN)] }}
+      agentName="Sol"
+      state={() => "ended"}
+    />,
+  );
+  const expected = formatItemTimestamp(at / 1000, { withTime: true });
+  expect(screen.getByText(`Turn · ${expected} · gpt-6`)).toBeInTheDocument();
+  expect(screen.getAllByText("Turn · gpt-6")).toHaveLength(2);
 });

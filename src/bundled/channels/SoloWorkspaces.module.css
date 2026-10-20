@@ -36,6 +36,8 @@
 
 .chatRow > span:first-child {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .listMessage {
@@ -293,19 +295,18 @@
     > [data-variant="row"] {
     padding-inline-end: calc(
       var(--session-action-size) +
-      var(--session-trailing-end)
+      var(--session-trailing-offset)
     );
   }
-  /* The pill ends on the row inset, the overflow glyph's trailing edge.
+  /* The row button already sits inside the gutter fill, so its padding
+     measures from the painted edge without adding the fill again. The pill
+     ends on the row inset, the overflow glyph's trailing edge.
      Hover ties this rule's specificity, so it must stay after it. */
   .sidebarContents
     .organizedRow
     > div
     > [data-variant="row"]:has([data-solo-working-indicator]:not(:empty)) {
-    padding-inline-end: calc(
-      var(--session-row-inset) +
-      var(--channel-row-fill-end, 0%)
-    );
+    padding-inline-end: var(--session-row-inset);
   }
   .sidebarContents
     .organizedRow:is(
@@ -318,7 +319,7 @@
     > [data-variant="row"] {
     padding-inline-end: calc(
       var(--session-action-size) +
-      var(--session-trailing-end)
+      var(--session-trailing-offset)
     );
   }
   .organizedRow:is(

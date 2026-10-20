@@ -13,6 +13,10 @@ export type SyncState = {
   /** The destinations the service last reported holding. */
   known: string[];
   outbox: PendingOp[];
+  /** The Builderlab account (its subject) whose list `known` describes.
+   * Absent until a first merge. The record outlives a Builderlab sign-out, so
+   * a sign-in as another account must not read this set as that account's. */
+  account?: string;
 };
 /** Membership changes a server list implies, as destination addresses. */
 export type SyncChanges = { add?: string[]; remove?: string[] };
@@ -42,8 +46,9 @@ const isAddress = (value: unknown): value is string =>
  * dropped on its own. */
 export function parseSync(raw: unknown): SyncState {
   if (!raw || typeof raw !== "object") return emptySync();
-  const { known, outbox } = raw as Record<string, unknown>;
+  const { known, outbox, account } = raw as Record<string, unknown>;
   return {
+    ...(typeof account === "string" && account ? { account } : {}),
     known: Array.isArray(known) ? [...new Set(known.filter(isAddress))] : [],
     outbox: Array.isArray(outbox)
       ? outbox.flatMap((op): PendingOp[] =>
@@ -77,7 +82,7 @@ export function enqueue(
       : undefined;
   if (latest === removed) return state;
   return {
-    known: state.known,
+    ...state,
     outbox: [...state.outbox.filter((op) => op.url !== url), { url, removed }],
   };
 }
@@ -87,6 +92,7 @@ export function enqueue(
 export function acknowledge(state: SyncState, op: PendingOp): SyncState {
   const held = state.known.includes(op.url);
   return {
+    ...state,
     known: op.removed
       ? held
         ? state.known.filter((url) => url !== op.url)
@@ -100,33 +106,38 @@ export function acknowledge(state: SyncState, op: PendingOp): SyncState {
   };
 }
 
-/** Reconciles the complete server list with the device's memberships. The
- * list replaces what is known. A destination the service has that the device
- * lacks is added unless its removal is queued; a saved membership the service
- * held before but no longer lists was removed elsewhere and is removed unless
- * its re-add is queued; a saved membership the service has never seen is
- * queued for upload, which is how a device list from before sync existed
- * reaches the account. */
+/** Reconciles `account`'s complete server list with the device's
+ * memberships. The list replaces what is known. A destination the service has
+ * that the device lacks is added unless its removal is queued; a saved
+ * membership the service held before but no longer lists was removed
+ * elsewhere and is removed unless its re-add is queued; a saved membership
+ * the service has never seen is queued for upload, which is how a device list
+ * from before sync existed reaches the account. What was known describes only
+ * the account it was merged for: another account's list, or one merged before
+ * the account was recorded, starts from nothing known, so it forgets no
+ * membership and uploads every one it lacks. */
 export function mergeList(
   state: SyncState,
   memberships: ReadonlyArray<{ id: string }>,
   list: string[],
+  account: string,
 ): { state: SyncState; add: string[]; remove: string[] } {
+  const before = state.account === account ? state.known : [];
   const known = [...new Set(list)];
   const local = new Set(memberships.map((m) => relayAddress(m.id)));
   const pending = new Map(state.outbox.map((op) => [op.url, op]));
   const add = known.filter(
     (url) => !local.has(url) && !pending.get(url)?.removed,
   );
-  const remove = state.known.filter(
+  const remove = before.filter(
     (url) =>
       local.has(url) &&
       !known.includes(url) &&
       pending.get(url)?.removed !== false,
   );
-  let next: SyncState = { known, outbox: state.outbox };
+  let next: SyncState = { known, outbox: state.outbox, account };
   for (const url of local)
-    if (!known.includes(url) && !state.known.includes(url) && !pending.has(url))
+    if (!known.includes(url) && !before.includes(url) && !pending.has(url))
       next = enqueue(next, url, false);
   return { state: next, add, remove };
 }

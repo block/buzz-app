@@ -129,9 +129,11 @@ async function fixture({
   const s = store(snapshot);
   const client = fakeClient();
   arrange(client);
+  // Which Builderlab account the next sign-in is for.
+  const account = { subject: "user" };
   const session = createOAuthSession(async () => ({
     value: "secret",
-    account: { subject: "user", email: "a@example.com" },
+    account: { subject: account.subject, email: "a@example.com" },
   }));
   const dispose = startKnownCommunitiesSync({
     client,
@@ -158,7 +160,7 @@ async function fixture({
               removed: true,
             };
       });
-  return { ...s, client, session, dispose, sent };
+  return { ...s, account, client, session, dispose, sent };
 }
 const synced = (pending = 0) => ({ phase: "synced", pending });
 
@@ -191,7 +193,7 @@ it("waits for sign-in and a ready identity, then lists, merges and drains", asyn
   // is handed to the service to add, and the queued add keeps its place.
   expect(h.apply).toHaveBeenNthCalledWith(
     1,
-    { known: [secondary], outbox: [op] },
+    { known: [secondary], outbox: [op], account: "user" },
     { add: [secondary], remove: [] },
   );
   expect(h.client.add).toHaveBeenCalledTimes(1);
@@ -200,6 +202,7 @@ it("waits for sign-in and a ready identity, then lists, merges and drains", asyn
   expect(h.apply).toHaveBeenLastCalledWith({
     known: [secondary, primary],
     outbox: [],
+    account: "user",
   });
   expect(h.status.mock.calls.map(([s]) => s?.phase)).toContain("syncing");
   h.dispose();
@@ -377,7 +380,7 @@ it("keeps syncing when the list left out addresses this device cannot save, and 
   });
   await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
   expect(h.apply).toHaveBeenCalledWith(
-    { known: [secondary], outbox: [] },
+    { known: [secondary], outbox: [], account: "user" },
     { add: [secondary], remove: [] },
   );
   expect(warn).toHaveBeenCalledTimes(1);
@@ -671,7 +674,7 @@ it("keeps an intent queued while the list is in flight: the merge reads the reco
   await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
   expect(h.apply).toHaveBeenNthCalledWith(
     1,
-    { known: [], outbox: [op] },
+    { known: [], outbox: [op], account: "user" },
     { add: [], remove: [] },
   );
   expect(h.client.add).toHaveBeenCalledTimes(1);
@@ -689,7 +692,7 @@ it("follows the account on the next sign-in: a removal elsewhere is applied, a m
         { id: "https://primary.example", name: "Primary" },
         { id: "https://secondary.example", name: "Secondary" },
       ],
-      sync: { known: [secondary], outbox: [] },
+      sync: { known: [secondary], outbox: [], account: "user" },
     },
   });
   h.client.list.mockImplementation(async () => service.list());
@@ -704,11 +707,118 @@ it("follows the account on the next sign-in: a removal elsewhere is applied, a m
     {
       known: ["wss://third.example"],
       outbox: [{ url: primary, removed: false }],
+      account: "user",
     },
     { add: ["wss://third.example"], remove: [secondary] },
   );
   expect(h.sent()).toEqual([{ url: primary, removed: false }]);
   expect(h.known()).toEqual(["wss://third.example", primary]);
+  h.dispose();
+});
+
+const both = [
+  { id: "https://primary.example", name: "Primary" },
+  { id: "https://secondary.example", name: "Secondary" },
+];
+
+it("keeps what it knows across a sign-out and sign-in as the same account, so a removal elsewhere meanwhile is applied", async () => {
+  const service = fakeService(primary, secondary);
+  const h = await fixture({
+    snapshot: { memberships: both },
+    arrange: (client) =>
+      client.list.mockImplementation(async () => service.list()),
+  });
+  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  expect(h.known()).toEqual([primary, secondary]);
+  h.session.signOut();
+  service.rows.delete(secondary);
+  await h.session.signIn();
+  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  expect(h.apply).toHaveBeenLastCalledWith(
+    { known: [primary], outbox: [], account: "user" },
+    { add: [], remove: [secondary] },
+  );
+  expect(h.sent()).toEqual([]);
+  h.dispose();
+});
+
+it("reads nothing into another account's sign-in on this device: the first account's communities are uploaded to it, never forgotten", async () => {
+  const alice = fakeService(primary, secondary);
+  const bob = fakeService();
+  let service = alice;
+  const h = await fixture({
+    snapshot: { memberships: both },
+    arrange: (client) => {
+      client.list.mockImplementation(async () => service.list());
+      client.add.mockImplementation(async (url) => service.add(url));
+    },
+  });
+  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  expect(h.known()).toEqual([primary, secondary]);
+  h.session.signOut();
+  h.account.subject = "bob";
+  service = bob;
+  await h.session.signIn();
+  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+  // The device record outlived Alice's sign-out, but her list says nothing
+  // about Bob's: neither membership was removed elsewhere, and both are ones
+  // Bob's account has never seen.
+  expect(h.apply).toHaveBeenNthCalledWith(
+    2,
+    {
+      known: [],
+      outbox: [
+        { url: primary, removed: false },
+        { url: secondary, removed: false },
+      ],
+      account: "bob",
+    },
+    { add: [], remove: [] },
+  );
+  expect(h.sent()).toEqual([
+    { url: primary, removed: false },
+    { url: secondary, removed: false },
+  ]);
+  expect([...bob.rows]).toEqual([primary, secondary]);
+  expect(h.knownCommunities.snapshot().sync).toEqual({
+    known: [primary, secondary],
+    outbox: [],
+    account: "bob",
+  });
+  expect(
+    h.apply.mock.calls.flatMap(([, changes]) => changes?.remove ?? []),
+  ).toEqual([]);
+  h.dispose();
+});
+
+it("runs no pass and reports nothing on a trigger while only parked intents remain", async () => {
+  const h = await fixture({
+    snapshot: { sync: queued(primary) },
+    arrange: (client) =>
+      client.add.mockResolvedValueOnce({ kind: "limit_reached" }),
+  });
+  const parked = {
+    phase: "error",
+    pending: 1,
+    error: "Builderlab can’t save more communities for this account.",
+  };
+  await until(() => expect(h.status).toHaveBeenLastCalledWith(parked));
+  const reports = h.status.mock.calls.length;
+  // A parked intent moves again only when replaced or on the next sign-in,
+  // so these triggers have nothing to run and nothing new to say.
+  window.dispatchEvent(new Event("online"));
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  document.dispatchEvent(new Event("visibilitychange"));
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(h.status).toHaveBeenCalledTimes(reports);
+  expect(h.client.list).toHaveBeenCalledTimes(1);
+  expect(h.client.add).toHaveBeenCalledTimes(1);
+  // A fresh intent still runs, passing the parked one over.
+  h.enqueue(secondary);
+  await until(() => expect(h.client.add).toHaveBeenCalledTimes(2));
+  expect(h.client.add.mock.calls[1]?.[0]).toBe(secondary);
+  await until(() => expect(h.status).toHaveBeenLastCalledWith(parked));
+  expect(h.outbox()).toEqual([{ url: primary, removed: false }]);
   h.dispose();
 });
 

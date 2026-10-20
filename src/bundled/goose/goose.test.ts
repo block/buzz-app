@@ -10,6 +10,7 @@ import type { Models } from "../../features/agents/service";
 import { fakeSpawn, flush } from "./goose-testing";
 import { SUPERSEDED } from "../../features/agents/settings";
 import { settingsClock } from "../../features/agents/settings-testing";
+import { createLocalAgentActivity } from "../../features/agents/local-activity";
 
 const ok: ToolServer = async (_conversation, message) => ({
   jsonrpc: "2.0",
@@ -629,8 +630,55 @@ describe("GooseProcess", () => {
     await flush();
     process.exit(1, "A PROCESS FAILURE\n");
     await expect(a).resolves.toEqual({ ok: false, error: "A PROCESS FAILURE" });
-    // B superseded A's activity, then left: no step reaches B.
-    expect(steps).toEqual([]);
+    // B superseded A's activity, then left: its steps are A's again.
+    expect(steps).toEqual(["A:Thinking"]);
+  });
+
+  it("gives a cancelled queued message's activity back to the turn it displaced", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const local = createLocalAgentActivity();
+    const receipt = (messageId: string) => {
+      const work = local.begin({
+        scope: "conversation",
+        agent: "goose",
+        channelId: "channel",
+        messageId,
+        threadRootId: messageId,
+      });
+      // As the runner maps a request's activity onto a turn.
+      const activity = {
+        step: work.step,
+        acknowledged: work.started,
+        superseded: work.supersede,
+      };
+      return { work, activity };
+    };
+    const shown = (messageId: string) =>
+      local.reader.work().find((row) => row.messageId === messageId);
+    const A = receipt("A");
+    const a = session.send("A", A.activity);
+    await flush();
+    const controller = new AbortController();
+    const B = receipt("B");
+    const b = session.send("B", B.activity, "o3", undefined, controller.signal);
+    await flush();
+    expect(shown("A")?.state).toBe("superseded");
+    controller.abort();
+    B.work.finish(await b);
+    process.update(session.id, { sessionUpdate: "agent_thought_chunk" });
+    await flush();
+    expect(shown("A")).toMatchObject({
+      state: "working",
+      step: { tool: "Thinking" },
+    });
+    process.exit(1, "A PROCESS FAILURE\n");
+    A.work.finish(await a);
+    expect(shown("A")).toMatchObject({
+      state: "error",
+      error: "A PROCESS FAILURE",
+    });
   });
 
   it("gives a message cancelled during its own model lookup no later failure or steps", async () => {
@@ -676,7 +724,8 @@ describe("GooseProcess", () => {
     process.exit(1, "A PROCESS FAILURE\n");
     release();
     await expect(a).resolves.toEqual({ ok: false, error: "A PROCESS FAILURE" });
-    expect(steps).toEqual([]);
+    // A still waits for its answer, so B gave its activity back to A.
+    expect(steps).toEqual(["A:Thinking"]);
     expect(process.turns.map((turn) => turn.text)).toEqual(["A"]);
   });
 

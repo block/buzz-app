@@ -136,7 +136,11 @@ export function createLocalAgentActivity() {
         step?: WorkStep,
       ) => {
         const current = entries.get(id);
-        if (!current || settled(current.state)) return;
+        // Only `started` resumes work a newer message displaced: the harness
+        // handed its activity back when that message left.
+        const resumed =
+          current?.state === "superseded" && state === "working" && !step;
+        if (!current || (settled(current.state) && !resumed)) return;
         if (settled(state)) stops.delete(id);
         const next = step ?? (state === "working" ? current.step : undefined);
         if (

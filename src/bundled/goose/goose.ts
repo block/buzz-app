@@ -504,6 +504,15 @@ export class GooseSession {
    * acknowledged, else the latest sent. */
   private owner: Waiter | undefined;
   private readonly active = new Map<string, ActivityReceipt>();
+  /** What each acknowledged receipt displaced: the scope's earlier receipt
+   * and the result owner, given back if it leaves before it prompts. */
+  private readonly displaced = new Map<
+    ActivityReceipt,
+    Readonly<{
+      receipt: ActivityReceipt | undefined;
+      owner: Waiter | undefined;
+    }>
+  >();
   private lastStep = "";
   private lastError: string | undefined;
   private lastFailure: UnsupportedSetting | undefined;
@@ -903,11 +912,14 @@ export class GooseSession {
     for (const resolve of this.runWaiters.splice(0)) resolve(runId);
   }
   private acknowledge(activity: ActivityReceipt, waiter: Waiter) {
+    const owner = this.owner;
     if (this.waiters.includes(waiter)) this.owner = waiter;
     // Watches and timers have no message activity: they must not hide a mention.
     if (!activity.step) return;
     const scope = activity.activityScope ?? "conversation";
-    this.active.get(scope)?.superseded?.();
+    const receipt = this.active.get(scope);
+    receipt?.superseded?.();
+    this.displaced.set(activity, { receipt, owner });
     this.active.set(scope, activity);
     this.lastStep = "";
     activity.acknowledged?.();
@@ -919,9 +931,24 @@ export class GooseSession {
     if (!waiter || index < 0) return;
     this.waiters.splice(index, 1);
     this.pending--;
-    if (this.owner === waiter) this.owner = undefined;
+    const displaced = activity && this.displaced.get(activity);
+    if (activity) this.displaced.delete(activity);
+    // Hand back only what this turn took: a newer owner or receipt stays.
+    if (this.owner === waiter)
+      this.owner =
+        displaced?.owner && this.waiters.includes(displaced.owner)
+          ? displaced.owner
+          : undefined;
+    for (const [later, earlier] of this.displaced)
+      if (earlier.receipt === activity)
+        this.displaced.set(later, { ...earlier, receipt: displaced?.receipt });
     for (const [scope, receipt] of this.active)
-      if (receipt === activity) this.active.delete(scope);
+      if (receipt === activity) {
+        if (displaced?.receipt) {
+          this.active.set(scope, displaced.receipt);
+          displaced.receipt.acknowledged?.();
+        } else this.active.delete(scope);
+      }
     waiter(settled);
   }
   private done() {
@@ -947,6 +974,7 @@ export class GooseSession {
     this.written = "";
     for (const [scope, receipt] of this.active)
       if (stopped.receipts.has(receipt)) this.active.delete(scope);
+    for (const receipt of stopped.receipts) this.displaced.delete(receipt);
     const owner =
       this.owner && stopped.waiters.includes(this.owner)
         ? this.owner
@@ -964,6 +992,7 @@ export class GooseSession {
   private settle(settled: Settled) {
     this.pending = 0;
     this.active.clear();
+    this.displaced.clear();
     this.lastError = undefined;
     this.lastFailure = undefined;
     this.acted = false;

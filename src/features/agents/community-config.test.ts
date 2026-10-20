@@ -18,7 +18,7 @@ import {
   communityConfig,
 } from "./community-config";
 import { PublishRejected } from "../relay/outbox";
-import { LifecycleJournal } from "./config-lifecycle";
+import { LIFECYCLE_STORAGE_KEY, LifecycleJournal } from "./config-lifecycle";
 import { MigrationJournal } from "./config-writes";
 import { TeamJournal } from "./team-config";
 import { memoryStorage } from "./test-fakes";
@@ -224,6 +224,7 @@ function setup(
     }),
   );
   const local = { instructions: "Be brief.", stripped: [] as string[] };
+  const notified = vi.fn();
   const configs = agentConfigs({
     channels: {
       ensure,
@@ -248,7 +249,7 @@ function setup(
     owner: owner.pubkey,
     community: "c",
     strip: (_, side) => void local.stripped.push(side),
-    changed() {},
+    changed: () => notified(),
   });
   const start = () => {
     const instructions = configs.binding(agent.pubkey)?.instructions;
@@ -272,11 +273,34 @@ function setup(
     me,
     meta,
     archive,
+    unarchive,
     storage,
     writer,
     addMember,
     teams,
+    notified,
   };
+}
+
+/** Storage whose lifecycle saves wait for `release`, then land or fail. */
+function heldLifecycle() {
+  const storage = memoryStorage();
+  const set = storage.set.bind(storage);
+  const held: { release(ok: boolean): void }[] = [];
+  Object.assign(storage, {
+    set: (key: string, value: string | null) =>
+      key === LIFECYCLE_STORAGE_KEY
+        ? new Promise<void>((resolve, reject) =>
+            held.push({
+              release: (ok) =>
+                ok
+                  ? void set(key, value).then(resolve)
+                  : reject(new Error("disk full")),
+            }),
+          )
+        : set(key, value),
+  });
+  return { storage, held };
 }
 
 /** Discovery's metadata for the agent's config channel. */
@@ -596,6 +620,60 @@ describe("agent config history wiring", () => {
 });
 
 describe("agent archive and recover wiring", () => {
+  it("holds a discovered archive while its save is held, and never settles an attach whose save failed", async () => {
+    const { storage, held } = heldLifecycle();
+    const f = setup(true, storage);
+    const attaching = f.configs.attach([f.me()]);
+    await vi.waitFor(() => expect(held).toHaveLength(1));
+    expect(f.configs.lifecycle(agent.pubkey)).toBe("archived");
+    expect(f.configs.settled(agent.pubkey)).toBe(false);
+    held[0]?.release(false);
+    await attaching;
+    expect(f.configs.lifecycle(agent.pubkey)).toBe("archived");
+    expect(f.configs.settled(agent.pubkey)).toBe(false);
+    expect(f.configs.binding(agent.pubkey)).toBeUndefined();
+    expect(f.bind).not.toHaveBeenCalled();
+    // Retried on the next connection, and settled once saved.
+    const retry = f.configs.reconnected();
+    await vi.waitFor(() => expect(held).toHaveLength(2));
+    held[1]?.release(true);
+    await retry;
+    expect(f.configs.lifecycle(agent.pubkey)).toBe("archived");
+    expect(f.configs.settled(agent.pubkey)).toBe(true);
+    expect(new LifecycleJournal(storage).get("c", agent.pubkey)).toBe(
+      "archived",
+    );
+  });
+
+  it("notifies once an archive or recovery intent is saved, before the relay answers", async () => {
+    const f = setup();
+    await f.configs.attach([f.me()]);
+    let answer = () => {};
+    f.archive.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (answer = resolve)),
+    );
+    const seen: string[] = [];
+    f.notified.mockImplementation(() =>
+      seen.push(f.configs.lifecycle(agent.pubkey)),
+    );
+    const archiving = f.configs.archive(agent.pubkey);
+    await vi.waitFor(() => expect(f.archive).toHaveBeenCalled());
+    expect(seen.at(-1)).toBe("archiving");
+    f.meta.archived = true;
+    answer();
+    expect(await archiving).toBe("archived");
+    let unarchived = () => {};
+    f.unarchive.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (unarchived = resolve)),
+    );
+    const recovering = f.configs.recover(agent.pubkey);
+    await vi.waitFor(() => expect(f.unarchive).toHaveBeenCalled());
+    expect(seen.at(-1)).toBe("recovering");
+    f.meta.archived = false;
+    unarchived();
+    expect(await recovering).toBe("active");
+  });
+
   it("archives the agent's channel, drops its binding and lists it as deleted", async () => {
     const f = setup();
     await f.configs.attach([f.me()]);

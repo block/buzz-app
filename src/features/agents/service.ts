@@ -3204,7 +3204,11 @@ export class AgentsService extends Service implements Agents {
   }
   /** The agent's archive lifecycle in its community's config channels. */
   private lifecycleOf({ pubkey, relay }: Pick<Agent, "pubkey" | "relay">) {
-    return this.configJournals.lifecycle.get(originOf(relay) ?? "", pubkey);
+    const origin = originOf(relay) ?? "";
+    return (
+      this.communityConfigs.get(origin)?.lifecycle(pubkey) ??
+      this.configJournals.lifecycle.get(origin, pubkey)
+    );
   }
   /** The agent's synced binding: its live community's, or else the one this
    * device persisted, so losing the community never makes it local again. */

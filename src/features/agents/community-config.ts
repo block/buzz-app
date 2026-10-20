@@ -276,6 +276,9 @@ export function agentConfigs(
   /** Agents whose attach ran. Only a connection, a discovery or the archive
    * lifecycle runs one again, so a failing relay is retried boundedly. */
   const attached = new Set<string>();
+  /** Agents whose discovered archive state failed to save, with the state it
+   * holds them in until a later attach saves it: never a settled attach. */
+  const unsaved = new Map<string, Lifecycle>();
   const configs = new Map<string, ConfigAgent>();
   /** Each attached agent's selected config channel. */
   const channelOf = new Map<string, string>();
@@ -365,10 +368,26 @@ export function agentConfigs(
     channelOf.set(agent.pubkey, channel.id);
     // The channel's archive state holds whoever set it (§8.1); its config
     // stays unbound while archived.
-    if (
-      (await observe(life, agent.pubkey, channel.id, channel.archived)) !==
-      "active"
-    ) {
+    if (channel.archived) unsaved.set(agent.pubkey, "archived");
+    const lifecycle = await observe(
+      life,
+      agent.pubkey,
+      channel.id,
+      channel.archived,
+    ).catch((error: unknown) => {
+      // Known archive authority holds while unsaved; retried like any attach.
+      unsaved.set(
+        agent.pubkey,
+        channel.archived
+          ? "archived"
+          : input.lifecycle.get(community, agent.pubkey),
+      );
+      bindings.delete(agent.pubkey);
+      input.changed();
+      throw error;
+    });
+    unsaved.delete(agent.pubkey);
+    if (lifecycle !== "active") {
       bindings.delete(agent.pubkey);
       input.changed();
       return;
@@ -437,10 +456,11 @@ export function agentConfigs(
       );
     },
     /** Whether the agent's attach has run, so its binding is decided. */
-    settled: (pubkey: string) => attached.has(pubkey) && !running.has(pubkey),
+    settled: (pubkey: string) =>
+      attached.has(pubkey) && !running.has(pubkey) && !unsaved.has(pubkey),
     /** Where the agent is in archive and recover; starts need `active`. */
     lifecycle: (pubkey: string): Lifecycle =>
-      input.lifecycle.get(community, pubkey),
+      unsaved.get(pubkey) ?? input.lifecycle.get(community, pubkey),
     /** Archives the agent's config channel. Starts block from the moment the
      * intent is saved; an unconfirmed one keeps retrying (§8.1). A definite
      * refusal rolls it back, and it binds again behind the barrier. */
@@ -448,8 +468,7 @@ export function agentConfigs(
       const channel = channelOf.get(pubkey);
       if (!channel) throw new Error("Its config channel isn't known yet");
       bindings.delete(pubkey);
-      const state = begin(life, pubkey, channel, "archive");
-      input.changed();
+      const state = begin(life, pubkey, channel, "archive", input.changed);
       const settled = await state.catch(async (error: unknown) => {
         // Not saved, so not requested: it stays active.
         await rebind(pubkey, true);
@@ -464,8 +483,7 @@ export function agentConfigs(
     async recover(pubkey: string) {
       const channel = channelOf.get(pubkey);
       if (!channel) throw new Error("Its config channel isn't known yet");
-      const state = begin(life, pubkey, channel, "recover");
-      input.changed();
+      const state = begin(life, pubkey, channel, "recover", input.changed);
       const settled = await state;
       if (settled === "active") await rebind(pubkey, true);
       input.changed();

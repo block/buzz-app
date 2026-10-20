@@ -7020,6 +7020,10 @@ describe("Delete as a recoverable archive", () => {
       binding: () => undefined,
       teams: () => undefined,
       settled: () => true,
+      lifecycle: vi.fn(
+        (pubkey: string): Life =>
+          journals?.lifecycle.get(community, pubkey) ?? "active",
+      ),
       dispose() {},
     };
     const open = (input: CommunityConfigInput) => {
@@ -7067,6 +7071,24 @@ describe("Delete as a recoverable archive", () => {
     expect(config.recover).toHaveBeenCalledWith(bot);
     mention(f, "2");
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    await f.ctx.fiber.dispose();
+  });
+
+  it("refuses a start its live community holds archived before that is saved", async () => {
+    const config = fakeConfig();
+    communityFake.value = config;
+    const f = await setup();
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(config.resume).toHaveBeenCalled());
+    config.lifecycle.mockReturnValue("archived");
+    mention(f, "1");
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: "This agent is deleted; recover it from Settings",
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
     await f.ctx.fiber.dispose();
   });
 

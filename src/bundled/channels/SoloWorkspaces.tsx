@@ -413,7 +413,11 @@ export function SoloWorkspaces({
                         sectionKey={DROP + project.id}
                       >
                         {renderChat(item, () => {
-                          if (renaming || !canEditLifetime(session, channel))
+                          if (
+                            renaming ||
+                            deleting === project.id ||
+                            !canEditLifetime(session, channel)
+                          )
                             return;
                           setRenaming(item.id);
                         })}

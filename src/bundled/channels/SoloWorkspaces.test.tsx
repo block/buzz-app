@@ -454,3 +454,64 @@ it("toggles a deferred collapse intent and protects a failed rename from workspa
     }),
   ).not.toHaveAttribute("aria-disabled", "true");
 });
+
+it("prevents rename in a deleting workspace while other workspaces remain editable", async () => {
+  const h = fixture();
+  Object.assign(h.details, {
+    available: true,
+    load: vi.fn(async (channelId: string) => ({
+      channelId,
+      name: channelId === "chat" ? "Planning" : "Existing chat",
+      description: "",
+      visibility: "private",
+      labels: ["buzz.solo"],
+      canEdit: true,
+      version: "one",
+    })),
+  });
+  const owner = h.store();
+  await owner.queries.ensure();
+  await owner.queries.assign("chat", "work");
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const remove = h.remove.getMockImplementation();
+  if (!remove) throw new Error("Missing workspace removal fixture");
+  h.remove.mockImplementation(async (id) => {
+    await pending;
+    return remove(id);
+  });
+  render(h.view(owner.queries));
+  const user = userEvent.setup();
+  try {
+    await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Delete workspace" }),
+    );
+    await waitFor(() =>
+      expect(h.remove).toHaveBeenCalledWith("work", expect.any(AbortSignal)),
+    );
+    await user.dblClick(screen.getByRole("button", { name: "Planning" }));
+    expect(screen.queryByRole("textbox", { name: "Chat name" })).toBeNull();
+    await user.dblClick(screen.getByRole("button", { name: "Existing chat" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Chat name" }),
+      ).not.toHaveAttribute("readonly"),
+    );
+    await user.keyboard("{Escape}");
+  } finally {
+    release();
+  }
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Work" })).toBeNull(),
+  );
+  await user.dblClick(screen.getByRole("button", { name: "Planning" }));
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Chat name" })).toHaveValue(
+      "Planning",
+    ),
+  );
+  owner.dispose();
+});

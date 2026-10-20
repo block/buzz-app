@@ -2,37 +2,18 @@ import {
   acknowledge,
   mergeList,
   type PendingOp,
-  type SyncStatus,
 } from "../../../features/communities/known-communities";
 import type { KnownCommunities } from "../../../features/communities/service";
 import type { OAuthSession } from "../oauth/session";
-import type {
-  KnownCommunitiesClient,
-  ListResult,
-  Refusal,
-  UpdateResult,
-} from "./client";
+import type { KnownCommunitiesClient, UpdateResult } from "./client";
 
-/** Why the service refused, in the viewer's terms. */
-const REASONS: Record<Exclude<Refusal["kind"], "rejected">, string> = {
-  invalid_request: "Builderlab refused one of your community addresses.",
-  forbidden: "This Builderlab account can’t sync communities.",
-  limit_reached: "Builderlab can’t save more communities for this account.",
-  invalid_response: "Builderlab returned an invalid response.",
-};
-const reason = (refusal: Refusal) =>
-  refusal.kind === "rejected"
-    ? `Builderlab refused this request (HTTP ${refusal.status}).`
-    : REASONS[refusal.kind];
 const backoff = (failures: number) => Math.min(60_000, 1000 * 2 ** failures);
 /** The service has no such route: not yet deployed, or only partly. */
-const missing = (result: ListResult | UpdateResult) =>
+const missing = (result: UpdateResult) =>
   result.kind === "rejected" && result.status === 404;
 /** An intent's identity for parking: the newer intent that replaces a parked
  * one is a different request and goes out. */
 const key = (op: PendingOp) => `${op.removed ? "-" : "+"}${op.url}`;
-const same = (a: SyncStatus | undefined, b: SyncStatus) =>
-  a?.phase === b.phase && a.pending === b.pending && a.error === b.error;
 
 /** Drains the known-community outbox to the account service and reconciles
  * its list, for one plugin lifetime. It runs only while signed in: each
@@ -48,9 +29,8 @@ const same = (a: SyncStatus | undefined, b: SyncStatus) =>
  * this client cannot read, stops everything until the next sign-in, while a
  * refused address, a full account or another client error parks that one
  * intent until it is replaced or the next sign-in. A service without the
- * routes (404 on any of them) stops the same way but reports nothing to show.
- * Signing out or disposal abandons in-flight work and leaves the outbox
- * intact. */
+ * routes (404 on any of them) stops the same way. Signing out or disposal
+ * abandons in-flight work and leaves the outbox intact. */
 export function startKnownCommunitiesSync({
   client,
   session,
@@ -69,44 +49,11 @@ export function startKnownCommunitiesSync({
   let rerun = false;
   let listed = false;
   let halted = false;
-  let unavailable = false;
-  let error: string | undefined;
-  let reported: SyncStatus | undefined;
-  // Refused intents wait for the next sign-in, counted as pending meanwhile,
-  // each with the reason it was refused.
-  const parked = new Map<string, string>();
+  // Refused intents wait for the next sign-in unless replaced.
+  const parked = new Set<string>();
   let outbox = knownCommunities.snapshot().sync.outbox;
   let ready = knownCommunities.snapshot().status === "ready";
 
-  /** Reports a change of status; an unchanged one would only wake every
-   * listener on the communities snapshot for nothing. */
-  const publish = () => {
-    if (disposed) return;
-    const pending = knownCommunities.pending().length;
-    const phase: SyncStatus["phase"] = !controller
-      ? "signed-out"
-      : unavailable
-        ? "unavailable"
-        : running
-          ? "syncing"
-          : error
-            ? "error"
-            : pending
-              ? "pending"
-              : "synced";
-    const status: SyncStatus =
-      phase === "error" && error
-        ? { phase, pending, error }
-        : { phase, pending };
-    if (same(reported, status)) return;
-    reported = status;
-    knownCommunities.status(status);
-  };
-  const refuse = (refusal: Refusal) => {
-    halted = true;
-    if (missing(refusal)) unavailable = true;
-    else error = reason(refusal);
-  };
   async function run() {
     if (disposed || !controller || halted || running) return;
     const snapshot = knownCommunities.snapshot();
@@ -117,11 +64,13 @@ export function startKnownCommunitiesSync({
     const { signal } = controller;
     running = true;
     rerun = false;
-    publish();
     try {
       if (!listed) {
         const list = await client.list(signal);
-        if (list.kind !== "listed") return refuse(list);
+        if (list.kind !== "listed") {
+          halted = true;
+          return;
+        }
         signal.throwIfAborted();
         if (list.dropped)
           console.warn(
@@ -150,47 +99,33 @@ export function startKnownCommunitiesSync({
           await knownCommunities.apply(
             acknowledge(knownCommunities.snapshot().sync, op),
           );
-        else if (result.kind === "forbidden" || missing(result))
-          return refuse(result);
-        else parked.set(key(op), reason(result));
+        else if (result.kind === "forbidden" || missing(result)) {
+          halted = true;
+          return;
+        } else parked.add(key(op));
       }
       failures = 0;
-      // A parked intent that was replaced or withdrawn no longer counts.
+      // A parked intent that was replaced or withdrawn no longer counts, so
+      // the same intent queued again later is sent.
       const pending = knownCommunities.pending().map(key);
-      for (const entry of parked.keys())
+      for (const entry of parked)
         if (!pending.includes(entry)) parked.delete(entry);
-      // The pass went through, so an earlier failure is over: what remains
-      // wrong is only what is still parked.
-      error = parked.values().next().value;
-    } catch (reason) {
+    } catch (error) {
       if (
         signal.aborted ||
-        (reason instanceof Error && reason.name === "AbortError")
+        (error instanceof Error && error.name === "AbortError")
       )
         return;
-      error =
-        reason instanceof Error
-          ? reason.message
-          : "Couldn’t sync your community list.";
       timer = setTimeout(() => void run(), backoff(failures++));
     } finally {
       running = false;
-      publish();
       if (rerun) void run();
     }
   }
   /** A trigger resets the backoff and runs now, or again once the request in
-   * flight settles. Once the list has merged, no retry is due and nothing is
-   * waiting that is not parked, there is no pass to run: a parked intent
-   * moves again only when replaced or on the next sign-in. */
+   * flight settles. */
   const kick = () => {
     if (disposed || !controller || halted) return;
-    if (
-      listed &&
-      !timer &&
-      knownCommunities.pending().every((op) => parked.has(key(op)))
-    )
-      return;
     failures = 0;
     clearTimeout(timer);
     timer = undefined;
@@ -203,18 +138,13 @@ export function startKnownCommunitiesSync({
       controller = new AbortController();
       listed = false;
       halted = false;
-      unavailable = false;
-      error = undefined;
       parked.clear();
       kick();
-      // A run reports as it goes; a record still loading leaves none to run.
-      if (!running) publish();
     } else if (!signedIn && controller) {
       controller.abort();
       controller = undefined;
       clearTimeout(timer);
       timer = undefined;
-      publish();
     }
   };
   const onStore = () => {
@@ -231,7 +161,6 @@ export function startKnownCommunitiesSync({
     // acknowledgements only shrink the queue.
     const fresh = outbox.some((op) => !previous.includes(op));
     if (fresh || (ready && !wasReady)) kick();
-    publish();
   };
   const online = () => kick();
   const visible = () => {
@@ -243,7 +172,6 @@ export function startKnownCommunitiesSync({
   if (typeof document !== "undefined")
     document.addEventListener("visibilitychange", visible);
   onSession();
-  publish();
   return () => {
     disposed = true;
     controller?.abort();
@@ -255,6 +183,5 @@ export function startKnownCommunitiesSync({
       window.removeEventListener("online", online);
     if (typeof document !== "undefined")
       document.removeEventListener("visibilitychange", visible);
-    knownCommunities.status(undefined);
   };
 }

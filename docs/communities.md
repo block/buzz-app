@@ -156,8 +156,7 @@ devices of one account can disagree about a community, and an add queued while
 the service was unreachable can likewise land after another device's removal.
 Joining and leaving never wait for sync. The `knownCommunities` capability
 exposes the record, the queue and these writes to one owner, the bundled
-Builderlab plugin, and carries that owner's report back as `syncStatus` on the
-snapshot.
+Builderlab plugin.
 
 The list is account-scoped, but this state is still kept under the device
 record's viewer key (`buzz-client.v1:<viewer>`), where it outlives a
@@ -176,20 +175,21 @@ app with a configured Builderlab service. The owner syncs only while signed in.
 Each sign-in reads the complete list, merges it as above, then sends each
 destination's latest intent one at a time. A newly queued intent, the window
 coming online or becoming visible runs the drain again at once; once the list
-has merged and nothing is queued or due for a retry, a trigger runs no pass
-and reports nothing, and an unchanged report is never repeated. A failed
+has merged, a trigger never reads it again before the next sign-in. A failed
 request, or a device record that would not take the answer, retries at 1, 2,
 4… seconds, capped at a minute, re-sending the intent that then stands; a
 timeout, a rate limit and a server error are such failures. The service's
 refusals are never retried as sent: an address it refuses, an account that is
-full or any other client error (named with its HTTP status) parks that one
-intent until it is replaced or the next sign-in while the rest continue, an
+full or any other client error parks that one intent until it is replaced or
+the next sign-in while the rest continue, an
 account that cannot sync or a list this client cannot read (a shape the two
 sides no longer share) stops until then, and a session the service has ended
 signs the plugin out. A service that answers any of the routes with 404 has no
-known-communities routes yet, or not all of them: sync stops quietly until the
-next sign-in. A listed address this device could never save is left out and
-counted in a console warning, so one bad row cannot stop the account's sync.
+known-communities routes yet, or not all of them: sync stops until the next
+sign-in. The owner reports nothing to the app, so a halted or parked sync is
+not shown anywhere yet. A listed address this device could never save is left
+out and counted in a console warning, so one bad row cannot stop the account's
+sync.
 Signing out or disabling the plugin abandons the request in flight and leaves
 the queue intact.
 
@@ -336,24 +336,20 @@ without a JSON object body answered as an invalid response, every named refusal
 in JSON and in the framework's plain text, unnamed client errors returned as
 rejections on every route while timeouts, rate limits and server errors remain
 failures, a 401 that ends the session and an unreachable service.
-`sync.test.ts` covers the owner under a
-controlled clock: sign-in and a loading record, the complete list merged once
-per sign-in and an intent queued while it is in flight, the never-uploaded
-rule on a later sign-in and a membership removed elsewhere kept and never
-re-sent across the sign-ins after it, one upload in flight at a time in queue
-order, identical
-retries at each backoff boundary and the reset after a success, a device record
-that will not take an answer backing off and replaying, the `online` and
-`visibilitychange` triggers and their silence once synced with an empty queue,
-no repeated report, parked and halting refusals including rejections named by
-status, an unreadable list (through the real client, keeping every membership)
-and the quiet 404 on the list or an upload for a service without the routes,
-addresses the list left out, a parked add replaced by the removal that then
-goes out and re-sent on the next sign-in, a parked refusal reported again
-after a failed upload beside it or another parked intent clears, both
-lost-acknowledgement orders against a set service, an abandoned upload on
-sign-out that keeps the queue, a
-session ended
+`sync.test.ts` covers the owner under a controlled clock: sign-in and a
+loading record, the complete list merged once per sign-in and an intent queued
+while it is in flight, the never-uploaded rule on a later sign-in and a
+membership removed elsewhere kept and never re-sent across the sign-ins after
+it, one upload in flight at a time in queue order, identical retries at each
+backoff boundary and the reset after a success, a device record that will not
+take an answer backing off and replaying, the `online` and `visibilitychange`
+triggers and no second list once synced, parked and halting refusals
+including rejections by status, an unreadable list (through the real client,
+keeping every membership) and the 404 on the list or an upload for a service
+without the routes, addresses the list left out, a parked add replaced by the
+removal that then goes out and re-sent on the next sign-in, a withdrawn parked
+intent sent when queued anew, both lost-acknowledgement orders against a set
+service, an abandoned upload on sign-out that keeps the queue, a session ended
 by the service and disposal. `index.test.tsx` runs the real plugin wiring
 through to the list request under the signed-in credential, and that an
 unconfigured build starts no owner.

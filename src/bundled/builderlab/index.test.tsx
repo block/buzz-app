@@ -46,10 +46,9 @@ function provideKnownCommunities(root: Context, viewer: string) {
       selected: null,
       memberships: [],
     }),
-    subscribe: () => () => {},
+    subscribe: vi.fn(() => vi.fn()),
     pending: () => [],
     apply: vi.fn(async () => {}),
-    status: vi.fn(),
   };
   root.provide("knownCommunities", knownCommunities);
   return knownCommunities;
@@ -157,8 +156,8 @@ it.each([undefined, "", "http://builderlab.example"])(
         ),
       ).toEqual([]);
       expect(agents.types()).toHaveLength(0);
-      // No sign-in is possible, so no sync owner runs or reports.
-      expect(knownCommunities.status).not.toHaveBeenCalled();
+      // No sign-in is possible, so no sync owner runs.
+      expect(knownCommunities.subscribe).not.toHaveBeenCalled();
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
       // With no agent type to create, the empty page's Create tile is off.
@@ -584,12 +583,7 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
     // Sign-in also checks the account's linked Buzz identity, and the
     // account's community list follows through the same wiring: the complete
     // list is read under the session credential.
-    await waitFor(() =>
-      expect(knownCommunities.status).toHaveBeenLastCalledWith({
-        phase: "synced",
-        pending: 0,
-      }),
-    );
+    await waitFor(() => expect(knownCommunities.apply).toHaveBeenCalled());
     await waitFor(() =>
       expect(
         hostRequests()
@@ -709,8 +703,10 @@ it("shares plugin login with Settings, hosted Agents and community sync, replays
     expect(
       screen.getByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();
-    // The disabled plugin's sync owner withdraws its report with it.
-    expect(knownCommunities.status).toHaveBeenLastCalledWith(undefined);
+    // The disabled plugin's sync owner stops listening with it.
+    expect(
+      vi.mocked(knownCommunities.subscribe).mock.results.at(-1)?.value,
+    ).toHaveBeenCalled();
     mounted.unmount();
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));

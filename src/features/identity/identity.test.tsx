@@ -88,7 +88,9 @@ it("keeps native titlebar actions available throughout identity setup without dr
   expect(startDragging).toHaveBeenCalledTimes(2);
   drag();
   expect(startDragging).toHaveBeenCalledTimes(3);
-  await user.click(screen.getByRole("button", { name: "Use this key" }));
+  await user.click(
+    screen.getByRole("button", { name: "Import this identity" }),
+  );
   expect(screen.getByRole("status")).toHaveTextContent("Saving your identity");
   drag();
   expect(startDragging).toHaveBeenCalledTimes(4);
@@ -133,10 +135,14 @@ it("offers alternatives, passes exactly the imported key, and keeps secrets out 
     await screen.findByRole("button", { name: "Use an existing key" }),
   );
   await user.type(screen.getByLabelText("Private key (nsec)"), key);
-  await user.click(screen.getByRole("button", { name: "Use this key" }));
+  await user.click(
+    screen.getByRole("button", { name: "Import this identity" }),
+  );
   expect(invoke).toHaveBeenCalledWith("identity_import", { nsec: key });
   expect(screen.getByLabelText("Private key (nsec)")).toHaveValue("");
-  expect(screen.getByRole("button", { name: "Use this key" })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Import this identity" }),
+  ).toBeDisabled();
   await act(async () => {
     imported.resolve(viewer);
   });

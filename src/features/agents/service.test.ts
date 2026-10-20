@@ -4512,6 +4512,31 @@ describe("a turn closing or reloading the app stopped", () => {
     });
   });
 
+  it("is listed once this copy takes the agent over", async () => {
+    const asked = mention();
+    const storage = await stopped(asked);
+    vi.useFakeTimers();
+    const app = await setup({
+      storage,
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    app.native.claim.mockResolvedValue(false);
+    const claims = app.native.claim.mock.calls.length;
+    app.connect(false);
+    app.connect(true);
+    await vi.waitFor(() =>
+      expect(app.native.claim.mock.calls.length).toBeGreaterThan(claims),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.service.snapshot().interrupted).toEqual([]);
+    // The holder quit: the next tick claims it, and nothing else refreshes.
+    app.native.claim.mockResolvedValue(true);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(names(app.service.snapshot().interrupted)).toEqual(["Echo"]);
+  });
+
   it("saves each agent's turns apart, so another program's agents keep theirs", async () => {
     const storage = memoryStorage() as AgentStore;
     const birch = { ...echo, pubkey: sibling, name: "Birch" };

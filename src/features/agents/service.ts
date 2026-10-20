@@ -1178,6 +1178,7 @@ export class AgentsService extends Service implements Agents {
             console.warn("Agent turns in progress were not saved", error),
           );
         },
+        changed: () => this.update(),
       },
       scope: (agent) => this.bindingOf(agent)?.scope,
       saved: (pubkey) => this.records[pubkey],

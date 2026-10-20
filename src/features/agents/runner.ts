@@ -329,6 +329,8 @@ export type RunnerHost = {
     read(): Interrupted;
     /** Saves the agent's turns. Throws when storage refuses it. */
     write(pubkey: string, turns: Readonly<Record<string, string>>): void;
+    /** This copy began or stopped holding an agent with saved turns. */
+    changed(): void;
   };
   /** The partition its community's activity is kept under, while live. */
   scope(agent: Agent): string | undefined;
@@ -2156,6 +2158,7 @@ export class AgentRunners {
   }
 
   private async claim(runner: Runner) {
+    const held = this.runs(runner.pubkey);
     try {
       runner.mayHold = (await this.host.custody?.claim(runner.pubkey)) ?? false;
       runner.asked = true;
@@ -2169,7 +2172,15 @@ export class AgentRunners {
         error,
       );
       return true;
+    } finally {
+      this.heldChanged(runner, held);
     }
+  }
+  /** The notice lists an agent's saved turns only while this copy holds it,
+   * so a change in holding lists it again. */
+  private heldChanged(runner: Runner, held: boolean) {
+    if (this.left[runner.pubkey] && this.runs(runner.pubkey) !== held)
+      this.host.interrupted.changed();
   }
   /** Claims exclusively for a provider migration. Unlike turn execution,
    * uncertainty is unsafe here because changing native type is destructive. */
@@ -2179,7 +2190,9 @@ export class AgentRunners {
   }
   private async release(runner: Runner) {
     if (!runner.mayHold) return;
+    const held = this.runs(runner.pubkey);
     runner.mayHold = false;
+    this.heldChanged(runner, held);
     await this.host.custody
       ?.release(runner.pubkey)
       .catch((error) =>

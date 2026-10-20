@@ -150,6 +150,12 @@ for (const own of [true, false]) {
         await hidden(actions);
         await page.mouse.move(path.x, path.y);
         await hidden(actions);
+        // This point can also cross an avatar. Leave its preview before
+        // targeting the bubble beneath the interactive portal.
+        await page.mouse.move(0, 0);
+        await expect(
+          page.getByRole("dialog", { name: /profile preview$/ }),
+        ).toBeHidden();
         await hoverMessage(row);
         await shown(actions);
         await page.mouse.move(path.x, path.y, { steps: 10 });

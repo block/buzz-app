@@ -96,6 +96,12 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await page.getByRole("region", { name: "Profile details" }).press("Escape");
   await expect(panel).toHaveCount(0);
   await expect(avatar).toBeFocused();
+  // Restoring focus reveals the avatar's supplemental preview. Dismiss it
+  // before targeting the mention underneath its portal.
+  const preview = page.getByRole("dialog", { name: "Viewer profile preview" });
+  await expect(preview).toBeVisible();
+  await avatar.press("Escape");
+  await expect(preview).toBeHidden();
   const mention = page.getByRole("button", {
     name: "View Mic profile",
     exact: true,

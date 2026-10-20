@@ -46,7 +46,7 @@ function ProgramDetails({
   return (
     <>
       <p className="mb-2 mt-1">
-        Program: <code>{program}</code>
+        Program: <code className={styles.sourcePath}>{program}</code>
       </p>
       <p className="mb-1 mt-0">Arguments{args.length ? ":" : ": none"}</p>
       {args.length > 0 && (
@@ -58,7 +58,7 @@ function ProgramDetails({
               aria-label={`Argument ${index + 1}`}
             >
               <pre className="m-0 whitespace-pre-wrap break-words">
-                <code>{argument}</code>
+                <code className={styles.sourcePath}>{argument}</code>
               </pre>
             </li>
           ))}
@@ -100,7 +100,7 @@ function hostDeclarations(manifest: PluginManifest) {
       label: `Connect to ${origin}`,
       hint: "Buzz can make HTTPS requests to this address for the plugin.",
       icon: GlobeIcon,
-      details: <code className="break-words">{origin}</code>,
+      details: <code className={styles.sourcePath}>{origin}</code>,
     })),
     ...(manifest.host?.processes ?? []).map((process) => ({
       key: `process:${process.id}`,
@@ -516,7 +516,7 @@ export function PluginImport({
                   : "No plugins found"
         }
         description={
-          error ? undefined : preview ? (
+          error || showUnchanged ? undefined : preview ? (
             reviewing ? (
               updating ? (
                 <>
@@ -679,17 +679,26 @@ export function PluginImport({
             {updateId && savedSource && !chooseSource ? (
               <section aria-label="Saved plugin source">
                 <p className="mt-0 mb-2 text-body-sm break-words">
-                  {"root" in savedSource
-                    ? savedSource.root
-                    : savedSource.repository}
+                  <code className={styles.sourcePath}>
+                    {"root" in savedSource
+                      ? savedSource.root
+                      : savedSource.repository}
+                  </code>
                 </p>
                 <p className="mt-0 mb-4 text-body-sm text-muted break-words">
-                  Plugin folder: {savedSource.path}
+                  Plugin folder:{" "}
+                  <code className={styles.sourcePath}>{savedSource.path}</code>
                 </p>
                 {"reference" in savedSource && (
                   <p className="mt-0 mb-4 text-body-sm text-muted">
                     Branch or tag:{" "}
-                    {savedSource.reference || "Repository default"}
+                    {savedSource.reference ? (
+                      <code className={styles.sourcePath}>
+                        {savedSource.reference}
+                      </code>
+                    ) : (
+                      "Repository default"
+                    )}
                   </p>
                 )}
                 <div className="flex flex-wrap gap-3">
@@ -729,8 +738,10 @@ export function PluginImport({
                   </p>
                 )}
                 <p className="mb-4 mt-0 text-body-sm text-muted">
-                  Load built plugins containing manifest.json and plugin.js.
-                  Buzz doesn’t build source code or run install scripts.
+                  Load built plugins containing{" "}
+                  <code className={styles.sourcePath}>manifest.json</code> and{" "}
+                  <code className={styles.sourcePath}>plugin.js</code>. Buzz
+                  doesn’t build source code or run install scripts.
                 </p>
                 <div className={styles.columns}>
                   <section
@@ -865,7 +876,10 @@ export function PluginImport({
                     <div className="min-w-0 text-body-sm">
                       {preview.candidates.length === 0 && (
                         <p className="m-0 break-all text-caption text-muted">
-                          Source: {preview.source}
+                          Source:{" "}
+                          <code className={styles.sourcePath}>
+                            {preview.source}
+                          </code>
                         </p>
                       )}
                       {preview.commit && (
@@ -900,8 +914,10 @@ export function PluginImport({
                           label={item.manifest.name}
                           description={
                             <span className="block break-all text-caption text-muted">
-                              {importLocation(preview, item.path)} ·{" "}
-                              {item.manifest.id}
+                              <code className={styles.sourcePath}>
+                                {importLocation(preview, item.path)}
+                              </code>{" "}
+                              · {item.manifest.id}
                             </span>
                           }
                         />

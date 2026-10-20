@@ -1358,6 +1358,7 @@ it("shows unchanged declarations in a separate dialog view and returns without r
   expect(screen.getByRole("dialog")).toHaveAccessibleName(
     "Unchanged declarations",
   );
+  expect(screen.getByRole("dialog")).toHaveAccessibleDescription("");
   expect(screen.getByRole("button", { name: "Back" })).toHaveFocus();
   expect(screen.queryByRole("button", { name: "Update plugin" })).toBeNull();
   expect(screen.queryByText("No declared access changes")).not.toBeVisible();

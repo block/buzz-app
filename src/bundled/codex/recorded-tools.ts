@@ -47,7 +47,10 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       },
     ]),
   );
-  const calls = new Map<string, { item: ToolItem; owner: string }>();
+  const calls = new Map<
+    string,
+    { item: ToolItem; owner: string; dated: boolean }
+  >();
   const active = new Map<ToolItem, string>();
   let turnId = "";
   for (const line of file.split("\n")) {
@@ -135,8 +138,10 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
       // safely be assigned to a subsequently active script in this turn.
       const owner = drafts.get(found.owner);
       if (owner && item.status === "yielded") owner.ambiguous = true;
+      // An undated call starts at the turn-start fallback; pairing it with a
+      // real finish would invent a duration.
       const at = Date.parse(str(record.timestamp));
-      if (Number.isFinite(at)) item.completedAt = at;
+      if (found.dated && Number.isFinite(at)) item.completedAt = at;
       active.delete(item);
       continue;
     }
@@ -174,7 +179,11 @@ export function restoreRecordedTools(turns: TranscriptTurn[], file: string) {
     // can arrive while another script is the only active call.
     if ([...active.values()].includes(draft.turn.turnId))
       draft.ambiguous = true;
-    calls.set(callId, { item, owner: draft.turn.turnId });
+    calls.set(callId, {
+      item,
+      owner: draft.turn.turnId,
+      dated: Number.isFinite(at),
+    });
     draft.ordered.push(item);
     active.set(item, draft.turn.turnId);
   }

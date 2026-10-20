@@ -504,3 +504,27 @@ it.each([
     ).toBe(completedAt);
   },
 );
+
+it.each([
+  ["a dated", "2026-10-20T12:00:00Z", Date.parse("2026-10-20T12:00:06Z")],
+  ["an undated", "", undefined],
+  ["an invalid-timestamp", "not a time", undefined],
+])(
+  "gives %s restored exec call a finish only from a recorded start",
+  (_, callTime, completedAt) => {
+    const mapped = turns();
+    restoreRecordedTools(
+      mapped,
+      [
+        start(),
+        record("response_item", call("script"), callTime),
+        record("response_item", result("script"), "2026-10-20T12:00:06Z"),
+      ].join("\n"),
+    );
+    const script = mapped[0]?.items.find((item) => item.id === "script");
+    expect(script).toMatchObject({ status: "completed" });
+    expect(
+      script && "completedAt" in script ? script.completedAt : undefined,
+    ).toBe(completedAt);
+  },
+);

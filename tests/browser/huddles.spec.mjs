@@ -1979,7 +1979,10 @@ test("portraits can be tossed within the stage and return home, with reduced mot
   const home = await portrait.boundingBox();
   const area = await stage.boundingBox();
   const start = { x: home.x + home.width / 2, y: home.y + home.height / 2 };
-  const throwDistance = (area.x + area.width - home.x - home.width) * 0.6;
+  // Release close to the wall so the gesture exercises a collision at this fixture size.
+  const throwDistance = Math.round(
+    (area.x + area.width - home.x - home.width) * 0.9,
+  );
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
   for (let i = 1; i <= 3; i++) {

@@ -642,7 +642,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   });
   await button(page, "More plugin actions").click();
   await expect(page.getByRole("menuitem")).toHaveText([
-    "View computer access",
+    "Review access",
     "Disable",
     "Delete",
   ]);
@@ -654,10 +654,10 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await page.getByRole("menuitem", { name: "Enable", exact: true }).click();
   await button(page, "More plugin actions").click();
   await page
-    .getByRole("menuitem", { name: "View computer access", exact: true })
+    .getByRole("menuitem", { name: "Review access", exact: true })
     .click();
   const accessDialog = page.getByRole("dialog", {
-    name: "Computer access · Example two",
+    name: "What this plugin can do",
   });
   await expect(
     accessDialog.getByRole("button", { name: /^Run example-cli/ }),
@@ -671,7 +671,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await button(page, "Close plugin details").click();
   await button(page, "More actions for Example two").click();
   await page
-    .getByRole("menuitem", { name: "View computer access", exact: true })
+    .getByRole("menuitem", { name: "Review access", exact: true })
     .click();
   await accessDialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(button(page, "More actions for Example two")).toBeFocused();

@@ -53,9 +53,7 @@ export function PluginMenu({
           aria-label="Plugin actions"
           finalFocus={confirmDelete || showAccess ? false : deleteTrigger}
         >
-          <MenuItem onClick={() => setShowAccess(true)}>
-            View computer access
-          </MenuItem>
+          <MenuItem onClick={() => setShowAccess(true)}>Review access</MenuItem>
           {toggle && (
             <MenuItem disabled={toggle.disabled} onClick={toggle.run}>
               {toggle.label}
@@ -78,7 +76,7 @@ export function PluginMenu({
       <Dialog
         open={showAccess}
         onOpenChange={setShowAccess}
-        title={`Computer access · ${plugin.manifest.name}`}
+        title="What this plugin can do"
         finalFocus={deleteTrigger}
         actions={<Button onClick={() => setShowAccess(false)}>Done</Button>}
       >

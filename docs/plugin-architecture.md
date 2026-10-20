@@ -880,7 +880,7 @@ the prominent action position in both the pane and its list row; Enable/Disable
 moves into their ellipsis menus while Update is available. The row retains the latest
 check result for the installed revision and opens the pane’s review, checking the
 saved source again when the pane reopens. Only the open pane polls local folders.
-The menus also offer View computer access, reusing the import review’s disclosures
+The menus also offer Review access, reusing the import review’s disclosures
 for the installed manifest, and Delete for external plugins with confirmation.
 The list row shows no freshness status label. Failed activation shows Retry beside the error for an enabled,
 unpaused plugin. Retry activates the installed revision after its previous cleanup

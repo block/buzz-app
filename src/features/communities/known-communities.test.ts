@@ -98,7 +98,7 @@ it.each([
   },
 );
 
-it("merges a server list: adds, removes what was removed elsewhere, uploads unsynced memberships", () => {
+it("merges a server list: adds what is listed, uploads unsynced memberships, keeps what the list omits", () => {
   const state = withKnown(b, "wss://gone.example", "wss://stale.example");
   const memberships = [
     { id: "primary" }, // alias of https://primary.example, unknown to the server
@@ -108,39 +108,48 @@ it("merges a server list: adds, removes what was removed elsewhere, uploads unsy
   const merged = mergeList(
     state,
     memberships,
-    ["wss://new.example", b],
+    ["wss://new.example", b, b],
     "alice",
   );
   expect(merged.add).toEqual(["wss://new.example"]);
-  // Known before and no longer listed: removed elsewhere. A destination the
-  // service never held is not a removal, nor is one that is not saved here.
-  expect(merged.remove).toEqual(["wss://gone.example"]);
+  // Known before and no longer listed (removed elsewhere, or never saved
+  // here): nothing is forgotten, and the list joins the known set, so the
+  // membership the service once held is not uploaded as if it had never
+  // seen it. Only the alias the service has never seen is queued.
   expect(merged.state).toEqual({
-    known: ["wss://new.example", b],
+    known: [
+      b,
+      "wss://gone.example",
+      "wss://stale.example",
+      "wss://new.example",
+    ],
     outbox: [{ url: "wss://primary.example", removed: false }],
     account: "alice",
   });
+  // The next list without it changes nothing: still saved, still not sent.
+  const again = mergeList(merged.state, memberships, [b], "alice");
+  expect(again.add).toEqual([]);
+  expect(again.state).toEqual(merged.state);
 });
 
-it("knows nothing on behalf of another account, or of none: its list forgets nothing and uploads what it lacks", () => {
+it("knows nothing on behalf of another account, or of none: its list uploads what it lacks", () => {
   const memberships = [
     { id: "https://a.example" },
     { id: "https://b.example:8443" },
   ];
-  // The same account no longer lists b: removed elsewhere.
+  // The same account no longer lists b: removed elsewhere, which is ignored
+  // for now. b stays saved, known, and off the queue.
   expect(mergeList(withKnown(a, b), memberships, [a], "alice")).toEqual({
-    state: { known: [a], outbox: [], account: "alice" },
+    state: { known: [a, b], outbox: [], account: "alice" },
     add: [],
-    remove: [b],
   });
   // Another account signed in on this device: what alice's list held says
-  // nothing about bob's, so b is a membership bob has never seen, not one
-  // removed elsewhere, and the record now describes bob's list.
+  // nothing about bob's, so b is a membership bob has never seen, and the
+  // record now describes bob's list.
   const bob = mergeList(withKnown(a, b), memberships, [a], "bob");
   expect(bob).toEqual({
     state: { known: [a], outbox: [{ url: b, removed: false }], account: "bob" },
     add: [],
-    remove: [],
   });
   // A record that names no account reads the same way.
   expect(
@@ -148,7 +157,7 @@ it("knows nothing on behalf of another account, or of none: its list forgets not
   ).toEqual({ ...bob.state, account: "alice" });
 });
 
-it("defers to the pending intent when merging: no add over a queued removal, no removal over a queued re-add, no duplicate upload", () => {
+it("defers to the pending intent when merging: no add over a queued removal, no duplicate upload", () => {
   const state: SyncState = {
     known: [b],
     outbox: [
@@ -156,6 +165,7 @@ it("defers to the pending intent when merging: no add over a queued removal, no 
       { url: b, removed: false },
       { url: "wss://primary.example", removed: false },
     ],
+    account: "alice",
   };
   const merged = mergeList(
     state,
@@ -164,9 +174,8 @@ it("defers to the pending intent when merging: no add over a queued removal, no 
     "alice",
   );
   expect(merged.add).toEqual([]);
-  expect(merged.remove).toEqual([]);
   expect(merged.state).toEqual({
-    known: [a],
+    known: [b, a],
     outbox: state.outbox,
     account: "alice",
   });

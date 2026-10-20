@@ -75,7 +75,9 @@ agents are not migrated into this type.
   (`{}` → `{ communities: [{ community_url }] }`), `add` and `remove` (each
   `{ community_url }`; adding a saved destination or removing an absent one
   succeeds, and adds past about 1,000 saved destinations are refused with
-  `limit_reached`). Each sign-in merges the complete list, then sends each
+  `limit_reached`). Each sign-in merges the complete list (adding what it
+  lists; a saved membership it omits is kept and not uploaded again, since
+  removals made on another device are ignored for now), then sends each
   destination's latest queued join or leave one at a time, retrying failures
   as sent, and reports its state on the communities snapshot. A list
   this client cannot read halts sync until the next sign-in with that reason;

@@ -37,9 +37,10 @@ const same = (a: SyncStatus | undefined, b: SyncStatus) =>
 /** Drains the known-community outbox to the account service and reconciles
  * its list, for one plugin lifetime. It runs only while signed in: each
  * sign-in merges the complete server list, then sends each destination's
- * latest intent one at a time. The merge is for the signed-in account: what
- * an earlier sign-in as another account knew is not read as this one's list,
- * so nothing is forgotten on its behalf. A newly queued intent, the window
+ * latest intent one at a time. The merge only ever adds here: a membership
+ * the list omits is kept and not re-uploaded (removals made elsewhere are
+ * ignored for now), and what an earlier sign-in as another account knew is
+ * not read as this one's list. A newly queued intent, the window
  * coming online or becoming visible runs it again at once; a failure retries
  * at 1·2·4… s, capped at a minute, re-sending whatever intent then stands,
  * which is safe because the service's add and remove are idempotent. The
@@ -132,10 +133,7 @@ export function startKnownCommunitiesSync({
           list.communities,
           session.credential().account.subject,
         );
-        await knownCommunities.apply(merged.state, {
-          add: merged.add,
-          remove: merged.remove,
-        });
+        await knownCommunities.apply(merged.state, merged.add);
         listed = true;
       }
       for (;;) {

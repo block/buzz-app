@@ -18,7 +18,6 @@ import {
   enqueue,
   parseSync,
   type PendingOp,
-  type SyncChanges,
   type SyncState,
   type SyncStatus,
 } from "./known-communities";
@@ -62,11 +61,11 @@ export type CommunityReader = {
   subscribe(listener: () => void): () => void;
 };
 /** Known-community sync for its one upload owner: read the record and the
- * outbox, write back what the server settled and the membership changes a
- * server list implies. Never joins, selects or contacts a relay. */
+ * outbox, write back what the server settled and the memberships a server
+ * list adds. Never joins, selects, forgets or contacts a relay. */
 export type KnownCommunities = CommunityReader & {
   pending(): PendingOp[];
-  apply(next: SyncState, changes?: SyncChanges): Promise<void>;
+  apply(next: SyncState, add?: string[]): Promise<void>;
   status(next: SyncStatus | undefined): void;
 };
 declare module "@deepseek-ai/cordis" {
@@ -587,39 +586,18 @@ export function createCommunities(
       update({ syncStatus }, false);
     },
     /** Writes the sync owner's settled state and, in the same device record,
-     * the memberships a server list implies: destinations saved on another
-     * device appear here under their host name without a session, and ones
-     * removed elsewhere are forgotten like the banned answer to a leave, with
-     * no relay request and the device state kept, falling back to Personal
-     * space when one was selected. Persistence follows `joined`, and that save
-     * is the only step that throws, before anything has changed. */
-    async applySync(
-      next: SyncState,
-      { add = [], remove = [] }: SyncChanges = {},
-    ) {
-      const removing = state.memberships.filter((m) =>
-        remove.includes(relayAddress(m.id)),
-      );
-      const memberships = state.memberships.filter(
-        (m) => !removing.includes(m),
-      );
+     * the memberships a server list adds: destinations saved on another
+     * device appear here under their host name without a session. Sync never
+     * forgets a membership. Persistence follows `joined`, and that save is the
+     * only step that throws, before anything has changed. */
+    async applySync(next: SyncState, add: string[] = []) {
+      const memberships = [...state.memberships];
       for (const url of add) {
         const { id, name } = communityDestination(url);
         if (!memberships.some((m) => m.id === id))
           memberships.push({ id, name });
       }
-      update(
-        {
-          memberships,
-          ...(removing.some((m) => m.id === state.selected)
-            ? { selected: null }
-            : {}),
-          sync: next,
-        },
-        true,
-        !!nativeConnect && !live,
-      );
-      for (const { id } of removing) await release(id);
+      update({ memberships, sync: next }, true, !!nativeConnect && !live);
     },
   };
 }

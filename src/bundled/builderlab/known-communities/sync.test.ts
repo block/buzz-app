@@ -4,7 +4,6 @@ import {
   emptySync,
   enqueue,
   type PendingOp,
-  type SyncChanges,
   type SyncState,
 } from "../../../features/communities/known-communities";
 import type {
@@ -78,7 +77,7 @@ function store(initial: Partial<ClientSnapshot> = {}) {
     for (const listener of listeners) listener();
   };
   const status = vi.fn<KnownCommunities["status"]>();
-  const apply = vi.fn(async (next: SyncState, _changes?: SyncChanges) => {
+  const apply = vi.fn(async (next: SyncState, _add?: string[]) => {
     snapshot = { ...snapshot, sync: next };
     notify();
   });
@@ -194,7 +193,7 @@ it("waits for sign-in and a ready identity, then lists, merges and drains", asyn
   expect(h.apply).toHaveBeenNthCalledWith(
     1,
     { known: [secondary], outbox: [op], account: "user" },
-    { add: [secondary], remove: [] },
+    [secondary],
   );
   expect(h.client.add).toHaveBeenCalledTimes(1);
   expect(h.client.add).toHaveBeenCalledWith(primary, expect.any(AbortSignal));
@@ -381,7 +380,7 @@ it("keeps syncing when the list left out addresses this device cannot save, and 
   await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
   expect(h.apply).toHaveBeenCalledWith(
     { known: [secondary], outbox: [], account: "user" },
-    { add: [secondary], remove: [] },
+    [secondary],
   );
   expect(warn).toHaveBeenCalledTimes(1);
   expect(warn.mock.calls[0]?.[0]).toContain("2 community address(es)");
@@ -622,12 +621,7 @@ it.each([
     expect(h.outbox()).toEqual([]);
     // No membership change was ever reported against the user's own change
     // of mind.
-    expect(
-      h.apply.mock.calls.flatMap(([, changes]) => [
-        ...(changes?.add ?? []),
-        ...(changes?.remove ?? []),
-      ]),
-    ).toEqual([]);
+    expect(h.apply.mock.calls.flatMap(([, add]) => add ?? [])).toEqual([]);
     h.dispose();
   },
 );
@@ -675,7 +669,7 @@ it("keeps an intent queued while the list is in flight: the merge reads the reco
   expect(h.apply).toHaveBeenNthCalledWith(
     1,
     { known: [], outbox: [op], account: "user" },
-    { add: [], remove: [] },
+    [],
   );
   expect(h.client.add).toHaveBeenCalledTimes(1);
   expect(h.client.add.mock.calls[0]?.[0]).toBe(primary);
@@ -683,7 +677,7 @@ it("keeps an intent queued while the list is in flight: the merge reads the reco
   h.dispose();
 });
 
-it("follows the account on the next sign-in: a removal elsewhere is applied, a membership never uploaded is sent", async () => {
+it("follows the account on the next sign-in: a membership never uploaded is sent, one removed elsewhere is kept and not re-sent", async () => {
   const service = fakeService(secondary);
   const h = await fixture({
     signedIn: false,
@@ -697,7 +691,9 @@ it("follows the account on the next sign-in: a removal elsewhere is applied, a m
   });
   h.client.list.mockImplementation(async () => service.list());
   h.client.add.mockImplementation(async (url) => service.add(url));
-  // Another device removed the secondary and added a third community.
+  // Another device removed the secondary and added a third community. The
+  // removal is ignored for now: the secondary stays saved and known, so only
+  // the primary, which the service has never seen, is uploaded.
   service.rows.delete(secondary);
   service.rows.add("wss://third.example");
   await h.session.signIn();
@@ -705,14 +701,15 @@ it("follows the account on the next sign-in: a removal elsewhere is applied, a m
   expect(h.apply).toHaveBeenNthCalledWith(
     1,
     {
-      known: ["wss://third.example"],
+      known: [secondary, "wss://third.example"],
       outbox: [{ url: primary, removed: false }],
       account: "user",
     },
-    { add: ["wss://third.example"], remove: [secondary] },
+    ["wss://third.example"],
   );
   expect(h.sent()).toEqual([{ url: primary, removed: false }]);
-  expect(h.known()).toEqual(["wss://third.example", primary]);
+  expect(h.known()).toEqual([secondary, "wss://third.example", primary]);
+  expect([...service.rows]).toEqual(["wss://third.example", primary]);
   h.dispose();
 });
 
@@ -721,24 +718,35 @@ const both = [
   { id: "https://secondary.example", name: "Secondary" },
 ];
 
-it("keeps what it knows across a sign-out and sign-in as the same account, so a removal elsewhere meanwhile is applied", async () => {
+it("keeps what it knows across sign-ins as the same account: a membership removed elsewhere meanwhile is kept, never removed here and never uploaded again", async () => {
   const service = fakeService(primary, secondary);
   const h = await fixture({
     snapshot: { memberships: both },
-    arrange: (client) =>
-      client.list.mockImplementation(async () => service.list()),
+    arrange: (client) => {
+      client.list.mockImplementation(async () => service.list());
+      client.add.mockImplementation(async (url) => service.add(url));
+    },
   });
   await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
   expect(h.known()).toEqual([primary, secondary]);
   h.session.signOut();
   service.rows.delete(secondary);
-  await h.session.signIn();
-  await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
-  expect(h.apply).toHaveBeenLastCalledWith(
-    { known: [primary], outbox: [], account: "user" },
-    { add: [], remove: [secondary] },
-  );
-  expect(h.sent()).toEqual([]);
+  // The sign-in that first reads the shorter list, and the one after it:
+  // neither forgets the secondary, and neither re-adds it to the account.
+  for (const signIn of [2, 3]) {
+    await h.session.signIn();
+    await until(() => expect(h.status).toHaveBeenLastCalledWith(synced()));
+    expect(h.client.list).toHaveBeenCalledTimes(signIn);
+    expect(h.apply).toHaveBeenLastCalledWith(
+      { known: [primary, secondary], outbox: [], account: "user" },
+      [],
+    );
+    expect(h.sent()).toEqual([]);
+    expect(h.outbox()).toEqual([]);
+    expect([...service.rows]).toEqual([primary]);
+    expect(h.knownCommunities.snapshot().memberships).toEqual(both);
+    h.session.signOut();
+  }
   h.dispose();
 });
 
@@ -773,7 +781,7 @@ it("reads nothing into another account's sign-in on this device: the first accou
       ],
       account: "bob",
     },
-    { add: [], remove: [] },
+    [],
   );
   expect(h.sent()).toEqual([
     { url: primary, removed: false },
@@ -785,9 +793,6 @@ it("reads nothing into another account's sign-in on this device: the first accou
     outbox: [],
     account: "bob",
   });
-  expect(
-    h.apply.mock.calls.flatMap(([, changes]) => changes?.remove ?? []),
-  ).toEqual([]);
   h.dispose();
 });
 

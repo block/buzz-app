@@ -868,29 +868,24 @@ it("re-running a join the service already holds queues nothing; a join it does n
   ]);
 });
 
-it("applies a server list in one record write: adds under the host name, forgets removed ones without purging, keeps unrelated state", async () => {
+it("applies a server list in one record write: adds under the host name, forgets nothing, keeps the selection and session", async () => {
   const client = setup({
     profile: { name: "Local", picture: "" },
-    memberships: [
-      { id: "primary", name: "Primary" },
-      { id: "https://gone.example", name: "Gone" },
-    ],
-    selected: "https://gone.example",
+    memberships: [{ id: "primary", name: "Primary" }],
+    selected: "primary",
   });
   await flush();
   await flush();
   expect(client.relay.snapshot().status).toBe("ready");
-  const scope = `https://gone.example:${viewer}`;
-  writeView(scope, "draft:general", "unsent");
   const next = {
     known: ["wss://primary.example", "wss://new.example:8443"],
     outbox: [],
   };
   const writes = vi.spyOn(localStorage, "setItem");
-  await client.applySync(next, {
-    add: ["wss://new.example:8443", "wss://primary.example"],
-    remove: ["wss://gone.example", "wss://unknown.example"],
-  });
+  await client.applySync(next, [
+    "wss://new.example:8443",
+    "wss://primary.example",
+  ]);
   expect(
     writes.mock.calls.filter(([key]) => key === `buzz-client.v1:${viewer}`),
   ).toHaveLength(1);
@@ -899,17 +894,13 @@ it("applies a server list in one record write: adds under the host name, forgets
       { id: "primary", name: "Primary" },
       { id: "https://new.example:8443", name: "new.example:8443" },
     ],
-    selected: null,
+    selected: "primary",
     sync: next,
   });
-  // Forgotten like the banned answer: session disposed, device state kept,
-  // and no relay was asked to release anything.
-  expect(client.relay.snapshot().status).toBe("disconnected");
-  expect(readView(scope, "draft:general", "")).toBe("unsent");
-  expect(requests.some((url) => url.endsWith("/leave"))).toBe(false);
+  expect(client.relay.snapshot().status).toBe("ready");
   // The added community has no session until it is selected.
   expect(requests.filter((url) => url.endsWith("/session"))).toEqual([
-    "/api/relay/https%3A%2F%2Fgone.example/session",
+    "/api/relay/primary/session",
   ]);
   client.select("https://new.example:8443");
   await flush();
@@ -948,10 +939,7 @@ it("a native sync write that will not save throws before anything changes", asyn
   await flush();
   const snapshot = client.snapshot();
   await expect(
-    client.applySync(
-      { known: [], outbox: [] },
-      { remove: ["wss://native.example"] },
-    ),
+    client.applySync({ known: [], outbox: [] }, ["wss://new.example"]),
   ).rejects.toThrow("Could not save this community on this device");
   expect(client.snapshot()).toBe(snapshot);
 });

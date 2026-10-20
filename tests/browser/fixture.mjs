@@ -1686,7 +1686,7 @@ export const test = base.extend({
         expect(validTypingTemplate(event)).toBe(true);
         expect(rosterIds).toContain(event.tags[0]?.[1]);
         report.typingPublications.push({ community, event });
-        relay?.publish(community, event);
+        relay?.publish(community, event, { requireSubscriber: false });
         return;
       }
       if (openSearch && event.kind === 9021) {

@@ -1845,10 +1845,11 @@ function Composer({
               extensions={extensions}
               emoji={emojiCatalog.entries}
               onDraftChange={(next) => {
+                const textChanged = next.text !== valueRef.current.text;
                 if (!editing.target) automaticTag.current = undefined;
                 saveDraft(next);
                 completion.observe(true);
-                if (next.text.trim()) notifyTyping();
+                if (textChanged && next.text.trim()) notifyTyping();
               }}
               onFormatsChange={setActiveFormats}
               onEditLink={setLinkEdit}

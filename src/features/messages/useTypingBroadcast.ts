@@ -26,7 +26,7 @@ export function useTypingBroadcast(
   }, [send, channelId, threadRootId, enabled]);
   return () => {
     const signal = lifetime.current?.signal;
-    const now = Date.now();
+    const now = performance.now();
     if (
       !enabled ||
       !send ||

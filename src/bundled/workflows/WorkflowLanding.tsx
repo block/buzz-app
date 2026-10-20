@@ -41,6 +41,8 @@ import {
   MenuItem,
   MenuIcon,
 } from "../../shared/design-system/ui/Menu";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
@@ -629,19 +631,6 @@ function WorkflowCard({
       {new Date(definition.createdAt * 1000).toLocaleDateString()}
     </time>
   );
-  const open = (
-    <Button
-      ref={openRef}
-      aria-label={`Open ${name}`}
-      aria-pressed={selected}
-      data-workflow-card-open=""
-      disabled={!!deletion}
-      onClick={onSelect}
-      variant="ghost"
-    >
-      Open {name}
-    </Button>
-  );
   const detail = (
     <section className="workflow-detail" aria-label={name}>
       <div className="workflow-detail-hero">
@@ -740,40 +729,46 @@ function WorkflowCard({
     <>
       {selected && detailTarget && createPortal(detail, detailTarget)}
       <article className="workflow-card" data-selected={selected || undefined}>
-        {open}
-        <div className="workflow-card-content">
-          <div className="workflow-card-topline">
-            <div className="workflow-card-flow" aria-hidden="true">
+        <NavigationItem
+          ref={openRef}
+          aria-label={`Open ${name}`}
+          aria-current={false}
+          aria-pressed={selected}
+          selected={selected}
+          disabled={!!deletion}
+          onClick={onSelect}
+          icon={
+            <span className="workflow-card-flow" aria-hidden="true">
               <span className="workflow-card-icon">{triggerArt}</span>
               {presentation.actionIcons.length > 0 && (
                 <>
                   <ArrowRightIcon
                     className="workflow-card-arrow"
                     size="0.875rem"
-                    aria-hidden="true"
                   />
-                  {presentation.actionIcons.slice(0, 3).map((action) => (
+                  {presentation.actionIcons.slice(0, 1).map((action) => (
                     <span className="workflow-card-icon" key={action.key}>
                       <WorkflowIcon kind={action.icon} />
                     </span>
                   ))}
                 </>
               )}
-            </div>
-            {controls}
-          </div>
-          <h2 className="workflow-card-name text-label">{name}</h2>
-          <p className="workflow-card-description text-body-sm text-secondary">
-            {presentation.description}
-          </p>
-          <div className="workflow-card-meta text-caption text-subtle">
-            <span className="workflow-card-identity">
-              #{channel.name}
-              {status}
             </span>
-            {updated}
-          </div>
-        </div>
+          }
+          label={
+            <span className="workflow-row-copy">
+              <span className="workflow-card-name text-label">{name}</span>
+              <span className="workflow-card-description text-body-sm text-secondary">
+                {presentation.description}
+              </span>
+              <span className="workflow-card-meta text-caption text-subtle">
+                {updated}
+                {status}
+              </span>
+            </span>
+          }
+        />
+        {controls}
       </article>
       {confirmDelete && (
         <ConfirmAction
@@ -836,39 +831,45 @@ function WorkflowChannelCards({
   onDelete: (definition: WorkflowDefinition) => void;
   onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
 }) {
+  const headingId = useId();
   if (!snapshot) return null;
   if (snapshot.status === "idle" || snapshot.status === "unavailable")
     return null;
 
+  if (!snapshot.data.items.length && !snapshot.data.partial) return null;
+
   return (
-    <>
-      {snapshot.data.items.map((definition) => {
-        const key = workflowKey(definition);
-        return (
-          <WorkflowCard
-            capability={capability}
-            channel={channel}
-            definition={definition}
-            detailTarget={detailTarget}
-            key={key}
-            locked={workflowOperationLocked(operations, definition)}
-            onError={onError}
-            onRun={onRun}
-            onOpen={onOpen}
-            onDelete={onDelete}
-            onSelect={() => onSelect(selected === key ? undefined : key)}
-            operations={operations}
-            selected={selected === key}
-            viewer={viewer}
-          />
-        );
-      })}
-      {snapshot.data.partial && (
-        <div className="workflow-state-card text-body-sm text-secondary">
-          #{channel.name} returned a partial workflow list.
-        </div>
-      )}
-    </>
+    <section className="workflow-channel-group" aria-labelledby={headingId}>
+      <InlineHeader id={headingId} level={2} title={`#${channel.name}`} />
+      <div className="workflow-channel-rows">
+        {snapshot.data.items.map((definition) => {
+          const key = workflowKey(definition);
+          return (
+            <WorkflowCard
+              capability={capability}
+              channel={channel}
+              definition={definition}
+              detailTarget={detailTarget}
+              key={key}
+              locked={workflowOperationLocked(operations, definition)}
+              onError={onError}
+              onRun={onRun}
+              onOpen={onOpen}
+              onDelete={onDelete}
+              onSelect={() => onSelect(selected === key ? undefined : key)}
+              operations={operations}
+              selected={selected === key}
+              viewer={viewer}
+            />
+          );
+        })}
+        {snapshot.data.partial && (
+          <div className="workflow-state-card text-body-sm text-secondary">
+            #{channel.name} returned a partial workflow list.
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -1032,23 +1033,28 @@ export function WorkflowLanding({
             }
           }}
         >
-          {visible.map((channel) => (
-            <WorkflowChannelCards
-              capability={capability}
-              channel={channel}
-              detailTarget={detailTarget}
-              key={channel.id}
-              onOpen={onOpen}
-              onDelete={onDelete}
-              onSelect={onSelect}
-              onRun={runRequest}
-              onError={setError}
-              operations={operations}
-              selected={selected}
-              snapshot={snapshots[channel.id]}
-              viewer={viewer}
-            />
-          ))}
+          {[...visible]
+            .sort(
+              (a, b) =>
+                a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+            )
+            .map((channel) => (
+              <WorkflowChannelCards
+                capability={capability}
+                channel={channel}
+                detailTarget={detailTarget}
+                key={channel.id}
+                onOpen={onOpen}
+                onDelete={onDelete}
+                onSelect={onSelect}
+                onRun={runRequest}
+                onError={setError}
+                operations={operations}
+                selected={selected}
+                snapshot={snapshots[channel.id]}
+                viewer={viewer}
+              />
+            ))}
         </div>
       )}
       <p

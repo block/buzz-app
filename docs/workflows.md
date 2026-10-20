@@ -9,11 +9,12 @@ See the [capability contract](../src/features/workflows/types.ts).
 ## Scope
 
 - Channel-scoped saved configurations; new drafts start disabled.
-- The landing is a card grid filtered in place by channel. Each card runs the
+- The landing groups compact workflow rows under prominent channel headings,
+  sorted by channel name and filtered in place by channel. Each row runs the
   saved configuration in one click and toggles its configured state. Selecting
-  a card shows its detail, actions and run history in a resizable side pane, as
+  a row shows its detail, actions and run history in a resizable side pane, as
   on Agents; a created run rereads that history. Editing opens a modal over the
-  grid. Create begins with channel selection in that editor; the empty draft's
+  list. Create begins with channel selection in that editor; the empty draft's
   primary action adds its first step.
   Form mode uses a selectable flow and contextual inspector, with insertion
   menus and removal. On narrow screens the inspector is a nested side dialog.

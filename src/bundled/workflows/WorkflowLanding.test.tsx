@@ -144,6 +144,42 @@ function mount(
   };
 }
 
+it("groups repeated workflows by channel identity in channel-name order", async () => {
+  const first = { ...channel(1), name: "Zulu" };
+  const second = { ...channel(2), name: "Alpha" };
+  const sameName = { ...channel(3), name: "Alpha" };
+  const fixture = mount([first, sameName, second]);
+  try {
+    await fixture.finish(0, [
+      event(first.id),
+      event(second.id),
+      signed(author, {
+        created_at: 124,
+        kind: 30620,
+        tags: [
+          ["h", second.id],
+          ["d", "00000000-0000-4000-8000-000000000999"],
+        ],
+        content: fixtureYaml,
+      }),
+      event(sameName.id),
+    ]);
+    const groups = screen.getAllByRole("region");
+    expect(
+      groups.map((group) => within(group).getByRole("heading").textContent),
+    ).toEqual(["#Alpha", "#Alpha", "#Zulu"]);
+    expect(
+      groups.map(
+        (group) =>
+          within(group).getAllByRole("button", { name: "Open Message helper" })
+            .length,
+      ),
+    ).toEqual([2, 1, 1]);
+  } finally {
+    fixture.close();
+  }
+});
+
 it("reads 500 mixed member channels in four serial batches and never rereads on metadata reorder", async () => {
   const channels = Array.from({ length: 500 }, (_, i) => channel(i + 1));
   const fixture = mount(channels);

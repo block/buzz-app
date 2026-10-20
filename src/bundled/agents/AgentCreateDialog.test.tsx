@@ -229,6 +229,19 @@ it("creates with an emoji on a chosen background", async () => {
   );
 });
 
+it("offers an emoji only with a community to upload it to", async () => {
+  const { dialog, user } = setup([echo]);
+  await user.click(
+    within(dialog).getByRole("button", { name: "Choose avatar" }),
+  );
+  expect(
+    await within(dialog).findByRole("button", { name: "Use image" }),
+  ).toBeVisible();
+  expect(
+    within(dialog).queryByRole("button", { name: "Use emoji" }),
+  ).not.toBeInTheDocument();
+});
+
 it("opens on the name field", async () => {
   const { dialog } = setup([echo]);
   await waitFor(() =>

@@ -46,7 +46,10 @@ vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   paintEmojiAvatar: vi.fn(),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const agent = (name: string, n: number): Agent => ({
   pubkey: String(n).repeat(64),
@@ -1702,6 +1705,15 @@ it("opens avatar and name editing from the profile menu", async () => {
 });
 
 it("leaves an open emoji picker by Back or Cancel without saving", async () => {
+  for (const name of ["ResizeObserver", "IntersectionObserver"])
+    vi.stubGlobal(
+      name,
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
   await user.click(screen.getByRole("gridcell", { name: /Ada/ }));
@@ -1714,6 +1726,14 @@ it("leaves an open emoji picker by Back or Cancel without saving", async () => {
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
   await user.click(within(dialog).getByRole("button", { name: "Use emoji" }));
   expect(within(dialog).getByRole("tab", { name: "Emoji" })).toBeVisible();
+  // Let Mart finish mounting so it cannot outlive the test.
+  await waitFor(() =>
+    expect(
+      dialog
+        .querySelector("em-emoji-picker")
+        ?.shadowRoot?.querySelector("input"),
+    ).toBeTruthy(),
+  );
   await user.click(within(dialog).getByRole("button", { name: "Back" }));
   await user.click(within(dialog).getByRole("button", { name: "Use emoji" }));
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));

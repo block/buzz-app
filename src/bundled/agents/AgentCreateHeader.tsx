@@ -233,22 +233,25 @@ export function AgentCreateHeader({
                     ["image", "Use image", CloudUploadIcon],
                     ["emoji", "Use emoji", SmileyIcon],
                   ] as const
-                ).map(([source, label, Icon]) => (
-                  <SurfaceButton
-                    key={source}
-                    className={styles.collection}
-                    disabled={disabled}
-                    onClick={() => setView(source)}
-                  >
-                    <span
-                      className={`${styles.artwork} ${styles.sourceIcon}`}
-                      aria-hidden="true"
+                )
+                  // An emoji avatar is uploaded, so it needs a community.
+                  .filter(([source]) => community || source === "image")
+                  .map(([source, label, Icon]) => (
+                    <SurfaceButton
+                      key={source}
+                      className={styles.collection}
+                      disabled={disabled}
+                      onClick={() => setView(source)}
                     >
-                      <Icon size={48} />
-                    </span>
-                    <span>{label}</span>
-                  </SurfaceButton>
-                ))}
+                      <span
+                        className={`${styles.artwork} ${styles.sourceIcon}`}
+                        aria-hidden="true"
+                      >
+                        <Icon size={48} />
+                      </span>
+                      <span>{label}</span>
+                    </SurfaceButton>
+                  ))}
               </div>
             ) : view === "image" || view === "emoji" ? (
               <div className={styles.imageEditor}>

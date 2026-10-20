@@ -516,17 +516,26 @@ export function PluginImport({
                   : "No plugins found"
         }
         description={
-          error
-            ? undefined
-            : preview
-              ? reviewing
-                ? updating
-                  ? `${preview.commit ? "Source" : "Source folder"}: ${importLocation(preview, candidate?.path)}`
-                  : "Only install code you trust."
-                : preview.candidates.length
-                  ? "Select a plugin to review before installing."
-                  : "Try another folder or repository."
-              : "Choose a built plugin to load."
+          error ? undefined : preview ? (
+            reviewing ? (
+              updating ? (
+                <>
+                  {preview.commit ? "Source" : "Source folder"}:{" "}
+                  <code className={styles.sourcePath}>
+                    {importLocation(preview, candidate?.path)}
+                  </code>
+                </>
+              ) : (
+                "Only install code you trust."
+              )
+            ) : preview.candidates.length ? (
+              "Select a plugin to review before installing."
+            ) : (
+              "Try another folder or repository."
+            )
+          ) : (
+            "Choose a built plugin to load."
+          )
         }
         size={error || (reviewing && updating) ? "default" : "wide"}
         leadingActions={

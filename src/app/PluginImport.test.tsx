@@ -1137,6 +1137,54 @@ const rememberedPreview = {
   ],
 };
 
+it("rechecks Git with fresh authorization before opening a requested row review", async () => {
+  const git = vi.fn(async () => rememberedPreview);
+  const handled = vi.fn();
+  const manager = {
+    imports: { git, discard: vi.fn(async () => {}) },
+    installImport: vi.fn(),
+  } as unknown as PluginManager;
+  const repository = "https://git.example.com/plugins";
+  const authorizeGit = vi.fn(async () => ({ repository, token: "fresh" }));
+  render(
+    <StrictMode>
+      <PluginImport
+        plugins={manager}
+        catalog={{
+          profile: "test",
+          location: "test",
+          plugins: [
+            {
+              ...rememberedPlugin,
+              updateSource: {
+                repository,
+                reference: "release/one",
+                path: "dist",
+              },
+            },
+          ],
+        }}
+        busy={false}
+        updateId={rememberedManifest.id}
+        authorizeGit={authorizeGit}
+        reviewRequested
+        onReviewHandled={handled}
+      />
+    </StrictMode>,
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Update Remembered" }),
+  ).toBeVisible();
+  expect(git).toHaveBeenCalledExactlyOnceWith(
+    repository,
+    "release/one",
+    "fresh",
+  );
+  expect(authorizeGit).toHaveBeenCalledExactlyOnceWith(repository);
+  expect(handled).toHaveBeenCalled();
+  expect(manager.installImport).not.toHaveBeenCalled();
+});
+
 it.each([
   { root: "/plugins", path: "dist" },
   {

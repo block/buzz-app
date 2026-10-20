@@ -875,8 +875,14 @@ Opening an installed plugin's details checks its remembered folder. A matching
 package shows Up to date in the pane. Local folders are checked every five seconds
 while the pane is open and the app is visible, and again when the app becomes active.
 Checks pause during review or pending management operations. A changed package offers
-Update, which opens access review before explicit confirmation. The list row shows neither status nor
-an Update action. Failed activation shows Retry beside the error for an enabled,
+Update, which opens access review before explicit confirmation. A known update takes
+the prominent action position in both the pane and its list row; Enable/Disable
+moves into their ellipsis menus while Update is available. The row retains the latest
+check result for the installed revision and opens the pane’s review, checking the
+saved source again when the pane reopens. Only the open pane polls local folders.
+The menus also offer View computer access, reusing the import review’s disclosures
+for the installed manifest, and Delete for external plugins with confirmation.
+The list row shows no freshness status label. Failed activation shows Retry beside the error for an enabled,
 unpaused plugin. Retry activates the installed revision after its previous cleanup
 finishes; it does not acquire source files, install a package, or change saved state.
 Package freshness and activation failures are displayed separately. Update uses the same source and candidate path; changing sources

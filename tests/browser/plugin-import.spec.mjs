@@ -630,6 +630,51 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await page.clock.runFor(5_000);
   // The open pane detects folder changes without a manual check.
   await expect(button(page, "Update")).toBeEnabled();
+  const updatingPane = page.getByRole("complementary", {
+    name: "Example two details",
+  });
+  await expect(
+    updatingPane.getByRole("button", { name: "Disable", exact: true }),
+  ).toHaveCount(0);
+  await expect(button(page, "Update Example two")).toBeVisible();
+  await updatingPane.screenshot({
+    path: info.outputPath("primary-update-pane.png"),
+  });
+  await button(page, "More plugin actions").click();
+  await expect(page.getByRole("menuitem")).toHaveText([
+    "View computer access",
+    "Disable",
+    "Delete",
+  ]);
+  await page
+    .getByRole("menu")
+    .screenshot({ path: info.outputPath("primary-update-menu.png") });
+  await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
+  await button(page, "More plugin actions").click();
+  await page.getByRole("menuitem", { name: "Enable", exact: true }).click();
+  await button(page, "More plugin actions").click();
+  await page
+    .getByRole("menuitem", { name: "View computer access", exact: true })
+    .click();
+  const accessDialog = page.getByRole("dialog", {
+    name: "Computer access · Example two",
+  });
+  await expect(
+    accessDialog.getByRole("button", { name: /^Run example-cli/ }),
+  ).toBeVisible();
+  await accessDialog.getByRole("button", { name: /^Computer access/ }).click();
+  await expect(
+    accessDialog.getByRole("region", { name: "Plugin safety" }),
+  ).toContainText("Plugins aren’t sandboxed");
+  await accessDialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(button(page, "More plugin actions")).toBeFocused();
+  await button(page, "Close plugin details").click();
+  await button(page, "More actions for Example two").click();
+  await page
+    .getByRole("menuitem", { name: "View computer access", exact: true })
+    .click();
+  await accessDialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(button(page, "More actions for Example two")).toBeFocused();
   expect(
     await page.evaluate(
       () =>
@@ -640,7 +685,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   ).toEqual({ directory: "/fixture/plugins" });
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(button(page, "Check for updates")).toHaveCount(0);
-  await button(page, "Update").click();
+  await button(page, "Update Example two").click();
   await expect(button(page, "Change source folder")).toHaveCount(0);
   await expect(page.getByRole("radio")).toHaveCount(0);
   await expect(
@@ -689,7 +734,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
       .poll(() =>
         paneActions.evaluateAll((buttons) => {
           const rects = buttons.map((node) => node.getBoundingClientRect());
-          const row = buttons[0].parentElement;
+          const row = buttons[0].parentElement.parentElement;
           const group = row.parentElement.getBoundingClientRect();
           const primary = row.getBoundingClientRect();
           const more = row

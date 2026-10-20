@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { hoverMessage } from "./message-actions.mjs";
 
 test.use({
   productionBroker: true,
@@ -91,6 +92,12 @@ test("channel, thread and DM composers publish their own scope without publishin
   page,
   app,
 }) => {
+  const typingSigns = [];
+  page.on("request", (request) => {
+    if (!request.url().endsWith("/sign")) return;
+    const template = request.postDataJSON();
+    if (template?.kind === 20002) typingSigns.push(template);
+  });
   await open(page, app);
   const pulses = () => app.report.typingPublications;
   const type = async (input, text) => {
@@ -129,6 +136,7 @@ test("channel, thread and DM composers publish their own scope without publishin
   );
   await expect.poll(() => pulses().length).toBe(3);
   expect(pulses()[2].event.tags).toEqual([["h", "dm-peer"]]);
+  const dmRoot = app.append("primary", "dm-peer", "Typing barrier root");
   await page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Beta", exact: true })
@@ -142,10 +150,32 @@ test("channel, thread and DM composers publish their own scope without publishin
   await expect(
     page.getByRole("textbox", { name: /^Message / }).last(),
   ).toHaveText("private draft");
-  expect(pulses()).toHaveLength(3);
+  // Keep the restored composer mounted while a concurrent thread completes its
+  // pulse. Count signing attempts too, including a delayed or cancelled restore.
+  const dmComposer = page.getByRole("textbox", { name: /^Message / }).last();
+  const mounted = await dmComposer.elementHandle();
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${dmRoot.id}"]`,
+  );
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  await type(
+    page.getByRole("textbox", { name: "Reply to thread", exact: true }),
+    "publication barrier",
+  );
+  await expect
+    .poll(() => pulses().at(-1)?.event.tags)
+    .toEqual([
+      ["h", "dm-peer"],
+      ["e", dmRoot.id, "", "reply"],
+    ]);
+  expect(await mounted.evaluate((node) => node.isConnected)).toBe(true);
+  await expect(dmComposer).toHaveText("private draft");
+  expect(typingSigns).toHaveLength(4);
+  expect(pulses()).toHaveLength(4);
   expect(pulses().every(({ event }) => event.content === "")).toBe(true);
   await expect(
     page.getByRole("status", { name: "Conversation activity" }),
-  ).toBeEmpty();
+  ).toHaveText(["", ""]);
   expect(app.report.publications).toEqual([]);
 });

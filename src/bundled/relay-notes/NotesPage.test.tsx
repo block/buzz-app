@@ -1085,3 +1085,76 @@ it("pages beyond the real profile directory budget and retains evicted agent cla
     directory.dispose();
   }
 });
+
+it.each([false, true])(
+  "preserves retry focus through pending and failure, with success=%s",
+  async (success) => {
+    const f = fixture();
+    let release!: () => void;
+    let attempt = 0;
+    f.readPage.mockImplementation(async ([filter]) => {
+      if (!filter?.authors) return { events: [], relayCount: 0 };
+      if (++attempt === 1) throw new Error("offline");
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (!success) throw new Error("still offline");
+      return { events: [note("Recovered")], relayCount: 1 };
+    });
+    render(<NotesCommunity session={f.session} />);
+    const retry = await screen.findByRole("button", { name: "Retry notes" });
+    retry.focus();
+    fireEvent.click(retry);
+    try {
+      await waitFor(() => expect(retry).toHaveAttribute("aria-busy", "true"));
+      expect(retry).toHaveFocus();
+    } finally {
+      await act(async () => release());
+    }
+    if (success) {
+      await screen.findByRole("button", { name: "Open Recovered by Carl" });
+      expect(
+        screen.getByRole("button", { name: "Refresh notes" }),
+      ).toHaveFocus();
+    } else {
+      await waitFor(() =>
+        expect(retry).not.toHaveAttribute("aria-busy", "true"),
+      );
+      expect(retry).toHaveFocus();
+    }
+  },
+);
+
+it.each([false, true])(
+  "hands terminal pagination focus to Refresh without overriding a move, moved=%s",
+  async (moved) => {
+    const f = fixture();
+    let release!: () => void;
+    f.readPage.mockImplementation(async ([filter]) => {
+      if (!filter?.authors) return { events: [], relayCount: 0 };
+      if (!filter.before_id)
+        return { events: [note("First")], relayCount: 100 };
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { events: [note("Last", carl, 1)], relayCount: 1 };
+    });
+    render(<NotesCommunity session={f.session} />);
+    const more = await screen.findByRole("button", {
+      name: "Load older notes",
+    });
+    more.focus();
+    fireEvent.click(more);
+    const about = screen.getByRole("button", { name: "About shared notes" });
+    try {
+      await waitFor(() => expect(more).toHaveAttribute("aria-busy", "true"));
+      if (moved) about.focus();
+    } finally {
+      await act(async () => release());
+    }
+    await waitFor(() => expect(more).not.toBeInTheDocument());
+    expect(
+      moved ? about : screen.getByRole("button", { name: "Refresh notes" }),
+    ).toHaveFocus();
+  },
+);

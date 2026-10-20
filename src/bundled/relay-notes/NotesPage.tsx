@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -330,6 +331,12 @@ function NoteCollection({
   const split = usePanelSplit(448, 320);
   const origin = useRef<HTMLElement | null>(null);
   const refreshRef = useRef<HTMLButtonElement>(null);
+  const preserveControlFocus = useCallback((node: HTMLButtonElement | null) => {
+    if (!node) return;
+    return () => {
+      if (document.activeElement === node) refreshRef.current?.focus();
+    };
+  }, []);
   const folderGrid = useRef<HTMLElement>(null);
   const folderTitle = useRef<HTMLHeadingElement>(null);
   const [profile, setProfile] = useState("");
@@ -355,7 +362,6 @@ function NoteCollection({
     setResult((old) => ({
       ...old,
       loading: true,
-      error: undefined,
       sharedError: undefined,
     }));
     const options = { signal: controller.signal, fresh: request.version > 0 };
@@ -704,6 +710,8 @@ function NoteCollection({
             <div role="alert">
               <p>{result.error}</p>
               <Button
+                ref={preserveControlFocus}
+                loading={result.loading}
                 onClick={() =>
                   setRequest((old) => ({ ...old, version: old.version + 1 }))
                 }
@@ -790,6 +798,7 @@ function NoteCollection({
             <div>
               <Button
                 size="sm"
+                ref={preserveControlFocus}
                 loading={result.loading}
                 onClick={() =>
                   setRequest((old) => ({

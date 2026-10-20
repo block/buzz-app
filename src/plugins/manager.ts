@@ -9,7 +9,22 @@ import type {
   StorageResult,
   ConfigurationState,
   ManagementAction,
+  PluginInfo,
 } from "./types";
+
+export function canRetryPlugin(
+  plugin: PluginInfo | undefined,
+  activation: ReturnType<PluginRuntime["snapshot"]>[string] | undefined,
+  externalPluginsPaused: boolean,
+) {
+  return (
+    !!plugin?.enabled &&
+    !plugin.error &&
+    !(externalPluginsPaused && plugin.source === "external") &&
+    activation?.status === "failed" &&
+    activation.revision === plugin.revision
+  );
+}
 
 export type BundledPlugin = {
   manifest: PluginManifest;
@@ -192,13 +207,7 @@ export function createPluginManager(
       const desired = desiredPlugins();
       const plugin = desired.find((item) => item.manifest.id === id);
       const activation = runtime.snapshot()[id];
-      if (
-        !plugin ||
-        plugin.error ||
-        activation?.status !== "failed" ||
-        activation.revision !== plugin.revision
-      )
-        return false;
+      if (!canRetryPlugin(plugin, activation, false)) return false;
       runtime.reconcile(desired, id);
       return true;
     },

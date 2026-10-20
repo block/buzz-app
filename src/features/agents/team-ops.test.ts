@@ -975,6 +975,53 @@ describe("team operations: saved before sending", () => {
     expect(v.relay.archived).toBe(false);
   });
 
+  it.each([
+    [
+      "publish",
+      (value: string) => value.includes('"sends":1'),
+      (w: ReturnType<typeof world>, teamId: string) =>
+        edit(w, teamId, { name: "Renamed" }),
+      (w: ReturnType<typeof world>) => w.writer.publish,
+    ],
+    [
+      "member add",
+      (value: string) => value.includes('"maybe-sent"'),
+      (w: ReturnType<typeof world>, teamId: string) =>
+        edit(w, teamId, { members: [a] }),
+      (w: ReturnType<typeof world>) => w.channels.addMember,
+    ],
+    [
+      "archive",
+      (value: string) => value.includes('"maybe-sent"'),
+      (w: ReturnType<typeof world>, teamId: string) =>
+        w.runner.start({
+          kind: "delete",
+          teamId,
+          channel: CH,
+          intent: { name: "", instructions: "", members: [] },
+        }),
+      (w: ReturnType<typeof world>) => w.channels.archive,
+    ],
+  ])(
+    "a Discard saved right behind the %s claim stops it before it sends",
+    async (_, match, start, adapter) => {
+      const w = world();
+      const teamId = await existing(w, []);
+      const save = hold(w, match);
+      const { op, done } = start(w, teamId);
+      await save.reached;
+      const discarded = w.runner.discard(op.id);
+      save.release();
+      await discarded;
+      await done;
+      expect(adapter(w)).not.toHaveBeenCalled();
+      expect(w.ops.get(op.id)).toMatchObject({
+        mode: "reconcile-only",
+        stop: "discarded",
+      });
+    },
+  );
+
   it("keeps a revision's held bytes and a newer submission saved while they were", async () => {
     const w = world();
     const teamId = await existing(w);

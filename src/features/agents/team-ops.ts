@@ -324,9 +324,7 @@ export function teamRunner(deps: RunnerDeps) {
   const fenced = (teamId: string, except: string) =>
     onTeam(teamId).some((op) => op.id !== except && unresolved(op));
   /** Saves `next` over `prior` only while the record is still exactly
-   * `prior` as saved and its team unfenced, and whether it did. The caller
-   * dispatches right after, with no await between, so a Discard, Delete or
-   * revision saved meanwhile is never overtaken. */
+   * `prior` as saved and its team unfenced, and whether it did. */
   async function claim(prior: TeamOp, next: TeamOp) {
     const applied = await ops.update((records) =>
       records[prior.id] === prior && !fenced(prior.teamId, prior.id)
@@ -334,8 +332,14 @@ export function teamRunner(deps: RunnerDeps) {
         : undefined,
     );
     if (applied) deps.changed();
-    return applied && ops.get(prior.id) === next;
+    return applied;
   }
+  /** Whether `claimed` is still exactly the saved record, its team
+   * unfenced. Callers check it again after `await claim()`, right before
+   * the adapter: a Discard or Delete queued behind the claim's save can
+   * land before they resume. A stopped record keeps its uncertain marks. */
+  const holds = (claimed: TeamOp) =>
+    ops.get(claimed.id) === claimed && !fenced(claimed.teamId, claimed.id);
 
   /** Runs `work` after the team's earlier steps settle: one step per team
    * at a time, so no two overlap across signing, delivery or a command. */
@@ -702,8 +706,8 @@ export function teamRunner(deps: RunnerDeps) {
     if (!now || held?.event.id !== eventId || fenced(now.teamId, now.id))
       return ops.get(op.id);
     const sends = held.sends + 1;
-    if (!(await claim(now, { ...now, candidate: { ...held, sends } })))
-      return ops.get(op.id);
+    const claimed = { ...now, candidate: { ...held, sends } };
+    if (!(await claim(now, claimed)) || !holds(claimed)) return ops.get(op.id);
     const sent = await deliver(
       deps.writer,
       held.event,
@@ -829,7 +833,8 @@ export function teamRunner(deps: RunnerDeps) {
         const base = ops.get(start.id);
         return base && (await save(marked(base, state, error)));
       };
-      if (!(await claim(now, marked(now, "maybe-sent"))))
+      const claimed = marked(now, "maybe-sent");
+      if (!(await claim(now, claimed)) || !holds(claimed))
         return ops.get(start.id);
       const result = await (command.action === "add"
         ? channels.addMember(channel, pubkey, signal)
@@ -897,7 +902,8 @@ export function teamRunner(deps: RunnerDeps) {
       const base = ops.get(op.id);
       return base && (await save(marked(base, s, error)));
     };
-    if (!(await claim(now, marked(now, "maybe-sent")))) return ops.get(op.id);
+    const claimed = marked(now, "maybe-sent");
+    if (!(await claim(now, claimed)) || !holds(claimed)) return ops.get(op.id);
     try {
       await channels[archive ? "archive" : "unarchive"](channel, signal);
     } catch (error) {

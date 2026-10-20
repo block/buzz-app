@@ -3162,3 +3162,97 @@ it("keeps own-message and bubble styling off a shown thread root", () => {
     cleanup();
   }
 });
+
+it.each([
+  {
+    claim: undefined,
+    fails: false,
+    card: true,
+    listed: ["notes.txt", "shot.png"],
+  },
+  { claim: "shot", fails: false, card: true, listed: ["notes.txt"] },
+  {
+    claim: "throws",
+    fails: false,
+    card: true,
+    listed: ["notes.txt", "shot.png"],
+  },
+  {
+    claim: "shot",
+    fails: true,
+    card: false,
+    listed: ["notes.txt", "shot.png"],
+  },
+])(
+  "lists only the attachments a message renderer does not claim: %o",
+  ({ claim, fails, card, listed }) => {
+    const entry = {
+      id: "card",
+      title: "Card",
+      key: "fixture.card:card",
+      pluginId: "fixture.card",
+      revision: "one",
+      matches: () => true,
+      ...(claim
+        ? {
+            ownsAttachment: (
+              _message: unknown,
+              attachment: { url: string },
+            ) => {
+              if (claim === "throws") throw new Error("broken claim");
+              return attachment.url.endsWith("shot.png");
+            },
+          }
+        : {}),
+      component: () => {
+        if (fails) throw new Error("broken renderer");
+        return <p>Plugin card</p>;
+      },
+    };
+    // Stable snapshots: useSyncExternalStore rereads on every render.
+    const none: never[] = [];
+    const entries = [entry];
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = renderDom(
+      <MessageRow
+        row={{
+          ...row,
+          replyCount: 0,
+          attachments: [
+            {
+              kind: "file",
+              url: "https://media.test/notes.txt",
+              name: "notes.txt",
+            },
+            {
+              kind: "file",
+              url: "https://media.test/shot.png",
+              name: "shot.png",
+            },
+          ],
+        }}
+        profile={undefined}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={{
+          tools: { snapshot: () => none, subscribe: () => () => {} },
+          inline: { snapshot: () => none, subscribe: () => () => {} },
+          messages: { snapshot: () => entries, subscribe: () => () => {} },
+        }}
+      />,
+    );
+    try {
+      expect(!!screen.queryByText("Plugin card")).toBe(card);
+      expect(!!screen.queryByText("Root")).toBe(!card);
+      for (const name of ["notes.txt", "shot.png"])
+        expect(screen.queryAllByText(name)).toHaveLength(
+          listed.includes(name) ? 1 : 0,
+        );
+    } finally {
+      view.unmount();
+      error.mockRestore();
+    }
+  },
+);

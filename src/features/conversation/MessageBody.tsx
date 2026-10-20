@@ -4,33 +4,49 @@ import type { ContributionReader, MessageRenderer } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import { WithTargetOpener } from "./opener";
 
-/** First active match wins; a broken optional renderer leaves the host fallback. */
-export function MessageBody({
-  registry,
-  message,
-  children,
-}: {
-  registry: ContributionReader<MessageRenderer>;
-  message: ChannelMessage;
-  children: ReactNode;
-}) {
+const EMPTY: readonly never[] = [];
+const NONE = { snapshot: () => EMPTY, subscribe: () => () => {} };
+
+/** The renderer for `message`: the first active match. Throwing matchers are skipped. */
+export function useMessageRenderer(
+  registry: ContributionReader<MessageRenderer> | undefined,
+  message: ChannelMessage,
+) {
+  const reader = registry ?? NONE;
   const renderers = useSyncExternalStore(
-    registry.subscribe,
-    registry.snapshot,
-    registry.snapshot,
+    reader.subscribe,
+    reader.snapshot,
+    reader.snapshot,
   );
-  const renderer = renderers.find((entry) => {
+  return renderers.find((entry) => {
     try {
       return entry.matches(message);
     } catch {
       return false;
     }
   });
+}
+
+/** First active match wins; a broken optional renderer leaves the host fallback. */
+export function MessageBody({
+  registry,
+  message,
+  children,
+  onFailed,
+}: {
+  registry: ContributionReader<MessageRenderer>;
+  message: ChannelMessage;
+  children: ReactNode;
+  /** Called with the renderer that failed, after the fallback replaces it. */
+  onFailed?: (renderer: MessageRenderer) => void;
+}) {
+  const renderer = useMessageRenderer(registry, message);
   if (!renderer) return children;
   return (
     <ContributionBoundary
       key={`${contributionKey(renderer)}:${message.channelId}:${message.id}`}
       fallback={children}
+      onFailed={onFailed && (() => onFailed(renderer))}
     >
       <WithTargetOpener
         component={renderer.component}

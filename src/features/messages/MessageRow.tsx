@@ -51,11 +51,12 @@ import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
-import { MessageBody } from "../conversation/MessageBody";
+import { MessageBody, useMessageRenderer } from "../conversation/MessageBody";
 import { TargetOpenerProvider, WithTargetOpener } from "../conversation/opener";
 import { InlineText } from "../conversation/InlineText";
 import type {
   ConversationExtensions,
+  MessageRenderer,
   MessageSummaryActivity,
 } from "../conversation/contracts";
 import {
@@ -424,10 +425,25 @@ function MessageRowContent({
       </MenuItem>
     ),
   );
+  // A message renderer may draw some attachments itself. They return to the
+  // host list if that renderer fails.
+  const messageRenderer = useMessageRenderer(extensions?.messages, row);
+  const [failedRenderer, setFailedRenderer] = useState<MessageRenderer>();
+  const claims =
+    messageRenderer !== failedRenderer
+      ? messageRenderer?.ownsAttachment
+      : undefined;
+  const claimed = (attachment: ChannelMessage["attachments"][number]) => {
+    try {
+      return !!claims?.call(messageRenderer, row, attachment);
+    } catch {
+      return false;
+    }
+  };
   // Keep mixed attachments in sender order; only adjacent images share a strip.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
-    if (!safeMessageUrl(attachment.url)) continue;
+    if (!safeMessageUrl(attachment.url) || claimed(attachment)) continue;
     const previous = attachmentGroups.at(-1);
     if (
       (attachment.kind === "image" || attachment.kind === "file") &&
@@ -922,7 +938,11 @@ function MessageRowContent({
                     </div>
                   )}
                   {extensions?.messages ? (
-                    <MessageBody registry={extensions.messages} message={row}>
+                    <MessageBody
+                      registry={extensions.messages}
+                      message={row}
+                      onFailed={setFailedRenderer}
+                    >
                       {body}
                     </MessageBody>
                   ) : (

@@ -12,12 +12,19 @@ export function contributionKey(entry: object) {
   return key;
 }
 export class ContributionBoundary extends Component<
-  { children: ReactNode; fallback: ReactNode },
+  {
+    children: ReactNode;
+    fallback: ReactNode;
+    onFailed?: (() => void) | undefined;
+  },
   { failed: boolean }
 > {
   state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };
+  }
+  componentDidCatch() {
+    this.props.onFailed?.();
   }
   render() {
     return this.state.failed ? this.props.fallback : this.props.children;

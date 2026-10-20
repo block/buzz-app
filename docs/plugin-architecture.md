@@ -1100,12 +1100,15 @@ mounted page; see [sidebar ownership](channels.md#ownership).
 
 ## Conversation contributions
 
-`registerMessage({ id, title, matches, component })` contributes an optional whole
+`registerMessage({ id, title, matches, ownsAttachment?, component })` contributes an optional whole
 message body. Components receive `{ message: ChannelMessage, canOpen, open }`; the first active
 match wins, throwing matchers are skipped, and render failure/removal restores the
 host body. Registration uses the same owned contribution lifetime as inline/link
 renderers. The host retains author/time chrome, actions, attachments and session
-ownership. `MessageRenderer` is a host-matched author-preview type, not event
+ownership. `ownsAttachment(message, attachment)` lets the component claim the
+attachments it draws itself: the host leaves those out of its list, keeps the
+others, and lists every one again if the component fails. A throwing claim is
+false. `MessageRenderer` is a host-matched author-preview type, not event
 admission or cross-version capability negotiation.
 
 `registerMessageAction({ id, title, icon?, matches, component, marker? })` adds an

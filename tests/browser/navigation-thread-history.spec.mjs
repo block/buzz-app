@@ -87,25 +87,23 @@ test("Back restores each thread visit before the previous channel", async ({
   );
   const feedback = await selectedTab.evaluateHandle((tab) => {
     const state = { cue: null, paint: null };
-    tab.addEventListener(
-      "animationstart",
-      (event) => {
-        if (!event.target.classList.contains("buzz-tabs-attention")) return;
-        state.cue = event.target;
-        for (const animation of state.cue.getAnimations()) {
-          animation.pause();
-          animation.currentTime = 0;
-        }
-        // Capture while the cue is attached: WebKit may already have queued
-        // animationend before this handler pauses a delayed animation.
-        state.paint = {
-          tint: getComputedStyle(state.cue).backgroundColor,
-          resting: getComputedStyle(tab).backgroundColor,
-          opacity: Number(getComputedStyle(state.cue).opacity),
-        };
-      },
-      { once: true },
-    );
+    const start = (event) => {
+      if (!event.target.classList.contains("buzz-tabs-attention")) return;
+      tab.removeEventListener("animationstart", start);
+      state.cue = event.target;
+      for (const animation of state.cue.getAnimations()) {
+        animation.pause();
+        animation.currentTime = 0;
+      }
+      // Read the paint now. A slow renderer can deliver animationstart and
+      // animationend together, and the host removes the cue on animationend.
+      state.paint = {
+        tint: getComputedStyle(state.cue).backgroundColor,
+        resting: getComputedStyle(state.cue.parentElement).backgroundColor,
+        opacity: Number(getComputedStyle(state.cue).opacity),
+      };
+    };
+    tab.addEventListener("animationstart", start);
     return state;
   });
   await activate(threadButton(roots[1]));
@@ -113,7 +111,7 @@ test("Back restores each thread visit before the previous channel", async ({
     await expect
       .poll(() => feedback.evaluate((state) => !!state.paint))
       .toBe(true);
-    const paint = await feedback.evaluate((state) => state.paint);
+    const paint = await feedback.evaluate(({ paint }) => paint);
     expect(paint.tint).not.toBe(paint.resting);
     expect(paint.opacity).toBeGreaterThan(0);
   } finally {

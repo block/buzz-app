@@ -247,6 +247,32 @@ test.describe("settings empty collections", () => {
       for (const width of [1440, 800, 390]) {
         await page.setViewportSize({ width, height: 900 });
         await selectSettingsSection(page, "Custom emoji");
+        await page.getByRole("tab", { name: "Community emoji (0)" }).click();
+        const community = page.getByRole("group", {
+          name: "Community emoji",
+          exact: true,
+        });
+        const search = community.getByRole("searchbox", { name: "Search" });
+        await search.fill("unmatched");
+        await expect(
+          community.getByRole("heading", { name: "No results" }),
+        ).toBeVisible();
+        await community.getByRole("button", { name: "Clear search" }).click();
+        await expect(search).toBeFocused();
+        await expect(search).toHaveValue("");
+        await page.evaluate(() => document.fonts.ready);
+        await expect
+          .poll(() =>
+            community.evaluate(
+              (root) =>
+                root.scrollWidth <= root.clientWidth &&
+                document.documentElement.scrollWidth <= innerWidth,
+            ),
+          )
+          .toBe(true);
+        await page.screenshot({
+          path: info.outputPath(`emoji-community-${mode}-${width}.png`),
+        });
         await page.getByRole("tab", { name: "My emojis", exact: true }).click();
         const card = page.locator(".buzz-empty-state").filter({
           has: page.getByRole("heading", {

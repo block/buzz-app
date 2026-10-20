@@ -10,7 +10,7 @@ import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
-import { ThemePicker } from "../shared/design-system/ui/ThemePicker";
+import { AppearancePreview } from "./AppearancePreview";
 import { Button } from "../shared/design-system/ui/Button";
 import {
   useCallback,
@@ -62,15 +62,35 @@ export function AppearanceSettings({
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
+      <AppearancePreview />
       <div>
         <InlineHeader title="Interface" />
         <SettingsGroup>
           <PreferenceRow
-            title="Color mode"
+            title="Mode"
             trailing={
-              <ThemePicker
+              <Select
+                variant="compact"
+                label="Mode"
                 value={preference}
-                onValueChange={appearance.setMode}
+                groups={[
+                  {
+                    label: "Mode",
+                    options: [
+                      { value: "system", label: "System" },
+                      { value: "light", label: "Light" },
+                      { value: "dark", label: "Dark" },
+                    ],
+                  },
+                ]}
+                onValueChange={(value) => {
+                  if (
+                    value === "system" ||
+                    value === "light" ||
+                    value === "dark"
+                  )
+                    appearance.setMode(value);
+                }}
               />
             }
           />
@@ -174,23 +194,24 @@ export function AppearanceSettings({
             )}
           />
           <PreferenceRow
-            title="Contrast"
+            title="Vibe level"
             trailing={
               <Select
                 variant="compact"
-                label="Contrast"
+                label="Vibe level"
                 value={contrast}
                 groups={[
                   {
-                    label: "Contrast",
+                    label: "Vibe level",
                     options: [
-                      { value: "low", label: "Low contrast" },
-                      { value: "high", label: "High contrast" },
+                      { value: "quiet", label: "Snoozin’" },
+                      { value: "low", label: "Hummin’" },
+                      { value: "high", label: "Buzzin’" },
                     ],
                   },
                 ]}
                 onValueChange={(value) => {
-                  if (value === "low" || value === "high")
+                  if (value === "quiet" || value === "low" || value === "high")
                     appearance.setContrast(value);
                 }}
               />
@@ -242,11 +263,11 @@ export function AppearanceSettings({
         )}
         {active && contrastError && (
           <ToastNotice
-            title="Contrast wasn’t saved"
+            title="Vibe level wasn’t saved"
             description={contrastError}
           >
             <Button size="sm" onClick={() => appearance.setContrast(contrast)}>
-              Retry saving contrast
+              Retry saving vibe level
             </Button>
           </ToastNotice>
         )}

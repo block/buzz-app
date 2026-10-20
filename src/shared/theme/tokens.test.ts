@@ -17,7 +17,7 @@ const blocks = [...css.matchAll(/:root[^{}]*\{([^}]+)\}/g)].map((match) =>
 function resolvedPalette(
   mode: "light" | "dark",
   accent: Accent = DEFAULT_ACCENT,
-  contrastMode: "low" | "high" = "low",
+  contrastMode: "quiet" | "low" | "high" = "low",
 ) {
   const source = (
     readFileSync("src/shared/design-system/styles/tokens.css", "utf8") +
@@ -37,7 +37,7 @@ function resolvedPalette(
     if (
       selector.includes('data-color-level="') &&
       !selector.includes(
-        `data-color-level="${contrastMode === "high" ? "high" : "touch"}"`,
+        `data-color-level="${contrastMode === "low" ? "touch" : contrastMode}"`,
       )
     )
       continue;
@@ -190,10 +190,10 @@ it.each(["light", "dark"] as const)(
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
-    // Own and received bubbles are authored grays.
+    // Received bubbles stay neutral; own bubbles use the soft accent pair.
     expect(palette["--surface-message"]).toBe(palette["--bubble-received"]);
-    expect(palette["--surface-message-own"]).toBe(palette["--bubble-neutral"]);
-    expect(palette["--text-message-own"]).toBe(palette["--text-standard"]);
+    expect(palette["--surface-message-own"]).toBe(palette["--accent-4"]);
+    expect(palette["--text-message-own"]).toBe(palette["--accent-12"]);
   },
 );
 
@@ -201,7 +201,7 @@ it.each(ACCENTS)(
   "%s message fill keeps text and send icons readable in both modes",
   (color) => {
     for (const mode of ["light", "dark"] as const)
-      for (const contrastMode of ["low", "high"] as const) {
+      for (const contrastMode of ["quiet", "low", "high"] as const) {
         const palette = resolvedPalette(mode, color, contrastMode);
         const where = `${color}/${mode}`;
         // Highlights come from the family's tint, never a mixed bubble color.
@@ -229,7 +229,7 @@ it.each(ACCENTS)(
 it("the default Lime accent keeps its strong fill and paired black ink", () => {
   for (const mode of ["light", "dark"] as const) {
     const palette = resolvedPalette(mode);
-    expect(palette["--affordance-prominent"]).toBe("#6bce00");
+    expect(palette["--affordance-prominent"]).toBe("#6ccf01");
     expect(palette["--text-on-prominent"]).toBe("#000000");
   }
 });
@@ -261,12 +261,15 @@ it.each(ACCENTS)(
     for (const mode of ["light", "dark"] as const) {
       const high = resolvedPalette(mode, accent, "high");
       const low = resolvedPalette(mode, accent, "low");
+      const quiet = resolvedPalette(mode, accent, "quiet");
+      expect(quiet["--surface-message-own"]).toBe(quiet["--bubble-neutral"]);
       for (const role of [
         "--surface-message-own",
         "--surface-navigation-selected",
         "--bg-chrome-selected",
       ]) {
         expect(high[role]).toBe(high["--accent-9"]);
+        expect(low[role]).toBe(low["--accent-4"]);
         expect(low[role]).not.toBe(high[role]);
       }
     }

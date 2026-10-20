@@ -305,7 +305,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-surface-message-own",
         variable: "--surface-message-own",
-        pointsAt: "bubble-neutral at low contrast; accent 9 at high contrast",
+        pointsAt: "accent 4 at low contrast; accent 9 at high contrast",
         use: "Own message bubbles; pair with --text-message-own.",
         status: "core",
       },
@@ -454,7 +454,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "text-message-own",
         variable: "--text-message-own",
-        pointsAt: "text-standard at low contrast; accent ink at high contrast",
+        pointsAt: "accent 12 at low contrast; accent ink at high contrast",
 
         use: "Prose on the selected outgoing message surface.",
         status: "core",
@@ -657,16 +657,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "--surface-navigation-selected",
         variable: "--surface-navigation-selected",
-        pointsAt:
-          "affordance-selected at low contrast; accent 9 at high contrast",
+        pointsAt: "accent 4 at low contrast; accent 9 at high contrast",
         use: "Selected navigation fill, paired with text-navigation-selected.",
         status: "core",
       },
       {
         token: "--text-navigation-selected",
         variable: "--text-navigation-selected",
-        pointsAt:
-          "text-standard at low contrast; accent contrast at high contrast",
+        pointsAt: "accent 11 at low contrast; accent contrast at high contrast",
         use: "Labels and icons on selected navigation.",
         status: "core",
       },

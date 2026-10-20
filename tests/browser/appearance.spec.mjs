@@ -90,8 +90,8 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     "aria-pressed",
     "true",
   );
-  const system = page.getByRole("radio", { name: "System", exact: true });
-  await expect(system).toBeChecked();
+  const system = page.getByRole("combobox", { name: "Mode", exact: true });
+  await expect(system).toHaveText("System");
   await page.emulateMedia({ colorScheme: "dark" });
   await expectMode(page, "dark", true);
   await page.emulateMedia({ colorScheme: "light" });
@@ -99,11 +99,12 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await chooseColorMode(page, "Light");
   await page.emulateMedia({ colorScheme: "dark" });
   await expectMode(page, "light", true);
-  const dark = page.getByRole("radio", { name: "Dark", exact: true });
-  await page.getByRole("radio", { name: "Light", exact: true }).focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(dark).toBeChecked();
-  await expect(dark).toBeFocused();
+  await system.focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(system).toHaveText("Dark");
+  await expect(system).toBeFocused();
   await expectMode(page, "dark", true);
   await expect(
     page
@@ -212,24 +213,20 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     await expect(dialog).toHaveCSS("backdrop-filter", "none");
     await page.keyboard.press("Escape");
   }
+  const preview = page.getByRole("figure", { name: "Appearance preview" });
   for (const hostMode of ["Dark", "Light"]) {
     await chooseColorMode(page, hostMode);
-    for (const [mode, colors] of Object.entries(palettes)) {
-      const preview = page.locator(
-        `.buzz-theme-thumbnail[data-mode="${mode}"]`,
-      );
-      for (const [part, property, role] of [
-        ["backdrop", "fill", "bg-app"],
-        ["panel", "fill", "surface-panel"],
-        ["lines", "stroke", "text-metadata"],
-        ["message", "fill", "surface-message-own"],
-      ]) {
-        for (const element of await preview
-          .locator(`.buzz-theme-preview-${part}`)
-          .all())
-          await expect(element).toHaveCSS(property, colors[role]);
-      }
-    }
+    const colors = palettes[hostMode.toLowerCase()];
+    await expect(preview).toBeVisible();
+    await expect(preview.locator("[inert]")).toHaveCount(1);
+    await expect(preview).toHaveCSS(
+      "background-color",
+      colors["surface-panel"],
+    );
+    await expect(preview.locator("[data-own]")).toHaveCSS(
+      "background-color",
+      colors["surface-message-own"],
+    );
   }
   await button(page, "Magenta accent color").click();
   const pink = await button(page, "Magenta accent color").evaluate((el) => {
@@ -240,14 +237,10 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
     probe.remove();
     return color;
   });
-  for (const preview of await page
-    .locator('.buzz-theme-preview[data-tone="light"]')
-    .all()) {
-    for (const bubble of await preview
-      .locator(".buzz-theme-preview-message")
-      .all())
-      await expect(bubble).toHaveCSS("fill", pink);
-  }
+  await expect(preview.locator("[data-own]")).toHaveCSS(
+    "background-color",
+    pink,
+  );
   await page
     .getByRole("region", { name: "Appearance", exact: true })
     .screenshot({
@@ -294,10 +287,10 @@ test("System appearance follows computer changes and keeps the selected choice a
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto(app.origin);
   await settings(page);
-  const system = page.getByRole("radio", { name: "System", exact: true });
+  const system = page.getByRole("combobox", { name: "Mode", exact: true });
   await chooseColorMode(page, "Dark");
   await chooseColorMode(page, "System");
-  await expect(system).toBeChecked();
+  await expect(system).toHaveText("System");
   await expectMode(page, "light", true);
   await page.screenshot({ path: testInfo.outputPath("system-light.png") });
   expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
@@ -308,7 +301,7 @@ test("System appearance follows computer changes and keeps the selected choice a
   await page.reload();
   await expectMode(page, "dark", true);
   await settings(page);
-  await expect(system).toBeChecked();
+  await expect(system).toHaveText("System");
   await page.screenshot({ path: testInfo.outputPath("system-dark.png") });
   await page.emulateMedia({ colorScheme: "light" });
   await expectMode(page, "light", true);

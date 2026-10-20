@@ -89,7 +89,9 @@ it("retry saves the System choice even when its current palette is light", async
       <AppearanceSettings appearance={appearance} />
     </ToastProvider>,
   );
-  expect(screen.getByRole("radio", { name: "System" })).toBeChecked();
+  expect(screen.getByRole("combobox", { name: "Mode" })).toHaveTextContent(
+    "System",
+  );
   fireEvent.click(
     await screen.findByRole("button", { name: "Retry saving appearance" }),
   );
@@ -170,7 +172,7 @@ it.each([false, true])(
         <AppearanceSettings appearance={appearance} />
       </ToastProvider>,
     );
-    const colorMode = screen.getByRole("radio", { name: "System" });
+    const colorMode = screen.getByRole("combobox", { name: "Mode" });
     (focusReset
       ? screen.getByRole("button", { name: "Reset interface size" })
       : colorMode
@@ -221,7 +223,7 @@ it("does not hand off Reset focus when the settings form unmounts", () => {
   appearance.dispose();
 });
 
-it("selects and saves color mode through visual radio choices", async () => {
+it("selects and saves color mode through the Mode dropdown", async () => {
   const appearance = createAppearance();
   const user = userEvent.setup();
   render(
@@ -229,15 +231,18 @@ it("selects and saves color mode through visual radio choices", async () => {
       <AppearanceSettings appearance={appearance} />
     </ToastProvider>,
   );
-  expect(screen.getByRole("radio", { name: "System" })).toBeChecked();
+  expect(screen.getByRole("combobox", { name: "Mode" })).toHaveTextContent(
+    "System",
+  );
   for (const [label, value] of [
     ["Dark", "dark"],
     ["Light", "light"],
     ["System", "system"],
   ] as const) {
-    const choice = screen.getByRole("radio", { name: label });
+    const choice = screen.getByRole("combobox", { name: "Mode" });
     await user.click(choice);
-    expect(choice).toBeChecked();
+    await user.click(await screen.findByRole("option", { name: label }));
+    expect(choice).toHaveTextContent(label);
     expect(appearance.snapshot().preference).toBe(value);
     expect(localStorage.getItem("buzz-appearance.v1")).toBe(value);
   }
@@ -356,14 +361,20 @@ it("switches contrast through the shared select and restores it", async () => {
     </ToastProvider>,
   );
   const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: "Contrast" }));
-  await user.click(
-    await screen.findByRole("option", { name: "High contrast" }),
-  );
+  await user.click(screen.getByRole("combobox", { name: "Vibe level" }));
+  await user.click(await screen.findByRole("option", { name: "Buzzin’" }));
   expect(appearance.snapshot().contrast).toBe("high");
   expect(localStorage.getItem("buzz-contrast.v1")).toBe("high");
-  appearance.dispose();
   const restored = createAppearance();
   expect(restored.snapshot().contrast).toBe("high");
   restored.dispose();
+  for (const [label, value] of [
+    ["Snoozin’", "quiet"],
+    ["Hummin’", "low"],
+  ] as const) {
+    await user.click(screen.getByRole("combobox", { name: "Vibe level" }));
+    await user.click(await screen.findByRole("option", { name: label }));
+    expect(localStorage.getItem("buzz-contrast.v1")).toBe(value);
+  }
+  appearance.dispose();
 });

@@ -49,12 +49,13 @@
   document.documentElement.dataset.accent = accent;
   let contrast = "low";
   try {
-    if (localStorage.getItem("buzz-contrast.v1") === "high") contrast = "high";
+    const saved = localStorage.getItem("buzz-contrast.v1");
+    if (saved === "quiet" || saved === "high") contrast = saved;
   } catch {
     /* Low contrast remains usable without storage. */
   }
   document.documentElement.dataset.colorLevel =
-    contrast === "high" ? "high" : "touch";
+    contrast === "low" ? "touch" : contrast;
   let scale = 1;
   try {
     const value = Number(localStorage.getItem("buzz-font-scale.v1"));

@@ -343,10 +343,10 @@ plugin skipped-folder disclosure, and developer diagnostics.
 External plugin settings own their content.
 
 Use `ThemePicker` at the trailing edge of a PreferenceRow for color mode. The
-color mode, interface size, accent color, and contrast rows share one Appearance group.
-Accent applies to actions, links, and selections. High contrast also gives own
+color mode, interface size, accent color, and vibe level rows share one Appearance group.
+Accent applies to actions, links, and selections. Buzzin’ gives own
 messages and selected navigation solid accent fills; backgrounds stay neutral.
-Use the shared compact Select for Low contrast and High contrast. The
+Use the shared compact Select for Snoozin’, Hummin’, and Buzzin’. The
 
 System, Light, and Dark previews retain shared radio semantics, accessible names,
 and a persistent selection outline without visible captions. Their nested light/dark

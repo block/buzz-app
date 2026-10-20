@@ -42,10 +42,10 @@ export function parseLegacyBubbleColor(value: unknown): Accent {
   );
 }
 
-export type Contrast = "low" | "high";
+export type Contrast = "quiet" | "low" | "high";
 export const CONTRAST_KEY = "buzz-contrast.v1";
 export const parseContrast = (value: unknown): Contrast =>
-  value === "high" ? "high" : "low";
+  value === "quiet" || value === "high" ? value : "low";
 
 // Accent swatches always show their family's strong fill, in either mode.
 export const accentButtonStyle = {

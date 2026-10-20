@@ -76,7 +76,7 @@ export function createAppearance(
       (root.dataset.colorMode !== state.mode ||
         root.dataset.accent !== state.accent ||
         root.dataset.colorLevel !==
-          (state.contrast === "high" ? "high" : "touch"));
+          (state.contrast === "low" ? "touch" : state.contrast));
     const transitionGuard = changingPalette
       ? host.document.createElement("style")
       : undefined;
@@ -88,7 +88,8 @@ export function createAppearance(
     root.dataset.colorMode = state.mode;
     root.dataset.accent = state.accent;
     // Keep the existing low-accent scope; old vibe preferences are ignored.
-    root.dataset.colorLevel = state.contrast === "high" ? "high" : "touch";
+    root.dataset.colorLevel =
+      state.contrast === "low" ? "touch" : state.contrast;
     if (transitionGuard) {
       // Commit the new palette before restoring interactive transitions.
       void root.offsetHeight;
@@ -185,7 +186,7 @@ export function createAppearance(
       state = {
         ...state,
         contrastError:
-          "Contrast could not be restored. Choose a contrast to try saving it again.",
+          "Vibe level could not be restored. Choose a level to try saving it again.",
       };
     }
     notify();
@@ -297,7 +298,7 @@ export function createAppearance(
         host.localStorage.setItem(CONTRAST_KEY, contrast);
       } catch {
         contrastError =
-          "This contrast is active, but could not be saved on this device. Try again.";
+          "This vibe level is active, but could not be saved on this device. Try again.";
       }
       state = { ...state, contrast, contrastError };
       notify();

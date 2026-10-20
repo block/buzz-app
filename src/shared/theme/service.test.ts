@@ -386,7 +386,7 @@ it.each(["neutral", "touch", "more", "full"])(
   },
 );
 
-it.each(["low", "high"] as const)(
+it.each(["quiet", "low", "high"] as const)(
   "restores %s contrast before paint and after startup",
   (contrast) => {
     const b = browser();
@@ -397,7 +397,7 @@ it.each(["low", "high"] as const)(
       matchMedia: b.host.matchMedia,
     });
     expect(b.root.dataset.colorLevel).toBe(
-      contrast === "high" ? "high" : "touch",
+      contrast === "low" ? "touch" : contrast,
     );
     const app = createAppearance(b.host);
     expect(app.snapshot().contrast).toBe(contrast);

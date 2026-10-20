@@ -1260,15 +1260,19 @@ to remain visible on conversation surfaces in both modes.
 ### Accent color
 
 One device-local accent choice colors actions, links, and selection states.
-The picker presents eight screenshot-derived families in one row: Lime, Honey,
+The picker presents eight families in one row: Lime, Honey,
 Flame, Magenta, Iris, Cobalt, Jade, and Mono. An inset white ring marks the selected
 swatch. Lime is the default; Mono stays last. Saved Chartreuse and Citron choices fall back to Lime.
+Chromatic ramps blend 90% of the original palette with 10% of the Honey-based
+OKLCH lightness/chroma treatment, with solid fills adjusted for readable ink.
+Honey (`#e8b60a`) remains exact; Mono remains achromatic.
 Honey uses golden yellow-green fills with black ink; Mono uses charcoal fills in light
-mode and pale gray fills in dark mode. Contrast offers two device-local choices:
-Low contrast (the default) keeps messages neutral and navigation selection subtle.
-High contrast fills your own message bubbles and selected navigation with accent
-step 9. Received messages, app backgrounds, panels, popovers, and reading text stay
-neutral. Previously saved vibe levels are ignored.
+mode and pale gray fills in dark mode. Vibe level offers three device-local choices:
+Snoozin’ keeps your messages neutral, with accent actions, links, and subtle row states.
+Hummin’ (the default) adds soft accent fills to your messages and selected navigation.
+Buzzin’ uses solid accent fills for those same states. Received messages, app
+backgrounds, panels, and popovers stay neutral at every level. Saved Low/High
+contrast choices retain their behavior as Hummin’/Buzzin’. Older vibe values are ignored.
 
 Use `surface-navigation-selected` with `text-navigation-selected` for selected
 navigation. High contrast pairs solid fills with the family’s contrast ink;

@@ -521,7 +521,7 @@ export function PluginImport({
             : preview
               ? reviewing
                 ? updating
-                  ? undefined
+                  ? `${preview.commit ? "Source" : "Source folder"}: ${importLocation(preview, candidate?.path)}`
                   : "Only install code you trust."
                 : preview.candidates.length
                   ? "Select a plugin to review before installing."

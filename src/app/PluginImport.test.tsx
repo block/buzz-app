@@ -1335,6 +1335,9 @@ it("shows unchanged declarations in a separate dialog view and returns without r
   );
   expect(await screen.findByText("No declared access changes")).toBeVisible();
   expect(screen.getByRole("dialog")).toHaveAccessibleName("Update Remembered");
+  expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
+    "Source folder: /plugins/dist",
+  );
   expect(
     screen.queryByRole("region", { name: "Added declarations" }),
   ).toBeNull();

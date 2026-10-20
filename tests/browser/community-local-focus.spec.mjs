@@ -71,6 +71,10 @@ test("local settings retain keyboard focus through save, recovery, cancel and re
     await expect(button("Save folder")).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.keyboard.press("Shift+Tab");
+    await expect(
+      folderForm.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeFocused();
     await page.evaluate(() => window.finishFolder({ path: "/draft" }));
     await expect(folderForm.getByRole("status")).toBeVisible();
     await expect(folder).toBeFocused();

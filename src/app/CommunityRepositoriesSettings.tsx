@@ -95,7 +95,6 @@ export function CommunityRepositoriesSettings({
   };
   const save = async (path: string) => {
     if (busy) return;
-    const focused = document.activeElement;
     setBusy(true);
     setSaved(false);
     setError("");
@@ -118,7 +117,10 @@ export function CommunityRepositoriesSettings({
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       if (alive.current) {
-        restoreFocus.current = { from: focused, to: input.current };
+        // Hand off before settlement can natively disable the focused action.
+        // Navigation outside this form must keep its focus.
+        if (input.current?.form?.contains(document.activeElement))
+          input.current.focus();
         setBusy(false);
       }
     }

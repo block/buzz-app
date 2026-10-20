@@ -287,6 +287,36 @@ it("opens the shared image flow from a text trigger and applies its URL", async 
   expect(onChange).toHaveBeenCalledWith(next);
 });
 
+it("offers only emoji and background for an emoji source, ignoring dropped files", () => {
+  render(
+    <AvatarEditor
+      inlinePicker
+      source="emoji"
+      value=""
+      name="Agent"
+      community={community}
+      onChange={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("tab", { name: "Emoji" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("tab", { name: "Background" })).toBeVisible();
+  expect(screen.queryByRole("tab", { name: "Image" })).not.toBeInTheDocument();
+  fireEvent.drop(screen.getByRole("group", { name: "Avatar picker" }), {
+    dataTransfer: {
+      types: ["Files"],
+      files: [new File(["test"], "test.png", { type: "image/png" })],
+    },
+  });
+  expect(uploadAvatar).not.toHaveBeenCalled();
+  expect(screen.getByRole("tab", { name: "Emoji" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
 it("previews an inline agent emoji and its background with Done in the form footer", async () => {
   const footer = document.createElement("div");
   document.body.append(footer);

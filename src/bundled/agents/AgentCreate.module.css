@@ -99,7 +99,7 @@
 
 .collections {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--space-3);
   width: 100%;
 }
@@ -123,7 +123,7 @@
   max-height: 12rem;
   min-height: 0;
 }
-.uploadIcon {
+.sourceIcon {
   display: grid;
   place-items: center;
 }

@@ -1,5 +1,5 @@
-// The New agent card: the avatar, chosen from packs or an image, and the name,
-// with a details area the agent type fills in.
+// The New agent card: the avatar, chosen from packs, an image or an emoji,
+// and the name, with a details area the agent type fills in.
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import {
@@ -17,7 +17,7 @@ import { AvatarEditor } from "../../features/profiles/AvatarEditor";
 import { agentAvatars, avatarPacks } from "../../features/agents/avatar-packs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
-import { CloudUploadIcon } from "../../shared/design-system/icons";
+import { CloudUploadIcon, SmileyIcon } from "../../shared/design-system/icons";
 import { PackedAgentAvatar } from "./PackedAgentAvatar";
 import styles from "./AgentCreate.module.css";
 import { useShake } from "./useNamePrompt";
@@ -104,8 +104,7 @@ export function AgentCreateHeader({
   }, [view]);
   const [gridSize, setGridSize] = useState({ width: 768, height: 432, gap: 8 });
   useLayoutEffect(() => {
-    if (view === "selected" || view === "collections" || view === "image")
-      return;
+    if (["selected", "collections", "image", "emoji"].includes(view)) return;
     const element = options.current;
     if (!element) return;
     const observer = new ResizeObserver(([entry]) => {
@@ -229,26 +228,34 @@ export function AgentCreateHeader({
                     <span>{pack.label}</span>
                   </SurfaceButton>
                 ))}
-                <SurfaceButton
-                  className={styles.collection}
-                  disabled={disabled}
-                  onClick={() => setView("image")}
-                >
-                  <span
-                    className={`${styles.artwork} ${styles.uploadIcon}`}
-                    aria-hidden="true"
+                {(
+                  [
+                    ["image", "Use image", CloudUploadIcon],
+                    ["emoji", "Use emoji", SmileyIcon],
+                  ] as const
+                ).map(([source, label, Icon]) => (
+                  <SurfaceButton
+                    key={source}
+                    className={styles.collection}
+                    disabled={disabled}
+                    onClick={() => setView(source)}
                   >
-                    <CloudUploadIcon size={48} />
-                  </span>
-                  <span>Use image</span>
-                </SurfaceButton>
+                    <span
+                      className={`${styles.artwork} ${styles.sourceIcon}`}
+                      aria-hidden="true"
+                    >
+                      <Icon size={48} />
+                    </span>
+                    <span>{label}</span>
+                  </SurfaceButton>
+                ))}
               </div>
-            ) : view === "image" ? (
+            ) : view === "image" || view === "emoji" ? (
               <div className={styles.imageEditor}>
                 <AvatarEditor
                   triggerStyle="dotted-squircle"
                   inlinePicker
-                  imageOnly
+                  source={view}
                   actionTarget={avatarActionTarget}
                   shape="squircle"
                   value={selected ? "" : (picture ?? "")}

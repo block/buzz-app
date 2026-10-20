@@ -354,6 +354,9 @@ test("collapsing a workspace waits for its rename save before hiding the editor"
     release();
     await expect(work).toHaveAttribute("aria-expanded", "false");
     await expect(input(page)).toHaveCount(0);
+    // The editor closes before its panel finishes collapsing. Wait for the
+    // panel's unmount so the next double-click has a stationary target.
+    await expect(row(page, alpha)).toHaveCount(0);
     await expect(row(page, beta)).toBeFocused();
     await row(page, beta).dblclick();
     await expect(input(page)).toHaveValue("Beta");

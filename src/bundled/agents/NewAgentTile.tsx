@@ -1,10 +1,11 @@
-import { useState, type ComponentProps, type Ref } from "react";
+import type { ComponentProps, Ref } from "react";
 import { CaretDownIcon } from "../../shared/design-system/icons";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import type { PortableAgent } from "../../features/agents/native";
-import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
+import { avatarPreview } from "../../features/profiles/avatar-upload";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import styles from "./AgentCard.module.css";
 
 const artwork = [
@@ -17,29 +18,9 @@ const artwork = [
   "pollies-24",
   "fuzzies-18",
 ];
-/** The most agents a crew tile scatters; its CSS places each one. */
-const CREW = 12;
+/** How many agents a crew shows before counting the rest. */
+const CREW = 5;
 
-/** One agent the owner knows, floating on a crew tile: its picture when it
- * loads, and always its name. */
-function CrewMember({ agent }: { agent: PortableAgent }) {
-  const pack = agentAvatars.find((avatar) => avatar.url === agent.picture);
-  const src = useAvatarPreview(
-    pack ? "" : (agent.picture ?? ""),
-    agent.relay || undefined,
-    "small",
-  );
-  const [failed, setFailed] = useState(false);
-  const picture = pack?.preview ?? src;
-  return (
-    <span className={styles.crewMember}>
-      {picture && !failed && (
-        <img src={picture} alt="" onError={() => setFailed(true)} />
-      )}
-      <span className="text-caption">{agent.name}</span>
-    </span>
-  );
-}
 export function NewAgentTile({
   fullWidth = false,
   variant = "tile",
@@ -58,7 +39,7 @@ export function NewAgentTile({
   labelRef?: Ref<HTMLSpanElement>;
   /** Pack avatars scattered behind a tile that is not full width. */
   art?: readonly string[];
-  /** Agents the tile is about, shown by picture and name in place of art. */
+  /** Agents the tile is about, stacked by picture in place of art. */
   crew?: readonly PortableAgent[];
   /** A line above the label. */
   description?: string;
@@ -85,11 +66,26 @@ export function NewAgentTile({
       data-crew={crew ? "" : undefined}
     >
       {crew ? (
-        <span aria-hidden="true" className={styles.crewArtwork}>
-          {crew.slice(0, CREW).map((agent) => (
-            <CrewMember key={agent.pubkey} agent={agent} />
-          ))}
-        </span>
+        <AvatarStack
+          size="large"
+          max={CREW}
+          // Pictures lead; an agent without one shows its initial.
+          items={[...crew]
+            .sort((a, b) => Number(!a.picture) - Number(!b.picture))
+            .map((agent) => ({
+              id: agent.pubkey,
+              name: agent.name,
+              src:
+                agentAvatars.find((avatar) => avatar.url === agent.picture)
+                  ?.preview ??
+                avatarPreview(
+                  agent.picture ?? "",
+                  agent.relay || undefined,
+                  "small",
+                ),
+              shape: "squircle",
+            }))}
+        />
       ) : (
         <span aria-hidden="true" className={styles.newArtwork}>
           {(fullWidth

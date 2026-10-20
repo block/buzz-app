@@ -522,13 +522,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "avatar-stack",
     name: "AvatarStack",
     purpose:
-      "Show up to three overlapping identities and an overflow count on one line. The enclosing control supplies the accessible name.",
+      "Show overlapping identities, three unless the caller sets a maximum, and an overflow count on one line. The enclosing control supplies the accessible name.",
     behavior:
       "Decorative artwork composed from Avatar; identity data stays with the caller.",
     variants: [
       "mini",
       "compact",
       "small",
+      "large",
       "circle",
       "squircle",
       "overflow count",

@@ -1600,13 +1600,14 @@ it("offers importing first agents only when there are some to import", async () 
   const user = userEvent.setup();
   setup([]);
   const tile = await screen.findByRole("button", { name: /Import them now/ });
-  // Each agent is named; one with no picture shows only its name.
-  expect(tile).toHaveTextContent("Ada");
-  expect(tile).toHaveTextContent("Bea");
+  // Agents show by picture alone; one without a picture shows its initial.
   expect(tile).toHaveTextContent(
     "You have agents in a previous version of Buzz.",
   );
-  expect(tile.querySelectorAll("img")).toHaveLength(1);
+  expect(tile).not.toHaveTextContent("Ada");
+  expect(
+    tile.querySelectorAll("[data-avatar-stack] > [data-avatar-shape]"),
+  ).toHaveLength(2);
   await user.click(
     screen.getByRole("button", { name: "Create your first agent" }),
   );

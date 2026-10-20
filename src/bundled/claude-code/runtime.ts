@@ -30,7 +30,7 @@ import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
-import { appClient } from "../../buzz-mcp/app-client";
+import { appClient, readFile } from "../../buzz-mcp/app-client";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
@@ -695,8 +695,7 @@ export class ClaudeRuntime {
             audienceAuthorityCommunity:
               this.reads(pubkey)?.audienceAuthorityCommunity?.(),
             signingAuthority: this.reads(pubkey)?.workflowAuthority(),
-            spawn: this.spawn,
-            cwd,
+            read: (path) => readFile(this.spawn, cwd, path),
             memories: (slug) => this.memories(pubkey, slug),
             remembered: () => this.forget(pubkey),
           });

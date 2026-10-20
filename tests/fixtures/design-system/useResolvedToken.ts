@@ -79,12 +79,10 @@ function readDeclaredValues(isDark: boolean): Map<string, string> {
 
 /**
  * Resolves a list of custom properties, re-running whenever the colour scheme
- * changes. When scope is supplied, only value is scoped; declared and
- * pointsAtVariable describe the root stylesheet chain.
+ * changes.
  */
 export function useResolvedTokens(
   variables: string[],
-  scope?: HTMLElement | null,
 ): Map<string, ResolvedToken> {
   const [resolved, setResolved] = useState<Map<string, ResolvedToken>>(
     () => new Map(),
@@ -100,7 +98,7 @@ export function useResolvedTokens(
     const read = () => {
       const isDark = root.classList.contains("dark");
       const declaredValues = readDeclaredValues(isDark);
-      const computed = getComputedStyle(scope ?? root);
+      const computed = getComputedStyle(root);
 
       const next = new Map<string, ResolvedToken>();
       for (const variable of key.split(",")) {
@@ -127,9 +125,8 @@ export function useResolvedTokens(
     // React that every colour on the page just changed.
     const observer = new MutationObserver(read);
     observer.observe(root, { attributeFilter: ["class", "style"] });
-    if (scope) observer.observe(scope, { attributes: true });
     return () => observer.disconnect();
-  }, [key, scope]);
+  }, [key]);
 
   return resolved;
 }

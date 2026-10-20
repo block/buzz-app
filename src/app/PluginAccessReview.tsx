@@ -4,6 +4,7 @@ import { Accordion } from "../shared/design-system/ui/Accordion";
 import { Button } from "../shared/design-system/ui/Button";
 import {
   GlobeIcon,
+  FolderOpenIcon,
   PlugIcon,
   TerminalWindowIcon,
   MonitorIcon,
@@ -106,6 +107,25 @@ function hostDeclarations(manifest: PluginManifest) {
             details: (
               <p className="m-0">
                 Tools served to local agents over loopback HTTP.
+              </p>
+            ),
+          },
+        ]
+      : []),
+    ...(manifest.host?.files
+      ? [
+          {
+            key: "files",
+            signature:
+              "Files: read any file and resolve folders · full user access",
+            title: "Files:",
+            label: "Read your files",
+            hint: "Can read any file your account can, and create folders it resolves.",
+            icon: FolderOpenIcon,
+            details: (
+              <p className="m-0">
+                Reads files and resolves folders with your account’s full
+                access.
               </p>
             ),
           },

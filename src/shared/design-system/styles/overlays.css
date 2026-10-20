@@ -410,6 +410,13 @@
       transform var(--duration-state) var(--easing-settle),
       filter var(--duration-state) var(--easing-state);
   }
+  /* A palette preview resolves its own accent instead of inheriting the app’s
+     already-resolved prominent fill through the portal. */
+  .buzz-tooltip[data-accent][data-color-mode] {
+    background: var(--affordance-accent-prominent);
+    color: var(--text-on-accent);
+  }
+
   .buzz-tooltip:is([data-starting-style], [data-ending-style]) {
     opacity: 0;
     transform: translateY(2px) scale(0.97);

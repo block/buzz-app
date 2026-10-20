@@ -3561,6 +3561,22 @@ it("ambiguous namesake replacement cannot notify the wrong remaining identity", 
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
 });
 
+it("shows tools who the draft mentions, keeping the list while only prose changes", async () => {
+  const h = mount();
+  expect(h.commands().recipients).toEqual([]);
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  const mentioned = h.commands().recipients;
+  expect(mentioned).toEqual([first]);
+  act(() => {
+    h.commands().insertText("hi ");
+  });
+  expect(h.commands().recipients).toBe(mentioned);
+  await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
+  expect(h.commands().recipients).toEqual([first, second]);
+  h.fill("no recipient now");
+  expect(h.commands().recipients).toEqual([]);
+});
+
 it("serializes tool commands in one React batch and rejects malformed recipients", () => {
   const h = mount();
   h.fill("Hi ");

@@ -299,6 +299,15 @@
     border-radius: var(--radius-pill);
   }
 
+  .buzz-button[data-color-swatch] .buzz-button-label {
+    color: var(--text-on-accent);
+  }
+
+  .buzz-button[data-color-swatch] .buzz-button-label > svg {
+    width: var(--space-6);
+    height: var(--space-6);
+  }
+
   /* Avatar edit badges reuse the artwork curve. Mask only the fill so the
      interactive wrapper's keyboard focus indicator remains visible. */
   .buzz-button[data-icon-shape="squircle"][data-variant="prominent"],
@@ -363,11 +372,15 @@
     );
   }
 
-  .buzz-button[data-icon-variant="ghost"][data-selected],
+  .buzz-button[data-icon-variant="ghost"][data-selected]:not(
+    [data-disabled],
+    :disabled
+  ),
   .buzz-button[data-icon-variant="ghost"][data-selected]:hover:not(
     [data-disabled]
   ) {
-    background: var(--interaction-selected);
+    background: var(--surface-navigation-selected);
+    color: var(--text-navigation-selected);
   }
 
   /* Bare controls stay unfilled. Glyph-state toggles keep their larger
@@ -803,7 +816,7 @@
   }
 
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-navigation-selected);
   }
 
   .buzz-tabs[data-variant="chrome"] .buzz-tabs-indicator {
@@ -839,12 +852,12 @@
     color: var(--text-standard);
   }
   .buzz-tabs[data-variant="segmented"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-control-selected);
   }
   .buzz-tabs[data-variant="segmented"] .buzz-tabs-indicator {
     inset-block: 0;
     border-radius: var(--radius-pill);
-    background: var(--surface-panel);
+    background: var(--surface-control-selected);
     box-shadow: var(--shadow-xs);
   }
 
@@ -895,7 +908,7 @@
   }
 
   .buzz-tabs[data-variant="panel"] .buzz-tabs-tab[data-selected] {
-    color: var(--text-standard);
+    color: var(--text-accent);
   }
 
   /* Sits on the tab's bottom edge and spans the tab exactly. `height` is
@@ -906,7 +919,7 @@
     bottom: var(--space-1);
     height: 2px;
     border-radius: var(--radius-pill);
-    background: var(--text-standard);
+    background: var(--affordance-prominent-mark);
   }
 
   .buzz-tabs-item[data-closable] .buzz-tabs-tab {
@@ -1154,7 +1167,7 @@
   .chrome-navigation .navigation-item[data-variant="pill"][data-selected],
   .buzz-button[data-icon-variant="chrome"][aria-current="page"] {
     background: var(--bg-chrome-selected);
-    color: var(--text-standard);
+    color: var(--text-navigation-selected);
     box-shadow: var(--shadow-xs);
   }
 
@@ -1218,6 +1231,9 @@
     padding: var(--space-half) calc(var(--space-1) + var(--space-half))
       var(--space-half) var(--space-2);
     border-radius: var(--radius-row);
+  }
+  .buzz-sidebar-navigation .navigation-item[data-variant="row"][data-selected] {
+    --navigation-item-text: var(--text-row-selected);
   }
   .buzz-sidebar-navigation .navigation-item[data-variant="row"][data-inset] {
     padding-inline-start: calc(var(--space-2) + var(--space-6));

@@ -490,6 +490,10 @@ it("confirms on the grid without mounting detail, cancels safely, and removes on
   expect(fixture.calls.delete).toBe(1);
   expect(screen.queryByRole("region", { name: "Workflow editor" })).toBeNull();
   expect(screen.getByText("Deleting…")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Open Message helper" }),
+  ).toHaveAccessibleDescription(/When a message is posted.*Deleting…/);
+  expect(screen.getByText("Deleting…").closest("button")).toBeNull();
   await act(async () => {
     fixture.definitions.update({
       status: "ready",
@@ -1087,4 +1091,15 @@ it("moves list focus into an open pane when the page narrows", async () => {
   } finally {
     media.restore();
   }
+});
+
+it("describes an unreadable workflow outside its row button", async () => {
+  mount("not: [valid yaml");
+  const open = await screen.findByRole("button", {
+    name: "Open Unnamed or malformed workflow",
+  });
+  expect(open).toHaveAccessibleDescription(/Unreadable configuration/);
+  expect(
+    screen.getByText("Unreadable configuration").closest("button"),
+  ).toBeNull();
 });

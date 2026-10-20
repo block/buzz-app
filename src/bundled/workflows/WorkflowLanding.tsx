@@ -493,6 +493,8 @@ function WorkflowCard({
           ? "Saving is unavailable from this host."
           : undefined;
   const reasonId = useId();
+  const descriptionId = useId();
+  const statusId = useId();
   const warning = getWorkflowActivationWarning(definition.yaml);
   const name = fields.name || "Unnamed or malformed workflow";
   const runDisabled =
@@ -730,52 +732,60 @@ function WorkflowCard({
     <>
       {selected && detailTarget && createPortal(detail, detailTarget)}
       <article className="workflow-card" data-selected={selected || undefined}>
-        <NavigationItem
-          ref={openRef}
-          aria-label={`Open ${name}`}
-          aria-current={false}
-          aria-pressed={selected}
-          selected={selected}
-          disabled={!!deletion}
-          onClick={onSelect}
-          icon={
-            <span className="workflow-card-flow" aria-hidden="true">
-              <span className="workflow-card-icon">{triggerArt}</span>
-              {presentation.actionIcons.length > 0 && (
-                <>
-                  <ArrowRightIcon
-                    className="workflow-card-arrow"
-                    size="0.875rem"
-                  />
-                  {presentation.actionIcons.slice(0, 1).map((action) => (
-                    <span className="workflow-card-icon" key={action.key}>
-                      <WorkflowIcon kind={action.icon} />
-                    </span>
-                  ))}
-                </>
-              )}
-            </span>
-          }
-          label={
-            <span className="workflow-row-copy">
-              <span
-                className="workflow-card-description text-body-sm text-standard"
-                title={presentation.description}
-              >
-                {presentation.description}
+        <div className="workflow-card-row">
+          <NavigationItem
+            ref={openRef}
+            aria-label={`Open ${name}`}
+            aria-describedby={`${descriptionId} ${statusId}`}
+            aria-current={false}
+            aria-pressed={selected}
+            selected={selected}
+            disabled={!!deletion}
+            onClick={onSelect}
+            icon={
+              <span className="workflow-card-flow" aria-hidden="true">
+                <span className="workflow-card-icon">{triggerArt}</span>
+                {presentation.actionIcons.length > 0 && (
+                  <>
+                    <ArrowRightIcon
+                      className="workflow-card-arrow"
+                      size="0.875rem"
+                    />
+                    {presentation.actionIcons.slice(0, 1).map((action) => (
+                      <span className="workflow-card-icon" key={action.key}>
+                        <WorkflowIcon kind={action.icon} />
+                      </span>
+                    ))}
+                  </>
+                )}
               </span>
-              <span className="workflow-card-meta text-caption text-subtle">
-                <span className="workflow-card-name" title={name}>
-                  {name}
+            }
+            label={
+              <span className="workflow-row-copy" id={descriptionId}>
+                <span
+                  className="workflow-card-description text-body-sm text-standard"
+                  title={presentation.description}
+                >
+                  {presentation.description}
                 </span>
-                <span aria-hidden="true">·</span>
-                {updated}
-                {status}
+                <span className="workflow-card-meta text-caption text-subtle">
+                  <span className="workflow-card-name" title={name}>
+                    {name}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  {updated}
+                </span>
               </span>
-            </span>
-          }
-        />
-        {controls}
+            }
+          />
+          {controls}
+        </div>
+        <span
+          id={statusId}
+          className="workflow-card-status text-caption text-subtle"
+        >
+          {status}
+        </span>
       </article>
       {confirmDelete && (
         <ConfirmAction

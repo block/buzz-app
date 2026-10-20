@@ -1904,3 +1904,104 @@ it("clears a discarded preview when an automatic acquisition is contended", asyn
     vi.useRealTimers();
   }
 });
+
+it.each([true, false])(
+  "updates a source-less installation in place (enabled=%s)",
+  async (enabled) => {
+    const user = userEvent.setup();
+    const discard = vi.fn(async () => {});
+    const manager = {
+      imports: {
+        folder: vi.fn(async () => ({
+          ...rememberedPreview,
+          candidates: [
+            { ...rememberedPreview.candidates[0], revision: "old" },
+            {
+              path: "other",
+              revision: "other",
+              manifest: { ...rememberedManifest, id: "example.other" },
+            },
+          ],
+        })),
+        discard,
+      },
+      installImport: vi.fn(async () => true),
+      change: vi.fn(),
+    } as unknown as PluginManager;
+    render(
+      <PluginImport
+        plugins={manager}
+        catalog={{
+          profile: "test",
+          location: "test",
+          plugins: [{ ...rememberedPlugin, enabled }],
+        }}
+        busy={false}
+        updateId={rememberedManifest.id}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Update Remembered" }));
+    await user.click(
+      screen.getByRole("button", { name: "Browse plugin folder" }),
+    );
+    const dialog = screen.getByRole("dialog");
+    expect(
+      await within(dialog).findByRole("button", { name: "Update" }),
+    ).toBeEnabled();
+    expect(within(dialog).queryByRole("radio")).toBeNull();
+    expect(within(dialog).queryByRole("switch")).toBeNull();
+    expect(manager.installImport).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Update" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(
+      "remembered",
+      "dist",
+    );
+    expect(manager.change).not.toHaveBeenCalled();
+  },
+);
+
+it("rejects a replacement source without the installed plugin ID", async () => {
+  const user = userEvent.setup();
+  const manager = {
+    imports: {
+      folder: vi.fn(async () => ({
+        ...rememberedPreview,
+        candidates: [
+          {
+            path: "dist",
+            revision: "new",
+            manifest: { ...rememberedManifest, id: "example.other" },
+          },
+        ],
+      })),
+      discard: vi.fn(async () => {}),
+    },
+    installImport: vi.fn(),
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [rememberedPlugin],
+      }}
+      busy={false}
+      updateId={rememberedManifest.id}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Update Remembered" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse plugin folder" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("same plugin ID");
+  expect(manager.installImport).not.toHaveBeenCalled();
+  expect(manager.imports?.discard).toHaveBeenCalledExactlyOnceWith(
+    "remembered",
+  );
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    screen.getByRole("button", { name: "Browse plugin folder" }),
+  ).toBeVisible();
+});

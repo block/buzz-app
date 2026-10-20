@@ -242,6 +242,9 @@ export function PluginImport({
   const updating = !!existing;
   const duplicate = updating && !updateId;
   const upToDate =
+    // An identical package can still establish a missing source. Native keeps
+    // its enabled state and existing rollback target for the same revision.
+    !(updateId && !savedSource) &&
     !!existing &&
     candidate?.revision ===
       (updateId
@@ -274,6 +277,11 @@ export function PluginImport({
   ]);
 
   const startRequestedReview = useEffectEvent(() => {
+    if (!savedSource) {
+      setOpen(true);
+      onReviewHandled?.();
+      return;
+    }
     if (
       savedSource &&
       "repository" in savedSource &&
@@ -328,7 +336,7 @@ export function PluginImport({
               candidates: result.candidates.filter(
                 (item) =>
                   item.manifest.id === updateId &&
-                  item.path === savedSource?.path,
+                  (!savedSource || item.path === savedSource.path),
               ),
             }
           : result;
@@ -342,7 +350,9 @@ export function PluginImport({
           await imports?.discard(next.token);
           current.token = "";
           throw new Error(
-            "The saved folder or repository no longer contains this plugin at its installed path.",
+            savedSource
+              ? "The saved folder or repository no longer contains this plugin at its installed path."
+              : "This source does not contain the installed plugin. Choose a source with the same plugin ID.",
           );
         }
       }
@@ -474,6 +484,7 @@ export function PluginImport({
   );
   const updateActions = (
     <>
+      {!savedSource && !preview && addButton}
       {savedSource &&
         "repository" in savedSource &&
         !(preview && !error && !upToDate) && (
@@ -523,8 +534,8 @@ export function PluginImport({
             </code>
           ) : (
             <p className="m-0 text-muted">
-              No saved source. Delete this plugin and add it again to choose a
-              source.
+              No saved source. Choose a folder or repository to update this
+              plugin.
             </p>
           )}
           {loading && !open && checkingVisible ? (
@@ -762,8 +773,8 @@ export function PluginImport({
           />
         )}
         <div hidden={!!error || showUnchanged}>
-          <div hidden={!!preview || !!updateId}>
-            {!updateId && (
+          <div hidden={!!preview || (!!updateId && !!savedSource)}>
+            {(!updateId || !savedSource) && (
               <div className={styles.columns}>
                 <section
                   aria-label="Add from folder"

@@ -922,8 +922,11 @@ follows the current revision through update and rollback. Rollback requires conf
 in Settings and consumes the previous revision: it cannot toggle forward again. The
 enabled/disabled choice is preserved; a later update establishes a new rollback target. Missing sources or changed
 plugin identities/paths leave the installation unchanged. Older Git installs and
-dropped-folder snapshots without saved source information need deletion and a fresh
-Add to establish a source. Git sources remain ineligible for folder Reload.
+dropped-folder snapshots without saved source information can use Update to choose
+a folder or repository. Only candidates with the installed plugin ID are offered;
+confirmation updates in place, preserves the enabled state and retains rollback
+history under the normal update rules. The selected source is saved with the new
+revision. Git sources remain ineligible for folder Reload.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
 single pending preview per native process. Replacing/closing a preview discards it;

@@ -47,6 +47,7 @@ export function SoloChatName({
     if (
       !active.current ||
       saving.current ||
+      name.busy ||
       !name.base ||
       name.invalid ||
       (name.blocked && !name.checkOnly)

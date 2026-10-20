@@ -4,6 +4,7 @@ import { newChat } from "./navigation.mjs";
 const alpha = "33333333-3333-4333-8333-333333333333";
 const beta = "44444444-4444-4444-8444-444444444444";
 test.use({
+  pluginFixtures: true,
   productionBroker: true,
   hasTouch: true,
   channelIds: [alpha, beta],
@@ -107,11 +108,17 @@ test("failed Enter-save and explicit reload retain keyboard control", async ({
     await held.requested;
     await expect(input(page)).toBeFocused();
     await expect(input(page)).toHaveAttribute("readonly");
+    await input(page).press("Enter");
+    await expect(input(page)).toHaveValue("Keep this draft");
+    await composer(page).focus();
+    await expect(input(page)).toHaveValue("Keep this draft");
+    await expect(input(page)).toHaveAttribute("readonly");
     held.release();
     await expect(input(page)).toHaveAttribute("aria-disabled", "false");
-    await expect(input(page)).toBeFocused();
+    await expect(composer(page)).toBeFocused();
     await expect(input(page)).toHaveValue("Keep this draft");
     expect(app.report.detailsPublications ?? []).toHaveLength(0);
+    await input(page).focus();
     await input(page).press("Enter");
     await expect(input(page)).toHaveCount(0);
     await expect(row(page, alpha)).toContainText("Keep this draft");
@@ -161,6 +168,53 @@ test("narrow mouse double-click renames while single-click and keyboard still na
   await show.click();
   await row(page, beta).tap();
   await expect(sidebar(page)).not.toBeVisible();
+  for (const activation of ["keyboard", "touch", "mouse"]) {
+    await test.step(activation, async () => {
+      // Opening by touch starts a fresh tap target before the row tap.
+      await show.tap();
+      await row(page, alpha).click();
+      if (activation === "keyboard") {
+        await row(page, beta).focus();
+        await row(page, beta).press("Enter");
+      } else if (activation === "touch") await row(page, beta).tap();
+      else {
+        await row(page, beta).click();
+        await page.clock.runFor(500);
+      }
+      await expect(sidebar(page)).not.toBeVisible();
+      await page.clock.runFor(501);
+      await expect(
+        page.locator(`[data-solo-channel-id="${beta}"]`),
+      ).toHaveAttribute("aria-current", "page");
+    });
+  }
+  await page.evaluate(() =>
+    window.fixtureNavigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "fixture.absent",
+      pageId: "missing",
+    }),
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const snapshot = window.fixtureNavigation.snapshot();
+        return {
+          status: snapshot.status,
+          aborted: snapshot.attempt.signal.aborted,
+        };
+      }),
+    )
+    .toEqual({ status: "failed", aborted: true });
+  await show.tap();
+  await row(page, alpha).click();
+  await page.clock.runFor(501);
+  await expect(sidebar(page)).not.toBeVisible();
+  await expect(composer(page)).toBeVisible();
+  await expect(
+    page.locator(`[data-solo-channel-id="${alpha}"]`),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 test("live conversion removes the old editor and permits renaming another Solo chat", async ({

@@ -4,6 +4,7 @@ import {
   useState,
   useSyncExternalStore,
   type ComponentProps,
+  type RefObject,
 } from "react";
 import { useChannelNavigation } from "./ChannelNavigationState";
 import { conversationTarget, soloDraftTarget } from "./routes";
@@ -48,6 +49,9 @@ export function SoloInventory({
   target: OpenTarget;
 }) {
   const list = useChannelList(session.channels);
+  const pendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   const preferences = useSyncExternalStore(
     session.soloPreferences.subscribe,
     session.soloPreferences.snapshot,
@@ -196,6 +200,8 @@ export function SoloInventory({
           <SoloConversationRow
             key={item.id}
             session={session}
+            navigation={navigator}
+            pendingClick={pendingClick}
             id={item.id}
             title={item.title}
             selected={selected === item.id}
@@ -223,6 +229,8 @@ export function SoloInventory({
 
 function SoloConversationRow({
   session,
+  navigation,
+  pendingClick,
   id,
   title,
   selected,
@@ -234,6 +242,8 @@ function SoloConversationRow({
   onOpenAgentActivity,
 }: {
   session: RelaySession;
+  navigation: Navigation;
+  pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>;
   id: string;
   title: string;
   selected: boolean;
@@ -273,7 +283,7 @@ function SoloConversationRow({
           }}
           onClick={(event) => {
             if (event.detail >= 2) return;
-            clearTimeout(click.current);
+            clearTimeout(pendingClick.current);
             const touch = pointer.current === "touch";
             pointer.current = undefined;
             if (
@@ -283,14 +293,17 @@ function SoloConversationRow({
             ) {
               // Keep the drawer present for a mouse double-click. Touch and
               // keyboard activation, and wide layouts, navigate immediately.
-              click.current = setTimeout(onSelect, 500);
+              const attempt = navigation.snapshot().attempt;
+              click.current = pendingClick.current = setTimeout(() => {
+                if (navigation.snapshot().attempt.id === attempt.id) onSelect();
+              }, 500);
             } else onSelect();
           }}
           onDoubleClick={() => {
-            clearTimeout(click.current);
+            clearTimeout(pendingClick.current);
             onRename();
           }}
-          onContextMenu={() => clearTimeout(click.current)}
+          onContextMenu={() => clearTimeout(pendingClick.current)}
           icon={
             <span className={styles.conversationIcon} aria-hidden="true">
               <ChatCircleIcon size={16} />

@@ -492,10 +492,14 @@ pub fn repository_url(input: &str) -> Result<String> {
     if input.len() > 2048 {
         return Err("Repository URL is too long".into());
     }
-    let expanded = if input.starts_with("git@") && !input.contains("://") {
-        let (host, path) = input
-            .split_once(':')
-            .ok_or("Expected git@host:owner/repository.git")?;
+    let scp = input.split_once(':').filter(|(authority, _)| {
+        !input.contains("://")
+            && !authority.contains('/')
+            && authority
+                .split_once('@')
+                .is_some_and(|(user, host)| !user.is_empty() && !host.is_empty())
+    });
+    let expanded = if let Some((host, path)) = scp {
         format!("ssh://{host}/{path}")
     } else if input.starts_with("github.com/") {
         format!("https://{input}")
@@ -1510,6 +1514,14 @@ mod tests {
             repository_url("git@github.com:block/plugins.git").unwrap(),
             "ssh://git@github.com/block/plugins.git"
         );
+        assert_eq!(
+            repository_url("org-49461806@github.com:squareup/buzz-context-manager.git").unwrap(),
+            "ssh://org-49461806@github.com/squareup/buzz-context-manager.git"
+        );
+        assert_eq!(
+            repository_url("dev.user@git.example.org:team/repo.git").unwrap(),
+            "ssh://dev.user@git.example.org/team/repo.git"
+        );
         assert!(repository_url("https://git.example.org/team/repo.git").is_ok());
         for input in [
             "/tmp/repo",
@@ -1521,6 +1533,13 @@ mod tests {
             "https://github.com/block/repo/tree/main/plugins",
             "--upload-pack=bad",
             "ssh://-oProxyCommand=bad/repo",
+            "-oProxyCommand=bad@github.com:owner/repo.git",
+            "user@-host:owner/repo.git",
+            "user@github.com:owner/repo.git?token=secret",
+            "user@github.com:owner/repo.git#fragment",
+            "user@github.com:owner/repo.git extra",
+            "/tmp/user@github.com:owner/repo.git",
+            "user@github.com:",
         ] {
             assert!(repository_url(input).is_err(), "{input}");
         }

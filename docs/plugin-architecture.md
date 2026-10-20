@@ -881,7 +881,12 @@ finishes; it does not acquire source files, install a package, or change saved s
 Package freshness and activation failures are displayed separately. Update uses the same source and candidate path; changing sources
 requires deleting the plugin and adding it again. Git checks remain explicit in the
 pane, using the remembered repository and branch/tag with fresh authorization;
-credentials/tokens are never saved with source metadata. Each check creates an
+credentials/tokens are never saved with source metadata. SSH accepts explicit URLs
+and `user@host:owner/repository.git` shorthand, including organization-specific
+usernames. The importer uses the desktop process's inherited `SSH_AUTH_SOCK` and
+known hosts, with interactive prompts and SSH config disabled. If normal Git uses
+an `IdentityAgent` from SSH config, launch the app with that socket in
+`SSH_AUTH_SOCK`; otherwise terminal Git can authenticate while the app cannot. Each check creates an
 immutable preview, discarded when details close or a check is replaced. The source
 follows the current revision through update and rollback. Missing sources or changed
 plugin identities/paths leave the installation unchanged. Older Git installs and

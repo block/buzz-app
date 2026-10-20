@@ -1,10 +1,10 @@
-import type { ComponentProps, Ref } from "react";
+import { useState, type ComponentProps, type Ref } from "react";
 import { CaretDownIcon } from "../../shared/design-system/icons";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import type { PortableAgent } from "../../features/agents/native";
-import { AgentPortrait } from "./AgentCard";
+import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import styles from "./AgentCard.module.css";
 
 const artwork = [
@@ -17,8 +17,29 @@ const artwork = [
   "pollies-24",
   "fuzzies-18",
 ];
-/** The most agents a crew shows before counting the rest. */
-const CREW = 6;
+/** The most agents a crew tile scatters; its CSS places each one. */
+const CREW = 12;
+
+/** One agent the owner knows, floating on a crew tile: its picture when it
+ * loads, and always its name. */
+function CrewMember({ agent }: { agent: PortableAgent }) {
+  const pack = agentAvatars.find((avatar) => avatar.url === agent.picture);
+  const src = useAvatarPreview(
+    pack ? "" : (agent.picture ?? ""),
+    agent.relay || undefined,
+    "small",
+  );
+  const [failed, setFailed] = useState(false);
+  const picture = pack?.preview ?? src;
+  return (
+    <span className={styles.crewMember}>
+      {picture && !failed && (
+        <img src={picture} alt="" onError={() => setFailed(true)} />
+      )}
+      <span className="text-caption">{agent.name}</span>
+    </span>
+  );
+}
 export function NewAgentTile({
   fullWidth = false,
   variant = "tile",
@@ -27,6 +48,7 @@ export function NewAgentTile({
   art = artwork,
   crew,
   description,
+  secondary = false,
   ...props
 }: Omit<ComponentProps<typeof SurfaceButton>, "className" | "children"> & {
   /** What the tile makes, such as New team. */
@@ -40,6 +62,8 @@ export function NewAgentTile({
   crew?: readonly PortableAgent[];
   /** A line above the label. */
   description?: string;
+  /** A quieter label, for a tile beside a more important one. */
+  secondary?: boolean;
 }) {
   if (variant === "button")
     return (
@@ -61,27 +85,10 @@ export function NewAgentTile({
       data-crew={crew ? "" : undefined}
     >
       {crew ? (
-        <span aria-hidden="true" className={styles.crewRow}>
+        <span aria-hidden="true" className={styles.crewArtwork}>
           {crew.slice(0, CREW).map((agent) => (
-            <span key={agent.pubkey} className={styles.crewMember}>
-              {agent.picture && (
-                <span className={styles.crewMemberPortrait}>
-                  <AgentPortrait
-                    agent={agent}
-                    community={agent.relay || undefined}
-                  />
-                </span>
-              )}
-              <span className={`${styles.crewMemberName} text-caption`}>
-                {agent.name}
-              </span>
-            </span>
+            <CrewMember key={agent.pubkey} agent={agent} />
           ))}
-          {crew.length > CREW && (
-            <span className={`${styles.crewMore} text-caption`}>
-              +{crew.length - CREW}
-            </span>
-          )}
         </span>
       ) : (
         <span aria-hidden="true" className={styles.newArtwork}>
@@ -107,7 +114,11 @@ export function NewAgentTile({
       {description && (
         <span className="text-body text-secondary">{description}</span>
       )}
-      <span ref={labelRef} className={`${styles.newLabel} text-label-sm`}>
+      <span
+        ref={labelRef}
+        className={`${styles.newLabel} text-label-sm`}
+        data-tone={secondary ? "secondary" : undefined}
+      >
         {label}
       </span>
     </SurfaceButton>

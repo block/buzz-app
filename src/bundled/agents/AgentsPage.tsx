@@ -246,10 +246,12 @@ export function AgentsPage({
       </MenuPopup>
     </MenuRoot>
   );
-  // With no agents yet, each way to get one is its own tile.
+  // With no agents yet, each way to get one is its own tile; importing the
+  // owner's own agents leads when there are any.
+  const canImport = firstAgent && importable.length > 0;
   const starts = (
     <div className={cardStyles.starts}>
-      {firstAgent && importable.length > 0 && (
+      {canImport && (
         <NewAgentTile
           fullWidth
           crew={importable}
@@ -260,12 +262,14 @@ export function AgentsPage({
       )}
       <NewAgentTile
         label="Create your first agent"
+        secondary={canImport}
         disabled={snapshot.status !== "ready" || !types.length}
         onClick={() => setCreating(true)}
       />
       <NewAgentTile
         label="Explore the marketplace"
         art={MARKETPLACE_ART}
+        secondary={canImport}
         onClick={openMarketplace}
       />
     </div>

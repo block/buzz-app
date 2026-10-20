@@ -560,11 +560,10 @@ export type AgentType<Config = unknown> = {
    * mentioning the agent. Discovery may be async but must not start a turn.
    * The picks reach that run as `Delivery.model` and `Delivery.effort`. */
   models?(agent: Agent<Config>): Models | Promise<Models>;
-  /** Its runs honour `Delivery.session`, so the owner can ask for one with
-   * the model and effort. It returns the agent's session scope: under
-   * `channel` a channel's top-level message joins the channel's one session,
-   * and under `thread` it starts a thread of its own, with no session to act
-   * on. A DM or Solo chat is one session either way. */
+  /** Offers immediate controls for the agent's session scope: under `channel`
+   * a channel's top-level message joins the channel's one session, and under
+   * `thread` it starts a thread of its own, with no session to act on. A DM or
+   * Solo chat is one session either way. */
   sessionActions?(agent: Agent<Config>): "thread" | "channel";
   sessionState?(agent: Agent<Config>, place: SessionPlace): SessionState;
   session?(

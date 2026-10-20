@@ -148,6 +148,7 @@ export function CommunityLocalSettings({
           <div className="flex flex-wrap justify-end gap-3">
             <Button
               type="button"
+              size="xs"
               loading={copying}
               onClick={() => void copyUrl()}
             >
@@ -155,6 +156,7 @@ export function CommunityLocalSettings({
             </Button>
             <Button
               type="button"
+              size="xs"
               disabled={!viewer || !communities.snapshot().relayAvailable}
               onClick={() => setEditingConnection(true)}
             >

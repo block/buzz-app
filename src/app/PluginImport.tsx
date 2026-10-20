@@ -8,7 +8,13 @@ import { Accordion } from "../shared/design-system/ui/Accordion";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { readPluginFolder } from "./plugin-folder-drop";
 import styles from "./PluginImport.module.css";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   FolderOpenIcon,
@@ -65,6 +71,7 @@ function ProgramDetails({
 function hostDeclarations(manifest: PluginManifest) {
   return [
     ...(manifest.host?.commands ?? []).map((command) => ({
+      key: `command:${command.id}`,
       signature: `Command ${command.id}: ${JSON.stringify([command.program, ...command.args])} · input: ${command.maxInputBytes === undefined ? "none" : `up to ${command.maxInputBytes} bytes`} · output: up to ${command.maxOutputBytes ?? 4096} bytes`,
       title: `Command ${command.id}:`,
       label: `Run ${command.program}`,
@@ -86,6 +93,7 @@ function hostDeclarations(manifest: PluginManifest) {
       ),
     })),
     ...(manifest.host?.networkOrigins ?? []).map((origin) => ({
+      key: `origin:${origin}`,
       signature: `HTTPS origin: ${origin}`,
       title: "HTTPS origin:",
       name: `HTTPS origin ${origin}`,
@@ -95,6 +103,7 @@ function hostDeclarations(manifest: PluginManifest) {
       details: <code className="break-words">{origin}</code>,
     })),
     ...(manifest.host?.processes ?? []).map((process) => ({
+      key: `process:${process.id}`,
       signature: `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])}${process.bundled ? " (bundled with Buzz)" : ""} and any further arguments · stdin, full user access`,
       title: `Process ${process.id}:`,
       label: `Start ${process.program}`,
@@ -114,6 +123,7 @@ function hostDeclarations(manifest: PluginManifest) {
     ...(manifest.host?.mcp
       ? [
           {
+            key: "mcp",
             signature:
               "MCP servers: tools served to local agents over loopback HTTP",
             title: "MCP servers:",
@@ -193,7 +203,11 @@ export function PluginImport({
         : null;
       (checked ?? previewBack.current)?.focus();
     } else if (sourceTrigger.current) {
-      if (sourceTrigger.current === document.body) browse.current?.focus();
+      if (
+        sourceTrigger.current === document.body ||
+        !sourceTrigger.current.isConnected
+      )
+        browse.current?.focus();
       else sourceTrigger.current.focus();
       sourceTrigger.current = null;
     }
@@ -226,9 +240,19 @@ export function PluginImport({
   const [enableOnInstall, setEnableOnInstall] = useState(true);
   const lifetime = useRef({ active: true, token: "" });
   const pending = useRef(false);
+  const startSavedFolder = useEffectEvent(() => {
+    if (imports && savedSource && "root" in savedSource) {
+      const directory = savedSource.root;
+      void load(() => imports.folder(directory));
+    }
+  });
   useEffect(() => {
     const current = { active: true, token: "" };
     lifetime.current = current;
+    // Defer until effects settle so Strict Mode's retired mount never acquires.
+    queueMicrotask(() => {
+      if (current.active) startSavedFolder();
+    });
     return () => {
       current.active = false;
       if (current.token) void imports?.discard(current.token).catch(() => {});
@@ -299,7 +323,10 @@ export function PluginImport({
         next?.candidates.length === 1 ? (next.candidates[0]?.path ?? "") : "",
       );
     } catch (reason) {
-      if (current.active) showError(reason, returnTo);
+      if (current.active) {
+        if (savedSource && "root" in savedSource) setChooseSource(true);
+        showError(reason, returnTo);
+      }
     } finally {
       pending.current = false;
       if (current.active) setLoading(false);
@@ -313,6 +340,7 @@ export function PluginImport({
       await imports?.discard(preview.token);
       lifetime.current.token = "";
       setPreview(null);
+      if (savedSource && "root" in savedSource) setChooseSource(true);
     } catch (reason) {
       showError(reason, previewBack.current);
     } finally {
@@ -355,20 +383,35 @@ export function PluginImport({
           : "There is no earlier revision to roll back to.";
   const declaredDetails = candidate ? hostDeclarations(candidate.manifest) : [];
   const previousDetails = existing ? hostDeclarations(existing.manifest) : [];
-  const declaredGrants = declaredDetails.map((grant) => grant.signature);
   const previousGrants = previousDetails.map((grant) => grant.signature);
   const removedDetails = previousDetails.filter(
-    (grant) => !declaredGrants.includes(grant.signature),
+    (grant) => !declaredDetails.some((next) => next.key === grant.key),
   );
+  const addedDetails = declaredDetails.filter(
+    (grant) => !previousDetails.some((previous) => previous.key === grant.key),
+  );
+  const changedDetails = declaredDetails.filter((grant) =>
+    previousDetails.some(
+      (previous) =>
+        previous.key === grant.key && previous.signature !== grant.signature,
+    ),
+  );
+  const hasAccessChanges =
+    addedDetails.length + changedDetails.length + removedDetails.length > 0;
   function scopeItem(
     grant: ReturnType<typeof hostDeclarations>[number],
     removed = false,
+    compare = updating,
   ) {
     const changed =
-      updating &&
+      compare &&
       !!existing &&
       !removed &&
       !previousGrants.includes(grant.signature);
+    const previous = changed
+      ? previousDetails.find((item) => item.key === grant.key)
+      : undefined;
+    const changeLabel = changed ? (previous ? " (changed)" : " (added)") : "";
     const Icon = grant.icon;
     return {
       value: grant.signature,
@@ -379,7 +422,7 @@ export function PluginImport({
             <span className="block font-medium">
               {removed ? "Removed: " : ""}
               {grant.label}
-              {changed ? " (new or changed)" : ""}
+              {changeLabel}
             </span>
             <span className="block text-muted">{grant.hint}</span>
           </span>
@@ -394,13 +437,33 @@ export function PluginImport({
         >
           <p className="m-0 font-medium">
             {grant.title}
-            {changed ? " (new or changed)" : ""}
+            {changeLabel}
           </p>
+          {previous && (
+            <>
+              <p className="mb-2 mt-3 text-label">Previously</p>
+              {previous.details}
+              <p className="mb-2 mt-3 text-label">After this update</p>
+            </>
+          )}
           {grant.details}
         </section>
       ),
     };
   }
+  const allDeclarations = (
+    <section aria-label="Declared scopes">
+      {declaredDetails.length ? (
+        <Accordion
+          animate
+          key={selected}
+          items={declaredDetails.map((grant) => scopeItem(grant, false, false))}
+        />
+      ) : (
+        <p className="m-0">No additional capabilities declared.</p>
+      )}
+    </section>
+  );
   const addButton = (
     <Button
       ref={trigger}
@@ -441,7 +504,9 @@ export function PluginImport({
             ? undefined
             : preview
               ? reviewing
-                ? "Only install code you trust."
+                ? updating
+                  ? "Compare this update with the installed version."
+                  : "Only install code you trust."
                 : preview.candidates.length
                   ? "Select a plugin to review before installing."
                   : "Try another folder or repository."
@@ -468,7 +533,11 @@ export function PluginImport({
               ref={errorBack}
               type="button"
               disabled={blocked}
-              onClick={() => setError(null)}
+              onClick={() => {
+                if (!preview && savedSource && "root" in savedSource)
+                  errorTrigger.current = browse.current;
+                setError(null);
+              }}
             >
               Back
             </Button>
@@ -479,12 +548,18 @@ export function PluginImport({
                 type="button"
                 disabled={blocked}
                 onClick={() => {
-                  if (reviewing && preview.candidates.length > 1) {
+                  if (
+                    reviewing &&
+                    preview.candidates.length > 1 &&
+                    !(savedSource && "root" in savedSource)
+                  ) {
                     setReviewing(false);
                   } else void dismiss();
                 }}
               >
-                Back
+                {savedSource && "root" in savedSource
+                  ? "Change source folder"
+                  : "Back"}
               </Button>
               {!reviewing && preview.candidates.length > 1 && (
                 <Button
@@ -560,7 +635,12 @@ export function PluginImport({
           </p>
         )}
         <div hidden={!!error}>
-          <div hidden={!!preview}>
+          <div
+            hidden={
+              !!preview ||
+              (!!savedSource && "root" in savedSource && !chooseSource)
+            }
+          >
             {updateId && savedSource && !chooseSource ? (
               <section aria-label="Saved plugin source">
                 <p className="mt-0 mb-2 text-body-sm break-words">
@@ -578,27 +658,25 @@ export function PluginImport({
                   </p>
                 )}
                 <div className="flex flex-wrap gap-3">
-                  <Button
-                    disabled={blocked}
-                    onClick={() =>
-                      void load(async () => {
-                        if ("root" in savedSource)
-                          return imports.folder(savedSource.root);
-                        const signed = await authorizeGit?.(
-                          savedSource.repository,
-                        );
-                        return imports.git(
-                          signed?.repository ?? savedSource.repository,
-                          savedSource.reference,
-                          signed?.token,
-                        );
-                      })
-                    }
-                  >
-                    {"root" in savedSource
-                      ? "Check this folder"
-                      : "Check this repository"}
-                  </Button>
+                  {!("root" in savedSource) && (
+                    <Button
+                      disabled={blocked}
+                      onClick={() =>
+                        void load(async () => {
+                          const signed = await authorizeGit?.(
+                            savedSource.repository,
+                          );
+                          return imports.git(
+                            signed?.repository ?? savedSource.repository,
+                            savedSource.reference,
+                            signed?.token,
+                          );
+                        })
+                      }
+                    >
+                      Check this repository
+                    </Button>
+                  )}
                   <Button
                     disabled={blocked}
                     onClick={() => setChooseSource(true)}
@@ -823,6 +901,51 @@ export function PluginImport({
                       aria-label="Computer access"
                       className="text-body-sm"
                     >
+                      {updating && (
+                        <section
+                          aria-label="Declared access changes"
+                          className="mb-4"
+                        >
+                          <p className="mt-0 mb-2 text-label">
+                            {hasAccessChanges
+                              ? "Declared access changes"
+                              : "No declared access changes"}
+                          </p>
+                          {!hasAccessChanges && (
+                            <p className="m-0 text-muted">
+                              This update requests the same access through Buzz
+                              as the installed version.
+                            </p>
+                          )}
+                          {(
+                            [
+                              ["Added", addedDetails],
+                              ["Changed", changedDetails],
+                              ["Removed", removedDetails],
+                            ] as const
+                          ).map(
+                            ([label, grants]) =>
+                              grants.length > 0 && (
+                                <section
+                                  key={label}
+                                  aria-label={`${label} declarations`}
+                                  className="mt-3"
+                                >
+                                  <p className="mt-0 mb-2 text-label">
+                                    {label}
+                                  </p>
+                                  <Accordion
+                                    animate
+                                    key={`${selected}-${label}`}
+                                    items={grants.map((grant) =>
+                                      scopeItem(grant, label === "Removed"),
+                                    )}
+                                  />
+                                </section>
+                              ),
+                          )}
+                        </section>
+                      )}
                       <Accordion
                         animate
                         key={`computer-${selected}`}
@@ -870,47 +993,20 @@ export function PluginImport({
                           },
                         ]}
                       />
-                      {updating &&
-                        existing &&
-                        (declaredGrants.some(
-                          (grant) => !previousGrants.includes(grant),
-                        ) ||
-                          previousGrants.some(
-                            (grant) => !declaredGrants.includes(grant),
-                          )) && (
-                          <p className="my-2">
-                            Computer access changes with this update. Expand a
-                            scope to review its exact declaration.
-                          </p>
-                        )}
-                      {declaredDetails.length ? (
-                        <section aria-label="Declared scopes">
-                          <Accordion
-                            animate
-                            key={selected}
-                            items={declaredDetails.map((grant) =>
-                              scopeItem(grant),
-                            )}
-                          />
-                        </section>
+                      {updating ? (
+                        <Accordion
+                          animate
+                          key={`all-${selected}`}
+                          items={[
+                            {
+                              value: "all-declarations",
+                              title: "All access declarations",
+                              content: allDeclarations,
+                            },
+                          ]}
+                        />
                       ) : (
-                        <p className="m-0">
-                          No additional capabilities declared.
-                        </p>
-                      )}
-                      {updating && removedDetails.length > 0 && (
-                        <section
-                          aria-label="Removed declarations"
-                          className="mt-4"
-                        >
-                          <p className="m-0 font-medium">Removed:</p>
-                          <Accordion
-                            animate
-                            items={removedDetails.map((grant) =>
-                              scopeItem(grant, true),
-                            )}
-                          />
-                        </section>
+                        allDeclarations
                       )}
                     </section>
                   )}

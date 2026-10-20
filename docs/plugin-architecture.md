@@ -771,7 +771,11 @@ has a 30-second deadline. Browser calls cannot use these native operations.
 Existing bundled GitHub requests retain their first-party renderer fetch and CSP
 entry.
 
-The import preview lists declarations and marks added or changed access on updates.
+New-install review lists declarations. Update review compares against the installed
+revision and leads with added, changed and removed declarations; changed commands and
+processes include previous and replacement details. Equivalent default limits and
+reordered declarations do not count as changes. Unchanged updates say so explicitly,
+and the complete current declarations remain available in a collapsed detail.
 The install/update action accepts that displayed version; an enabled update may run
 immediately. These declarations help review and catch mistakes. Plugins share the
 main WebView and can invoke app commands directly, so the declarations do not
@@ -866,8 +870,10 @@ the installed revision unchanged. Replacing an active plugin ends its in-memory
 work, including a voice call. This is a host-management capability, since an
 external plugin cannot manage other installations or add CLI commands.
 
-Update on an installed row offers to check its remembered folder or Git repository,
-branch/tag and candidate path, with a choice to use another source. Each check creates
+Update on an installed row immediately checks its remembered folder and opens access
+review, with Change source folder available before confirmation. Git installations
+still offer to check the remembered repository, branch/tag and candidate path,
+with a choice to use another source. Each check creates
 an immutable preview and requires explicit confirmation. Git authorization is acquired
 again for each check; credentials/tokens are never saved with source metadata. The
 source follows the current revision through update and rollback. Existing folder

@@ -13,6 +13,7 @@ import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview } from "../plugins/types";
 import { PluginImport } from "./PluginImport";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 
 afterEach(cleanup);
 
@@ -242,15 +243,15 @@ it("shows exact declared access and changes before an enabled update", async () 
     screen.getByRole("region", { name: "Plugin safety" }),
   ).toHaveTextContent("Plugins aren’t sandboxed");
   const scopes = within(
-    screen.getByRole("region", { name: "Declared scopes" }),
+    screen.getByRole("region", { name: "Declared access changes" }),
   );
   expect(scopes.getByText("Run a program on your computer.")).toBeVisible();
   expect(scopes.getByText(/account’s full access/)).toBeVisible();
-  expect(scopes.getAllByText(/HTTPS requests to this address/)).toHaveLength(2);
+  expect(scopes.getAllByText(/HTTPS requests to this address/)).toHaveLength(3);
   expect(scopes.getByText(/Buzz’s local MCP server/)).toBeVisible();
   expect(screen.getByText(/beyond these declarations/)).toBeVisible();
   expect(
-    screen.getByText(/Computer access changes with this update/),
+    screen.getByRole("region", { name: "Declared access changes" }),
   ).toBeVisible();
   expect(screen.queryByText(/Command check:/)).toBeNull();
   expect(screen.getByRole("button", { name: "Update plugin" })).toHaveAttribute(
@@ -262,9 +263,6 @@ it("shows exact declared access and changes before an enabled update", async () 
     screen.getByRole("button", {
       name: /^Connect to https:\/\/api.example.com/,
     }),
-  );
-  fireEvent.click(
-    screen.getByRole("button", { name: /^Removed: Run example-cli/ }),
   );
   fireEvent.click(screen.getByRole("button", { name: /^Removed: Connect to/ }));
   fireEvent.click(
@@ -280,13 +278,13 @@ it("shows exact declared access and changes before an enabled update", async () 
   const command = screen.getByRole("region", { name: "Command check details" });
   await waitFor(() => expect(command).toBeVisible());
   expect(command).toHaveTextContent(
-    /new or changed.*example-cli.*status.*--json/,
+    /changed.*Previously.*example-cli.*status.*--brief.*After this update.*example-cli.*status.*--json/,
   );
   expect(
     screen.getByRole("region", {
       name: "HTTPS origin https://api.example.com details",
     }),
-  ).toHaveTextContent(/new or changed.*https:\/\/api.example.com/);
+  ).toHaveTextContent(/added.*https:\/\/api.example.com/);
   expect(
     screen.getByRole("region", {
       name: "Removed HTTPS origin https://old.example.com details",
@@ -294,7 +292,7 @@ it("shows exact declared access and changes before an enabled update", async () 
   ).toHaveTextContent("https://old.example.com");
   expect(
     screen.getByRole("region", { name: "Removed declarations" }),
-  ).toHaveTextContent(/--brief.*https:\/\/old.example.com/);
+  ).toHaveTextContent("https://old.example.com");
   expect(screen.queryByRole("region", { name: "Package content" })).toBeNull();
   expect(
     screen.getByText(
@@ -585,6 +583,12 @@ it.each([
     const access = within(
       await screen.findByRole("region", { name: "Computer access" }),
     );
+    if (!changed) {
+      expect(screen.getByText("No declared access changes")).toBeVisible();
+      fireEvent.click(
+        access.getByRole("button", { name: "All access declarations" }),
+      );
+    }
     fireEvent.click(access.getByRole("button", { name: /^Run agent-tools/ }));
     const grant = access.getByRole("region", { name: "Command tools details" });
     expect(
@@ -592,17 +596,22 @@ it.each([
     ).not.toBeInTheDocument();
     expect(grant).toHaveTextContent(allowance(next));
     if (changed) {
-      fireEvent.click(
-        access.getByRole("button", { name: /^Removed: Run agent-tools/ }),
-      );
-      expect(grant).toHaveTextContent("(new or changed)");
+      expect(grant).toHaveTextContent("(changed)");
+      expect(grant).toHaveTextContent("Previously");
+      expect(grant).toHaveTextContent(allowance(previous));
+      expect(grant).toHaveTextContent("After this update");
       expect(
-        access.getByRole("region", { name: "Removed declarations" }),
-      ).toHaveTextContent(allowance(previous));
+        access.getByRole("region", { name: "Changed declarations" }),
+      ).toHaveTextContent(allowance(next));
     } else {
-      expect(grant).not.toHaveTextContent("(new or changed)");
-      expect(access.queryByText(/^Removed:/)).not.toBeInTheDocument();
+      expect(grant).not.toHaveTextContent("(changed)");
+      expect(
+        access.queryByRole("region", { name: "Changed declarations" }),
+      ).toBeNull();
     }
+    expect(
+      access.queryByRole("region", { name: "Removed declarations" }),
+    ).toBeNull();
     expect(manager.installImport).not.toHaveBeenCalled();
   },
 );
@@ -1152,29 +1161,27 @@ it.each([
       token: "fresh-authorization",
     }));
     render(
-      <PluginImport
-        plugins={manager}
-        catalog={{
-          profile: "test",
-          location: "test",
-          plugins: [{ ...rememberedPlugin, updateSource }],
-        }}
-        busy={false}
-        updateId={rememberedManifest.id}
-        authorizeGit={authorizeGit}
-      />,
+      <StrictMode>
+        <PluginImport
+          plugins={manager}
+          catalog={{
+            profile: "test",
+            location: "test",
+            plugins: [{ ...rememberedPlugin, updateSource }],
+          }}
+          busy={false}
+          updateId={rememberedManifest.id}
+          authorizeGit={authorizeGit}
+        />
+      </StrictMode>,
     );
     expect(
       screen.queryByRole("button", { name: "Browse plugin folder" }),
     ).toBeNull();
-    await user.click(
-      screen.getByRole("button", {
-        name:
-          "root" in updateSource
-            ? "Check this folder"
-            : "Check this repository",
-      }),
-    );
+    if (!("root" in updateSource))
+      await user.click(
+        screen.getByRole("button", { name: "Check this repository" }),
+      );
     expect(await screen.findByText(/It stays off/)).toBeVisible();
     expect(screen.queryByRole("radio")).toBeNull();
     expect(manager.installImport).not.toHaveBeenCalled();
@@ -1231,14 +1238,13 @@ it("recovers from an unavailable remembered folder by choosing another source", 
       updateId={rememberedManifest.id}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Check this folder" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Folder no longer exists",
   );
   await user.click(screen.getByRole("button", { name: "Back" }));
-  await user.click(
-    screen.getByRole("button", { name: "Choose another source" }),
-  );
+  expect(
+    screen.getByRole("button", { name: "Browse plugin folder" }),
+  ).toHaveFocus();
   await user.click(
     screen.getByRole("button", { name: "Browse plugin folder" }),
   );
@@ -1249,7 +1255,6 @@ it("recovers from an unavailable remembered folder by choosing another source", 
 });
 
 it("keeps wrong-plugin sources out of a remembered-source update", async () => {
-  const user = userEvent.setup();
   const discard = vi.fn(async () => {});
   const manager = {
     imports: {
@@ -1282,10 +1287,76 @@ it("keeps wrong-plugin sources out of a remembered-source update", async () => {
       updateId={rememberedManifest.id}
     />,
   );
-  await user.click(screen.getByRole("button", { name: "Check this folder" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "does not contain the selected plugin",
   );
   expect(discard).toHaveBeenCalledExactlyOnceWith("remembered");
   expect(screen.queryByRole("button", { name: "Update plugin" })).toBeNull();
+});
+
+it("shows no net access change for reordered declarations and equivalent defaults", async () => {
+  const user = userEvent.setup();
+  const host = {
+    commands: [{ id: "check", program: "example-cli", args: ["status"] }],
+    networkOrigins: ["https://one.example.com", "https://two.example.com"],
+  };
+  const manager = {
+    imports: {
+      folder: vi.fn(async () => ({
+        ...rememberedPreview,
+        candidates: [
+          {
+            path: "dist",
+            revision: "changed-code",
+            manifest: {
+              ...rememberedManifest,
+              host: {
+                commands: [{ ...host.commands[0], maxOutputBytes: 4096 }],
+                networkOrigins: [...host.networkOrigins].reverse(),
+              },
+            },
+          },
+        ],
+      })),
+      discard: vi.fn(async () => {}),
+    },
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            ...rememberedPlugin,
+            manifest: { ...rememberedManifest, host },
+            updateSource: { root: "/plugins", path: "dist" },
+          },
+        ],
+      }}
+      busy={false}
+      updateId={rememberedManifest.id}
+    />,
+  );
+  expect(await screen.findByText("No declared access changes")).toBeVisible();
+  expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
+    "Compare this update with the installed version.",
+  );
+  expect(
+    screen.queryByRole("region", { name: "Added declarations" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "Changed declarations" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "Removed declarations" }),
+  ).toBeNull();
+  expect(screen.queryByRole("region", { name: "Declared scopes" })).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "All access declarations" }),
+  );
+  expect(
+    await screen.findByRole("region", { name: "Declared scopes" }),
+  ).toHaveTextContent("Run example-cli");
 });

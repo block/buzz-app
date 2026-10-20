@@ -630,7 +630,6 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   });
   await button(page, "Update Example two").click();
   // Real modal focus handoff when the remembered-source step is replaced.
-  await button(page, "Check this folder").click();
   await expect(button(page, "Update plugin")).toBeEnabled();
   expect(
     await page.evaluate(
@@ -640,9 +639,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
           .at(-1).args,
     ),
   ).toEqual({ directory: "/fixture/plugins" });
-  await button(page, "Back").click();
-  await expect(button(page, "Check this folder")).toBeFocused();
-  await button(page, "Choose another source").click();
+  await button(page, "Change source folder").click();
   await expect(button(page, "Browse plugin folder")).toBeFocused();
   await button(page, "Browse plugin folder").click();
   await expect(page.getByRole("radio")).toHaveCount(0);

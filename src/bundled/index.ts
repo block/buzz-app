@@ -40,6 +40,8 @@ import * as channels from "./channels";
 import * as github from "./github";
 import bestieManifest from "./bestie/manifest.json";
 import * as bestie from "./bestie";
+import usageManifest from "./usage/manifest.json";
+import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import remindersManifest from "./reminders/manifest.json";
@@ -147,6 +149,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...bestieManifest, apiVersion: 1 },
     module: bestie,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...usageManifest, apiVersion: 1 },
+    module: usage,
     enabledByDefault: false,
   },
   {

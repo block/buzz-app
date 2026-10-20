@@ -4,6 +4,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { ownerReads } from "../../features/agents/reads";
+import { localStore } from "../../features/agents/state";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
 import type { EventData } from "../../features/relay/events";
@@ -54,6 +55,8 @@ function fixture(
   const sent: Wire[] = [];
   /** Methods the server answers with a JSON-RPC error instead of a result. */
   const failing = new Set<string>();
+  /** Methods the server answers only once their promise settles. */
+  const held = new Map<string, Promise<void>>();
   const toolCalls = new Map<
     number | string,
     { threadId: string | undefined; turnId: string; callId: string }
@@ -82,6 +85,7 @@ function fixture(
         return;
       }
       if (request.id == null) return;
+      await held.get(request.method ?? "");
       if (request.method && failing.has(request.method)) {
         emit({
           id: request.id,
@@ -267,6 +271,7 @@ function fixture(
           ],
         }),
       },
+      channelWrites: { startingCanvas: () => undefined },
       canvas: {
         available: false,
         read: vi.fn(
@@ -282,12 +287,13 @@ function fixture(
     },
   };
   const relay = { snapshot: () => snapshot } as unknown as RelayData;
-  const store = {
+  const local = {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => {
       storage.set(key, value);
     },
   } as Storage;
+  const store = localStore(local);
   // The host's copy of `core` memory, which needs no relay read.
   const core = vi.fn(
     async (
@@ -419,7 +425,7 @@ function fixture(
     runtime.run(delivery);
   let pluginDispose = () => {};
   if (plugin) {
-    vi.stubGlobal("localStorage", store);
+    vi.stubGlobal("localStorage", local);
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     apply({
       host: { spawn },
@@ -547,6 +553,7 @@ function fixture(
     process,
     sent,
     failing,
+    held,
     emit,
     publish,
     read,
@@ -1315,6 +1322,230 @@ it("cleans background terminals on server interruption and permits same-thread r
     1,
   );
 });
+it("registers a stopper that interrupts the turn it is running", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(interruptible).toHaveBeenCalledTimes(1);
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  await interruptible.mock.calls[0]?.[0]();
+  const sent = f.sent.filter((wire) => wire.method === "turn/interrupt");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]?.params).toEqual({
+    threadId: (f.starts()[0]?.params as { threadId: string } | undefined)
+      ?.threadId,
+    turnId: "turn-1",
+  });
+});
+
+it("refuses to stop a request still waiting for its turn, and leaves the running turn alone", async () => {
+  const f = fixture();
+  const running = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const waiting = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("first"), interruptible: running });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  // Another model cannot be steered in, so it waits for the turn to end.
+  await f.runtime.run({
+    ...f.delivery("deeper"),
+    model: "deep-model",
+    interruptible: waiting,
+  });
+  await expect(waiting.mock.calls[0]?.[0]()).rejects.toThrow(
+    "Codex has not started on this message yet",
+  );
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  // The turn it did not stop ends as any other.
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "FIRST" });
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+});
+
+it("refuses to stop a request queued behind a finished turn that is still cleaning up", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const cleanup = deferred<void>();
+  f.held.set("thread/unsubscribe", cleanup.promise);
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "thread/unsubscribe")).toBe(
+      true,
+    ),
+  );
+  const waiting = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("second"), interruptible: waiting });
+  await expect(waiting.mock.calls[0]?.[0]()).rejects.toThrow(
+    "Codex has not started on this message yet",
+  );
+  // The request it did not stop runs once the finished turn lets go.
+  cleanup.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+  f.complete(1, "SECOND");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+});
+
+it("sends one interrupt for stops pressed together, and settles each with it", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const accepted = deferred<void>();
+  f.held.set("turn/interrupt", accepted.promise);
+  const stop = interruptible.mock.calls[0]?.[0];
+  const first = stop?.();
+  const second = stop?.();
+  await vi.waitFor(() =>
+    expect(
+      f.sent.filter((wire) => wire.method === "turn/interrupt"),
+    ).toHaveLength(1),
+  );
+  accepted.resolve();
+  await expect(first).resolves.toBeUndefined();
+  await expect(second).resolves.toBeUndefined();
+  await vi.waitFor(
+    () => expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Stopped"),
+    { timeout: 3_000 },
+  );
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(1);
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
+it("runs a message sent while a stopped turn is ending as the next turn, not steered into it", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const accepted = deferred<void>();
+  f.held.set("turn/interrupt", accepted.promise);
+  const stopping = interruptible.mock.calls[0]?.[0]();
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "turn/interrupt")).toBe(true),
+  );
+  await f.runtime.run(f.delivery("after"));
+  // It waits for the stopped turn to end, as a turn of its own.
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Starting"),
+  );
+  accepted.resolve();
+  await stopping;
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2), {
+    timeout: 3_000,
+  });
+  expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(false);
+  expect(inputText(f.starts()[1])).toContain("after");
+  f.complete(1, "AFTER");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "AFTER" });
+});
+
+it("rejects a stop Codex does not take, and still reports the turn's interruption", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.failing.add("turn/interrupt");
+  await expect(interruptible.mock.calls[0]?.[0]()).rejects.toThrow(
+    "turn/interrupt failed",
+  );
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(1);
+  // The turn is interrupted anyway, without the owner having stopped it.
+  f.interrupt();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Interrupted"),
+  );
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: expect.stringContaining("turn was interrupted"),
+  });
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: false,
+    error: "Codex’s turn was interrupted",
+  });
+});
+
+it("sends nothing when asked to stop a request whose turn has finished", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "DONE");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  await expect(interruptible.mock.calls[0]?.[0]()).resolves.toBeUndefined();
+  expect(
+    f.sent.filter((wire) => wire.method === "turn/interrupt"),
+  ).toHaveLength(0);
+});
+
+it("ends a turn the owner stopped as stopped, not as an interruption failure", async () => {
+  const f = fixture();
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await interruptible.mock.calls[0]?.[0]();
+  // The stopped turn lets its shells linger a second before it settles.
+  await vi.waitFor(
+    () => expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Stopped"),
+    { timeout: 3_000 },
+  );
+  for (const method of [
+    "thread/backgroundTerminals/clean",
+    "thread/backgroundTerminals/list",
+  ])
+    expect(f.sent.some((wire) => wire.method === method)).toBe(true);
+  expect(f.publish).not.toHaveBeenCalled();
+  await expect(f.workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: true,
+  });
+});
+
+it("keeps looking for shells for a moment after a stopped turn, and ends one that shows up late", async () => {
+  const late: unknown[] = [];
+  const f = fixture(late, Promise.resolve());
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  await f.runtime.run({ ...f.delivery("work"), interruptible });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await interruptible.mock.calls[0]?.[0]();
+  const terminates = () =>
+    f.sent.filter(
+      (wire) => wire.method === "thread/backgroundTerminals/terminate",
+    );
+  // Codex hands the shell over only after the turn has ended.
+  await vi.waitFor(() =>
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/backgroundTerminals/list")
+        .length,
+    ).toBeGreaterThan(0),
+  );
+  expect(f.runtime.sessions(pubkey)[0]?.status).not.toBe("Stopped");
+  late.push({ processId: "77" });
+  await vi.waitFor(() => expect(terminates()).toHaveLength(1));
+  expect(terminates()[0]?.params).toMatchObject({ processId: "77" });
+  // The stopped turn lets its shells linger a second before it settles.
+  await vi.waitFor(
+    () => expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Stopped"),
+    { timeout: 3_000 },
+  );
+  expect(f.publish).not.toHaveBeenCalled();
+});
+
 it("closes a native process returned after runtime disposal", async () => {
   const f = fixture();
   const gate = deferred<Awaited<ReturnType<typeof f.spawn>>>();
@@ -1466,7 +1697,10 @@ it("starts no work when the agent stops while its channel is read", async () => 
       );
     },
     async () => undefined,
-    { getItem: () => null, setItem: () => {} } as unknown as Storage,
+    localStore({
+      getItem: () => null,
+      setItem: () => {},
+    } as unknown as Storage),
   );
   runtimes.push(runtime);
   runtime.sync([{ pubkey } as Agent]);
@@ -2636,7 +2870,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   await f.complete();
 });
 
-it("always offers the attention tools and guidance, keeps the thread when attention goes off, and says so in the turn", async () => {
+it("always offers the attention tools, on search, keeps the thread when attention goes off, and says so in the turn", async () => {
   const f = fixture();
   f.attention.on = true;
   f.objects.set("interest/ops", {
@@ -2648,12 +2882,23 @@ it("always offers the attention tools and guidance, keeps the thread when attent
   const thread = (index: number) =>
     f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as {
       developerInstructions: string;
-      dynamicTools: { tools: { name: string }[] }[];
+      dynamicTools: {
+        description: string;
+        tools: { name: string; deferLoading?: boolean }[];
+      }[];
     };
   const names = (index: number) =>
     thread(index)?.dynamicTools[0]?.tools.map((tool) => tool.name) ?? [];
   expect(names(0)).toEqual(expect.arrayContaining(["send", "interest_show"]));
-  expect(thread(0)?.developerInstructions).toContain("## Attention");
+  // The Buzz tools are listed up front, and the attention tools, with their
+  // guidance, once the model searches for them.
+  const deferred = (name: string) =>
+    thread(0)?.dynamicTools[0]?.tools.find((tool) => tool.name === name)
+      ?.deferLoading;
+  expect(deferred("send")).toBe(undefined);
+  expect(deferred("interest_show")).toBe(true);
+  expect(thread(0)?.dynamicTools[0]?.description).toContain("attention");
+  expect(thread(0)?.developerInstructions).not.toContain("## Attention");
   const start = f.starts()[0]?.params as { input: { text: string }[] };
   expect(start.input[0]?.text).toMatch(
     /<attention>\nHandle the work that caused this turn/,
@@ -2707,10 +2952,20 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
   const names = (index: number) =>
     (
       f.sent.filter((wire) => wire.method === "thread/start")[index]?.params as
-        | { dynamicTools: { tools: { name: string }[] }[] }
+        | {
+            dynamicTools: {
+              tools: { name: string; deferLoading?: boolean }[];
+            }[];
+          }
         | undefined
-    )?.dynamicTools[0]?.tools.map((tool) => tool.name);
-  expect(names(0)).toEqual(expect.arrayContaining(["send", "tasks_create"]));
+    )?.dynamicTools[0]?.tools;
+  expect(names(0)?.map((tool) => tool.name)).toEqual(
+    expect.arrayContaining(["send", "tasks_create"]),
+  );
+  // A plugin's tool loads on search.
+  expect(
+    names(0)?.find((tool) => tool.name === "tasks_create")?.deferLoading,
+  ).toBe(true);
   const reply = await f.tool("tasks_create", { title: "Ship it" });
   expect(JSON.stringify(reply?.result)).toContain("created");
   expect(call).toHaveBeenCalledWith(
@@ -2745,7 +3000,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
   expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
     1,
   );
-  expect(names(1)).not.toContain("tasks_create");
+  expect(names(1)?.map((tool) => tool.name)).not.toContain("tasks_create");
   const gone = await f.tool("tasks_create", { title: "Late" });
   expect(JSON.stringify(gone)).toContain("No active Buzz tool");
   expect(call).toHaveBeenCalledTimes(1);

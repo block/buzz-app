@@ -66,6 +66,8 @@ fn native_command_permissions_isolate_webviews() {
     let application_commands = [
         "identity_restore",
         "identity_import",
+        "identity_legacy_available",
+        "identity_import_legacy",
         "identity_create",
         "identity_export",
         "nsec_backup_available",
@@ -155,6 +157,8 @@ fn native_command_permissions_isolate_webviews() {
         "jev_classifier_set_key",
         "jev_classifier_clear_key",
         "jev_classify",
+        "app_agent_state_load",
+        "app_agent_state_set",
         "title_bar_double_click",
         "notification_show",
         #[cfg(target_os = "macos")]

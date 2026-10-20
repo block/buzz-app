@@ -294,6 +294,13 @@ export class AgentSessions {
     }
   }
 
+  /** Stops the turn running in conversation `key`, if any, once a session
+   * opening for it has taken its message. */
+  async interrupt(key: string) {
+    await this.opening.get(key)?.catch(() => undefined);
+    this.live.get(key)?.session.interrupt();
+  }
+
   /** Runs one turn in a new session, then closes it. `label` names it in the
    * snapshot. It gives up, and stops the turn, once `signal` aborts.
    * `prompt` is asked for the turn's text once the session is open, so a turn
@@ -545,7 +552,10 @@ export async function absolute(spawn: Spawn, workspace: string) {
 }
 
 /** `work`, or a rejection with `signal`'s reason once it aborts. */
-function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+export function abortable<T>(
+  work: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   if (!signal) return work;
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(signal.reason);

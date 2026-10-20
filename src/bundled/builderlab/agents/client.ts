@@ -74,6 +74,14 @@ export function createAgentClient(
   // dev broker, which has no binding signer, so linking is skipped.
   owner: OwnerIdentity | null = nativeIdentityEnabled() ? nativeOwner : null,
 ) {
+  function remoteCredential() {
+    const credential = session.credential();
+    if (!credential.account.canUseRemoteAgents)
+      throw new Error(
+        "Builderlab remote agents are coming soon for your account.",
+      );
+    return credential;
+  }
   function check(credential: Credential, signal: AbortSignal) {
     signal.throwIfAborted();
     if (
@@ -96,7 +104,7 @@ export function createAgentClient(
     signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
     signal.throwIfAborted();
-    const credential = session.credential();
+    const credential = remoteCredential();
     let response: HostResponse;
     try {
       response = await host.request({
@@ -324,6 +332,37 @@ export function createAgentClient(
           : "Agent deletion was not confirmed. Retry Delete.",
       );
     },
+    /** Stops the agent's turn in one conversation. False when nothing there
+     * was running. */
+    async cancelTurn(
+      agent: Pick<RemoteAgent, "id">,
+      place: Readonly<{
+        community: string;
+        channelId: string;
+        threadRootId: string;
+      }>,
+      signal: AbortSignal,
+    ): Promise<boolean> {
+      const result = await request(
+        "cancel-agent-turn",
+        {
+          agent_id: agent.id,
+          // Beekeeper keys conversations by the community's host.
+          community: new URL(place.community).host,
+          channel_id: place.channelId,
+          thread_root_event_id: place.threadRootId,
+        },
+        signal,
+      );
+      const status = resultStatus(result.status);
+      if ([1, "CANCELLING"].includes(status)) return true;
+      if ([2, "RUNNING", 3, "FOUND"].includes(status)) return false;
+      throw new Error(
+        typeof result.message === "string" && result.message
+          ? result.message
+          : "Builderlab did not stop the agent. Try again.",
+      );
+    },
     async register(
       name: string,
       signal: AbortSignal,
@@ -340,7 +379,7 @@ export function createAgentClient(
         throw new Error(
           "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.",
         );
-      const credential = session.credential();
+      const credential = remoteCredential();
       const { account } = credential;
       const intent = registrationIntent(
         oauthTarget(),

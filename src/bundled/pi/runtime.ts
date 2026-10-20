@@ -54,6 +54,7 @@ import {
 } from "./pi";
 import { DEFAULT_THINKING, PiSetup, runsAt } from "./setup";
 import { readTranscript } from "./transcript";
+import { readUsage } from "./usage";
 
 export type Config = Readonly<{
   /** A Pi provider; empty uses the one Pi's settings name. */
@@ -273,6 +274,12 @@ export class PiRuntime {
           }),
         };
       });
+  }
+  /** The usage of the agent's Buzz conversations since `since`. */
+  async usage(pubkey: string, since: number, signal: AbortSignal) {
+    // Reading opens its storage, which only an agent running here may hold.
+    if (!this.running.has(pubkey)) return [];
+    return readUsage(this.pi, pubkey, await this.places(pubkey), since, signal);
   }
   /** The conversations a Buzz request of the agent's is working in. */
   working(pubkey: string) {

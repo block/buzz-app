@@ -69,6 +69,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const { model, provider } = config(agent.config);
       return [provider, model].filter(Boolean).join(" · ") || "Pi";
     },
+    ...(host.spawn && {
+      usage: (agent, { since, signal }) =>
+        runtime.usage(agent.pubkey, since, signal),
+    }),
     sessions: {
       list: (pubkey) => runtime.sessions(pubkey),
       subscribe: (listener) => runtime.subscribe(listener),

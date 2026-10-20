@@ -37,6 +37,9 @@ type Message = Readonly<{
   stopReason?: string;
   errorMessage?: string;
   model?: string;
+  responseId?: string;
+  /** pi-ai's token counts and cost of an answer. */
+  usage?: unknown;
 }>;
 /** A Pi entry as the host reads it: its messages, as pi-ai has them. */
 export type PiEntry = Readonly<{

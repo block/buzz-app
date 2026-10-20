@@ -2047,6 +2047,23 @@ const git = (client: BuzzClient) => {
   return gitAuth;
 };
 
+/** A fake relay over `events` that then serves what `client` publishes. */
+const announcing = (events: BuzzEvent[]) => {
+  const { client, published } = fake(events);
+  client.publish = vi.fn(async (template: Template) => {
+    published.push(template);
+    const created = event({
+      ...template,
+      pubkey: client.pubkey,
+      id: published.length.toString(16).padStart(64, "e"),
+      created_at: 2_000_000_000 + published.length,
+    });
+    events.push(created);
+    return created;
+  });
+  return { client, published };
+};
+
 it("gives the channel's repository and a Git header signed for it", async () => {
   const { client } = fake([
     hive({ [bob]: "admin", [alice]: "member" }),
@@ -2086,7 +2103,7 @@ it("trusts a lead's agent, and asks which when there are several", async () => {
 });
 
 it("creates one protected repository for a channel it leads", async () => {
-  const { client, published } = fake([
+  const { client, published } = announcing([
     event({ kind: 39000, tags: [["d", "chan"]] }),
     hive({ [me]: "admin" }),
   ]);
@@ -2108,7 +2125,7 @@ it("creates one protected repository for a channel it leads", async () => {
         ["d", "hive"],
         ["name", "hive"],
         ["buzz-channel", "chan"],
-        ["buzz-protect", "refs/heads/*", "no-force-push", "no-delete"],
+        ["buzz-protect", "refs/heads/**", "no-force-push", "no-delete"],
       ],
     },
   ]);
@@ -2136,11 +2153,11 @@ it("never moves its own repository, or starts a second one", async () => {
   ).rejects.toThrow("already has a repository");
   await expect(
     callTool(bound, { channel: "empty" }, "repo", {}),
-  ).rejects.toThrow("has no repository");
+  ).rejects.toThrow("has no repository from its owners or admins");
 });
 
 it("lets only a lead or a lead's agent start the channel's repository", async () => {
-  const { client, published } = fake([
+  const { client, published } = announcing([
     event({ kind: 39000, tags: [["d", "chan"]] }),
     hive({ [me]: "member", [owner]: "owner" }),
   ]);
@@ -2152,6 +2169,115 @@ it("lets only a lead or a lead's agent start the channel's repository", async ()
   Object.assign(client, { owner });
   await callTool(client, { channel: "chan" }, "repo", { create: "hive" });
   expect(published).toHaveLength(1);
+});
+
+it("reads past a page of untrusted repositories, and never guesses past five", async () => {
+  const spam = (count: number) =>
+    Array.from({ length: count }, (_, i) =>
+      event({
+        kind: 30617,
+        pubkey: alice,
+        id: i.toString(16).padStart(64, "a"),
+        created_at: 1000 + i,
+        tags: [
+          ["d", `spam${i}`],
+          ["buzz-channel", "chan"],
+        ],
+      }),
+    );
+  const { client } = fake([
+    hive({ [bob]: "admin", [me]: "admin" }),
+    ...spam(150),
+    repo(bob, "hive", ["chan"]),
+  ]);
+  const gitAuth = git(client);
+  await callTool(client, { channel: "chan" }, "repo", {});
+  await callTool(client, { channel: "chan" }, "repo", { repo: `${bob}/hive` });
+  expect(gitAuth).toHaveBeenNthCalledWith(1, bob, "hive");
+  expect(gitAuth).toHaveBeenNthCalledWith(2, bob, "hive");
+
+  const { client: flooded, published } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    hive({ [bob]: "admin", [me]: "admin" }),
+    ...spam(500),
+    repo(bob, "hive", ["chan"]),
+  ]);
+  git(flooded);
+  await expect(
+    callTool(flooded, { channel: "chan" }, "repo", {}),
+  ).rejects.toThrow("could not all be read");
+  await expect(
+    callTool(flooded, { channel: "chan" }, "repo", { create: "mine" }),
+  ).rejects.toThrow("could not all be read");
+  expect(published).toEqual([]);
+});
+
+it("starts one repository at a time, from the relay's writer, and confirms it", async () => {
+  const led = (channel: string) => [
+    event({ kind: 39000, id: channel.padEnd(64, "1"), tags: [["d", channel]] }),
+    event({
+      kind: 39002,
+      id: channel.padEnd(64, "2"),
+      tags: [
+        ["d", channel],
+        ["p", me, "", "admin"],
+      ],
+    }),
+  ];
+  const { client, published } = announcing([...led("chan"), ...led("other")]);
+  git(client);
+  const results = await Promise.allSettled([
+    callTool(client, { channel: "chan" }, "repo", { create: "hive" }),
+    callTool(client, { channel: "other" }, "repo", { create: "hive" }),
+  ]);
+  expect(published).toHaveLength(1);
+  expect(results.map((result) => result.status)).toEqual([
+    "fulfilled",
+    "rejected",
+  ]);
+  expect((results[1] as PromiseRejectedResult).reason.message).toBe(
+    "You already have a repository named hive.",
+  );
+  const reads = vi
+    .mocked(client.query)
+    .mock.calls.flatMap(([filters]) => filters)
+    .filter((filter) =>
+      (filter.kinds as number[] | undefined)?.includes(30617),
+    );
+  expect(reads.every((filter) => filter.consistency === "strong")).toBe(true);
+
+  // Another session of it rebinds the name before the relay is read back.
+  const { client: raced } = announcing(led("chan"));
+  git(raced);
+  const publish = raced.publish;
+  raced.publish = vi.fn(async (template: Template) => {
+    const created = await publish(template);
+    await publish({
+      ...template,
+      tags: template.tags.map((t) =>
+        t[0] === "buzz-channel" ? ["buzz-channel", "elsewhere"] : t,
+      ),
+    });
+    return created;
+  });
+  await expect(
+    callTool(raced, { channel: "chan" }, "repo", { create: "hive" }),
+  ).rejects.toThrow("hive was announced, but the relay binds it elsewhere.");
+});
+
+it("says how to get the header when only that failed", async () => {
+  const { client } = announcing([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    hive({ [me]: "admin" }),
+  ]);
+  client.gitAuth = vi.fn(async () => {
+    throw new Error("offline.");
+  });
+  await expect(
+    callTool(client, { channel: "chan" }, "repo", { create: "hive" }),
+  ).rejects.toThrow(
+    "Started hive, but its Git header failed: offline. Call repo again without create.",
+  );
 });
 
 it("refuses Git where the host holds no key", async () => {

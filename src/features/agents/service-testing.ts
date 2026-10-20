@@ -373,6 +373,7 @@ export function fakeNative(identities: AgentIdentity[] = []) {
     searchProfiles: vi.fn(async () => undefined),
     upload: vi.fn(async () => ({ url: "", sha256: "", size: 0, type: "" })),
     media: vi.fn(async () => ({ path: "", type: "", size: 0 })),
+    gitAuth: vi.fn(async () => ({ url: "", header: "" })),
     remember: vi.fn(async (pubkey: string) =>
       event(`m${++published}`, { pubkey }),
     ),

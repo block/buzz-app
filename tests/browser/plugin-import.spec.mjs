@@ -825,6 +825,26 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
       exact: true,
     });
     await expect(cancel).toBeFocused();
+    await expect(rollback).not.toContainText("enabled or disabled");
+    const scrim = page.locator(".buzz-dialog-backdrop[data-alert-dialog]");
+    await expect(scrim).toBeVisible();
+    // The confirmation scrim must cover Settings, rather than sit behind it.
+    const parentBox = await page
+      .locator('[role="dialog"][data-navigation]')
+      .boundingBox();
+    await expect
+      .poll(() =>
+        scrim.evaluate(
+          (element, point) => {
+            return (
+              document.elementFromPoint(point.x, point.y) === element &&
+              getComputedStyle(element).backgroundColor !== "rgba(0, 0, 0, 0)"
+            );
+          },
+          { x: parentBox.x + 12, y: parentBox.y + 12 },
+        ),
+      )
+      .toBe(true);
     await expect(
       rollback.getByRole("button", { name: "Roll back", exact: true }),
     ).toBeVisible();

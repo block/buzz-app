@@ -104,7 +104,7 @@ export function PluginMenu({
       {confirmRollback && (
         <AlertDialog
           title={`Roll back ${plugin.manifest.name}?`}
-          description="Restore the previous installed version. Your enabled or disabled choice will stay the same. You can update again from the source folder or repository."
+          description="Restore the previous installed version. You can update again from the source folder or repository."
           pending={busy || rollingBack}
           finalFocus={deleteTrigger}
           onClose={() => setConfirmRollback(false)}

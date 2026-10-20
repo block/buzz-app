@@ -38,6 +38,7 @@ export function AlertDialog({
           onPointerCancel={windowDrag.onPointerCancel}
           onLostPointerCapture={windowDrag.onLostPointerCapture}
           data-buzz-ui=""
+          data-alert-dialog=""
           className="buzz-dialog-backdrop"
         />
         <BaseAlertDialog.Popup

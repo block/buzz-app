@@ -69,7 +69,7 @@ export function focusKeyboardTarget(target: HTMLElement | undefined) {
   focusWithKeyboard(target);
 }
 
-/** Land on the selected tab so existing arrow-key tab navigation remains usable. */
+/** Resume typing in a conversation; tool panes fall back to their selected tab. */
 export function paneFocusTarget(pane?: "main" | "side") {
   const targets = workspaces()
     .filter(
@@ -79,8 +79,8 @@ export function paneFocusTarget(pane?: "main" | "side") {
     )
     .map(
       (pane) =>
-        pane.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ??
-        composerIn(pane),
+        composerIn(pane) ??
+        pane.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]'),
     )
     .filter((target): target is HTMLElement => !!target && available(target));
   if (pane) return targets[0];

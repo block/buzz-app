@@ -1,6 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 import { closeSettings } from "./navigation.mjs";
 import { open } from "./timeline.mjs";
+import { openChannelDetails } from "./channel-details.mjs";
 
 test.use({
   productionBroker: true,
@@ -90,7 +91,7 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   });
   await expect(sideBeta).toHaveText("Beta draft");
 
-  // The range must survive a round trip through both pane strips.
+  // Pane shortcuts resume typing directly and retain the native range.
   await sideBeta.focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("Shift+ArrowRight");
@@ -104,12 +105,8 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
     )
     .toEqual([0, 1]);
   await page.keyboard.press(keys.main);
-  await expect(main.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(keys.composer);
   await expect(alpha).toBeFocused();
   await page.keyboard.press(keys.side);
-  await expect(side.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(keys.composer);
   await expect(sideBeta).toBeFocused();
   expect(
     await sideBeta.evaluate((element) => [
@@ -128,8 +125,6 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   await toggle.click();
   await expect(side).toBeHidden();
   await page.keyboard.press(keys.main);
-  await expect(main.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(keys.composer);
   await expect(alpha).toBeFocused();
   await toggle.click();
   await expect(sideBeta).toHaveText("Beta draft");
@@ -152,16 +147,21 @@ test("search, composer and split-pane keyboard focus preserve both drafts", asyn
   await expect(
     row.getByRole("textbox", { name: `New shortcut for ${title}` }),
   ).toBeFocused();
-  await page.keyboard.press("Control+Alt+ArrowLeft");
+  await page.keyboard.press(
+    keys.apple ? "Meta+Alt+ArrowLeft" : "Control+Alt+ArrowLeft",
+  );
   await expect(row.getByText("Modified", { exact: true })).toBeVisible();
   await closeSettings(page);
   await sideBeta.focus();
   await sideBeta.evaluate((element) => element.setSelectionRange(0, 1));
-  await page.keyboard.press("Control+Alt+ArrowLeft");
-  const selectedMain = main.getByRole("tab", { selected: true });
-  await expect(selectedMain).toBeFocused();
-  await expect(selectedMain).toHaveCSS("outline-style", "solid");
-  await expect(selectedMain).toHaveCSS("outline-width", "2px");
+  await page.keyboard.press(
+    keys.apple ? "Meta+Alt+ArrowLeft" : "Control+Alt+ArrowLeft",
+  );
+  await expect(alpha).toBeFocused();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-keyboard-navigation",
+    "",
+  );
 });
 
 test.extend({ companionFixture: true })(
@@ -222,9 +222,13 @@ test.extend({ companionFixture: true })(
     await expect(composer).toBeFocused();
     await expect(composer).toHaveText("Alpha draft");
 
-    // Pointer-to-keyboard focus uses the shared ring in both themes, across
-    // layout breakpoints and with enlarged text.
-    const tab = main.getByRole("tab", { selected: true });
+    // A tool without a composer falls back to its tab, retaining visible focus
+    // after pointer use in both themes, breakpoints and enlarged text.
+    await openChannelDetails(page);
+    const tab = page.locator("[data-panel-workspace]").getByRole("tab", {
+      name: "Channel settings",
+      exact: true,
+    });
     for (const mode of ["light", "dark"]) {
       await page.evaluate((mode) => {
         document.documentElement.dataset.colorMode = mode;
@@ -233,11 +237,14 @@ test.extend({ companionFixture: true })(
       for (const width of [600, 900, 1440]) {
         await page.setViewportSize({ width, height: 900 });
         await tab.click();
+        // The PC binding cycles: start in main so its next destination is side.
+        if (!keys.apple)
+          await main.getByRole("tab", { selected: true }).focus();
         await expect(page.locator("html")).not.toHaveAttribute(
           "data-keyboard-navigation",
           "",
         );
-        await page.keyboard.press(keys.main);
+        await page.keyboard.press(keys.side);
         await expect(tab).toBeFocused();
         await expect(tab).toHaveCSS("outline-style", "solid");
         await expect(tab).toHaveCSS("outline-width", "2px");
@@ -350,14 +357,8 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
     await expect(notices.locator("ol")).toBeFocused();
   }
   await page.keyboard.press(keys.main);
-  await expect(
-    page
-      .locator("[data-main-workspace], [data-solo-focus-pane]")
-      .getByRole("tab", { selected: true }),
-  ).toBeFocused();
+  await expect(alpha).toBeFocused();
   await page.keyboard.press(keys.side);
-  await expect(side.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(keys.composer);
   await expect(composer).toBeFocused();
   await expect(composer).toHaveText("Toast draft");
 
@@ -370,8 +371,6 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
   await page.keyboard.press(keys.composer);
   await expect(search).toBeFocused();
   await page.keyboard.press(keys.side);
-  await expect(side.getByRole("tab", { selected: true })).toBeFocused();
-  await page.keyboard.press(keys.composer);
   await expect(composer).toBeFocused();
   await expect(
     notices.getByText("Could not attach file", { exact: true }),

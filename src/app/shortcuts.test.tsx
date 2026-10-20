@@ -300,7 +300,7 @@ it("Win32 Ctrl+Tab and Ctrl+Shift+Tab request the next and previous tab, even wh
 });
 
 it.each(["MacIntel", "Win32", "Linux x86_64"])(
-  "%s focuses the current pane's composer and tab strip with exact modifiers",
+  "%s focuses destination composers and falls back to tabs for tools",
   async (platform) => {
     vi.mocked(isTauri).mockReturnValue(false);
     const h = harness(platform);
@@ -435,22 +435,27 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
         : { ...paneKey, shiftKey: true };
       main.focus();
       press(main, paneKey);
-      expect(sideTab).toHaveFocus();
+      expect(side).toHaveFocus();
       expect(document.documentElement.dataset.keyboardNavigation).toBe("");
       if (apple) {
-        press(sideTab, paneKey);
-        expect(sideTab).toHaveFocus();
+        press(side, paneKey);
+        expect(side).toHaveFocus();
       }
+      sideTab.focus();
       press(sideTab, chord);
       expect(side).toHaveFocus();
       press(side, mainKey);
-      expect(mainTab).toHaveFocus();
+      expect(main).toHaveFocus();
+      mainTab.focus();
       press(mainTab, chord);
       expect(main).toHaveFocus();
 
       // A tool's filter is not a composer; disabled editors and hidden tabs
       // must not redirect the request to the main pane.
       side.setAttribute("aria-disabled", "true");
+      main.focus();
+      press(main, paneKey);
+      expect(sideTab).toHaveFocus();
       const filter = screen.getByRole("textbox", { name: "Tool filter" });
       filter.focus();
       expect(press(filter, chord).defaultPrevented).toBe(false);

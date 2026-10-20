@@ -81,7 +81,10 @@ mod terminal;
 #[cfg(all(test, unix))]
 mod test_executable;
 use buzzodz_plugins::{
-    imports::{prepare_folder, prepare_git, prepare_upload, FolderUpload, PreparedImport, Preview},
+    imports::{
+        check_saved_folder, prepare_folder, prepare_git, prepare_saved_folder, prepare_upload,
+        FolderUpload, PreparedImport, Preview,
+    },
     Catalog, InstallationResult, Manager,
 };
 use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
@@ -312,14 +315,10 @@ async fn plugin_import_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     imports: tauri::State<'_, Imports>,
     upload: Option<FolderUpload>,
-    directory: Option<String>,
 ) -> Result<Option<Preview>, String> {
     prepare_import(imports.inner().clone(), move || {
         if let Some(upload) = upload {
             return prepare_upload(upload).map(Some);
-        }
-        if let Some(directory) = directory {
-            return prepare_folder(std::path::Path::new(&directory)).map(Some);
         }
         app.dialog()
             .file()
@@ -327,6 +326,25 @@ async fn plugin_import_folder<R: tauri::Runtime>(
             .blocking_pick_folder()
             .map(|folder| prepare_folder(&folder.into_path().map_err(|e| e.to_string())?))
             .transpose()
+    })
+    .await
+}
+#[tauri::command]
+async fn plugin_update_check(
+    manager: tauri::State<'_, PluginManager>,
+    id: String,
+) -> Result<String, String> {
+    with_manager(manager, move |manager| check_saved_folder(&manager, &id)).await
+}
+#[tauri::command]
+async fn plugin_update_preview(
+    manager: tauri::State<'_, PluginManager>,
+    imports: tauri::State<'_, Imports>,
+    id: String,
+) -> Result<Option<Preview>, String> {
+    let manager = manager.0.clone()?;
+    prepare_import(imports.inner().clone(), move || {
+        prepare_saved_folder(&manager, &id).map(Some)
     })
     .await
 }
@@ -519,6 +537,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         workspace_pick_folder,
         repositories_folder_validate,
         plugin_import_folder,
+        plugin_update_check,
+        plugin_update_preview,
         plugin_import_git,
         plugin_import_install,
         plugin_import_discard,

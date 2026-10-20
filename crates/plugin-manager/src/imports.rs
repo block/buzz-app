@@ -253,6 +253,58 @@ pub fn prepare_upload(upload: FolderUpload) -> Result<PreparedImport> {
     Ok(prepared)
 }
 
+/// Resolve the installed source natively; callers cannot supply an arbitrary path.
+pub fn prepare_saved_folder(manager: &Manager, id: &str) -> Result<PreparedImport> {
+    let plugin = manager
+        .catalog()?
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == id)
+        .ok_or("Plugin is not installed")?;
+    let Some(InstallSource::Folder(source)) = plugin.update_source else {
+        return Err("Plugin has no saved folder source".into());
+    };
+    let mut prepared = prepare_folder(&source.root)?;
+    if !prepared
+        .preview
+        .candidates
+        .iter()
+        .any(|candidate| candidate.path == source.path && candidate.manifest.id == id)
+    {
+        let prefix = if source.path == "." {
+            "Selected folder"
+        } else {
+            &source.path
+        };
+        return Err(prepared
+            .preview
+            .warnings
+            .iter()
+            .find(|warning| warning.starts_with(&format!("{prefix}:")))
+            .cloned()
+            .unwrap_or_else(|| {
+                "The saved folder no longer contains this plugin at its installed path.".into()
+            }));
+    }
+    prepared
+        .preview
+        .candidates
+        .retain(|candidate| candidate.path == source.path && candidate.manifest.id == id);
+    prepared.artifacts.retain(|path, _| path == &source.path);
+    Ok(prepared)
+}
+
+/// No preview is retained, installed, or published to the native import slot.
+pub fn check_saved_folder(manager: &Manager, id: &str) -> Result<String> {
+    let prepared = prepare_saved_folder(manager, id)?;
+    prepared
+        .preview
+        .candidates
+        .first()
+        .map(|candidate| candidate.revision.clone())
+        .ok_or_else(|| "Saved source has no candidate".into())
+}
+
 pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
     if !fs::symlink_metadata(directory)
         .map_err(err)?
@@ -1652,6 +1704,76 @@ mod tests {
             Some(png().as_slice())
         );
     }
+    #[test]
+    fn saved_folder_checks_preserve_install_and_other_previews() {
+        let root = tempfile::tempdir().unwrap();
+        let source = plugin(root.path(), "dist", "example.checked");
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let pending = prepare_folder(root.path()).unwrap();
+        let installed = pending
+            .install(&manager, &pending.preview.token, "dist")
+            .unwrap();
+        let original = installed
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.checked")
+            .unwrap()
+            .revision
+            .clone();
+        assert_eq!(
+            check_saved_folder(&manager, "example.checked").unwrap(),
+            original
+        );
+        fs::write(
+            source.join("plugin.js"),
+            "export function activate() { /* changed */ }",
+        )
+        .unwrap();
+        assert_ne!(
+            check_saved_folder(&manager, "example.checked").unwrap(),
+            original
+        );
+        // A read never installs bytes or invalidates an unrelated captured preview.
+        let current = manager.catalog().unwrap();
+        assert_eq!(
+            current
+                .plugins
+                .iter()
+                .find(|p| p.manifest.id == "example.checked")
+                .unwrap()
+                .revision,
+            original
+        );
+        pending
+            .install(&manager, &pending.preview.token, "dist")
+            .unwrap();
+        assert!(check_saved_folder(&manager, "missing").is_err());
+        assert!(check_saved_folder(&manager, "buzz.channels").is_err());
+    }
+
+    #[test]
+    fn saved_folder_checks_report_build_errors_and_do_not_substitute_siblings() {
+        let root = tempfile::tempdir().unwrap();
+        let source = plugin(root.path(), "dist", "example.checked");
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let pending = prepare_folder(root.path()).unwrap();
+        pending
+            .install(&manager, &pending.preview.token, "dist")
+            .unwrap();
+        plugin(root.path(), "other", "example.checked");
+        let bound = prepare_saved_folder(&manager, "example.checked").unwrap();
+        assert_eq!(bound.preview.candidates.len(), 1);
+        assert!(bound
+            .install(&manager, &bound.preview.token, "other")
+            .is_err());
+        fs::remove_file(source.join("plugin.js")).unwrap();
+        let error = check_saved_folder(&manager, "example.checked").unwrap_err();
+        assert!(error.contains("dist:"), "{error}");
+        assert!(error.contains("plugin.js"), "{error}");
+    }
+
     #[test]
     fn signed_folder_import_load_reload_and_publisher_continuity() {
         let root = tempfile::tempdir().unwrap();

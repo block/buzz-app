@@ -46,10 +46,10 @@ import {
   SquaresFourIcon,
   SidebarRightIcon,
 } from "../shared/design-system/icons/index";
-import type { PluginManager } from "../plugins/manager";
+import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
-import { PluginImport, type PluginPreviewControl } from "./PluginImport";
+import { PluginImport } from "./PluginImport";
 import { PluginReadme } from "./PluginReadme";
 import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
@@ -250,6 +250,17 @@ function covered(element: Element | null) {
   return !!element && getComputedStyle(element).visibility === "hidden";
 }
 
+function pluginToggleDisabled(
+  plugin: PluginInfo,
+  access: AdminAccessState,
+  busy: boolean,
+) {
+  return (
+    busy ||
+    (!plugin.enabled && restrictedPlugin(plugin) && access !== "allowed")
+  );
+}
+
 function PluginDetails({
   plugin,
   failure,
@@ -266,8 +277,7 @@ function PluginDetails({
   onUpdateAvailableChange,
   reviewRequested,
   onReviewHandled,
-  previewControl,
-  importSessionActive,
+  initialUpdateAvailable,
 }: {
   plugin: PluginInfo;
   failure: string | null;
@@ -284,8 +294,7 @@ function PluginDetails({
   onUpdateAvailableChange(available: boolean): void;
   reviewRequested: boolean;
   onReviewHandled(): void;
-  previewControl: RefObject<PluginPreviewControl | null>;
-  importSessionActive: boolean;
+  initialUpdateAvailable: boolean;
 }) {
   const accessReason = restrictedPlugin(plugin)
     ? accessMessage(plugin, access)
@@ -296,7 +305,7 @@ function PluginDetails({
   const [actionTarget, setActionTarget] = useState<HTMLDivElement | null>(null);
   const [primaryActionTarget, setPrimaryActionTarget] =
     useState<HTMLDivElement | null>(null);
-  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const updateAvailable = initialUpdateAvailable;
   useLayoutEffect(() => {
     close.current?.focus({ preventScroll: true });
   }, [close]);
@@ -403,12 +412,7 @@ function PluginDetails({
                           : "prominent"
                     }
                     size="sm"
-                    disabled={
-                      busy ||
-                      (!plugin.enabled &&
-                        restrictedPlugin(plugin) &&
-                        access !== "allowed")
-                    }
+                    disabled={pluginToggleDisabled(plugin, access, busy)}
                     loading={
                       !plugin.enabled &&
                       restrictedPlugin(plugin) &&
@@ -434,11 +438,7 @@ function PluginDetails({
               ? {
                   toggle: {
                     label: pluginActionLabel(plugin, access),
-                    disabled:
-                      busy ||
-                      (!plugin.enabled &&
-                        restrictedPlugin(plugin) &&
-                        access !== "allowed"),
+                    disabled: pluginToggleDisabled(plugin, access, busy),
                     run: onToggle,
                   },
                 }
@@ -467,13 +467,9 @@ function PluginDetails({
       {plugin.source === "external" && plugins.imports && (
         <PluginImport
           key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
-          previewControl={previewControl}
-          suspended={importSessionActive}
+          initialUpdateAvailable={initialUpdateAvailable}
           actionTarget={updateAvailable ? primaryActionTarget : actionTarget}
-          onUpdateAvailableChange={(available) => {
-            setUpdateAvailable(available);
-            onUpdateAvailableChange(available);
-          }}
+          onUpdateAvailableChange={onUpdateAvailableChange}
           reviewRequested={reviewRequested}
           onReviewHandled={onReviewHandled}
           statusTarget={installedStatus}
@@ -765,8 +761,6 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
-  const panePreview = useRef<PluginPreviewControl>(null);
-  const [importSessionActive, setImportSessionActive] = useState(false);
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
     Record<string, { revision: string; available: boolean }>
@@ -1037,12 +1031,11 @@ export function Settings({
                             }
                             size="sm"
                             aria-label={`${pluginActionLabel(plugin, access)} ${plugin.manifest.name}`}
-                            disabled={
-                              busy ||
-                              (!plugin.enabled &&
-                                restrictedPlugin(plugin) &&
-                                access !== "allowed")
-                            }
+                            disabled={pluginToggleDisabled(
+                              plugin,
+                              access,
+                              busy,
+                            )}
                             loading={
                               !plugin.enabled &&
                               restrictedPlugin(plugin) &&
@@ -1068,11 +1061,11 @@ export function Settings({
                           ? {
                               toggle: {
                                 label: pluginActionLabel(plugin, access),
-                                disabled:
-                                  busy ||
-                                  (!plugin.enabled &&
-                                    restrictedPlugin(plugin) &&
-                                    access !== "allowed"),
+                                disabled: pluginToggleDisabled(
+                                  plugin,
+                                  access,
+                                  busy,
+                                ),
                                 run: () => togglePlugin(plugin),
                               },
                             }
@@ -1274,14 +1267,6 @@ export function Settings({
             {catalog ? (
               <PluginImport
                 actionTarget={pluginImportActions}
-                onBeforeOpen={async () => {
-                  setImportSessionActive(true);
-                  await panePreview.current?.pause();
-                }}
-                onClosed={() => {
-                  setImportSessionActive(false);
-                  panePreview.current?.resume();
-                }}
                 plugins={plugins}
                 catalog={catalog}
                 busy={busy}
@@ -1396,8 +1381,11 @@ export function Settings({
           key={selectedPlugin.manifest.id}
           plugin={selectedPlugin}
           catalog={catalog}
-          previewControl={panePreview}
-          importSessionActive={importSessionActive}
+          initialUpdateAvailable={
+            updateChecks[selectedPlugin.manifest.id]?.revision ===
+              selectedPlugin.revision &&
+            updateChecks[selectedPlugin.manifest.id]?.available === true
+          }
           authorizeGit={authorizePluginGit}
           reviewRequested={reviewPluginId === selectedPlugin.manifest.id}
           onReviewHandled={() => setReviewPluginId(undefined)}
@@ -1416,13 +1404,11 @@ export function Settings({
             })
           }
           failure={selectedFailure}
-          retryable={
-            !!selectedPlugin.enabled &&
-            !selectedPlugin.error &&
-            !(externalPluginsPaused && selectedPlugin.source === "external") &&
-            selectedRunning?.revision === selectedPlugin.revision &&
-            selectedRunning.status === "failed"
-          }
+          retryable={canRetryPlugin(
+            selectedPlugin,
+            selectedRunning,
+            !!externalPluginsPaused,
+          )}
           busy={busy}
           access={pluginAccess(selectedPlugin)}
           onCheckAccess={() => adminAccess?.retry(selectedPlugin.manifest.id)}

@@ -103,7 +103,23 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
           return;
         }
         if (command === "plugin_catalog") return ready();
+        if (command === "plugin_update_check") {
+          const plugin = plugins.find(
+            (plugin) => plugin.manifest.id === args.id,
+          );
+          const candidate = preview.candidates.find(
+            (candidate) =>
+              candidate.manifest.id === args.id &&
+              candidate.path === plugin?.updateSource?.path,
+          );
+          if (!candidate)
+            throw new Error("Saved source no longer contains this plugin");
+          return window.importCategory
+            ? `${candidate.path}-${window.importCategory}`
+            : candidate.revision;
+        }
         if (
+          command === "plugin_update_preview" ||
           command === "plugin_import_folder" ||
           command === "plugin_import_git"
         ) {
@@ -122,7 +138,14 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
                 ? { repository: args.repository, reference: args.reference }
                 : args?.upload
                   ? null
-                  : { root: args?.directory ?? "/fixture/plugins" };
+                  : {
+                      root:
+                        command === "plugin_update_preview"
+                          ? plugins.find(
+                              (plugin) => plugin.manifest.id === args.id,
+                            )?.updateSource?.root
+                          : "/fixture/plugins",
+                    };
             if (window.importCategory)
               for (const candidate of preview.candidates) {
                 candidate.revision = `${candidate.path}-${window.importCategory}`;
@@ -728,10 +751,10 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
     await page.evaluate(
       () =>
         window.importCalls
-          .filter((c) => c.command === "plugin_import_folder")
+          .filter((c) => c.command === "plugin_update_check")
           .at(-1).args,
     ),
-  ).toEqual({ directory: "/fixture/plugins" });
+  ).toEqual({ id: "example.two" });
   await expectOnlySettings(page);
   await expect(button(page, "Check for updates")).toHaveCount(0);
   await button(page, "Update Example two").click();

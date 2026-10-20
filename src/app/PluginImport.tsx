@@ -4,6 +4,7 @@ import { Input } from "../shared/design-system/ui/Input";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { Switch } from "../shared/design-system/ui/Switch";
 import { Button } from "../shared/design-system/ui/Button";
+import { LoadingRegion } from "../shared/design-system/ui/LoadingRegion";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { readPluginFolder } from "./plugin-folder-drop";
 import styles from "./PluginImport.module.css";
@@ -11,8 +12,6 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
-  useImperativeHandle,
-  type Ref,
   useRef,
   useState,
 } from "react";
@@ -34,15 +33,8 @@ function importLocation(
   return `${source}${separator}${path.replaceAll("/", separator)}`;
 }
 
-export type PluginPreviewControl = {
-  pause(): Promise<void>;
-  resume(): void;
-};
-
 export function PluginImport({
-  previewControl,
-  onBeforeOpen,
-  suspended = false,
+  initialUpdateAvailable = false,
   plugins,
   catalog,
   busy,
@@ -57,9 +49,7 @@ export function PluginImport({
   onReviewHandled,
   returnFocus,
 }: {
-  previewControl?: Ref<PluginPreviewControl>;
-  onBeforeOpen?: () => Promise<void>;
-  suspended?: boolean;
+  initialUpdateAvailable?: boolean;
   plugins: PluginManager;
   catalog: Catalog;
   busy: boolean;
@@ -96,13 +86,10 @@ export function PluginImport({
   // new install into an update while its enable operation is still pending.
   const [existing, setExisting] = useState<PluginInfo>();
   const [loading, setLoading] = useState(false);
-  const [checkingVisible, setCheckingVisible] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
-  useEffect(() => {
-    if (!loading || open || !updateId || preview) return;
-    const timer = setTimeout(() => setCheckingVisible(true), 200);
-    return () => clearTimeout(timer);
-  }, [loading, open, updateId, preview]);
+  const [checkedRevision, setCheckedRevision] = useState<string>();
+  const [checking, setChecking] = useState(false);
+  const checkPending = useRef(false);
 
   const [discarding, setDiscarding] = useState(false);
   const [selected, setSelected] = useState("");
@@ -166,46 +153,35 @@ export function PluginImport({
   const [enableOnInstall, setEnableOnInstall] = useState(true);
   const lifetime = useRef({ active: true, token: "" });
   const pending = useRef(false);
-  const inFlight = useRef<Promise<void>>(Promise.resolve());
-  const paused = useRef(false);
-  const [resumed, setResumed] = useState(0);
-  useImperativeHandle(previewControl, () => ({
-    async pause() {
-      // Stop new checks before waiting for an already-running native scan.
-      paused.current = true;
-      await inFlight.current;
-      if (lifetime.current.token) {
-        await imports?.discard(lifetime.current.token);
-        lifetime.current.token = "";
+  async function checkSource(operation: () => Promise<string>) {
+    if (checkPending.current) return;
+    checkPending.current = true;
+    const current = lifetime.current;
+    setChecking(true);
+    try {
+      const revision = await operation();
+      if (current.active) {
+        setCheckedRevision(revision);
+        setError(null);
       }
-      setPreview(null);
-    },
-    resume() {
-      paused.current = false;
-      setResumed((value) => value + 1);
-    },
-  }));
+    } catch (reason) {
+      if (current.active) setError(String(reason));
+    } finally {
+      checkPending.current = false;
+      if (current.active) setChecking(false);
+    }
+  }
   const startSavedFolder = useEffectEvent(() => {
     if (
       imports &&
       savedSource &&
       "root" in savedSource &&
+      updateId &&
       !open &&
-      !paused.current &&
-      !suspended &&
       !busy &&
-      !discarding &&
       document.visibilityState !== "hidden"
-    ) {
-      const directory = savedSource.root;
-      void load(async () => {
-        if (lifetime.current.token) {
-          await imports.discard(lifetime.current.token);
-          lifetime.current.token = "";
-        }
-        return imports.folder(directory);
-      }, true);
-    }
+    )
+      void checkSource(() => imports.checkFolder(updateId));
   });
   useEffect(() => {
     const current = { active: true, token: "" };
@@ -219,10 +195,6 @@ export function PluginImport({
       if (current.token) void imports?.discard(current.token).catch(() => {});
     };
   }, [imports]);
-
-  useEffect(() => {
-    if (resumed) startSavedFolder();
-  }, [resumed]);
 
   const localFolder = !!savedSource && "root" in savedSource;
   useEffect(() => {
@@ -251,13 +223,20 @@ export function PluginImport({
         ? catalog.plugins.find((item) => item.manifest.id === updateId)
             ?.revision
         : existing.revision);
-  const updateAvailable = !!preview && !error && !upToDate;
+  const updateAvailable =
+    !error &&
+    (preview
+      ? !upToDate
+      : checkedRevision !== undefined
+        ? checkedRevision !== currentPlugin?.revision
+        : initialUpdateAvailable);
   const notifyUpdateAvailable = useEffectEvent((available: boolean) =>
     onUpdateAvailableChange?.(available),
   );
   useEffect(() => {
-    notifyUpdateAvailable(updateAvailable);
-  }, [updateAvailable]);
+    if (error || preview || checkedRevision !== undefined)
+      notifyUpdateAvailable(updateAvailable);
+  }, [updateAvailable, checkedRevision, preview, error]);
   useEffect(() => {
     if (!reviewRequested || loading) return;
     if (error) {
@@ -265,16 +244,9 @@ export function PluginImport({
       return;
     }
     if (!preview) return;
-    setOpen(updateAvailable);
+    setOpen(true);
     onReviewHandled?.();
-  }, [
-    reviewRequested,
-    loading,
-    preview,
-    error,
-    updateAvailable,
-    onReviewHandled,
-  ]);
+  }, [reviewRequested, loading, preview, error, onReviewHandled]);
 
   const startRequestedReview = useEffectEvent(() => {
     if (!savedSource) {
@@ -282,13 +254,7 @@ export function PluginImport({
       onReviewHandled?.();
       return;
     }
-    if (
-      savedSource &&
-      "repository" in savedSource &&
-      !preview &&
-      !pending.current
-    )
-      checkSavedGit();
+    if (!preview && !pending.current) prepareReview();
   });
   useEffect(() => {
     if (!reviewRequested) return;
@@ -301,30 +267,15 @@ export function PluginImport({
   const blocked = busy || loading || discarding;
   if (!imports) return null;
 
-  function load(
-    operation: () => Promise<ImportPreview | null>,
-    automatic = false,
-  ) {
-    if (suspended || paused.current || pending.current || blocked) return;
-    const work = loadPreview(operation, automatic);
-    inFlight.current = work;
-    return work;
-  }
-  async function loadPreview(
-    operation: () => Promise<ImportPreview | null>,
-    automatic = false,
-  ) {
+  async function load(operation: () => Promise<ImportPreview | null>) {
     if (pending.current || blocked) return;
     const returnTo = document.activeElement as HTMLElement | null;
-    if (!automatic) sourceTrigger.current = returnTo;
+    sourceTrigger.current = returnTo;
     pending.current = true;
     const current = lifetime.current;
     setLoading(true);
-    setCheckingVisible(false);
-    if (!automatic) {
-      setError(null);
-      setPreview(null);
-    }
+    setError(null);
+    setPreview(null);
     setShowUnchanged(false);
     setEnableOnInstall(true);
     try {
@@ -349,14 +300,24 @@ export function PluginImport({
         if (!next.candidates.length) {
           await imports?.discard(next.token);
           current.token = "";
+          const prefix =
+            savedSource?.path === "."
+              ? "Selected folder:"
+              : `${savedSource?.path}:`;
+          const warning = next.warnings.find((warning) =>
+            warning.startsWith(prefix),
+          );
           throw new Error(
-            savedSource
-              ? "The saved folder or repository no longer contains this plugin at its installed path."
-              : "This source does not contain the installed plugin. Choose a source with the same plugin ID.",
+            warning ??
+              (savedSource
+                ? "The saved folder or repository no longer contains this plugin at its installed path."
+                : "This source does not contain the installed plugin. Choose a source with the same plugin ID."),
           );
         }
       }
       setError(null);
+      if (updateId && next?.candidates.length === 1)
+        setCheckedRevision(next.candidates[0]?.revision);
       setPreview(next);
       setReviewing(next?.candidates.length === 1);
       setExisting(
@@ -370,21 +331,11 @@ export function PluginImport({
         next?.candidates.length === 1 ? (next.candidates[0]?.path ?? "") : "",
       );
     } catch (reason) {
-      // Native Imports::try_lock wording: src-tauri/src/lib.rs (prepare_import).
-      const contended =
-        (reason instanceof Error ? reason.message : String(reason)) ===
-        "Another import is in progress";
-      if (current.active) {
-        if (automatic && contended) {
-          // A skipped read cannot leave an already-discarded token actionable.
-          if (!current.token) setPreview(null);
-        } else showError(reason, automatic ? null : returnTo);
-      }
+      if (current.active) showError(reason, returnTo);
     } finally {
       pending.current = false;
       if (current.active) {
         setLoading(false);
-        setCheckingVisible(false);
       }
     }
   }
@@ -436,10 +387,19 @@ export function PluginImport({
           existing?.rollbackBlockedReason
         ? `${existing.rollbackBlockedReason}.`
         : null;
-  function checkSavedGit() {
+  function prepareReview() {
+    if (!imports) return;
+    setOpen(true);
+    if (savedSource && "root" in savedSource && updateId) {
+      void load(() => imports.previewFolder(updateId));
+      return;
+    }
+    checkSavedGit(false);
+  }
+  function checkSavedGit(checkOnly = true) {
     const source = savedSource;
     if (!imports || !source || !("repository" in source)) return;
-    void load(async () => {
+    const acquire = async () => {
       if (lifetime.current.token) {
         await imports.discard(lifetime.current.token);
         lifetime.current.token = "";
@@ -450,6 +410,31 @@ export function PluginImport({
         source.reference,
         signed?.token,
       );
+    };
+    if (!checkOnly) {
+      void load(acquire);
+      return;
+    }
+    void checkSource(async () => {
+      const result = await acquire();
+      if (!result) throw new Error("No update source found");
+      try {
+        const candidate = result.candidates.find(
+          (item) => item.manifest.id === updateId && item.path === source.path,
+        );
+        if (!candidate)
+          throw new Error(
+            result.warnings.find((warning) =>
+              warning.startsWith(
+                `${source.path === "." ? "Selected folder" : source.path}:`,
+              ),
+            ) ??
+              "The saved repository no longer contains this plugin at its installed path.",
+          );
+        return candidate.revision;
+      } finally {
+        await imports.discard(result.token);
+      }
     });
   }
   const addButton = (
@@ -468,7 +453,6 @@ export function PluginImport({
         pending.current = true;
         setDiscarding(true);
         try {
-          if (onBeforeOpen) await onBeforeOpen();
           setOpen(true);
         } catch (reason) {
           showError(reason, trigger.current);
@@ -492,9 +476,8 @@ export function PluginImport({
             ref={checkAgain}
             variant="subtle"
             size="sm"
-            loading={loading && !open && checkingVisible}
-            disabled={blocked}
-            onClick={checkSavedGit}
+            disabled={blocked || checking}
+            onClick={() => checkSavedGit()}
           >
             Check for updates
           </Button>
@@ -504,8 +487,10 @@ export function PluginImport({
           ref={trigger}
           variant="prominent"
           size="sm"
-          disabled={blocked}
-          onClick={() => setOpen(true)}
+          disabled={blocked || checking}
+          onClick={() => {
+            prepareReview();
+          }}
         >
           Update
         </Button>
@@ -538,9 +523,12 @@ export function PluginImport({
               plugin.
             </p>
           )}
-          {loading && !open && checkingVisible ? (
-            <p role="status">Checking for updates…</p>
-          ) : null}
+          <LoadingRegion
+            pending={checking || (loading && !open)}
+            label="Checking for updates…"
+          >
+            {null}
+          </LoadingRegion>
           {error && !open ? (
             <p role="alert">
               Source{" "}
@@ -550,7 +538,10 @@ export function PluginImport({
               unavailable. {error}
             </p>
           ) : null}
-          {preview && !open && !error && upToDate ? (
+          {(preview || checkedRevision !== undefined) &&
+          !open &&
+          !error &&
+          !updateAvailable ? (
             statusTarget ? (
               createPortal(<span role="status">Up to date</span>, statusTarget)
             ) : (

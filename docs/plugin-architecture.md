@@ -894,14 +894,18 @@ external plugin cannot manage other installations or add CLI commands.
 Opening an installed plugin's details checks its remembered folder. A matching
 package shows Up to date in the pane. Local folders are checked every five seconds
 while the pane is open and the app is visible, and again when the app becomes active.
-Checks pause during review or pending management operations. Opening Add pauses
-the pane, waits for an in-flight source check and discards its preview before
-handing over the native preview slot. Checks resume when Add closes. A changed package offers
+Checks pause during review or pending management operations. Folder checks resolve
+the saved source by installed plugin ID and return only a revision or build diagnostic,
+without reserving the native import slot. Add can prepare its own preview while a
+folder check is pending. Choosing Update acquires a fresh immutable preview; checks
+never supply installation bytes. A changed package offers
 Update, which opens access review before explicit confirmation. A known update takes
 the prominent action position in both the pane and its list row; Enable/Disable
 moves into their ellipsis menus while Update is available. The row retains the latest
 check result for the installed revision and opens the pane’s review, checking the
-saved source again when the pane reopens. Only the open pane polls local folders.
+saved source again when the pane reopens. Known Git results remain visible on reopen;
+Git is checked explicitly, and its check preview is discarded immediately. Choosing
+Update reacquires the Git source with fresh authorization. Only the open pane polls local folders.
 The menus also offer Review access, reusing the import review’s disclosures
 for the installed manifest, and Delete with confirmation. These menus appear only for
 manual/external plugins; bundled plugins keep their Enable/Disable control.

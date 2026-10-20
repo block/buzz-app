@@ -953,6 +953,19 @@ it("opens a selected card in the side pane and drops a stale channel filter", as
   await screen.findByRole("option", { name: "Fixture channel" });
   expect(screen.queryByRole("option", { name: "Other channel" })).toBeNull();
   await user.keyboard("{Escape}");
+  act(() =>
+    fixture.definitions.update({
+      status: "ready",
+      data: { partial: false, items: [fixtureDefinition, otherDefinition] },
+    }),
+  );
+  await user.click(screen.getByRole("combobox", { name: "Channel" }));
+  await user.click(
+    await screen.findByRole("option", { name: "Other channel" }),
+  );
+  expect(screen.getByRole("combobox", { name: "Channel" })).toHaveTextContent(
+    "Other channel",
+  );
   act(() => {
     list = {
       ...list,

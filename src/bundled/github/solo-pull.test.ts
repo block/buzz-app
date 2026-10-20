@@ -200,26 +200,57 @@ it("reads every shown chat's link and pull request together, then again each min
   expect(gh).toHaveBeenCalledTimes(2);
 });
 
-it("reads each pull request alone when one is missing, and public data without gh", async () => {
-  const relay = session([revision(chat, pull), revision(other, second)]);
+it("leaves an unreadable pull request out of the shared query, trying it alone every 5 minutes", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const third = "https://github.com/block/goose/pull/3";
+  const chats = [chat, other, "33333333-3333-4333-8333-333333333333"];
+  const relay = session([
+    revision(chats[0] as string, pull),
+    revision(chats[1] as string, second),
+    revision(chats[2] as string, third),
+  ]);
+  // GitHub answers the pull requests it can read and an error for the rest.
   const gh = vi.fn(
     async (_query: string, variables: Record<string, unknown>) => {
-      if ("o1" in variables) throw new GitHubError("Not found", "NOT_FOUND");
-      if (variables.n0 === "buzz")
-        throw new GitHubError("Not found", "NOT_FOUND");
-      return { r0: rollup("OPEN", { isDraft: true }, "PENDING") };
+      const data: Record<string, unknown> = {};
+      let missing = false;
+      for (let i = 0; `n${i}` in variables; i++)
+        if (variables[`n${i}`] === "buzz") {
+          data[`r${i}`] = null;
+          missing = true;
+        } else data[`r${i}`] = rollup("OPEN", { isDraft: true }, "PENDING");
+      if (missing) throw new GitHubError("Not found", "NOT_FOUND", data);
+      return data;
     },
-  ) as unknown as GitHubCli;
+  ) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
   const pulls = createSoloPulls(relay.session, gh);
-  pulls.watch(chat, () => {});
-  pulls.watch(other, () => {});
+  for (const id of chats) pulls.watch(id, () => {});
   await vi.waitFor(() => expect(pulls.get(other)?.failed).toBe(true));
+  expect(gh).toHaveBeenCalledOnce();
   expect(pulls.get(chat)?.state).toEqual({
     state: "draft",
     checks: "pending",
     conflicts: false,
   });
+  const repositories = () =>
+    gh.mock.calls.map(([, variables]) =>
+      Object.entries(variables as Record<string, unknown>)
+        .filter(([key]) => key.startsWith("n"))
+        .map(([, name]) => name),
+    );
+  // Four minutes of polls: the two readable ones together, once a minute.
+  await vi.advanceTimersByTimeAsync(4 * SOLO_REFRESH_MS);
+  expect(repositories().slice(1)).toEqual(
+    Array.from({ length: 4 }, () => ["buzz-app", "goose"]),
+  );
+  // The fifth also tries the missing one, alone.
+  await vi.advanceTimersByTimeAsync(SOLO_REFRESH_MS);
+  expect(repositories().slice(5)).toEqual([["buzz-app", "goose"], ["buzz"]]);
+  expect(pulls.get(other)?.failed).toBe(true);
+});
 
+it("reads public data without gh", async () => {
+  const relay = session([revision(chat, pull)]);
   const fetch = vi.fn(
     async () =>
       new Response(
@@ -310,6 +341,55 @@ it("keeps a refresh that was given up on from marking pull requests unavailable"
   await vi.waitFor(() =>
     expect(pulls.get(chat)?.state?.checks).toBe("success"),
   );
+});
+
+it("reads links once, not on the poll, and only a new row's own link", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const relay = session([revision(chat, pull)]);
+  const gh = vi.fn(async () => ({
+    r0: rollup("OPEN", {}, "SUCCESS"),
+  })) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
+  const pulls = createSoloPulls(relay.session, gh);
+  pulls.watch(chat, () => {});
+  await vi.waitFor(() => expect(pulls.get(chat)?.state).toBeDefined());
+  await vi.advanceTimersByTimeAsync(3 * SOLO_REFRESH_MS);
+  expect(relay.snapshotRead).toHaveBeenCalledOnce();
+  expect(gh).toHaveBeenCalledTimes(4);
+  pulls.watch(other, () => {});
+  await vi.waitFor(() => expect(relay.snapshotRead).toHaveBeenCalledTimes(2));
+  expect(relay.snapshotRead.mock.calls[1]?.[0]).toEqual([
+    expect.objectContaining({ "#h": [other] }),
+  ]);
+});
+
+it("polls GitHub only for linked pull requests that can still change", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const relay = session([revision(chat, pull)]);
+  const gh = vi.fn(async () => ({
+    r0: rollup("MERGED"),
+  })) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
+  const pulls = createSoloPulls(relay.session, gh);
+  pulls.watch(chat, () => {});
+  pulls.watch(other, () => {});
+  await vi.waitFor(() => expect(pulls.get(chat)?.state?.state).toBe("merged"));
+  await vi.advanceTimersByTimeAsync(5 * SOLO_REFRESH_MS);
+  expect(gh).toHaveBeenCalledOnce();
+  expect(relay.snapshotRead).toHaveBeenCalledOnce();
+});
+
+it("reads shown chats' links again when the window comes back after a while", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const relay = session([revision(chat, null)]);
+  const pulls = createSoloPulls(relay.session, undefined);
+  pulls.watch(chat, () => {});
+  await vi.waitFor(() => expect(relay.snapshotRead).toHaveBeenCalledOnce());
+  document.dispatchEvent(new Event("visibilitychange"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(relay.snapshotRead).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(5 * SOLO_REFRESH_MS);
+  expect(relay.snapshotRead).toHaveBeenCalledOnce();
+  document.dispatchEvent(new Event("visibilitychange"));
+  await vi.waitFor(() => expect(relay.snapshotRead).toHaveBeenCalledTimes(2));
 });
 
 it("shows a link this device wrote before the next read", async () => {

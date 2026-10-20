@@ -8,14 +8,18 @@ import {
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 import { loadGitHubDetails } from "./data";
-import { GhUnavailable, type GitHubCli } from "./gh";
+import { GhUnavailable, GitHubError, type GitHubCli } from "./gh";
 import { parseGitHubReference } from "./references";
 
 export const SOLO_PULL_TYPE = "buzz.solo.pr";
 /** How often shown chats read their links and pull requests again. */
 export const SOLO_REFRESH_MS = 60_000;
-/** Without `gh`, GitHub allows 60 public reads an hour. */
+/** Without `gh`, GitHub allows 60 public reads an hour. A pull request `gh`
+ * could not read is tried again alone this often too. */
 const PUBLIC_REFRESH_MS = 5 * 60_000;
+/** Links change rarely and only by hand, so shown chats read them again when
+ * the window comes back, at most this often. */
+const LINKS_AGAIN_MS = 5 * 60_000;
 /** Chats per link read. Each has one link artifact, so a read of 500, the
  * session reader's cap, leaves room for concurrent revisions. */
 const CHANNELS_PER_READ = 100;
@@ -169,7 +173,8 @@ const checksOf = (rollup: Rollup | undefined): PullState["checks"] =>
         ? "pending"
         : undefined;
 
-/** All of `urls` in one GitHub request. */
+/** All of `urls` in one GitHub request: each one's state, or undefined for
+ * one GitHub could not read. Throws when it answered for none. */
 async function readStates(
   gh: GitHubCli,
   urls: readonly string[],
@@ -188,11 +193,20 @@ async function readStates(
   const declared = urls
     .map((_, i) => `$o${i}:String!,$n${i}:String!,$p${i}:Int!`)
     .join(",");
-  const data = await gh<Record<string, StateData>>(
-    `query(${declared}){${fields.join("\n")}}`,
-    variables,
-    signal,
-  );
+  let data: Record<string, StateData>;
+  try {
+    data = await gh<Record<string, StateData>>(
+      `query(${declared}){${fields.join("\n")}}`,
+      variables,
+      signal,
+    );
+  } catch (error) {
+    // A missing pull request is an error for its alias alone; GitHub still
+    // answers the rest.
+    if (!(error instanceof GitHubError) || typeof error.data !== "object")
+      throw error;
+    data = error.data as Record<string, StateData>;
+  }
   return urls.map((_, i): PullState | undefined => {
     const pull = data[`r${i}`]?.pullRequest;
     if (!pull) return undefined;
@@ -236,11 +250,17 @@ export type SoloPulls = Readonly<{
   /** Keeps `channel`'s link and pull request current while subscribed. */
   watch(channel: string, listener: () => void): () => void;
   get(channel: string): SoloPull | undefined;
-  /** Shows a link this device just wrote, before the next read. */
+  /** Shows a link this device just wrote, without reading it back. */
   linked(channel: string, url: string | null): void;
 }>;
 
-/** One session's Solo pull requests, read with `gh` when there is one. */
+/** One session's Solo pull requests, read with `gh` when there is one.
+ *
+ * Links are read once per shown chat, batched for rows that appear together,
+ * and again when the window comes back after a while; never on a timer.
+ * Pull requests are polled only while a shown chat links one that can still
+ * change. One that GitHub cannot read leaves the shared query and is tried
+ * alone every few minutes. */
 export function createSoloPulls(
   session: RelaySession,
   gh: GitHubCli | undefined,
@@ -248,9 +268,14 @@ export function createSoloPulls(
   const listeners = new Map<string, Set<() => void>>();
   const links = new Map<string, string | null>();
   const states = new Map<string, PullState | "failed">();
+  /** Shown chats whose link is still to be read. */
+  const unread = new Set<string>();
+  /** Pull requests GitHub could not read, and when to try each alone again. */
+  const retryAt = new Map<string, number>();
   /** Until when to read public data instead, after `gh` was unavailable. */
   let publicUntil = 0;
   const readsPublic = () => !gh || Date.now() < publicUntil;
+  let linksReadAt = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let scheduled = false;
@@ -261,15 +286,36 @@ export function createSoloPulls(
     for (const set of listeners.values())
       for (const listener of set) listener();
   };
-  /** The next read, while the window is in view. */
+  const shown = () => [
+    ...new Set(
+      [...listeners.keys()]
+        .map((channel) => links.get(channel))
+        .filter((url): url is string => !!url),
+    ),
+  ];
+  /** Merged and closed pull requests stay that way. */
+  const settled = (url: string) => {
+    const state = states.get(url);
+    return (
+      !!state &&
+      state !== "failed" &&
+      (state.state === "merged" || state.state === "closed")
+    );
+  };
+  /** The next poll, while a shown chat links a pull request that can change. */
   const later = () => {
     clearTimeout(timer);
+    timer = undefined;
+    if (!shown().some((url) => !settled(url))) return;
     timer = setTimeout(
-      () => (document.visibilityState === "visible" ? void refresh() : later()),
+      () =>
+        document.visibilityState === "visible" ? void refresh(true) : later(),
       readsPublic() ? PUBLIC_REFRESH_MS : SOLO_REFRESH_MS,
     );
   };
-  async function refresh() {
+  /** Reads the links still unread, then pull requests: on a poll, every one
+   * that can change and is due; otherwise only those not read yet. */
+  async function refresh(poll: boolean) {
     controller?.abort();
     const current = new AbortController();
     controller = current;
@@ -280,23 +326,42 @@ export function createSoloPulls(
       AbortSignal.timeout(30_000),
     ]);
     try {
-      const read = await readLinks(session, [...listeners.keys()], signal);
-      // A refresh that was given up on, or replaced, changes nothing.
-      if (signal.aborted) return;
-      for (const [channel, url] of read)
-        if (listeners.has(channel)) links.set(channel, url);
-      notify();
-      const urls = [
-        ...new Set(
-          [...listeners.keys()]
-            .map((channel) => links.get(channel))
-            .filter((url): url is string => !!url),
+      const channels = [...unread].filter((channel) => listeners.has(channel));
+      if (channels.length) {
+        const read = await readLinks(session, channels, signal);
+        // A refresh that was given up on, or replaced, changes nothing.
+        if (signal.aborted) return;
+        for (const [channel, url] of read) {
+          links.set(channel, url);
+          unread.delete(channel);
+        }
+        notify();
+      }
+      const now = Date.now();
+      const due = shown().filter((url) =>
+        poll ? !settled(url) : !states.has(url),
+      );
+      const together = due.filter((url) => !retryAt.has(url));
+      const alone = due.filter((url) => (retryAt.get(url) ?? Infinity) <= now);
+      const [found, retried] = await Promise.all([
+        readAll(together, signal),
+        Promise.all(
+          alone.map((url) =>
+            readAll([url], signal).then(
+              ([state]) => state,
+              () => undefined,
+            ),
+          ),
         ),
-      ];
-      const found = await readAll(urls, signal);
+      ]);
       if (signal.aborted) return;
-      for (const [i, url] of urls.entries())
-        states.set(url, found[i] ?? "failed");
+      const read = (url: string, state: PullState | undefined) => {
+        states.set(url, state ?? "failed");
+        if (state) retryAt.delete(url);
+        else retryAt.set(url, now + PUBLIC_REFRESH_MS);
+      };
+      for (const [i, url] of together.entries()) read(url, found[i]);
+      for (const [i, url] of alone.entries()) read(url, retried[i]);
       notify();
     } catch {
       // Keep what is shown; the next refresh tries again.
@@ -317,14 +382,8 @@ export function createSoloPulls(
         return await readStates(gh, urls, signal);
       } catch (error) {
         // Offline or signed out for now; gh is tried again next public read.
-        if (error instanceof GhUnavailable)
-          publicUntil = Date.now() + PUBLIC_REFRESH_MS;
-        else if (urls.length > 1)
-          // One missing pull request fails the whole request; read each.
-          return (
-            await Promise.all(urls.map((url) => readAll([url], signal)))
-          ).flat();
-        else return [undefined];
+        if (!(error instanceof GhUnavailable)) throw error;
+        publicUntil = Date.now() + PUBLIC_REFRESH_MS;
       }
     return Promise.all(
       urls.map((url) => readPublicState(url, signal).catch(() => undefined)),
@@ -336,16 +395,32 @@ export function createSoloPulls(
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
-      if (listeners.size) void refresh();
+      if (listeners.size) void refresh(false);
     });
   }
+  /** Back in the window after a while: shown chats read their links again. */
+  const returned = () => {
+    if (
+      document.visibilityState !== "visible" ||
+      Date.now() - linksReadAt < LINKS_AGAIN_MS
+    )
+      return;
+    linksReadAt = Date.now();
+    for (const channel of listeners.keys()) unread.add(channel);
+    schedule();
+  };
   return {
     watch(channel, listener) {
       let set = listeners.get(channel);
       if (!set) {
         set = new Set();
+        if (!listeners.size) {
+          linksReadAt = Date.now();
+          document.addEventListener("visibilitychange", returned);
+        }
         listeners.set(channel, set);
         const url = links.get(channel);
+        if (!links.has(channel)) unread.add(channel);
         if (!links.has(channel) || (url && !states.has(url))) schedule();
         else if (!controller && timer === undefined) later();
       }
@@ -355,6 +430,7 @@ export function createSoloPulls(
         if (set.size) return;
         listeners.delete(channel);
         if (listeners.size) return;
+        document.removeEventListener("visibilitychange", returned);
         clearTimeout(timer);
         timer = undefined;
         controller?.abort();
@@ -378,8 +454,10 @@ export function createSoloPulls(
     },
     linked(channel, url) {
       links.set(channel, url);
+      unread.delete(channel);
       notify();
-      if (url && !states.has(url)) void refresh();
+      if (url && !states.has(url)) schedule();
+      else if (listeners.size && !controller) later();
     },
   };
 }

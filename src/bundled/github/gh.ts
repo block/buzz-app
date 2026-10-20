@@ -9,11 +9,13 @@ import type { Host } from "../../features/host/service";
 
 /** `gh` cannot be used here: no desktop, not installed, or not signed in. */
 export class GhUnavailable extends Error {}
-/** GitHub refused or failed the request; `type` is GitHub's, such as NOT_FOUND. */
+/** GitHub refused or failed the request; `type` is GitHub's, such as NOT_FOUND.
+ * `data` is what GitHub still answered, as for the aliases it could read. */
 export class GitHubError extends Error {
   constructor(
     message: string,
     readonly type?: string,
+    readonly data?: unknown,
   ) {
     super(message);
   }
@@ -93,6 +95,7 @@ export function parseAnswer<T>(
     throw new GitHubError(
       error.message as string,
       typeof error.type === "string" ? error.type : undefined,
+      answer?.data ?? undefined,
     );
   if (code === 0 && answer?.data) return answer.data;
   const reason = stderr.trim().replace(/^gh: /, "");

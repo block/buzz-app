@@ -47,7 +47,11 @@ function fixture(
   remainingTerminals: unknown[] = [],
   termination?: Promise<void>,
   plugin = false,
-  configured: { model?: string; model_reasoning_effort?: string } = {},
+  configured: {
+    model?: string;
+    model_reasoning_effort?: string;
+    model_reasoning_summary?: string;
+  } = {},
   repositories?: (scope: string | undefined) => string,
 ) {
   let terminals = remainingTerminals;
@@ -1015,6 +1019,22 @@ it("tells a turn a reload stopped to carry on where it left off", async () => {
   expect(params.input[0]?.text).toContain("fix the build");
   expect(params.input[0]?.text).toContain(RESUMED_PROMPT);
 });
+it.each([
+  [undefined, "auto"],
+  ["detailed", undefined],
+])(
+  "asks for reasoning summaries unless the user set %s",
+  async (setting, expected) => {
+    const f = fixture([], undefined, false, {
+      ...(setting ? { model_reasoning_summary: setting } : {}),
+    });
+    await f.runtime.run(f.delivery("@Codex think"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const [start] = f.starts();
+    const params = start?.params as { summary?: string } | undefined;
+    expect(params?.summary).toBe(expected);
+  },
+);
 it("starts a turn at the effort its owner picked when the model supports it", async () => {
   const f = fixture();
   await f.runtime.run({ ...f.delivery("@Codex hard"), effort: "high" });

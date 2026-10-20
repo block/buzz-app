@@ -119,9 +119,11 @@ function item(
         ? { id, at, type: "message", text: str(value.text) }
         : undefined;
     case "reasoning": {
-      const text = (Array.isArray(value.summary) ? value.summary : []).join(
-        "\n\n",
+      // Summary and raw content can repeat each other; show each text once.
+      const parts = [value.summary, value.content].flatMap((part: unknown) =>
+        Array.isArray(part) ? part.map(str).filter(Boolean) : [],
       );
+      const text = [...new Set(parts)].join("\n\n");
       return text ? { id, at, type: "thought", text } : undefined;
     }
     case "plan":

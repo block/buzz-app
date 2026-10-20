@@ -179,6 +179,9 @@ export class ClaudeProcess {
         "stream-json",
         "--verbose",
         "--replay-user-messages",
+        // Recent models return empty thinking unless asked for summaries.
+        "--thinking-display",
+        "summarized",
         ...(launch.discovery
           ? [
               "--safe-mode",

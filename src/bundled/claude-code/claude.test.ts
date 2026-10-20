@@ -28,6 +28,8 @@ it("starts Claude as the SDK does and initializes it with the system prompt", as
     "stream-json",
     "--verbose",
     "--replay-user-messages",
+    "--thinking-display",
+    "summarized",
     "--permission-mode",
     "bypassPermissions",
     "--model",

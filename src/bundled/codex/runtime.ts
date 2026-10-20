@@ -728,7 +728,7 @@ export class CodexRuntime {
       const workspace = await this.workspace(settings.workspace);
       signal.throwIfAborted();
       once.workspace = workspace;
-      const { params, model, effort } = await this.prepare(
+      const { params, model, effort, summary } = await this.prepare(
         rpc,
         agent,
         settings,
@@ -757,6 +757,7 @@ export class CodexRuntime {
           input: input(text),
           model,
           effort,
+          ...summary,
           additionalContext: turnContext(
             agent,
             settings,
@@ -1072,6 +1073,7 @@ export class CodexRuntime {
     const normalized = await rpc.request<{
       config: {
         mcp_servers?: Record<string, Record<string, unknown>>;
+        model_reasoning_summary?: string | null;
       };
     }>("config/read", { cwd: workspace });
     const models = await listModels(rpc);
@@ -1121,7 +1123,11 @@ export class CodexRuntime {
         "features.apps": false,
       },
     };
-    return { params, model, effort };
+    // Ask for reasoning summaries unless the user chose a summary mode.
+    const summary = normalized.config.model_reasoning_summary
+      ? {}
+      : { summary: "auto" };
+    return { params, model, effort, summary };
   }
   private async execute(
     request: Request,
@@ -1177,7 +1183,7 @@ export class CodexRuntime {
       signal.throwIfAborted();
       active.workspace = workspace;
       const existing = entry.saved[key];
-      const { params, model, effort } = await this.prepare(
+      const { params, model, effort, summary } = await this.prepare(
         rpc,
         agent,
         settings,
@@ -1243,6 +1249,7 @@ export class CodexRuntime {
         ),
         model,
         effort,
+        ...summary,
         // Application context is a developer message that updates on each turn.
         additionalContext: turnContext(
           agent,

@@ -1640,8 +1640,8 @@ function ChannelWorkspace({
                         {current && (
                           <IconButton
                             size="sm"
-                            aria-label="Channel members"
-                            title="Channel members"
+                            aria-label="Access"
+                            title="Access"
                             aria-haspopup="dialog"
                             ref={membersHeaderTrigger}
                             aria-expanded={membersOpen}

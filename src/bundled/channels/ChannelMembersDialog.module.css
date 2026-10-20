@@ -76,16 +76,6 @@
   align-self: stretch;
   flex-shrink: 0;
 }
-@media (hover: hover) and (pointer: fine) {
-  .memberActions {
-    opacity: 0;
-    pointer-events: none;
-  }
-  .member:is(:hover, :focus-within, [data-menu-open]) .memberActions {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
 .profile {
   flex: 1;
   min-width: 0;
@@ -121,18 +111,6 @@
   inset: 0;
   display: flex;
 }
-.identity {
-  display: block;
-  overflow-wrap: anywhere;
-}
-.identityName {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 100%;
-  vertical-align: bottom;
-}
 .name {
   display: block;
   overflow: hidden;
@@ -140,31 +118,32 @@
   white-space: nowrap;
 }
 .manager {
+  display: block;
   color: var(--text-subtle);
   font-size: var(--text-caption);
 }
 .manager > * {
   pointer-events: auto;
 }
-.publicKey {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  opacity: 0;
-  visibility: hidden;
+.stagedRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-row);
+  padding-block: var(--space-2);
 }
-.metadata {
-  display: block;
-  overflow: hidden;
+.stagedName {
+  display: grid;
+  flex: 1;
+  min-width: 0;
 }
-.metadataContent {
-  position: relative;
-  display: block;
-  min-height: calc(var(--text-body-sm) * var(--text-body-sm--line-height));
+.choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
-.member:is(:hover, :focus-within) .publicKey {
-  opacity: 1;
-  visibility: visible;
+@media (max-width: 480px) {
+  .stagedRow {
+    flex-wrap: wrap;
+  }
 }

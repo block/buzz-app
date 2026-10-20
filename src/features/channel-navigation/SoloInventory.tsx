@@ -17,7 +17,7 @@ import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
 import {
   soloSharedMarkId,
   useSharedWithPeople,
-} from "../../bundled/channels/SoloShare";
+} from "../../bundled/channels/ChatAccessIndicator";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";

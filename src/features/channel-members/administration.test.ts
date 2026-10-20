@@ -222,17 +222,44 @@ it("protects all owners and self even when co-owners exist", async () => {
   }
   expect(h.sign).not.toHaveBeenCalled();
 });
-it.each(["dm", "archived", "solo"])("excludes %s channels", async (kind) => {
+it.each(["dm", "archived"])("excludes %s channels", async (kind) => {
   const h = harness();
   h.setEvents([
     h.record(39000, [
       ["d", id],
       ["t", kind === "dm" ? "dm" : "stream"],
       ...(kind === "archived" ? [["archived", "true"]] : []),
-      ...(kind === "solo" ? [["t", SOLO_LABEL]] : []),
     ]),
     ...h.events().slice(1),
   ]);
+  await h.owner.capability.run(id, change);
+  expect(h.sign).not.toHaveBeenCalled();
+});
+function soloHarness() {
+  const h = harness();
+  h.setEvents([
+    h.record(39000, [
+      ["d", id],
+      ["t", "stream"],
+      ["t", SOLO_LABEL],
+    ]),
+    ...h.events().slice(1),
+  ]);
+  return h;
+}
+it("lets a Solo chat owner remove a participant", async () => {
+  const h = soloHarness();
+  await h.owner.capability.run(id, { ...change, role: "remove" });
+  expect(h.publish.mock.calls[0]?.[0]).toMatchObject({
+    kind: 9001,
+    tags: [
+      ["h", id],
+      ["p", target],
+    ],
+  });
+});
+it("never lets a Solo chat owner change roles", async () => {
+  const h = soloHarness();
   await h.owner.capability.run(id, change);
   expect(h.sign).not.toHaveBeenCalled();
 });
@@ -339,7 +366,12 @@ it.each(["ack", "lost", "read"])(
     });
     h.owner.clear();
     expect(h.owner.capability.snapshot(id)).toMatchObject({
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+      },
       operation: { change, status: "uncertain" },
     });
     await expect(h.owner.capability.run(id, change)).rejects.toThrow(
@@ -374,7 +406,12 @@ it.each(["access", "invalid ID"])(
     await h.owner.capability.refresh(channelId);
     expect(h.owner.capability.snapshot(channelId)).toMatchObject({
       status: "error",
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+      },
       error:
         failure === "access"
           ? "Channel access unavailable; refresh membership."
@@ -395,7 +432,12 @@ it.each(["clear", "dispose"] as const)(
     await pending;
     expect(h.owner.capability.snapshot(id)).toMatchObject({
       status: "idle",
-      authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+      authority: {
+        roles: {},
+        canManage: false,
+        canRemove: false,
+        canRemoveOwnedAgent: false,
+      },
     });
   },
 );
@@ -577,7 +619,12 @@ it.each(["cache", "access"] as const)(
       await clear();
       expect(admin.snapshot(id)).toMatchObject({
         status: "idle",
-        authority: { roles: {}, canManage: false, canRemoveOwnedAgent: false },
+        authority: {
+          roles: {},
+          canManage: false,
+          canRemove: false,
+          canRemoveOwnedAgent: false,
+        },
         operation: { change, status: "uncertain" },
       });
       await recoverAccess();
@@ -589,6 +636,7 @@ it.each(["cache", "access"] as const)(
       expect(admin.snapshot(id).authority).toEqual({
         roles: {},
         canManage: false,
+        canRemove: false,
         canRemoveOwnedAgent: false,
       });
       await recoverAccess();
@@ -783,7 +831,6 @@ it.each([
   "unknown target",
   "dm",
   "archived",
-  "solo",
   "role edit",
 ])("owned-agent evidence does not bypass %s restrictions", async (failure) => {
   const h = ownedAgent();
@@ -801,13 +848,12 @@ it.each([
   if (failure === "unknown actor") h.setRoles("unknown", "bot");
   if (failure === "owner target") h.setRoles("member", "owner");
   if (failure === "unknown target") h.setRoles("member", "unknown");
-  if (["dm", "archived", "solo"].includes(failure))
+  if (["dm", "archived"].includes(failure))
     h.setEvents([
       h.record(39000, [
         ["d", id],
         ["t", failure === "dm" ? "dm" : "stream"],
         ...(failure === "archived" ? [["archived", "true"]] : []),
-        ...(failure === "solo" ? [["t", SOLO_LABEL]] : []),
       ]),
       ...h.events().slice(1),
     ]);

@@ -457,7 +457,7 @@ test.describe("filter action focus", () => {
     await expect(row).toBeVisible();
     await row.click({ button: "right" });
     await page
-      .getByRole("menuitem", { name: "Mark as Read", exact: true })
+      .getByRole("menuitem", { name: "Mark as read", exact: true })
       .click();
     await expect(row).toHaveCount(0);
     await expect(channels.locator("details > summary")).toBeFocused();

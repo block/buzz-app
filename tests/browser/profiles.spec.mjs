@@ -376,12 +376,12 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html");
   const members = page.getByRole("button", {
-    name: "Channel members",
+    name: "Access",
     exact: true,
   });
   await members.click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel members",
+    name: "Channel access",
     exact: true,
     includeHidden: true,
   });
@@ -434,7 +434,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
         name: "Refresh member data",
       });
       const close = header.getByRole("button", {
-        name: "Close channel members",
+        name: "Close",
       });
       await expect(refresh).toHaveAttribute("data-variant", "ghost");
       await expect(refresh).toHaveAttribute("data-icon-size", "compact");
@@ -624,7 +624,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     await expect(members).toBeFocused();
     await members.press("Enter");
   }
-  await dialog.getByRole("button", { name: "Close channel members" }).click();
+  await dialog.getByRole("button", { name: "Close" }).click();
   await page.evaluate(() =>
     window.profilesFixture.change("disable", "buzz.profiles"),
   );
@@ -655,12 +655,12 @@ test.describe("touch member actions", () => {
   test("keeps the ellipsis available without hover", async ({ page }) => {
     await page.goto("/tests/fixtures/profiles.html");
     const members = page.getByRole("button", {
-      name: "Channel members",
+      name: "Access",
       exact: true,
     });
     await members.tap();
     const dialog = page.getByRole("dialog", {
-      name: "Channel members",
+      name: "Channel access",
       exact: true,
     });
     const actions = dialog.getByRole("button", { name: "Actions for Viewer" });
@@ -684,11 +684,9 @@ test("member Send message navigates a human DM without sending or returning focu
 }) => {
   const errors = watchPageErrors(page);
   await page.goto("/tests/fixtures/profiles.html?member-message");
-  await page
-    .getByRole("button", { name: "Channel members", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Access", exact: true }).click();
   const dialog = page.getByRole("dialog", {
-    name: "Channel members",
+    name: "Channel access",
     exact: true,
   });
   const actions = dialog.getByRole("button", {
@@ -716,7 +714,7 @@ test("member Send message navigates a human DM without sending or returning focu
     page.getByRole("textbox", { name: "Message #Mic", exact: true }),
   ).toBeFocused();
   await expect(
-    page.getByRole("button", { name: "Channel members", exact: true }),
+    page.getByRole("button", { name: "Access", exact: true }),
   ).not.toBeFocused();
   expect(
     await page.evaluate(() => window.profilesFixture.report.publications),

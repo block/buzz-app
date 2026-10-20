@@ -116,7 +116,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
-    provideKnownCommunities(root, community.viewer);
+    const knownCommunities = provideKnownCommunities(root, community.viewer);
     const agents = provideAgents(root, community);
     try {
       runtime.reconcile([
@@ -146,6 +146,8 @@ it.each([undefined, "", "http://builderlab.example"])(
         ),
       ).toEqual([]);
       expect(agents.types()).toHaveLength(0);
+      // No sign-in is possible, so no sync owner runs or reports.
+      expect(knownCommunities.status).not.toHaveBeenCalled();
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
       // With no agent type to create, the empty page's Create tile is off.

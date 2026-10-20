@@ -154,9 +154,9 @@ export function HuddleAvatarToss({
         dragging.current = true;
         setMoving(true);
       }}
-      onDragEnd={(_, info) => {
+      onDragEnd={(event, info) => {
         dragging.current = false;
-        if (motionPreference.matches) {
+        if (event.type === "pointercancel" || motionPreference.matches) {
           reset();
           return;
         }

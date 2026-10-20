@@ -2052,6 +2052,30 @@ test("portraits can be tossed within the stage and return home, with reduced mot
   const resting = await portrait.boundingBox();
   expect(Math.abs(resting.x - home.x)).toBeLessThan(1);
   expect(Math.abs(resting.y - home.y)).toBeLessThan(1);
+  // Motion delivers drag-end in postRender, after React handles pointercancel.
+  // A cancelled gesture must stay reset through that callback and later frames.
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 3; i++) {
+    await page.mouse.move(start.x + (i * throwDistance) / 3, start.y);
+    await page.clock.runFor(16);
+  }
+  expect((await portrait.boundingBox()).x - home.x).toBeCloseTo(
+    throwDistance,
+    0,
+  );
+  await stage.locator("[data-avatar-moving]").dispatchEvent("pointercancel", {
+    pointerId: 1,
+    pointerType: "mouse",
+    isPrimary: true,
+    bubbles: true,
+  });
+  for (let i = 0; i < 4; i++) {
+    await page.clock.runFor(16);
+    expect(Math.abs((await portrait.boundingBox()).x - home.x)).toBeLessThan(1);
+  }
+  await expect(stage.locator("[data-avatar-moving]")).toHaveCount(0);
+  await page.mouse.up();
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();

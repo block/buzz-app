@@ -87,6 +87,38 @@ test("failed Enter-save and explicit reload retain keyboard control", async ({
 }) => {
   await page.goto(app.origin);
   await newChat(page);
+  await row(page, alpha).click();
+  await expect(composer(page)).toBeVisible();
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.colorMode = value;
+    }, mode);
+    for (const size of ["100%", "150%"]) {
+      await page.evaluate((value) => {
+        document.documentElement.style.fontSize = value;
+      }, size);
+      const before = await row(page, alpha)
+        .locator("svg")
+        .first()
+        .boundingBox();
+      await row(page, alpha).dblclick();
+      await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+      const glyph = sidebar(page).getByRole("form").locator("svg").first();
+      const after = await glyph.boundingBox();
+      expect(after.x).toBeCloseTo(before.x, 0);
+      expect(after.y).toBeCloseTo(before.y, 0);
+      await page.screenshot({
+        path: test
+          .info()
+          .outputPath(`editor-${mode}-${size.replace("%", "")}.png`),
+      });
+      await input(page).press("Escape");
+    }
+  }
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "100%";
+    document.documentElement.dataset.colorMode = "light";
+  });
   await row(page, alpha).dblclick();
   await expect(input(page)).toHaveAttribute("aria-disabled", "false");
   let refused = false;
@@ -100,6 +132,11 @@ test("failed Enter-save and explicit reload retain keyboard control", async ({
   await input(page).fill("Keep this draft");
   await input(page).press("Enter");
   await expect(sidebar(page).getByRole("alert")).toBeVisible();
+  const recovery = await sidebar(page)
+    .getByRole("button", { name: "Reload chat details" })
+    .boundingBox();
+  const field = await input(page).boundingBox();
+  expect(recovery.x).toBeCloseTo(field.x, 0);
   await expect(input(page)).toBeFocused();
   await expect(input(page)).toHaveValue("Keep this draft");
   expect(app.report.detailsPublications ?? []).toHaveLength(0);

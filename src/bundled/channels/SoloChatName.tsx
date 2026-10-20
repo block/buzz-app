@@ -88,7 +88,8 @@ export function SoloChatName({
           !name.error &&
           !name.checkOnly
         ) {
-          if (!name.base && !name.busy) finish(false);
+          if (!name.busy && !saving.current && (!name.base || name.blocked))
+            finish(false);
           else void save(false);
         }
       }}
@@ -105,7 +106,9 @@ export function SoloChatName({
       }}
     >
       <div className={styles.nameEditorRow}>
-        <ChatCircleIcon size={16} aria-hidden="true" />
+        <span className={styles.conversationIcon} aria-hidden="true">
+          <ChatCircleIcon size={16} />
+        </span>
         <div className={styles.nameEditorField}>
           <Field
             label="Chat name"
@@ -133,6 +136,25 @@ export function SoloChatName({
               }}
             />
           </Field>
+          {!name.busy &&
+            (name.checkOnly ? (
+              <Button type="submit" size="sm">
+                Check save status
+              </Button>
+            ) : (
+              name.error && (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    input.current?.focus();
+                    void name.run("reload").catch(() => {});
+                  }}
+                >
+                  Reload chat details
+                </Button>
+              )
+            ))}
         </div>
         <IconButton
           type="button"
@@ -142,25 +164,6 @@ export function SoloChatName({
           onClick={() => finish(true)}
         />
       </div>
-      {!name.busy &&
-        (name.checkOnly ? (
-          <Button type="submit" size="sm">
-            Check save status
-          </Button>
-        ) : (
-          name.error && (
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                input.current?.focus();
-                void name.run("reload").catch(() => {});
-              }}
-            >
-              Reload chat details
-            </Button>
-          )
-        ))}
     </form>
   );
 }

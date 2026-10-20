@@ -198,3 +198,41 @@ it("releases an abandoned initial read without restoring focus when it completes
   expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
   expect(f.save).not.toHaveBeenCalled();
 });
+
+it.each(["ineligible", "unrelated attempt"])(
+  "releases a blocked %s editor on blur without writing",
+  async (reason) => {
+    const attempt = {
+      status: "saving" as const,
+      draft: {
+        name: "Other",
+        description: "Changed elsewhere",
+        visibility: "private" as const,
+        labels: ["buzz.solo"],
+      },
+    };
+    const f = setup({
+      ...(reason === "ineligible"
+        ? {
+            load: vi.fn(async () => ({
+              channelId: "chat",
+              name: "Plan",
+              description: "",
+              visibility: "private" as const,
+              labels: ["stream"],
+              version: "one",
+              canEdit: false,
+            })),
+          }
+        : { snapshot: () => attempt }),
+    });
+    await screen.findByText(
+      reason === "ineligible"
+        ? "This chat can’t be renamed."
+        : "Finish the pending change in Chat settings first.",
+    );
+    await f.user.click(screen.getByRole("button", { name: "Elsewhere" }));
+    expect(f.close).toHaveBeenCalledWith(false);
+    expect(f.save).not.toHaveBeenCalled();
+  },
+);

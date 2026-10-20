@@ -18,6 +18,7 @@ import {
 } from "../../features/relay/session";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SoloWorkspaces } from "./SoloWorkspaces";
+import { readView } from "../../shared/view-state";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
@@ -28,6 +29,7 @@ afterEach(() => {
 
 function fixture(projectName = "Work") {
   const owner = createRelaySession(null);
+  const details = { ...owner.session.channelDetails };
   owners.push(owner);
   let saved: SidebarPreferences = {
     sections: [{ id: "work", name: projectName, order: 0 }],
@@ -94,6 +96,7 @@ function fixture(projectName = "Work") {
       session={
         {
           ...owner.session,
+          channelDetails: details,
           soloPreferences: preferences,
           unread,
           canvas: { available: false },
@@ -105,11 +108,16 @@ function fixture(projectName = "Work") {
         { id: "chat", title: "Planning" },
         { id: "other", title: "Existing chat" },
       ]}
-      renderChat={(item) => <button type="button">{item.title}</button>}
+      renderChat={(item, rename) => (
+        <button type="button" onDoubleClick={rename}>
+          {item.title}
+        </button>
+      )}
     />
   );
   return {
     store,
+    details,
     view,
     write,
     remove,
@@ -392,4 +400,57 @@ it("marks a chat read from its row menu and reports a failed save", async () => 
   } finally {
     store.dispose();
   }
+});
+
+it("toggles a deferred collapse intent and protects a failed rename from workspace deletion", async () => {
+  const h = fixture();
+  Object.assign(h.details, {
+    available: true,
+    load: vi.fn(async () => ({
+      channelId: "chat",
+      name: "Planning",
+      description: "",
+      visibility: "private",
+      labels: ["buzz.solo"],
+      canEdit: true,
+      version: "one",
+    })),
+    save: vi.fn(async () => {
+      throw new Error("Save failed");
+    }),
+  });
+  const owner = h.store();
+  await owner.queries.ensure();
+  await owner.queries.assign("chat", "work");
+  render(h.view(owner.queries));
+  const user = userEvent.setup();
+  await user.dblClick(screen.getByRole("button", { name: "Planning" }));
+  const field = screen.getByRole("textbox", { name: "Chat name" });
+  await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+  await user.clear(field);
+  await user.type(field, "Retained draft{Enter}");
+  await screen.findByText("Save failed");
+  const heading = screen.getByRole("button", { name: "Work" });
+  for (const intent of [["work"], [], ["work"], []]) {
+    await user.click(heading);
+    expect(readView("viewer:community", "solo:collapsed-projects", [])).toEqual(
+      intent,
+    );
+  }
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Delete workspace",
+    }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(h.remove).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Cancel rename" }));
+  expect(heading).toHaveAttribute("aria-expanded", "true");
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Delete workspace",
+    }),
+  ).not.toHaveAttribute("aria-disabled", "true");
 });

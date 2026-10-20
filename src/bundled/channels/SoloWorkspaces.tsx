@@ -204,9 +204,8 @@ export function SoloWorkspaces({
     );
   };
   const toggle = (id: string, open: boolean) => {
-    const next = open
-      ? collapsed.filter((key) => key !== id)
-      : [...collapsed, id];
+    const next = collapsed.filter((key) => key !== id);
+    if (!open) next.push(id);
     setCollapsed(next);
     writeView(scope, collapsedKey, next);
   };
@@ -267,7 +266,14 @@ export function SoloWorkspaces({
                 !collapsed.includes(project.id) ||
                 renamingProject === project.id
               }
-              onOpenChange={(open) => toggle(project.id, open)}
+              onOpenChange={(open) =>
+                toggle(
+                  project.id,
+                  renamingProject === project.id
+                    ? collapsed.includes(project.id)
+                    : open,
+                )
+              }
               data-animate={animate || undefined}
             >
               <ChatActionsMenu
@@ -297,7 +303,9 @@ export function SoloWorkspaces({
                       tone="danger"
                       data-delete-solo-project=""
                       disabled={
-                        !preferences.sectionRemovalWritable || !!deleting
+                        !preferences.sectionRemovalWritable ||
+                        !!deleting ||
+                        renamingProject === project.id
                       }
                       onClick={() => {
                         setDeleting(project.id);

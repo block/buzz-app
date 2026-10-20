@@ -592,10 +592,7 @@ test("capsule and companion presentation share mute and leave", async ({
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.evaluate(() => window.huddleFixture.speak("cd".repeat(32)));
-  await expect(speakerHalo).toHaveCSS(
-    "transform",
-    "matrix(1.15, 0, 0, 1.15, 0, 0)",
-  );
+  await expect(speakerHalo).toHaveCSS("transform", "none");
   await page.evaluate(
     (keys) => window.huddleFixture.participants(keys),
     keys.slice(0, 1),
@@ -1329,6 +1326,8 @@ test("DM requests share window and capsule controls without capturing audio unti
         .getByRole("button", { name: "Decline", exact: true })
         .boundingBox();
       expect(Math.abs(join.width - decline.width)).toBeLessThan(1);
+      // The compact prompt retains solid call colors; the window uses glass icons.
+      if (surface === request) continue;
       for (const [name, tone] of [
         ["Join", "join"],
         ["Decline", "decline"],

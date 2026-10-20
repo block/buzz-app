@@ -450,6 +450,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "destructive",
       "outline",
       "attention (proposed): light dashed danger outline with slow marching ants",
+      "glass",
       "inverted",
       "link",
       "plain: unfilled text disclosure without an underline",

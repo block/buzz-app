@@ -72,10 +72,10 @@
   flex-direction: column;
   background: var(--surface-panel);
   padding: var(--space-6);
-  gap: var(--space-5);
+  gap: var(--space-6);
 }
 .windowHeader {
-  min-height: 1.75rem;
+  min-height: var(--space-8);
   display: flex;
   justify-content: flex-end;
   align-items: center;
@@ -89,12 +89,16 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-4);
   text-align: center;
+}
+.windowFooter > p,
+.window > p[role="status"] {
+  margin: 0;
 }
 .windowControls {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 .windowControlBar {
   width: 100%;
@@ -308,41 +312,28 @@
 }
 .speakingHalo {
   position: absolute;
-  inset: 0;
+  inset: -8px;
+  padding: 4px;
   pointer-events: none;
-  /* Organic artwork mask, not a control or surface corner. */
-  border-radius: 43% 57% 62% 38% / 55% 38% 62% 45%;
+  border-radius: var(--radius-pill);
   background: var(--affordance-selected);
   overflow: hidden;
-  filter: blur(8px);
+  /* Keep the blurred artwork inside a crisp, four-pixel stroke. */
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
   opacity: 0;
-  transform: scale(1);
-  transition:
-    opacity 280ms var(--easing-settle),
-    transform 280ms var(--easing-settle);
+  transition: opacity 280ms var(--easing-settle);
 }
 .speakingHalo[data-speaking="true"] {
-  opacity: 0.8;
-  transform: scale(var(--speaker-scale));
+  opacity: 0.5;
 }
 .speakingArtwork {
   position: absolute;
   inset: -25%;
   display: grid;
   filter: blur(8px);
-}
-@media (prefers-reduced-motion: no-preference) {
-  .speakingHalo[data-speaking="true"] {
-    animation: speaking-shape 2400ms ease-in-out infinite alternate;
-  }
-}
-@keyframes speaking-shape {
-  from {
-    border-radius: 43% 57% 62% 38% / 55% 38% 62% 45%;
-  }
-  to {
-    border-radius: 60% 40% 42% 58% / 42% 59% 41% 58%;
-  }
 }
 .bubbleName {
   pointer-events: none;
@@ -384,23 +375,13 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .speakingHalo[data-speaking="true"] {
-    transform: scale(1.15);
-  }
-}
-
-/* Compact Leave keeps its red hover; window controls share the mobile gray fill. */
+/* Preserve the semantic hang-up color on shared controls. */
 .capsule [data-huddle-leave],
 .windowControls [data-huddle-leave] {
   color: var(--text-call-leave);
 }
 .capsule [data-huddle-leave] {
   background: transparent;
-}
-.windowControls {
-  --interaction-fill: var(--affordance-subtle-hover);
-  --interaction-hover: var(--affordance-subtle-pressed);
 }
 @media (hover: hover) and (pointer: fine) {
   .capsule > button:hover + .capsuleDivider,
@@ -415,34 +396,67 @@
   background: var(--affordance-danger-pressed);
 }
 
+.requestWindow {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
 .requestBody {
+  container-type: size;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-3);
+  gap: var(--space-4);
   text-align: center;
 }
 .requestAvatar {
-  width: 8rem;
-  height: 8rem;
+  container-type: inline-size;
+  width: min(80cqw, 85cqh, 20rem);
+  aspect-ratio: 1;
+}
+.requestInitial {
+  font-size: 40cqw;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  opacity: 0.5;
 }
 .requestBody p {
   margin: 0;
 }
 .requestTitle {
+  margin: 0;
+  min-width: 0;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+.requestTitle > :last-child {
+  flex-shrink: 0;
 }
 .requestName {
-  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .requestActions {
+  width: 100%;
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+.requestAction {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
 }
 .requestCompactActions {
   display: inline-grid;
@@ -451,14 +465,14 @@
   align-items: center;
 }
 
-:is(.requestActions, .requestCompactActions) [data-huddle-join] {
+.requestCompactActions [data-huddle-join] {
   --interaction-fill: var(--affordance-call-join);
   --interaction-hover: var(--affordance-call-join-hover);
   --interaction-pressed: var(--affordance-call-join);
   color: var(--text-inverse);
 }
 
-:is(.requestActions, .requestCompactActions) [data-variant="destructive"] {
+.requestCompactActions [data-variant="destructive"] {
   --affordance-danger: var(--affordance-call-decline);
   --affordance-danger-hover: var(--affordance-call-decline-hover);
   --affordance-danger-pressed: var(--affordance-call-decline);
@@ -506,9 +520,6 @@ html[data-keyboard-input] :is(.selfBubble, .cloudBubble, .bubbleName) {
 }
 .avatarToss img {
   pointer-events: none;
-}
-.avatarToss > .speakingHalo {
-  z-index: -1;
 }
 .avatarForeground:has([data-avatar-moving]) {
   z-index: 2;

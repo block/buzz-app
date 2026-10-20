@@ -32,6 +32,7 @@ export function HuddleAudioSettings({
         render={
           <IconButton
             size={compact ? "toolbar" : "large"}
+            shape={compact ? "control" : "round"}
             variant={compact || quiet ? "ghost" : "subtle"}
             aria-label="Audio settings"
             title="Audio settings"

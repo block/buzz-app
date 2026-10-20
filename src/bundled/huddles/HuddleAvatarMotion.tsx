@@ -31,7 +31,7 @@ export function HuddleAvatarMotion({
           restingTilt +
             (reduced
               ? 0
-              : Math.min(1, Math.max(0, level)) * 6 * (seed % 2 ? 1 : -1)),
+              : Math.min(1, Math.max(0, level)) * 1.5 * (seed % 2 ? 1 : -1)),
         ),
       )
     : 0;
@@ -70,7 +70,7 @@ export function HuddleAvatarMotion({
             reduced ||
             document.documentElement.hasAttribute("data-keyboard-input")
               ? { duration: 0 }
-              : { type: "spring", stiffness: 100, damping: 20 }
+              : { type: "spring", stiffness: 60, damping: 20 }
           }
           style={{
             display: "grid",

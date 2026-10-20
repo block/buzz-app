@@ -49,8 +49,11 @@ The proposed `text-call-leave` role preserves the requested Red 10 in both theme
 It is a documented contrast exception for these controls: the light-mode Leave
 label measures 3.09–4.37:1 across its opaque fills; dark-mode APCA is Lc 35.2–40.4.
 Glass depends on its backdrop and is not certified by those opaque measurements.
-The separate window uses matching neutral gray controls for microphone and Leave,
-with a Red 10 Leave icon.
+The separate window uses shared round glass controls for microphone, chat, and Leave,
+with a Red 10 Leave icon. Incoming requests use a large centered portrait over
+blurred profile artwork, with a red decline icon on the left, a green join icon
+on the right, and the caller label between them. Initials scale with the portrait
+and render at 50% opacity.
 New arrivals slide
 and scale into the front of the stack; reduced motion removes that movement. The
 latest four avatars remain visible, with a matching avatar showing the count for other participants. Click the
@@ -63,12 +66,11 @@ Names appear on hover or keyboard focus. In small calls, nearby portraits shift
 aside for the active name capsule, then settle back when it closes. In the ring,
 names sit inside portraits without moving neighbors. Only one name is shown
 at a time; reduced motion makes the layout change immediate.
-An organic, softly blurred halo around each speaker eases between audio levels with a restrained expansion,
-responding to their own microphone or received audio,
-then fades after speech stops. The window uses these halos instead of a footer
-waveform; the compact player keeps its waveform. Photo halos reuse the avatar artwork;
-initials use the neutral tint of the fallback avatar. The shape gently changes while
-speaking and stays still with reduced motion. Muting clears only your halo.
+A four-pixel ring appears around each speaker at 50% opacity, responding to
+their own microphone or received audio, then fades after speech stops. The ring
+uses blurred avatar artwork inside a crisp stroke; initials use the neutral
+fallback tint. The compact player keeps its waveform. Muting clears only your
+ring. Portrait scale and rotation respond subtly to speech with softened motion.
 Window portraits fill the stage: solo artwork can reach 320px; duets use roughly
 42% of the stage width per portrait, and groups retain a tightly packed cloud of
 varied sizes. Portraits gently grow with their audio level.

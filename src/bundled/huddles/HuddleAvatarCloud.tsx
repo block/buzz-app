@@ -365,15 +365,15 @@ function Bubble({
   const label = `${person.name}${person.own ? (muted ? " (you, muted)" : " (you)") : ""}${level > 0 ? ", speaking" : ""}`;
   return (
     <HuddleAvatarToss stage={stage}>
-      <SpeakingHalo level={level} person={person} />
       <span
         className={styles.bubbleArtwork}
         style={
           {
-            "--voice-scale": level > 0 ? 1.04 + Math.min(level, 0.6) * 0.16 : 1,
+            "--voice-scale": 1 + Math.min(level, 0.6) * 0.06,
           } as CSSProperties
         }
       >
+        <SpeakingHalo level={level} person={person} />
         <HuddleAvatarMotion participant={person.key} playful level={level}>
           <Avatar
             size="fill"
@@ -408,11 +408,6 @@ function SpeakingHalo({ level, person }: { level: number; person: Person }) {
       data-speaking={level > 0}
       data-speaker={person.key}
       aria-hidden="true"
-      style={
-        {
-          "--speaker-scale": 1.16 + Math.max(0, Math.min(1, level)) * 0.55,
-        } as CSSProperties
-      }
     >
       {person.picture && (
         <span className={styles.speakingArtwork}>

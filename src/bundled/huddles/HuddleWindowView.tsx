@@ -16,7 +16,7 @@ import {
   ChatCircleIcon,
   MicrophoneIcon,
   MicrophoneSlashIcon,
-  PhoneDisconnectIcon,
+  PhoneEndIcon,
 } from "../../shared/design-system/icons";
 import styles from "./Huddles.module.css";
 
@@ -153,44 +153,42 @@ function HuddleWindowContent({ view, act, error }: WindowProps) {
             <div className={styles.windowControls}>
               <IconButton
                 size="large"
-                variant="subtle"
+                variant="glass"
+                shape="round"
                 ref={focus.mute}
                 aria-label={view.muted ? "Unmute" : "Mute"}
                 title={view.muted ? "Unmute" : "Mute"}
                 aria-pressed={view.muted}
                 disabled={view.phase !== "connected"}
                 onClick={() => act("mute")}
-                icon={
-                  view.muted ? (
-                    <MicrophoneSlashIcon size={22} />
-                  ) : (
-                    <MicrophoneIcon size={22} />
-                  )
-                }
+                icon={view.muted ? <MicrophoneSlashIcon /> : <MicrophoneIcon />}
               />
               <IconButton
                 size="large"
-                variant="subtle"
+                variant="glass"
+                shape="round"
                 aria-label="Huddle chat"
                 title="Huddle chat"
                 aria-expanded={open && !closing}
                 onClick={toggleChat}
-                icon={<ChatCircleIcon size={22} />}
+                icon={<ChatCircleIcon />}
               />
               <IconButton
                 size="large"
-                variant="subtle"
+                variant="glass"
+                shape="round"
                 data-huddle-leave=""
                 aria-label="Leave huddle"
                 title="Leave huddle"
                 disabled={view.phase === "leaving"}
                 onClick={() => act("leave")}
-                icon={<PhoneDisconnectIcon size={22} />}
+                icon={<PhoneEndIcon />}
               />
             </div>
             <IconButton
               size="large"
               variant="ghost"
+              shape="round"
               aria-label="Minimize Huddle to compact controls"
               title="Minimize Huddle"
               onClick={() => act("minimize")}

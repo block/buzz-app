@@ -8028,7 +8028,7 @@ describe("Delete as a recoverable archive", () => {
       try {
         const seen: unknown[] = [];
         const off = g.f.service.subscribe(() =>
-          seen.push(g.f.service.find(bot)?.settings),
+          seen.push(g.f.service.find(bot)?.config),
         );
         const before = g.relay.publishing.mock.calls.length;
         const savingB =
@@ -8075,11 +8075,15 @@ describe("Delete as a recoverable archive", () => {
           expect(shown.instructions).toBe("CONFIG B");
         else expect(shown.model).toBe("model-b");
         off();
-        for (const value of seen) {
-          const view = value as { instructions?: string; model?: string };
-          expect(view.instructions).not.toBe("CONFIG C");
-          expect(view.model).not.toBe("model-c");
-        }
+        // The editor only ever moves from A to accepted B, never to draft C.
+        const views = seen.map((value) => {
+          const { instructions, model } = value as typeof shown;
+          return `${instructions} / ${model}`;
+        });
+        expect(views.filter((view, i) => view !== views[i - 1])).toEqual([
+          "CONFIG A / model-a",
+          side === "instructions" ? "CONFIG B / model-a" : "CONFIG A / model-b",
+        ]);
         g.deliver("4".repeat(64));
         await vi.waitFor(() =>
           expect(g.process.geese[0]?.turns).toHaveLength(2),

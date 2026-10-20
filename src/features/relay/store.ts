@@ -271,14 +271,16 @@ export function createChannelStore(
         old.readOnly === channel.readOnly &&
         old.cached === channel.cached &&
         old.pending === channel.pending &&
-        old.members?.length === channel.members?.length &&
-        (old.members ?? []).every(
-          (id, index) => id === channel.members?.[index],
-        ) &&
-        old.participants?.length === channel.participants?.length &&
-        (old.participants ?? []).every(
-          (id, index) => id === channel.participants?.[index],
-        )
+        (old.members === channel.members ||
+          (old.members?.length === channel.members?.length &&
+            (old.members ?? []).every(
+              (id, index) => id === channel.members?.[index],
+            ))) &&
+        (old.participants === channel.participants ||
+          (old.participants?.length === channel.participants?.length &&
+            (old.participants ?? []).every(
+              (id, index) => id === channel.participants?.[index],
+            )))
         ? old
         : Object.freeze({ ...channel, metadataPending: pending, preview });
     });

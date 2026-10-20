@@ -1019,3 +1019,69 @@ it("shows only owned notes in the index grid and retains a note while filtering 
   ).toBeVisible();
   expect(screen.getByRole("tab", { name: "Latest" })).toBeVisible();
 });
+
+it("pages beyond the real profile directory budget and retains evicted agent classification", async () => {
+  const { createProfileDirectory } = await import(
+    "../../features/relay/profile-directory"
+  );
+  const entries = Array.from({ length: 1101 }, (_, i) => ({
+    ...note(`Entry ${i}`, (i + 1).toString(16).padStart(64, "0"), 2000 - i),
+    id: (i + 1).toString(16).padStart(64, "0"),
+  }));
+  const directory = createProfileDirectory({
+    read: vi.fn(async ([filter]: readonly ReadFilter[]) =>
+      (filter?.authors ?? []).map((pubkey) => ({
+        ...note("Profile", pubkey),
+        kind: 0,
+        content: JSON.stringify({
+          name: `Agent ${entries.findIndex((entry) => entry.pubkey === pubkey)}`,
+          is_agent:
+            pubkey === entries[0]?.pubkey || pubkey === entries.at(-1)?.pubkey,
+        }),
+      })),
+    ),
+  } as unknown as Parameters<typeof createProfileDirectory>[0]);
+  try {
+    await expect(
+      directory.ensure(entries.map((entry) => entry.pubkey)),
+    ).rejects.toThrow("directory budget");
+    const f = fixture();
+    let page = 0;
+    f.readPage.mockImplementation(async ([filter]) => {
+      if (filter?.authors) return { events: [], relayCount: 0 };
+      const events = entries.slice(page * 100, ++page * 100);
+      return { events, relayCount: events.length };
+    });
+    render(
+      <NotesCommunity
+        session={{ ...f.session, profiles: directory.queries }}
+      />,
+    );
+    await screen.findByRole("button", { name: "Open Agent 0 folder" });
+    for (let i = 1; i <= 11; i++) {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Load older notes" }),
+      );
+      await waitFor(() => expect(page).toBe(i + 1));
+      await waitFor(() => {
+        const more = screen.queryByRole("button", { name: "Load older notes" });
+        if (i === 11) expect(more).not.toBeInTheDocument();
+        else expect(more).not.toHaveAttribute("aria-busy", "true");
+      });
+    }
+    await screen.findByRole("button", { name: "Open Agent 1100 folder" });
+    expect(directory.queries.snapshot().has(entries[0]?.pubkey ?? "")).toBe(
+      false,
+    );
+    expect(
+      screen.getByRole("button", { name: "Open Agent 0 folder" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Open Agent 500 folder" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/could not be checked/)).not.toBeInTheDocument();
+  } finally {
+    cleanup();
+    directory.dispose();
+  }
+});

@@ -19,6 +19,7 @@ import {
 } from "../../features/relay/message-content";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
+import type { Profile } from "../../features/relay/contracts";
 import type { EventData } from "../../features/relay/events";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
@@ -280,6 +281,7 @@ function NoteCollection({
 }) {
   const [request, setRequest] = useState({ version: 0, more: false });
   const pages = useRef({ owned: emptyNotePage(), shared: emptyNotePage() });
+  const sharedAgents = useRef(new Map<string, Profile>());
   const [result, setResult] = useState<{
     notes: EventData[];
     loading: boolean;
@@ -296,17 +298,20 @@ function NoteCollection({
     const others = [...new Set(result.notes.map((note) => note.pubkey))].filter(
       (pubkey) =>
         !ownedAgents.some((agent) => agent.pubkey === pubkey) &&
-        profiles.get(pubkey)?.isAgent,
+        sharedAgents.current.has(pubkey),
     );
     const candidates = [...ownedAgents.map((agent) => agent.pubkey), ...others];
     return [
       ...ownedAgents.map((agent) => ({ ...agent, owned: true })),
       ...others.map((pubkey) => ({
         pubkey,
-        picture: profiles.get(pubkey)?.picture,
+        picture: (profiles.get(pubkey) ?? sharedAgents.current.get(pubkey))
+          ?.picture,
         name: resolveName(
           pubkey,
-          profiles.get(pubkey)?.name ?? formatPublicKey(pubkey) ?? pubkey,
+          (profiles.get(pubkey) ?? sharedAgents.current.get(pubkey))?.name ??
+            formatPublicKey(pubkey) ??
+            pubkey,
           candidates,
         ),
         owned: false,
@@ -372,24 +377,44 @@ function NoteCollection({
       options,
     ).then(async (page) => {
       controller.signal.throwIfAborted();
-      await session.profiles.ensure(
-        [...new Set(page.notes.map((note) => note.pubkey))],
-        "background",
-      );
-      return page;
+      const known = request.more
+        ? new Map(sharedAgents.current)
+        : new Map<string, Profile>();
+      const previousIds = new Set(previous.shared.notes.map((note) => note.id));
+      const newAuthors = [
+        ...new Set(
+          page.notes
+            .filter((note) => !previousIds.has(note.id))
+            .map((note) => note.pubkey),
+        ),
+      ];
+      // Enrich only this page, and retain accepted classification across directory eviction.
+      for (let offset = 0; offset < newAuthors.length; offset += NOTE_LIMIT) {
+        const batch = newAuthors.slice(offset, offset + NOTE_LIMIT);
+        await session.profiles.ensure(batch, "background");
+        controller.signal.throwIfAborted();
+        for (const pubkey of batch) {
+          const profile = session.profiles.snapshot().get(pubkey);
+          if (profile?.isAgent) known.set(pubkey, profile);
+          else known.delete(pubkey);
+        }
+      }
+      return { page, agents: known };
     });
     void Promise.allSettled([owned, shared]).then(
       ([ownResult, sharedResult]) => {
         if (controller.signal.aborted) return;
         if (ownResult.status === "fulfilled")
           pages.current.owned = ownResult.value;
-        if (sharedResult.status === "fulfilled")
-          pages.current.shared = sharedResult.value;
+        if (sharedResult.status === "fulfilled") {
+          pages.current.shared = sharedResult.value.page;
+          sharedAgents.current = sharedResult.value.agents;
+        }
         const ownAuthors = authors ? authors.split(":") : [];
         const sharedNotes = pages.current.shared.notes.filter(
           (note) =>
             !ownAuthors.includes(note.pubkey) &&
-            session.profiles.snapshot().get(note.pubkey)?.isAgent,
+            sharedAgents.current.has(note.pubkey),
         );
         const notes = noteHeads(
           [...pages.current.owned.notes, ...sharedNotes],

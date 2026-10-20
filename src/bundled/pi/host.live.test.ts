@@ -73,7 +73,7 @@ out.a = { ...(await pi.rpc("wait", { agent, submission: a.submission })), calls:
 faux.setResponses([fauxAssistantMessage("Plain answer")]);
 const b = await pi.rpc("deliver", turn("B", "second"));
 out.b = { ...(await pi.rpc("wait", { agent, submission: b.submission })), conversation: b.conversation };
-// What a transcript reads: the places, and the entries without schemas or usage.
+// What a transcript and usage read: the places, and the entries without schemas.
 out.places = (await pi.rpc("places", { agent })).places;
 out.entries = (await pi.rpc("entries", { agent, conversation: a.conversation })).entries.map((entry) => [entry.kind, ...(entry.model ?? []).map((message) => message.role + (message.usage ? "+usage" : ""))]);
 // A request while the run works steers it.
@@ -195,12 +195,13 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.places).toEqual([
       { key: "chan/root", conversation: out.a.conversation, seen: 100 },
     ]);
-    // Newest first; a system entry's tool schemas are left out.
+    // Newest first; a system entry's tool schemas are left out, an answer's
+    // usage kept.
     expect(out.entries).toEqual([
-      ["pi.assistant", "assistant"],
+      ["pi.assistant", "assistant+usage"],
       ["pi.user", "user"],
       ["pi.tool-result", "toolResult"],
-      ["pi.assistant", "assistant"],
+      ["pi.assistant", "assistant+usage"],
       ["pi.system"],
       ["pi.user", "user"],
     ]);

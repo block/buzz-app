@@ -179,8 +179,9 @@ async function piDefaults(dir) {
   }
 }
 
-/** A message as a transcript shows it: no usage, image data or signatures. */
-const slim = ({ usage, ...message }) =>
+/** A message as a transcript and usage show it: no image data or
+ * signatures. */
+const slim = (message) =>
   Array.isArray(message.content)
     ? {
         ...message,

@@ -13,6 +13,7 @@ import { useWorkingAgents } from "../../bundled/channels/useWorkingAgents";
 import { WorkingAgentsBadge } from "../../bundled/channels/WorkingAgentsBadge";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
 import { SoloWorkspaces } from "../../bundled/channels/SoloWorkspaces";
+import { soloSharedMarkId } from "../../bundled/channels/SoloShare";
 import { useChannelList } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import { useRecoveryShown } from "../relay/RecoveryNotice";
@@ -278,6 +279,7 @@ function SoloConversationRow({
           selected={selected}
           data-solo-channel-id={id}
           aria-current={selected ? "page" : undefined}
+          aria-describedby={soloSharedMarkId(id)}
           onPointerDown={(event) => {
             pointer.current = event.pointerType;
           }}

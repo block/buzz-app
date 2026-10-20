@@ -123,7 +123,11 @@ export function ChatAccessIndicator({
   );
 }
 
-/** Status only: the chat's actions menu owns access management. */
+/** Status only: the chat's actions menu owns access management. The row's
+ * select button names it through `soloSharedMarkId`. */
+export const soloSharedMarkId = (channelId: string) =>
+  `solo-shared-${channelId}`;
+
 export function ChatSharedMark({
   session,
   channel,
@@ -133,8 +137,9 @@ export function ChatSharedMark({
 }) {
   if (!useSharedWithPeople(session, channel)) return null;
   return (
-    <span role="img" aria-label="Shared" title="Shared" data-solo-shared="">
+    <span id={channel && soloSharedMarkId(channel.id)} data-solo-shared="">
       <UsersIcon size={16} aria-hidden="true" />
+      <span className="sr-only">Shared</span>
     </span>
   );
 }

@@ -60,7 +60,8 @@ async function showSharedMark(page, app, row) {
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   const outer = page.locator(`[data-solo-menu-id="${id}"]`);
-  const shared = outer.getByRole("img", { name: "Shared", exact: true });
+  const shared = outer.locator("[data-solo-shared]");
+  await expect(row).toHaveAccessibleDescription("Shared");
   await expect(shared).toBeVisible();
   return shared;
 }

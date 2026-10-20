@@ -264,7 +264,7 @@
   flex: 0 0 auto;
   width: var(--session-action-size);
   height: var(--session-action-size);
-  color: var(--text-subtle);
+  color: var(--text-row-subtle);
 }
 .organizedRow:has([aria-current="page"]) [data-solo-shared] {
   color: var(--text-row-selected-subtle);
@@ -296,7 +296,8 @@
       var(--session-trailing-end)
     );
   }
-  /* The pill ends on the row inset, the overflow glyph's trailing edge. */
+  /* The pill ends on the row inset, the overflow glyph's trailing edge.
+     Hover ties this rule's specificity, so it must stay after it. */
   .sidebarContents
     .organizedRow
     > div

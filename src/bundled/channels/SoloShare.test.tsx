@@ -34,7 +34,12 @@ import {
   saveShareHistory,
   shareHistoryKey,
 } from "../../features/solo/share-history";
-import { ChatAccessIndicator, ChatSharedMark, SoloShare } from "./SoloShare";
+import {
+  ChatAccessIndicator,
+  ChatSharedMark,
+  SoloShare,
+  soloSharedMarkId,
+} from "./SoloShare";
 import { SoloWorkspaces } from "./SoloWorkspaces";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import {
@@ -1555,9 +1560,16 @@ it("shows Shared on cold render from verified members and cached human evidence 
   ).toBeEnabled();
   cleanup();
   // The sidebar's status mark reads the same evidence but is not an action.
-  render(<ChatSharedMark session={t.session} channel={channel} />);
-  expect(screen.getByRole("img", { name: "Shared" })).toBeInTheDocument();
-  expect(screen.queryByRole("button")).toBeNull();
+  render(
+    <>
+      <button type="button" aria-describedby={soloSharedMarkId(source)}>
+        Row
+      </button>
+      <ChatSharedMark session={t.session} channel={channel} />
+    </>,
+  );
+  expect(screen.getByRole("button")).toHaveAccessibleDescription("Shared");
+  expect(screen.getAllByRole("button")).toHaveLength(1);
   expect(t.session.memberAdministration.snapshot(source)?.status).not.toBe(
     "ready",
   );

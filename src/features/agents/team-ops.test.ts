@@ -978,6 +978,46 @@ describe("team operations: saved before sending", () => {
     expect(JSON.parse(w.relay.head?.content ?? "").name).toBe("Later");
   });
 
+  it("a Delete stops an earlier change still saving, and numbers after it", async () => {
+    const del = (w: ReturnType<typeof world>, teamId: string) =>
+      w.runner.submit({
+        kind: "delete",
+        teamId,
+        channel: CH,
+        intent: { name: "", instructions: "", members: [] },
+      });
+    const w = world();
+    const teamId = await existing(w);
+    const save = hold(w, (value) => value.includes('"Renamed"'));
+    const old = edit(w, teamId, { name: "Renamed" });
+    await save.reached;
+    const deleting = del(w, teamId);
+    save.release();
+    await deleting.saved;
+    expect(record(w, old.op.id)).toMatchObject({
+      mode: "reconcile-only",
+      stop: "deleted",
+    });
+    expect(record(w, deleting.op.id).seq).toBeGreaterThan(
+      record(w, old.op.id).seq,
+    );
+    await old.done;
+    expect(w.writer.publish).not.toHaveBeenCalled();
+
+    // An earlier change that never saved isn't there to stop.
+    const v = world();
+    const id = await existing(v);
+    const failed = hold(v, (value) => value.includes('"Renamed"'), true);
+    const lost = edit(v, id, { name: "Renamed" });
+    await failed.reached;
+    const after = del(v, id);
+    failed.release();
+    await expect(lost.done).rejects.toThrow(STORAGE_FULL);
+    await after.saved;
+    expect(v.ops.get(lost.op.id)).toBeUndefined();
+    expect(record(v, after.op.id)).toMatchObject({ mode: "may-send", seq: 1 });
+  });
+
   it("saves records in the order they were written", async () => {
     const w = world();
     const teamId = await existing(w);

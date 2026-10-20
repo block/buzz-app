@@ -183,8 +183,6 @@ export class TeamOps {
       .filter((op) => op.owner === owner && op.community === community)
       .sort((a, b) => a.seq - b.seq);
   every = () => Object.values(this.records);
-  nextSeq = () =>
-    Math.max(0, ...Object.values(this.records).map((op) => op.seq)) + 1;
   /** Settles once every write made so far has. */
   settled = () => this.state.settled();
   /** Stores `changes` (undefined removes) in one write, each made from the
@@ -212,7 +210,44 @@ export class TeamOps {
       throw new Error(STORAGE_FULL, { cause });
     });
   }
+  /** Runs `decide` on the records as saved when its turn comes, and stores
+   * the changes it returns (undefined removes) in one write. Resolves with
+   * whether it returned any: a decision that needs the saved records, which
+   * a write made from an earlier read can't see. Throws and rejects with
+   * `STORAGE_FULL` as `write` does. */
+  update(
+    decide: (
+      records: Readonly<Record<string, TeamOp>>,
+    ) => Readonly<Record<string, TeamOp | undefined>> | undefined,
+  ): Promise<boolean> {
+    let applied = false;
+    const apply = (records: Readonly<Record<string, TeamOp>>) => {
+      const changes = decide(records);
+      applied = !!changes;
+      if (!changes) return records;
+      const next = { ...records };
+      for (const [id, op] of Object.entries(changes))
+        if (op) next[id] = op;
+        else delete next[id];
+      if (overflows(records, next, Object.keys(changes)))
+        throw new Error(STORAGE_FULL);
+      return next;
+    };
+    apply(this.records);
+    return this.state.change(apply).then(
+      () => applied,
+      (cause: unknown) => {
+        if (cause instanceof Error && cause.message === STORAGE_FULL)
+          throw cause;
+        throw new Error(STORAGE_FULL, { cause });
+      },
+    );
+  }
 }
+
+/** The next submission number among `records`. */
+const nextSeq = (records: Readonly<Record<string, TeamOp>>) =>
+  Math.max(0, ...Object.values(records).map((op) => op.seq)) + 1;
 
 /** Whether a record still holds something whose outcome is unknown. */
 export const unresolved = (op: TeamOp) =>
@@ -324,33 +359,45 @@ export function teamRunner(deps: RunnerDeps) {
    * its step decides from the metadata it reads, not from `mode`. */
   const intentKinds = (op: TeamOp) => !LIFECYCLE[op.kind];
 
-  /** Stores a new change. A Delete
-   * stops every older record on the team in the same write. */
+  /** Stores a new change, numbered after every record saved before it. A
+   * Delete stops every older record on the team in the same write, as
+   * saved then: an earlier change still saving is stopped too. */
   function submit(
     input: Pick<TeamOp, "kind" | "teamId" | "intent"> &
       Partial<Pick<TeamOp, "base" | "source" | "channel" | "local">>,
   ) {
-    const op: TeamOp = {
-      id: crypto.randomUUID(),
-      owner: deps.owner,
-      community: deps.community,
-      commands: LIFECYCLE[input.kind]
-        ? [{ action: LIFECYCLE[input.kind] as "archive", state: "planned" }]
-        : [],
-      mode: "may-send",
-      seq: ops.nextSeq(),
-      ...input,
-    };
-    const changes: Record<string, TeamOp> = { [op.id]: op };
-    if (op.kind === "delete")
-      for (const older of onTeam(op.teamId))
-        if (older.mode === "may-send")
-          changes[older.id] = {
-            ...older,
-            mode: "reconcile-only",
-            stop: "deleted",
-          };
-    return { op, saved: put(changes) };
+    const id = crypto.randomUUID();
+    const saved = ops
+      .update((records) => {
+        const op: TeamOp = {
+          id,
+          owner: deps.owner,
+          community: deps.community,
+          commands: LIFECYCLE[input.kind]
+            ? [{ action: LIFECYCLE[input.kind] as "archive", state: "planned" }]
+            : [],
+          mode: "may-send",
+          seq: nextSeq(records),
+          ...input,
+        };
+        const changes: Record<string, TeamOp> = { [id]: op };
+        if (op.kind === "delete")
+          for (const older of Object.values(records))
+            if (
+              older.owner === op.owner &&
+              older.community === op.community &&
+              older.teamId === op.teamId &&
+              older.mode === "may-send"
+            )
+              changes[older.id] = {
+                ...older,
+                mode: "reconcile-only",
+                stop: "deleted",
+              };
+        return changes;
+      })
+      .then(() => deps.changed());
+    return { op: { id }, saved };
   }
 
   /** One step of record `id`, queued on its team. Resolves with the record
@@ -905,7 +952,7 @@ export function teamRunner(deps: RunnerDeps) {
       // adopts) again; with a head, it edits from it.
       const first =
         base === null && (old.kind === "create" || old.kind === "import");
-      const op: TeamOp = {
+      const op: Omit<TeamOp, "seq"> = {
         id: crypto.randomUUID(),
         owner: old.owner,
         community: old.community,
@@ -920,11 +967,14 @@ export function teamRunner(deps: RunnerDeps) {
         ...((move || first) && old.source ? { source: old.source } : {}),
         commands: [],
         mode: "may-send",
-        seq: ops.nextSeq(),
         ...(old.channel ? { channel: old.channel } : {}),
       };
       if (!move) await deps.done(old);
-      await put({ [old.id]: undefined, [op.id]: op });
+      await ops.update((records) => ({
+        [old.id]: undefined,
+        [op.id]: { ...op, seq: nextSeq(records) },
+      }));
+      deps.changed();
       return { op, done: run(op.id) };
     },
   };

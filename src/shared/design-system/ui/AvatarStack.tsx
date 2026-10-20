@@ -52,13 +52,24 @@ export function AvatarStack({
           />
         </span>
       ))}
-      {items.length > max && (
-        <span
-          className={`${styles.count}${size === "large" ? " text-label" : ""}`}
-        >
-          +{items.length - max}
-        </span>
-      )}
+      {items.length > max &&
+        (size === "large" ? (
+          // A large count is one more stack item, shaped like the avatars.
+          <span
+            className={styles.item}
+            data-avatar-shape={items[0]?.shape}
+            style={{ zIndex: max + 1 }}
+          >
+            <span
+              className={`${styles.countFill} text-label`}
+              data-avatar-shape={items[0]?.shape}
+            >
+              +{items.length - max}
+            </span>
+          </span>
+        ) : (
+          <span className={styles.count}>+{items.length - max}</span>
+        ))}
     </span>
   );
 }

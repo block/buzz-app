@@ -654,10 +654,12 @@ test("landing scan survives channel presentation churn without restarting", asyn
       await page.evaluate(() =>
         window.workflowSessionFixture.renameFirstChannel(),
       );
-      // The card's channel label also holds its hidden control reason.
-      await expect(page.getByRole("article")).toContainText(
-        `#${index % 2 ? "Z-last" : "A-first"} channel ${index}`,
-      );
+      await expect(
+        page.getByRole("heading", {
+          name: `#${index % 2 ? "Z-last" : "A-first"} channel ${index}`,
+          exact: true,
+        }),
+      ).toBeVisible();
     }
     expect(
       await page.evaluate(() =>

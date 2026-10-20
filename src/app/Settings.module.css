@@ -440,6 +440,7 @@
   overflow-y: auto;
   padding: var(--space-4) var(--space-5) var(--space-6);
   border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
   background: var(--surface-panel);
   animation: plugin-side-in var(--duration-fast, 160ms)
     var(--ease-out, ease-out);

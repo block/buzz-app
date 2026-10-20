@@ -23,7 +23,7 @@ import {
 } from "./config-writes";
 import { storedBinding } from "./community-config";
 import { TeamJournal } from "./team-config";
-import { memoryStorage } from "./test-fakes";
+import { memoryStorage, sharedFiles } from "./test-fakes";
 
 const owner = keypair();
 const agent = keypair().pubkey;
@@ -526,6 +526,71 @@ describe("migration journal", () => {
       draft: body("Edited meanwhile"),
     });
     expect(f.local.stripped).toBe(0);
+  });
+});
+
+describe("journal saves before relay writes", () => {
+  /** A journal in agent storage files whose saves wait for `release`, or
+   * fail with `fail`. */
+  function heldJournal() {
+    const files = sharedFiles();
+    let release = () => {};
+    let fail = (_: Error) => {};
+    const hold = new Promise<void>((resolve, reject) => {
+      release = resolve;
+      fail = reject;
+    });
+    hold.catch(() => {});
+    const journal = new MigrationJournal(files.open(hold));
+    const restarted = () => new MigrationJournal(files.open());
+    return { journal, restarted, release, fail };
+  }
+
+  it("sends a save only once its held bytes are saved, so a restart resends them", async () => {
+    const disk = heldJournal();
+    let held: string | undefined;
+    const f = await setup(() => {
+      held = disk.restarted().unsaved(subject)?.event.id;
+    });
+    const deps = { ...f.deps, journal: disk.journal };
+    const saving = save(deps, f.side, body("Held"));
+    await vi.waitFor(() => expect(f.writer.sign).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(f.sent).toHaveLength(0);
+    disk.release();
+    expect((await saving).status).toBe("saved");
+    expect(f.sent).toHaveLength(1);
+    expect(held).toBe(f.sent[0]?.id);
+  });
+
+  it("sends no save and reports the failure when its held bytes can't be saved", async () => {
+    const disk = heldJournal();
+    const f = await setup();
+    const deps = { ...f.deps, journal: disk.journal };
+    const saving = save(deps, f.side, body("Held"));
+    disk.fail(new Error("disk full"));
+    await expect(saving).rejects.toThrow("disk full");
+    expect(f.sent).toHaveLength(0);
+    expect(disk.journal.unsaved(subject)).toBeUndefined();
+  });
+
+  it("migrates only once each journal entry is saved, and sends nothing when one fails", async () => {
+    const held = heldJournal();
+    const f = await setup();
+    const migrating = migrate({ ...f.deps, journal: held.journal }, f.side);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(f.sent).toHaveLength(0);
+    held.release();
+    expect((await migrating).status).toBe("confirmed");
+    expect(f.sent).toHaveLength(1);
+
+    const failing = heldJournal();
+    const g = await setup();
+    const refused = migrate({ ...g.deps, journal: failing.journal }, g.side);
+    failing.fail(new Error("disk full"));
+    await expect(refused).rejects.toThrow("disk full");
+    expect(g.sent).toHaveLength(0);
+    expect(failing.journal.get(subject)).toBeUndefined();
   });
 });
 

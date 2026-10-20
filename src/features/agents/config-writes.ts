@@ -18,6 +18,7 @@ import {
 } from "./agent-config-artifacts";
 import type { AgentConfigStore, Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
+import { localStore, type AgentStore } from "./store";
 
 export const MIGRATION_STORAGE_KEY = "buzz.agents.config.migration.v1";
 
@@ -79,6 +80,10 @@ export const migrationKey = (subject: Subject) =>
  * not accepted (rate-limited), so a replay's refusal is definitive too. */
 type Held = Readonly<{ event: RelayEvent; unsent?: true }>;
 
+/** Where a config journal is saved: agent storage, whose writes resolve once
+ * saved. */
+export type JournalStore = Pick<AgentStore, "get" | "set">;
+
 export class MigrationJournal {
   private entries: Record<string, Migration> = {};
   private saves: Record<string, Held> = {};
@@ -86,10 +91,10 @@ export class MigrationJournal {
   private maybe: Record<string, string> = {};
   /** Each subject's latest save or resend, which the next waits for. */
   private writing = new Map<string, Promise<unknown>>();
-  constructor(private readonly storage: Storage = localStorage) {
+  constructor(private readonly storage: JournalStore = localStore()) {
     try {
       const value = JSON.parse(
-        storage.getItem(MIGRATION_STORAGE_KEY) ?? "null",
+        storage.get(MIGRATION_STORAGE_KEY) ?? "null",
       ) as {
         version?: unknown;
         entries?: unknown;
@@ -109,18 +114,20 @@ export class MigrationJournal {
   }
   get = (subject: Subject): Migration | undefined =>
     this.entries[migrationKey(subject)];
-  /** Persisted before the caller's next relay write. */
+  /** Resolves once saved, so the caller's next relay write follows it. */
   put(subject: Subject, entry: Migration) {
-    this.entries[migrationKey(subject)] = entry;
-    this.save();
+    return this.save(() => {
+      this.entries[migrationKey(subject)] = entry;
+    });
   }
   /** A signed save not yet resolved, by subject, so a restart resends it. */
   unsaved = (subject: Subject): Held | undefined =>
     this.saves[migrationKey(subject)];
   holdSave(subject: Subject, held: Held | undefined) {
-    if (held) this.saves[migrationKey(subject)] = held;
-    else delete this.saves[migrationKey(subject)];
-    this.save();
+    return this.save(() => {
+      if (held) this.saves[migrationKey(subject)] = held;
+      else delete this.saves[migrationKey(subject)];
+    });
   }
   /** Runs `run` once the subject's earlier save or resend has finished, so
    * one held save is signed, sent and resolved at a time. */
@@ -145,21 +152,37 @@ export class MigrationJournal {
    * been accepted, so no crash can lose that evidence. */
   retireSave(subject: Subject, maybe: string | undefined) {
     const key = migrationKey(subject);
-    delete this.saves[key];
-    if (maybe) this.maybe[key] = maybe;
-    else delete this.maybe[key];
-    this.save();
+    return this.save(() => {
+      delete this.saves[key];
+      if (maybe) this.maybe[key] = maybe;
+      else delete this.maybe[key];
+    });
   }
-  private save() {
-    this.storage.setItem(
-      MIGRATION_STORAGE_KEY,
-      JSON.stringify({
-        version: 1,
-        entries: this.entries,
-        saves: this.saves,
-        maybe: this.maybe,
-      }),
-    );
+  /** Applies `change` and saves the journal. When the save fails, the
+   * journal is put back and the promise rejects, so nothing that needs the
+   * change saved goes ahead. */
+  private async save(change: () => void) {
+    const before = [this.entries, this.saves, this.maybe] as const;
+    [this.entries, this.saves, this.maybe] = [
+      { ...this.entries },
+      { ...this.saves },
+      { ...this.maybe },
+    ];
+    change();
+    try {
+      await this.storage.set(
+        MIGRATION_STORAGE_KEY,
+        JSON.stringify({
+          version: 1,
+          entries: this.entries,
+          saves: this.saves,
+          maybe: this.maybe,
+        }),
+      );
+    } catch (error) {
+      [this.entries, this.saves, this.maybe] = before;
+      throw error;
+    }
   }
 }
 
@@ -258,12 +281,12 @@ export async function migrate(
           ...(stored ? { from: stored.from ?? stored } : {}),
           ...(stored?.afterSave ? { afterSave: true } : {}),
         };
-  const put = (next: Migration) => {
-    journal.put(side.subject, next);
+  const put = async (next: Migration) => {
+    await journal.put(side.subject, next);
     entry = next;
     return next;
   };
-  if (entry !== stored) put(entry);
+  if (entry !== stored) await put(entry);
   if (entry.from) {
     // A save held for the old channel resolves there first, so an accepted
     // one is part of the copy this channel starts from; until then, and
@@ -271,7 +294,7 @@ export async function migrate(
     // pending.
     const held = journal.unsaved(side.subject);
     if (held && homeOf(held.event).channel === entry.from.channelId) {
-      if (!entry.afterSave) put({ ...entry, afterSave: true });
+      if (!entry.afterSave) await put({ ...entry, afterSave: true });
       await resume(deps, side);
       if (journal.unsaved(side.subject)?.event.id === held.event.id)
         return entry;
@@ -288,7 +311,7 @@ export async function migrate(
       seed = artifactOp(head) === "delete" ? undefined : head.content;
     } else seed = await lastCopy(deps, entry.from);
     const { from: _, afterSave: __, ...rest } = entry;
-    put({ ...rest, ...(seed === undefined ? {} : { seed }) });
+    await put({ ...rest, ...(seed === undefined ? {} : { seed }) });
   }
   if (SETTLED.has(entry.status)) return entry;
 
@@ -320,7 +343,7 @@ export async function migrate(
       });
     }
     const stagedValue = entry.seed ?? side.content();
-    put({
+    await put({
       ...entry,
       status: "staged",
       stagedValue,
@@ -336,7 +359,7 @@ export async function migrate(
       }),
       deps.signal,
     );
-    put({
+    await put({
       ...entry,
       status: "dispatched",
       eventId: signedEvent.id,
@@ -351,7 +374,7 @@ export async function migrate(
         status: "failed",
         error: "Another device holds this config, but it can't be read yet",
       });
-    put(settled);
+    await put(settled);
   }
 }
 
@@ -369,7 +392,7 @@ async function resolve(
   deps: WriteDeps,
   side: LocalSide,
   entry: Migration,
-  put: (next: Migration) => Migration,
+  put: (next: Migration) => Promise<Migration>,
 ): Promise<Migration> {
   const event = entry.signedEvent;
   if (!event) throw new Error("Nothing was signed for this migration");
@@ -422,7 +445,7 @@ async function refused(
   deps: WriteDeps,
   side: LocalSide,
   entry: Migration,
-  put: (next: Migration) => Migration,
+  put: (next: Migration) => Promise<Migration>,
   refusal: Refusal,
   message: string,
 ): Promise<Migration> {
@@ -554,7 +577,7 @@ async function write(
     const prev = base === undefined ? head?.id : (base ?? undefined);
     if (head && head.id !== prev) return { status: "conflict", head };
     const event = await deps.writer.sign(template(head, prev), deps.signal);
-    deps.journal.holdSave(side.subject, { event });
+    await deps.journal.holdSave(side.subject, { event });
     return send(deps, side, { event }, capture, false);
   });
 }
@@ -598,8 +621,8 @@ async function send(
 ): Promise<Saved> {
   const { event } = held;
   /** Only an accepted save resolves an earlier one that may have been. */
-  const done = (result: Saved, accepted = false) => {
-    deps.journal.retireSave(
+  const done = async (result: Saved, accepted = false) => {
+    await deps.journal.retireSave(
       side.subject,
       accepted ? undefined : deps.journal.maybeSaved(side.subject),
     );
@@ -627,17 +650,18 @@ async function send(
     deps.maxEventBytes,
   );
   if (sent.status === "uncertain") {
-    if (held.unsent) deps.journal.holdSave(side.subject, { event });
+    if (held.unsent) await deps.journal.holdSave(side.subject, { event });
     return { status: "uncertain", message: sent.message, retired: false };
   }
   if (sent.status === "refused") {
     if (sent.refusal === "rate-limited") {
-      if (!replay) deps.journal.holdSave(side.subject, { event, unsent: true });
+      if (!replay)
+        await deps.journal.holdSave(side.subject, { event, unsent: true });
       return { status: "uncertain", message: sent.message, retired: false };
     }
     const head = sent.refusal === "conflict" ? await installHead() : undefined;
     if (replay) {
-      deps.journal.retireSave(side.subject, event.id);
+      await deps.journal.retireSave(side.subject, event.id);
       return {
         status: "uncertain",
         message: `It may have been saved, but the relay now says: ${sent.message}`,

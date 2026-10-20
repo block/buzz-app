@@ -44,7 +44,7 @@ function session() {
   } as unknown as RelaySession;
 }
 
-const journals = (storage: Storage) => ({
+const journals = (storage: ReturnType<typeof memoryStorage>) => ({
   migration: new MigrationJournal(storage),
   teams: new TeamJournal(storage),
   lifecycle: new LifecycleJournal(storage),

@@ -5,6 +5,8 @@
 import { PublishRejected } from "../relay/outbox";
 import { refusal } from "./agent-config-artifacts";
 import type { ConfigChannels } from "./config-channels";
+import type { JournalStore } from "./config-writes";
+import { localStore } from "./store";
 
 export const LIFECYCLE_STORAGE_KEY = "buzz.agents.config.lifecycle.v1";
 
@@ -14,10 +16,10 @@ type Entry = Readonly<{ state: Exclude<Lifecycle, "active">; channel: string }>;
 /** Per `community\nsubject` (agent pubkey or team id); absent is `active`. */
 export class LifecycleJournal {
   private entries: Record<string, Entry> = {};
-  constructor(private readonly storage: Storage = localStorage) {
+  constructor(private readonly storage: JournalStore = localStore()) {
     try {
       const value = JSON.parse(
-        storage.getItem(LIFECYCLE_STORAGE_KEY) ?? "null",
+        storage.get(LIFECYCLE_STORAGE_KEY) ?? "null",
       ) as { version?: unknown; entries?: unknown } | null;
       if (
         value?.version === 1 &&
@@ -40,13 +42,29 @@ export class LifecycleJournal {
         ? [{ subject, ...entry }]
         : [];
     });
-  put(community: string, subject: string, entry: Entry | undefined) {
+  /** Resolves once saved. When the save fails, the journal is put back and
+   * the promise rejects. */
+  async put(community: string, subject: string, entry: Entry | undefined) {
     const key = `${community}\n${subject}`;
+    const before = this.entries;
+    this.entries = { ...before };
     if (entry) this.entries[key] = entry;
     else delete this.entries[key];
-    this.storage.setItem(
-      LIFECYCLE_STORAGE_KEY,
-      JSON.stringify({ version: 1, entries: this.entries }),
+    try {
+      await this.storage.set(
+        LIFECYCLE_STORAGE_KEY,
+        JSON.stringify({ version: 1, entries: this.entries }),
+      );
+    } catch (error) {
+      this.entries = before;
+      throw error;
+    }
+  }
+  /** `put` for a state the relay already confirmed: a restart that misses
+   * it drives the intent again, which confirms it again. */
+  settled(community: string, subject: string, entry: Entry | undefined) {
+    void this.put(community, subject, entry).catch((error: unknown) =>
+      console.warn(`Agent config lifecycle ${subject} was not saved`, error),
     );
   }
 }
@@ -66,14 +84,15 @@ export type LifecycleDeps = Readonly<{
   signal?: AbortSignal;
 }>;
 
-/** Persists the intent, then drives it once. Call `drive` again to retry. */
-export function begin(
+/** Persists the intent, then drives it once. Call `drive` again to retry.
+ * Nothing is requested unless the intent was saved. */
+export async function begin(
   deps: LifecycleDeps,
   subject: string,
   channel: string,
   action: "archive" | "recover",
 ) {
-  deps.journal.put(deps.community, subject, {
+  await deps.journal.put(deps.community, subject, {
     state: action === "archive" ? "archiving" : "recovering",
     channel,
   });
@@ -119,14 +138,14 @@ export function settle(
   const state = journal.get(community, subject);
   if (state === "archiving") {
     if (archived)
-      journal.put(community, subject, { state: "archived", channel });
-    else if (refused) journal.put(community, subject, undefined);
+      journal.settled(community, subject, { state: "archived", channel });
+    else if (refused) journal.settled(community, subject, undefined);
     return journal.get(community, subject);
   }
   if (state === "recovering") {
-    if (!archived) journal.put(community, subject, undefined);
+    if (!archived) journal.settled(community, subject, undefined);
     else if (refused)
-      journal.put(community, subject, { state: "archived", channel });
+      journal.settled(community, subject, { state: "archived", channel });
     return journal.get(community, subject);
   }
   return state;
@@ -145,7 +164,7 @@ export function observe(
   const state = journal.get(community, subject);
   if (state === "archiving" || state === "recovering")
     return settle(deps, subject, channel, archived);
-  journal.put(
+  journal.settled(
     community,
     subject,
     archived ? { state: "archived", channel } : undefined,

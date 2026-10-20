@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { PublishRejected } from "../relay/outbox";
 import { begin, LifecycleJournal, resumeAll, settle } from "./config-lifecycle";
-import { memoryStorage } from "./test-fakes";
+import { memoryStorage, sharedFiles } from "./test-fakes";
 
 const channel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
 const subject = "a".repeat(64);
@@ -41,6 +41,37 @@ describe("archive and recover", () => {
       );
     });
     await begin(f.deps, subject, channel, "archive");
+  });
+
+  it("requests nothing until the intent is saved, and nothing when saving fails", async () => {
+    const f = setup();
+    const files = sharedFiles();
+    let release = () => {};
+    const journal = new LifecycleJournal(
+      files.open(new Promise<void>((resolve) => (release = resolve))),
+    );
+    const archiving = begin(
+      { ...f.deps, journal },
+      subject,
+      channel,
+      "archive",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(f.channels.archive).not.toHaveBeenCalled();
+    release();
+    expect(await archiving).toBe("archived");
+    expect(new LifecycleJournal(files.open()).get("c", subject)).toBe(
+      "archived",
+    );
+
+    const failed = Promise.reject(new Error("disk full"));
+    failed.catch(() => {});
+    const refusing = new LifecycleJournal(sharedFiles().open(failed));
+    await expect(
+      begin({ ...f.deps, journal: refusing }, subject, channel, "recover"),
+    ).rejects.toThrow("disk full");
+    expect(f.channels.unarchive).not.toHaveBeenCalled();
+    expect(refusing.get("c", subject)).toBe("active");
   });
 
   it("stays archiving after a lost reply and active metadata, then retries after restart", async () => {

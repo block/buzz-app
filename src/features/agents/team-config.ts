@@ -5,7 +5,8 @@ import { artifactD, expectedTeam, readHead } from "./agent-config-artifacts";
 import type { Subject } from "./agent-config";
 import type { ConfigChannels } from "./config-channels";
 import type { ConfigSync } from "./config-sync";
-import type { WriteDeps } from "./config-writes";
+import type { JournalStore, WriteDeps } from "./config-writes";
+import { localStore } from "./store";
 
 export const TEAMS_MIGRATION_KEY = "buzz.agents.teams.migration.v1";
 
@@ -29,11 +30,12 @@ const isKnownTeam = (value: unknown): value is KnownTeam => {
 
 export class TeamJournal {
   private discovered: Record<string, readonly KnownTeam[]> = {};
-  constructor(private readonly storage: Storage = localStorage) {
+  constructor(private readonly storage: JournalStore = localStore()) {
     try {
-      const value = JSON.parse(
-        storage.getItem(TEAMS_MIGRATION_KEY) ?? "null",
-      ) as { version?: unknown; known?: unknown } | null;
+      const value = JSON.parse(storage.get(TEAMS_MIGRATION_KEY) ?? "null") as {
+        version?: unknown;
+        known?: unknown;
+      } | null;
       if (
         value?.version === 1 &&
         value.known &&
@@ -72,16 +74,18 @@ export class TeamJournal {
     this.discovered[key(community, owner)] = teams.map(
       ({ subject: _, ...team }) => team,
     );
-    this.persist();
-  }
-  private persist() {
-    this.storage.setItem(
-      TEAMS_MIGRATION_KEY,
-      JSON.stringify({
-        version: 1,
-        known: this.discovered,
-      }),
-    );
+    // What discovery found again next time: a missed save costs only that.
+    void this.storage
+      .set(
+        TEAMS_MIGRATION_KEY,
+        JSON.stringify({
+          version: 1,
+          known: this.discovered,
+        }),
+      )
+      .catch((error: unknown) =>
+        console.warn("Synced teams were not saved", error),
+      );
   }
 }
 

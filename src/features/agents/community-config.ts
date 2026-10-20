@@ -449,7 +449,12 @@ export function agentConfigs(
       bindings.delete(pubkey);
       const state = begin(life, pubkey, channel, "archive");
       input.changed();
-      const settled = await state;
+      const settled = await state.catch(async (error: unknown) => {
+        // Not saved, so not requested: it stays active.
+        await rebind(pubkey, true);
+        input.changed();
+        throw error;
+      });
       if (settled === "active") await rebind(pubkey, true);
       input.changed();
       return settled;

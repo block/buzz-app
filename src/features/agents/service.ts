@@ -1058,20 +1058,6 @@ const blank = (pubkey: string): AgentRecord => ({
 });
 /** `record` with the owner's `change` to its settings; throws when the
  * change is not valid for it. */
-/** Agent storage as the config store and journals read and write it: reads
- * see each write at once, which saves as agent storage saves. */
-function asStorage(store: AgentStore): Storage {
-  return {
-    getItem: (key) => store.get(key),
-    setItem: (key, value) =>
-      void store
-        .set(key, value)
-        .catch((error: unknown) =>
-          console.warn(`Agent config state ${key} was not saved`, error),
-        ),
-  } as Storage;
-}
-
 function changed(record: AgentRecord, change: AgentChange): AgentRecord {
   let next = record;
   if (change.config !== undefined) next = { ...next, config: change.config };
@@ -1358,12 +1344,11 @@ export class AgentsService extends Service implements Agents {
       interrupted: [],
       teams: this.teamList,
     });
-    const configStorage = asStorage(storage);
     this.configStore = new AgentConfigStore(storage);
     this.configJournals = {
-      migration: new MigrationJournal(configStorage),
-      teams: new TeamJournal(configStorage),
-      lifecycle: new LifecycleJournal(configStorage),
+      migration: new MigrationJournal(storage),
+      teams: new TeamJournal(storage),
+      lifecycle: new LifecycleJournal(storage),
     };
     this.coreMemory = new CoreMemoryCache((pubkey) =>
       ownerReads(this.relay(pubkey), pubkey),

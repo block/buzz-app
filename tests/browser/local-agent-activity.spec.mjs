@@ -625,6 +625,8 @@ test("the published-activity tab shows turns its agent published", async ({
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
     .toBe(true);
+  // Activity is best effort; publish only once the owner's observer route is live.
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   // The fixture agent's key is the curve generator, so secret key 1 signs as it.
   const key = new Uint8Array(32);
   key[31] = 1;

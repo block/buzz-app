@@ -92,7 +92,7 @@
   min-width: 0;
   padding-inline-start: calc(
     var(--space-2) -
-    var(--channel-row-fill-start, 0px)
+    var(--channel-row-fill-start, 0%)
   );
 }
 .showMore > [data-solo-show-more-fold] {

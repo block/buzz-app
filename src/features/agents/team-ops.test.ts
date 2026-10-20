@@ -10,7 +10,11 @@ import {
   artifactTemplate,
 } from "./agent-config-artifacts";
 import { AgentConfigStore } from "./agent-config";
-import { MIGRATION_STORAGE_KEY } from "./config-writes";
+import { agentConfigs } from "./community-config";
+import { LifecycleJournal } from "./config-lifecycle";
+import { MIGRATION_STORAGE_KEY, MigrationJournal } from "./config-writes";
+import { teamSubject } from "./config-channels";
+import { TeamJournal } from "./team-config";
 import {
   OPS_BYTE_LIMIT,
   OPS_RECORD_LIMIT,
@@ -967,7 +971,7 @@ describe("team operations: saved before sending", () => {
     await save.reached;
     const revised = w.runner.revise(op.id, { ...team, name: "Later" });
     save.release();
-    expect(await revised).toBe(true);
+    expect(await revised).toBe("applied");
     await done;
     // The held bytes went as signed, then the later name as its own
     // revision: neither save lost the other's change.
@@ -1040,6 +1044,87 @@ describe("team operations: saved before sending", () => {
     expect(await replaced.done).toBeUndefined();
     expect(w.ops.every()).toEqual([]);
     expect(w.writer.publish).toHaveBeenCalledOnce();
+  });
+
+  it("a community Save while its finished change is being removed edits from the finished head", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const form = crypto.randomUUID();
+    const label = await teamSubject(teamId);
+    const channel = () => ({
+      id: CH,
+      label,
+      archived: w.relay.archived,
+      members: [owner.pubkey, ...w.relay.roster],
+    });
+    const configs = agentConfigs({
+      owner: owner.pubkey,
+      community,
+      ops: w.ops,
+      lifecycle: new LifecycleJournal(w.storage),
+      teamJournal: new TeamJournal(w.storage),
+      channels: {
+        ...w.channels,
+        teams: async () => (w.relay.exists ? [channel()] : []),
+      } as never,
+      sync: { bind: async () => {}, unbind() {}, dispose() {} } as never,
+      deps: {
+        read: w.read,
+        writer: w.writer,
+        store: new AgentConfigStore(w.storage),
+        journal: new MigrationJournal(w.storage),
+        maxEventBytes: ARTIFACT_MAX_EVENT_BYTES,
+        signal: new AbortController().signal,
+      },
+      strip() {},
+      retire: async () => {},
+      changed() {},
+    });
+    await configs.refreshTeams();
+    const removal = hold(w, (value) => !value.includes('"edit"'));
+    const first = configs.editTeam(
+      teamId,
+      { ...team, instructions: "RULE" },
+      w.relay.head?.id,
+      form,
+    );
+    await removal.reached;
+    const second = configs.editTeam(
+      teamId,
+      { ...team, instructions: "NEW COMMUNITY SAVE" },
+      w.relay.head?.id,
+      form,
+    );
+    removal.release();
+    await first;
+    await second;
+    expect(JSON.parse(w.relay.head?.content ?? "{}").instructions).toBe(
+      "NEW COMMUNITY SAVE",
+    );
+    expect(w.ops.every()).toEqual([]);
+    configs.dispose();
+  });
+
+  it("finishing never removes a submission saved while it retired the record", async () => {
+    const w = world();
+    const teamId = await existing(w);
+    const retiring = gate(),
+      retired = gate();
+    w.done.mockImplementationOnce(async () => {
+      retiring.open();
+      await retired.promise;
+    });
+    const { op, done } = edit(w, teamId, { instructions: "RULE" });
+    await retiring.promise;
+    expect(
+      await w.runner.revise(op.id, { ...team, instructions: "NEWER" }),
+    ).toBe("applied");
+    retired.open();
+    expect(await done).toBeUndefined();
+    expect(JSON.parse(w.relay.head?.content ?? "{}").instructions).toBe(
+      "NEWER",
+    );
+    expect(await w.runner.revise(op.id, team)).toBe("absent");
   });
 
   it("saves records in the order they were written", async () => {
@@ -1215,7 +1300,7 @@ describe("team operations: transitions", () => {
     });
     await old.done;
     expect(await w.runner.revise(old.op.id, { ...team, members: [a] })).toBe(
-      true,
+      "applied",
     );
     w.agents.add(b);
     expect(await w.runner.run(old.op.id)).toBeUndefined();
@@ -1575,10 +1660,10 @@ describe("team operations: revisions during member work", () => {
             ...initial,
             instructions: "TEMP RULE",
           }),
-        ).toBe(true);
+        ).toBe("applied");
         void w.runner.run(first.op.id);
       }
-      expect(await w.runner.revise(first.op.id, latest)).toBe(true);
+      expect(await w.runner.revise(first.op.id, latest)).toBe("applied");
       const next = w.runner.run(first.op.id);
       release.open();
       await Promise.all([first.done, next]);
@@ -1612,7 +1697,7 @@ describe("team operations: revisions during member work", () => {
         members: [a],
         instructions: "LATEST SUBMITTED RULE",
       }),
-    ).toBe(true);
+    ).toBe("applied");
     const newer = w.runner.run(first.op.id);
     release.open();
     await Promise.all([first.done, newer]);

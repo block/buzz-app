@@ -430,12 +430,21 @@ export function teamRunner(deps: RunnerDeps) {
       const now = ops.get(id);
       return now?.mode === "may-send" ? now : undefined;
     };
-    const finish = async () => {
+    const finish = async (): Promise<TeamOp | undefined> => {
       const last = ops.get(id);
       if (!last) return undefined;
       await deps.done(last);
-      await put({ [id]: undefined });
-      return undefined;
+      // Removes only the submission that finished: one saved meanwhile
+      // runs on.
+      if (
+        await ops.update((records) =>
+          records[id] === last ? { [id]: undefined } : undefined,
+        )
+      ) {
+        deps.changed();
+        return undefined;
+      }
+      return ops.get(id)?.mode === "may-send" ? step(id) : ops.get(id);
     };
 
     // A fresh roster and metadata read of the selected channel.
@@ -725,7 +734,7 @@ export function teamRunner(deps: RunnerDeps) {
     roster: ReadonlySet<string> | undefined,
     save: (next: TeamOp) => Promise<TeamOp>,
     live: () => TeamOp | undefined,
-    finish: () => Promise<undefined>,
+    finish: () => Promise<TeamOp | undefined>,
   ): Promise<TeamOp | undefined> {
     if (!roster || !start.channel) return start;
     const channel = start.channel;
@@ -837,7 +846,7 @@ export function teamRunner(deps: RunnerDeps) {
     channel: string | undefined,
     save: (next: TeamOp) => Promise<TeamOp>,
     live: () => TeamOp | undefined,
-    finish: () => Promise<undefined>,
+    finish: () => Promise<TeamOp | undefined>,
   ): Promise<TeamOp | undefined> {
     if (!channel) return op;
     if (op.channel !== channel) op = await save({ ...op, channel });
@@ -913,12 +922,24 @@ export function teamRunner(deps: RunnerDeps) {
     exclusive: <T>(teamId: string, work: () => Promise<T>) =>
       queue(teamId, work),
     /** A newer submission to a record that may still send: it waits behind
-     * any held revision, never replacing its bytes. */
+     * any held revision, never replacing its bytes. Resolves with what it
+     * found as saved: `absent` once the record finished or went, `stopped`
+     * once it may no longer send, and then it changed nothing. */
     async revise(id: string, intent: TeamIntent) {
-      const op = ops.get(id);
-      if (op?.mode !== "may-send") return false;
-      await put({ [id]: { ...op, intent } });
-      return true;
+      const result = { found: "absent" as "applied" | "absent" | "stopped" };
+      await ops.update((records) => {
+        const op = records[id];
+        result.found = !op
+          ? "absent"
+          : op.mode === "may-send"
+            ? "applied"
+            : "stopped";
+        return op && result.found === "applied"
+          ? { [id]: { ...op, intent } }
+          : undefined;
+      });
+      if (result.found === "applied") deps.changed();
+      return result.found;
     },
     /** Stops automatic sending; the evidence stays for reconciliation. */
     async discard(id: string) {

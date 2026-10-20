@@ -222,6 +222,13 @@ export type CommunityConfigInput = Readonly<{
   enabled?: boolean;
 }>;
 
+/** A Save of a change that finished while it was saving, at `head`. */
+class FinishedMeanwhile extends Error {
+  constructor(readonly head: string) {
+    super("This change finished while it was saving");
+  }
+}
+
 /** Null when config sync is off or this session can't hold it. Otherwise
  * resolves once the support check passes; unsupported relays give null. */
 export async function communityConfig(
@@ -361,6 +368,20 @@ export function agentConfigs(
   /** Which record each open form submitted (in memory): Save again from
    * that form revises the same change, and no form takes another's. */
   const forms = new Map<string, string>();
+  /** The head change `id` finished at, once its record is gone. */
+  const finishedHead = (id: string | undefined) =>
+    id === undefined || runner.records().some((op) => op.id === id)
+      ? undefined
+      : finishedAt.get(id);
+  /** Change `id` of form `form` finished while a Save of it was saving:
+   * that Save edits from its finished head instead, never reporting a
+   * submission the change didn't take. */
+  function finishedMeanwhile(form: string, id: string) {
+    const head = finishedHead(id);
+    if (head === undefined) return;
+    forms.delete(form);
+    throw new FinishedMeanwhile(head);
+  }
   /** Runs `done` to its end for this step, re-reads teams, and throws what
    * stops the change while it is unfinished. */
   async function finished(done: Promise<TeamOp | undefined>) {
@@ -380,12 +401,18 @@ export function agentConfigs(
     // one, even after a restart; a stopped one waits for Resubmit or Dismiss.
     if (operation) {
       forms.set(form, operation);
-      if (await runner.revise(operation, intent)) return runner.run(operation);
-      if (runner.records().some((op) => op.id === operation))
+      const found = await runner.revise(operation, intent);
+      if (found === "applied") return runner.run(operation);
+      if (found === "stopped")
         throw new Error("This change stopped. Resubmit or dismiss it.");
+      finishedMeanwhile(form, operation);
     }
     const prior = forms.get(form);
-    if (prior && (await runner.revise(prior, intent))) return runner.run(prior);
+    if (prior) {
+      const found = await runner.revise(prior, intent);
+      if (found === "applied") return runner.run(prior);
+      if (found === "absent") finishedMeanwhile(form, prior);
+    }
     const { op, done } = runner.start(input);
     forms.set(form, op.id);
     return done;
@@ -800,7 +827,7 @@ export function agentConfigs(
         ],
       };
       const done =
-        prior && (await runner.revise(prior.id, intent))
+        prior && (await runner.revise(prior.id, intent)) === "applied"
           ? runner.run(prior.id)
           : runner.start({
               kind: "import",
@@ -836,9 +863,7 @@ export function agentConfigs(
       const saved = await accepted(form, team, () => {
         // A reopened change that finished here saves as an edit of its head:
         // this form's latest finished submission, else the reopened one.
-        const head =
-          finishedAt.get(forms.get(form) ?? "") ??
-          finishedAt.get(operation ?? "");
+        const head = finishedHead(forms.get(form)) ?? finishedHead(operation);
         if (head) return { head };
         return {
           done: submitted(
@@ -849,9 +874,19 @@ export function agentConfigs(
           ),
         };
       });
-      if ("head" in saved)
-        return this.editTeam(form, team, saved.head, form).then(() => form);
-      return finished(saved.done).then(() => form);
+      // Its team may be newer than the last discovery.
+      const edit = async (head: string) => {
+        await refreshTeams().catch(() => {});
+        return this.editTeam(form, team, head, form).then(() => form);
+      };
+      if ("head" in saved) return edit(saved.head);
+      return finished(saved.done).then(
+        () => form,
+        (error: unknown) => {
+          if (!(error instanceof FinishedMeanwhile)) throw error;
+          return edit(error.head);
+        },
+      );
     },
     /** Deletes synced team `id` by archiving its config channel. */
     archiveTeam(id: string) {
@@ -883,7 +918,7 @@ export function agentConfigs(
       change: TeamIntent,
       base: string | undefined,
       form: string,
-    ) {
+    ): Promise<void> {
       const team = ownTeam(id);
       if (team.archived) throw new Error("No such team");
       const { done } = await accepted(id, change, (create) => {
@@ -907,7 +942,10 @@ export function agentConfigs(
           ),
         };
       });
-      return finished(done);
+      return finished(done).catch((error: unknown) => {
+        if (!(error instanceof FinishedMeanwhile)) throw error;
+        return this.editTeam(id, change, error.head, form);
+      });
     },
     /** Saves each synced side the edit changed as its next revision of
      * `base`, the head its editor opened (the stored head where absent). The

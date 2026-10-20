@@ -542,7 +542,20 @@ confirmedPresence(
         const content = await pluginContent.boundingBox();
         expect(content).not.toBeNull();
         expect(navigation.x + navigation.width).toBeLessThan(content.x);
-        expect(content.y - scrollport.y).toBe(32);
+        // Keyboard focus can scroll this pane; measure its layout inset in
+        // scroll-content coordinates rather than assuming scrollTop is zero.
+        await expect
+          .poll(() =>
+            pluginContent.evaluate((element) => {
+              const pane = element.closest(".buzz-dialog-navigation-detail");
+              return (
+                element.getBoundingClientRect().top -
+                pane.getBoundingClientRect().top +
+                pane.scrollTop
+              );
+            }),
+          )
+          .toBe(32);
       } else {
         // Narrow Settings stacks its navigation above the detail.
         expect(navigation.y + navigation.height).toBeLessThanOrEqual(

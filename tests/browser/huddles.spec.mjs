@@ -1859,6 +1859,7 @@ test("pending companion attachment send survives a transcript tab switch", async
 test("an inactive call error does not suppress the next incoming call", async ({
   page,
 }) => {
+  await page.clock.install();
   await page.goto(`${origin}/tests/fixtures/huddles.html?chrome`);
   await page
     .getByRole("button", { name: /Start or join a huddle|Join active huddle/ })
@@ -1869,6 +1870,9 @@ test("an inactive call error does not suppress the next incoming call", async ({
   await expect(
     page.getByRole("region", { name: "App notifications" }),
   ).toContainText("Previous call failed");
+  // The real clip may finish while WebKit renders the request. Freeze the
+  // repeat timer so the first-play assertion cannot race the next ring.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await page.evaluate(() =>
     window.huddleFixture.request("00000000-0000-4000-8000-000000000099"),
   );

@@ -359,6 +359,7 @@ function PluginDetails({
             {access === "checking" ? "Checking…" : "Unavailable"}
           </span>
         )}
+        <div ref={setActionTarget} className={styles.pluginExtraActions} />
         {/* Channels is required and has no enable/disable control. */}
         {plugin.manifest.id === "buzz.channels" ? (
           <Button variant="outline" size="sm" disabled>
@@ -405,7 +406,6 @@ function PluginDetails({
             </Button>
           </Tooltip>
         )}
-        <div ref={setActionTarget} className={styles.pluginExtraActions} />
         {accessReason && access === "error" && (
           <Button
             size="sm"

@@ -680,6 +680,12 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
     name: /^(Disable|Check for updates|Roll back|Delete)$/,
   });
   await expect(paneActions).toHaveCount(4);
+  await expect(paneActions).toHaveText([
+    "Check for updates",
+    "Disable",
+    "Roll back",
+    "Delete",
+  ]);
   for (const [width, theme] of [
     [1440, "light"],
     [480, "dark"],
@@ -690,7 +696,10 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
       .poll(() =>
         paneActions.evaluateAll((buttons) => {
           const rects = buttons.map((node) => node.getBoundingClientRect());
-          const group = buttons[0].parentElement.getBoundingClientRect();
+          let groupNode = buttons[0].parentElement;
+          while (getComputedStyle(groupNode).display === "contents")
+            groupNode = groupNode.parentElement;
+          const group = groupNode.getBoundingClientRect();
           return rects.every(
             (rect, index) =>
               Math.abs(rect.left - group.left) < 1 &&

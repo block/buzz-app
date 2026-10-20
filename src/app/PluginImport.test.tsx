@@ -1493,3 +1493,70 @@ it("does not substitute another folder with the same plugin identity", async () 
     "remembered",
   );
 });
+
+it("delays checking feedback, cancels it for fast reads, and resets it for the next check", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  let finish!: (preview: ImportPreview) => void;
+  const folder = vi.fn(
+    () =>
+      new Promise<ImportPreview>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const manager = {
+    imports: { folder, discard: vi.fn(async () => {}) },
+  } as unknown as PluginManager;
+  const same = {
+    ...rememberedPreview,
+    candidates: [
+      { path: "dist", revision: "old", manifest: rememberedManifest },
+    ],
+  };
+  const view = render(
+    <PluginImport
+      plugins={manager}
+      catalog={{
+        profile: "test",
+        location: "test",
+        plugins: [
+          {
+            ...rememberedPlugin,
+            updateSource: { root: "/plugins", path: "dist" },
+          },
+        ],
+      }}
+      busy={false}
+      updateId={rememberedManifest.id}
+    />,
+  );
+  try {
+    await act(async () => {});
+    const check = screen.getByRole("button", { name: "Check for updates" });
+    expect(folder).toHaveBeenCalledTimes(1);
+    expect(check).toBeDisabled();
+    expect(check).not.toHaveAttribute("data-loading");
+    await act(async () => vi.advanceTimersByTime(199));
+    expect(screen.queryByText("Checking for updates…")).toBeNull();
+    await act(async () => finish(same));
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(screen.queryByText("Checking for updates…")).toBeNull();
+    expect(check).not.toHaveAttribute("data-loading");
+    expect(screen.getByText("Up to date")).toBeVisible();
+
+    fireEvent.click(check);
+    await act(async () => {});
+    expect(folder).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTime(199));
+    expect(screen.queryByText("Checking for updates…")).toBeNull();
+    expect(check).not.toHaveAttribute("data-loading");
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(screen.getByText("Checking for updates…")).toBeVisible();
+    expect(check).toHaveAttribute("data-loading", "true");
+    await act(async () => finish(same));
+    expect(screen.queryByText("Checking for updates…")).toBeNull();
+    expect(check).not.toHaveAttribute("data-loading");
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+});

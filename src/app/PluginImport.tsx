@@ -186,6 +186,13 @@ export function PluginImport({
   // new install into an update while its enable operation is still pending.
   const [existing, setExisting] = useState<PluginInfo>();
   const [loading, setLoading] = useState(false);
+  const [checkingVisible, setCheckingVisible] = useState(false);
+  useEffect(() => {
+    if (!loading || open || !updateId) return;
+    const timer = setTimeout(() => setCheckingVisible(true), 200);
+    return () => clearTimeout(timer);
+  }, [loading, open, updateId]);
+
   const [discarding, setDiscarding] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [selected, setSelected] = useState("");
@@ -278,6 +285,7 @@ export function PluginImport({
     pending.current = true;
     const current = lifetime.current;
     setLoading(true);
+    setCheckingVisible(false);
     setError(null);
     setPreview(null);
     setShowUnchanged(false);
@@ -327,7 +335,10 @@ export function PluginImport({
       }
     } finally {
       pending.current = false;
-      if (current.active) setLoading(false);
+      if (current.active) {
+        setLoading(false);
+        setCheckingVisible(false);
+      }
     }
   }
   async function dismiss() {
@@ -491,22 +502,12 @@ export function PluginImport({
   );
   const updateActions = (
     <>
-      {preview && !error && !upToDate && (
-        <Button
-          ref={trigger}
-          size="sm"
-          disabled={blocked}
-          onClick={() => setOpen(true)}
-        >
-          Update
-        </Button>
-      )}
       {savedSource && (
         <Button
           ref={checkAgain}
           variant="subtle"
           size="sm"
-          loading={loading && !open}
+          loading={loading && !open && checkingVisible}
           disabled={blocked}
           onClick={() =>
             void load(async () => {
@@ -526,6 +527,16 @@ export function PluginImport({
           }
         >
           Check for updates
+        </Button>
+      )}
+      {preview && !error && !upToDate && (
+        <Button
+          ref={trigger}
+          size="sm"
+          disabled={blocked}
+          onClick={() => setOpen(true)}
+        >
+          Update
         </Button>
       )}
     </>
@@ -556,7 +567,9 @@ export function PluginImport({
               source.
             </p>
           )}
-          {loading && !open ? <p role="status">Checking for updates…</p> : null}
+          {loading && !open && checkingVisible ? (
+            <p role="status">Checking for updates…</p>
+          ) : null}
           {error && !open ? (
             <p role="alert">
               Source{" "}

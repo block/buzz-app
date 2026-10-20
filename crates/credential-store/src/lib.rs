@@ -17,7 +17,7 @@ pub const HUMAN_SERVICE: &str = human_service(cfg!(debug_assertions));
 
 pub const fn human_service(debug: bool) -> &'static str {
     if debug {
-        "dev.local.buzz.foundation.identity.debug"
+        "dev.local.buzz.foundation.identity.debug.onboarding" // DO NOT MERGE
     } else {
         "dev.local.buzz.foundation.identity"
     }

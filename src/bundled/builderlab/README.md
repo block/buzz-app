@@ -56,6 +56,21 @@ agents are not migrated into this type.
   plugin-lifetime session. `browserCredential()` returns a verified `Credential`;
   `session.credential()` provides access to it. The session handles cancellation,
   sign-out, and disposal.
+  `oauth/first-run.ts` lets the app's first-launch welcome screen run the same
+  sign-in before any plugin session exists, using this plugin's bundled native
+  grant; that credential is separate from the Settings session. When a community
+  URL on that screen names another Builderlab deployment (the
+  [`BUZZ_BUILDERLAB_TENANTS` table](../../../docs/configuration.md#builderlab-tenant-table-build-input)),
+  the welcome screen passes that deployment's origin and `browserCredential`
+  runs the whole round-trip there; the Settings card always uses the build URL.
+  A successful first-run sign-in continues into the app-owned setup steps
+  described in [identity](../../../docs/identity.md): the app reads the key
+  bound to the account and the communities it owns through this plugin's
+  bundled grant (`src/features/identity/builderlab-account.ts`, reusing the
+  hosted-communities routes and parsers); a linked account is asked for that
+  key, otherwise the user chooses who keeps the device key before it is
+  created, or brings one they already have. The backed-up-key lookup, key
+  backup, binding and unlinking are placeholders until Builderlab serves them.
 - `login/` owns the login experience: pending state, cancellation, retry, email
   display, and sign-out.
 - `agents/` lists the signed-in account's remote agents beneath login, with
@@ -70,7 +85,9 @@ agents are not migrated into this type.
   affect newly accepted tasks and are never published to the relay.
 
 The plugin uses the `BUZZ_BUILDERLAB_URL` [build input](../../../docs/configuration.md#builderlab-url-build-input)
-as its server address and appends `/api/goose`.
+as its server address and appends `/api/goose`. Its bundled native grant also
+covers every `loginOrigin` in the `BUZZ_BUILDERLAB_TENANTS` table, which only
+the first-launch sign-in uses.
 
 On desktop, the plugin supplies `/v1/auth/login` with `type=cli` and
 `product=builderlab` to the shared native

@@ -6,6 +6,8 @@ import {
   parseCommunityAliases,
   relayOrigin,
 } from "./src/features/communities/destination.ts";
+import { parseFirstRunAccountSeed } from "./src/features/identity/first-run-seed.ts";
+import { parseBuilderlabTenants } from "./src/features/identity/builderlab-tenants.ts";
 
 export default defineConfig(async ({ command, mode }) => {
   const env = loadEnv(mode, ".", "BUZZ_");
@@ -15,6 +17,9 @@ export default defineConfig(async ({ command, mode }) => {
   const live = command === "serve" && Boolean(env.BUZZ_DEV_VIEWER?.trim());
   const aliases = env.BUZZ_COMMUNITY_ALIASES ?? "";
   parseCommunityAliases(aliases);
+  // Public too: the same table the native build grants to the Builderlab plugin.
+  const tenants = env.BUZZ_BUILDERLAB_TENANTS ?? "";
+  parseBuilderlabTenants(tenants);
   // Public routing configuration only; the viewer pin and credentials stay in Node.
   const defaultRelay = env.BUZZ_RELAY_URL?.trim();
   const defaultOrigin = defaultRelay ? relayOrigin(defaultRelay) : "";
@@ -39,6 +44,13 @@ export default defineConfig(async ({ command, mode }) => {
     : openRelay
       ? defaultOrigin
       : "";
+  // Opt-in seed: answers the first-run Builderlab account reads (linked key,
+  // owned communities) without kgoose, so the returning-user screens can be
+  // walked against a real account whose binding must not change. Builds never
+  // see it.
+  const firstRunAccount =
+    command === "serve" ? (env.BUZZ_DEV_FIRST_RUN_ACCOUNT ?? "") : "";
+  parseFirstRunAccountSeed(firstRunAccount);
   const plugins: PluginOption[] = [react()];
   if (command === "serve")
     plugins.push(
@@ -79,7 +91,10 @@ export default defineConfig(async ({ command, mode }) => {
       "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(
         env.BUZZ_BUILDERLAB_URL ?? "",
       ),
+      "import.meta.env.VITE_BUZZ_BUILDERLAB_TENANTS": JSON.stringify(tenants),
       "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(openOrigin),
+      "import.meta.env.VITE_BUZZ_FIRST_RUN_ACCOUNT":
+        JSON.stringify(firstRunAccount),
     },
     build: {
       rollupOptions: {

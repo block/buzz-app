@@ -50,8 +50,8 @@ export type ThreadPanelProps = {
   scope: string;
   channelName: string;
   channelId: string;
+  /** Solo agents answer at top level, so a Solo thread is read-only. */
   soloConversation?: boolean | undefined;
-  ownSoloConversation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   messageId: string;
@@ -352,7 +352,6 @@ function OwnedThreadPanel({
   onOpenMediaReview,
   canOpenLink,
   soloConversation,
-  ownSoloConversation,
   activityClickOpensPanel,
   disabled,
   replyRequest,
@@ -413,7 +412,6 @@ function OwnedThreadPanel({
   ) : view ? (
     <ThreadMessages
       soloConversation={soloConversation}
-      ownSoloConversation={ownSoloConversation}
       activityClickOpensPanel={activityClickOpensPanel}
       disabled={disabled}
       extensions={extensions}
@@ -451,7 +449,6 @@ function ThreadMessages({
   onOpenMediaReview,
   canOpenLink,
   soloConversation,
-  ownSoloConversation,
   activityClickOpensPanel,
   disabled,
   replyRequest,
@@ -467,8 +464,8 @@ function ThreadMessages({
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A same-thread link that couldn't open; the current thread stays usable. */
   selectionFailure?: SelectionFailure | undefined;
+  /** Solo agents answer at top level, so a Solo thread is read-only. */
   soloConversation?: boolean | undefined;
-  ownSoloConversation?: boolean | undefined;
   activityClickOpensPanel?: boolean | undefined;
   disabled?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -1179,7 +1176,7 @@ function ThreadMessages({
           extensions={extensions}
           session={session}
           scope={scope}
-          onReply={snapshot.root ? targetReply : undefined}
+          onReply={snapshot.root && !soloConversation ? targetReply : undefined}
           row={row}
           getThreadRoot={getThreadRoot}
           stackPrevious={continuation}
@@ -1295,6 +1292,7 @@ function ThreadMessages({
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
+    !soloConversation &&
     (!requireReadyRoot ||
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
       ? snapshot.root
@@ -1418,7 +1416,7 @@ function ThreadMessages({
               extensions={extensions}
               session={session}
               scope={scope}
-              onReply={focusReply}
+              onReply={soloConversation ? undefined : focusReply}
               row={snapshot.root}
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
@@ -1519,8 +1517,6 @@ function ThreadMessages({
       )}
       {composerRoot && (
         <MessageComposer
-          soloConversation={soloConversation}
-          ownSoloConversation={ownSoloConversation}
           activityClickOpensPanel={activityClickOpensPanel}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}

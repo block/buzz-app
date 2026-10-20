@@ -1264,6 +1264,65 @@ function renderMessage(
   );
 }
 
+it.each([true, false])(
+  "offers thread starts only where the conversation starts threads (startsThreads=%s)",
+  (startsThreads) => {
+    const agent = "a".repeat(64);
+    const prompt = { ...row, id: "prompt", replyCount: 0 };
+    const channels = { channels: [], status: "ready" };
+    const library = { identities: [{ pubkey: agent, name: "Brain" }] };
+    // Local work records a top-level prompt as its thread root.
+    const typing: readonly TypingEntry[] = [
+      { channelId: row.channelId, threadRootId: "prompt", pubkey: agent },
+    ];
+    const session = {
+      channels: { list: () => channels, subscribeList: () => () => {} },
+      messages: {},
+      agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+      typing: { snapshot: () => typing, subscribe: () => () => {} },
+    } as unknown as RelaySession;
+    const thread = vi.fn();
+    const view = renderMessage({
+      row: prompt,
+      viewer: row.authorId,
+      session,
+      onOpenThread: thread,
+      startsThreads,
+    });
+    try {
+      expect(!!screen.queryByRole("button", { name: "Reply" })).toBe(
+        startsThreads,
+      );
+      expect(
+        !!screen.queryByRole("button", { name: /^View thread.*working$/ }),
+      ).toBe(startsThreads);
+      // An existing thread still opens.
+      view.rerender(
+        <MessageRow
+          row={row}
+          viewer={row.authorId}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+          onOpenThread={thread}
+          startsThreads={startsThreads}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: /^View thread: 23 replies/ }),
+      );
+      expect(thread).toHaveBeenCalledWith("root", "root");
+      expect(!!screen.queryByRole("button", { name: "Reply" })).toBe(
+        startsThreads,
+      );
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
 it("rejects attachment URLs outside the shared safe-link policy", () => {
   const media = vi.fn((url: string) => url);
   const view = renderMessage({

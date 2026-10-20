@@ -1,6 +1,8 @@
 import { expect, it, vi } from "vitest";
-import type { HostProcessOptions } from "../../features/host/service";
+import type { Host, HostProcessOptions } from "../../features/host/service";
 import { GhUnavailable, GitHubError, gitHubCli, parseAnswer } from "./gh";
+
+type HostSpawn = NonNullable<Host["spawn"]>;
 
 it("gives GitHub's data, GitHub's own error, or says gh is unavailable", () => {
   expect(parseAnswer('{"data":{"viewer":{"login":"baxen"}}}', "", 0)).toEqual({
@@ -84,6 +86,30 @@ it("stops gh when the caller gives up", async () => {
   controller.abort();
   await expect(answer).rejects.toThrow();
   expect(kill).toHaveBeenCalled();
+});
+
+it("stops gh at once when the caller gave up while it was starting", async () => {
+  const kill = vi.fn(async () => {});
+  const end = vi.fn(async () => {});
+  let started!: (process: Awaited<ReturnType<HostSpawn>>) => void;
+  const spawn = vi.fn(
+    () =>
+      new Promise<Awaited<ReturnType<HostSpawn>>>((resolve) => {
+        started = resolve;
+      }),
+  );
+  const controller = new AbortController();
+  const answer = gitHubCli({ spawn })?.("query{}", {}, controller.signal);
+  controller.abort();
+  started({
+    write: async () => {},
+    end,
+    kill,
+    exited: new Promise<number | null>(() => {}),
+  });
+  await expect(answer).rejects.toThrow();
+  expect(kill).toHaveBeenCalled();
+  expect(end).not.toHaveBeenCalled();
 });
 
 it("treats a gh that cannot start as unavailable", async () => {

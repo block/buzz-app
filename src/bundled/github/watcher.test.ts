@@ -122,7 +122,7 @@ describe("watch_pr", () => {
     const [channel, thread, content, mentions] = app.reply.mock.calls[0] ?? [];
     expect([channel, thread, mentions]).toEqual(["c", root, [agent]]);
     expect(content).toMatch(
-      /^@mbot CI failed on 111111111 for https:\/\/github\.com\/block\/buzz-app\/pull\/7:\n- unit\n\n_Sent by the GitHub plugin/,
+      /^@mbot CI failed on 111111111 for https:\/\/github\.com\/block\/buzz-app\/pull\/7: 1 check failed, to read with gh\.\n\n_Sent by the GitHub plugin/,
     );
     // Reported once per head commit.
     await vi.advanceTimersByTimeAsync(POLL_MS);
@@ -154,7 +154,7 @@ describe("watch_pr", () => {
     expect(app.send).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
     expect(app.send).toHaveBeenCalledTimes(1);
-    expect(app.send.mock.calls[0]?.[1]).toContain(`wes: ${url}#2`);
+    expect(app.send.mock.calls[0]?.[1]).toContain(`- ${url}#2`);
     expect(app.send.mock.calls[0]?.[1]).not.toContain(`${url}#1`);
     // Nobody else's words are sent as the owner.
     expect(app.send.mock.calls[0]?.[1]).not.toContain("body-");
@@ -219,6 +219,28 @@ describe("watch_pr", () => {
       JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? ""),
     ).toEqual([]);
     app.dispose();
+  });
+
+  it("lets a read still in flight when the plugin stops do nothing", async () => {
+    const old = setup();
+    await old.call({ url });
+    let finish: (value: string) => void = () => {};
+    old.runCommand.mockImplementationOnce(
+      () => new Promise<string>((resolve) => (finish = resolve)),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    old.dispose();
+    // Its replacement takes over the saved watch, then the agent stops it.
+    const next = setup();
+    await vi.advanceTimersByTimeAsync(0);
+    await next.call({ url, stop: true });
+    finish(answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.reply).not.toHaveBeenCalled();
+    expect(
+      JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? ""),
+    ).toEqual([]);
+    next.dispose();
   });
 
   it("says when a watch moves to another conversation", async () => {

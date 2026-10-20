@@ -84,9 +84,10 @@ While the app is open the plugin reads the pull request through the signed-in
 once per commit and result, or when new feedback from anyone but the `gh`
 account has been quiet for 90 seconds. The wake is one message from the owner,
 mentioning the agent, in the conversation where it called the tool, so every
-agent type answers it as a mention. That message lists failed check names and
-each comment's author, place and link, never text others wrote, because agents
-trust their owner's words. The agent reads the feedback with `gh`. A watch is
+agent type answers it as a mention. That message holds only fixed wording, counts,
+the head commit and GitHub's links: no check names, authors, file paths or
+comment text, because others write those and agents trust their owner's words.
+The agent reads the checks and feedback with `gh`, as data. A watch is
 saved on the device. It ends when the pull request merges or closes, after 20
 wakes, after 30 failed polls in a row, or when the agent calls it with
 `stop: true`.

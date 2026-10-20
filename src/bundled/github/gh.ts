@@ -59,6 +59,11 @@ export function gitHubCli(host: Pick<Host, "spawn">): GitHubCli | undefined {
     const abort = signal ? AbortSignal.any([signal, limit]) : limit;
     abort.addEventListener("abort", stop, { once: true });
     try {
+      // The caller may have given up while gh was starting.
+      if (abort.aborted) {
+        stop();
+        abort.throwIfAborted();
+      }
       await process.end(JSON.stringify({ query, variables }));
       const code = await process.exited;
       abort.throwIfAborted();

@@ -258,6 +258,11 @@ function Actions({
     }
   }
   const merge = mergeability(pull);
+  // A new confirmation starts without an earlier action's error.
+  const confirm = (method: MergeMethod) => {
+    setError(undefined);
+    setConfirming({ method, head: pull.head, bypass: merge.bypass });
+  };
   const confirming =
     merge.now && asked?.head === pull.head && asked.bypass === merge.bypass
       ? asked
@@ -271,12 +276,7 @@ function Actions({
   const menu = [
     ...(merge.now
       ? others.map((method) => (
-          <MenuItem
-            key={method}
-            onClick={() =>
-              setConfirming({ method, head: pull.head, bypass: merge.bypass })
-            }
-          >
+          <MenuItem key={method} onClick={() => confirm(method)}>
             {mergeLabels[method]}
           </MenuItem>
         ))
@@ -338,13 +338,7 @@ function Actions({
             variant={merge.bypass ? "attention" : "prominent"}
             size="sm"
             disabled={!!busy}
-            onClick={() =>
-              setConfirming({
-                method: pull.method,
-                head: pull.head,
-                bypass: merge.bypass,
-              })
-            }
+            onClick={() => confirm(pull.method)}
           >
             {mergeLabels[pull.method]}
           </Button>

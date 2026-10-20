@@ -709,6 +709,34 @@ it("offers a bypass merge to admins, and other methods and drafting in the menu"
   );
 });
 
+it("opens the merge confirmation without an earlier action's error", async () => {
+  const user = userEvent.setup();
+  const gh = vi.fn(async (query: string) => {
+    if (query.startsWith("mutation"))
+      throw new GitHubError("Could not convert to draft");
+    return pullData({ viewerCanMergeAsAdmin: true });
+  });
+  render(
+    <GitHubPanel
+      target={pull}
+      close={() => {}}
+      gh={gh as unknown as GitHubCli}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "More pull request actions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Convert to draft" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not convert to draft",
+  );
+  await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("marks a draft ready for review, and offers auto-merge while blocked", async () => {
   const user = userEvent.setup();
   let draft = true;

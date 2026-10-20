@@ -4,8 +4,9 @@
 // other than the signed-in account, which is also the account agents use.
 //
 // The wake is sent as the owner, whom agents trust, so it carries no text
-// anyone else wrote: no comment bodies, only who, where and a link. The agent
-// reads the feedback itself.
+// anyone else wrote: no check names, comment bodies, authors or file paths,
+// only fixed wording, counts, the head commit and GitHub links. The agent reads
+// the rest itself, as data.
 
 /** What a watched pull request looked like at one read. */
 export type PullSnapshot = Readonly<{
@@ -15,15 +16,13 @@ export type PullSnapshot = Readonly<{
   head: string;
   /** Whether every check on the head is done, and none is still expected. */
   settled: boolean;
-  /** The head's failed checks, by name. */
-  failed: readonly string[];
+  /** How many of the head's checks failed. */
+  failed: number;
   feedback: readonly Feedback[];
 }>;
 export type Feedback = Readonly<{
   id: string;
   author: string;
-  /** A review's state, or where an inline comment is. */
-  where?: string | undefined;
   url: string;
 }>;
 
@@ -87,7 +86,7 @@ export function step(watch: Watch, snapshot: PullSnapshot, now: number): Step {
     arrived: arrived.length ? now : watch.arrived,
   };
   // A failed head that turns green after a rerun is news too.
-  const result = `${snapshot.head}:${snapshot.failed.length ? "failed" : "passed"}`;
+  const result = `${snapshot.head}:${snapshot.failed ? "failed" : "passed"}`;
   const ci = snapshot.settled && result !== watch.reported;
   const quiet = pending.length > 0 && now - (next.arrived ?? now) >= QUIET_MS;
   if (!ci && !quiet) return { watch: next };
@@ -105,10 +104,10 @@ export function step(watch: Watch, snapshot: PullSnapshot, now: number): Step {
   };
 }
 
-const listed = (lines: string[], items: readonly string[]) => {
-  for (const item of items.slice(0, LISTED)) lines.push(`- ${item}`);
-  if (items.length > LISTED) lines.push(`- and ${items.length - LISTED} more`);
-};
+// Only GitHub's own links pass into a wake; anything else stays out.
+const LINK = /^https:\/\/github\.com\/[A-Za-z0-9_.\-/]+(?:#[A-Za-z0-9_-]+)?$/;
+const plural = (count: number, one: string, many: string) =>
+  `${count} ${count === 1 ? one : many}`;
 
 function wakeText(
   url: string,
@@ -118,27 +117,26 @@ function wakeText(
 ) {
   const lines: string[] = [];
   if (ci) {
-    const sha = snapshot.head.slice(0, 9);
-    if (snapshot.failed.length) {
-      lines.push(`CI failed on ${sha} for ${url}:`);
-      listed(
-        lines,
-        snapshot.failed.map((name) => name.slice(0, 80)),
-      );
-    } else lines.push(`CI passed on ${sha} for ${url}.`);
+    const sha = /^[0-9a-f]+$/i.test(snapshot.head)
+      ? `on ${snapshot.head.slice(0, 9)} `
+      : "";
+    lines.push(
+      snapshot.failed
+        ? `CI failed ${sha}for ${url}: ${plural(snapshot.failed, "check", "checks")} failed, to read with gh.`
+        : `CI passed ${sha}for ${url}.`,
+    );
   }
   if (feedback.length) {
     if (lines.length) lines.push("");
     lines.push(
       `${feedback.length === 1 ? "New feedback" : `${feedback.length} new comments`} on ${url}, to read with gh:`,
     );
-    listed(
-      lines,
-      feedback.map(
-        (item) =>
-          `${item.author}${item.where ? ` (${item.where})` : ""}: ${item.url}`,
-      ),
-    );
+    const links = feedback
+      .map((item) => item.url)
+      .filter((link) => LINK.test(link));
+    for (const link of links.slice(0, LISTED)) lines.push(`- ${link}`);
+    if (links.length > LISTED)
+      lines.push(`- and ${links.length - LISTED} more`);
   }
   return lines.join("\n");
 }
@@ -167,11 +165,11 @@ repository(owner:$owner,name:$name){pullRequest(number:$number){
 state headRefOid
 commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
 __typename
-... on CheckRun{name status conclusion}
-... on StatusContext{context state}}}}}}}
+... on CheckRun{status conclusion}
+... on StatusContext{state}}}}}}}
 reviews(last:50){nodes{databaseId author{login} state body url}}
 comments(last:50){nodes{databaseId author{login} url}}
-reviewThreads(last:50){nodes{comments(last:20){nodes{databaseId author{login} path line url}}}}
+reviewThreads(last:50){nodes{comments(last:20){nodes{databaseId author{login} url}}}}
 }}}`;
 
 /** The `gh api graphql --input -` request body that reads `pull`. */
@@ -224,12 +222,10 @@ export function parsePull(output: string): PullSnapshot | undefined {
   const checks = contexts.map((node) =>
     node.__typename === "StatusContext"
       ? {
-          name: str(node.context),
           done: !["PENDING", "EXPECTED"].includes(str(node.state)),
           failed: FAILED.has(str(node.state)),
         }
       : {
-          name: str(node.name),
           done: node.status === "COMPLETED",
           failed: FAILED.has(str(node.conclusion)),
         },
@@ -249,7 +245,6 @@ export function parsePull(output: string): PullSnapshot | undefined {
       .map((node) => ({
         id: `review/${String(node.databaseId)}`,
         author: login(node),
-        where: `review, ${str(node.state).toLowerCase().replace(/_/g, " ")}`,
         url: str(node.url),
       })),
     ...nodes(pull.comments).map((node) => ({
@@ -261,7 +256,6 @@ export function parsePull(output: string): PullSnapshot | undefined {
       nodes(thread.comments).map((node) => ({
         id: `inline/${String(node.databaseId)}`,
         author: login(node),
-        where: `${str(node.path)}${typeof node.line === "number" ? `:${node.line}` : ""}`,
         url: str(node.url),
       })),
     ),
@@ -271,7 +265,7 @@ export function parsePull(output: string): PullSnapshot | undefined {
     viewer: str((data.viewer as Node | null)?.login),
     head,
     settled,
-    failed: checks.filter((check) => check.failed).map((check) => check.name),
+    failed: checks.filter((check) => check.failed).length,
     feedback,
   };
 }

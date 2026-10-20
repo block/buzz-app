@@ -232,7 +232,9 @@ export function createSoloPulls(
   const listeners = new Map<string, Set<() => void>>();
   const links = new Map<string, string | null>();
   const states = new Map<string, PullState | "failed">();
-  let usePublic = !gh;
+  /** Until when to read public data instead, after `gh` was unavailable. */
+  let publicUntil = 0;
+  const readsPublic = () => !gh || Date.now() < publicUntil;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let scheduled = false;
@@ -248,7 +250,7 @@ export function createSoloPulls(
     clearTimeout(timer);
     timer = setTimeout(
       () => (document.visibilityState === "visible" ? void refresh() : later()),
-      usePublic ? PUBLIC_REFRESH_MS : SOLO_REFRESH_MS,
+      readsPublic() ? PUBLIC_REFRESH_MS : SOLO_REFRESH_MS,
     );
   };
   async function refresh() {
@@ -291,11 +293,13 @@ export function createSoloPulls(
     signal: AbortSignal,
   ): Promise<readonly (PullState | undefined)[]> {
     if (!urls.length) return [];
-    if (gh && !usePublic)
+    if (gh && !readsPublic())
       try {
         return await readStates(gh, urls, signal);
       } catch (error) {
-        if (error instanceof GhUnavailable) usePublic = true;
+        // Offline or signed out for now; gh is tried again next public read.
+        if (error instanceof GhUnavailable)
+          publicUntil = Date.now() + PUBLIC_REFRESH_MS;
         else if (urls.length > 1)
           // One missing pull request fails the whole request; read each.
           return (

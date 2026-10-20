@@ -49,8 +49,13 @@ function load(): Map<string, Watch> {
 /** Adds `watch_pr` and polls the watches it saved, for this scope's life. */
 export function watchPulls(ctx: Context) {
   const watches = load();
-  const save = () =>
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([...watches.values()]));
+  // Set when this scope ends, so a read still in flight then neither wakes
+  // anyone nor overwrites the watches a replacement saved.
+  let disposed = false;
+  const save = () => {
+    if (!disposed)
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...watches.values()]));
+  };
   const read = async (url: string) => {
     const pull = pullOf(url);
     if (!pull) return undefined;
@@ -60,6 +65,7 @@ export function watchPulls(ctx: Context) {
   /** Posts `text` to the watch's conversation as the owner, mentioning the
    * agent. Throws when the agent's community cannot take it now. */
   const wake = (watch: Watch, text: string) => {
+    if (disposed) throw new Error("The GitHub plugin has stopped");
     const relay = ctx.agents.relay(watch.agent)?.snapshot();
     if (relay?.status !== "ready")
       throw new Error("The agent's community is not connected");
@@ -79,6 +85,7 @@ export function watchPulls(ctx: Context) {
   /** Counts a poll that failed; after FAILURE_LIMIT in a row the watch ends,
    * telling the agent if it still can. */
   const failed = (key: string, watch: Watch, error: unknown) => {
+    if (disposed) return;
     console.warn(`GitHub watch failed for ${watch.url}`, error);
     const failures = (watch.failures ?? 0) + 1;
     if (failures < FAILURE_LIMIT) {
@@ -103,6 +110,7 @@ export function watchPulls(ctx: Context) {
       for (const [key, watch] of [...watches]) {
         try {
           const snapshot = await read(watch.url);
+          if (disposed) return;
           // Removed or replaced while it was read.
           if (watches.get(key) !== watch) continue;
           if (!snapshot) {
@@ -159,6 +167,7 @@ export function watchPulls(ctx: Context) {
       if (!context.channel)
         throw new Error("watch_pr needs a conversation to wake you in");
       const snapshot = await read(pull.url);
+      if (disposed) throw new Error("The GitHub plugin has stopped");
       if (!snapshot)
         throw new Error(
           "Could not read the pull request with gh. Check that gh is installed, signed in, and can see it.",
@@ -190,6 +199,9 @@ export function watchPulls(ctx: Context) {
   ctx.effect(() => {
     const timer = setInterval(() => void poll(), POLL_MS);
     void poll();
-    return () => clearInterval(timer);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
   });
 }

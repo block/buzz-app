@@ -236,6 +236,29 @@ it("reads each pull request alone when one is missing, and public data without g
   );
 });
 
+it("goes back to gh once it is available again", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ state: "open" }))),
+  );
+  const relay = session([revision(chat, pull)]);
+  let signedIn = false;
+  const gh = vi.fn(async () => {
+    if (!signedIn) throw new GhUnavailable();
+    return { r0: rollup("OPEN", {}, "SUCCESS") };
+  }) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
+  const pulls = createSoloPulls(relay.session, gh);
+  pulls.watch(chat, () => {});
+  await vi.waitFor(() =>
+    expect(pulls.get(chat)?.state).toEqual({ state: "open" }),
+  );
+  signedIn = true;
+  await vi.advanceTimersByTimeAsync(5 * SOLO_REFRESH_MS);
+  expect(gh).toHaveBeenCalledTimes(2);
+  expect(pulls.get(chat)?.state?.checks).toBe("success");
+});
+
 it("shows a link this device wrote before the next read", async () => {
   const relay = session();
   const gh = vi.fn(async () => ({ r0: rollup("OPEN", {}, "SUCCESS") }));

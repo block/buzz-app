@@ -4,6 +4,7 @@ import closeRequest from "../../../src-tauri/src/close-request.js?raw";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   renderHook,
   screen,
@@ -33,6 +34,9 @@ import { setThreadPlacementPreference } from "../../features/messages/thread-pre
 import { SOLO_LABEL } from "../../features/solo/labels";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { ChannelsPage } from "./ChannelsPage";
+import { BrowserHostView } from "../../features/browser/BrowserHostView";
+import { BrowserSessions } from "../../features/browser/sessions";
+import type { BrowserPlatform } from "../../features/browser/platform";
 
 composerDOMFixture();
 
@@ -65,6 +69,7 @@ async function page(
   type: "stream" | "solo" = "stream",
   navigator?: Navigation,
   routed = false,
+  appComponent?: RegisteredPanel["component"],
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -151,7 +156,7 @@ async function page(
     title: "App",
     keepOpen: true,
     matches: (target) => target === "https://app.example/",
-    component: () => <p>App content</p>,
+    component: appComponent ?? (() => <p>App content</p>),
   };
   const available = [panel, app];
   let handleOpen: ((request: PanelOpenRequest) => boolean) | undefined;
@@ -259,6 +264,111 @@ it.each(["side", "main"] as const)(
     expect(open).not.toHaveBeenCalled();
   },
 );
+
+it("moving the last side app adopts its guest before the dock exit finishes", async () => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 800, 500),
+  );
+  let finishExit = () => {};
+  const finished = new Promise<void>((resolve) => {
+    finishExit = resolve;
+  });
+  const originalAnimations = HTMLElement.prototype.getAnimations;
+  const getAnimations = vi.fn(() => [{ finished }]);
+  Object.defineProperty(HTMLElement.prototype, "getAnimations", {
+    configurable: true,
+    value: getAnimations,
+  });
+  const pages = new Map<string, string>();
+  const attached = vi.fn(async (url: string) => {
+    const id = `guest-${pages.size + 1}`;
+    pages.set(id, url);
+    return id;
+  });
+  const detached = vi.fn(async (id: string) => {
+    pages.delete(id);
+  });
+  const observed: string[] = [];
+  const platform: BrowserPlatform = {
+    available: true,
+    attach: attached,
+    detach: detached,
+    setBounds: async () => {},
+    navigate: async (id, url) => {
+      pages.set(id, url);
+    },
+    action: async () => {},
+    status: async (id) => {
+      const url = pages.get(id) ?? "";
+      observed.push(url);
+      return { url, title: "App", loading: false, error: null };
+    },
+  };
+  const sessions = new BrowserSessions(platform);
+  const App = () => (
+    <BrowserHostView
+      url="https://app.example/"
+      storage="builderlab-apps"
+      platform={platform}
+      sessions={sessions}
+    />
+  );
+  try {
+    const h = await page("stream", undefined, false, App);
+    act(() =>
+      expect(
+        h.panels.requestOpen({
+          channelId: "alpha",
+          target: "https://app.example/",
+        }),
+      ).toBe(true),
+    );
+    await vi.waitFor(() => expect(attached).toHaveBeenCalledTimes(1));
+    const address = screen.getByRole("textbox", { name: "Address" });
+    await h.user.clear(address);
+    await h.user.type(address, "https://app.example/second.html{Enter}");
+    await vi.waitFor(() =>
+      expect(observed).toContain("https://app.example/second.html"),
+    );
+    const source = document.querySelector("[data-panel-dock]");
+    const sourceGuest = source
+      ?.querySelector("[data-browser-session]")
+      ?.getAttribute("data-browser-session");
+    expect(sourceGuest).toBe("guest-1");
+    screen.getByRole("tab", { name: "App" }).focus();
+    await h.user.keyboard("{Alt>}{Shift>}{ArrowLeft}{/Shift}{/Alt}");
+    const main = document.querySelector<HTMLElement>("[data-main-workspace]");
+    if (!main) throw new Error("Main workspace unavailable");
+    fireEvent.animationEnd(within(main).getByRole("tabpanel", { name: "App" }));
+    await vi.waitFor(() =>
+      expect(main.querySelector("[data-browser-session]")).not.toBeNull(),
+    );
+    expect(getAnimations).toHaveBeenCalled();
+    expect(source).toHaveAttribute("data-closing");
+    expect(main.querySelector("[data-browser-session]")).toHaveAttribute(
+      "data-browser-session",
+      sourceGuest,
+    );
+    expect(attached).toHaveBeenCalledTimes(1);
+    expect(detached).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(
+        within(main).getByRole("textbox", { name: "Address" }),
+      ).toHaveValue("https://app.example/second.html"),
+    );
+    await act(async () => finishExit());
+    expect(main.querySelector("[data-browser-session]")).toHaveAttribute(
+      "data-browser-session",
+      sourceGuest,
+    );
+    expect(attached).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => finishExit());
+    if (originalAnimations)
+      HTMLElement.prototype.getAnimations = originalAnimations;
+    else Reflect.deleteProperty(HTMLElement.prototype, "getAnimations");
+  }
+});
 
 const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
   let handled = false;

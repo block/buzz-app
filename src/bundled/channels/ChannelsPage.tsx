@@ -1844,7 +1844,9 @@ function ChannelWorkspace({
       </p>
       <PanelDock
         open={!!showingPanel && !showingMediaReview}
-        keepMounted={!!hasPanel && !tabState.paneOpen}
+        keepMounted={
+          tabState.entries.length > 0 || (!!hasPanel && !tabState.paneOpen)
+        }
         className={styles.panelStack}
         resizeHandle={split.handle}
       >

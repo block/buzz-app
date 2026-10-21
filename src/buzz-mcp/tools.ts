@@ -29,6 +29,8 @@ import type { BuzzClient, BuzzEvent, Context, Filter, Upload } from "./client";
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
 const strs = { type: "array", items: str } as const;
+/** The channel types a channel list can ask for, as NIP-CL names them. */
+const CHANNEL_TYPES = ["stream", "forum", "dm", "workflow", "system"];
 const tool = (
   name: string,
   description: string,
@@ -130,8 +132,17 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "channels",
-    "Channels you are in; with all, every one you can see. system lists only system channels, which are otherwise left out.",
-    { q: str, all: { type: "boolean" }, system: { type: "boolean" } },
+    "Channels you are in; with all, every one you can see. types lists only channels of those types; system channels are listed only when types has system.",
+    {
+      q: str,
+      all: { type: "boolean" },
+      types: {
+        type: "array",
+        items: { type: "string", enum: CHANNEL_TYPES },
+        minItems: 1,
+        uniqueItems: true,
+      },
+    },
   ),
   tool(
     "channel",
@@ -585,8 +596,18 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async channels(tools, args) {
     const { client } = tools;
     const ids = new Set<string>();
-    // The relay leaves system channels out unless a read opts in to them.
-    const scope = args.system === true ? { "#t": ["system"] } : {};
+    // Each channel-state event carries its type in its first `t` tag. The
+    // relay leaves system channels out unless `#t` asks for them.
+    const types = args.types === undefined ? undefined : list(args.types);
+    if (
+      types &&
+      (!Array.isArray(args.types) ||
+        !types.length ||
+        types.length !== args.types.length ||
+        types.some((type) => !CHANNEL_TYPES.includes(type)))
+    )
+      throw new Error(`types must list some of ${CHANNEL_TYPES.join(", ")}.`);
+    const scope = types ? { "#t": [...new Set(types)] } : {};
     const membershipsComplete = await tools.scan(
       { kinds: [39002], "#p": [client.pubkey], ...scope },
       (event) => {

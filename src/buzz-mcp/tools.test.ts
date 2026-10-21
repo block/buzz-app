@@ -681,6 +681,7 @@ function relay(refused: Readonly<Record<string, string>> = {}) {
       kind: 39002,
       tags: [
         ["d", room],
+        ["t", "stream"],
         ["p", me, "", "owner"],
         ["p", alice, "", "member"],
       ],
@@ -761,6 +762,51 @@ it("lists channels it can join as well as its own", async () => {
   );
 });
 
+it("lists only the channel types asked for", async () => {
+  const { client, state } = relay();
+  const forum = "7d9a4e3f-5c6b-4d8e-8f1a-2b3c4d5e6f70";
+  state.push(
+    event({
+      kind: 39000,
+      tags: [
+        ["d", forum],
+        ["name", "ideas"],
+        ["t", "forum"],
+      ],
+    }),
+    event({
+      kind: 39002,
+      tags: [
+        ["d", forum],
+        ["t", "forum"],
+        ["p", me, "", "member"],
+      ],
+    }),
+    event({
+      kind: 39000,
+      tags: [["d", "other"], ["name", "lobby"], ["t", "forum"], ["private"]],
+    }),
+  );
+  await expect(callTool(client, {}, "channels", {})).resolves.toBe(
+    `${room} plans\n${forum} ideas (forum)`,
+  );
+  await expect(
+    callTool(client, {}, "channels", { types: ["forum"] }),
+  ).resolves.toBe(`${forum} ideas (forum)`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["stream"], all: true }),
+  ).resolves.toBe(`${room} plans`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["forum"], all: true }),
+  ).resolves.toBe(
+    `${forum} ideas (forum)\nother lobby (forum, private, not joined)`,
+  );
+  for (const types of [[], ["channel"], "forum", [7]])
+    await expect(callTool(client, {}, "channels", { types })).rejects.toThrow(
+      "types must list some of stream, forum, dm, workflow, system.",
+    );
+});
+
 it("lists system channels only when asked, as the relay serves them", async () => {
   const { client, state } = relay();
   const system = "5b7e2c1d-3a4f-4b6c-8d9e-0f1a2b3c4d5e";
@@ -810,10 +856,10 @@ it("lists system channels only when asked, as the relay serves them", async () =
     `${room} plans`,
   );
   await expect(
-    callTool(client, {}, "channels", { system: true }),
+    callTool(client, {}, "channels", { types: ["system"] }),
   ).resolves.toBe(`${system} config (system, private)`);
   await expect(
-    callTool(client, {}, "channels", { system: true, all: true }),
+    callTool(client, {}, "channels", { types: ["system"], all: true }),
   ).resolves.toBe(
     `${system} config (system, private)\n${lobby} ops (system, not joined)`,
   );

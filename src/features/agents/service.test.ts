@@ -7308,7 +7308,7 @@ it("submits an unsaved change draft and applies only the owner's reviewed change
   await service.approveUpdate(result.requestId, {
     name: "Reviewer",
     type: "other/relay",
-    instructions: "Review carefully.",
+    config: { prompt: "Review carefully.", model: "small" },
   });
   expect(service.find(sibling)).toMatchObject({
     name: "Reviewer",
@@ -7321,7 +7321,10 @@ it("submits an unsaved change draft and applies only the owner's reviewed change
   });
   expect(service.updateRequests()).toEqual([]);
   await expect(
-    service.approveUpdate(result.requestId, { name: "Again" }),
+    service.approveUpdate(result.requestId, {
+      name: "Again",
+      type: "example/echo",
+    }),
   ).rejects.toThrow("No such pending");
 });
 
@@ -7336,7 +7339,11 @@ it("changes instructions in place and discards a dismissed change draft", async 
     agent: sibling,
     instructions: "Triage.",
   });
-  await service.approveUpdate(requestId, { instructions: "Triage." });
+  await service.approveUpdate(requestId, {
+    name: "Child",
+    type: "example/echo",
+    config: { reply: "Triage." },
+  });
   expect(service.find(sibling)?.config).toEqual({ reply: "Triage." });
   const draft = await handle.updateAgent({ agent: "Child", name: "Kid" });
   service.dismissUpdate(draft.requestId);

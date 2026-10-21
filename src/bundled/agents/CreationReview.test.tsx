@@ -60,7 +60,7 @@ it("prefills an editable review and creates only when the owner submits", async 
   const agents = fixture();
   const name = await screen.findByDisplayValue("Child");
   expect(
-    screen.getByText(/Parent requested this agent in https:\/\/relay.example/),
+    screen.getByText(/Parent requested this agent\. Review/),
   ).toBeVisible();
   expect(agents.approveCreation).not.toHaveBeenCalled();
   await user.clear(name);

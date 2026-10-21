@@ -8,7 +8,6 @@ import type {
   Agents,
   RegisteredAgentType,
   AgentCreationRequest,
-  AgentUpdate,
   AgentUpdateRequest,
   NewAgent,
 } from "../../src/features/agents/service";
@@ -25,8 +24,19 @@ const type: RegisteredAgentType = {
   title: "Fixture",
   description: "Fixture agent",
   defaults: () => ({ config: {} }),
-  Create: () => (
-    <AgentInstructions value="" disabled={false} onChange={() => {}} creation />
+  adopt: ({ instructions }, config) => ({
+    ...(config as object),
+    instructions,
+  }),
+  Create: ({ config, disabled, onChange }) => (
+    <AgentInstructions
+      value={(config as { instructions?: string }).instructions ?? ""}
+      disabled={disabled}
+      onChange={(instructions) =>
+        onChange({ ...(config as object), instructions })
+      }
+      creation
+    />
   ),
   CreateModel: ({ disabled, modelAppearance }) => (
     <CreateModelChoices
@@ -88,7 +98,7 @@ let updates: readonly AgentUpdateRequest[] = changing
       },
     ]
   : [];
-const changed: AgentUpdate[] = [];
+const changed: NewAgent[] = [];
 let requests: readonly AgentCreationRequest[] = reviewing
   ? [
       {
@@ -131,8 +141,8 @@ const agents = {
   },
   updateRequests: () => updates,
   dismissUpdate,
-  approveUpdate: async (_id: string, change: AgentUpdate) => {
-    changed.push(change);
+  approveUpdate: async (_id: string, input: NewAgent) => {
+    changed.push(input);
     dismissUpdate();
   },
   previewRetype: () => ({

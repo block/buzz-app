@@ -884,8 +884,9 @@ export type Agents = {
   /** Local, unsaved change requests; closing a review discards its request. */
   updateRequests(): readonly AgentUpdateRequest[];
   dismissUpdate(id: string): void;
-  /** Applies the owner-reviewed `change` to the request's agent. */
-  approveUpdate(id: string, change: AgentUpdate): Promise<void>;
+  /** Saves the owner-reviewed edit form, the agent's settings with the
+   * request's changes, to the request's agent. */
+  approveUpdate(id: string, input: NewAgent): Promise<void>;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -1788,7 +1789,7 @@ export class AgentsService extends Service implements Agents {
     this.updates = this.updates.filter((request) => request.id !== id);
     this.notify();
   };
-  async approveUpdate(id: string, change: AgentUpdate) {
+  async approveUpdate(id: string, input: NewAgent) {
     const request = this.updates.find((item) => item.id === id);
     if (!request || this.approving.has(id))
       throw new Error("No such pending agent request");
@@ -1798,25 +1799,23 @@ export class AgentsService extends Service implements Agents {
     const binding = this.bindingOf(identity);
     if (!binding || binding.controller.signal.aborted)
       throw new Error("Connect to the agent's community first");
-    const kind = this.updateKind(identity, change);
+    const { type, name, picture, config } = input;
+    this.updateKind(identity, { name, type });
     const { pubkey } = identity;
-    const carry =
-      change.instructions === undefined
-        ? undefined
-        : { instructions: change.instructions };
+    const retyped = type !== identity.type;
     this.approving.add(id);
     try {
-      if (change.type !== undefined && change.type !== identity.type) {
-        const { config } = this.previewRetype(pubkey, change.type);
-        await this.retype(pubkey, change.type, {
-          config: carry && kind.adopt ? kind.adopt(carry, config) : config,
-        });
-      } else if (carry && kind.adopt)
-        await this.save(pubkey, {
-          config: kind.adopt(carry, this.recordOf(identity).config),
-        });
-      if (change.name !== undefined)
-        await this.save(pubkey, { name: change.name });
+      if (retyped)
+        await this.retype(
+          pubkey,
+          type,
+          config === undefined ? undefined : { config },
+        );
+      await this.save(pubkey, {
+        name,
+        ...(picture && { picture }),
+        ...(!retyped && config !== undefined && { config }),
+      });
       this.updates = this.updates.filter((item) => item.id !== id);
       this.notify();
     } finally {

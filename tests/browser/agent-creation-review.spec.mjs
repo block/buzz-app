@@ -9,7 +9,7 @@ test("agent creation waits for owner review in the existing editable form", asyn
   await expect(name).toHaveValue("Child");
   await expect(name).toBeFocused();
   await expect(dialog).toContainText(
-    "Parent requested this agent in https://relay.example",
+    "Parent requested this agent. Review its settings",
   );
   expect(await page.evaluate(() => window.creationReviewResult())).toEqual([]);
   for (const theme of ["light", "dark"]) {

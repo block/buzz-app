@@ -4,6 +4,8 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
+  Agent,
+  AgentCreateProps,
   Agents,
   AgentUpdateRequest,
   RegisteredAgentType,
@@ -12,7 +14,26 @@ import { UpdateReview } from "./UpdateReview";
 
 afterEach(cleanup);
 
-function fixture() {
+type Config = { reply: string; model: string };
+const Create = ({ config, onChange }: AgentCreateProps<Config>) => (
+  <textarea
+    aria-label="Instructions"
+    value={config.reply}
+    onChange={(event) => onChange({ ...config, reply: event.target.value })}
+  />
+);
+const kind = (key: string, title: string) => ({
+  key,
+  title,
+  defaults: () => ({ config: { reply: "", model: "default" } }),
+  adopt: ({ instructions }: { instructions?: string }, config: Config) => ({
+    ...config,
+    reply: instructions ?? config.reply,
+  }),
+  Create,
+});
+
+function fixture(change: Partial<AgentUpdateRequest>) {
   let requests: readonly AgentUpdateRequest[] = [
     {
       id: "draft",
@@ -23,8 +44,7 @@ function fixture() {
       agent: "c".repeat(64),
       agentName: "Child",
       agentType: "test/echo",
-      name: "Kid",
-      instructions: "Review PRs.",
+      ...change,
     },
   ];
   const listeners = new Set<() => void>();
@@ -33,51 +53,86 @@ function fixture() {
     for (const listener of listeners) listener();
   };
   const types = [
-    { key: "test/echo", title: "Echo" },
+    kind("test/echo", "Echo"),
+    kind("test/other", "Other"),
   ] as unknown as readonly RegisteredAgentType[];
+  const agent = {
+    pubkey: "c".repeat(64),
+    name: "Child",
+    picture: "https://example.test/child.png",
+    type: "test/echo",
+    config: { reply: "Be brief.", model: "large" },
+  } as unknown as Agent;
   const agents = {
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
     types: () => types,
+    find: () => agent,
     updateRequests: () => requests,
     approveUpdate: vi.fn(async () => clear()),
     dismissUpdate: vi.fn(clear),
-    previewRetype: vi.fn(),
+    previewRetype: vi.fn(() => ({
+      config: { reply: "Be brief.", model: "default" },
+      moved: ["instructions"],
+      dropped: [],
+      settings: [],
+    })),
   };
   render(<UpdateReview agents={agents as unknown as Agents} />);
   return agents;
 }
 
-it("shows only the proposed changes and saves what the owner reviewed", async () => {
+it("edits the agent's settings with the proposed changes and saves what the owner reviewed", async () => {
   const user = userEvent.setup();
-  const agents = fixture();
+  const agents = fixture({ name: "Kid", instructions: "Review PRs." });
   const name = await screen.findByDisplayValue("Kid");
-  expect(
-    screen.getByText(
-      /Parent proposed these changes in https:\/\/relay.example/,
-    ),
-  ).toBeVisible();
-  expect(screen.getByDisplayValue("Review PRs.")).toBeVisible();
-  expect(screen.queryByText("Harness")).not.toBeInTheDocument();
+  expect(screen.getByText("Edit Child")).toBeVisible();
+  expect(screen.getByText(/Parent proposed these changes\./)).toBeVisible();
+  expect(screen.getByLabelText("Instructions")).toHaveValue("Review PRs.");
+  expect(agents.previewRetype).not.toHaveBeenCalled();
   expect(agents.approveUpdate).not.toHaveBeenCalled();
   await user.clear(name);
   await user.type(name, "Reviewer");
   await user.click(screen.getByRole("button", { name: /^Save changes$/ }));
   await waitFor(() =>
     expect(agents.approveUpdate).toHaveBeenCalledWith("draft", {
+      type: "test/echo",
       name: "Reviewer",
-      instructions: "Review PRs.",
+      picture: "https://example.test/child.png",
+      config: { reply: "Review PRs.", model: "large" },
     }),
+  );
+});
+
+it("previews a proposed harness change from the migrated settings", async () => {
+  const user = userEvent.setup();
+  const agents = fixture({ type: "test/other" });
+  await screen.findByDisplayValue("Child");
+  expect(agents.previewRetype).toHaveBeenCalledWith(
+    "c".repeat(64),
+    "test/other",
+  );
+  expect(screen.getByText(/The provider changes/)).toBeVisible();
+  expect(screen.getByLabelText("Instructions")).toHaveValue("Be brief.");
+  await user.click(screen.getByRole("button", { name: /^Save changes$/ }));
+  await waitFor(() =>
+    expect(agents.approveUpdate).toHaveBeenCalledWith(
+      "draft",
+      expect.objectContaining({
+        type: "test/other",
+        config: { reply: "Be brief.", model: "default" },
+      }),
+    ),
   );
 });
 
 it("discards an unsaved change request when the owner closes its review", async () => {
   const user = userEvent.setup();
-  const agents = fixture();
+  const agents = fixture({ name: "Kid" });
   await screen.findByDisplayValue("Kid");
-  await user.click(screen.getByRole("button", { name: /^Discard$/ }));
+  await user.click(screen.getByRole("button", { name: /^Close$/ }));
   await waitFor(() =>
     expect(agents.dismissUpdate).toHaveBeenCalledWith("draft"),
   );

@@ -1012,6 +1012,7 @@ describe("team operations: saved before sending", () => {
       (w: ReturnType<typeof world>, teamId: string) =>
         edit(w, teamId, { name: "Renamed" }),
       (w: ReturnType<typeof world>) => w.writer.publish,
+      false,
     ],
     [
       "member add",
@@ -1019,6 +1020,7 @@ describe("team operations: saved before sending", () => {
       (w: ReturnType<typeof world>, teamId: string) =>
         edit(w, teamId, { members: [a] }),
       (w: ReturnType<typeof world>) => w.channels.addMember,
+      true,
     ],
     [
       "archive",
@@ -1031,10 +1033,11 @@ describe("team operations: saved before sending", () => {
           intent: { name: "", instructions: "", members: [] },
         }),
       (w: ReturnType<typeof world>) => w.channels.archive,
+      true,
     ],
   ])(
     "a Discard saved right behind the %s claim stops it before it sends",
-    async (_, match, start, adapter) => {
+    async (_, match, start, adapter, command) => {
       const w = world();
       const teamId = await existing(w, []);
       const save = hold(w, match);
@@ -1049,6 +1052,15 @@ describe("team operations: saved before sending", () => {
         mode: "reconcile-only",
         stop: "discarded",
       });
+      // A command that never reached its adapter leaves nothing unconfirmed:
+      // Check again, Dismiss, and the team's next change all go through.
+      if (!command) return;
+      await w.runner.run(op.id);
+      expect(unresolved(record(w, op.id))).toBe(false);
+      await w.runner.dismiss(op.id);
+      expect(w.ops.get(op.id)).toBeUndefined();
+      expect(await edit(w, teamId, { name: "Later" }).done).toBeUndefined();
+      expect(w.relay.head?.tags).toContainEqual(["title", "Later"]);
     },
   );
 

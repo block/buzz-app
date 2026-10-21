@@ -340,6 +340,27 @@ export function teamRunner(deps: RunnerDeps) {
    * land before they resume. A stopped record keeps its uncertain marks. */
   const holds = (claimed: TeamOp) =>
     ops.get(claimed.id) === claimed && !fenced(claimed.teamId, claimed.id);
+  /** Takes back a command claim `holds()` stopped before the adapter saw
+   * it: each command still exactly as claimed returns to its state in
+   * `prior`. Newer fields stay, and so does any other uncertainty. */
+  async function unclaim(prior: TeamOp, claimed: TeamOp) {
+    const key = (c: Command) => JSON.stringify(c);
+    const applied = await ops.update((records) => {
+      const now = records[prior.id];
+      if (!now) return undefined;
+      let changed = false;
+      const commands = now.commands.map((c) => {
+        const i = claimed.commands.findIndex((d) => key(d) === key(c));
+        const was = prior.commands[i];
+        if (i < 0 || !was || key(was) === key(c)) return c;
+        changed = true;
+        return was;
+      });
+      return changed ? { [prior.id]: { ...now, commands } } : undefined;
+    });
+    if (applied) deps.changed();
+    return ops.get(prior.id);
+  }
 
   /** Runs `work` after the team's earlier steps settle: one step per team
    * at a time, so no two overlap across signing, delivery or a command. */
@@ -845,8 +866,8 @@ export function teamRunner(deps: RunnerDeps) {
         return base && (await save(marked(base, state, error)));
       };
       const claimed = marked(now, "maybe-sent");
-      if (!(await claim(now, claimed)) || !holds(claimed))
-        return ops.get(start.id);
+      if (!(await claim(now, claimed))) return ops.get(start.id);
+      if (!holds(claimed)) return unclaim(now, claimed);
       const result = await (command.action === "add"
         ? channels.addMember(channel, pubkey, signal)
         : channels.removeMember(channel, pubkey)
@@ -914,7 +935,8 @@ export function teamRunner(deps: RunnerDeps) {
       return base && (await save(marked(base, s, error)));
     };
     const claimed = marked(now, "maybe-sent");
-    if (!(await claim(now, claimed)) || !holds(claimed)) return ops.get(op.id);
+    if (!(await claim(now, claimed))) return ops.get(op.id);
+    if (!holds(claimed)) return unclaim(now, claimed);
     try {
       await channels[archive ? "archive" : "unarchive"](channel, signal);
     } catch (error) {

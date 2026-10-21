@@ -38,6 +38,7 @@ import {
   recordVisit,
 } from "../../features/search/usage";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
+import { clearViewScope, writeView } from "../../shared/view-state";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
@@ -3911,5 +3912,86 @@ it("withholds unknown metadata, then reveals unproven legacy rooms as ordinary d
     release();
     cleanup();
     owner.dispose();
+  }
+});
+
+it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", async () => {
+  // The sidebar hides a DM on this device (Hide conversation) or by the
+  // relay's DM visibility list. Search reads both, as the sidebar does.
+  const scope = "search-hidden-dms";
+  writeView(scope, "hidden-dms", [{ id: "local-dm" }]);
+  const relay = keypair(),
+    viewer = keypair();
+  const dms = [
+    { id: "local-dm", name: "Scotty", key: keypair() },
+    { id: "relay-dm", name: "Scooby", key: keypair() },
+    { id: "shown-dm", name: "Scott", key: keypair() },
+  ];
+  const discovery = dms.flatMap(({ id, key, name }) => [
+    metadata(relay, id, "opaque", 1700000000, [
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, id, [viewer.pubkey, key.pubkey]),
+    profile(key, { name }),
+  ]);
+  const hits = [
+    message(viewer, "local-dm", "sco from local", 1700000001),
+    message(viewer, "relay-dm", "sco from relay", 1700000001),
+  ];
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined))
+        return filters.some((filter) => filter.kinds?.includes(0)) ? [] : hits;
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const lifecycle = owner.session.channelLifecycle;
+  const visibility = {
+    ...lifecycle.snapshot(),
+    status: "ready" as const,
+    hidden: Object.freeze(["relay-dm"]),
+  };
+  const session = {
+    ...owner.session,
+    channelLifecycle: {
+      ...lifecycle,
+      snapshot: () => visibility,
+      subscribe: () => () => {},
+    },
+  } as typeof owner.session;
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="sco"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+        sidebarScope={scope}
+      />,
+    );
+    const direct = within(
+      await screen.findByRole("group", { name: "Direct messages" }),
+    );
+    expect(
+      await direct.findByRole("option", { name: /^Scott(?!y)/ }),
+    ).toBeVisible();
+    expect(direct.queryByRole("option", { name: /Scotty/ })).toBeNull();
+    expect(direct.queryByRole("option", { name: /Scooby/ })).toBeNull();
+    expect(
+      await screen.findByRole("option", { name: /sco from local/ }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("option", { name: /sco from relay/ }),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    owner.dispose();
+    clearViewScope(scope);
   }
 });

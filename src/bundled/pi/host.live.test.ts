@@ -24,7 +24,7 @@ const run = promisify(execFile);
 /** Serves the plugin's side over in-process streams, as Buzz would. */
 const DRIVER = `
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { rm, utimes, writeFile } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
 import { createModels } from "@earendil-works/pi-ai/models";
@@ -170,6 +170,23 @@ out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission });
 // Pi's settings as they are now, which the pi command changes.
 await writeFile(data + "/settings.json", JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
 out.defaults = await pi.rpc("defaults", {});
+// A host whose storage another host took over stops running it, and leaves
+// its run there: changing the lock's time is what taking it over does.
+const k = held(), thinking = held();
+faux.setResponses([async (_context, options) => { thinking.release(); await abortable(k.gate, options?.signal); return fauxAssistantMessage("Ran beside the new owner"); }]);
+const k1 = await pi.rpc("deliver", turn("K", "eleventh"));
+await thinking.gate;
+const lock = data + "/agents/" + agent + ".sqlite.lock";
+const taken = new Date(Date.now() + 60_000);
+await utimes(lock, taken, taken);
+// The lock's own timer, which finds it taken, doesn't keep a process up.
+const up = setInterval(() => {}, 1_000);
+out.lost = await pi.rpc("wait", { agent, submission: k1.submission });
+clearInterval(up);
+out.lostDeliver = await pi.rpc("deliver", turn("K2", "twelfth")).catch((error) => error.message);
+await rm(lock, { recursive: true });
+await pi.rpc("open", { agent, tools });
+out.lostLeft = (await pi.rpc("unfinished", { agent })).submissions.map((item) => item.request);
 await pi.stop();
 // Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
 // another process refreshed first, keeps the sign-in.
@@ -325,6 +342,9 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       text: "Late answer",
     });
     expect(out.defaults).toEqual({ provider: "faux", model: "faux-1" });
+    expect(out.lost).toEqual({ status: "closed" });
+    expect(out.lostDeliver).toBe("The agent is not open");
+    expect(out.lostLeft).toEqual(["K"]);
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });
     expect(out.command).toMatch(

@@ -257,7 +257,7 @@ export function serve({
     };
   }
 
-  async function open(agent) {
+  async function open(agent, lost) {
     if (!/^[0-9a-f]{64}$/.test(agent)) throw new Error("Not an agent key");
     const path = join(data, "agents", `${agent}.sqlite`);
     // An agent's storage holds its conversations: only its owner may read
@@ -271,8 +271,10 @@ export function serve({
         realpath: false,
         stale: STALE_MS,
         retries: { retries: 12, minTimeout: 1_000, maxTimeout: 5_000 },
-        onCompromised: (error) =>
-          console.error("Pi lost its lock on an agent's storage", error),
+        onCompromised: (error) => {
+          console.error("Pi lost its lock on an agent's storage", error);
+          lost();
+        },
       })
       .catch((error) => {
         throw error.code === "ELOCKED"
@@ -331,7 +333,12 @@ export function serve({
   function opening(agent) {
     let started = agents.get(agent);
     if (!started) {
-      const opened = open(agent);
+      // A host that took the storage over runs it now: this one stops, and
+      // leaves its runs to it. Opening again says the agent is open there.
+      const opened = open(agent, () => {
+        forget();
+        void opened.then(shut, () => undefined);
+      });
       started = opened;
       failed.delete(agent);
       agents.set(agent, opened);

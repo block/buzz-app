@@ -16,9 +16,10 @@ that does not match your explicit public pin.
 Click the avatar → **Settings → Profile**. With a community selected in the
 header's community picker, Save updates only your profile in that community;
 there is no separate profile-destination selector. In Personal space, Save edits
-the local default for new communities without publishing. Use **Join a
-community** and type a **Relay URL**. With no community joined it is a labeled
-button in the header; afterwards it is in the community picker. There
+the local default for new communities without publishing. Open the header's
+community picker, choose **Join a community** and type a **Relay URL**. With no
+community saved, the picker is labeled **Communities**; otherwise it shows the
+selected community's icon or the Personal space globe. There
 is no destination dropdown. Accepts `wss://` or `https://` origins, for example
 `wss://relay.example.com` or `wss://other.example.com`, and other
 Buzz-compatible community relays. No community is pre-joined.

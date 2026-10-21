@@ -3,6 +3,7 @@ import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  CaretDownIcon,
   GlobeIcon,
   PlusIcon,
   UsersPlusIcon,
@@ -60,13 +61,11 @@ export function CommunityPicker({
 }) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const joinRef = useRef<HTMLButtonElement>(null);
   const [joining, setJoining] = useState(false);
   const navigated = useRef(false);
   const wasJoining = useRef(false);
   useEffect(() => {
-    if (wasJoining.current && !joining)
-      (joinRef.current ?? triggerRef.current)?.focus();
+    if (wasJoining.current && !joining) triggerRef.current?.focus();
     wasJoining.current = joining;
   }, [joining]);
   // The confirm dialog belongs to the picker so it outlives the item it removes.
@@ -185,18 +184,6 @@ export function CommunityPicker({
   return (
     <>
       <nav aria-label="Communities" className={styles.picker}>
-        {/* The globe alone doesn't say where communities live; with none
-            joined, offer joining as a labeled action beside it. */}
-        {client.memberships.length === 0 && (
-          <Button
-            ref={joinRef}
-            size="sm"
-            variant="subtle"
-            onClick={() => setJoining(true)}
-          >
-            Join a community
-          </Button>
-        )}
         <PopoverRoot
           open={switcherOpen}
           onOpenChange={(open) => {
@@ -206,27 +193,39 @@ export function CommunityPicker({
         >
           <PopoverTrigger
             render={
-              <IconButton
-                ref={triggerRef}
-                size="md"
-                variant="avatar"
-                shape="round"
-                aria-label={`Community switcher: ${active ? communityName(active) : "Personal space"}`}
-                title={active ? communityName(active) : "Personal space"}
-                icon={
-                  active ? (
-                    <Avatar
-                      size="small"
-                      shape="squircle"
-                      alt=""
-                      fallback={communityName(active)}
-                      src={active.publishedIcon ?? active.icon}
-                    />
-                  ) : (
-                    <GlobeIcon size={22} aria-hidden="true" />
-                  )
-                }
-              />
+              client.memberships.length === 0 ? (
+                <Button
+                  ref={triggerRef}
+                  size="sm"
+                  variant="subtle"
+                  aria-label="Community switcher: Communities"
+                >
+                  Communities
+                  <CaretDownIcon size={16} aria-hidden="true" />
+                </Button>
+              ) : (
+                <IconButton
+                  ref={triggerRef}
+                  size="md"
+                  variant="avatar"
+                  shape="round"
+                  aria-label={`Community switcher: ${active ? communityName(active) : "Personal space"}`}
+                  title={active ? communityName(active) : "Personal space"}
+                  icon={
+                    active ? (
+                      <Avatar
+                        size="small"
+                        shape="squircle"
+                        alt=""
+                        fallback={communityName(active)}
+                        src={active.publishedIcon ?? active.icon}
+                      />
+                    ) : (
+                      <GlobeIcon size={22} aria-hidden="true" />
+                    )
+                  }
+                />
+              )
             }
           />
           <PopoverPopup

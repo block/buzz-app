@@ -106,13 +106,13 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
-  // Someone without a community starts by joining one. Skipping, or having
-  // had one this run, keeps the shell; Personal space with memberships is unchanged.
-  const [joinSettled, setJoinSettled] = useState(false);
-  if (!joinSettled && client.memberships.length > 0) setJoinSettled(true);
+  // Someone without a community starts by joining one. Having had one this
+  // run keeps the shell; Personal space with memberships is unchanged.
+  const [hadCommunity, setHadCommunity] = useState(false);
+  if (!hadCommunity && client.memberships.length > 0) setHadCommunity(true);
   const firstRun =
     !settings &&
-    !joinSettled &&
+    !hadCommunity &&
     startup !== "recovery" &&
     client.status === "ready" &&
     client.relayAvailable &&
@@ -253,7 +253,6 @@ function ConnectedApp({ services }: { services: AppServices }) {
             section: "block.hosted-communities/hosted",
           })
         }
-        onSkip={() => setJoinSettled(true)}
       />
     );
   const openSettingsSection = (section: string) => {

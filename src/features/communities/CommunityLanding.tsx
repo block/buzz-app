@@ -16,7 +16,6 @@ export function CommunityLanding({
   settingsCards,
   onJoined,
   onCreate,
-  onSkip,
 }: {
   communities: Communities;
   invite?: (InviteLink & { requestId: number }) | undefined;
@@ -24,7 +23,6 @@ export function CommunityLanding({
   settingsCards: Pick<SettingsCards, "subscribe" | "has">;
   onJoined(id: string): void;
   onCreate(): void;
-  onSkip(): void;
 }) {
   const [link, setLink] = useState("");
   const [error, setError] = useState("");
@@ -37,51 +35,50 @@ export function CommunityLanding({
     <OnboardingScreen
       labelledBy="community-landing-title"
       intro={
-        <h1 id="community-landing-title" className="text-heading">
-          Join a community
-        </h1>
+        <>
+          <h1 id="community-landing-title" className="text-heading">
+            Join a community
+          </h1>
+          <form
+            className="mt-4 grid w-full max-w-md gap-4 text-left"
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              const parsed = parsePastedInvite(link);
+              if (parsed) setJoining(parsed);
+              else setError("Paste the invite link you were sent.");
+            }}
+          >
+            <Field label="Invite link" error={error}>
+              <Input
+                autoFocus
+                value={link}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="https://"
+                onChange={(event) => {
+                  setLink(event.target.value);
+                  setError("");
+                }}
+              />
+            </Field>
+            <Button
+              type="submit"
+              size="lg"
+              variant="prominent"
+              disabled={!link.trim()}
+            >
+              Join
+            </Button>
+          </form>
+        </>
       }
     >
-      <form
-        className="grid gap-4 text-left"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          const parsed = parsePastedInvite(link);
-          if (parsed) setJoining(parsed);
-          else setError("Paste the invite link you were sent.");
-        }}
-      >
-        <Field label="Invite link" error={error}>
-          <Input
-            autoFocus
-            value={link}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="https://"
-            onChange={(event) => {
-              setLink(event.target.value);
-              setError("");
-            }}
-          />
-        </Field>
-        <Button
-          type="submit"
-          size="lg"
-          variant="prominent"
-          disabled={!link.trim()}
-        >
-          Join
-        </Button>
-      </form>
       {hostedAvailable && (
         <Button size="lg" variant="ghost" onClick={onCreate}>
           Create a community
         </Button>
       )}
-      <Button size="lg" variant="ghost" onClick={onSkip}>
-        Skip for now
-      </Button>
       {opened && (
         <CommunityDialog
           key={invite ? invite.requestId : `${opened.community} ${opened.code}`}

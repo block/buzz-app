@@ -201,6 +201,15 @@ it("lists active primary pages in their sidebar and header placements", async ()
     value: () => {},
   });
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
+  // Personal space with a saved community, not the first-run join screen.
+  localStorage.setItem(
+    `buzz-client.v1:${viewer}`,
+    JSON.stringify({
+      profile: { name: "Fixture", picture: "" },
+      memberships: [{ id: origin, name: "Fixture community" }],
+      selected: null,
+    }),
+  );
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
@@ -212,10 +221,6 @@ it("lists active primary pages in their sidebar and header placements", async ()
   services = createServices();
   const current = services;
   render(<App services={current} />);
-  // A viewer with no community starts on the join screen.
-  await userEvent.click(
-    await screen.findByRole("button", { name: "Skip for now" }),
-  );
   const pages = await screen.findByRole("navigation", { name: "Pages" });
   await waitFor(() =>
     expect(

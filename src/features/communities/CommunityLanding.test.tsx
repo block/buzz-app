@@ -31,7 +31,6 @@ function landing({
     onInviteClose: vi.fn(),
     onJoined: vi.fn(),
     onCreate: vi.fn(),
-    onSkip: vi.fn(),
   };
   render(
     <CommunityLanding
@@ -84,11 +83,9 @@ it("presents an opened invite and clears it on close", async () => {
   expect(onInviteClose).toHaveBeenCalledWith(7);
 });
 
-it("offers creating a community where hosting is available, and skipping", async () => {
+it("offers creating a community where hosting is available", async () => {
   const user = userEvent.setup();
-  const { onCreate, onSkip } = landing({ hosted: true });
+  const { onCreate } = landing({ hosted: true });
   await user.click(screen.getByRole("button", { name: "Create a community" }));
-  await user.click(screen.getByRole("button", { name: "Skip for now" }));
   expect(onCreate).toHaveBeenCalledOnce();
-  expect(onSkip).toHaveBeenCalledOnce();
 });

@@ -270,10 +270,7 @@ export function CanvasEditor({
           aria-labelledby={`${panelId}-edit-tab`}
         >
           <div className={styles.stack}>
-            <p className="text-secondary">
-              Shared Markdown for this channel. Saves and restores check the
-              loaded revision on supporting relays.
-            </p>
+            <p className="text-secondary">Shared Markdown for this channel.</p>
             {readOnly && (
               <p role="status">Archived channel. Canvas is read-only.</p>
             )}

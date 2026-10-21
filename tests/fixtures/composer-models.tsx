@@ -41,8 +41,11 @@ const agents = {
   subscribe: () => () => {},
   snapshot: () => snapshot,
   types: () => types,
+  sessionScope: () => undefined,
 } as unknown as Agents;
 const ignoreResolved = () => {};
+const ignoreFocus = () => {};
+const place = { channelId: "fixture-channel" };
 function Fixture() {
   useKeyboardFocusVisibility();
   const [picks, setPicks] = useState<MentionPicks>({});
@@ -58,6 +61,9 @@ function Fixture() {
             disabled={false}
             onChange={setPicks}
             onResolved={ignoreResolved}
+            startsThread
+            place={place}
+            focusComposer={ignoreFocus}
           />
         </form>
       </main>

@@ -51,6 +51,7 @@ export function ComposerModels({
   onResolved,
   startsThread,
   place,
+  focusComposer,
 }: {
   pubkeys: readonly string[];
   value: MentionPicks;
@@ -61,8 +62,13 @@ export function ComposerModels({
    * does, so a thread-scoped agent has no session to act on. */
   startsThread: boolean;
   place: SessionPlace;
+  /** Takes focus back when a session control holding it goes away, as New
+   * does when it ends the pinned conversation that kept the controls here. */
+  focusComposer(): void;
 }) {
   const [open, setOpen] = useState(false);
+  // Outlives the controls, so a result is still announced after they go.
+  const [notice, setNotice] = useState("");
   const listed = useMentionModels(pubkeys);
   // A pinned channel conversation keeps taking top-level messages after a
   // remote edit to thread scope, so its controls stay with it.
@@ -149,7 +155,12 @@ export function ComposerModels({
     onResolved(resolved);
     return () => onResolved({});
   }, [listed, choices, value, onResolved]);
-  if (!choices.length) return null;
+  const status = (
+    <span className="sr-only" role="status">
+      {notice}
+    </span>
+  );
+  if (!choices.length) return status;
   const picked = choices.flatMap((choice) => {
     const { model, effort } = value[choice.pubkey] ?? {};
     const runs = runModel(choice, model);
@@ -169,55 +180,62 @@ export function ComposerModels({
     ? "Model, effort, and session controls"
     : "Model and effort for the next run";
   return (
-    <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
-      <Popover.Trigger
-        disabled={disabled}
-        render={
-          <IconButton
-            ref={trigger}
-            size="toolbar"
-            type="button"
-            disabled={disabled}
-            data-selected={picked.length ? "" : undefined}
-            aria-label={label}
-            title={
-              picked.length ? `${label}. Next run: ${picked.join(", ")}` : label
-            }
-            icon={<GaugeIcon size={18} aria-hidden="true" />}
-          />
-        }
-      />
-      <Popover.Portal>
-        {/* The controls are the whole popup: it has no surface of its own. */}
-        <Popover.Positioner
-          className="buzz-popover-positioner"
-          side="top"
-          align="end"
-          sideOffset={8}
-          anchor={() => trigger.current?.closest("form") ?? trigger.current}
-          collisionPadding={8}
-        >
-          <Popover.Popup
-            className={styles.popup}
-            aria-label={label}
-            initialFocus={thumb}
+    <>
+      {status}
+      <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
+        <Popover.Trigger
+          disabled={disabled}
+          render={
+            <IconButton
+              ref={trigger}
+              size="toolbar"
+              type="button"
+              disabled={disabled}
+              data-selected={picked.length ? "" : undefined}
+              aria-label={label}
+              title={
+                picked.length
+                  ? `${label}. Next run: ${picked.join(", ")}`
+                  : label
+              }
+              icon={<GaugeIcon size={18} aria-hidden="true" />}
+            />
+          }
+        />
+        <Popover.Portal>
+          {/* The controls are the whole popup: it has no surface of its own. */}
+          <Popover.Positioner
+            className="buzz-popover-positioner"
+            side="top"
+            align="end"
+            sideOffset={8}
+            anchor={() => trigger.current?.closest("form") ?? trigger.current}
+            collisionPadding={8}
           >
-            {choices.map((choice, index) => (
-              <AgentChoice
-                key={choice.pubkey}
-                choice={choice}
-                place={place}
-                named={choices.length > 1}
-                value={value[choice.pubkey] ?? {}}
-                disabled={disabled}
-                pick={(next) => pick(choice.pubkey, next)}
-                {...(index === 0 ? { thumb } : {})}
-              />
-            ))}
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+            <Popover.Popup
+              className={styles.popup}
+              aria-label={label}
+              initialFocus={thumb}
+            >
+              {choices.map((choice, index) => (
+                <AgentChoice
+                  key={choice.pubkey}
+                  choice={choice}
+                  place={place}
+                  named={choices.length > 1}
+                  value={value[choice.pubkey] ?? {}}
+                  disabled={disabled}
+                  pick={(next) => pick(choice.pubkey, next)}
+                  announce={setNotice}
+                  focusComposer={focusComposer}
+                  {...(index === 0 ? { thumb } : {})}
+                />
+              ))}
+            </Popover.Popup>
+          </Popover.Positioner>
+        </Popover.Portal>
+      </Popover.Root>
+    </>
   );
 }
 
@@ -234,6 +252,8 @@ function AgentChoice({
   value,
   disabled,
   pick,
+  announce,
+  focusComposer,
   thumb,
 }: {
   choice: MentionModelChoice;
@@ -242,6 +262,8 @@ function AgentChoice({
   value: RunPick;
   disabled: boolean;
   pick(next: RunPick): void;
+  announce(message: string): void;
+  focusComposer(): void;
   thumb?: Ref<HTMLInputElement>;
 }) {
   const [feedback, setFeedback] = useState("");
@@ -322,12 +344,17 @@ function AgentChoice({
             pubkey={choice.pubkey}
             name={choice.name}
             place={place}
-            onFeedback={setFeedback}
+            onFeedback={(message) => {
+              setFeedback(message);
+              announce(message);
+            }}
+            focusComposer={focusComposer}
           />
         )}
       </div>
+      {/* Announced once, by the composer's lasting status. */}
       {feedback && (
-        <span className={styles.about} role="status">
+        <span className={styles.about} aria-hidden="true">
           {feedback}
         </span>
       )}
@@ -413,13 +440,32 @@ function SessionRail({
   name,
   place,
   onFeedback,
+  focusComposer,
 }: {
   pubkey: string;
   name: string;
   place: SessionPlace;
   onFeedback(message: string): void;
+  focusComposer(): void;
 }) {
   const agents = useContext(AgentsContext);
+  // Whether focus is in the rail: set on entry, cleared only when it moves
+  // to another element, so the rail's removal, which drops focus to the page,
+  // leaves it set.
+  const held = useRef(false);
+  const refocus = useRef(focusComposer);
+  refocus.current = focusComposer;
+  useLayoutEffect(
+    () => () => {
+      if (!held.current) return;
+      // Once the rail is gone, the composer takes focus unless the person
+      // has moved it elsewhere.
+      queueMicrotask(() => {
+        if (document.activeElement === document.body) refocus.current();
+      });
+    },
+    [],
+  );
   const state = useSessionState(agents, [pubkey], place);
   const act = async (action: SessionControlAction) => {
     onFeedback("");
@@ -439,7 +485,16 @@ function SessionRail({
     }
   };
   return (
-    <fieldset className={styles.rail} aria-label={`${name}'s session`}>
+    <fieldset
+      onFocus={() => {
+        held.current = true;
+      }}
+      onBlur={(event) => {
+        if (event.relatedTarget) held.current = false;
+      }}
+      className={styles.rail}
+      aria-label={`${name}'s session`}
+    >
       {(
         [
           ["compact", "Compact session", ArrowsInIcon],

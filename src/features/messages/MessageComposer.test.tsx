@@ -2546,6 +2546,14 @@ const sessionAgents = (
   };
 };
 
+/** A result announced by the composer's lasting status region. */
+const announced = (text: string) =>
+  waitFor(() =>
+    expect(
+      screen.getAllByRole("status").map((status) => status.textContent),
+    ).toContain(text),
+  );
+
 const openSessionPopover = async (h: ReturnType<typeof mount>) => {
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   await h.user.click(
@@ -2570,6 +2578,49 @@ it("keeps a pinned channel conversation's controls in the channel composer after
   // Once that conversation ends, a top-level message starts a thread.
   act(() => agents.pin(undefined));
   expect(screen.queryByRole("button", { name: "Compact session" })).toBeNull();
+});
+
+it("keeps New's confirmation and returns focus to the composer when New ends the pinned conversation holding the controls", async () => {
+  const agents = sessionAgents("channel");
+  agents.pin("channel");
+  agents.editScope("thread");
+  agents.session.mockImplementation(async (_pubkey, _place, action) => {
+    if (action === "new") agents.pin(undefined);
+  });
+  const h = mount({}, undefined, undefined, agents);
+  await openSessionPopover(h);
+  const fresh = await screen.findByRole("button", {
+    name: "Start a new session",
+  });
+  await h.user.click(fresh);
+  await announced("New session started");
+  expect(fresh).not.toBeInTheDocument();
+  await waitFor(() => expect(h.input()).toHaveFocus());
+});
+
+it("leaves focus where the person moved it when New ends the pinned conversation", async () => {
+  const agents = sessionAgents("channel");
+  agents.pin("channel");
+  agents.editScope("thread");
+  const ended = deferred<void>();
+  agents.session.mockImplementation(async () => ended.promise);
+  const h = mount({}, undefined, undefined, agents);
+  await openSessionPopover(h);
+  await h.user.click(
+    await screen.findByRole("button", { name: "Start a new session" }),
+  );
+  const elsewhere = document.createElement("button");
+  document.body.append(elsewhere);
+  try {
+    elsewhere.focus();
+    await act(async () => {
+      agents.pin(undefined);
+      ended.resolve();
+    });
+    expect(elsewhere).toHaveFocus();
+  } finally {
+    elsewhere.remove();
+  }
 });
 
 it("shows channel controls once a remote edit moves an unpinned agent to channel scope", async () => {
@@ -2891,15 +2942,11 @@ it("shows action failures and lets an idle session retry", async () => {
   await h.user.click(
     await screen.findByRole("button", { name: "Start a new session" }),
   );
-  expect(await screen.findByText("Disk is full")).toHaveTextContent(
-    "Disk is full",
-  );
+  await announced("Disk is full");
   await h.user.click(
     screen.getByRole("button", { name: "Start a new session" }),
   );
-  expect(await screen.findByText("New session started")).toHaveTextContent(
-    "New session started",
-  );
+  await announced("New session started");
 });
 
 it("offers a thread-scoped agent session actions in a thread, not on a message that starts one", async () => {

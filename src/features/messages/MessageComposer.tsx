@@ -2084,6 +2084,7 @@ function Composer({
                   }}
                   startsThread={startsThread}
                   place={sessionPlace}
+                  focusComposer={() => input.current?.focus()}
                 />
               )}
             <IconButton

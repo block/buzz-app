@@ -1,12 +1,15 @@
 import { agentAvatars } from "../../src/features/agents/avatar-packs";
 import { createRoot } from "react-dom/client";
 import { CreationReview } from "../../src/bundled/agents/CreationReview";
+import { UpdateReview } from "../../src/bundled/agents/UpdateReview";
 import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
 import type {
   Agent,
   Agents,
   RegisteredAgentType,
   AgentCreationRequest,
+  AgentUpdate,
+  AgentUpdateRequest,
   NewAgent,
 } from "../../src/features/agents/service";
 import type { RelayData } from "../../src/features/relay/service";
@@ -59,8 +62,33 @@ const snapshot = {
       }) as Agent,
   ),
 };
-const types = [type];
+const other: RegisteredAgentType = {
+  ...type,
+  key: "fixture/other",
+  id: "other",
+  title: "Other",
+};
 const reviewing = new URLSearchParams(location.search).has("review");
+const changing = new URLSearchParams(location.search).has("change");
+const types = changing ? [type, other] : [type];
+let updates: readonly AgentUpdateRequest[] = changing
+  ? [
+      {
+        id: "change",
+        requester: "a".repeat(64),
+        requesterName: "Parent",
+        owner: "f".repeat(64),
+        community: "https://relay.example",
+        agent: "1".repeat(64),
+        agentName: "Ada",
+        agentType: type.key,
+        name: "Ada Reviewer",
+        type: other.key,
+        instructions: "Review pull requests before they merge.",
+      },
+    ]
+  : [];
+const changed: AgentUpdate[] = [];
 let requests: readonly AgentCreationRequest[] = reviewing
   ? [
       {
@@ -80,7 +108,14 @@ const dismissCreation = () => {
   requests = [];
   for (const listener of listeners) listener();
 };
-Object.assign(window, { creationReviewResult: () => reviewed });
+const dismissUpdate = () => {
+  updates = [];
+  for (const listener of listeners) listener();
+};
+Object.assign(window, {
+  creationReviewResult: () => reviewed,
+  updateReviewResult: () => changed,
+});
 const agents = {
   snapshot: () => snapshot,
   subscribe: (listener: () => void) => {
@@ -94,6 +129,18 @@ const agents = {
     dismissCreation();
     return {} as Agent;
   },
+  updateRequests: () => updates,
+  dismissUpdate,
+  approveUpdate: async (_id: string, change: AgentUpdate) => {
+    changed.push(change);
+    dismissUpdate();
+  },
+  previewRetype: () => ({
+    config: {},
+    moved: ["instructions"],
+    dropped: ["workspace"],
+    settings: [],
+  }),
   types: () => types,
   find: (pubkey: string) =>
     snapshot.agents.find((agent) => agent.pubkey === pubkey),
@@ -112,5 +159,6 @@ createRoot(root).render(
   <div className="h-screen">
     <AgentsPage agents={agents} relay={relay} />
     {reviewing && <CreationReview agents={agents} />}
+    {changing && <UpdateReview agents={agents} />}
   </div>,
 );

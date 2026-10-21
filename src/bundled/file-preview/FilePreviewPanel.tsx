@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { PanelProps } from "../../features/panels/service";
@@ -16,18 +16,13 @@ import { loadPreview, parsePreviewTarget } from "./preview";
 type PreviewState =
   | { kind: "loading" }
   | { kind: "ready"; text: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "retrying"; message: string };
 
 export function FilePreviewPanel({ target, context }: PanelProps) {
-  const [attempt, retry] = useState(0);
   const file = parsePreviewTarget(target);
   return file ? (
-    <Preview
-      key={`${target}:${attempt}`}
-      file={file}
-      open={context?.open ?? (() => false)}
-      retry={() => retry(attempt + 1)}
-    />
+    <Preview key={target} file={file} open={context?.open ?? (() => false)} />
   ) : (
     <p role="alert">This file cannot be previewed.</p>
   );
@@ -36,13 +31,15 @@ export function FilePreviewPanel({ target, context }: PanelProps) {
 function Preview({
   file,
   open,
-  retry,
 }: {
   file: NonNullable<ReturnType<typeof parsePreviewTarget>>;
   open(target: string): boolean;
-  retry(): void;
 }) {
   const [state, setState] = useState<PreviewState>({ kind: "loading" });
+  const [attempt, retry] = useState(0);
+  const region = useRef<HTMLElement>(null);
+  const retryButton = useRef<HTMLButtonElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the explicit user-requested retry trigger.
   useEffect(() => {
     const controller = new AbortController();
     void loadPreview(
@@ -50,7 +47,10 @@ function Preview({
       AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
     ).then(
       (text) => {
-        if (!controller.signal.aborted) setState({ kind: "ready", text });
+        if (controller.signal.aborted) return;
+        if (retryButton.current === document.activeElement)
+          region.current?.focus({ preventScroll: true });
+        setState({ kind: "ready", text });
       },
       (error: unknown) => {
         if (!controller.signal.aborted)
@@ -64,9 +64,11 @@ function Preview({
       },
     );
     return () => controller.abort();
-  }, [file.source]);
+  }, [file.source, attempt]);
   return (
     <section
+      ref={region}
+      tabIndex={-1}
       className={styles.content}
       aria-label={`Preview: ${file.attachment.name ?? "file"}`}
     >
@@ -78,13 +80,22 @@ function Preview({
         typeLabel={file.format === "markdown" ? "Markdown" : "Plain text"}
       />
       <LoadingRegion
-        pending={state.kind === "loading"}
+        pending={state.kind === "loading" || state.kind === "retrying"}
         label="Loading preview…"
       >
-        {state.kind === "loading" ? null : state.kind === "error" ? (
+        {state.kind === "loading" ? null : state.kind === "error" ||
+          state.kind === "retrying" ? (
           <div role="alert">
             <p>{state.message}</p>
-            <Button size="sm" onClick={retry}>
+            <Button
+              ref={retryButton}
+              size="sm"
+              loading={state.kind === "retrying"}
+              onClick={() => {
+                setState({ kind: "retrying", message: state.message });
+                retry((attempt) => attempt + 1);
+              }}
+            >
               Retry
             </Button>
           </div>

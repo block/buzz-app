@@ -17,6 +17,7 @@ import {
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
+import { SessionControls } from "../../features/agent-harness/session-control";
 import {
   MemoryReads,
   READ_TIMEOUT_MS,
@@ -31,6 +32,9 @@ import type {
   AgentSession,
   Delivery,
   Models,
+  SessionControlAction,
+  SessionPlace,
+  SessionState,
   StandaloneTurn,
   TurnResult,
 } from "../../features/agents/service";
@@ -110,6 +114,8 @@ type Waited =
   | { status: "unanswered"; reason?: string; detail?: string }
   | { status: "closed" };
 type Receipt = Pick<Delivery, "step" | "acknowledged" | "superseded"> & {
+  /** Its conversation key, which session controls act on. */
+  key: string;
   /** Where its activity shows: a thread, or a Solo chat's channel. */
   scope: string;
   /** Where a run's answer for it is posted. */
@@ -152,6 +158,7 @@ type Entry = {
 export class PiRuntime {
   private readonly agents = new Map<string, Entry>();
   private readonly memoryReads = new MemoryReads();
+  private readonly controls = new SessionControls(() => this.notify());
   private readonly listeners = new Set<() => void>();
   /** Each agent's working conversations, as last read, for a stable view. */
   private readonly views = new Map<string, readonly number[]>();
@@ -319,6 +326,49 @@ export class PiRuntime {
     for (const listener of this.listeners) listener();
   }
 
+  /** A conversation is active from a delivery's handover, or a left run's
+   * taking-on, until its run settles: Interrupt reaches both. */
+  sessionState(agent: Agent, place: SessionPlace): SessionState {
+    const key = controlKey(agent, place);
+    const control = `${agent.pubkey}/${key}`;
+    if (this.controls.compacting(control)) return "compacting";
+    const receipts = this.agents.get(agent.pubkey)?.receipts.values() ?? [];
+    return this.controls.active(control) ||
+      [...receipts].some((receipt) => receipt.key === key)
+      ? "active"
+      : "idle";
+  }
+  async session(
+    agent: Agent,
+    place: SessionPlace,
+    action: SessionControlAction,
+  ) {
+    const key = controlKey(agent, place);
+    const control = `${agent.pubkey}/${key}`;
+    const entry = this.agents.get(agent.pubkey);
+    // Pi continues every run once asked anything: its left runs are taken on
+    // first, which posting their answers needs a delivery's handle for.
+    const act = async () => {
+      if (!entry?.handle)
+        throw new Error(
+          "Mention the agent once after Buzz starts, then try again.",
+        );
+      await this.open(agent.pubkey);
+      await this.adopted(entry, agent.pubkey);
+      await this.pi.request("session", { agent: agent.pubkey, key, action });
+    };
+    if (action === "interrupt") {
+      this.controls.interrupt(control);
+      return act();
+    }
+    if (this.sessionState(agent, place) !== "idle")
+      throw new Error("Wait for the active turn to finish first.");
+    return this.controls.run(control, action, async (signal) => {
+      signal.throwIfAborted();
+      await act();
+    });
+  }
+
   dispose() {
     for (const entry of this.agents.values()) entry.closed = true;
     this.agents.clear();
@@ -379,7 +429,9 @@ export class PiRuntime {
     const request = event.id;
     let submitted!: { submission: number; conversation: number };
     let sends = 0;
-    const handed = (async () => {
+    // A delivery during a session action waits for it, past its handover.
+    const control = `${agent.pubkey}/${key}`;
+    const handoff = this.controls.deliver(control, async () => {
       await wait;
       this.live(entry, agent.pubkey);
       await this.open(agent.pubkey);
@@ -412,6 +464,7 @@ export class PiRuntime {
           : { channel, root };
       // Known before Pi has it, as it can say it joined a run first.
       entry.receipts.set(request, {
+        key,
         scope: topLevel ? channel : root,
         where,
         ...(step ? { step } : {}),
@@ -440,7 +493,8 @@ export class PiRuntime {
         )
       )
         this.notify();
-    })();
+    });
+    const handed = handoff.done;
     const settled = handed
       .then(async (): Promise<TurnResult> => {
         const waited = await this.settle(
@@ -487,7 +541,7 @@ export class PiRuntime {
     });
     // Deliveries keep their order: a later one waits on this handover, and
     // one with nothing to wait for is handed over before `run` returns.
-    if (!wait) await policy.handed;
+    if (!wait && !handoff.deferred) await policy.handed;
     // The turn outlives `run`, which the host is told so it shows it as working.
     workingUntil(settled);
     // Stop on its activity stops the run the request is in.
@@ -751,6 +805,10 @@ export class PiRuntime {
         topLevel: !!context.topLevel,
       };
       const receipt: Receipt = {
+        // Only a thread's own conversation has a root.
+        key: context.root
+          ? `${context.channel}/${context.root}`
+          : context.channel,
         scope: context.topLevel ? context.channel : root,
         where,
       };
@@ -1094,6 +1152,13 @@ export class PiRuntime {
     if (reads) this.memoryReads.forget(reads.connection, pubkey);
   }
 }
+
+/** The conversation key session controls in `place` act on, as `key` makes
+ * it: a DM or Solo chat has no root here. */
+const controlKey = (agent: Agent, place: SessionPlace) =>
+  config(agent.config).scope === "channel" || !place.root
+    ? place.channelId
+    : `${place.channelId}/${place.root}`;
 
 /** Why Pi left a request unanswered, in words. */
 function unanswered({

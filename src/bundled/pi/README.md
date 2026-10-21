@@ -44,7 +44,7 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
   reads no `$NAME` key. Set up a provider that needs more than a key with
   `pi`. Providers from Pi packages don't run.
 - Runs left unfinished when the app quit continue at the next turn. A
-  mention's run posts its answer or failure, but shows no steps and has no
-  Stop; a watch's or timer's run is ended.
+  mention's run posts its answer or failure but shows no steps; its thread's
+  session controls interrupt it. A watch's or timer's run is ended.
 - On Windows, Pi's `bash` tool needs Git Bash. Linux and Windows are not yet
   validated.

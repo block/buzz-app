@@ -129,6 +129,23 @@ const g1 = await pi.rpc("deliver", turn("G", "ninth"));
 await asking.gate;
 await pi.rpc("abort", { agent, conversation: g1.conversation });
 out.aborted = await pi.rpc("wait", { agent, submission: g1.submission });
+// Session controls act on a conversation key's Pi conversation.
+const s = held(), running = held();
+faux.setResponses([async (_context, options) => { running.release(); await abortable(s.gate, options?.signal); return fauxAssistantMessage("never"); }]);
+const s1 = await pi.rpc("deliver", turn("S", "session"));
+await running.gate;
+await pi.rpc("session", { agent, key: "chan/root", action: "interrupt" });
+out.interrupted = await pi.rpc("wait", { agent, submission: s1.submission });
+// Past what Pi keeps verbatim, so compacting summarizes the older turn.
+faux.setResponses([() => fauxAssistantMessage("Read it"), () => fauxAssistantMessage("Read it too"), () => fauxAssistantMessage("Summary of the chat")]);
+for (const request of ["S2", "S3"]) {
+  const long = await pi.rpc("deliver", turn(request, "word ".repeat(25_000)));
+  await pi.rpc("wait", { agent, submission: long.submission });
+}
+await pi.rpc("session", { agent, key: "chan/root", action: "compact" });
+await pi.rpc("session", { agent, key: "chan/root", action: "new" });
+out.renewed = { place: await pi.rpc("place", { agent, key: "chan/root" }), kinds: (await pi.rpc("entries", { agent, conversation: s1.conversation })).entries.map((entry) => entry.kind).slice(0, 2) };
+out.unplaced = await pi.rpc("session", { agent, key: "chan/none", action: "compact" });
 // A tool loaded on search is offered once tool_search finds it.
 const offered = [];
 /** The tools a request offers: its own, and those its system messages add. */
@@ -352,6 +369,16 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       status: "unanswered",
       reason: "aborted",
     });
+    expect(out.interrupted).toMatchObject({
+      status: "unanswered",
+      reason: "aborted",
+    });
+    // A new session is shown the whole conversation at its next turn.
+    expect(out.renewed).toEqual({
+      place: { seen: 0 },
+      kinds: ["pi.reset", "pi.compaction"],
+    });
+    expect(out.unplaced).toEqual({});
     const [before, after] = out.search.offered;
     expect(before).toEqual(
       expect.arrayContaining(["buzz_send", "tool_search"]),

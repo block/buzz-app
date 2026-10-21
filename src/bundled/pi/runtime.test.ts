@@ -667,6 +667,87 @@ it("stops a mention's run when the owner stops it, and posts nothing", async () 
   expect(published).toEqual([]);
 });
 
+it("interrupts a run an earlier app left from its thread's session controls", async () => {
+  const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
+  const stopped = deferred<unknown>();
+  const { host, deliver, published, runtime } = setup({
+    unfinished: () => ({
+      submissions: [{ ...left, context: { channel, root: root.id } }],
+    }),
+    wait: ({ submission }) =>
+      submission === left.submission ? stopped.promise : new Promise(() => {}),
+    session: ({ action }) => {
+      if (action === "interrupt")
+        stopped.resolve({ status: "unanswered", reason: "aborted" });
+    },
+  });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  expect(runtime.sessionState(agent, thread)).toBe("idle");
+  await deliver({
+    type: "mention",
+    event: message("5", "@Pi elsewhere", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  }).run;
+  expect(runtime.sessionState(agent, thread)).toBe("active");
+  await runtime.session(agent, thread, "interrupt");
+  expect(host.requests("session")[0]?.params).toEqual({
+    agent: self,
+    key: `${channel}/${root.id}`,
+    action: "interrupt",
+  });
+  await vi.waitFor(() =>
+    expect(runtime.sessionState(agent, thread)).toBe("idle"),
+  );
+  expect(published).toEqual([]);
+});
+
+it("compacts or starts a new session only while idle, and hands a mention over once compaction ends", async () => {
+  const compacted = deferred();
+  const { host, deliver, settled, runtime } = setup({
+    wait: () => ({ status: "done", answer: 5, text: "" }),
+    session: ({ action }) => (action === "compact" ? compacted.promise : {}),
+  });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  // Its left runs need a delivery's handle to be taken on first.
+  await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
+    "Mention the agent once",
+  );
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await first.run;
+  await settled(first);
+  await vi.waitFor(() =>
+    expect(runtime.sessionState(agent, thread)).toBe("idle"),
+  );
+  const compacting = runtime.session(agent, thread, "compact");
+  await vi.waitFor(() => expect(host.requests("session")).toHaveLength(1));
+  expect(runtime.sessionState(agent, thread)).toBe("compacting");
+  await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
+    "Wait for the active turn",
+  );
+  const later = deliver({ type: "mention", event: reply("3", "@Pi again") });
+  // Released at once, and handed over after compaction.
+  await later.run;
+  expect(host.requests("deliver")).toHaveLength(1);
+  compacted.resolve();
+  await compacting;
+  await settled(later);
+  expect(host.requests("deliver")).toHaveLength(2);
+  await vi.waitFor(() =>
+    expect(runtime.sessionState(agent, thread)).toBe("idle"),
+  );
+  await runtime.session(agent, thread, "new");
+  expect(host.requests("session").map((item) => item.params)).toEqual([
+    { agent: self, key: `${channel}/${root.id}`, action: "compact" },
+    { agent: self, key: `${channel}/${root.id}`, action: "new" },
+  ]);
+});
+
 it("lists the agent's sessions from Pi's storage, and whether each works", async () => {
   const answered = deferred<unknown>();
   const key = `${channel}/${root.id}`;

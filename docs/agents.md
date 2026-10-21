@@ -174,7 +174,7 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
-A type with `sessionControls` (Claude, Codex and goose) offers three immediate
+A type with `sessionControls` (Claude, Codex, goose and Pi) offers three immediate
 session controls in the composer's gauge popover: **Compact session**,
 **Start a new session**, and **Interrupt**. A side rail keeps all three visible.
 Compact and New are enabled while that harness session is idle; Interrupt is

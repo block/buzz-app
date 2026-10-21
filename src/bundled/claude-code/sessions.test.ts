@@ -38,6 +38,8 @@ function sessions(
     hold: boolean;
     /** Holds each launch after it reads the settings, as a memory read does. */
     launched: Promise<void>;
+    /** Holds each process's `initialize` write, as a stalled pipe would. */
+    initialized: Promise<void>;
     /** The shared spare its new conversations look for. */
     spare: Spare;
     tools: ToolServer;
@@ -52,7 +54,15 @@ function sessions(
     const process = fake.spawn(id, spawnOptions);
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
-    return process;
+    const { initialized } = options;
+    if (!initialized) return process;
+    return process.then((host) => ({
+      ...host,
+      write: async (data: string) => {
+        if (data.includes('"subtype":"initialize"')) await initialized;
+        return host.write(data);
+      },
+    }));
   };
   const pool = new AgentSessions({
     spawn,
@@ -617,6 +627,33 @@ it("gives up a one-off turn whose process is still starting", async () => {
   expect(claudes()).toHaveLength(1);
   expect(claudes()[0]?.killed).toBe(true);
   expect(prompt).not.toHaveBeenCalled();
+});
+
+it("stops a one-off turn's process given up while it initializes", async () => {
+  let release!: () => void;
+  const initialized = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ initialized });
+  const stop = new AbortController();
+  const prompt = vi.fn(() => "wake");
+  const done = pool.runOnce("watch/a", prompt, stop.signal);
+  await flush();
+  expect(claudes()).toHaveLength(1);
+  stop.abort(new Error("The agent was removed"));
+  try {
+    await expect(done).resolves.toEqual({
+      ok: false,
+      error: "The agent was removed",
+    });
+    // Stopped while its initialize write is still held.
+    expect(claudes()[0]?.killed).toBe(true);
+  } finally {
+    release();
+  }
+  await flush();
+  expect(prompt).not.toHaveBeenCalled();
+  expect(claudes()).toHaveLength(1);
 });
 
 it("starts nothing for a one-off turn given up before it runs", async () => {

@@ -291,10 +291,18 @@ export class AgentSessions {
     const key = `${label} #${++this.onceCount}`;
     this.once.set(key, undefined);
     this.options.onChange?.();
-    const starting = this.start(undefined);
-    let live: Live | undefined;
+    // Its process as soon as it exists, so one still initializing can be
+    // stopped; one that spawns after the turn was given up is stopped at once.
+    let spawned: ClaudeProcess | undefined;
+    let over = false;
     try {
-      live = await abortable(starting, signal);
+      const live = await abortable(
+        this.start(undefined, undefined, (process) => {
+          spawned = process;
+          if (over) void process.kill();
+        }),
+        signal,
+      );
       if (this.disposed) return { ok: false, error: "Claude was stopped" };
       // A key no conversation uses: its tools have no default destination.
       live.process.conversation = key;
@@ -308,15 +316,11 @@ export class AgentSessions {
       console.warn("Claude could not start a one-off session", error);
       return { ok: false, error: "Claude could not start" };
     } finally {
-      if (live) {
+      over = true;
+      if (spawned) {
         // Killing only asks it to stop; the host may let it run a few seconds.
-        void live.process.kill();
-        await live.process.exited.catch(() => undefined);
-      } else {
-        // One that starts after the turn was given up is stopped once it has.
-        void starting
-          .then((late) => late.process.kill())
-          .catch(() => undefined);
+        void spawned.kill();
+        await spawned.exited.catch(() => undefined);
       }
       this.once.delete(key);
       this.options.onChange?.();
@@ -369,33 +373,46 @@ export class AgentSessions {
     this.opening.set(key, opened);
     return opened;
   }
-  private async start(resume: string | undefined, key?: string): Promise<Live> {
+  /** `spawned` is told of a new session's process as soon as it exists,
+   * before it is initialized. */
+  private async start(
+    resume: string | undefined,
+    key?: string,
+    spawned?: (process: ClaudeProcess) => void,
+  ): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint(key);
     const launch = await this.options.launch(key);
     const process = resume
       ? await ClaudeProcess.start(this.options.spawn, { ...launch, resume })
-      : await this.fresh(launch);
+      : await this.fresh(launch, spawned);
     if (fingerprint === this.options.fingerprint(key) || this.disposed)
       return { process, fingerprint, used: this.now() };
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
-    return this.start(resume, key);
+    return this.start(resume, key, spawned);
   }
   /** A process for a new session: the spare when it fits, else a new one. */
-  private async fresh(launch: Omit<ClaudeLaunch, "resume" | "sessionId">) {
+  private async fresh(
+    launch: Omit<ClaudeLaunch, "resume" | "sessionId">,
+    spawned?: (process: ClaudeProcess) => void,
+  ) {
     const spare = await this.options.spare?.take(launch);
     if (spare)
       try {
+        spawned?.(spare);
         await spare.initialize(launch);
         return spare;
       } catch {
         void spare.kill();
       }
-    return ClaudeProcess.start(this.options.spawn, {
+    const process = await ClaudeProcess.spawn(this.options.spawn, {
       ...launch,
       sessionId: this.newId(),
     });
+    spawned?.(process);
+    await process.initialize(launch);
+    return process;
   }
   private adopt(key: string, live: Live, seen: number) {
     live.process.conversation = key;

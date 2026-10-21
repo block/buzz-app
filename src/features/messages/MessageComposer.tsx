@@ -1386,19 +1386,26 @@ function Composer({
     const capturedAttachments = attachments.store.snapshot();
     const capturedPicks = picks;
     const capturedRunPicks = { ...picks, ...resolvedPicks.current };
-    // Only a send addressed solely to the owner's agents is an agent follow-up
-    // that queues and waits on their turns. A message to people, or untagged
-    // conversation in a shared chat, goes out now.
+    // A send is an agent follow-up unless it addresses a confirmed person
+    // (a loaded, non-agent profile). Those, and untagged conversation in a
+    // shared chat, go out now; recipients still being classified keep the
+    // owner's queue preference.
+    const profileSnapshot = session.profiles.snapshot();
+    const agentKeys = knownAgentPubkeys(
+      profileSnapshot,
+      session.agentChoices.snapshot(),
+    );
     const queueFollowUp =
       !!host &&
       ownSoloConversation &&
       !threadRootId &&
       followUpBehaviorPreference() === "queue" &&
       captured.recipients.length > 0 &&
-      captured.recipients.every((person) =>
-        session.agentChoices
-          .snapshot()
-          .selectable.some((agent) => agent.pubkey === person.pubkey),
+      !soloHasPeople(
+        captured.recipients.map(({ pubkey }) => pubkey),
+        session.viewer,
+        profileSnapshot,
+        agentKeys,
       );
     try {
       if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))

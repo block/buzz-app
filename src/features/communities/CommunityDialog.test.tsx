@@ -73,6 +73,10 @@ it("publishes a description-only edit to an existing community profile", async (
   ).toHaveAccessibleDescription(
     "Use your identity across communities. Your profile and conversations stay separate in each one.",
   );
+  // Continue contacts the destination with the viewer's identity before joining.
+  expect(screen.getByLabelText("Community URL")).toHaveAccessibleDescription(
+    "Paste the address the community shared with you. Continue connects with your Buzz identity so you can review the community before you join.",
+  );
   await user.type(
     screen.getByLabelText("Community URL"),
     "wss://relay.example",

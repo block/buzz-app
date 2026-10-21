@@ -364,7 +364,7 @@ export function CommunityDialog({
                 description={
                   connectionFrom
                     ? undefined
-                    : "Paste the address the community shared with you. You can review it before you join."
+                    : "Paste the address the community shared with you. Continue connects with your Buzz identity so you can review the community before you join."
                 }
               >
                 <Input

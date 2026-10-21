@@ -3,6 +3,7 @@
 // host on this Node: through pi.sh, as on Mac and Linux, and as `node -e`
 // alone, as on Windows.
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -175,3 +176,27 @@ it("says Pi needs a newer Node when the one it finds is too old", async () => {
     stderr: expect.stringContaining("Pi needs Node.js 22.19 or later."),
   });
 });
+
+it.skipIf(!existsSync("/bin/zsh"))(
+  "finds the Node an interactive shell's rc file sets up, past what it prints",
+  async () => {
+    const pi = await disk();
+    await rm(join(pi.bin, "node"));
+    // Only .zshrc, which a plain login shell skips, has this Node, which
+    // notes that it ran.
+    const managed = join(pi.home, "nvm");
+    await mkdir(managed);
+    await writeFile(
+      join(managed, "node"),
+      `#!/bin/sh\ntouch ${JSON.stringify(join(pi.home, "ran"))}\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
+    );
+    await chmod(join(managed, "node"), 0o755);
+    await writeFile(
+      join(pi.home, ".zshrc"),
+      `echo "Welcome back"\nexport PATH=${JSON.stringify(managed)}:$PATH\n`,
+    );
+    const out = await pi.step({ PATH: "/usr/bin:/bin", SHELL: "/bin/zsh" });
+    expect(JSON.parse(out)).toMatchObject({ line: "hello" });
+    expect(existsSync(join(pi.home, "ran"))).toBe(true);
+  },
+);

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { expect, it, vi } from "vitest";
+import type { TranscriptTurn } from "../../features/agents/activity-transcript";
 import { steerPrompt } from "../claude-code/prompt";
 import {
   type PiEntry,
@@ -164,6 +165,40 @@ it("counts only the last attempt of a turn Pi retried", () => {
   );
   expect(turn?.endedAt).toBe(3);
   expect(turn?.error).toBeUndefined();
+});
+
+it("replaces an interrupted run's partial answer with the one that continues it, and keeps a stopped one", () => {
+  const texts = (turn?: TranscriptTurn) =>
+    turn?.items.flatMap((item) => (item.type === "message" ? [item.text] : []));
+  const partial = assistant(2, [{ type: "text", text: "Working on" }], {
+    stopReason: "aborted",
+  });
+  const [resumed] = piTurns(
+    [
+      user(1, event("first")),
+      partial,
+      assistant(3, [{ type: "text", text: "Working on it. Done." }], {
+        stopReason: "stop",
+      }),
+    ],
+    PLACE,
+    false,
+  );
+  expect(resumed?.stopReason).toBeUndefined();
+  expect(texts(resumed)).toEqual(["Working on it. Done."]);
+  const [stopped, next] = piTurns(
+    [
+      user(1, event("first")),
+      partial,
+      user(3, event("second")),
+      assistant(4, [{ type: "text", text: "Done" }], { stopReason: "stop" }),
+    ],
+    PLACE,
+    false,
+  );
+  expect(stopped?.stopReason).toBe("stopped");
+  expect(texts(stopped)).toEqual(["Working on"]);
+  expect(next?.stopReason).toBeUndefined();
 });
 
 it("reads pages, newest first, until one turn more than it shows", async () => {

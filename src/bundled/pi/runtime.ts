@@ -138,6 +138,8 @@ type Entry = {
   sends: Map<number, number>;
   /** The answer each conversation last posted for a turn without `send`. */
   posted: Map<number, number>;
+  /** Runs a stopped app left in Pi's storage, waited for once. */
+  adopted?: Promise<void>;
   /** The agent was removed: its turns wait in its storage. */
   closed: boolean;
 };
@@ -373,6 +375,8 @@ export class PiRuntime {
       await wait;
       this.live(entry, agent.pubkey);
       await this.open(agent.pubkey);
+      entry.adopted ??= this.adopt(entry, agent.pubkey, request);
+      await entry.adopted;
       const { seen } = await this.pi.request<{ seen: number }>("place", {
         agent: agent.pubkey,
         key,
@@ -507,6 +511,8 @@ export class PiRuntime {
     let stop: (() => void) | undefined;
     try {
       await this.open(agent.pubkey);
+      entry.adopted ??= this.adopt(entry, agent.pubkey);
+      await entry.adopted;
       signal.throwIfAborted();
       const text = await prompt();
       if (text === undefined) return { ok: true };
@@ -673,6 +679,79 @@ export class PiRuntime {
       this.live(entry, pubkey);
       return this.pi.request("deliver", params);
     }
+  }
+
+  /** Takes on the runs an earlier app left unfinished in Pi's storage, which
+   * any delivery continues, in whatever thread: they show as working, and
+   * their answers are posted and failures reported as a delivery's are. Stop
+   * and a standalone turn's deadline are not restored. `current` is the
+   * request being delivered, which its own run waits for. */
+  private async adopt(entry: Entry, pubkey: string, current?: string) {
+    let unfinished: readonly {
+      submission: number;
+      conversation: number;
+      request: string;
+      context: { channel: string; root?: string; topLevel?: boolean };
+    }[];
+    try {
+      ({ submissions: unfinished } = await this.pi.request<{
+        submissions: typeof unfinished;
+      }>("unfinished", { agent: pubkey }));
+    } catch (error) {
+      // Listed again at the next delivery.
+      delete entry.adopted;
+      console.warn("Pi could not list an agent's unfinished runs", error);
+      return;
+    }
+    for (const { submission, conversation, request, context } of unfinished) {
+      const { handle } = entry;
+      if (!handle || request === current || entry.receipts.has(request))
+        continue;
+      // A conversation several threads share has no root: its answer goes to
+      // the mention's thread, which the request, a mention's id, opens or is in.
+      const root = context.root ?? request;
+      const where = {
+        channel: context.channel,
+        root,
+        topLevel: !!context.topLevel,
+      };
+      const receipt: Receipt = {
+        scope: context.topLevel ? context.channel : root,
+        where,
+      };
+      // A delivery of the same request takes it over, and says how it ended.
+      const ours = () => entry.receipts.get(request) === receipt;
+      entry.receipts.set(request, receipt);
+      const active = entry.active.get(conversation) ?? new Map();
+      active.set(receipt.scope, receipt);
+      entry.active.set(conversation, active);
+      const sends = entry.sends.get(conversation) ?? 0;
+      void this.settle(entry, pubkey, submission)
+        .then(async (waited) => {
+          if (!ours()) return;
+          if (waited.status === "done")
+            await this.answer(
+              entry,
+              handle,
+              conversation,
+              { where, sends },
+              waited,
+            );
+          else if (
+            waited.status === "unanswered" &&
+            waited.reason !== "aborted"
+          )
+            await this.report(handle, where, unanswered(waited));
+        })
+        .catch(async (error: unknown) => {
+          if (ours() && !entry.closed)
+            await this.report(handle, where, errorText(error));
+        })
+        .finally(() => {
+          if (ours()) this.forget(entry, request);
+        });
+    }
+    this.notify();
   }
 
   private async open(pubkey: string) {

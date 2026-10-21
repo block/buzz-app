@@ -555,6 +555,8 @@ export function createTabs({
             size="sm"
             variant={modelAppearance === "subtle" ? "subtle" : "outline"}
             disabled={disabled}
+            aria-label={`Model: ${label}`}
+            aria-haspopup="dialog"
             onClick={() => setChoosing(true)}
           >
             <span className="buzz-select-value-content">

@@ -1,6 +1,6 @@
 // The token use of an agent's Pi conversations, as pi-ai records it on each
-// of their answers, read from the agent's Pi durable storage through the host.
-// Pi owns the entries; nothing here writes or keeps them.
+// of their answers and Pi durable totals it, read from the agent's storage
+// through the host. Pi owns the entries; nothing here writes or keeps them.
 import { promptSections } from "../../features/agents/activity-transcript";
 import type {
   SessionUsage,
@@ -53,20 +53,36 @@ function title(entries: readonly PiEntry[]) {
     ?.trim();
 }
 
-/** A conversation's model requests, its entries oldest first. pi-ai counts a
- * request's input without its cached part, and prices the models it knows. */
+/** A conversation's model requests, its entries oldest first, and Pi's
+ * totals of them by `<provider>/<model>`. pi-ai counts a request's input
+ * without its cached part, and prices the models it knows. A request with no
+ * answer, such as a compaction's, is only in the totals: what they have beyond
+ * the answers is one more request of each model, at the newest compaction. */
 export function conversationUsage(
   entries: readonly PiEntry[],
   place: Omit<Place, "at">,
+  recorded: Readonly<Record<string, unknown>> = {},
 ): Omit<SessionUsage, "revision"> | undefined {
   const observations: UsageObservation[] = [];
   const times: number[] = [];
+  /** The answers' counts and cost, by the totals' key. */
+  const answered = new Map<string, Record<string, number>>();
+  let compacted: number | undefined;
   for (const entry of entries)
     for (const message of entry.model ?? []) {
       if (typeof message.timestamp === "number") times.push(message.timestamp);
+      if (entry.kind === "pi.compaction")
+        compacted = message.timestamp ?? compacted;
       const usage = object(message.usage);
       if (message.role !== "assistant" || !usage) continue;
       const cost = count(object(usage.cost)?.total);
+      const key = `${message.provider ?? ""}/${message.model ?? ""}`;
+      const sum = answered.get(key) ?? {};
+      for (const name of [...TOKENS, "cost"] as const)
+        sum[name] =
+          (sum[name] ?? 0) +
+          ((name === "cost" ? cost : count(usage[name])) ?? 0);
+      answered.set(key, sum);
       observations.push({
         ...(message.responseId ? { requestId: message.responseId } : {}),
         at: message.timestamp ?? 0,
@@ -82,6 +98,30 @@ export function conversationUsage(
       });
     }
   if (!times.length) return undefined;
+  const lastAt = Math.max(...times);
+  for (const [key, value] of Object.entries(recorded)) {
+    const total = object(value);
+    if (!total) continue;
+    const sum = answered.get(key) ?? {};
+    const rest = (name: string, recorded: unknown) =>
+      Math.max(0, (count(recorded) ?? 0) - (sum[name] ?? 0));
+    const tokens = Object.fromEntries(
+      TOKENS.flatMap((name) => {
+        const value = rest(name, total[name]);
+        return value ? [[name, value]] : [];
+      }),
+    );
+    // Sums of float prices: below a millionth of a cent is rounding.
+    const usd = rest("cost", object(total.cost)?.total);
+    if (!Object.keys(tokens).length && usd < 1e-8) continue;
+    observations.push({
+      requestId: `unanswered:${key}`,
+      at: compacted ?? lastAt,
+      model: key.slice(key.indexOf("/") + 1) || "pi",
+      tokens,
+      ...(usd >= 1e-8 ? { cost: { usd, source: "pi" } } : {}),
+    });
+  }
   const asked = title(entries);
   return {
     id: String(place.conversation),
@@ -89,7 +129,7 @@ export function conversationUsage(
     ...(place.root ? { root: place.root } : {}),
     ...(asked ? { title: asked } : {}),
     startedAt: Math.min(...times),
-    lastAt: Math.max(...times),
+    lastAt,
     gaps: [],
     observations,
   };
@@ -128,10 +168,15 @@ export async function readUsage(
   const found: SessionUsage[] = [];
   for (const place of places) {
     if (place.at < since) continue;
-    const session = conversationUsage(
-      await entries(pi, agent, place.conversation, signal),
-      place,
+    // Totals first: an answer recorded between the reads is then in the
+    // entries, not counted as a request without one.
+    const { models } = await pi.request<{ models: Record<string, unknown> }>(
+      "recorded",
+      { agent, conversation: place.conversation },
     );
+    signal.throwIfAborted();
+    const read = await entries(pi, agent, place.conversation, signal);
+    const session = conversationUsage(read, place, models);
     if (session && session.lastAt >= since)
       found.push(await withRevision(session));
   }

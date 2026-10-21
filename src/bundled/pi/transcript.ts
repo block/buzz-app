@@ -37,6 +37,7 @@ type Message = Readonly<{
   stopReason?: string;
   errorMessage?: string;
   model?: string;
+  provider?: string;
   responseId?: string;
   /** pi-ai's token counts and cost of an answer. */
   usage?: unknown;
@@ -90,6 +91,8 @@ export function piTurns(
     { turn: TranscriptTurn; message: { posted?: boolean } }
   >();
   let last = 0;
+  /** The aborted answer the turn ends with so far, by its message's id. */
+  let aborted: string | undefined;
   const turn = (id: string, at: number, partial: boolean) => {
     const current = turns.at(-1);
     if (current) current.endedAt = Math.max(last, current.startedAt);
@@ -113,6 +116,7 @@ export function piTurns(
       const id = `${entry.id}:${position}`;
       const at = message.timestamp ?? last;
       if (entry.kind === "pi.user" && message.role === "user") {
+        aborted = undefined;
         const item = prompt(id, at, text(message.content));
         const current =
           item.type === "prompt" && item.steer ? turns.at(-1) : undefined;
@@ -146,7 +150,22 @@ export function piTurns(
       if (message.stopReason === "error")
         current.error = message.errorMessage || "The model did not answer";
       else delete current.error;
-      if (message.stopReason === "aborted") current.stopReason = "stopped";
+      // Pi saves an interrupted run's partial answer as aborted, then
+      // continues the turn: a later answer replaces it. A Stop ends the run,
+      // so its aborted answer stays last.
+      if (aborted !== undefined) {
+        const prefix = `${aborted}:`;
+        current.items = current.items.filter(
+          (item) => !item.id.startsWith(prefix),
+        );
+      }
+      if (message.stopReason === "aborted") {
+        current.stopReason = "stopped";
+        aborted = id;
+      } else {
+        delete current.stopReason;
+        aborted = undefined;
+      }
       (typeof message.content === "string"
         ? []
         : (message.content ?? [])

@@ -31,8 +31,8 @@ BUZZODZ_PROFILE=pi-agents BUZZ_DEV_VIEWER= bin/just desktop
 ```
 
 Pi needs Node.js 22.19 or later on this computer (`node:sqlite`). On macOS and
-Linux the app's PATH is searched first, then a login shell's, so Homebrew, nvm,
-fnm and similar installs work. On Windows, `node` must be on the PATH Buzz
+Linux the app's PATH is searched first, then an interactive login shell's, so
+Homebrew, nvm, fnm and similar installs work. On Windows, `node` must be on the PATH Buzz
 starts with.
 
 1. Turn on **Pi** in **Settings → Plugins**. Then open **Agents → New agent**
@@ -142,8 +142,15 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
   conversations only, and rereads an open transcript when its turn ends, not
   as it streams.
 - A host that stops while a turn waits is started again once and waits for it
-  there. A run resumed that way, or at the next delivery after a restart, shows
-  no steps.
+  there. A run resumed that way shows no steps.
+- Runs left unfinished when the app quit continue at the first turn after it
+  starts again, in whatever thread. A mention's run shows as working and its
+  answer or failure is posted where it would have been, but it shows no steps
+  and Stop does not reach it. A watch's or timer's run continues unseen, with
+  no deadline.
+- Pi durable records some requests that have no answer, such as compaction's,
+  only in its totals. Usage counts each model's share of those as one more
+  request, at the newest compaction.
 - A provider that needs more than a key, such as Bedrock or Vertex, is set up
   with the `pi` command. Signing in from Buzz is not supported.
 - Only Pi's built-in providers run. One that a Pi package adds (`packages` in

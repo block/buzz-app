@@ -61,6 +61,7 @@ function setup(
     }),
     once: () => ({ submission: ++submissions, conversation: 99 }),
     place: () => ({ seen: 0 }),
+    unfinished: () => ({ submissions: [] }),
     wait: () => new Promise(() => {}),
     ...handlers,
   });
@@ -712,6 +713,122 @@ it("waits for a turn again once the agent's failed storage is opened again", asy
   expect(host.requests("open")).toHaveLength(2);
   await vi.waitFor(() => expect(published).toHaveLength(1));
   expect(published[0]?.content).toBe("Resumed.");
+});
+
+it("gives up on a turn whose agent's storage fails again once it is opened again", async () => {
+  const { host, deliver, settled, published } = setup({
+    wait: () => ({ status: "reopen" }),
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({
+    ok: false,
+    error: "Pi's storage for this agent keeps failing",
+  });
+  expect(host.requests("open")).toHaveLength(2);
+  expect(host.requests("wait")).toHaveLength(2);
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.content).toContain("keeps failing");
+});
+
+it("posts the answer of a run an earlier app left unfinished, once a delivery in another thread continues it", async () => {
+  const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
+  const { host, deliver, published, runtime } = setup({
+    unfinished: () => ({
+      submissions: [{ ...left, context: { channel, root: root.id } }],
+    }),
+    wait: ({ submission }) =>
+      submission === left.submission
+        ? { status: "done", answer: 9, text: "Finished the old one." }
+        : new Promise(() => {}),
+  });
+  const turn = deliver({
+    type: "mention",
+    event: message("5", "@Pi elsewhere", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    }),
+  });
+  await turn.run;
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]).toMatchObject({
+    content: "Finished the old one.",
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+    ],
+  });
+  // Waited for before the delivery that continues it, and only once.
+  const methods = host.processes[0]?.requests.map((item) => item.method);
+  expect(methods?.indexOf("unfinished")).toBeLessThan(
+    methods?.indexOf("deliver") ?? 0,
+  );
+  expect(host.requests("unfinished")).toHaveLength(1);
+  expect(runtime.working(self)).not.toContain(left.conversation);
+});
+
+it("reports a run an earlier app left unfinished that fails, and stays silent for one stopped", async () => {
+  const { deliver, published } = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: 5,
+          request: "d".repeat(64),
+          context: { channel, root: root.id },
+        },
+        {
+          submission: 42,
+          conversation: 6,
+          request: "e".repeat(64),
+          context: { channel },
+        },
+      ],
+    }),
+    wait: ({ submission }) =>
+      submission === 41
+        ? { status: "unanswered", reason: "error", detail: "400 Bad model" }
+        : submission === 42
+          ? { status: "unanswered", reason: "aborted" }
+          : new Promise(() => {}),
+  });
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.content).toContain("400 Bad model");
+});
+
+it("answers a left run of a conversation threads share in its mention's thread, and lists left runs again after a failed listing", async () => {
+  const left = "d".repeat(64);
+  let listings = 0;
+  const { deliver, published } = setup({
+    unfinished: () => {
+      if (++listings === 1) throw new Error("busy");
+      return {
+        submissions: [
+          {
+            submission: 41,
+            conversation: 5,
+            request: left,
+            context: { channel },
+          },
+        ],
+      };
+    },
+    wait: ({ submission }) =>
+      submission === 41
+        ? { status: "done", answer: 9, text: "Finished the old one." }
+        : new Promise(() => {}),
+  });
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(published).toHaveLength(0);
+  await deliver({ type: "mention", event: reply("3", "@Pi again") }).run;
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.tags).toEqual([
+    ["h", channel],
+    ["e", left, "", "reply"],
+  ]);
 });
 
 it("waits for a turn again in a new host when the host stops", async () => {

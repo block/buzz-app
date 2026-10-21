@@ -173,7 +173,7 @@ async function choose(label: string, option: string) {
 }
 
 const modelButton = () =>
-  screen.getByRole("button", { name: /^(Pi default|Choose a|GPT X)/ });
+  screen.getByRole("button", { name: /^Model: (Pi default|Choose a|GPT X)/ });
 
 /** Opens the provider dialog from the Model field. */
 async function openChoices() {
@@ -191,6 +191,7 @@ it("starts New agent's Model field on Pi's default, with the provider kept to it
   );
   // Pi's mark, then the provider's.
   expect(modelButton().querySelectorAll("svg")).toHaveLength(2);
+  expect(modelButton()).toHaveAttribute("aria-haspopup", "dialog");
   expect(screen.getByLabelText("Instructions Optional")).toBeVisible();
 });
 

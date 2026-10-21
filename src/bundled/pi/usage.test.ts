@@ -99,6 +99,54 @@ it("leaves out counts pi-ai did not record, and a conversation with no messages"
   expect(conversationUsage([], PLACE)).toBeUndefined();
 });
 
+it("adds what Pi recorded beyond the answers, such as a compaction's request", () => {
+  const recorded = (input: number, cost: number) => ({
+    ...usage(cost),
+    input,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+  });
+  const compaction = {
+    id: 3,
+    kind: "pi.compaction",
+    model: [{ role: "user", content: "Summary", timestamp: 3000 }],
+  };
+  const entries = [
+    ask(1, "hi"),
+    answer(2, usage(0.1), { provider: "anthropic" }),
+    compaction,
+    answer(4, usage(0.2), { provider: "anthropic" }),
+  ];
+  const session = conversationUsage(entries, PLACE, {
+    // The answers' 200 input and $0.30, and a compaction's 900 and $0.05.
+    "anthropic/claude-x": {
+      ...recorded(1100, 0.35),
+      output: 20,
+      cacheRead: 100,
+      cacheWrite: 10,
+    },
+  });
+  expect(session?.observations.slice(2)).toEqual([
+    {
+      requestId: "unanswered:anthropic/claude-x",
+      at: 3000,
+      model: "claude-x",
+      tokens: { input: 900 },
+      cost: { usd: expect.closeTo(0.05, 10), source: "pi" },
+    },
+  ]);
+  // Totals the answers account for add nothing.
+  expect(
+    conversationUsage(entries, PLACE, {
+      "anthropic/claude-x": {
+        ...recorded(200, 0.1 + 0.2),
+        output: 20,
+        cacheRead: 100,
+        cacheWrite: 10,
+      },
+    })?.observations,
+  ).toHaveLength(2);
+});
+
 it("reads every page of the conversations used since `since`, newest first", async () => {
   const pages: Record<string, { entries: PiEntry[]; next?: string }> = {
     "2:": { entries: [answer(4, usage(1)), ask(3, "second")], next: "c" },
@@ -107,9 +155,12 @@ it("reads every page of the conversations used since `since`, newest first", asy
   };
   const request = vi.fn(
     async (
-      _method: string,
+      method: string,
       params: { conversation: number; cursor?: string },
-    ) => pages[`${params.conversation}:${params.cursor ?? ""}`],
+    ) =>
+      method === "recorded"
+        ? { models: {} }
+        : pages[`${params.conversation}:${params.cursor ?? ""}`],
   );
   const sessions = await readUsage(
     { request } as never,
@@ -123,7 +174,7 @@ it("reads every page of the conversations used since `since`, newest first", asy
     1500,
     new AbortController().signal,
   );
-  expect(request).toHaveBeenCalledTimes(3);
+  expect(request).toHaveBeenCalledTimes(5);
   expect(request).toHaveBeenCalledWith("entries", {
     agent: "agent",
     conversation: 2,

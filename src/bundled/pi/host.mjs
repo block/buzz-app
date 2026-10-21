@@ -6,7 +6,7 @@
 // back to the plugin. `pi.sh` runs this with Node in the folder its packages
 // are installed in.
 import { execSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -28,6 +28,7 @@ import {
   Harness,
   SessionFailed,
   section,
+  UsageDoc,
   watchEvents,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -224,6 +225,8 @@ export function serve({
 }) {
   /** Each agent's open Harness, by pubkey. */
   const agents = new Map();
+  /** Agents whose storage failed and that nothing has opened again. */
+  const failed = new Set();
   const calls = new Map();
   let called = 0;
   const write = (message) => output.write(`${JSON.stringify(message)}\n`);
@@ -264,7 +267,10 @@ export function serve({
   async function open(agent) {
     if (!/^[0-9a-f]{64}$/.test(agent)) throw new Error("Not an agent key");
     const path = join(data, "agents", `${agent}.sqlite`);
-    await mkdir(dirname(path), { recursive: true });
+    // An agent's storage holds its conversations: only its owner may read
+    // it, however an earlier build made it.
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await chmod(dirname(path), 0o700);
     // One host at a time per agent, across every Buzz build here. A lock that
     // a killed host left is taken over once it is stale.
     const release = await lockfile
@@ -281,6 +287,12 @@ export function serve({
           : error;
       });
     try {
+      // SQLite gives the -wal and -shm files it makes the database's mode.
+      await writeFile(path, "", { flag: "a", mode: 0o600 });
+      for (const file of [path, `${path}-wal`, `${path}-shm`])
+        await chmod(file, 0o600).catch((error) => {
+          if (error.code !== "ENOENT") throw error;
+        });
       const registry = createRegistry();
       registry.install(CodingTools);
       // Loads the Buzz tools that are deferred when the model asks for them.
@@ -328,6 +340,7 @@ export function serve({
     if (!started) {
       const opened = open(agent);
       started = opened;
+      failed.delete(agent);
       agents.set(agent, opened);
       const forget = () => {
         if (agents.get(agent) === opened) agents.delete(agent);
@@ -339,6 +352,7 @@ export function serve({
           ready.harness.closed.then((end) => {
             if (end.reason !== "failed") return;
             console.error("Pi's storage failed for an agent", end.error);
+            if (agents.get(agent) === opened) failed.add(agent);
             forget();
             void shut(ready);
           }),
@@ -637,6 +651,14 @@ export function serve({
         ...(page.next ? { next: page.next } : {}),
       };
     },
+    /** The usage Pi recorded for a conversation, by `<provider>/<model>`:
+     * its answers', and the requests that left no answer, such as
+     * compaction's. */
+    async recorded({ agent, conversation }) {
+      const { harness } = await opening(agent);
+      const state = await harness.snapshot(UsageDoc, conversation, context);
+      return { models: state?.models ?? {} };
+    },
     /** The newest message a conversation key's Pi conversation has been
      * shown; 0 when it has none yet. */
     async place({ agent, key }) {
@@ -710,8 +732,35 @@ export function serve({
       );
       return submit(conversation, turn, false);
     },
+    /** The requests of runs Pi has not finished, in conversations the agent
+     * has a place for, with where each one's tools default to. A host that
+     * stopped leaves them; a later delivery or wait, for any conversation,
+     * continues all of them. */
+    async unfinished({ agent }) {
+      const opened = await agentOf(agent);
+      const { submissions } = await opened.harness.inspect(context);
+      return {
+        submissions: submissions.flatMap(
+          ({ id, conversationId, requestId }) => {
+            const place = opened.contexts.get(conversationId);
+            return place && requestId
+              ? [
+                  {
+                    submission: id,
+                    conversation: conversationId,
+                    request: requestId,
+                    context: place,
+                  },
+                ]
+              : [];
+          },
+        ),
+      };
+    },
     /** How a request settled: its answer's text, or why it has none. */
     async wait({ agent, submission }) {
+      // Its run is in Pi's storage: the plugin opens the agent again.
+      if (failed.has(agent)) return { status: "reopen" };
       return settle(await agentOf(agent), submission);
     },
     async abort({ agent, conversation }) {
@@ -723,6 +772,7 @@ export function serve({
     async close({ agent }) {
       const opening = agents.get(agent);
       agents.delete(agent);
+      failed.delete(agent);
       await shut(await opening?.catch(() => undefined));
     },
   };

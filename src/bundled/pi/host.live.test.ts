@@ -3,7 +3,15 @@
 // with PI_DEPS set to a folder pi.sh installed Pi's packages in, such as
 // "~/Library/Application Support/Buzz/pi/deps/<sum>".
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -15,6 +23,7 @@ const run = promisify(execFile);
 
 /** Serves the plugin's side over in-process streams, as Buzz would. */
 const DRIVER = `
+import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
@@ -75,6 +84,7 @@ const b = await pi.rpc("deliver", turn("B", "second"));
 out.b = { ...(await pi.rpc("wait", { agent, submission: b.submission })), conversation: b.conversation };
 // What a transcript and usage read: the places, and the entries without schemas.
 out.places = (await pi.rpc("places", { agent })).places;
+out.recorded = Object.keys((await pi.rpc("recorded", { agent, conversation: a.conversation })).models);
 out.entries = (await pi.rpc("entries", { agent, conversation: a.conversation })).entries.map((entry) => [entry.kind, ...(entry.model ?? []).map((message) => message.role + (message.usage ? "+usage" : ""))]);
 // A request while the run works steers it.
 const c = held();
@@ -101,6 +111,7 @@ await pi.stop();
 out.stopped = await stopped;
 pi = start();
 await pi.rpc("open", { agent, tools });
+out.unfinished = (await pi.rpc("unfinished", { agent })).submissions;
 out.resumed = await pi.rpc("wait", { agent, submission: d1.submission });
 // A run that fails leaves no request it was steered with waiting for the next.
 const e = held();
@@ -139,6 +150,22 @@ out.place = await pi.rpc("place", { agent, key: "chan/root" });
 // A turn Pi could not start leaves what the conversation was shown.
 out.unstarted = await pi.rpc("deliver", { ...turn("F", "eighth"), at: 200, model: "nope" }).catch((error) => error.message);
 out.unstartedPlace = await pi.rpc("place", { agent, key: "chan/root" });
+// A request that waits after the agent's storage failed is told to open it
+// again, and finds its run there. Another connection holds the write lock
+// while the run commits, so the storage fails while the host is blocked and the
+// request is read only afterwards, as when the plugin's wait is already in the pipe.
+const locked = held();
+faux.setResponses([async () => { await locked.gate; return fauxAssistantMessage("Late answer"); }, () => fauxAssistantMessage("Late answer")]);
+const l1 = await pi.rpc("deliver", turn("L", "tenth"));
+const blocker = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "-e", "const { DatabaseSync } = require('node:sqlite'); new DatabaseSync(process.argv[1]).exec('BEGIN IMMEDIATE'); console.log('locked'); setTimeout(() => {}, 60000)", data + "/agents/" + agent + ".sqlite"], { stdio: ["ignore", "pipe", "inherit"] });
+await new Promise((resolve) => blocker.stdout.once("data", resolve));
+locked.release();
+await new Promise((resolve) => setTimeout(resolve, 50));
+out.failed = await pi.rpc("wait", { agent, submission: l1.submission });
+blocker.kill();
+await new Promise((resolve) => blocker.once("exit", resolve));
+await pi.rpc("open", { agent, tools });
+out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission });
 // Pi's settings as they are now, which the pi command changes.
 await writeFile(data + "/settings.json", JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
 out.defaults = await pi.rpc("defaults", {});
@@ -169,6 +196,13 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     );
     await writeFile(join(folder, "host.mjs"), host);
     await writeFile(join(folder, "driver.mjs"), DRIVER);
+    // Storage an earlier build left readable by others.
+    const agents = join(folder, "agents");
+    const database = join(agents, `${"b".repeat(64)}.sqlite`);
+    await mkdir(agents, { mode: 0o755 });
+    await chmod(agents, 0o755);
+    await writeFile(database, "", { mode: 0o644 });
+    await chmod(database, 0o644);
     const { stdout } = await run(
       process.execPath,
       [
@@ -179,6 +213,11 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       { cwd: folder, timeout: 60_000 },
     );
     const out = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}");
+    if (process.platform !== "win32") {
+      const mode = async (path: string) => (await stat(path)).mode & 0o777;
+      expect(await mode(agents)).toBe(0o700);
+      expect(await mode(database)).toBe(0o600);
+    }
     expect(out.unknown).toMatch(
       /^Buzz can use only Pi's built-in providers, and databricks isn't one/,
     );
@@ -192,6 +231,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         arguments: { text: "hi", final: true },
       },
     ]);
+    expect(out.recorded).toEqual(["faux/faux-1"]);
     expect(out.places).toEqual([
       { key: "chan/root", conversation: out.a.conversation, seen: 100 },
     ]);
@@ -230,6 +270,14 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     // What a Buzz tool answered is what the model reads.
     expect(out.c.results.at(-1)).toEqual([{ type: "text", text: "sent" }]);
     expect(out.stopped).toEqual({ status: "closed" });
+    expect(out.unfinished).toEqual([
+      {
+        submission: expect.any(Number),
+        conversation: out.a.conversation,
+        request: "D",
+        context: { channel: "chan", root: "root" },
+      },
+    ]);
     expect(out.resumed).toMatchObject({
       status: "done",
       text: "Resumed answer",
@@ -255,6 +303,11 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.place).toEqual({ seen: 100 });
     expect(out.unstarted).toMatch(/Pi has no model nope/);
     expect(out.unstartedPlace).toEqual({ seen: 100 });
+    expect(out.failed).toEqual({ status: "reopen" });
+    expect(out.failedResumed).toMatchObject({
+      status: "done",
+      text: "Late answer",
+    });
     expect(out.defaults).toEqual({ provider: "faux", model: "faux-1" });
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });

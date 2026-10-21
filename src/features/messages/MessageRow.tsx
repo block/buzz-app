@@ -754,7 +754,10 @@ function MessageRowContent({
             ? ""
             : undefined
         }
-        data-own={(!attachmentOnly && !cardsOnly && ownBubble) || undefined}
+        data-own={
+          (!attachmentOnly && !cardsOnly && !row.huddle && ownBubble) ||
+          undefined
+        }
       >
         {!renderMessage && <span className={styles.messageGutter} />}
 
@@ -763,7 +766,8 @@ function MessageRowContent({
           <div
             className={styles.messageContent}
             data-bubble={
-              (!attachmentOnly && !cardsOnly && !shownRow) || undefined
+              (!attachmentOnly && !cardsOnly && !row.huddle && !shownRow) ||
+              undefined
             }
           >
             {/* A live append must not remove the reader's current focus target. */}
@@ -871,7 +875,9 @@ function MessageRowContent({
               )}
               {!attachmentOnly && !cardsOnly && (
                 <div
-                  className={shownRow ? undefined : styles.messageBubble}
+                  className={
+                    shownRow || row.huddle ? undefined : styles.messageBubble
+                  }
                   data-message-action-anchor
                   data-emoji-only={emojiOnly || undefined}
                   data-diff-only={!!row.diff || undefined}

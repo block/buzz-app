@@ -746,6 +746,11 @@ is called complete; token math alone cannot validate the CSS cascade.
 
 ## Controls
 
+An Input that must retain focus during asynchronous work can pair `readOnly` with
+`aria-disabled="true"` to use the shared disabled appearance without removing
+keyboard focus. Its feature owner must prevent edits and keep `aria-busy` on the
+working region; `aria-disabled` alone does not prevent native input.
+
 Navigation labels are controls, not selectable document text. `NavigationItem`,
 tabs, and sidebar section/project disclosure headings prevent text selection,
 including when opening a context menu. Keep this behavior on the navigation
@@ -890,9 +895,11 @@ selection-mark slot in every option so selecting the widest label cannot resize 
 Compact choices can pass `valueSuffix` for short metadata that must stay visible,
 such as an agent card's Default source. It sits directly after the value on the
 same line; only the value truncates. Keep the full choice in the popup and value
-hint. The caller owns its column width. `align="end"` anchors a trailing choice popup
-to the trigger’s right edge; the default remains `start`. Pass `disabled` explicitly
-when the choice is unavailable. An option may include one concise supporting
+hint. The caller owns its column width; in PreferenceRow a compact choice takes at
+most 60% of the row, beyond its min-content width, so a long value ellipsizes
+before the row title loses its words. Other trailing controls keep their width.
+`align="end"` anchors a trailing choice popup to the trigger’s right edge; the
+default remains `start`. Pass `disabled` explicitly when the choice is unavailable. An option may include one concise supporting
 description; Select shows it as a byline in the popup while the closed trigger
 retains only the option label. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control

@@ -12,6 +12,7 @@ type ButtonVariant =
   | "destructive"
   | "outline"
   | "attention"
+  | "glass"
   | "inverted"
   | "link"
   | "plain"

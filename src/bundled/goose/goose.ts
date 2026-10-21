@@ -953,6 +953,7 @@ export class GooseSession {
         const earlierWaiter = earlier && this.receiptWaiters.get(earlier);
         if (earlier && earlierWaiter && this.waiters.includes(earlierWaiter)) {
           this.active.set(scope, earlier);
+          this.lastStep = "";
           earlier.acknowledged?.();
         } else this.active.delete(scope);
       }

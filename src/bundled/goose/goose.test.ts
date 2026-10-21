@@ -884,6 +884,36 @@ describe("GooseProcess", () => {
     expect(process.turns.map((turn) => turn.text)).toEqual(["A"]);
   });
 
+  it("shows a resumed message a step it already showed the message that left", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const steps: string[] = [];
+    const activity = (name: string) => ({
+      step: (tool: string) => steps.push(`${name}:${tool}`),
+    });
+    const a = session.send("A", activity("A"));
+    await flush();
+    const controller = new AbortController();
+    const b = session.send(
+      "B",
+      activity("B"),
+      "o3",
+      undefined,
+      controller.signal,
+    );
+    await flush();
+    process.update(session.id, { sessionUpdate: "agent_thought_chunk" });
+    await flush();
+    controller.abort();
+    await expect(b).resolves.toEqual({ ok: true });
+    process.update(session.id, { sessionUpdate: "agent_thought_chunk" });
+    await flush();
+    expect(steps).toEqual(["B:Thinking", "A:Thinking"]);
+    process.turns[0]?.finish();
+    await expect(a).resolves.toEqual({ ok: true });
+  });
+
   it("sends nothing for a message cancelled while its handoff is held", async () => {
     const { open, process } = await start();
     process.hold = true;

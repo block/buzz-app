@@ -608,6 +608,8 @@ export function SearchResults({
     const rank = matchRank(label, needle) ?? 6;
     return searchOrder(usage, picked, { key, rank }) + (archived ? 0.5 : 0);
   };
+  /** Whether a search order is an exact name, live (-2) or archived (-1.5). */
+  const exact = (rank: number) => rank < -1;
   const byMatch = <T,>(rows: readonly T[], rank: (row: T) => number) =>
     rows
       .map((row) => ({ row, rank: rank(row) }))
@@ -681,12 +683,19 @@ export function SearchResults({
     usage,
     picked,
   );
-  // Solo chats, by name or by a shown agent among their members. Chats with
-  // that agent come first, in the agent's order, so they follow its "New
-  // chat" row; chats found only by name come after them. Live chats come
-  // before archived ones, and newer before older.
-  const chatRank = (channel: ChannelSummary) =>
-    newChatAmong(channel.members)?.score ?? channelRank(channel);
+  // Solo chats, by name or by a shown agent among their members. A chat whose
+  // name is the exact text comes first. Chats with that agent come next, in
+  // the agent's order, so they follow its "New chat" row; other chats found
+  // by name come after them. Live chats come before archived ones, and newer
+  // before older.
+  const chatRank = (channel: ChannelSummary) => {
+    const named = matchingAll.includes(channel)
+      ? channelRank(channel)
+      : Infinity;
+    return exact(named)
+      ? named
+      : (newChatAmong(channel.members)?.score ?? named);
+  };
   const chatResults = channels
     .filter(
       (channel) =>
@@ -700,6 +709,7 @@ export function SearchResults({
     }))
     .sort(
       (a, b) =>
+        Number(exact(b.rank)) - Number(exact(a.rank)) ||
         Number(b.agent) - Number(a.agent) ||
         a.rank - b.rank ||
         Number(!!a.channel.archived) - Number(!!b.channel.archived) ||
@@ -992,10 +1002,11 @@ export function SearchResults({
                 // the "Work" page before a channel that merely contains it.
                 // Every group scores on one scale, match and usage, not the
                 // relationship band that orders rows inside People and
-                // Agents. When the text finds one of the viewer's agents,
-                // though, its "New chat" row leads and its chats follow,
-                // whatever else matches better or was picked before; its DM,
-                // and every other group, comes after them.
+                // Agents. An exact name always leads. After exact names, when
+                // the text finds one of the viewer's agents, its "New chat"
+                // row leads and its chats follow, whatever else matches
+                // better or was picked before; its DM, and every other group,
+                // comes after them.
                 ...[
                   {
                     label: "Agents",
@@ -1044,11 +1055,13 @@ export function SearchResults({
                   .map((group) => ({
                     ...group,
                     lead:
-                      newChats.size > 0 &&
-                      (group.label === "Agents" || group.label === "Chats"),
+                      exact(group.best) ||
+                      (newChats.size > 0 &&
+                        (group.label === "Agents" || group.label === "Chats")),
                   }))
                   .sort(
                     (a, b) =>
+                      Number(exact(b.best)) - Number(exact(a.best)) ||
                       Number(b.lead) - Number(a.lead) ||
                       (a.lead ? 0 : a.best - b.best),
                   )

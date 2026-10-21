@@ -3586,15 +3586,36 @@ it.each([true, false])(
   },
 );
 
-it("keeps an agent's new chat and chats ahead of better matches", async () => {
+it.each([
+  {
+    name: "keeps an agent's new chat and chats ahead of a picked channel",
+    // The viewer last chose this channel for the same text; Scout matches
+    // only part of it, as "Scoo" and the "scoo" chat do.
+    picked: "channel:scout-ops",
+    exactName: "Scoo",
+    groups: ["Agents", "Chats"],
+    chats: ["Plan the week", "scoo"],
+    first: /Scout.*New chat/,
+  },
+  {
+    name: "puts exact names ahead of an agent's new chat",
+    picked: undefined,
+    exactName: "Sco",
+    // Chats leads with its exact name; Channels and Direct messages have
+    // exact names too, so they come before the partly matching agent.
+    groups: ["Chats", "Channels", "Direct messages", "Agents"],
+    chats: ["sco", "Plan the week"],
+    first: /^sco/,
+  },
+])("$name", async ({ picked, exactName, groups, chats: chatOrder, first }) => {
   localStorage.clear();
-  // The viewer last chose this channel for the same text.
-  recordChoice(usage, "sco", "channel:scout-ops");
+  if (picked) recordChoice(usage, "sco", picked);
   const relay = keypair(),
     viewer = keypair(),
     mine = keypair(),
     human = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const lower = exactName.toLowerCase();
   const dm = (id: string, member: string) => [
     metadata(relay, id, "opaque", 1700000000, [
       ["t", "dm"],
@@ -3602,30 +3623,26 @@ it("keeps an agent's new chat and chats ahead of better matches", async () => {
     ]),
     roster(relay, id, [viewer.pubkey, member]),
   ];
-  const chat = (id: string, name: string, at: number) => [
+  const chat = (id: string, name: string, at: number, members: string[]) => [
     metadata(relay, id, name, at, [
       ["t", "stream"],
       ["private"],
       ["t", "buzz.solo"],
     ]),
-    roster(relay, id, [viewer.pubkey, mine.pubkey]),
+    roster(relay, id, [viewer.pubkey, ...members]),
   ];
   const discovery = [
     ...dm("mine-dm", mine.pubkey),
-    // A person whose name is the exact text, a better match than Scout.
     ...dm("human-dm", human.pubkey),
-    ...chat("agent-chat", "Plan the week", 1700000002),
-    // A chat whose name is the exact text, found by name.
-    metadata(relay, "named-chat", "sco", 1700000003, [
-      ["t", "stream"],
-      ["private"],
-      ["t", "buzz.solo"],
-    ]),
-    roster(relay, "named-chat", [viewer.pubkey]),
+    ...chat("agent-chat", "Plan the week", 1700000002, [mine.pubkey]),
+    // A chat found by its name, not its agent.
+    ...chat("named-chat", lower, 1700000003, []),
     metadata(relay, "scout-ops", "scout-ops"),
     roster(relay, "scout-ops", [viewer.pubkey]),
+    metadata(relay, "named-channel", lower),
+    roster(relay, "named-channel", [viewer.pubkey]),
     profile(mine, { name: "Scout", is_agent: true }),
-    profile(human, { name: "Sco" }),
+    profile(human, { name: exactName }),
   ];
   const owner = createRelaySession({
     ...wire.transport,
@@ -3668,25 +3685,23 @@ it("keeps an agent's new chat and chats ahead of better matches", async () => {
     const direct = within(
       await screen.findByRole("group", { name: "Direct messages" }),
     );
-    await direct.findByRole("option", { name: /^Sco(?!ut)/ });
+    await direct.findByRole("option", {
+      name: new RegExp(`^${exactName}(?!ut)`),
+    });
     await direct.findByRole("option", { name: /Scout/ });
     await screen.findByRole("group", { name: "Channels" });
+    await screen.findByRole("group", { name: "Agents" });
     const chats = within(await screen.findByRole("group", { name: "Chats" }));
     await waitFor(() =>
       expect(
         chats.getAllByRole("option").map((row) => row.textContent),
-      ).toEqual([
-        expect.stringContaining("Plan the week"),
-        expect.stringContaining("sco"),
-      ]),
+      ).toEqual(chatOrder.map((name) => expect.stringContaining(name))),
     );
     const labels = screen
       .getAllByRole("group")
       .map((group) => group.getAttribute("aria-label"));
-    expect(labels.slice(0, 2)).toEqual(["Agents", "Chats"]);
-    const options = screen.getAllByRole("option");
-    expect(options[0]).toHaveTextContent("Scout");
-    expect(options[0]).toHaveTextContent("New chat");
+    expect(labels.slice(0, groups.length)).toEqual(groups);
+    expect(screen.getAllByRole("option")[0]?.textContent).toMatch(first);
   } finally {
     cleanup();
     owner.dispose();

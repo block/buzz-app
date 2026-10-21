@@ -13,6 +13,9 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+use zeroize::Zeroizing;
+
+use crate::federated_identity::{agent::AgentTokens, assertion};
 
 /// A NIP-98 `Authorization` header for one signed HTTP auth event.
 fn authorization(event: Value) -> Result<String, String> {
@@ -44,6 +47,8 @@ pub(crate) struct AppAgentHost {
     /// last; Delete takes it too, so no publication outlives the key.
     profiles: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     hosting: Arc<Hosting>,
+    /// Each agent's NIP-FI grant and assertions, for an organization's communities.
+    tokens: AgentTokens,
 }
 impl AppAgentHost {
     /// `packaged` is false for a dev build, which steps aside for a packaged app.
@@ -51,13 +56,24 @@ impl AppAgentHost {
         path: Result<PathBuf, String>,
         old: Result<OldStores, String>,
         packaged: bool,
+        tokens: AgentTokens,
     ) -> Self {
         let hosts = path
             .as_ref()
             .map_err(Clone::clone)
             .and_then(|path| Ok(path.parent().ok_or("Invalid agent storage")?.join("hosts")));
+        let agents = path.map(AppAgents::open);
+        let listed = agents.clone();
+        tokens.watch(move || {
+            Ok(listed
+                .clone()?
+                .list()?
+                .into_iter()
+                .map(|agent| (agent.owner, agent.pubkey))
+                .collect())
+        });
         Self {
-            agents: path.map(AppAgents::open),
+            agents,
             old,
             credentials: Arc::new(PlatformCredentials::default()),
             keys: Arc::default(),
@@ -67,6 +83,7 @@ impl AppAgentHost {
                 packaged,
                 held: Mutex::default(),
             }),
+            tokens,
         }
     }
     fn keys(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Secret>>> {
@@ -110,6 +127,64 @@ impl AppAgentHost {
         })
         .await
     }
+    /// The agent, its key and its organization evidence, for one request.
+    async fn signer(
+        &self,
+        pubkey: String,
+    ) -> Result<(AppAgent, Arc<Secret>, Option<Zeroizing<String>>), String> {
+        let incarnation = self.tokens.incarnation(&pubkey);
+        let (agent, key) = self.key(self.agent(pubkey).await?).await?;
+        let evidence = self.tokens.evidence(&agent, &key, incarnation).await?;
+        Ok((agent, key, evidence))
+    }
+    /// Saves an imported identity with its key, opening the agent's next
+    /// incarnation if it was deleted here before. Work that keeps the returned
+    /// agent and key passes the returned incarnation to `evidence`, so a later
+    /// deletion refuses it even after another import of the same key.
+    async fn install(
+        &self,
+        prepared: buzz_agent_controller::NewAppAgent,
+        auth: Vec<String>,
+    ) -> Result<(AppAgent, Arc<Secret>, u64), String> {
+        let host = self.clone();
+        blocking(move || {
+            let mut keys = host.keys();
+            let (agent, key) =
+                host.agents
+                    .clone()?
+                    .commit(prepared, &auth, host.credentials.as_ref())?;
+            let key = Arc::new(key);
+            keys.insert(agent.pubkey.clone(), key.clone());
+            let incarnation = host.tokens.reopen(&agent.pubkey);
+            Ok((agent, key, incarnation))
+        })
+        .await
+    }
+    /// Uploads an imported agent's inline picture and saves its URL, as the
+    /// installation `incarnation` returned by `install`.
+    async fn imported_picture(
+        &self,
+        agent: &AppAgent,
+        key: &Secret,
+        incarnation: u64,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<String, String> {
+        let agents = self.agents.clone()?;
+        let evidence = self.tokens.evidence(agent, key, incarnation).await?;
+        let receipt = upload(
+            agent,
+            key,
+            evidence.as_deref().map(String::as_str),
+            bytes,
+            mime,
+        )
+        .await?;
+        let url = receipt["url"].as_str().ok_or("Upload returned no URL")?;
+        let (pubkey, picture) = (agent.pubkey.clone(), Some(url.to_owned()));
+        blocking(move || agents.set_picture(&pubkey, picture)).await?;
+        Ok(url.to_owned())
+    }
     /// Deletes the key once any profile publication in flight has settled, so
     /// the community's cleanup sees every profile it will ever have. The row
     /// stays, marked deleted, until the WebView has cleaned up the community and
@@ -117,6 +192,9 @@ impl AppAgentHost {
     async fn delete(&self, pubkey: String) -> Result<(), String> {
         let turn = self.profile_turn(&pubkey);
         let _turn = turn.lock().await;
+        if let Ok(agent) = self.agent(pubkey.clone()).await {
+            self.tokens.forget(&agent.owner, &pubkey).await?;
+        }
         let host = self.clone();
         blocking(move || {
             // Held across the deletion, so no publication re-reads the key meanwhile.
@@ -329,7 +407,8 @@ pub(crate) async fn app_agent_port(
     owner: String,
     agent_type: String,
 ) -> Result<Ported, String> {
-    let agents = state.agents.clone()?;
+    // Unavailable storage refuses before the old store gives up its key.
+    state.agents.clone()?;
     let old = state.old.clone()?;
     let credentials = state.credentials.clone();
     let (found, key) = blocking(move || {
@@ -359,15 +438,7 @@ pub(crate) async fn app_agent_port(
         .inner()
         .authorize_agent(owner, prepared.pubkey().to_owned())
         .await?;
-    let host = state.inner().clone();
-    let (mut agent, key) = blocking(move || {
-        let mut keys = host.keys();
-        let (agent, key) = agents.commit(prepared, &auth, host.credentials.as_ref())?;
-        let key = Arc::new(key);
-        keys.insert(agent.pubkey.clone(), key.clone());
-        Ok((agent, key))
-    })
-    .await?;
+    let (mut agent, key, incarnation) = state.install(prepared, auth).await?;
     let mut notes = vec![];
     // Old Buzz kept some pictures inline; the community serves the upload. The
     // agent comes over without it if that fails, which the import reports.
@@ -382,15 +453,10 @@ pub(crate) async fn app_agent_port(
         ));
     }
     if let Some((mime, bytes)) = inline.and_then(inline_picture) {
-        let agents = state.agents.clone()?;
-        let uploaded = async {
-            let receipt = upload(&agent, &key, bytes, mime).await?;
-            let url = receipt["url"].as_str().ok_or("Upload returned no URL")?;
-            let (pubkey, picture) = (agent.pubkey.clone(), Some(url.to_owned()));
-            blocking(move || agents.set_picture(&pubkey, picture)).await?;
-            Ok::<_, String>(url.to_owned())
-        };
-        match uploaded.await {
+        match state
+            .imported_picture(&agent, &key, incarnation, mime, bytes)
+            .await
+        {
             Ok(url) => agent.picture = Some(url),
             Err(error) => {
                 eprintln!("Imported agent picture was not saved: {error}");
@@ -493,9 +559,15 @@ pub(crate) async fn app_agent_publish(
     pubkey: String,
     event: AppAgentEvent,
 ) -> Result<Value, String> {
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (agent, key, evidence) = state.signer(pubkey).await?;
     let signed = agent.sign(&key, event.kind, event.content, event.tags)?;
-    post(&agent, &key, signed).await
+    post(
+        &agent,
+        &key,
+        evidence.as_deref().map(String::as_str),
+        signed,
+    )
+    .await
 }
 
 /// Publishes changed public metadata. Safe to call any time; one publication
@@ -507,12 +579,20 @@ pub(crate) async fn app_agent_publish_profile(
 ) -> Result<(), String> {
     let turn = state.profile_turn(&pubkey);
     let _turn = turn.lock().await;
+    let incarnation = state.tokens.incarnation(&pubkey);
     let agent = state.agent(pubkey).await?;
     if agent.profile_is_current() {
         return Ok(());
     }
     let (agent, key) = state.key(agent).await?;
-    let signed = post(&agent, &key, agent.profile_event(&key)?).await?;
+    let evidence = state.tokens.evidence(&agent, &key, incarnation).await?;
+    let signed = post(
+        &agent,
+        &key,
+        evidence.as_deref().map(String::as_str),
+        agent.profile_event(&key)?,
+    )
+    .await?;
     let created_at = signed
         .get("created_at")
         .and_then(Value::as_u64)
@@ -543,13 +623,24 @@ pub(crate) async fn app_agent_query(
     if filters.is_empty() || filters.len() > 8 {
         return Err("Agents read with one to eight filters".into());
     }
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
-    read(&agent, &key, &filters).await
+    let (agent, key, evidence) = state.signer(pubkey).await?;
+    read(
+        &agent,
+        &key,
+        evidence.as_deref().map(String::as_str),
+        &filters,
+    )
+    .await
 }
 
-async fn read(agent: &AppAgent, key: &Secret, filters: &[Value]) -> Result<Value, String> {
+async fn read(
+    agent: &AppAgent,
+    key: &Secret,
+    evidence: Option<&str>,
+    filters: &[Value],
+) -> Result<Value, String> {
     let bytes = serde_json::to_vec(filters).map_err(|_| "Could not encode agent read")?;
-    let (status, body) = signed_read(agent, key, agent.query_url(), bytes).await?;
+    let (status, body) = signed_read(agent, key, evidence, agent.query_url(), bytes).await?;
     if !status.is_success() {
         return Err(format!(
             "The community refused the agent read: {}",
@@ -564,11 +655,11 @@ async fn read(agent: &AppAgent, key: &Secret, filters: &[Value]) -> Result<Value
 async fn signed_read(
     agent: &AppAgent,
     key: &Secret,
+    evidence: Option<&str>,
     url: String,
     bytes: Vec<u8>,
 ) -> Result<(reqwest::StatusCode, Vec<u8>), String> {
-    let response = client()?
-        .post(&url)
+    let response = attach(client()?.post(&url), evidence)
         .timeout(Duration::from_secs(20))
         .header("Content-Type", "application/json")
         .header(
@@ -595,19 +686,28 @@ pub(crate) async fn app_agent_search_profiles(
     query: String,
     limit: u32,
 ) -> Result<Option<Value>, String> {
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
-    search_profiles(&agent, &key, &query, limit).await
+    let (agent, key, evidence) = state.signer(pubkey).await?;
+    search_profiles(
+        &agent,
+        &key,
+        evidence.as_deref().map(String::as_str),
+        &query,
+        limit,
+    )
+    .await
 }
 
 async fn search_profiles(
     agent: &AppAgent,
     key: &Secret,
+    evidence: Option<&str>,
     query: &str,
     limit: u32,
 ) -> Result<Option<Value>, String> {
     let bytes = serde_json::to_vec(&serde_json::json!({ "query": query, "limit": limit }))
         .map_err(|_| "Could not encode profile search")?;
-    let (status, body) = signed_read(agent, key, agent.profile_search_url(), bytes).await?;
+    let (status, body) =
+        signed_read(agent, key, evidence, agent.profile_search_url(), bytes).await?;
     if matches!(
         status,
         reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::METHOD_NOT_ALLOWED
@@ -661,14 +761,22 @@ pub(crate) async fn app_agent_upload(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|_| "Invalid upload data")?;
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
-    upload(&agent, &key, bytes, &mime).await
+    let (agent, key, evidence) = state.signer(pubkey).await?;
+    upload(
+        &agent,
+        &key,
+        evidence.as_deref().map(String::as_str),
+        bytes,
+        &mime,
+    )
+    .await
 }
 
 /// Uploads one blob to the agent's community as the agent.
 async fn upload(
     agent: &AppAgent,
     key: &Secret,
+    evidence: Option<&str>,
     bytes: Vec<u8>,
     mime: &str,
 ) -> Result<Value, String> {
@@ -677,8 +785,7 @@ async fn upload(
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let auth = serde_json::to_vec(&agent.upload_auth(key, &sha256)?)
         .map_err(|_| "Could not authorize upload")?;
-    let response = client()?
-        .put(agent.upload_url())
+    let response = attach(client()?.put(agent.upload_url()), evidence)
         .timeout(Duration::from_secs(120))
         .header("Content-Type", mime)
         .header("X-SHA-256", &sha256)
@@ -761,12 +868,11 @@ pub(crate) async fn app_agent_media(
 ) -> Result<AgentMedia, String> {
     use base64::Engine;
     let dir = std::env::temp_dir().join("buzz-agent-media");
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (agent, key, evidence) = state.signer(pubkey).await?;
     let url = agent.media_url(&url)?;
     let auth =
         serde_json::to_vec(&agent.media_auth(&key)?).map_err(|_| "Could not authorize media")?;
-    let response = client()?
-        .get(&url)
+    let response = attach(client()?.get(&url), evidence.as_deref().map(String::as_str))
         .timeout(Duration::from_secs(600))
         .header(
             "Authorization",
@@ -863,9 +969,24 @@ pub(crate) async fn app_agent_remember(
     body: String,
     after: u64,
 ) -> Result<Value, String> {
-    let (agent, key) = state.key(state.agent(pubkey).await?).await?;
+    let (agent, key, evidence) = state.signer(pubkey).await?;
     let signed = agent.memory(&key, &slug, &body, after)?;
-    post(&agent, &key, signed).await
+    post(
+        &agent,
+        &key,
+        evidence.as_deref().map(String::as_str),
+        signed,
+    )
+    .await
+}
+
+/// Adds the agent's NIP-FI assertion, beside its NIP-98 `Authorization`, for
+/// a community of the owner's organization.
+fn attach(request: reqwest::RequestBuilder, evidence: Option<&str>) -> reqwest::RequestBuilder {
+    match evidence {
+        Some(evidence) => request.header(assertion::HEADER, evidence),
+        None => request,
+    }
 }
 
 /// One client for every agent request, so frequent small posts such as
@@ -909,15 +1030,19 @@ fn reason(status: reqwest::StatusCode, body: &[u8]) -> String {
         .unwrap_or_else(|| format!("status {}", status.as_u16()))
 }
 
-async fn post(agent: &AppAgent, key: &Secret, signed: Value) -> Result<Value, String> {
+async fn post(
+    agent: &AppAgent,
+    key: &Secret,
+    evidence: Option<&str>,
+    signed: Value,
+) -> Result<Value, String> {
     let event_id = signed
         .get("id")
         .and_then(Value::as_str)
         .ok_or("Invalid agent event")?
         .to_owned();
     let bytes = serde_json::to_vec(&signed).map_err(|_| "Could not encode agent event")?;
-    let response = client()?
-        .post(agent.events_url())
+    let response = attach(client()?.post(agent.events_url()), evidence)
         .timeout(Duration::from_secs(20))
         .header("Content-Type", "application/json")
         .header(
@@ -985,6 +1110,7 @@ mod tests {
             keys: Arc::default(),
             profiles: Arc::default(),
             hosting: Arc::new(hosting(Err("unused".into()), true)),
+            tokens: AgentTokens::unconfigured(),
         };
         let agent = AppAgent {
             pubkey: key.pubkey().into(),
@@ -1010,6 +1136,7 @@ mod tests {
             Ok(dir.path().join("identities.json")),
             Err("unused".into()),
             true,
+            AgentTokens::unconfigured(),
         );
         let pubkey = "c".repeat(64);
         let turn = host.profile_turn(&pubkey);
@@ -1024,6 +1151,220 @@ mod tests {
         assert!(tokio::time::timeout(waited, &mut deleting).await.is_err());
         drop(publishing);
         deleting.await.unwrap().unwrap();
+    }
+
+    /// Saved keys in memory; `gate` holds the next read once it is called.
+    #[derive(Default)]
+    struct Gated(
+        Mutex<HashMap<String, String>>,
+        Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    );
+    impl Credentials for Gated {
+        fn read_legacy(
+            &self,
+            _: buzz_agent_controller::LegacySource,
+            _: &str,
+        ) -> Result<Secret, String> {
+            unreachable!()
+        }
+        fn read(&self, id: &str, pubkey: &str) -> Result<Option<Secret>, String> {
+            let gate = self.1.lock().unwrap().take();
+            if let Some((held, release)) = gate {
+                held.send(()).unwrap();
+                release.recv().unwrap();
+            }
+            let saved = self.0.lock().unwrap().get(id).cloned();
+            saved.map(|hex| Secret::parse(&hex, pubkey)).transpose()
+        }
+        fn add(&self, id: &str, key: &Secret) -> Result<(), String> {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(id.into(), key.hex().to_string());
+            Ok(())
+        }
+        fn delete(&self, id: &str, _: &str) -> Result<(), String> {
+            self.0.lock().unwrap().remove(id);
+            Ok(())
+        }
+    }
+
+    /// The owner's NIP-OA tag for `agent`, from a fixed owner key.
+    fn attestation(agent: &str) -> Vec<String> {
+        use secp256k1::{Keypair, Secp256k1, SecretKey};
+        use sha2::{Digest, Sha256};
+        let secp = Secp256k1::new();
+        let mut bytes = [0; 32];
+        bytes[31] = 2;
+        let pair = Keypair::from_secret_key(&secp, &SecretKey::from_byte_array(bytes).unwrap());
+        let digest = Sha256::digest(format!("nostr:agent-auth:{agent}:"));
+        let sig = secp.sign_schnorr_no_aux_rand(&digest, &pair);
+        vec![
+            "auth".into(),
+            pair.x_only_public_key().0.to_string(),
+            String::new(),
+            sig.to_string(),
+        ]
+    }
+
+    #[tokio::test]
+    async fn deletion_refuses_a_request_holding_the_key_and_a_re_import_works_again() {
+        use crate::federated_identity::agent::tests::{enrolled, fixture, issued, issuer, settled};
+        let key = Secret::generate().unwrap();
+        let owner = attestation(key.pubkey())[1].clone();
+        let probe = agent_at("wss://relay.example".into(), &key);
+        let probe = AppAgent {
+            owner: owner.clone(),
+            ..probe
+        };
+        let (base, served) = issuer(vec![
+            (200, enrolled(&owner)),
+            (200, issued(&probe, serde_json::json!({}))),
+        ])
+        .await;
+        let f = fixture(base);
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = Arc::new(Gated::default());
+        let host = AppAgentHost {
+            agents: Ok(AppAgents::open(dir.path().join("identities.json"))),
+            old: Err("unused".into()),
+            credentials: credentials.clone(),
+            keys: Arc::default(),
+            profiles: Arc::default(),
+            hosting: Arc::new(hosting(Err("unused".into()), true)),
+            tokens: f.tokens.clone(),
+        };
+        let import = |key: &Secret| {
+            let key = Secret::parse(&key.hex(), key.pubkey()).unwrap();
+            let auth = attestation(key.pubkey());
+            let prepared = AppAgents::adopt(
+                "https://relay.example/",
+                &owner,
+                "p/t",
+                key,
+                "Ada",
+                None,
+                None,
+            )
+            .unwrap();
+            let host = host.clone();
+            async move { host.install(prepared, auth).await.unwrap() }
+        };
+        let (agent, _, old_incarnation) = import(&key).await;
+        host.keys().clear();
+
+        // A request reads the agent, then is held reading its key.
+        let (held_tx, held) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        *credentials.1.lock().unwrap() = Some((held_tx, release_rx));
+        let stale = tokio::spawn({
+            let host = host.clone();
+            let pubkey = agent.pubkey.clone();
+            async move { host.signer(pubkey).await.map(drop) }
+        });
+        tokio::task::spawn_blocking(move || held.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let deleting = tokio::spawn({
+            let host = host.clone();
+            let pubkey = agent.pubkey.clone();
+            async move { host.delete(pubkey).await }
+        });
+        crate::federated_identity::agent::tests::bounded(async {
+            while !host.tokens.closed(&agent.pubkey) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        release.send(()).unwrap();
+        assert_eq!(
+            stale.await.unwrap().err().as_deref(),
+            Some("This agent was deleted")
+        );
+        deleting.await.unwrap().unwrap();
+        assert!(f.grants.0.lock().unwrap().is_empty(), "nothing persisted");
+
+        // The same key imported again enrolls and works; the old request's
+        // incarnation stays refused.
+        let (agent, key, _) = import(&key).await;
+        let (_, _, evidence) = host.signer(agent.pubkey.clone()).await.unwrap();
+        assert!(evidence.is_some());
+        assert_eq!(
+            host.tokens
+                .evidence(&agent, &key, old_incarnation)
+                .await
+                .err()
+                .as_deref(),
+            Some("This agent was deleted")
+        );
+        let seen = settled(served).await;
+        assert_eq!(
+            seen.len(),
+            2,
+            "only the re-imported agent's grant and assertion"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_import_held_past_its_deletion_does_not_upload_with_a_re_import() {
+        use crate::federated_identity::agent::tests::{enrolled, fixture, issued, issuer, settled};
+        let key = Secret::generate().unwrap();
+        let owner = attestation(key.pubkey())[1].clone();
+        let probe = AppAgent {
+            owner: owner.clone(),
+            ..agent_at("wss://relay.example".into(), &key)
+        };
+        let (base, served) = issuer(vec![
+            (200, enrolled(&owner)),
+            (200, issued(&probe, serde_json::json!({}))),
+        ])
+        .await;
+        let f = fixture(base);
+        let dir = tempfile::tempdir().unwrap();
+        let host = AppAgentHost {
+            agents: Ok(AppAgents::open(dir.path().join("identities.json"))),
+            old: Err("unused".into()),
+            credentials: Arc::new(Gated::default()),
+            keys: Arc::default(),
+            profiles: Arc::default(),
+            hosting: Arc::new(hosting(Err("unused".into()), true)),
+            tokens: f.tokens.clone(),
+        };
+        let import = || {
+            let key = Secret::parse(&key.hex(), key.pubkey()).unwrap();
+            let auth = attestation(key.pubkey());
+            let prepared = AppAgents::adopt(
+                "https://relay.example/",
+                &owner,
+                "p/t",
+                key,
+                "Ada",
+                None,
+                None,
+            )
+            .unwrap();
+            let host = host.clone();
+            async move { host.install(prepared, auth).await.unwrap() }
+        };
+
+        // Import I installs, then its picture work is held while the agent is
+        // deleted and the same key is imported again as import II.
+        let (old_agent, old_key, old_incarnation) = import().await;
+        host.delete(old_agent.pubkey.clone()).await.unwrap();
+        let (agent, _, _) = import().await;
+        let (_, _, evidence) = host.signer(agent.pubkey.clone()).await.unwrap();
+        assert!(evidence.is_some(), "import II works");
+
+        let stale = host
+            .imported_picture(&old_agent, &old_key, old_incarnation, "image/png", vec![1])
+            .await;
+        assert_eq!(stale.err().as_deref(), Some("This agent was deleted"));
+        assert_eq!(
+            settled(served).await.len(),
+            2,
+            "only import II's grant and assertion"
+        );
     }
 
     /// Answers one HTTP request with `status` and `body`, and returns the
@@ -1191,15 +1532,21 @@ mod tests {
     async fn profile_search_posts_the_query_signed_and_returns_the_ranked_events() {
         let key = Secret::generate().unwrap();
         let (origin, served) = answer_once("200 OK", r#"[{"kind":0}]"#).await;
-        let found = search_profiles(&agent_at(origin, &key), &key, "wes", 40)
-            .await
-            .unwrap();
+        let found = search_profiles(
+            &agent_at(origin, &key),
+            &key,
+            Some("Bearer agent.jwt.sig"),
+            "wes",
+            40,
+        )
+        .await
+        .unwrap();
         assert_eq!(found, Some(serde_json::json!([{ "kind": 0 }])));
-        let request = served.await.unwrap();
-        assert!(request.starts_with("POST /profiles/search HTTP/1.1"));
-        assert!(request
-            .to_ascii_lowercase()
-            .contains("authorization: nostr "));
+        let request = served.await.unwrap().to_ascii_lowercase();
+        assert!(request.starts_with("post /profiles/search http/1.1"));
+        // The organization's assertion rides beside the agent's own NIP-98 proof.
+        assert!(request.contains("authorization: nostr "));
+        assert!(request.contains("nostr-federated-identity: bearer agent.jwt.sig"));
         let body: Value = serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(body, serde_json::json!({ "query": "wes", "limit": 40 }));
     }
@@ -1209,7 +1556,7 @@ mod tests {
         let key = Secret::generate().unwrap();
         for status in ["404 Not Found", "405 Method Not Allowed"] {
             let (origin, served) = answer_once(status, "").await;
-            let found = search_profiles(&agent_at(origin, &key), &key, "wes", 40).await;
+            let found = search_profiles(&agent_at(origin, &key), &key, None, "wes", 40).await;
             assert_eq!(found, Ok(None), "{status}");
             served.await.unwrap();
         }
@@ -1218,7 +1565,7 @@ mod tests {
             r#"{"error":"profile search error"}"#,
         )
         .await;
-        let failed = search_profiles(&agent_at(origin, &key), &key, "wes", 40).await;
+        let failed = search_profiles(&agent_at(origin, &key), &key, None, "wes", 40).await;
         assert_eq!(
             failed,
             Err("The community refused the profile search: profile search error".into())

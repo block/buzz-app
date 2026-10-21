@@ -203,6 +203,17 @@ export const CHANNEL_KINDS = [
   9, 40002, 40008, 45001, 45003, 40099, 40100, 40003, 5, 9005, 7, 39000, 39002,
   39005, 20002, 48100, 48101, 48102, 48103,
 ];
+/** The browser socket and native header-capable facade share only frame transport. */
+export interface LiveSocket {
+  readonly readyState: number;
+  readonly connectionTimeoutMs?: number;
+  onopen: ((event: Event) => unknown) | null;
+  onmessage: ((event: MessageEvent) => unknown) | null;
+  onerror: ((event: Event) => unknown) | null;
+  onclose: ((event: CloseEvent) => unknown) | null;
+  send(data: string): void;
+  close(): void;
+}
 /** One authenticated socket, bounded joined-channel batches, singleton previews and two globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
 export function subscribeRelayTraffic(
@@ -210,7 +221,7 @@ export function subscribeRelayTraffic(
   sign: (event: EventTemplate) => Promise<VerifiedEvent>,
   viewer: string,
   callbacks: LiveCallbacks,
-  socketFactory: (url: string) => WebSocket = (url) => new WebSocket(url),
+  socketFactory: (url: string) => LiveSocket = (url) => new WebSocket(url),
   admission: LiveAdmission = createLiveAdmission(),
   setupConcurrency = SETUP_CONCURRENCY,
   setupTimeoutMs = SETUP_TIMEOUT_MS,
@@ -218,7 +229,7 @@ export function subscribeRelayTraffic(
   const log = getLogger("relay-ws");
   const peer = relayLabel(url);
   let closed = false;
-  let socket: WebSocket | undefined;
+  let socket: LiveSocket | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   let dispatchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -227,6 +238,9 @@ export function subscribeRelayTraffic(
   let generation = 0,
     serial = 0;
   let authenticated = false;
+  // A policy close (1008) gets one fresh-evidence reconnect; only NIP-42
+  // admission restores it, so a post-admission denial cannot loop.
+  let policyRecovery = true;
   let connection: LiveSnapshot["status"] = "connecting";
   let connectionError: string | undefined;
   let interests: string[] = [];
@@ -656,7 +670,7 @@ export function subscribeRelayTraffic(
       connectionError = reason;
       notify();
     };
-    let ws: WebSocket;
+    let ws: LiveSocket;
     try {
       log.info(`${peer} connecting`);
       ws = socketFactory(url);
@@ -669,10 +683,18 @@ export function subscribeRelayTraffic(
     let authenticating = false;
     deadline = setTimeout(
       () => reconnect("Live authentication timed out"),
-      10000,
+      ws.connectionTimeoutMs ?? 10000,
     );
     ws.onopen = () => {
-      if (valid()) log.info(`${peer} connected`);
+      if (!valid()) return;
+      log.info(`${peer} connected`);
+      if (ws.connectionTimeoutMs !== undefined) {
+        clearTimeout(deadline);
+        deadline = setTimeout(
+          () => reconnect("Live authentication timed out"),
+          10000,
+        );
+      }
     };
     ws.onmessage = async (event) => {
       if (!valid()) return;
@@ -724,6 +746,7 @@ export function subscribeRelayTraffic(
         }
         clearTimeout(deadline);
         authenticated = true;
+        policyRecovery = true;
         connection = "connected";
         recoveryTimer = setTimeout(recover, LIVE_RECOVERY_INTERVAL);
         pump();
@@ -865,8 +888,28 @@ export function subscribeRelayTraffic(
         );
       }
     };
-    ws.onerror = () => reconnect("Live connection interrupted");
-    ws.onclose = () => reconnect("Live connection closed");
+    ws.onerror = (event) => {
+      const failure = event as Event & { terminal?: boolean; message?: string };
+      if (failure.terminal)
+        terminal(
+          failure.message || "Federated relay authorization unavailable",
+        );
+      else reconnect("Live connection interrupted");
+    };
+    // Keep the relay's close detail. A 1008 also ends a normally expired
+    // assertion, so the first reconnects with fresh evidence. The relay denies
+    // after the upgrade and NIP-42, so a second 1008 before admission stops.
+    ws.onclose = (event) => {
+      // A replaced socket's late close must not spend the current budget.
+      if (!valid()) return;
+      const reason = event?.code
+        ? `Live connection closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`
+        : "Live connection closed";
+      if (event?.code !== 1008) return reconnect(reason);
+      if (!policyRecovery) return terminal(reason);
+      policyRecovery = false;
+      reconnect(reason);
+    };
   }
   connect();
   return {

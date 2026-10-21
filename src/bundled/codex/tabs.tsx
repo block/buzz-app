@@ -1,3 +1,11 @@
+import activityStyles from "../../features/agents/ActivityLayout.module.css";
+import { formatItemTimestamp } from "../../shared/datetime";
+import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  ArrowsClockwiseIcon,
+  CaretRightIcon,
+} from "../../shared/design-system/icons";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
@@ -26,7 +34,9 @@ import type {
 } from "../../features/agents/service";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import { PanelSubview } from "../../features/panels/PanelSubview";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -296,44 +306,109 @@ const modelChange = (model: string, data?: Catalog) => ({
 function CodexSignIn({
   login,
   step,
+  checking,
+  check,
   disabled,
 }: {
   login: CodexSetup;
   step: "install" | "login";
+  checking: boolean;
+  check(): void;
   disabled: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   const { running, output } = useSyncExternalStore(
     login.subscribe,
     login.snapshot,
   );
+  const action = step === "install" ? "Install Codex" : "Sign in";
+  // A step's process ends before the check that follows it, which may still
+  // find the step needed; until it answers, neither button starts another.
   return (
-    <div className="grid gap-2">
-      <div className="flex justify-end gap-2">
-        <Button
-          variant="prominent"
-          size="sm"
-          disabled={disabled}
-          loading={Boolean(running)}
-          onClick={() => void login.run(step)}
-        >
-          {step === "install" ? "Install Codex" : "Sign in"}
-        </Button>
-        {running && (
-          <Button size="sm" onClick={() => void login.cancel()}>
-            Cancel
-          </Button>
-        )}
-      </div>
-      {output && (
-        <pre
-          role="log"
-          aria-label="Setup output"
-          className="m-0 max-h-40 max-w-sm overflow-auto whitespace-pre-wrap break-all text-caption"
-        >
-          {output}
-        </pre>
-      )}
-    </div>
+    <>
+      <Button
+        size="sm"
+        variant="prominent"
+        disabled={disabled || !!running || checking}
+        focusableWhenDisabled
+        onClick={() => {
+          if (login.snapshot().running) return;
+          setOpen(true);
+          void login.run(step);
+        }}
+      >
+        {action}
+      </Button>
+      <Dialog
+        open={open}
+        title={step === "install" ? "Set up Codex" : "Sign in to Codex"}
+        description={step === "login" ? "Continue in your browser." : undefined}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) void login.cancel();
+        }}
+      >
+        <section className="grid gap-2">
+          {step === "install" && (
+            <p role="status" className="m-0">
+              {checking && !running
+                ? "Checking Codex…"
+                : "Codex is not installed."}
+            </p>
+          )}
+          {/* One button per slot, so focus stays put as Install becomes
+              Sign in and Cancel becomes Check again. */}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="prominent"
+              size="sm"
+              loading={running === step || (!running && checking)}
+              disabled={disabled || (!!running && running !== step)}
+              onClick={() => void login.run(step)}
+            >
+              {action}
+            </Button>
+            {(step !== "login" || running) && (
+              <Button
+                variant="ghost"
+                disabled={!running && checking}
+                focusableWhenDisabled
+                onClick={() => void (running ? login.cancel() : check())}
+              >
+                {running ? "Cancel" : "Check again"}
+              </Button>
+            )}
+          </div>
+          {step === "install" && (
+            <p className="m-0 text-body-sm text-subtle">
+              Downloads Buzz's own copy of Codex (about 130 MB) from
+              releases.openai.com and keeps it on the latest release. It does
+              not change the <code>codex</code> in your terminal, and uses the
+              same sign-in and settings.
+            </p>
+          )}
+          {output && (
+            <Accordion
+              items={[
+                {
+                  value: "details",
+                  title: "Setup details",
+                  content: (
+                    <pre
+                      role="log"
+                      aria-label="Setup output"
+                      className="m-0 max-h-60 overflow-auto whitespace-pre-wrap break-all text-caption"
+                    >
+                      {output}
+                    </pre>
+                  ),
+                },
+              ]}
+            />
+          )}
+        </section>
+      </Dialog>
+    </>
   );
 }
 
@@ -379,25 +454,50 @@ export function createTabs(
         : status?.state === "signed-out" || error === SIGN_IN_ERROR
           ? "login"
           : undefined;
+    const field = useRef<HTMLDivElement>(null);
+    const hadStep = useRef(false);
+    const handoff = useRef(false);
+    // Setup's dialog and button leave once Codex is ready; focus they held
+    // moves to the model field, not to the page. The field takes it once
+    // the models load, as it is disabled until then.
+    useEffect(() => {
+      const unfocused = () =>
+        !document.activeElement || document.activeElement === document.body;
+      if (step) handoff.current = false;
+      else if (hadStep.current) handoff.current = unfocused();
+      hadStep.current = Boolean(step);
+      if (!handoff.current || checking) return;
+      handoff.current = false;
+      if (unfocused())
+        field.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+    }, [step, checking]);
     if (step)
       return (
-        <CodexSignIn login={login} step={step} disabled={props.disabled} />
+        <CodexSignIn
+          login={login}
+          step={step}
+          checking={checking}
+          check={retry}
+          disabled={props.disabled}
+        />
       );
     return (
-      <CreateModelChoices
-        {...props}
-        models={choices(data)}
-        value={current.model}
-        defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}
-        defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
-        defaultDescription="Following the provider's model default"
-        loading={checking}
-        error={error}
-        retry={retry}
-        onChange={(model) =>
-          onChange(readConfig({ ...current, ...modelChange(model, data) }))
-        }
-      />
+      <div ref={field} className="contents">
+        <CreateModelChoices
+          {...props}
+          models={choices(data)}
+          value={current.model}
+          defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}
+          defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
+          defaultDescription="Following the provider's model default"
+          loading={checking}
+          error={error}
+          retry={retry}
+          onChange={(model) =>
+            onChange(readConfig({ ...current, ...modelChange(model, data) }))
+          }
+        />
+      </div>
     );
   }
 
@@ -659,17 +759,24 @@ export function createTabs(
       return () => abort.abort();
     }, [conversation, attempt]);
     return (
-      <div className="grid gap-4">
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            loading={loading}
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            Refresh
-          </Button>
-        </div>
+      <div className={activityStyles.transcript}>
+        <InlineHeader
+          title="Transcript"
+          actions={
+            <IconButton
+              aria-label="Refresh transcript"
+              title="Refresh transcript"
+              loading={loading}
+              onClick={() => setAttempt((value) => value + 1)}
+              icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
+            />
+          }
+        />
+        {read && loading && (
+          <span role="status" className="sr-only">
+            Refreshing transcript…
+          </span>
+        )}
         {!read ? (
           <p role="status" className="m-0">
             Reading the Codex session…
@@ -727,13 +834,23 @@ export function createTabs(
     const { open, show, back } = useOpenTranscript(conversation, label);
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
-    const detail = (text: string) => (
-      <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap text-caption">
-        {text}
-      </pre>
-    );
+    const unbound = sessions.filter((view) => !saved.has(view.key));
+    const detail = (text: string, status?: string) =>
+      status !== "Working" ? (
+        <p className="m-0 whitespace-pre-wrap break-words text-body-sm text-subtle">
+          {text}
+        </p>
+      ) : (
+        <details className={activityStyles.details}>
+          <summary className="text-body-sm text-subtle">
+            <CaretRightIcon size={14} aria-hidden="true" />
+            <span>Latest activity</span>
+          </summary>
+          <pre className={`${activityStyles.detail} text-mono`}>{text}</pre>
+        </details>
+      );
     return (
-      <div className="grid gap-4">
+      <div className={activityStyles.activity}>
         {conversation && (
           <OpenedConversation
             conversation={conversation}
@@ -745,56 +862,71 @@ export function createTabs(
             onView={() => here && show(here)}
           />
         )}
-        <section className="grid gap-1">
-          <h3 className="m-0 text-body">Recent conversations</h3>
-          {recent.length || sessions.length ? (
-            <ul className="m-0 grid list-none gap-4 p-0">
-              {/* Work that failed before Codex started a thread has no binding. */}
-              {sessions
-                .filter((view) => !saved.has(view.key))
-                .map((view) => (
-                  <li key={view.key}>
-                    <p className="m-0">
+        <section className={activityStyles.section}>
+          <InlineHeader title="Recent conversations" />
+          <SettingsGroup layout="form">
+            {recent.length || unbound.length ? (
+              <ul className={activityStyles.list}>
+                {/* Work that failed before Codex started a thread has no binding. */}
+                {unbound.map((view) => (
+                  <li key={view.key} className={activityStyles.entry}>
+                    <p className="m-0 break-words text-body-sm">
                       <code>{view.key}</code> · {view.status}
                     </p>
-                    {view.detail && detail(view.detail)}
+                    {view.detail && detail(view.detail, view.status)}
                   </li>
                 ))}
-              {recent.map((conversation) => {
-                const view = views.get(conversation.key);
-                return (
-                  <li key={conversation.key} className="grid gap-2">
-                    <p className="m-0">
-                      {label(conversation)}
-                      {[
-                        view?.status,
-                        conversation.at
-                          ? new Date(conversation.at).toLocaleString()
-                          : undefined,
-                      ]
-                        .filter(Boolean)
-                        .map((part) => ` · ${part}`)
-                        .join("")}
-                    </p>
-                    {view?.detail && detail(view.detail)}
-                    <div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => show(conversation)}
-                      >
-                        View transcript
-                      </Button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="m-0 text-body-sm text-subtle">
-              None. A conversation's session starts when the agent is mentioned.
-            </p>
-          )}
+                {recent.map((conversation) => {
+                  const view = views.get(conversation.key);
+                  return (
+                    <li key={conversation.key} className={activityStyles.entry}>
+                      <div className={activityStyles.row}>
+                        <div className={activityStyles.copy}>
+                          <p
+                            className="m-0 truncate text-label-sm"
+                            title={label(conversation)}
+                          >
+                            {conversation.name
+                              ? `#${conversation.name}`
+                              : conversation.channelId.slice(0, 8)}
+                          </p>
+                          <p className="m-0 text-body-sm text-subtle">
+                            {[
+                              conversation.root
+                                ? `Thread ${conversation.root.slice(0, 8)}`
+                                : "Channel",
+                              view?.status,
+                              conversation.at
+                                ? formatItemTimestamp(conversation.at / 1000, {
+                                    withTime: true,
+                                  })
+                                : undefined,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="subtle"
+                          size="sm"
+                          aria-label={`View transcript: ${label(conversation)}`}
+                          onClick={() => show(conversation)}
+                        >
+                          View transcript
+                        </Button>
+                      </div>
+                      {view?.detail && detail(view.detail, view.status)}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="m-0 text-body-sm text-subtle">
+                No other conversations saved in this app yet.
+              </p>
+            )}
+          </SettingsGroup>
         </section>
         {open && (
           <PanelSubview

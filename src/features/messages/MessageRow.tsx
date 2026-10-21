@@ -1,5 +1,6 @@
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
+import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
   TypingPresentation,
@@ -468,41 +469,42 @@ function MessageRowContent({
       }
     />
   ) : clickable ? (
-    <IconButton
-      size={layout === "timeline" ? "default" : "sm"}
-      shape="round"
-      aria-label={`View ${name} profile`}
-      onFocus={() => setAvatarFocused(true)}
-      onBlur={(event) => {
-        // A window blur keeps this element as the browser's return-focus target.
-        if (
-          event.relatedTarget === null &&
-          document.activeElement === event.currentTarget
-        )
-          return;
-        setAvatarFocused(false);
-      }}
-      aria-describedby={presence !== "unknown" ? presenceId : undefined}
-      onClick={(event) => {
-        event.currentTarget.focus();
-        openLink(target);
-      }}
-      icon={
-        <>
-          <Avatar
-            src={picture}
-            alt=""
-            fallback={name}
-            size={compactAvatar ? "small" : "fill"}
-            shape={avatarShape}
-            statusBadge={presence === "unknown" ? undefined : presence}
-          />
-          {presence !== "unknown" && (
-            <span className="sr-only select-none" id={presenceId}>
-              Presence: {presence}
-            </span>
-          )}
-        </>
+    <ProfilePeek
+      key={`${scope}:${viewer}:${row.authorId}`}
+      viewer={viewer}
+      name={name}
+      picture={picture}
+      pubkey={row.authorId}
+      agent={avatarShape === "squircle"}
+      session={session}
+      channelId={row.channelId}
+      target={target}
+      onOpen={openLink}
+      onFocusChange={setAvatarFocused}
+      trigger={
+        <IconButton
+          size={layout === "timeline" ? "default" : "sm"}
+          shape="round"
+          aria-label={`View ${name} profile`}
+          aria-describedby={presence !== "unknown" ? presenceId : undefined}
+          icon={
+            <>
+              <Avatar
+                src={picture}
+                alt=""
+                fallback={name}
+                size={compactAvatar ? "small" : "fill"}
+                shape={avatarShape}
+                statusBadge={presence === "unknown" ? undefined : presence}
+              />
+              {presence !== "unknown" && (
+                <span className="sr-only select-none" id={presenceId}>
+                  Presence: {presence}
+                </span>
+              )}
+            </>
+          }
+        />
       }
     />
   ) : (
@@ -657,6 +659,7 @@ function MessageRowContent({
     const remainingWorkingLabel = remainingThreadAgents.length
       ? `${remainingThreadAgents.map(({ pubkey, name }) => resolveName(pubkey, name)).join(", ")} ${threadWaiting ? "waiting" : "working"}`
       : undefined;
+    const activityOnly = !!activity && row.replyCount === 0;
     return (
       ((row.replyCount > 0 ||
         (startsThreads && !row.threadRootId && threadAgents.length > 0) ||
@@ -664,9 +667,10 @@ function MessageRowContent({
         onOpenThread && (
           <Button
             ref={activity?.ref}
-            variant="ghost"
-            size="sm"
+            variant={activityOnly ? "subtle" : "ghost"}
+            size={activityOnly ? "xs" : "sm"}
             data-thread-summary=""
+            data-activity-summary={activityOnly ? "" : undefined}
             data-reply-connector={row.replyCount > 0 || undefined}
             data-first-participant-shape={
               agentPubkeys?.has(row.participants[0] ?? "")
@@ -685,6 +689,7 @@ function MessageRowContent({
             }}
           >
             <ReplySummary
+              hideEmptyLabel={activityOnly}
               count={row.replyCount}
               participants={row.participants}
               profiles={participantProfiles}
@@ -751,7 +756,10 @@ function MessageRowContent({
             ? ""
             : undefined
         }
-        data-own={(!attachmentOnly && !cardsOnly && ownBubble) || undefined}
+        data-own={
+          (!attachmentOnly && !cardsOnly && !row.huddle && ownBubble) ||
+          undefined
+        }
       >
         {!renderMessage && <span className={styles.messageGutter} />}
 
@@ -760,7 +768,8 @@ function MessageRowContent({
           <div
             className={styles.messageContent}
             data-bubble={
-              (!attachmentOnly && !cardsOnly && !shownRow) || undefined
+              (!attachmentOnly && !cardsOnly && !row.huddle && !shownRow) ||
+              undefined
             }
           >
             {/* A live append must not remove the reader's current focus target. */}
@@ -868,7 +877,9 @@ function MessageRowContent({
               )}
               {!attachmentOnly && !cardsOnly && (
                 <div
-                  className={shownRow ? undefined : styles.messageBubble}
+                  className={
+                    shownRow || row.huddle ? undefined : styles.messageBubble
+                  }
                   data-message-action-anchor
                   data-emoji-only={emojiOnly || undefined}
                   data-diff-only={!!row.diff || undefined}

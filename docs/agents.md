@@ -89,6 +89,22 @@ one-off process; Codex: an ephemeral thread). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
 be ready. The prompt text lives in `attention-prompt.ts`.
 
+A plugin wakes an agent with `ctx.agents.wake(pubkey, { channel, root?, text })`,
+in the conversation of that channel and thread, or of a Solo chat when it leaves
+out `root`. It throws when this copy of the app does not run the agent or its
+mention lane is full. The wake is a `plugin` trigger in the mention lane, with
+the mention's rate limit, and is dropped like a queued mention when the agent
+stops running here. Nothing goes to the relay. Claude, Codex and goose take it
+on their mention path, without the owner check, since the plugin is the owner's
+installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
+anchor in place of the event (the thread's `e` tag, and a random id), and a
+`<plugin-wake>` section in place of `<buzz-event>`. That section says the plugin
+woke the agent, that neither the owner nor anyone in the channel wrote it, and
+that its text is data. The anchor's id is never published: failure reports and
+typing go to the thread root, or the channel itself in a Solo chat, and a wake
+with no `root` outside a Solo chat is ignored. A wake is not saved for resume
+and shows no activity row or Stop.
+
 A type marks its primary configuration tab with `role: "settings"`. In the
 Agents build view and profile panel, the host keeps that tab at a stable
 `Settings` destination and supplies the current type identity plus retype
@@ -133,6 +149,32 @@ records. Codex uses an inherited thinking choice only when the effective model
 supports it, otherwise that model's default applies. Transient process/session
 state may appear in the Activity tab, but is not durable history.
 
+A type with `sessionControls` (Claude, Codex and goose) offers three immediate
+session controls in the composer's gauge popover: **Compact session**,
+**Start a new session**, and **Interrupt**. A side rail keeps all three visible.
+Compact and New are enabled while that harness session is idle; Interrupt is
+enabled while it is active, including work after a final Buzz reply. Disabled
+controls remain focusable and explain their state in a tooltip. The app holding
+the agent's runner performs the action; other copies explain where to use it.
+Send keeps its existing steering or Solo queue preference and carries no session
+action.
+While manual compaction runs, its icon shows a spinner and the composer says
+“Compacting session…”. Compact, New and Send (including Enter) are disabled;
+the draft remains editable and Interrupt remains available. Send returns when
+compaction finishes, fails or is interrupted. The block applies to messages
+targeting that harness session; other sessions remain usable.
+
+`sessionControls.scope(agent)` returns the agent's session scope. Controls appear in a
+thread, DM or Solo chat, and at a channel's top level for a channel-scoped agent.
+A thread-scoped agent's top-level message starts a thread of its own, so it has
+no existing session to control. goose compacts only a session still open. A new
+session is primed with the conversation on the next message. Compaction failures
+appear beside the controls. Session actions never travel on messages. A mention
+received during an action is accepted into that session's handoff and releases
+the agent's mention lane immediately. It waits for the action without spending
+its handover deadline; other conversations continue, and stopping the agent
+cancels the deferred work.
+
 Codex's provider model menu offers **Codex recommended** (the catalog's
 recommendation) and specific models. Blank model preferences follow the
 recommendation; blank thinking preferences follow the selected model's default
@@ -174,6 +216,21 @@ selected community's agents, with their settings.
 `sameCommunityAgents` keeps only rows whose `owner` is the viewer and whose
 `relayUrl` maps to this session's community partition. Local agents carry no
 process status, so a stopped agent is as selectable as a running one.
+
+### Turns a close or reload stopped
+
+Claude and Codex (`AgentType.resumes`) run their turns in the page, so closing or
+reloading the app stops them; the native host then sends no exit for them. The
+runner keeps each mention turn working then in agent storage
+(`buzz.agents.interrupted.v1:<pubkey>`) until it settles. On the next start Agents lists
+those agents as `interrupted` and `InterruptedNotice` asks the owner: **Resume**
+reads each mention again and gives it to `run` marked `resumed`, which tells the
+agent to carry on in its saved session; **Don’t resume** forgets them. Either
+answer covers only the agents the notice names, and only Resume gives those
+mentions again: a replay or live delivery of one never does. A turn
+stays saved until its resumed turn settles, so closing again first loses none.
+Mentions queued behind a working turn, watch turns and other types are not
+kept.
 
 ## Shared agent selection
 
@@ -727,8 +784,8 @@ Usage shows the last 7 or 30 days. It reads the last 30 days once for both, and
 again only on Refresh or when the agents change. Thirty days is what Claude Code
 keeps by default, and older history would undercount. Only the 7-day period is
 compared with the one before it, because a 30-day comparison would need days
-that were not read. The page says that costs are estimated from the session
-files on this computer, not a bill.
+that were not read. The page marks costs as a best-effort estimate from the
+session files on this computer, not a bill.
 
 Claude implements it from the transcripts Claude Code keeps for the agent's
 workspace: sessions whose first prompt names the agent, plus those this app saved
@@ -749,11 +806,14 @@ input, which the readers subtract.
 All three read only the harness's own session history; none reads Buzz's saved
 agent activity or turn metrics.
 
-Where a harness recorded no cost, Usage estimates it at Anthropic's published
-first-party API rates, including for a Claude model a provider prefixes, such as
-`databricks-claude-sonnet-5-5`. That may differ from what a subscription or
-provider bills. Totals add only known values. A total is marked partial when an
-unknown count, a model without known rates (such as Codex's OpenAI models) or an
-incomplete snapshot left something out, and unavailable when nothing was known.
+Where a harness recorded no cost, Usage estimates it from the token counts at the
+provider's published API list prices, including a model's long-prompt rates and,
+for a Claude model a provider prefixes such as `databricks-claude-sonnet-5-5`, the
+Anthropic model's rates. The prices are the data `@pydantic/genai-prices` bundles,
+loaded when the page first reads; they change with the package version, never at
+run time. That may differ from what a subscription or provider bills. Totals add
+only known values. A total is marked partial when an unknown count, a model
+without known rates or an incomplete snapshot left something out, and
+unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.

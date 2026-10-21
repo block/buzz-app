@@ -65,6 +65,7 @@ function setup(
     core?: string | null;
     /** The channel's Canvas. */
     canvas?: string;
+    repositories?: (scope: string | undefined) => string;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -123,7 +124,12 @@ function setup(
     },
   };
   const relay = {
-    snapshot: () => ({ status: "ready", session, viewer: alice }),
+    snapshot: () => ({
+      status: "ready",
+      session,
+      viewer: alice,
+      scope: `https://goose.example:${alice}`,
+    }),
   } as unknown as RelayData;
   const core = vi.fn(async () => options.core);
   const data = new Map<string, string>();
@@ -131,7 +137,14 @@ function setup(
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
   } as Storage;
-  const runtime = new GooseRuntime(host, () => relay, core, storage);
+  const runtime = new GooseRuntime(
+    host,
+    () => relay,
+    core,
+    storage,
+    undefined,
+    options.repositories,
+  );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
     pubkey: self,
@@ -146,9 +159,9 @@ function setup(
     }),
     query: vi.fn(async () => [] as RelayEvent[]),
   };
-  const deliver = (event: RelayEvent, extra: Partial<Delivery> = {}) =>
+  const run = (trigger: Delivery["trigger"], extra: Partial<Delivery> = {}) =>
     runtime.run({
-      trigger: { type: "mention", event },
+      trigger,
       channelId: channel,
       agent,
       config: { ...DEFAULT_CONFIG, scope: options.scope ?? "thread" },
@@ -156,6 +169,8 @@ function setup(
       workingUntil: () => undefined,
       ...extra,
     } as unknown as Delivery);
+  const deliver = (event: RelayEvent, extra: Partial<Delivery> = {}) =>
+    run({ type: "mention", event }, extra);
   const goose = () => fake.geese.find((process) => process.turns.length);
   const runOnce = (key: string, prompt: string) =>
     runtime.runOnce({
@@ -172,6 +187,7 @@ function setup(
     agent,
     core,
     deliver,
+    run,
     runOnce,
     fake,
     goose,
@@ -356,6 +372,29 @@ describe("GooseRuntime", () => {
     expect(solo.published.map((event) => event.tags)).toEqual([
       [["h", channel]],
     ]);
+  });
+
+  it("leaves a Solo chat's session for goose to name, and offers that name", async () => {
+    const solo = setup({ hold: true, solo: new Set([channel]) });
+    const named = vi.fn();
+    await solo.deliver(message("1", "@Gander fix the login bug"), { named });
+    await flush(100);
+    const process = solo.goose();
+    expect(process?.opened[0]?._meta).not.toHaveProperty("sessionTitle");
+    process?.update(process.turns[0]?.sessionId ?? "", {
+      sessionUpdate: "session_info_update",
+      title: "Fix login bug",
+      _meta: { messageCount: 1, userSetName: false },
+    });
+    await flush(100);
+    expect(named).toHaveBeenCalledExactlyOnceWith("Fix login bug");
+    // A channel's session keeps Buzz's title, which goose never replaces.
+    const team = setup({ hold: true });
+    await team.deliver(message("1", "@Gander hi"), { named: vi.fn() });
+    await flush(100);
+    expect(team.goose()?.opened[0]?._meta).toMatchObject({
+      sessionTitle: "Buzz agent · #general · 11111111",
+    });
   });
 
   it("names the agent in a timer's prompt, so its session is listed as the agent's", async () => {
@@ -584,6 +623,65 @@ function slowMemories(viewer: string) {
   ).capability;
 }
 
+/** A plugin's wake; its id is its own, which nothing may publish. */
+const WAKE_ID = "9".repeat(64);
+const pluginWake = (root?: string) => ({
+  type: "plugin" as const,
+  plugin: "github",
+  channel,
+  ...(root ? { root } : {}),
+  text: "CI failed: lint",
+  id: WAKE_ID,
+  at: 200_000,
+});
+
+it("takes a plugin's wake in its thread's session, as the plugin's and not a message", async () => {
+  const root = message("1", "@Gander watch my PR");
+  const f = setup();
+  await f.deliver(root);
+  await flush(100);
+  await f.run(pluginWake(root.id));
+  await flush(100);
+  const goose = f.goose();
+  expect(goose?.turns).toHaveLength(2);
+  expect(goose?.turns[1]?.sessionId).toBe(goose?.turns[0]?.sessionId);
+  const text = goose?.turns[1]?.text ?? "";
+  expect(text).toContain('<plugin-wake plugin="github">');
+  expect(text).toContain("neither your owner nor anyone in the channel");
+  expect(text).toContain("CI failed: lint");
+  expect(text).not.toContain("<buzz-event");
+  expect(text).not.toContain(WAKE_ID);
+});
+
+it("reports a failed wake at its thread's root, never at the wake's own id", async () => {
+  const root = "1".repeat(64);
+  const f = setup({ hold: true });
+  await f.run(pluginWake(root));
+  await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+  f.goose()?.exit(1, "Error: boom\n");
+  await vi.waitFor(() =>
+    expect(f.published.some((event) => event.kind === 9)).toBe(true),
+  );
+  for (const event of f.published.filter(({ kind }) => kind === 9))
+    expect(event.tags).toContainEqual(["e", root, "", "reply"]);
+  expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
+});
+
+it("takes a wake with no thread only in a Solo chat", async () => {
+  const ignored = vi.fn();
+  const stream = setup();
+  await stream.run(pluginWake(), { ignored });
+  await flush(100);
+  expect(ignored).toHaveBeenCalled();
+  expect(stream.goose()).toBeUndefined();
+  const solo = setup({ solo: new Set([channel]) });
+  await solo.run(pluginWake());
+  await flush(100);
+  const text = solo.goose()?.turns[0]?.text ?? "";
+  expect(text).toContain('<plugin-wake plugin="github">');
+  expect(text).not.toContain(WAKE_ID);
+});
+
 it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
   const solo = setup({ solo: new Set([channel]), canvas: "Use tokens." });
   await solo.deliver(message("1", "@Gander hi"));
@@ -604,3 +702,128 @@ it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", as
   await flush(100);
   expect(shared.goose()?.turns[0]?.text).not.toContain("workspace-canvas");
 });
+
+it("compacts idle Goose immediately, keeps active controls through the turn, and resets without a message", async () => {
+  const f = setup({ hold: true, reply: "Compaction complete" });
+  const root = message("1", "hello");
+  const place = { channelId: channel, root: root.id };
+  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  try {
+    await f.deliver(root);
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const goose = f.goose();
+    if (!goose) throw new Error("Expected Goose process");
+    expect(f.runtime.sessionState(agent, place)).toBe("active");
+    await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
+      "active turn",
+    );
+    goose.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    const compacted = f.runtime.session(agent, place, "compact");
+    await vi.waitFor(() => expect(goose.turns[1]?.text).toBe("/compact"));
+    expect(goose.turns).toHaveLength(2);
+    expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    expect(
+      f.runtime.sessionState(agent, { ...place, root: "another-thread" }),
+    ).toBe("idle");
+    goose.turns[1]?.finish();
+    await compacted;
+    await f.runtime.session(agent, place, "new");
+    await f.deliver(
+      message("2", "next", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      }),
+    );
+    await vi.waitFor(() => expect(goose.turns).toHaveLength(3));
+    expect(goose.turns[2]?.sessionId).not.toBe(goose.turns[0]?.sessionId);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("hands Goose its own community repositories while retaining the session workspace", async () => {
+  const repositories = vi.fn(
+    () => "<community-repositories>/code/goose</community-repositories>",
+  );
+  const { runtime, deliver, goose } = setup({ repositories });
+  try {
+    await deliver(message("1", "@Gander work"));
+    await flush(100);
+    expect(repositories).toHaveBeenCalledWith(`https://goose.example:${alice}`);
+    expect([...(goose()?.prompts.values() ?? [])].join()).toContain(
+      "/code/goose",
+    );
+    expect(goose()?.opened[0]).toMatchObject({ cwd: "/home/test/.buzz" });
+  } finally {
+    runtime.dispose();
+  }
+});
+
+it.each(["completed", "stopped"])(
+  "keeps an accepted Goose handoff past its deadline and respects its lifetime (%s)",
+  async (outcome) => {
+    const f = setup({ hold: true, reply: "Compaction complete" });
+    const root = message("1", "hello");
+    const place = { channelId: channel, root: root.id };
+    const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+    const handover = new AbortController();
+    const held: PromiseLike<unknown>[] = [];
+    try {
+      await f.deliver(root);
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const goose = f.goose();
+      if (!goose) throw new Error("Expected Goose process");
+      goose.turns[0]?.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      const compacted = f.runtime
+        .session(agent, place, "compact")
+        .catch((error) => error);
+      await vi.waitFor(() => expect(goose.turns[1]?.text).toBe("/compact"));
+      let returned = false;
+      const reply = message("2", "queued after compact", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+      const admitted = f
+        .deliver(reply, {
+          signal: handover.signal,
+          workingUntil: (done) => held.push(done),
+        })
+        .then(() => {
+          returned = true;
+        });
+      try {
+        await vi.waitFor(() => expect(returned).toBe(true));
+        handover.abort(new Error("Handover expired"));
+      } finally {
+        if (outcome === "stopped") f.runtime.sync([]);
+        else goose.turns[1]?.finish();
+        const result = await compacted;
+        if (outcome === "stopped") expect(result).toBeInstanceOf(Error);
+        else expect(result).toBeUndefined();
+        await admitted;
+      }
+      if (outcome === "stopped") {
+        await Promise.all(held);
+        expect(goose.turns).toHaveLength(2);
+        expect(f.fake.geese).toHaveLength(1);
+        return;
+      }
+      await vi.waitFor(() => expect(goose.turns).toHaveLength(3));
+      expect(goose.turns[2]?.text).toContain("queued after compact");
+      goose.turns[2]?.finish();
+      await Promise.all(held);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);

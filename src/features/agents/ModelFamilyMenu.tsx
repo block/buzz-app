@@ -94,10 +94,17 @@ export function ModelFamilyMenu({
             aria-label={`${label}: ${selectedLabel}${effortLabel ? `, ${effortLabel}` : ""}`}
             title={selectedLabel}
           >
-            {leading ?? <ModelIcon model={selected.id || selected.label} />}
-            <span className="buzz-select-value">
-              {selected.label}
-              {inherited && <span className="text-subtle"> · Default</span>}
+            <span className="buzz-select-leading" aria-hidden="true">
+              {leading ?? <ModelIcon model={selected.id || selected.label} />}
+            </span>
+            {/* Select's value text: only the name ellipsizes, not Default. */}
+            <span className="buzz-select-value-text">
+              <span className="buzz-select-value">{selected.label}</span>
+              {inherited && (
+                <span className="buzz-select-value-suffix text-subtle">
+                  {" · Default"}
+                </span>
+              )}
             </span>
             {effortLabel && (
               <span className="text-body-sm text-subtle">{effortLabel}</span>
@@ -166,12 +173,17 @@ export function ModelFamilyMenu({
       </MenuPopup>
     </MenuRoot>
   );
-  return compact ? (
+  // Like Select's preference variant, rows hold the compact recipe, which
+  // bounds the trigger and ellipsizes long model names.
+  const control = (
     <div className="buzz-select" data-variant="compact">
       {menu}
     </div>
+  );
+  return compact ? (
+    control
   ) : (
-    <PreferenceRow title={label} subtitle={description} trailing={menu} />
+    <PreferenceRow title={label} subtitle={description} trailing={control} />
   );
 }
 

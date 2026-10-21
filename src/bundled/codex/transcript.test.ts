@@ -108,6 +108,7 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
     }),
     expect.objectContaining({ type: "message", text: "Done", posted: true }),
     expect.objectContaining({ type: "message", text: "Fixed." }),
+    expect.objectContaining({ type: "status", text: "Context compaction" }),
   ]);
   const [channelTurn] = codexTurns(
     [turn({ status: "interrupted", completedAt: null, items: [] })],
@@ -123,6 +124,25 @@ it("shows a Codex turn's request, steering, tools and reply in the shared transc
 const agent = { pubkey: "a".repeat(64), name: "Sol" };
 const lookup = { agent, channelId: "channel", name: "dev", root };
 
+it.each([
+  ["summary only", { summary: ["Plan"] }, "Plan"],
+  ["content only", { content: ["Raw"] }, "Raw"],
+  ["both", { summary: ["Plan"], content: ["Raw"] }, "Plan\n\nRaw"],
+  ["both, repeated", { summary: ["Same"], content: ["Same"] }, "Same"],
+  [
+    "summary with its own repeat",
+    { summary: ["check", "retry", "check"], content: ["retry", "Raw"] },
+    "check\n\nretry\n\ncheck\n\nRaw",
+  ],
+])("shows Codex reasoning from its %s", (_, reasoning, text) => {
+  const [mapped] = codexTurns(
+    [turn({ items: [{ type: "reasoning", id: "r1", ...reasoning }] })],
+    conversation,
+  );
+  expect(mapped?.items).toEqual([
+    expect.objectContaining({ type: "thought", text }),
+  ]);
+});
 it("shows the command the model wrote, not the login shell running it", () => {
   expect(shellCommand("/bin/zsh -lc 'git diff --stat'")).toBe(
     "git diff --stat",
@@ -178,7 +198,8 @@ it("keeps a send that failed or has not finished as a tool call", () => {
 });
 
 /** An app-server answering `thread/turns/list` as the test says, and
- * `thread/list` from `threads` as Codex searches names. */
+ * `thread/list` from `threads` as Codex searches names: only the default
+ * provider's threads, here none, unless asked for every provider's. */
 function server(
   list: (params: Record<string, unknown>) => Wire,
   threads: { id: string; name: string; updatedAt: number }[] = [],
@@ -217,8 +238,11 @@ function server(
               : wire.method === "thread/list"
                 ? {
                     result: {
-                      data: threads.filter((thread) =>
-                        thread.name.includes(String(params.searchTerm)),
+                      data: threads.filter(
+                        (thread) =>
+                          Array.isArray(params.modelProviders) &&
+                          !params.modelProviders.length &&
+                          thread.name.includes(String(params.searchTerm)),
                       ),
                     },
                   }
@@ -421,8 +445,8 @@ it("merges the threads other builds started, found by tag or by their earlier na
   expect(
     sent.filter((w) => w.method === "thread/list").map((w) => w.params),
   ).toEqual([
-    { searchTerm: tag, limit: 50 },
-    { searchTerm: title, limit: 50 },
+    { searchTerm: tag, modelProviders: [], limit: 50 },
+    { searchTerm: title, modelProviders: [], limit: 50 },
   ]);
   // With no saved thread, the newest one found for it is the conversation's.
   await expect(

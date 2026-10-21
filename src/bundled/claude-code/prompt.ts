@@ -5,6 +5,10 @@ import { BUZZ_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { EventData } from "../../features/relay/events";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { coreMemorySection } from "../../features/agent-harness/core-memory";
+import {
+  type PluginTrigger,
+  wakeSection,
+} from "../../features/agent-harness/plugin-wake";
 import channelModel from "./session_model_channel.md?raw";
 import threadModel from "./session_model_thread.md?raw";
 
@@ -22,6 +26,8 @@ export function systemPrompt(
     /** Who the agent is, so it can name itself and the session viewer can too. */
     agent?: Readonly<{ name: string; pubkey: string }>;
     instructions?: string;
+    /** Device-local repository location, supplied by the owning runtime. */
+    repositories?: string;
     /** A section for each team the agent is on, from the host. */
     team?: string;
     /** The agent's `core` memory; `null` when it has none yet. */
@@ -39,6 +45,7 @@ export function systemPrompt(
       : "",
     section("base", base.map((part) => part.trim()).join("\n\n")),
     section("workspace", `Current working directory: ${input.cwd}`),
+    input.repositories ?? "",
     input.instructions?.trim()
       ? section("agent-instructions", input.instructions)
       : "",
@@ -75,6 +82,8 @@ export type TurnInput = Readonly<{
   name(pubkey: string): string | undefined;
   /** The chat's workspace Canvas section, for a Solo chat with one. */
   project?: string;
+  /** A plugin's wake, whose turn has its section in place of the event's. */
+  wake?: PluginTrigger;
 }>;
 
 const time = (seconds: number) => new Date(seconds * 1000).toISOString();
@@ -159,7 +168,9 @@ export function turnPrompt(input: TurnInput) {
       ),
     );
   parts.push(
-    section("buzz-event", eventBlock(input), ` type="${input.label}"`),
+    input.wake
+      ? wakeSection(input.wake)
+      : section("buzz-event", eventBlock(input), ` type="${input.label}"`),
   );
   return parts.join("\n\n");
 }

@@ -2,6 +2,6 @@
   "id": "buzz.usage",
   "name": "Usage",
   "apiVersion": 1,
-  "description": "See what your agents' sessions on this computer cost: spend, tokens and cache hits.",
-  "discovery": { "category": "agents" }
+  "description": "Token usage and estimated costs from local agent sessions.",
+  "discovery": { "category": "agent-tools" }
 }

@@ -1,6 +1,6 @@
 # Usage
 
-Estimates what your agents' Claude Code, Codex and goose sessions on this computer cost, from each harness's own session files. It is an estimate, not your bill.
+Estimates what your agents' Claude Code, Codex and goose sessions on this computer cost, from each harness's own session files: the cost a harness records, or else its token counts at each provider's published API prices, from [genai-prices](https://github.com/pydantic/genai-prices). It is a best-effort estimate, not your bill.
 
 ## Getting started
 

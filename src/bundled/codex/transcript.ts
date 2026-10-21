@@ -119,13 +119,18 @@ function item(
         ? { id, at, type: "message", text: str(value.text) }
         : undefined;
     case "reasoning": {
-      const text = (Array.isArray(value.summary) ? value.summary : []).join(
-        "\n\n",
-      );
+      const texts = (part: unknown) =>
+        Array.isArray(part) ? part.map(str).filter(Boolean) : [];
+      const summary = texts(value.summary);
+      // Raw content can repeat the summary; show that text once.
+      const content = texts(value.content).filter((t) => !summary.includes(t));
+      const text = [...summary, ...content].join("\n\n");
       return text ? { id, at, type: "thought", text } : undefined;
     }
     case "plan":
       return { id, at, type: "status", text: str(value.text) };
+    case "contextCompaction":
+      return { id, at, type: "status", text: "Context compaction" };
     case "commandExecution":
       return tool({
         title: shellCommand(str(value.command)),
@@ -281,9 +286,11 @@ async function findThreads(rpc: AppServer, lookup: Lookup): Promise<Found[]> {
     [tag, false, (name: string) => name.endsWith(` · ${tag}`)],
     [title, true, (name: string) => name === title],
   ] as const) {
+    // Without it, Codex lists only its default provider's threads, which
+    // can leave out every thread the agent ran.
     const page = await rpc.request<{
       data: { id: string; name: string | null; updatedAt: number }[];
-    }>("thread/list", { searchTerm: term, limit: 50 });
+    }>("thread/list", { searchTerm: term, modelProviders: [], limit: 50 });
     for (const { id, name, updatedAt } of page.data)
       if (name && named(name) && !found.has(id))
         found.set(id, { id, updatedAt, legacy });

@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -292,6 +293,22 @@ it("says why Pi could not start, and tries again", async () => {
   // The card and its dialog read Pi's providers once, so neither still fails.
   expect(screen.queryByText(/Pi needs Node\.js/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+it("reads Pi's providers again when the window gets focus, after a change in the pi command", async () => {
+  const defaults = { provider: "anthropic", model: "claude-x" };
+  created(fakePi({}, defaults));
+  await waitFor(() =>
+    expect(modelButton()).toHaveTextContent(
+      "Pi default (Anthropic · Claude X)",
+    ),
+  );
+  // As /login and /model in the pi command leave Pi's files.
+  Object.assign(defaults, { provider: "openai", model: "gpt-x" });
+  fireEvent.focus(window);
+  await waitFor(() =>
+    expect(modelButton()).toHaveTextContent("Pi default (OpenAI · GPT X)"),
+  );
 });
 
 it("says Buzz can't use a default provider that a Pi package adds", async () => {

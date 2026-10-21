@@ -83,6 +83,8 @@ export const config = (value: unknown): Config => ({
 });
 
 const NAMES_TIMEOUT_MS = 2_000;
+/** How long an adopted run's mention is looked for. */
+const READ_MS = 10_000;
 const CHAT = [9, 40002];
 
 /** Where a mention's turn replies: its thread, or the top of a Solo chat. */
@@ -708,8 +710,10 @@ export class PiRuntime {
       if (!handle || request === current || entry.receipts.has(request))
         continue;
       // A conversation several threads share has no root: its answer goes to
-      // the mention's thread, which the request, a mention's id, opens or is in.
-      const root = context.root ?? request;
+      // the thread of the mention, whose id is the request.
+      const root =
+        context.root ??
+        (context.topLevel ? request : await this.threadOf(pubkey, request));
       const where = {
         channel: context.channel,
         root,
@@ -752,6 +756,20 @@ export class PiRuntime {
         });
     }
     this.notify();
+  }
+
+  /** The thread a mention is in, or opens; itself when it cannot be read. */
+  private async threadOf(pubkey: string, id: string) {
+    try {
+      const [event] =
+        (await this.reads(pubkey)?.read(
+          [{ ids: [id], limit: 1 }],
+          AbortSignal.timeout(READ_MS),
+        )) ?? [];
+      return (event && threadReference(event)?.rootId) ?? id;
+    } catch {
+      return id;
+    }
   }
 
   private async open(pubkey: string) {

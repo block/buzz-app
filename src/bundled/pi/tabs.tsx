@@ -85,15 +85,23 @@ type Read<T> = (
 ) & { scope?: string };
 
 /** `read()` as it settles, read again when `key` changes or on `retry`, which
- * abort the one before. A value already shown for the same `scope` stays
- * while it is read again, and when that read fails. */
+ * abort the one before, and with `focus` when the window gets focus. A value
+ * already shown for the same `scope` stays while it is read again, and when
+ * that read fails. */
 function useRead<T>(
   read: (signal: AbortSignal) => Promise<T>,
   key: string,
   scope = key,
+  focus = false,
 ) {
   const [state, setState] = useState<Read<T>>({ status: "loading" });
   const [round, setRound] = useState(0);
+  useEffect(() => {
+    if (!focus) return;
+    const again = () => setRound((value) => value + 1);
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+  }, [focus]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `read` follows `key`.
   useEffect(() => {
     const abort = new AbortController();
@@ -519,7 +527,13 @@ export function createTabs({
     modelAppearance,
   }: AgentCreateProps<Config>) {
     const current = readConfig(config);
-    const [listing, reload] = useRead(() => setup.providers(), "providers");
+    const [listing, reload] = useRead(
+      () => setup.providers(),
+      "providers",
+      // Signing in or choosing defaults with the `pi` command changes them.
+      "providers",
+      true,
+    );
     const [choosing, setChoosing] = useState(false);
     const providers = listing.value;
     const id = current.provider || providers?.defaults.provider || "";
@@ -813,7 +827,13 @@ export function createTabs({
     useEffect(() => {
       if (error) saveErrorRef.current?.focus();
     }, [error]);
-    const [listing, reload] = useRead(() => setup.providers(), "providers");
+    const [listing, reload] = useRead(
+      () => setup.providers(),
+      "providers",
+      // Signing in or choosing defaults with the `pi` command changes them.
+      "providers",
+      true,
+    );
     const defaults = listing.value?.defaults;
     const id = draft.provider || defaults?.provider || "";
     const [models] = useRead(

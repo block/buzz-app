@@ -799,36 +799,48 @@ it("reports a run an earlier app left unfinished that fails, and stays silent fo
   expect(published[0]?.content).toContain("400 Bad model");
 });
 
-it("answers a left run of a conversation threads share in its mention's thread, and lists left runs again after a failed listing", async () => {
-  const left = "d".repeat(64);
+it("answers and reports left runs of a conversation threads share in their mentions' thread, and lists left runs again after a failed listing", async () => {
+  // Mentions in the thread, whose shared conversation's context has no root.
+  const answered = reply("8", "@Pi old");
+  const failed = reply("9", "@Pi older");
   let listings = 0;
-  const { deliver, published } = setup({
+  const { deliver, published, session } = setup({
     unfinished: () => {
       if (++listings === 1) throw new Error("busy");
       return {
-        submissions: [
-          {
-            submission: 41,
-            conversation: 5,
-            request: left,
-            context: { channel },
-          },
-        ],
+        submissions: [answered, failed].map((event, index) => ({
+          submission: 41 + index,
+          conversation: 5,
+          request: event.id,
+          context: { channel },
+        })),
       };
     },
     wait: ({ submission }) =>
       submission === 41
         ? { status: "done", answer: 9, text: "Finished the old one." }
-        : new Promise(() => {}),
+        : submission === 42
+          ? { status: "unanswered", reason: "error", detail: "400 Bad model" }
+          : new Promise(() => {}),
   });
+  session.read.mockImplementation(async (filters?: { ids?: string[] }[]) =>
+    [answered, failed, root].filter((event) =>
+      (filters?.[0]?.ids ?? [root.id]).includes(event.id),
+    ),
+  );
   await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
   expect(published).toHaveLength(0);
   await deliver({ type: "mention", event: reply("3", "@Pi again") }).run;
-  await vi.waitFor(() => expect(published).toHaveLength(1));
-  expect(published[0]?.tags).toEqual([
-    ["h", channel],
-    ["e", left, "", "reply"],
+  await vi.waitFor(() => expect(published).toHaveLength(2));
+  expect(published.map(({ content }) => content)).toEqual([
+    "Finished the old one.",
+    expect.stringContaining("400 Bad model"),
   ]);
+  for (const { tags } of published)
+    expect(tags.slice(0, 2)).toEqual([
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+    ]);
 });
 
 it("waits for a turn again in a new host when the host stops", async () => {

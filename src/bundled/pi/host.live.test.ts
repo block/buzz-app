@@ -176,6 +176,9 @@ const auth = new AuthFile(data + "/auth.json");
 const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
 await auth.modify("p", async () => signIn);
 out.auth = { result: await auth.modify("p", async () => undefined), stored: await auth.read("p") };
+// A key \`pi\` gets by running a command is not run here.
+await auth.modify("c", async () => ({ type: "api_key", key: "!echo secret" }));
+out.command = await auth.read("c").catch((error) => error.message);
 console.log(JSON.stringify(out));
 `;
 
@@ -311,5 +314,6 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.defaults).toEqual({ provider: "faux", model: "faux-1" });
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });
+    expect(out.command).toMatch(/^Buzz doesn't run `!command` keys/);
   }, 90_000);
 });

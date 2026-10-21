@@ -5,7 +5,6 @@
 // in the app, which holds the agent's key: a call to one here is a request
 // back to the plugin. `pi.sh` runs this with Node in the folder its packages
 // are installed in.
-import { execSync } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -70,7 +69,6 @@ const piDir = () => {
 /** Pi's `auth.json`, read and written as the `pi` command does, under the
  * same lock, so keys saved in either work in both. */
 export class AuthFile {
-  commands = new Map();
   constructor(path) {
     this.path = path;
   }
@@ -113,23 +111,14 @@ export class AuthFile {
       delete all[id];
     });
   }
-  /** As in `pi`: `!command` runs it for the key, and `$NAME` or `${NAME}`
-   * reads it from the environment. A command that gave no key, such as one
-   * for a locked password manager, runs again next time. */
+  /** As in `pi`, `$NAME` or `${NAME}` reads the key from the environment.
+   * A `!command` key, which `pi` runs for the key, is not run here: one
+   * host serves every agent, and a command would stop them all. */
   resolve(key) {
-    if (key.startsWith("!")) {
-      if (this.commands.has(key)) return this.commands.get(key);
-      let value;
-      try {
-        value = execSync(key.slice(1), {
-          encoding: "utf8",
-          timeout: 10_000,
-          stdio: ["ignore", "pipe", "ignore"],
-        }).trim();
-      } catch {}
-      if (value) this.commands.set(key, value);
-      return value || undefined;
-    }
+    if (key.startsWith("!"))
+      throw new Error(
+        "Buzz doesn't run `!command` keys from Pi's auth.json. Enter the key in Buzz's Provider and model dialog instead.",
+      );
     const name = /^\$(?:\{(\w+)\}|(\w+))$/.exec(key);
     return name ? process.env[name[1] ?? name[2]] : key;
   }

@@ -46,20 +46,14 @@ export function runsAt(levels: readonly string[], level: string) {
 }
 
 export class PiSetup {
-  private listing: Promise<Providers> | undefined;
   private readonly listed = new Map<string, Promise<readonly PiModel[]>>();
 
   constructor(private readonly pi: Pick<Pi, "request">) {}
 
-  /** Pi's providers, read once until a key is saved. */
+  /** Pi's providers and settings as they are now, which the `pi` command
+   * changes. */
   providers(): Promise<Providers> {
-    if (this.listing) return this.listing;
-    const listing = this.pi.request<Providers>("providers");
-    this.listing = listing;
-    listing.catch(() => {
-      if (this.listing === listing) this.listing = undefined;
-    });
-    return listing;
+    return this.pi.request<Providers>("providers");
   }
 
   /** What Pi's settings pick now, which the `pi` command changes. */
@@ -92,7 +86,6 @@ export class PiSetup {
   /** Saves a provider's API key with Pi's own login. */
   async login(id: string, key: string) {
     await this.pi.request("login", { provider: id, key });
-    this.listing = undefined;
   }
 
   /** Asks the model for one short reply, without tools. */

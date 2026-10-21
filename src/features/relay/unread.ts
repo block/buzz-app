@@ -18,7 +18,7 @@ import type {
 import type { ReadJournal } from "./read-state-storage";
 import { markMessage } from "./read-state-retention";
 import type { Priority, RelayReader } from "./reader";
-import { foldMessages, deletionApplies } from "./fold";
+import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
 import {
@@ -1782,12 +1782,10 @@ export function createUnread({
             if (edit.kind !== 40003) continue;
             for (const [name, id] of edit.tags) {
               const original = name === "e" && id ? events.get(id) : undefined;
-              if (
-                original &&
-                contentKind(original) &&
-                original.pubkey !== edit.pubkey
-              )
-                authors.add(original.pubkey);
+              if (original && contentKind(original)) {
+                const author = messageAuthor(original, signingAuthority);
+                if (author !== edit.pubkey) authors.add(author);
+              }
             }
           }
           if (authors.size)

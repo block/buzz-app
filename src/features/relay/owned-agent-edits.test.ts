@@ -384,6 +384,99 @@ it.each(["head", "tail"])(
   },
 );
 
+it.each(["actor", "p"])(
+  "fetches a cold %s-attributed agent profile for owner-edited unread previews",
+  async (attribution) => {
+    const owner = keypair(),
+      agent = keypair(),
+      relay = keypair();
+    const wire = scriptedTransport(owner.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    const connection = createRelaySession({
+      ...wire.transport,
+      archiveAuthority: relay.pubkey,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    });
+    const root = message(owner, "c", "Question", 10);
+    const original = signed(relay, {
+      kind: 9,
+      created_at: 11,
+      content: "Whole answer",
+      tags: [
+        [attribution, agent.pubkey],
+        ["h", "c"],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+    const edit = signed(owner, {
+      kind: 40003,
+      created_at: 12,
+      content: "Spoken",
+      tags: [
+        ["h", "c"],
+        ["e", original.id],
+      ],
+    });
+    const profile = signed(agent, {
+      kind: 0,
+      created_at: 10,
+      content: "{}",
+      tags: [
+        [
+          "auth",
+          owner.pubkey,
+          "",
+          bytesToHex(
+            schnorr.sign(
+              createHash("sha256")
+                .update(`nostr:agent-auth:${agent.pubkey}:`)
+                .digest(),
+              owner.secret,
+            ),
+          ),
+        ],
+      ],
+    });
+    const { unread, profiles } = connection.session;
+    try {
+      live.receive([
+        roster(relay, "c", [owner.pubkey, agent.pubkey], 1),
+        metadata(relay, "c", "c", 1),
+        root,
+        original,
+      ]);
+      expect(profiles.owner?.(agent.pubkey)).toBeUndefined();
+      expect(unread.activity("c").items?.[0]?.preview).toBe("Whole answer");
+      expect(unread.inbox().items?.[0]?.preview).toBe("Whole answer");
+      live.receive([edit]);
+      await vi.waitFor(() => {
+        const request = wire.pending.find(({ filters }) =>
+          filters.some(
+            (filter) =>
+              filter.kinds?.includes(0) &&
+              filter.authors?.includes(agent.pubkey),
+          ),
+        );
+        assert(
+          request,
+          "Expected ownership profile request for attributed agent",
+        );
+        request.respond([eventDto(profile)]);
+      });
+      await vi.waitFor(() => {
+        expect(unread.activity("c").items?.[0]?.preview).toBe("Spoken");
+        expect(unread.inbox().items?.[0]?.preview).toBe("Spoken");
+      });
+      expect(connection.retainedChannels()).toEqual([]);
+    } finally {
+      connection.dispose();
+    }
+  },
+);
+
 it("uses the same verified owner edit in the conversation, prompt history and unread previews", async () => {
   const owner = keypair(),
     agent = keypair(),

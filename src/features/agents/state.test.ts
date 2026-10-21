@@ -4,6 +4,7 @@ import { LifecycleJournal } from "./config-lifecycle";
 import { MigrationJournal } from "./config-writes";
 import { fileStore, loadAgentStorage, MOVED_KEY } from "./state";
 import { TeamJournal } from "./team-config";
+import { TEAM_OPS_KEY, TeamOps } from "./team-ops";
 import { memoryStorage } from "./test-fakes";
 
 const files = (items: Record<string, string> = {}) => {
@@ -84,6 +85,22 @@ it("moves config sync journals a start without agent storage kept, so a restart 
   new TeamJournal(local).remember("o", "c", [
     { ...team, subject: { ...subject, subject: "t", type: "buzz.team" } },
   ]);
+  // An unfinished team change, saved before anything was sent.
+  local.setItem(
+    TEAM_OPS_KEY,
+    JSON.stringify({
+      version: 1,
+      records: {
+        op: {
+          id: "op",
+          owner: "o",
+          community: "c",
+          teamId: "t",
+          mode: "may-send",
+        },
+      },
+    }),
+  );
   const native = files();
   await loadAgentStorage(local, native);
   expect(local.length).toBe(0);
@@ -97,6 +114,10 @@ it("moves config sync journals a start without agent storage kept, so a restart 
   expect(new TeamJournal(restarted).known("o", "c")?.[0]).toMatchObject({
     id: "t",
     unreadable: true,
+  });
+  expect(new TeamOps(restarted).get("op")).toMatchObject({
+    teamId: "t",
+    mode: "may-send",
   });
 });
 

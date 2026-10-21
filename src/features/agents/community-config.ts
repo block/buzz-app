@@ -3,6 +3,7 @@
 // sync to it, and migrate each type. Off until every ship gate holds (§1.2);
 // tests turn it on through `enabled`.
 import type { RelaySession } from "../relay/session";
+import { readSnapshotCommunity } from "../relay/read-state-snapshot";
 import {
   type AgentConfigStore,
   pickSettings,
@@ -19,9 +20,10 @@ type ArtifactTemplate = ReturnType<typeof artifactTemplate>;
 import type { Mode, TeamSource } from "./agent-start";
 import {
   agentSubject,
-  type ConfigChannels,
   configSupport,
   createConfigChannels,
+  importedTeamId,
+  teamSubject,
 } from "./config-channels";
 import type { RelayEvent } from "../relay/events";
 import {
@@ -52,12 +54,24 @@ import {
   type WriteDeps,
 } from "./config-writes";
 import { sessionConfigFeed } from "./session-config-feed";
+import type { Team } from "./store";
 import {
   discoverTeams,
   type SyncedTeam,
   type TeamDeps,
   type TeamJournal,
+  teamCommunity,
 } from "./team-config";
+import {
+  established,
+  type RunnerDeps,
+  type TeamIntent,
+  type TeamOp,
+  type TeamOps,
+  teamOpProblem,
+  teamRunner,
+  unresolved,
+} from "./team-ops";
 
 /** Config sync ships off. Turning it on is a one-line change. */
 export const CONFIG_SYNC_ENABLED = false;
@@ -136,6 +150,8 @@ export type ConfigJournals = Readonly<{
   migration: MigrationJournal;
   teams: TeamJournal;
   lifecycle: LifecycleJournal;
+  /** Team changes this device has unfinished. */
+  ops: TeamOps;
 }>;
 
 /** The binding the migration journal persisted for the agent, or undefined
@@ -200,8 +216,18 @@ export type CommunityConfigInput = Readonly<{
   strip(pubkey: string, side: Side, accepted?: RelayEvent): void;
   /** Reports each binding change, so starts and the UI re-resolve. */
   changed(): void;
+  /** Hands a local team over to relay team `teamId` once its move onto the
+   * relay is done: its row goes, and references to it follow. */
+  retire(localTeamId: string, teamId: string): Promise<void>;
   enabled?: boolean;
 }>;
+
+/** A Save of a change that finished while it was saving, at `head`. */
+class FinishedMeanwhile extends Error {
+  constructor(readonly head: string) {
+    super("This change finished while it was saving");
+  }
+}
 
 /** Null when config sync is off or this session can't hold it. Otherwise
  * resolves once the support check passes; unsupported relays give null. */
@@ -241,11 +267,16 @@ export async function communityConfig(
       signal,
     },
     teamJournal: input.journals.teams,
+    ops: input.journals.ops,
     lifecycle: input.journals.lifecycle,
     owner,
     community,
+    communityId: readSnapshotCommunity(
+      (info as { read_state_snapshot?: unknown } | null)?.read_state_snapshot,
+    ),
     strip: input.strip,
     changed: input.changed,
+    retire: input.retire,
     dispose: feed.dispose,
   });
   return configs;
@@ -254,17 +285,20 @@ export async function communityConfig(
 /** Per-agent config channels over one community's sync and writers. */
 export function agentConfigs(
   input: Readonly<{
-    channels: Pick<ConfigChannels, "ensure" | "addMember"> &
-      TeamDeps["channels"] &
+    channels: TeamDeps["channels"] &
+      RunnerDeps["channels"] &
       LifecycleDeps["channels"];
     sync: Pick<ConfigSync, "bind" | "unbind" | "dispose">;
     deps: WriteDeps;
     teamJournal: TeamJournal;
+    ops: TeamOps;
     lifecycle: LifecycleJournal;
     owner: string;
     community: string;
+    communityId?: string | undefined;
     strip(pubkey: string, side: Side, accepted?: RelayEvent): void;
     changed(): void;
+    retire(localTeamId: string, teamId: string): Promise<void>;
     dispose?(): void;
   }>,
 ) {
@@ -297,10 +331,162 @@ export function agentConfigs(
     channels,
     sync,
     writes: deps,
-    journal: input.teamJournal,
+    ops: input.ops,
     owner,
     community,
   };
+  /** The head each finished change left: a form's Save again after its
+   * change finished edits from there. */
+  const finishedAt = new Map<string, string>();
+  const runner = teamRunner({
+    read: deps.read,
+    writer: deps.writer,
+    maxEventBytes: deps.maxEventBytes,
+    signal,
+    channels,
+    sync,
+    store: deps.store,
+    ops: input.ops,
+    owner,
+    community,
+    async done(op) {
+      // A move retires its local row only once its relay team is
+      // established, first: if that can't be saved, the record and its
+      // handover stay. Unestablished, the record is the row's only link to
+      // a relay team that may exist or appear later, so it is never
+      // dismissed: the prompt never gets both copies, and the row is never
+      // lost. The owner finishes it with Resubmit instead.
+      if (op.local && established(op)) await input.retire(op.local, op.teamId);
+      else if (op.local)
+        throw new Error(
+          "This move never took over its relay team, so it can't be dismissed. Resubmit it to finish; if the team is archived, recover it first.",
+        );
+      if (op.confirmedHead) finishedAt.set(op.id, op.confirmedHead);
+    },
+    changed: () => input.changed(),
+  });
+  /** Which record each open form submitted (in memory): Save again from
+   * that form revises the same change, and no form takes another's. */
+  const forms = new Map<string, string>();
+  /** The head change `id` finished at, once its record is gone. */
+  const finishedHead = (id: string | undefined) =>
+    id === undefined || runner.records().some((op) => op.id === id)
+      ? undefined
+      : finishedAt.get(id);
+  /** Change `id` of form `form` finished while a Save of it was saving:
+   * that Save edits from its finished head instead, never reporting a
+   * submission the change didn't take. */
+  function finishedMeanwhile(form: string, id: string) {
+    const head = finishedHead(id);
+    if (head === undefined) return;
+    forms.delete(form);
+    throw new FinishedMeanwhile(head);
+  }
+  /** Runs `done` to its end for this step, re-reads teams, and throws what
+   * stops the change while it is unfinished. */
+  async function finished(done: Promise<TeamOp | undefined>) {
+    const after = await done;
+    await refreshTeams().catch(() => {});
+    if (after) throw new Error(teamOpProblem(after));
+  }
+  /** A submission from form `form`: a newer intent for its change, or a new
+   * change. */
+  async function submitted(
+    form: string,
+    intent: TeamIntent,
+    input: Parameters<typeof runner.start>[0],
+    operation?: string,
+  ) {
+    // A reopened change names its stored record: Save revises exactly that
+    // one, even after a restart; a stopped one waits for Resubmit or Dismiss.
+    if (operation) {
+      forms.set(form, operation);
+      const found = await runner.revise(operation, intent);
+      if (found === "applied") return runner.run(operation);
+      if (found === "stopped")
+        throw new Error("This change stopped. Resubmit or dismiss it.");
+      finishedMeanwhile(form, operation);
+    }
+    const prior = forms.get(form);
+    if (prior) {
+      const found = await runner.revise(prior, intent);
+      if (found === "applied") return runner.run(prior);
+      if (found === "absent") finishedMeanwhile(form, prior);
+    }
+    const { op, done } = runner.start(input);
+    forms.set(form, op.id);
+    return done;
+  }
+  const ownTeam = (id: string) => {
+    const team = teams?.find((t) => t.id === id);
+    if (!team) throw new Error("No such team");
+    return team;
+  };
+  /** Refuses `intent` for team `id` while its Create is unfinished when it
+   * drops a member on the team's roster, freshly read for this Save, or one
+   * whose add was or may have been sent: a Create removes nobody. Returns
+   * that Create. */
+  const refuseDroppingJoined = async (id: string, intent: TeamIntent) => {
+    const create = () =>
+      runner.records().find((op) => op.kind === "create" && op.teamId === id);
+    const before = create();
+    if (!before) return undefined;
+    const unreadable = new Error(
+      "This team can't be read right now; try again",
+    );
+    const found = await channels
+      .find("team-config", await teamSubject(id), signal)
+      .catch(() => {
+        throw unreadable;
+      });
+    // Its channel was created yet isn't found, or has no roster: no proof.
+    if (found ? !found.members : before.channel) throw unreadable;
+    const joined: string[] = [];
+    for (const pubkey of found?.members ?? [])
+      if (
+        pubkey !== owner &&
+        (await channels.owns(pubkey, signal).catch(() => true))
+      )
+        joined.push(pubkey);
+    // Read after the roster, so an add sent meanwhile still counts.
+    const now = create();
+    const sent = (now?.commands ?? []).flatMap((c) =>
+      c.action === "add" &&
+      (c.state === "maybe-sent" || c.state === "confirmed") &&
+      c.pubkey
+        ? [c.pubkey]
+        : [],
+    );
+    if ([...joined, ...sent].some((p) => !intent.members.includes(p)))
+      throw new Error(
+        "A member joined or may have joined this new team; remove them after the team is created",
+      );
+    return now;
+  };
+  /** Accepts a Save of `intent` for team `id` through `accept`. While its
+   * Create is unfinished, the roster check and the acceptance run as one step
+   * on the team's queue: no earlier add is still in flight, and no step of
+   * the older intent dispatches or replans between them. `accept` must not
+   * await the team's steps, which queue behind it. */
+  async function accepted<T>(
+    id: string,
+    intent: TeamIntent,
+    accept: (create: TeamOp | undefined) => T,
+  ): Promise<T> {
+    const unfinished = () =>
+      runner.records().some((op) => op.kind === "create" && op.teamId === id);
+    if (!unfinished()) return accept(undefined);
+    return runner.exclusive(id, async () =>
+      accept(await refuseDroppingJoined(id, intent)),
+    );
+  }
+  const importId = (source: "old-buzz-team" | "local-team", sourceId: string) =>
+    importedTeamId({
+      owner,
+      community: input.communityId as string,
+      source,
+      sourceId,
+    });
   /** Until a discovery completes, the teams the last one found here;
    * undefined while none ever did, so teams stay local. */
   let teams = input.teamJournal.known(owner, community);
@@ -428,12 +614,22 @@ export function agentConfigs(
       .finally(() => {
         attached.add(pubkey);
         if (running.get(pubkey) === work) running.delete(pubkey);
+        // Its config channel may exist now, so a pending team member can join.
+        void resumeTeams();
       });
     running.set(pubkey, work);
     return work;
   }
   const rebind = (pubkey: string, recovered = false) =>
     configs.has(pubkey) ? start(pubkey, recovered) : Promise.resolve();
+
+  /** Runs every unfinished team change here, then re-reads teams: when
+   * agent channels appear and on each connection. */
+  async function resumeTeams() {
+    if (disposed || !runner.records().length) return;
+    await runner.resume();
+    if (!disposed) await refreshTeams().catch(() => {});
+  }
 
   async function resumeLifecycle() {
     const pending = input.lifecycle.pending(community);
@@ -508,7 +704,9 @@ export function agentConfigs(
     async reconnected() {
       await Promise.all([...configs.keys()].map((pubkey) => rebind(pubkey)));
       await resumeLifecycle();
+      await resumeTeams();
     },
+    resumeTeams,
     /** A team channel's members changed: its cached members are re-read. */
     rosterChanged(channel: string) {
       if (teams?.some((team) => team.channel === channel)) void refreshTeams();
@@ -559,6 +757,201 @@ export function agentConfigs(
     /** The synced teams, archived ones included; undefined until known. */
     teams: () => teams,
     refreshTeams,
+    /** This scope's unfinished team changes, oldest first. */
+    teamOps: () => runner.records(),
+    /** Check again: reconciles a change from fresh reads now. */
+    async checkTeamOp(id: string) {
+      await runner.run(id);
+      await refreshTeams().catch(() => {});
+    },
+    discardTeamOp: (id: string) => runner.discard(id),
+    dismissTeamOp: (id: string) => runner.dismiss(id),
+    /** Resubmits a stopped change on the team's current head. */
+    async resubmitTeamOp(id: string) {
+      const op = runner.records().find((record) => record.id === id);
+      if (!op) throw new Error("Nothing to resubmit");
+      const team = teams?.find((t) => t.id === op.teamId);
+      return finished((await runner.resubmit(id, team?.head ?? null)).done);
+    },
+    /** Moves each local team whose members are all in this community onto
+     * the relay, at its UUIDv5 id. Its row goes once the move is done. */
+    async migrateTeams(
+      local: readonly Team[],
+      communityOf: (pubkey: string) => string | undefined,
+      source: (team: Team) => NonNullable<TeamOp["source"]> = (team) => ({
+        kind: "local-team",
+        id: team.id,
+      }),
+    ) {
+      if (input.communityId === undefined) return;
+      for (const team of local) {
+        if (teamCommunity(team, communityOf) !== community) continue;
+        const prior = runner.records().find((op) => op.local === team.id);
+        const from = source(team);
+        const intent = {
+          name: team.name,
+          instructions: team.instructions,
+          members: team.members,
+        };
+        // The row as it stands now: edits made to it meanwhile move too.
+        if (prior) await runner.revise(prior.id, intent);
+        await (prior
+          ? runner.run(prior.id)
+          : runner.start({
+              kind: "move",
+              teamId: await importId(from.kind, from.id),
+              source: from,
+              local: team.id,
+              intent,
+            }).done
+        ).catch(() => {});
+      }
+      await refreshTeams().catch(() => {});
+    },
+    /** Whether old Buzz teams import into config channels here; when not,
+     * Import keeps its local team. */
+    importsTeams: input.communityId !== undefined,
+    /** Imports old Buzz team `id` with `team`'s members (§6.3): every
+     * device's import of it converges on one team, whose name and
+     * instructions an import never replaces. `archived`: only a deleted copy
+     * exists. `missing`: members not confirmed on it yet. */
+    async importTeam(id: string, team: TeamIntent) {
+      const teamId = await importId("old-buzz-team", id);
+      const prior = runner
+        .records()
+        .find((op) => op.kind === "import" && op.teamId === teamId);
+      const intent = {
+        ...team,
+        members: [
+          ...new Set([...(prior?.intent.members ?? []), ...team.members]),
+        ],
+      };
+      const done =
+        prior && (await runner.revise(prior.id, intent)) === "applied"
+          ? runner.run(prior.id)
+          : runner.start({
+              kind: "import",
+              teamId,
+              source: { kind: "old-buzz-team", id },
+              intent,
+            }).done;
+      const after = await done;
+      await refreshTeams().catch(() => {});
+      // A member add that may have been sent keeps the change, unfinished.
+      if (
+        after?.stop === "archived" &&
+        !after.candidate &&
+        !unresolved(after)
+      ) {
+        await runner.dismiss(after.id);
+        return { teamId, archived: true as const, missing: [] };
+      }
+      const confirmed = new Set(
+        (after?.commands ?? []).flatMap((c) =>
+          c.state === "confirmed" && c.pubkey ? [c.pubkey] : [],
+        ),
+      );
+      return {
+        teamId,
+        missing: after ? intent.members.filter((p) => !confirmed.has(p)) : [],
+        ...(after ? { problem: teamOpProblem(after) } : {}),
+      };
+    },
+    /** Creates the team the open form `form` stands for, at that id: Save
+     * again from the same form revises that one change, never a second. */
+    async createTeam(team: TeamIntent, form: string, operation?: string) {
+      const saved = await accepted(form, team, () => {
+        // A reopened change that finished here saves as an edit of its head:
+        // this form's latest finished submission, else the reopened one.
+        const head = finishedHead(forms.get(form)) ?? finishedHead(operation);
+        if (head) return { head };
+        return {
+          done: submitted(
+            form,
+            team,
+            { kind: "create", teamId: form, intent: team, base: null },
+            operation,
+          ),
+        };
+      });
+      // Its team may be newer than the last discovery.
+      const edit = async (head: string) => {
+        await refreshTeams().catch(() => {});
+        return this.editTeam(form, team, head, form).then(() => form);
+      };
+      if ("head" in saved) return edit(saved.head);
+      return finished(saved.done).then(
+        () => form,
+        (error: unknown) => {
+          if (!(error instanceof FinishedMeanwhile)) throw error;
+          return edit(error.head);
+        },
+      );
+    },
+    /** Deletes synced team `id` by archiving its config channel. */
+    archiveTeam(id: string) {
+      const team = ownTeam(id);
+      return finished(
+        runner.start({
+          kind: "delete",
+          teamId: id,
+          channel: team.channel,
+          intent: { name: "", instructions: "", members: [] },
+        }).done,
+      );
+    },
+    /** Brings an archived team back by unarchiving its config channel. */
+    recoverTeam(id: string) {
+      const team = ownTeam(id);
+      return finished(
+        runner.start({
+          kind: "recover",
+          teamId: id,
+          channel: team.channel,
+          intent: { name: "", instructions: "", members: [] },
+        }).done,
+      );
+    },
+    /** Edits synced team `id` from the head `base` its form opened. */
+    async editTeam(
+      id: string,
+      change: TeamIntent,
+      base: string | undefined,
+      form: string,
+    ): Promise<void> {
+      const team = ownTeam(id);
+      if (team.archived) throw new Error("No such team");
+      const { done } = await accepted(id, change, (create) => {
+        // A form opened without a readable head never saves over one. It
+        // keeps that missing head, so only reopening the team can recover.
+        if (base === undefined)
+          throw new Error(
+            "This team couldn't be read when it was opened; close it and open it again",
+          );
+        if (team.unreadable)
+          throw new Error("This team can't be read right now; try again");
+        // While its Create is unfinished, the Save revises that Create: a
+        // separate Edit would leave its older intent to replay.
+        return {
+          done: submitted(
+            form,
+            change,
+            {
+              kind: "edit",
+              teamId: id,
+              channel: team.channel,
+              intent: change,
+              base,
+            },
+            create?.id,
+          ),
+        };
+      });
+      return finished(done).catch((error: unknown) => {
+        if (!(error instanceof FinishedMeanwhile)) throw error;
+        return this.editTeam(id, change, error.head, form);
+      });
+    },
     /** Saves each synced side the edit changed as its next revision of
      * `base`, the head its editor opened (the stored head where absent). The
      * local row keeps the edit, so on a conflict it stays as a draft. */

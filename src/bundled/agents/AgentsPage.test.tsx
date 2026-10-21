@@ -28,6 +28,7 @@ import type {
   AgentsSnapshot,
   RegisteredAgentType,
   TeamChange,
+  TeamChangeAction,
   FoundAgents,
   TeamPort,
 } from "../../features/agents/service";
@@ -156,6 +157,9 @@ function setup(
     more = [] as RegisteredAgentType[],
     dirtySettings = false,
     found = portable as readonly PortableAgent[],
+    archivedTeams = [] as AgentsSnapshot["teams"],
+    teams = [] as AgentsSnapshot["teams"],
+    teamChanges = [] as NonNullable<AgentsSnapshot["teamChanges"]>,
     page = {} as {
       navigation?: PageNavigation;
       navigator?: Navigation;
@@ -169,7 +173,9 @@ function setup(
     agents: saved,
     running: saved,
     interrupted: [],
-    teams: [],
+    teams,
+    archivedTeams,
+    teamChanges,
   };
   const listeners = new Set<() => void>();
   const echoProvider = provider("ready", ({ onClose }) => (
@@ -363,6 +369,8 @@ function setup(
       return team;
     }),
     core: vi.fn(async () => undefined),
+    recoverTeam: vi.fn(async (_id: string) => {}),
+    teamChange: vi.fn(async (_id: string, _action: TeamChangeAction) => {}),
     configHistory: () => undefined,
     restart: vi.fn(),
     removeTeam: vi.fn(async (id: string) => {
@@ -1397,6 +1405,112 @@ it("keeps a team whose members are all here importable with no agents to list", 
   ).toBeInTheDocument();
 });
 
+it("offers Recover or Cancel when an imported team was deleted in this community", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([]);
+  agents.portable.mockResolvedValue({
+    agents: [],
+    teams: [nightShift],
+    warnings: [],
+    here: [],
+  });
+  const met = {
+    imported: [],
+    failed: [],
+    elsewhere: [],
+    foreign: [],
+    archived: { id: "team-1" },
+  };
+  agents.portTeam.mockResolvedValueOnce(met).mockResolvedValueOnce(met);
+  await openImport(user);
+  const importTeam = await screen.findByRole("button", {
+    name: "Import team Night Shift",
+  });
+  await user.click(importTeam);
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByText(/was deleted in this community/)).toBeNull();
+  expect(agents.recoverTeam).not.toHaveBeenCalled();
+  await user.click(importTeam);
+  await user.click(screen.getByRole("button", { name: "Recover and import" }));
+  expect(agents.recoverTeam).toHaveBeenCalledWith("team-1");
+  expect(agents.portTeam).toHaveBeenCalledTimes(3);
+});
+
+it("shows an unfinished team change on its card, in the Teams tab and in its editor, with its actions", async () => {
+  const user = userEvent.setup();
+  const core = { id: "team-1", name: "Core", instructions: "", members: [] };
+  const { agents } = setup([], {
+    teams: [{ ...core, unfinished: true }],
+    teamChanges: [
+      {
+        id: "op-1",
+        teamId: "team-1",
+        kind: "edit",
+        name: "Core",
+        instructions: "",
+        members: [],
+        problem: "This team changed on another device.",
+        stopped: true,
+        unresolved: false,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(screen.getByText("Unfinished change")).toBeInTheDocument();
+  const row = within(
+    screen.getByRole("region", { name: "Unfinished changes" }),
+  ).getByRole("listitem", { name: "Edit: Core" });
+  expect(row).toHaveTextContent("This team changed on another device.");
+  // Stopped with nothing unconfirmed: Resubmit and Dismiss, never Discard.
+  expect(within(row).queryByRole("button", { name: "Discard" })).toBeNull();
+  await user.click(within(row).getByRole("button", { name: "Resubmit" }));
+  expect(agents.teamChange).toHaveBeenCalledWith("op-1", "resubmit");
+  await user.click(screen.getByRole("button", { name: "Core" }));
+  const editor = screen.getByRole("listitem", { name: "Edit: Core" });
+  await user.click(within(editor).getByRole("button", { name: "Dismiss" }));
+  expect(agents.teamChange).toHaveBeenLastCalledWith("op-1", "dismiss");
+});
+
+it("waits to offer Dismiss until nothing in a stopped change is unconfirmed", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], {
+    teamChanges: [
+      {
+        id: "op-1",
+        teamId: "team-1",
+        kind: "delete",
+        name: "",
+        instructions: "",
+        members: [],
+        problem: "Some steps may have been saved; Check again confirms them.",
+        stopped: true,
+        unresolved: true,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  const row = screen.getByRole("listitem", { name: "Delete: Unnamed team" });
+  expect(within(row).queryByRole("button", { name: "Dismiss" })).toBeNull();
+  expect(within(row).queryByRole("button", { name: "Resubmit" })).toBeNull();
+  await user.click(within(row).getByRole("button", { name: "Check again" }));
+  expect(agents.teamChange).toHaveBeenCalledWith("op-1", "check");
+});
+
+it("lists deleted synced teams, each with Recover", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], {
+    archivedTeams: [
+      { id: "team-1", name: "Core", instructions: "", members: [] },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  const deleted = screen.getByRole("region", { name: "Deleted teams" });
+  await user.click(
+    within(deleted).getByRole("button", { name: "Recover team Core" }),
+  );
+  expect(agents.recoverTeam).toHaveBeenCalledWith("team-1");
+});
+
 it("keeps Import open and names each part of a team import that did not come", async () => {
   const user = userEvent.setup();
   const { agents } = setup([]);
@@ -1502,6 +1616,7 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("button", { name: "Create team" }));
 
   expect(agents.saveTeam).toHaveBeenCalledWith({
+    creation: expect.any(String),
     name: "Crew",
     instructions: "Ada leads.",
     members: [ada.pubkey, agent("Cy", 3).pubkey],
@@ -1517,30 +1632,6 @@ it("makes a team of chosen agents and lists it with its members", async () => {
   await user.click(screen.getByRole("button", { name: "Delete team" }));
   expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
   expect(screen.queryByRole("list", { name: "Teams" })).not.toBeInTheDocument();
-});
-
-it("shows a synced team's refusal and keeps its editor open", async () => {
-  const user = userEvent.setup();
-  const { agents } = setup([agent("Ada", 1)]);
-  await act(() =>
-    agents.saveTeam({ name: "Crew", instructions: "", members: [] }),
-  );
-  const refused = new Error(
-    "Synced teams can't be changed in this version yet",
-  );
-  agents.saveTeam.mockRejectedValueOnce(refused);
-  agents.removeTeam.mockRejectedValueOnce(refused);
-  await user.click(screen.getByRole("tab", { name: "Your teams" }));
-  await user.click(screen.getByRole("button", { name: "Crew" }));
-  const form = screen.getByRole("form", { name: "Edit Crew" });
-  for (const name of ["Save", "Delete team"]) {
-    await user.click(within(form).getByRole("button", { name }));
-    expect(await within(form).findByRole("alert")).toHaveTextContent(
-      refused.message,
-    );
-    expect(screen.getByRole("form", { name: "Edit Crew" })).toBe(form);
-  }
-  expect(agents.removeTeam).toHaveBeenCalledWith("team-1");
 });
 
 it("closes the team editor when leaving Your teams", async () => {
@@ -2322,4 +2413,265 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
     view.unmount();
     owner.dispose();
   }
+});
+
+it("keeps a pending Create's status and Check again in the new-team editor that is still open", async () => {
+  const user = userEvent.setup();
+  const changes: NonNullable<AgentsSnapshot["teamChanges"]>[number][] = [];
+  const { agents, show } = setup([], { teamChanges: changes });
+  agents.saveTeam.mockImplementationOnce(async (change: TeamChange) => {
+    changes.push({
+      id: "pending-create",
+      teamId: change.creation as string,
+      kind: "create",
+      name: "Pending",
+      instructions: "",
+      members: [],
+      problem: "Some steps may have been saved",
+      stopped: false,
+      unresolved: true,
+    });
+    show([]);
+    throw new Error("Some steps may have been saved");
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(screen.getByRole("button", { name: "New team" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Create a new team" }),
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Pending");
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Some steps may have been saved",
+  );
+  expect(
+    screen.getByRole("listitem", { name: "Create: Pending" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Check again" }),
+  ).toBeInTheDocument();
+});
+
+it("reopens a change whose team has no card on what it saved, keeping edits apart until Save", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], {
+    teamChanges: [
+      {
+        id: "op-1",
+        teamId: "team-gone",
+        kind: "create",
+        name: "Lost",
+        instructions: "SAVED RULE",
+        members: [],
+        problem: "This team changed on another device.",
+        stopped: true,
+        unresolved: false,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  const row = screen.getByRole("listitem", { name: "Create: Lost" });
+  await user.click(within(row).getByRole("button", { name: "Open" }));
+  const form = screen.getByRole("form", { name: "New team" });
+  expect(
+    within(form).getByRole("textbox", { name: "Instructions" }),
+  ).toHaveValue("SAVED RULE");
+  await user.type(
+    within(form).getByRole("textbox", { name: "Name" }),
+    " draft",
+  );
+  const change = within(form).getByRole("listitem", { name: "Create: Lost" });
+  expect(change).toBeInTheDocument();
+  await user.click(within(change).getByRole("button", { name: "Resubmit" }));
+  expect(agents.teamChange).toHaveBeenCalledWith("op-1", "resubmit");
+  expect(agents.saveTeam).not.toHaveBeenCalled();
+});
+
+it("saves a reopened no-card change onto its stored operation", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], {
+    teamChanges: [
+      {
+        id: "op-1",
+        teamId: "team-gone",
+        kind: "create",
+        name: "Lost",
+        instructions: "SAVED RULE",
+        members: [],
+        problem: "Waiting",
+        stopped: false,
+        unresolved: false,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("listitem", { name: "Create: Lost" })).getByRole(
+      "button",
+      { name: "Open" },
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  expect(agents.saveTeam).toHaveBeenCalledWith(
+    expect.objectContaining({ creation: "team-gone", operation: "op-1" }),
+  );
+});
+
+it("keeps a reopened no-card change's draft and focus when its change finishes before Save", async () => {
+  const user = userEvent.setup();
+  const teams: AgentsSnapshot["teams"][number][] = [];
+  const changes: NonNullable<AgentsSnapshot["teamChanges"]>[number][] = [
+    {
+      id: "op-1",
+      teamId: "team-new",
+      kind: "create",
+      name: "Lost",
+      instructions: "SAVED RULE",
+      members: [],
+      problem: "Waiting",
+      stopped: false,
+      unresolved: false,
+    },
+  ];
+  const { agents, show } = setup([], { teams, teamChanges: changes });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("listitem", { name: "Create: Lost" })).getByRole(
+      "button",
+      { name: "Open" },
+    ),
+  );
+  const name = screen.getByRole("textbox", { name: "Name" });
+  await user.type(name, " draft");
+  // The change finishes in the background: its team is listed instead.
+  changes.splice(0);
+  teams.push({
+    id: "team-new",
+    name: "Lost",
+    instructions: "SAVED RULE",
+    members: [],
+  });
+  act(() => show([]));
+  const kept = screen.getByRole("textbox", { name: "Name" });
+  expect(kept).toHaveValue("Lost draft");
+  expect(kept).toHaveFocus();
+  await user.type(kept, "!");
+  // Save edits the finished team in place.
+  agents.saveTeam.mockImplementationOnce(async (change: TeamChange) => {
+    const team = { ...teams[0], ...change, id: "team-new" };
+    teams.splice(0, 1, team);
+    show([]);
+    return team;
+  });
+  // Its change finished: the form now edits that team, draft intact.
+  expect(
+    screen.getByRole("heading", { name: "Edit team" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Create team" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(agents.saveTeam).toHaveBeenCalledWith(
+    expect.objectContaining({
+      creation: "team-new",
+      operation: "op-1",
+      name: "Lost draft!",
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("textbox", { name: "Name" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByText("Lost draft!")).toBeInTheDocument();
+});
+
+it("shows a team's unfinished marker beside its note", async () => {
+  const user = userEvent.setup();
+  setup([], {
+    teams: [
+      {
+        id: "t",
+        name: "Core",
+        instructions: "",
+        members: [],
+        note: "Spans communities",
+        unfinished: true,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(
+    screen.getByText("Spans communities · Unfinished change"),
+  ).toBeInTheDocument();
+});
+
+it("submits a reopened no-card change with its operation and creation after removing every member", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const { agents } = setup([ada], {
+    teamChanges: [
+      {
+        id: "op-p4",
+        teamId: "team-p4",
+        kind: "create",
+        name: "Pending",
+        instructions: "SAVED RULE",
+        members: [ada.pubkey],
+        problem: "Waiting",
+        stopped: false,
+        unresolved: false,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("listitem", { name: "Create: Pending" })).getByRole(
+      "button",
+      { name: "Open" },
+    ),
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  await user.click(screen.getByRole("button", { name: "Create team" }));
+  const [change] = agents.saveTeam.mock.calls[0] ?? [];
+  expect(change).toMatchObject({
+    creation: "team-p4",
+    operation: "op-p4",
+    members: [],
+  });
+  expect(change).not.toHaveProperty("id");
+});
+
+it("opens an unfinished change with a card by team id, with creation but no explicit operation", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([], {
+    teams: [
+      { id: "team-p4", name: "Pending", instructions: "RULE", members: [] },
+    ],
+    teamChanges: [
+      {
+        id: "op-p4",
+        teamId: "team-p4",
+        kind: "edit",
+        name: "Pending",
+        instructions: "RULE",
+        members: [],
+        problem: "Waiting",
+        stopped: false,
+        unresolved: false,
+      },
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  await user.click(
+    within(screen.getByRole("listitem", { name: "Edit: Pending" })).getByRole(
+      "button",
+      { name: "Open" },
+    ),
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  const [change] = agents.saveTeam.mock.calls[0] ?? [];
+  expect(change).toMatchObject({ id: "team-p4", creation: expect.any(String) });
+  expect(change).not.toHaveProperty("operation");
 });

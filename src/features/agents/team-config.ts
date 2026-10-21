@@ -1,12 +1,13 @@
-// Teams in config channels (plan §6): discovery of this owner's team config
-// channels, and what it last found, kept in `buzz.agents.teams.migration.v1`
-// so runs keep their team rules while the community is unavailable.
+// Teams in config channels (plan §6): the synced teams discovery finds, kept
+// in `buzz.agents.teams.migration.v1` so they keep deciding starts while the
+// community is unavailable. Team writes are `team-ops.ts`'s.
 import { artifactD, expectedTeam, readHead } from "./agent-config-artifacts";
 import type { Subject } from "./agent-config";
 import type { ConfigChannels } from "./config-channels";
 import type { ConfigSync } from "./config-sync";
 import type { JournalStore, WriteDeps } from "./config-writes";
-import { localStore } from "./store";
+import { localStore, type Team } from "./store";
+import type { TeamOps } from "./team-ops";
 
 export const TEAMS_MIGRATION_KEY = "buzz.agents.teams.migration.v1";
 
@@ -23,6 +24,7 @@ const isKnownTeam = (value: unknown): value is KnownTeam => {
     typeof team.channel === "string" &&
     typeof team.archived === "boolean" &&
     typeof team.unreadable === "boolean" &&
+    (team.head === undefined || typeof team.head === "string") &&
     Array.isArray(team.members) &&
     team.members.every((member) => typeof member === "string")
   );
@@ -92,11 +94,24 @@ export class TeamJournal {
 export type TeamDeps = Readonly<{
   channels: Pick<ConfigChannels, "teams" | "owns">;
   sync: Pick<ConfigSync, "bind">;
-  writes: WriteDeps;
-  journal: TeamJournal;
+  writes: Pick<WriteDeps, "read" | "signal">;
+  /** Team changes in flight: a channel one made names its team. */
+  ops: TeamOps;
   owner: string;
   community: string;
 }>;
+
+/** Where a local team can move: the one community all its members share, or
+ * `spans` when they are in more than one (it stays on this device). */
+export function teamCommunity(
+  team: Pick<Team, "members">,
+  communityOf: (pubkey: string) => string | undefined,
+): string | "spans" | undefined {
+  const communities = new Set(team.members.map(communityOf));
+  if (communities.size !== 1) return communities.size ? "spans" : undefined;
+  const [only] = communities;
+  return only ?? "spans";
+}
 
 export const UNREADABLE_TEAM =
   "This team can't be read right now, so its agents wait to start";
@@ -114,6 +129,9 @@ export function teamBody(content: string) {
   }
 }
 
+export const SPANS_NOTE =
+  "This team's agents are in different communities, so it stays on this device";
+
 /** A team config channel this owner has, with its team id proven by the
  * channel's subject label. Name and instructions are its synced head's.
  * `unreadable`: its head can't be read now, so its members' starts wait. */
@@ -123,6 +141,9 @@ export type SyncedTeam = Readonly<{
   archived: boolean;
   unreadable: boolean;
   subject: Subject;
+  /** The id of the head discovery read: an edit without its own base
+   * revises this one. */
+  head?: string;
   /** The channel's agents this owner attests to (NIP-OA); anyone else in it
    * is never treated, or removed, as a team member. */
   members: readonly string[];
@@ -150,11 +171,12 @@ export async function discoverTeams(
 ): Promise<SyncedTeam[]> {
   const { signal } = deps.writes;
   const found: SyncedTeam[] = [];
-  const owned = new Map<string, Promise<boolean>>();
+  // `undefined`: ownership couldn't be read, which never means "not owned".
+  const owned = new Map<string, Promise<boolean | undefined>>();
   const owns = (pubkey: string) => {
     let proof = owned.get(pubkey);
     if (!proof) {
-      proof = deps.channels.owns(pubkey, signal).catch(() => false);
+      proof = deps.channels.owns(pubkey, signal).catch(() => undefined);
       owned.set(pubkey, proof);
     }
     return proof;
@@ -171,7 +193,12 @@ export async function discoverTeams(
       claimed &&
       (await expectedTeam(claimed, channel.label).catch(() => undefined));
     const prior = known.find((team) => team.channel === channel.id);
-    const id = proven || prior?.id;
+    const id =
+      proven ||
+      prior?.id ||
+      deps.ops
+        .all(deps.owner, deps.community)
+        .find((op) => op.channel === channel.id)?.teamId;
     if (!id) continue;
     if (!channel.archived)
       await deps.sync.bind([
@@ -179,16 +206,24 @@ export async function discoverTeams(
       ]);
     const occupants = (channel.members ?? []).filter((p) => p !== deps.owner);
     const members: string[] = [];
-    for (const pubkey of occupants)
-      if (prior?.members.includes(pubkey) || (await owns(pubkey)))
-        members.push(pubkey);
+    let unknown = false;
+    for (const pubkey of occupants) {
+      const proof = prior?.members.includes(pubkey) || (await owns(pubkey));
+      if (proof) members.push(pubkey);
+      else if (proof === undefined) unknown = true;
+    }
     found.push({
       id,
       channel: channel.id,
       archived: channel.archived,
-      unreadable: !proven,
+      unreadable: !proven || unknown,
       subject: teamArtifact(deps, id, channel.id),
-      members: channel.members ? members : (prior?.members ?? []),
+      ...(proven && head ? { head: head.id } : {}),
+      // An unknown lookup keeps every member already proved, here or before.
+      members:
+        channel.members && !unknown
+          ? members
+          : [...new Set([...(prior?.members ?? []), ...members])],
     });
   }
   return found;

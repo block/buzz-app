@@ -24,6 +24,7 @@ import {
   UNFINISHED_KEY,
 } from "./store";
 import { TEAMS_MIGRATION_KEY } from "./team-config";
+import { TEAM_OPS_KEY } from "./team-ops";
 
 export { localStore, type AgentStore } from "./store";
 
@@ -43,10 +44,12 @@ export function isAgentKey(key: string) {
     key.startsWith("buzz.codex.sessions.") ||
     // The relay-synced copies of agent settings that starts use.
     key === CONFIG_STORAGE_KEY ||
-    // What config sync journals: migrations, archives and synced teams.
+    // What config sync journals: migrations, archives, synced teams and
+    // unfinished team changes.
     key === MIGRATION_STORAGE_KEY ||
     key === LIFECYCLE_STORAGE_KEY ||
     key === TEAMS_MIGRATION_KEY ||
+    key === TEAM_OPS_KEY ||
     // The device-wide defaults that blank agent settings inherit.
     key === "buzz.claude-code.provider-defaults.v1" ||
     key === "buzz.codex.provider-defaults.v1" ||

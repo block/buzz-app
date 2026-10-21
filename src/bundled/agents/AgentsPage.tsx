@@ -38,6 +38,8 @@ import type {
   FoundAgents,
   RegisteredAgentType,
   Team,
+  TeamChangeAction,
+  TeamChangeView,
   TeamPort,
 } from "../../features/agents/service";
 import { useRelayConnection } from "../../features/relay/react";
@@ -156,8 +158,8 @@ export function AgentsPage({
   const [creating, setCreating] = useState(false);
   // Which import the dialog shows follows the menu it was opened from.
   const [flow, setFlow] = useState<"import" | "import-team">();
-  // A team being edited by its id, or "new" for one being made.
-  const [editingTeam, setEditingTeam] = useState<string>();
+  // The team editor open, if any.
+  const [editingTeam, setEditingTeam] = useState<TeamEditing>();
   const newAgentButton = useRef<HTMLButtonElement>(null);
   const newAgentLabel = useRef<HTMLSpanElement>(null);
   const [importing, setImporting] = useState(false);
@@ -211,10 +213,15 @@ export function AgentsPage({
   const build = (pubkey: string) => browse(pubkey);
   // Importing gives an agent a key here, so a hosted type cannot take one.
   const runnable = types.filter((type) => !type.remote);
-  // Only a team still saved, or one being made, keeps its editor open.
+  // Only a team still saved, one being made, or an unfinished change keeps
+  // its editor open; a change that finishes meanwhile keeps it as its team.
   const editing =
-    editingTeam === "new" ||
-    snapshot.teams.some((team) => team.id === editingTeam)
+    editingTeam &&
+    (editingTeam.id === "new" ||
+      snapshot.teams.some(
+        (team) => team.id === editingTeam.id || team.id === editingTeam.team,
+      ) ||
+      snapshot.teamChanges?.some((change) => change.id === editingTeam.id))
       ? editingTeam
       : undefined;
   // Leaving Teams drops the editor, whose unsaved draft goes with it.
@@ -317,7 +324,7 @@ export function AgentsPage({
       >
         <MenuItem
           disabled={snapshot.status !== "ready"}
-          onClick={() => setEditingTeam("new")}
+          onClick={() => setEditingTeam({ id: "new" })}
         >
           <PlusIcon size={16} aria-hidden="true" /> Create a new team
         </MenuItem>
@@ -437,6 +444,8 @@ export function AgentsPage({
               agents={agents}
               saved={snapshot.agents.filter((agent) => agent.place === "here")}
               teams={snapshot.teams}
+              archived={snapshot.archivedTeams ?? []}
+              changes={snapshot.teamChanges ?? []}
               editing={editing}
               onEdit={setEditingTeam}
               newTeam={!toolbarAction && newTeamMenu}
@@ -1108,6 +1117,9 @@ function ImportAgents({
   const [found, setFound] = useState<FoundAgents>();
   const [type, setType] = useState(types[0]?.key ?? "");
   const [pending, setPending] = useState<string>();
+  /** An import that met its team deleted here: Recover it, or cancel. */
+  const [collision, setCollision] =
+    useState<Readonly<{ team: OldTeam; id: string }>>();
   const [error, setError] = useState("");
   // Each agent the owner chose, in the order chosen: imports run one at a
   // time and the dialog stays open, so several can be picked in a row.
@@ -1186,12 +1198,14 @@ function ImportAgents({
       }
     });
   };
-  const portTeam = async (team: OldTeam) => {
+  const portTeam = async (team: OldTeam, recover?: string) => {
     if (!chosen || pending) return;
     setPending(team.id);
     onPendingChange(true);
     setError("");
+    setCollision(undefined);
     try {
+      if (recover) await agents.recoverTeam(recover);
       const result = await agents.portTeam({ id: team.id, type: chosen.key });
       const came = new Set(result.imported.map((agent) => agent.pubkey));
       setFound(
@@ -1202,6 +1216,10 @@ function ImportAgents({
             here: [...last.here, ...came],
           },
       );
+      if (result.archived) {
+        setCollision({ team, id: result.archived.id });
+        return;
+      }
       // Leaving would hide the one place that names what still needs a hand.
       const note = teamPortNote(result);
       if (note) setError(note);
@@ -1252,6 +1270,28 @@ function ImportAgents({
         <p role="alert" className="m-0 text-body-sm text-danger">
           {[error, ...said.values()].filter(Boolean).join(" ")}
         </p>
+      )}
+      {collision && (
+        <div role="alert" className="flex flex-wrap items-center gap-2">
+          <p className="m-0 flex-1 text-body-sm">
+            {collision.team.name} was deleted in this community. Recover it to
+            import into it, or cancel.
+          </p>
+          <Button
+            size="compact"
+            variant="primary"
+            onClick={() => void portTeam(collision.team, collision.id)}
+          >
+            Recover and import
+          </Button>
+          <Button
+            size="compact"
+            variant="ghost"
+            onClick={() => setCollision(undefined)}
+          >
+            Cancel
+          </Button>
+        </div>
       )}
       {found?.warnings.map((warning) => (
         <p key={warning} className="m-0 text-body-sm text-secondary">
@@ -1375,12 +1415,18 @@ function ImportAgents({
   );
 }
 
+/** The team editor open: a team's id, "new", or an unfinished change's id
+ * with the team it makes, which it stays open on once that change finishes. */
+type TeamEditing = Readonly<{ id: string; team?: string }>;
+
 /** The owner's teams: each a name, instructions and members, given to every
  * member's prompt with a roster. Agents record nothing about their teams. */
 function Teams({
   agents,
   saved,
   teams,
+  archived,
+  changes,
   editing,
   onEdit,
   newTeam,
@@ -1388,21 +1434,33 @@ function Teams({
   agents: Agents;
   saved: readonly Agent[];
   teams: readonly Team[];
-  /** A team's id while it is edited, or "new" for one being made. */
-  editing: string | undefined;
-  onEdit(id: string | undefined): void;
+  /** Deleted synced teams, each with Recover. */
+  archived: readonly Team[];
+  /** Team changes not finished on the relay. */
+  changes: readonly TeamChangeView[];
+  editing: TeamEditing | undefined;
+  onEdit(editing: TeamEditing | undefined): void;
   newTeam: ReactNode;
 }) {
-  const team = teams.find((item) => item.id === editing);
-  if (editing === "new" || team)
+  const team = teams.find((item) => item.id === editing?.id);
+  const submission = changes.find((change) => change.id === editing?.id);
+  if (editing)
     return (
       <TeamEditor
-        key={editing}
+        key={editing.id}
         agents={agents}
         saved={saved}
         {...(team ? { team } : {})}
+        {...(submission ? { submission } : {})}
+        changes={changes}
         onDone={() => onEdit(undefined)}
       />
+    );
+  const open = (change: TeamChangeView) =>
+    onEdit(
+      teams.some((item) => item.id === change.teamId)
+        ? { id: change.teamId }
+        : { id: change.id, team: change.teamId },
     );
   const byKey = new Map(saved.map((agent) => [agent.pubkey, agent]));
   return (
@@ -1415,7 +1473,11 @@ function Teams({
               <li key={item.id} className="contents">
                 <TeamCard
                   name={item.name}
-                  note={item.note}
+                  note={
+                    [item.note, item.unfinished && "Unfinished change"]
+                      .filter(Boolean)
+                      .join(" · ") || undefined
+                  }
                   aria-label={item.name}
                   members={item.members.flatMap((pubkey) => {
                     const member = byKey.get(pubkey);
@@ -1423,14 +1485,162 @@ function Teams({
                       ? [{ ...member, community: member.relay || undefined }]
                       : [];
                   })}
-                  onClick={() => onEdit(item.id)}
+                  onClick={() => onEdit({ id: item.id })}
                 />
               </li>
             ))}
           </ul>
         )}
       </div>
+      {changes.length > 0 && (
+        <section aria-label="Unfinished changes" className="grid gap-2">
+          <InlineHeader title="Unfinished changes" />
+          <ul className={styles.portList}>
+            {changes.map((change) => (
+              <TeamChangeRow
+                key={change.id}
+                agents={agents}
+                change={change}
+                onOpen={() => open(change)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+      {archived.length > 0 && (
+        <section aria-label="Deleted teams" className="grid gap-2">
+          <InlineHeader title="Deleted teams" />
+          <ul className={styles.portList}>
+            {archived.map((item) => (
+              <DeletedTeam key={item.id} agents={agents} team={item} />
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
+  );
+}
+
+/** A deleted synced team, which Recover brings back as it was. */
+function DeletedTeam({ agents, team }: { agents: Agents; team: Team }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const name = team.name || "Unnamed team";
+  return (
+    <li className={styles.portRow}>
+      <span className="grid min-w-0 flex-1">
+        <span className="truncate text-body">{name}</span>
+        {error && (
+          <span role="alert" className="text-caption text-danger">
+            {error}
+          </span>
+        )}
+      </span>
+      <Button
+        size="compact"
+        variant="outline"
+        aria-label={`Recover team ${name}`}
+        loading={pending}
+        onClick={() => {
+          setPending(true);
+          setError("");
+          agents
+            .recoverTeam(team.id)
+            .catch((reason) => setError(message(reason)))
+            .finally(() => setPending(false));
+        }}
+      >
+        Recover
+      </Button>
+    </li>
+  );
+}
+
+const CHANGE_KIND: Record<TeamChangeView["kind"], string> = {
+  create: "Create",
+  edit: "Edit",
+  import: "Import",
+  move: "Move to the relay",
+  delete: "Delete",
+  recover: "Recover",
+};
+
+/** A team change that hasn't finished: what stops it, and what the owner
+ * can do. Dismiss waits until nothing in it is unconfirmed. */
+function TeamChangeRow({
+  agents,
+  change,
+  onOpen,
+}: {
+  agents: Agents;
+  change: TeamChangeView;
+  /** Opens the change's team, or its saved submission, in the editor. */
+  onOpen?: () => void;
+}) {
+  const [pending, setPending] = useState<TeamChangeAction>();
+  const [error, setError] = useState("");
+  const name = change.name || "Unnamed team";
+  const act = (action: TeamChangeAction) => {
+    setPending(action);
+    setError("");
+    agents
+      .teamChange(change.id, action)
+      .catch((reason) => setError(message(reason)))
+      .finally(() => setPending(undefined));
+  };
+  const lifecycle = change.kind === "delete" || change.kind === "recover";
+  const actions: [TeamChangeAction, string, boolean][] = [
+    ["check", "Check again", true],
+    [
+      "resubmit",
+      "Resubmit",
+      change.stopped && !change.unresolved && !lifecycle,
+    ],
+    ["dismiss", "Dismiss", change.stopped && !change.unresolved],
+    ["discard", "Discard", !change.stopped],
+  ];
+  return (
+    <li
+      className={styles.portRow}
+      aria-label={`${CHANGE_KIND[change.kind]}: ${name}`}
+    >
+      <span className="grid min-w-0 flex-1">
+        <span className="truncate text-body">
+          {CHANGE_KIND[change.kind]}: {name}
+        </span>
+        <span className="text-caption text-secondary">{change.problem}</span>
+        {error && (
+          <span role="alert" className="text-caption text-danger">
+            {error}
+          </span>
+        )}
+      </span>
+      {onOpen && !lifecycle && (
+        <Button
+          size="compact"
+          variant="outline"
+          disabled={!!pending}
+          onClick={onOpen}
+        >
+          Open
+        </Button>
+      )}
+      {actions.map(
+        ([action, label, shown]) =>
+          shown && (
+            <Button
+              key={action}
+              size="compact"
+              variant="outline"
+              loading={pending === action}
+              disabled={!!pending}
+              onClick={() => act(action)}
+            >
+              {label}
+            </Button>
+          ),
+      )}
+    </li>
   );
 }
 
@@ -1438,17 +1648,36 @@ function TeamEditor({
   agents,
   saved,
   team,
+  submission,
+  changes,
   onDone,
 }: {
   agents: Agents;
   saved: readonly Agent[];
   team?: Team;
+  /** An unfinished change whose team has no card: the form opens on what
+   * it saved, and edits here stay unsaved until Save. */
+  submission?: TeamChangeView;
+  /** Unfinished changes; the form shows its own team's. */
+  changes: readonly TeamChangeView[];
   onDone(): void;
 }) {
-  const [name, setName] = useState(team?.name ?? "");
-  const [instructions, setInstructions] = useState(team?.instructions ?? "");
+  const shown = team ?? submission;
+  const [name, setName] = useState(shown?.name ?? "");
+  const [instructions, setInstructions] = useState(shown?.instructions ?? "");
   const [members, setMembers] = useState<readonly string[]>(
-    team?.members ?? [],
+    shown?.members ?? [],
+  );
+  // The head this form opened; a later remote edit makes Save a conflict.
+  const [base] = useState(team?.base);
+  // This form's id: Save again revises the same change (a new team's id),
+  // even once that change finished while the form stayed open.
+  const [creation] = useState(() => submission?.teamId ?? crypto.randomUUID());
+  const [operation] = useState(submission?.id);
+  // A reopened Create whose change finished now edits its team.
+  const edits = !!team || (!!operation && !submission);
+  const own = changes.filter(
+    (change) => change.teamId === (team?.id ?? creation),
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -1468,6 +1697,9 @@ function TeamEditor({
     act(() =>
       agents.saveTeam({
         ...(team ? { id: team.id } : {}),
+        creation,
+        ...(operation ? { operation } : {}),
+        ...(base ? { base } : {}),
         name: name.trim(),
         instructions,
         members,
@@ -1476,7 +1708,7 @@ function TeamEditor({
   return (
     <form
       className={styles.sideBody}
-      aria-label={team ? `Edit ${team.name}` : "New team"}
+      aria-label={edits ? `Edit ${team?.name ?? name}` : "New team"}
       onSubmit={(event) => {
         event.preventDefault();
         void save();
@@ -1488,7 +1720,7 @@ function TeamEditor({
       <SideHeader
         title={
           <h3 className="m-0 text-heading">
-            {team ? "Edit team" : "New team"}
+            {edits ? "Edit team" : "New team"}
           </h3>
         }
         onClose={onDone}
@@ -1535,6 +1767,15 @@ function TeamEditor({
           <p className="m-0 text-body-sm text-secondary">No agents yet.</p>
         )}
       </Section>
+      {own.length > 0 && (
+        <Section title="Unfinished changes">
+          <ul className={styles.portList}>
+            {own.map((change) => (
+              <TeamChangeRow key={change.id} agents={agents} change={change} />
+            ))}
+          </ul>
+        </Section>
+      )}
       {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">
           {error}
@@ -1547,7 +1788,7 @@ function TeamEditor({
           loading={pending}
           disabled={!name.trim()}
         >
-          {team ? "Save" : "Create team"}
+          {edits ? "Save" : "Create team"}
         </Button>
         {team && (
           <Button

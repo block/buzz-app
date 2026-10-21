@@ -6809,6 +6809,45 @@ it("does not label still-running work failed when only its handover deadline exp
   }
 });
 
+it("submits both draft kinds after the run's handover deadline expires", async () => {
+  const f = await setup({ timeoutMs: 100 });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await f.service.create({ type: "example/echo", name: "Child" });
+  let delivery!: Delivery<Config>;
+  const expired = new Promise<void>((resolve) =>
+    f.run.mockImplementationOnce((accepted) => {
+      delivery = accepted;
+      accepted.signal.addEventListener("abort", () => resolve(), {
+        once: true,
+      });
+      return new Promise<void>(() => {});
+    }),
+  );
+  f.emit({
+    events: [
+      event("1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  try {
+    await expired;
+    await expect(
+      delivery.agent.createAgent?.({ type: "example/echo", name: "Kid" }),
+    ).resolves.toMatchObject({ requestId: expect.any(String) });
+    await expect(
+      delivery.agent.updateAgent?.({ agent: sibling, name: "Kid" }),
+    ).resolves.toMatchObject({ requestId: expect.any(String) });
+    expect(f.service.creationRequests()).toHaveLength(1);
+    expect(f.service.updateRequests()).toHaveLength(1);
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
 it("clears declined requests and removed agents without late outcomes reviving activity", async () => {
   const f = await setup();
   await f.service.create({ type: "example/echo", name: "Echo" });

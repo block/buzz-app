@@ -2130,12 +2130,14 @@ export class AgentRunners {
         return event;
       },
       agentTypes: () => this.host.agentTypes(),
+      // Drafts outlive the run's handover deadline, as a turn still working may
+      // submit one, but not the agent or its type.
       createAgent: async (input: Readonly<{ type: string; name: string }>) => {
-        signal.throwIfAborted();
+        runner.controller.signal.throwIfAborted();
         return this.host.createAgent(agent, input);
       },
       updateAgent: async (input: AgentUpdateInput) => {
-        signal.throwIfAborted();
+        runner.controller.signal.throwIfAborted();
         return this.host.updateAgent(agent, input);
       },
       templates: () => this.host.templates(agent),

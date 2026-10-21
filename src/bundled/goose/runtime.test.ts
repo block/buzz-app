@@ -832,6 +832,47 @@ it("shows each resumed thread its own progress in one channel session", async ()
   expect(turns[1]?.text).toContain("Two reached 10");
 });
 
+it("leaves a later thread's context unseen after a resume in a channel session", async () => {
+  const first = message("1", "@Gander count in one");
+  const reply = (
+    id: string,
+    root: RelayEvent,
+    content: string,
+    pubkey: string,
+  ) =>
+    message(id, content, {
+      pubkey,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  const second = message("2", "Start of two");
+  // Older than the resumed thread's progress, but never read.
+  const instruction = reply("3", second, "Use the blue palette", alice);
+  const progress = reply("4", first, "One reached 10", self);
+  const mention = reply("5", second, "@Gander go", alice);
+  const events = [first, second, instruction, progress, mention];
+  const f = setup({ scope: "channel" });
+  f.read.mockImplementation((async (filters: { "#e"?: string[] }[]) =>
+    events.filter((event) =>
+      filters.some(
+        (filter) =>
+          filter["#e"]?.includes(event.tags[1]?.[1] ?? "") ||
+          (filter as { ids?: string[] }).ids?.includes(event.id),
+      ),
+    )) as never);
+  await f.run({ type: "mention", event: first, resumed: true });
+  await flush(100);
+  await f.deliver(mention);
+  await flush(100);
+  const turns = f.goose()?.turns ?? [];
+  expect(turns).toHaveLength(2);
+  expect(turns[1]?.sessionId).toBe(turns[0]?.sessionId);
+  expect(turns[0]?.text).toContain("One reached 10");
+  expect(turns[1]?.text).toContain("Use the blue palette");
+});
+
 it("ends a turn's prompt with the notes plugins left for it in its channel", async () => {
   const f = setup();
   const notes = vi.fn((at: string) =>

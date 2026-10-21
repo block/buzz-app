@@ -562,11 +562,12 @@ export class GooseRuntime {
             : undefined,
         )
       : Promise.resolve(undefined);
+    const threadRead = (thread || (resumed && !dm)) && !topLevel;
     let earlier: readonly EventData[] = [];
     if (session && (thread || dm || topLevel || resumed))
       try {
         const events = await session.read(
-          (thread || (resumed && !dm)) && !topLevel
+          threadRead
             ? [
                 { ids: [rootId], limit: 1 },
                 { kinds: CHAT, "#h": [channelId], "#e": [rootId], limit: 200 },
@@ -617,11 +618,15 @@ export class GooseRuntime {
       },
       ...(thread ? { thread } : {}),
       context: unseen,
-      /** created_at of the newest event the turn is shown. */
-      shown: Math.max(
-        event.created_at,
-        ...unseen.map((item) => item.created_at),
-      ),
+      /** created_at of the newest event the turn is shown. A thread read in a
+       * channel session stops at the event: the other threads were not read. */
+      shown:
+        threadRead && key === channelId
+          ? event.created_at
+          : Math.max(
+              event.created_at,
+              ...unseen.map((item) => item.created_at),
+            ),
       total: earlier.length + 1,
       name: (pubkey: string) =>
         session?.names.resolve(pubkey, undefined, members) ??

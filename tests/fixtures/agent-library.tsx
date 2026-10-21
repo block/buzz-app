@@ -52,7 +52,7 @@ const type: RegisteredAgentType = {
 };
 const snapshot = {
   status: "ready" as const,
-  running: [],
+  running: [] as Agent[],
   teams: [],
   agents: ["Ada", "Bo", "Cy"].map(
     (name, index) =>
@@ -81,6 +81,7 @@ const other: RegisteredAgentType = {
 const reviewing = new URLSearchParams(location.search).has("review");
 const changing = new URLSearchParams(location.search).has("change");
 const types = changing ? [type, other] : [type];
+if (changing) snapshot.running = snapshot.agents;
 let updates: readonly AgentUpdateRequest[] = changing
   ? [
       {

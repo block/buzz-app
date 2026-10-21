@@ -33,20 +33,22 @@ const kind = (key: string, title: string) => ({
   Create,
 });
 
-function fixture(change: Partial<AgentUpdateRequest>) {
-  let requests: readonly AgentUpdateRequest[] = [
-    {
-      id: "draft",
-      requester: "a".repeat(64),
-      requesterName: "Parent",
-      owner: "b".repeat(64),
-      community: "https://relay.example",
-      agent: "c".repeat(64),
-      agentName: "Child",
-      agentType: "test/echo",
-      ...change,
-    },
-  ];
+function fixture(change: Partial<AgentUpdateRequest>, waiting = false) {
+  const request: AgentUpdateRequest = {
+    id: "draft",
+    requester: "a".repeat(64),
+    requesterName: "Parent",
+    owner: "b".repeat(64),
+    community: "https://relay.example",
+    agent: "c".repeat(64),
+    agentName: "Child",
+    agentType: "test/echo",
+    ...change,
+  };
+  // One for an agent in a community that isn't connected now.
+  let requests: readonly AgentUpdateRequest[] = waiting
+    ? [{ ...request, id: "offline", agent: "d".repeat(64) }, request]
+    : [request];
   const listeners = new Set<() => void>();
   const clear = () => {
     requests = [];
@@ -63,13 +65,14 @@ function fixture(change: Partial<AgentUpdateRequest>) {
     type: "test/echo",
     config: { reply: "Be brief.", model: "large" },
   } as unknown as Agent;
+  const snapshot = { running: [agent] };
   const agents = {
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
     types: () => types,
-    find: () => agent,
+    snapshot: () => snapshot,
     updateRequests: () => requests,
     approveUpdate: vi.fn(async () => clear()),
     dismissUpdate: vi.fn(clear),
@@ -125,6 +128,16 @@ it("previews a proposed harness change from the migrated settings", async () => 
         config: { reply: "Be brief.", model: "default" },
       }),
     ),
+  );
+});
+
+it("reviews the next request while another's agent is not connected", async () => {
+  const user = userEvent.setup();
+  const agents = fixture({ name: "Kid" }, true);
+  await screen.findByDisplayValue("Kid");
+  await user.click(screen.getByRole("button", { name: /^Close$/ }));
+  await waitFor(() =>
+    expect(agents.dismissUpdate).toHaveBeenCalledWith("draft"),
   );
 });
 

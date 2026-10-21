@@ -504,7 +504,11 @@ export class ClaudeRuntime {
           }
           // Plugins' notes wait until the turn is handed over, so one that
           // fails or is cancelled before then leaves them for the next.
-          const notes = agent.notes?.(channel) ?? [];
+          const noteRoot =
+            key === channel
+              ? undefined
+              : (threadReference(event)?.rootId ?? event.id);
+          const notes = agent.notes?.(channel, noteRoot) ?? [];
           const text = this.review(entry, prepared, notes);
           // A conversation's tools default to its thread; a session shared by
           // several threads is told which to reply in instead.
@@ -532,7 +536,8 @@ export class ClaudeRuntime {
           });
           void delivered.then(
             (result) => {
-              if (result.undelivered) agent.restoreNotes?.(channel, notes);
+              if (result.undelivered)
+                agent.restoreNotes?.(channel, notes, noteRoot);
             },
             () => undefined,
           );

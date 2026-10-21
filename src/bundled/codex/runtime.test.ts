@@ -1024,6 +1024,7 @@ it("ends a turn's input with the notes plugins left for it in its channel", asyn
     /<\/buzz-event>\n\n\(I interrupted your reply\)/,
   );
   expect(notes).toHaveBeenCalledOnce();
+  expect(notes).toHaveBeenCalledWith("channel", root);
 });
 it("hands a turn the notes plugins left while it was being prepared", async () => {
   const f = fixture();

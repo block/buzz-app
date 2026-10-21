@@ -376,7 +376,11 @@ export class GooseRuntime {
         if (!deferred) signal.throwIfAborted();
         // Plugins' notes wait until the turn is handed over, so one that
         // fails or is cancelled before then leaves them for the next.
-        const notes = agent.notes?.(channel) ?? [];
+        const noteRoot =
+          key === channel
+            ? undefined
+            : (threadReference(event)?.rootId ?? event.id);
+        const notes = agent.notes?.(channel, noteRoot) ?? [];
         const text = this.review(entry, prepared, notes);
         entry.contexts.set(
           key,
@@ -407,7 +411,8 @@ export class GooseRuntime {
         this.notify();
         void done
           .then((result) => {
-            if (result.undelivered) agent.restoreNotes?.(channel, notes);
+            if (result.undelivered)
+              agent.restoreNotes?.(channel, notes, noteRoot);
             // Of the messages one turn answered, only one has its error or text.
             if (result.error !== undefined)
               return this.report(agent, channel, event, result.error, topLevel);

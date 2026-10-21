@@ -406,6 +406,7 @@ it("ends a turn's prompt with the notes plugins left for it in its channel", asy
     claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
   expect(prompt).toMatch(/\n\n\(I interrupted your reply\)\n\n<attention>/);
   expect(notes).toHaveBeenCalledOnce();
+  expect(notes).toHaveBeenCalledWith(channel, mention.id);
 });
 
 it("keeps the notes of a turn Claude never started for the next, ahead of newer ones", async () => {

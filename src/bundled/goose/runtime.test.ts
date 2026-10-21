@@ -696,6 +696,7 @@ it("ends a turn's prompt with the notes plugins left for it in its channel", asy
     /\n\n\(I interrupted your reply\)$/,
   );
   expect(notes).toHaveBeenCalledOnce();
+  expect(notes).toHaveBeenCalledWith(channel, "1".repeat(64));
 });
 
 it.each([false, true])(

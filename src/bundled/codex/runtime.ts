@@ -197,11 +197,19 @@ const message = (error: unknown) =>
 /** Puts back the notes a request took, for a turn that never took it in. */
 function restoreNotes(request: Request) {
   if (request.notes)
-    request.agent.restoreNotes?.(request.conversation.channelId, request.notes);
+    request.agent.restoreNotes?.(
+      request.conversation.channelId,
+      request.notes,
+      request.conversation.root,
+    );
 }
 /** The note at the end of a request's turn input, if any. */
 function noteOf(request: Request) {
-  request.notes ??= request.agent.notes?.(request.conversation.channelId) ?? [];
+  request.notes ??=
+    request.agent.notes?.(
+      request.conversation.channelId,
+      request.conversation.root,
+    ) ?? [];
   const notes = [
     request.resumed ? RESUMED_PROMPT : undefined,
     ...request.notes,

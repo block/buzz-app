@@ -144,6 +144,33 @@ describe("semantic contrast contract", () => {
     },
   );
 
+  it.each(["--surface-base", "--surface-panel", "--surface-message"])(
+    "rejects text selection that disappears on %s",
+    (surface) => {
+      const result = check(
+        tokens.replaceAll(
+          "--surface-text-selection: var(--neutral-12);",
+          `--surface-text-selection: var(${surface});`,
+        ),
+      );
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain(`--surface-text-selection on ${surface}`);
+    },
+  );
+
+  it("rejects selection that disappears on a solid own bubble", () => {
+    const result = check(
+      tokens.replaceAll(
+        "--surface-text-selection-own: var(--accent-ink);",
+        "--surface-text-selection-own: var(--surface-message-own);",
+      ),
+    );
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain(
+      "--surface-text-selection-own on --surface-message-own",
+    );
+  });
+
   it("checks shared color groups at every applicable level", () => {
     const from = "--text-sidebar-hover: var(--accent-12);";
     expect(tokens).toContain(from);

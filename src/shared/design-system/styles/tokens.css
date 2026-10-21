@@ -1063,6 +1063,10 @@
   --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
+  --surface-text-selection: var(--neutral-12);
+  --text-on-selection: var(--neutral-1);
+  --surface-text-selection-own: var(--neutral-12);
+  --text-on-selection-own: var(--neutral-1);
   --surface-message: var(--bubble-received);
   --surface-message-own: var(--bubble-neutral);
   --text-message-own: var(--text-standard);
@@ -1207,6 +1211,10 @@
   --surface-elevated-glass: var(--popover-glass-fill);
   --surface-inset: var(--neutral-2);
   --surface-inverse: var(--neutral-11);
+  --surface-text-selection: var(--neutral-12);
+  --text-on-selection: var(--neutral-1);
+  --surface-text-selection-own: var(--neutral-12);
+  --text-on-selection-own: var(--neutral-1);
   --text-navigation: var(--neutral-11);
   --text-navigation-unread: var(--neutral-12);
   --text-standard: var(--neutral-12);
@@ -1822,6 +1830,8 @@
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
+  --surface-text-selection-own: var(--accent-ink);
+  --text-on-selection-own: var(--surface-message-own);
   --text-message-link-own: var(--accent-ink);
 }
 
@@ -1832,6 +1842,8 @@
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
+  --surface-text-selection-own: var(--accent-ink);
+  --text-on-selection-own: var(--surface-message-own);
   --text-message-link-own: var(--accent-ink);
 }
 
@@ -1888,6 +1900,10 @@
   --border-color-focus: var(--border-focus);
   --border-color-danger: var(--border-danger);
   --border-color-warning: var(--border-warning);
+  --color-surface-text-selection: var(--surface-text-selection);
+  --text-color-on-selection: var(--text-on-selection);
+  --color-surface-text-selection-own: var(--surface-text-selection-own);
+  --text-color-on-selection-own: var(--text-on-selection-own);
   --color-affordance-prominent: var(--affordance-prominent);
   --color-affordance-prominent-hover: var(--affordance-prominent-hover);
   --color-affordance-prominent-pressed: var(--affordance-prominent-pressed);

@@ -1614,9 +1614,15 @@ separate WCAG 3:1 non-text ratio; decorative separators and hover fills do not.
   guard checks these role mappings and status dots separately from text and
   decorative dividers.
 
+Text selection uses `surface-text-selection` with `text-on-selection`, including
+composer tokens. Its neutral fill must remain distinct from app, panel, and
+received/own bubble backgrounds at both vibe levels and in both themes. Own
+bubbles use the `-own` pair, reversing the solid bubble’s ink and fill at Buzzin’.
+
 ### Link contrast
 
-General inline links use the neutral `text-link`. Bubble links use the family’s
+General inline links use the neutral `text-link` and a persistent underline.
+Mention chips retain their resting fill instead of an underline. Bubble links use the family’s
 readable `text-message-link` at both vibe levels. Own messages use `text-message-link-own`, which pairs with that
 level's bubble fill. Components consume the matching link role;
 never pick a link color per component.

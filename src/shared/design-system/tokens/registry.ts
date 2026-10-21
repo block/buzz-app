@@ -478,6 +478,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "text-on-selection",
+        variable: "--text-on-selection",
+        pointsAt: "neutral-1 light / neutral-1 dark",
+        use: "Selected text on surface-text-selection, including composer tokens.",
+        status: "core",
+      },
+      {
+        token: "text-on-selection-own",
+        variable: "--text-on-selection-own",
+        pointsAt: "neutral-1 / own bubble fill at Buzzin’",
+        use: "Selected text inside outgoing bubbles, paired with surface-text-selection-own.",
+        status: "core",
+      },
+      {
         token: "text-on-prominent",
         variable: "--text-on-prominent",
         pointsAt: "text-inverse (neutral prominent controls)",
@@ -1106,10 +1120,24 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-text-selection",
+        variable: "--surface-text-selection",
+        pointsAt: "neutral-12 light / neutral-12 dark",
+        use: "Text-selection fill distinct from panels and message bubbles; pair with text-on-selection.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-text-selection-own",
+        variable: "--surface-text-selection-own",
+        pointsAt: "neutral-12 / accent ink at Buzzin’",
+        use: "Neutral selection fill that contrasts with the outgoing bubble at either vibe.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-accent",
         variable: "--affordance-accent",
         pointsAt: "affordance-subtle (neutral compatibility role)",
-        use: "A quiet identity or selection fill.",
+        use: "A quiet compatibility fill; text selection uses surface-text-selection.",
         status: "core",
       },
       {

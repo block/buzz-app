@@ -456,6 +456,8 @@ const accentFamilies = [
   ),
 ];
 const ACCENT_PAIRS = [
+  ["--text-on-selection", "--surface-text-selection"],
+  ["--text-on-selection-own", "--surface-text-selection-own"],
   ["--text-sidebar-selected", "--surface-sidebar-selected"],
   ["--text-sidebar-hover", "--affordance-sidebar-hover"],
   ["--text-message-link", "--surface-message"],
@@ -512,6 +514,25 @@ for (const family of accentFamilies) {
             target: TARGET_BODY,
             wcag,
           });
+      }
+      for (const surfaceRole of [
+        ...BOUNDARY_SURFACES,
+        "--surface-message",
+        "--surface-message-own",
+        "--affordance-mention",
+        "--affordance-mention-own",
+      ]) {
+        const selectionRole = surfaceRole.endsWith("-own")
+          ? "--surface-text-selection-own"
+          : "--surface-text-selection";
+        const selection = resolve(map, selectionRole);
+        const surface = resolve(map, surfaceRole);
+        const ratio =
+          selection && surface ? wcagRatio(selection, surface) : null;
+        if (ratio === null || ratio < 3)
+          boundaryFailures.push(
+            `${family}/${level}/${mode}: ${selectionRole} on ${surfaceRole} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+          );
       }
       for (const surfaceRole of BOUNDARY_SURFACES) {
         const border = resolve(map, "--border-accent");

@@ -7,6 +7,7 @@ import {
 import { useProfileMessage } from "./useProfileMessage";
 import {
   useState,
+  useEffect,
   useRef,
   useId,
   cloneElement,
@@ -51,8 +52,30 @@ export function ProfilePeek({
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
   const profileButton = useRef<HTMLButtonElement>(null);
+  const returningFromProfile = useRef<"pending" | "returned" | null>(null);
+  const [watchReturnPointer, setWatchReturnPointer] = useState(false);
+  const pointerLeft = useRef(false);
   const triggerId = useId();
   const previewId = useId();
+  useEffect(() => {
+    if (!watchReturnPointer) return;
+    // The profile can obscure its trigger, so a real pointer exit may not
+    // reach the avatar's leave handler. Observe only during this handoff.
+    const track = (event: globalThis.PointerEvent) => {
+      const rect = document.getElementById(triggerId)?.getBoundingClientRect();
+      if (rect)
+        pointerLeft.current =
+          event.clientX < rect.left ||
+          event.clientX > rect.right ||
+          event.clientY < rect.top ||
+          event.clientY > rect.bottom;
+    };
+    document.addEventListener("pointermove", track, {
+      capture: true,
+      passive: true,
+    });
+    return () => document.removeEventListener("pointermove", track, true);
+  }, [watchReturnPointer, triggerId]);
   const focusRegion = {
     onFocus: () => onFocusChange?.(true),
     onBlur: (event: FocusEvent<HTMLElement>) => {
@@ -65,6 +88,10 @@ export function ProfilePeek({
           document.getElementById(previewId)?.contains(next))
       )
         return;
+      if (returningFromProfile.current === "returned") {
+        returningFromProfile.current = null;
+        setWatchReturnPointer(false);
+      }
       onFocusChange?.(false);
     },
   };
@@ -85,18 +112,51 @@ export function ProfilePeek({
       setOpen(false);
     },
   });
+  const openProfile = () => {
+    const avatar = document.getElementById(triggerId);
+    avatar?.focus();
+    setOpen(false);
+    returningFromProfile.current = "pending";
+    pointerLeft.current = !avatar?.matches(":hover");
+    setWatchReturnPointer(true);
+    if (!onOpen(target)) {
+      returningFromProfile.current = null;
+      setWatchReturnPointer(false);
+    }
+  };
   return (
     <PreviewCard
       trigger={cloneElement(
-        trigger as ReactElement<{ id?: string } & typeof focusRegion>,
+        trigger as ReactElement<
+          {
+            id?: string;
+            onClick?: () => void;
+          } & typeof focusRegion
+        >,
         {
           id: triggerId,
+          onClick: openProfile,
           ...focusRegion,
+          onFocus: () => {
+            if (returningFromProfile.current === "pending")
+              returningFromProfile.current = "returned";
+            focusRegion.onFocus();
+          },
         },
       )}
       id={previewId}
       open={open}
       onOpenChange={(next, details) => {
+        // Return focus is not a fresh request to preview the same identity.
+        if (next && returningFromProfile.current) {
+          if (details.reason === "trigger-hover" && pointerLeft.current) {
+            returningFromProfile.current = null;
+            setWatchReturnPointer(false);
+          } else {
+            details.cancel();
+            return;
+          }
+        }
         if (!next && message.opening && details.reason === "trigger-hover") {
           details.cancel();
           return;
@@ -107,7 +167,6 @@ export function ProfilePeek({
       className={styles.card ?? ""}
       aria-label={`${name} profile preview`}
       actionRef={profileButton}
-      delay={250}
     >
       <div className={styles.content} {...focusRegion}>
         <div className={styles.lockup} data-no-picture={!picture || undefined}>
@@ -150,11 +209,7 @@ export function ProfilePeek({
             shape="round"
             variant="subtle"
             aria-label="View profile"
-            onClick={() => {
-              document.getElementById(triggerId)?.focus();
-              setOpen(false);
-              onOpen(target);
-            }}
+            onClick={openProfile}
             icon={
               <span className={styles.actionContent}>
                 {agent ? <RobotIcon size={16} /> : <UserIcon size={16} />}

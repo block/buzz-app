@@ -163,7 +163,8 @@
   .ticker {
     overflow: visible;
   }
-  .ticker .tickerTrack {
+  .ticker .tickerTrack,
+  .ticker[data-overflow] .tickerTrack {
     display: block;
     animation: none;
     width: auto;

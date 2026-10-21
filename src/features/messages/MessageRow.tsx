@@ -487,10 +487,6 @@ function MessageRowContent({
           shape="round"
           aria-label={`View ${name} profile`}
           aria-describedby={presence !== "unknown" ? presenceId : undefined}
-          onClick={(event) => {
-            event.currentTarget.focus();
-            openLink(target);
-          }}
           icon={
             <>
               <Avatar

@@ -256,6 +256,8 @@ export function PreviewCard({
       <BasePreviewCard.Portal>
         <BasePreviewCard.Positioner
           side={side}
+          // Keep supplemental controls reachable when no side has enough room.
+          sticky={!!actionRef}
           anchor={anchor}
           align="start"
           sideOffset={8}
@@ -268,20 +270,6 @@ export function PreviewCard({
             id={id}
             data-buzz-ui=""
             ref={popupRef}
-            onKeyDownCapture={(event) => {
-              // A button hint must not consume the preview's Escape shortcut.
-              if (
-                actionRef &&
-                event.key === "Escape" &&
-                event.target instanceof Element &&
-                event.target.closest("[data-base-ui-tooltip-trigger]")
-              ) {
-                event.preventDefault();
-                event.stopPropagation();
-                actions.current?.close();
-                restoreFocus();
-              }
-            }}
             onKeyDown={(event) => {
               if ((link || actionRef) && event.key === "Tab") {
                 if (actionRef) {

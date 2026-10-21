@@ -1139,6 +1139,16 @@ function Composer({
     setError(undefined);
     return true;
   }
+  function replaceRecipientsIfEmpty(recipients: readonly MentionRecipient[]) {
+    const current = valueRef.current;
+    const prose = [...current.recipients]
+      .sort((a, b) => b.start - a.start)
+      .reduce(
+        (text, tag) => text.slice(0, tag.start) + text.slice(tag.end),
+        current.text,
+      );
+    return !prose.trim() && replaceRecipients(recipients);
+  }
   function insertResource(resource: ComposerResource): true | string {
     if (
       !permitted.current ||
@@ -2098,6 +2108,7 @@ function Composer({
                     insertMention={insertMention}
                     insertMentions={insertMentions}
                     replaceRecipients={replaceRecipients}
+                    replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
                     insertResource={insertResource}
                     focus={() => input.current?.focus()}
                   />

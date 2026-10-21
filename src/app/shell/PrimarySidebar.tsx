@@ -27,6 +27,8 @@ import { relayPartition } from "../../features/relay/partition";
 import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
 import type { ChannelList } from "../../features/relay/contracts";
+import type { ContributionReader } from "../../features/conversation/contracts";
+import type { ChatIcon } from "../../features/conversation/service";
 
 const noSubscription = () => () => {};
 
@@ -41,6 +43,7 @@ type Props = {
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
+  chatIcons?: ContributionReader<ChatIcon> | undefined;
   target: OpenTarget;
   children: ReactNode;
 };
@@ -214,6 +217,7 @@ function ScopedSidebar({
                       scope={scope}
                       navigator={props.navigator}
                       target={props.target}
+                      chatIcons={props.chatIcons}
                     />
                   </section>
                   <div

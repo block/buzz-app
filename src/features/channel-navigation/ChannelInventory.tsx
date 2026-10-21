@@ -246,11 +246,6 @@ export function ChannelInventory({
 
   const [initialGroup, setInitialGroup] = useState("");
   const [initialStarred, setInitialStarred] = useState(false);
-  const pendingChannelCreation = useSyncExternalStore(
-    queries.channelCreation.subscribe,
-    queries.channelCreation.snapshot,
-    queries.channelCreation.snapshot,
-  );
   const setupNotices = useSyncExternalStore(
     queries.channelCreation.subscribe,
     queries.channelCreation.notices,
@@ -1539,7 +1534,6 @@ export function ChannelInventory({
           open={createChannelOpen}
           onOpenChange={setCreateChannelOpen}
           onCreate={createChannel}
-          pending={pendingChannelCreation}
           finalFocus={createChannelTrigger}
           session={queries}
           agents={agents}

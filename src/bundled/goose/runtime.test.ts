@@ -159,9 +159,9 @@ function setup(
     }),
     query: vi.fn(async () => [] as RelayEvent[]),
   };
-  const deliver = (event: RelayEvent, extra: Partial<Delivery> = {}) =>
+  const run = (trigger: Delivery["trigger"], extra: Partial<Delivery> = {}) =>
     runtime.run({
-      trigger: { type: "mention", event },
+      trigger,
       channelId: channel,
       agent,
       config: { ...DEFAULT_CONFIG, scope: options.scope ?? "thread" },
@@ -169,6 +169,8 @@ function setup(
       workingUntil: () => undefined,
       ...extra,
     } as unknown as Delivery);
+  const deliver = (event: RelayEvent, extra: Partial<Delivery> = {}) =>
+    run({ type: "mention", event }, extra);
   const goose = () => fake.geese.find((process) => process.turns.length);
   const runOnce = (key: string, prompt: string) =>
     runtime.runOnce({
@@ -185,6 +187,7 @@ function setup(
     agent,
     core,
     deliver,
+    run,
     runOnce,
     fake,
     goose,
@@ -619,6 +622,65 @@ function slowMemories(viewer: string) {
     () => true,
   ).capability;
 }
+
+/** A plugin's wake; its id is its own, which nothing may publish. */
+const WAKE_ID = "9".repeat(64);
+const pluginWake = (root?: string) => ({
+  type: "plugin" as const,
+  plugin: "github",
+  channel,
+  ...(root ? { root } : {}),
+  text: "CI failed: lint",
+  id: WAKE_ID,
+  at: 200_000,
+});
+
+it("takes a plugin's wake in its thread's session, as the plugin's and not a message", async () => {
+  const root = message("1", "@Gander watch my PR");
+  const f = setup();
+  await f.deliver(root);
+  await flush(100);
+  await f.run(pluginWake(root.id));
+  await flush(100);
+  const goose = f.goose();
+  expect(goose?.turns).toHaveLength(2);
+  expect(goose?.turns[1]?.sessionId).toBe(goose?.turns[0]?.sessionId);
+  const text = goose?.turns[1]?.text ?? "";
+  expect(text).toContain('<plugin-wake plugin="github">');
+  expect(text).toContain("neither your owner nor anyone in the channel");
+  expect(text).toContain("CI failed: lint");
+  expect(text).not.toContain("<buzz-event");
+  expect(text).not.toContain(WAKE_ID);
+});
+
+it("reports a failed wake at its thread's root, never at the wake's own id", async () => {
+  const root = "1".repeat(64);
+  const f = setup({ hold: true });
+  await f.run(pluginWake(root));
+  await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+  f.goose()?.exit(1, "Error: boom\n");
+  await vi.waitFor(() =>
+    expect(f.published.some((event) => event.kind === 9)).toBe(true),
+  );
+  for (const event of f.published.filter(({ kind }) => kind === 9))
+    expect(event.tags).toContainEqual(["e", root, "", "reply"]);
+  expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
+});
+
+it("takes a wake with no thread only in a Solo chat", async () => {
+  const ignored = vi.fn();
+  const stream = setup();
+  await stream.run(pluginWake(), { ignored });
+  await flush(100);
+  expect(ignored).toHaveBeenCalled();
+  expect(stream.goose()).toBeUndefined();
+  const solo = setup({ solo: new Set([channel]) });
+  await solo.run(pluginWake());
+  await flush(100);
+  const text = solo.goose()?.turns[0]?.text ?? "";
+  expect(text).toContain('<plugin-wake plugin="github">');
+  expect(text).not.toContain(WAKE_ID);
+});
 
 it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
   const solo = setup({ solo: new Set([channel]), canvas: "Use tokens." });

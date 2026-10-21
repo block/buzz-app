@@ -30,6 +30,10 @@ import type {
 import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
+import {
+  wakeAnchor,
+  wakeLands,
+} from "../../features/agent-harness/plugin-wake";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import {
@@ -416,9 +420,13 @@ export class ClaudeRuntime {
   }: Delivery) {
     const settings = this.resolveConfig(raw);
     // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention") return ignored?.();
+    if (trigger.type !== "mention" && trigger.type !== "plugin")
+      return ignored?.();
+    // A plugin's wake is the owner's installed code, not a message to check.
+    const wake = trigger.type === "plugin" ? trigger : undefined;
     // Claude runs commands as you; mentions need owner or delegated authority.
     if (
+      trigger.type === "mention" &&
       !(await fromOwner(
         trigger.event,
         agent.owner,
@@ -432,7 +440,8 @@ export class ClaudeRuntime {
     const entry = this.entry(agent.pubkey, settings);
     entry.handle = agent;
     entry.team = team ?? "";
-    const { event } = trigger;
+    const event =
+      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
@@ -442,6 +451,7 @@ export class ClaudeRuntime {
         channel,
         signal,
       )) ?? false;
+    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const key = await this.key(entry, agent.pubkey, event, channel, topLevel);
@@ -467,10 +477,13 @@ export class ClaudeRuntime {
             )),
             agent: agent.pubkey,
             label: "@mention",
+            ...(wake ? { wake } : {}),
           });
           return this.review(
             entry,
-            trigger.resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
+            trigger.type === "mention" && trigger.resumed
+              ? `${text}\n\n${RESUMED_PROMPT}`
+              : text,
           );
         };
         // A turn keeps the posting policy it was admitted with: a request under

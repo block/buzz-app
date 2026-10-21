@@ -1,4 +1,5 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
+import { AgentAvatarArtworkProvider } from "../features/agents/AgentAvatarArtworkProvider";
 import { IdentitySetup } from "../features/identity/IdentitySetup";
 import { NewMenu } from "./shell/NewMenu";
 import { PrimarySidebar } from "./shell/PrimarySidebar";
@@ -54,18 +55,20 @@ export function App({ services }: { services: AppServices }) {
     return identity.subscribe(update);
   }, [identity]);
   return (
-    <ModalWindowDragProvider
-      value={isTauri() ? modalWindowDragHandlers : undefined}
-    >
-      <LaunchWindowControls />
-      {services.identity ? (
-        <IdentitySetup identity={services.identity}>
+    <AgentAvatarArtworkProvider>
+      <ModalWindowDragProvider
+        value={isTauri() ? modalWindowDragHandlers : undefined}
+      >
+        <LaunchWindowControls />
+        {services.identity ? (
+          <IdentitySetup identity={services.identity}>
+            <ConnectedApp services={services} />
+          </IdentitySetup>
+        ) : (
           <ConnectedApp services={services} />
-        </IdentitySetup>
-      ) : (
-        <ConnectedApp services={services} />
-      )}
-    </ModalWindowDragProvider>
+        )}
+      </ModalWindowDragProvider>
+    </AgentAvatarArtworkProvider>
   );
 }
 
@@ -285,6 +288,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
                 relay={services.relay}
                 navigator={services.navigation}
                 agents={services.agents}
+                chatIcons={services.conversation.chatIcons}
                 target={workspace.target}
               >
                 {pageNavigation}

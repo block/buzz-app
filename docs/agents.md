@@ -736,7 +736,8 @@ and also the host's saved Buzz library: the development broker's
 `dev.local.buzz.foundation` data directory, and the native host reads the Classic
 post-fold `xyz.block.buzz.app/agents/managed-agents.json`. The host read is
 read-only: it writes no configuration, migrates no identities, retrieves no
-credentials and manages no processes, with 8 MiB / 2000-record caps. Only definition
+credentials and manages no processes, with 8 MiB / 2000-record caps. The broker
+reads a missing file as an empty library, not a failure. Only definition
 ID/name, identity public key/name/definition link and optional avatar artwork leave
 the host. Optional artwork accepts HTTPS without credentials or bounded raster data
 URLs, never file URLs or SVG data.

@@ -244,7 +244,7 @@ process status, so a stopped agent is as selectable as a running one.
 
 ### Turns a close or reload stopped
 
-Claude and Codex (`AgentType.resumes`) run their turns in the page, so closing or
+Claude, Codex and goose (`AgentType.resumes`) run their turns in the page, so closing or
 reloading the app stops them; the native host then sends no exit for them. The
 runner keeps each mention turn working then in agent storage
 (`buzz.agents.interrupted.v1:<pubkey>`) until it settles. On the next start Agents lists
@@ -254,6 +254,8 @@ agent to carry on in its saved session; **Don’t resume** forgets them. Either
 answer covers only the agents the notice names, and only Resume gives those
 mentions again: a replay or live delivery of one never does. A turn
 stays saved until its resumed turn settles, so closing again first loses none.
+goose sessions end with the app, so a resumed goose turn opens a new one and is
+shown the mention's thread, including what it already posted there.
 Mentions queued behind a working turn, watch turns and other types are not
 kept.
 

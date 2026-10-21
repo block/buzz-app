@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BuzzClient, Memories } from "../../buzz-mcp/client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
-import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -750,6 +750,51 @@ it("takes a wake with no thread only in a Solo chat", async () => {
   const text = solo.goose()?.turns[0]?.text ?? "";
   expect(text).toContain('<plugin-wake plugin="github">');
   expect(text).not.toContain(WAKE_ID);
+});
+
+it("shows a turn a reload stopped what it already posted, and to carry on", async () => {
+  const mention = message("1", "@Gander count to 60");
+  const inThread = (id: string, content: string, pubkey: string) =>
+    message(id, content, {
+      pubkey,
+      tags: [
+        ["h", channel],
+        ["e", mention.id, "", "reply"],
+      ],
+    });
+  const progress = inThread("2", "Counted to 10", self);
+  const aside = inThread("3", "Looks good so far", alice);
+  const f = setup({ thread: [mention, progress, aside] });
+  await f.deliver(mention);
+  await flush(100);
+  // A first delivery is shown nothing after its mention.
+  const first = f.goose()?.turns[0]?.text ?? "";
+  expect(first).not.toContain("Counted to 10");
+  expect(first).not.toContain(RESUMED_PROMPT);
+
+  const g = setup({ thread: [mention, progress, aside] });
+  await g.run({ type: "mention", event: mention, resumed: true });
+  await flush(100);
+  expect(g.read).toHaveBeenCalledWith(
+    [
+      { ids: [mention.id], limit: 1 },
+      { kinds: [9, 40002], "#h": [channel], "#e": [mention.id], limit: 200 },
+    ],
+    expect.anything(),
+  );
+  const resumed = g.goose()?.turns[0]?.text ?? "";
+  expect(resumed).toContain("Counted to 10");
+  expect(resumed).toContain("Looks good so far");
+  expect(resumed).toContain("Content: @Gander count to 60");
+  expect(resumed).toContain(RESUMED_PROMPT);
+
+  // The session has been shown them, so the thread's next turn is not.
+  await g.deliver(inThread("4", "@Gander faster", alice));
+  await flush(100);
+  const next = g.goose()?.turns[1]?.text ?? "";
+  expect(next).toContain("Content: @Gander faster");
+  expect(next).not.toContain("Looks good so far");
+  expect(next).not.toContain(RESUMED_PROMPT);
 });
 
 it("ends a turn's prompt with the notes plugins left for it in its channel", async () => {

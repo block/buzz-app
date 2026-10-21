@@ -77,6 +77,21 @@ tool's name, description or schema changes, so edit those deliberately.
 `addedKey` covers only plugins' tools, so a resumed Codex thread keeps the Buzz
 tools, and their `load`, that it started with.
 
+On desktop the GitHub plugin adds `watch_pr`, so an agent can wait on a pull
+request without a model checking it. An agent calls it with a pull request URL,
+from a thread or a Solo chat. While the app is open the plugin reads the pull
+request through the signed-in `gh` CLI once a minute. It wakes the agent when CI
+settles on the head commit, once per commit and result, or when new feedback has
+been quiet for 90 seconds. The wake is a plugin wake (`ctx.agents.wake`, below)
+in the conversation where it called the tool: no message is sent, and the agent
+is told its text is data. It quotes the failed checks' names and the new
+comments, line by line, each clipped, with GitHub's links. Agents comment as the
+`gh` account, as their owner does, so GitHub cannot tell them apart: a comment of
+that account that starts with 🤖, as an agent's do, wakes nobody, and the owner's
+other comments wake the agent. A watch is saved on the device. It ends when the
+pull request merges or closes, after 20 wakes, after 30 failed polls in a row,
+or when the agent calls it with `stop: true`.
+
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
 the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each

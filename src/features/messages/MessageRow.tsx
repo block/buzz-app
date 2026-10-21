@@ -886,19 +886,25 @@ function MessageRowContent({
                   data-own={ownBubble || undefined}
                 >
                   {timeReply && (
-                    <span className={styles.mediaTimeLink}>
+                    <div className={styles.mediaTimeLink} data-media-timecode>
                       {onMediaTime ? (
                         <Button
-                          size="sm"
+                          variant="subtle"
+                          size="inline"
+                          title="Open video"
                           type="button"
                           onClick={() => onMediaTime(timeReply.anchor.seconds)}
                         >
-                          {timeReply.label}
+                          <span className={styles.mediaTimeDigits}>
+                            {timeReply.label}
+                          </span>
                         </Button>
                       ) : (
-                        <span>{timeReply.label}</span>
+                        <span className={styles.mediaTimeLabel}>
+                          {timeReply.label}
+                        </span>
                       )}
-                    </span>
+                    </div>
                   )}
                   {extensions?.messages ? (
                     <MessageBody registry={extensions.messages} message={row}>

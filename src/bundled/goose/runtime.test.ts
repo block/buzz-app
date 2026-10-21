@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BuzzClient } from "../../buzz-mcp/client";
+import type { BuzzClient, Memories } from "../../buzz-mcp/client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
 import { TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
@@ -66,6 +66,12 @@ function setup(
     /** The channel's Canvas. */
     canvas?: string;
     repositories?: (scope: string | undefined) => string;
+    /** The owner session's native memory read. */
+    memoryRead?: (
+      pubkey: string,
+      signal: AbortSignal,
+      slug?: string,
+    ) => Promise<Memories>;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -89,7 +95,10 @@ function setup(
   };
   const session = {
     read,
-    agentMemories: { open: vi.fn(() => memories) },
+    agentMemories: {
+      open: vi.fn(() => memories),
+      ...(options.memoryRead ? { read: options.memoryRead } : {}),
+    },
     channels: {
       list: () => ({
         channels: [
@@ -123,10 +132,12 @@ function setup(
       ),
     },
   };
+  // A reconnect is a new session to the same community.
+  let connected = session;
   const relay = {
     snapshot: () => ({
       status: "ready",
-      session,
+      session: connected,
       viewer: alice,
       scope: `https://goose.example:${alice}`,
     }),
@@ -158,6 +169,7 @@ function setup(
       };
     }),
     query: vi.fn(async () => [] as RelayEvent[]),
+    remember: vi.fn(async () => {}),
   };
   const run = (trigger: Delivery["trigger"], extra: Partial<Delivery> = {}) =>
     runtime.run({
@@ -196,6 +208,9 @@ function setup(
     readFile,
     runtime,
     memoryOpen: session.agentMemories.open,
+    reconnect: () => {
+      connected = { ...session };
+    },
   };
 }
 
@@ -513,44 +528,98 @@ describe("GooseRuntime", () => {
   });
 });
 
+/** A goose turn calling the Buzz tools, whose native memory reads each wait
+ * for the test to answer them. */
+async function memoryTurn() {
+  const reads: { slug?: string; answer(body: string): void }[] = [];
+  const memoryRead = vi.fn(
+    (_pubkey: string, _signal: AbortSignal, slug?: string) =>
+      new Promise<Memories>((done) =>
+        reads.push({
+          ...(slug === undefined ? {} : { slug }),
+          answer: (body) =>
+            done({
+              entries: [{ slug: slug ?? "core", body, createdAt: 1 }],
+              partial: false,
+            }),
+        }),
+      ),
+  );
+  const turn = setup({ hold: true, memoryRead });
+  await turn.deliver(message("1", "@Gander remember"));
+  await flush(100);
+  const process = turn.goose();
+  const sessionId = process?.turns[0]?.sessionId ?? "";
+  const call = async (name: string, args: Record<string, unknown>) =>
+    (await process?.mcp(sessionId, "tools/call", { name, arguments: args }))
+      ?.result as { content: { text: string }[]; isError?: boolean };
+  const text = (reply: ReturnType<typeof call>) =>
+    reply.then((result) => result.content[0]?.text);
+  return { ...turn, reads, memoryRead, call, text };
+}
+
 describe("goose memory reads", () => {
+  it("does not share a read with a replacement connection", async () => {
+    const { reads, memoryRead, call, text, reconnect } = await memoryTurn();
+    const before = text(call("mem_get", { slug: "core" }));
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(1));
+    reconnect();
+    const after = text(call("mem_get", { slug: "core" }));
+    // The new connection reads for itself, even while the old read waits.
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(2));
+    reads[1]?.answer("as the new connection");
+    reads[0]?.answer("as the old connection");
+    await expect(after).resolves.toBe("as the new connection");
+    await expect(before).resolves.toBe("as the old connection");
+  });
+
   it("does not share a read that started before a write", async () => {
-    const pending: ((body: string) => void)[] = [];
-    const read = vi.fn(
-      () =>
-        new Promise<{ entries: { slug: string; body: string }[] }>((done) =>
-          pending.push((body) => done({ entries: [{ slug: "core", body }] })),
-        ),
-    );
-    const relay = {
-      snapshot: () => ({
-        status: "ready",
-        session: { agentMemories: { read } },
-      }),
-    } as unknown as RelayData;
-    const runtime = new GooseRuntime(
-      {} as Host,
-      () => relay,
-      async () => null,
-    ) as unknown as {
-      memories(pubkey: string, slug?: string): Promise<unknown>;
-      forgetMemories(pubkey: string): void;
-    };
-    const before = runtime.memories(self, "core");
-    runtime.forgetMemories(self);
-    const after = runtime.memories(self, "core");
-    expect(read).toHaveBeenCalledTimes(2);
-    pending[0]?.("old");
-    await expect(before).resolves.toEqual({
-      entries: [{ slug: "core", body: "old" }],
-    });
+    const { agent, reads, memoryRead, call, text } = await memoryTurn();
+    const before = text(call("mem_get", { slug: "core" }));
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(1));
+    const saved = text(call("mem_set", { slug: "notes", text: "new" }));
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(2));
+    reads[1]?.answer("old notes");
+    await expect(saved).resolves.toBe("saved");
+    expect(agent.remember).toHaveBeenCalledWith("mem/notes", "new", 1);
+    const after = text(call("mem_get", { slug: "core" }));
+    await vi.waitFor(() => expect(memoryRead).toHaveBeenCalledTimes(3));
+    reads[0]?.answer("before the write");
+    await expect(before).resolves.toBe("before the write");
     // The old read finishing must not drop the newer one.
-    void runtime.memories(self, "core");
-    expect(read).toHaveBeenCalledTimes(2);
-    pending[1]?.("new");
-    await expect(after).resolves.toEqual({
-      entries: [{ slug: "core", body: "new" }],
+    const later = text(call("mem_get", { slug: "core" }));
+    reads[2]?.answer("after the write");
+    await expect(after).resolves.toBe("after the write");
+    await expect(later).resolves.toBe("after the write");
+    expect(memoryRead).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps a shared read for the others when one caller stops waiting", async () => {
+    const { reads, memoryRead, call, text } = await memoryTurn();
+    vi.useFakeTimers();
+    // AbortSignal.timeout runs on real time; put it on the fake clock.
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(
+        () => controller.abort(new DOMException("", "TimeoutError")),
+        ms,
+      );
+      return controller.signal;
     });
+    try {
+      const first = call("mem_get", { slug: "core" });
+      await vi.advanceTimersByTimeAsync(5_000);
+      const second = text(call("mem_get", { slug: "core" }));
+      await vi.advanceTimersByTimeAsync(5_000);
+      // The first caller's own bound passed; the read it started goes on.
+      await expect(first).resolves.toMatchObject({ isError: true });
+      reads[0]?.answer("shared");
+      await expect(second).resolves.toBe("shared");
+      expect(memoryRead).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
   });
 
   it("gives a tool the partial listing a slow native read answers", async () => {

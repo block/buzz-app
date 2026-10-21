@@ -651,7 +651,9 @@ export function createChannelStore(
       head.rows,
       priority === "background" && intent !== channelId ? channelId : undefined,
     ).then(() => {
-      if (generation === epoch) save(channelId, head, savedProfiles);
+      const current = heads.peek(channelId);
+      if (generation === epoch && current?.events === head.events)
+        save(channelId, current, savedProfiles);
     });
     if (intent === channelId) prepareMedia(channelId);
     return head;

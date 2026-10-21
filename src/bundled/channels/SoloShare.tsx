@@ -757,9 +757,10 @@ export function SoloShare({
           aria-label={`Remove ${names(key)}`}
           disabled={busy || !!saved}
           icon={<XIcon size={16} />}
-          onClick={() =>
-            setPeople(people.filter((person) => person.pubkey !== key))
-          }
+          onClick={() => {
+            setPeople(people.filter((person) => person.pubkey !== key));
+            input.current?.focus();
+          }}
         />
       )}
     </div>

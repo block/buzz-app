@@ -143,19 +143,22 @@ async fn read_repository(
         .as_ref()
         .map(|authorization| (fi.clone(), authorization.clone()));
     let proof = async {
-        let mut header = sign(host, url).await?;
+        let header = sign(host, url).await?;
         super::admit(host, Some(fi), assertion.as_ref()).await?;
-        if let Some(header_value) = assertion
-            .as_ref()
-            .and_then(|authorization| authorization.header())
-        {
-            header.push_str(&format!("\n{}: {}", super::HEADER, header_value));
-        }
-        Ok(header)
+        Ok(git_headers(header, assertion.as_ref()))
     };
     let response = serve(url, read, cancelled, proof, lease).await;
-    super::admit(host, Some(fi), assertion.as_ref()).await?;
+    if let Some(authorization) = assertion.as_ref() {
+        fi.admit_response(host, authorization, false).await?;
+    }
     response
+}
+
+fn git_headers(mut proof: String, authorization: Option<&Authorization>) -> String {
+    if let Some(header) = authorization.and_then(Authorization::header) {
+        proof.push_str(&format!("\n{}: {}", super::HEADER, header));
+    }
+    proof
 }
 
 #[tauri::command]
@@ -196,10 +199,8 @@ async fn serve(
     auth: impl Future<Output = Result<String>>,
     lease: Option<(FederatedIdentity, Authorization)>,
 ) -> Result<RelayResponse> {
-    let deadline = Instant::now()
-        + lease.as_ref().map_or(DEADLINE, |(_, authorization)| {
-            DEADLINE.min(authorization.remaining())
-        });
+    // The assertion admits this read. It is not a timeout for work already sent.
+    let deadline = Instant::now() + DEADLINE;
     let retirement = lease
         .as_ref()
         .map(|(fi, authorization)| fi.authorization_cancellation(authorization))
@@ -216,11 +217,7 @@ async fn serve(
             .prefix("buzz-project-read-")
             .tempdir()
             .map_err(|_| "Repository read failed")?;
-        let mut git = Git::new(directory.path(), &header, url, deadline, stop);
-        git.admission = lease.map(|(fi, authorization)| {
-            Box::new(move || fi.authorization_current(&authorization))
-                as Box<dyn Fn() -> bool + Send + Sync>
-        });
+        let git = Git::new(directory.path(), &header, url, deadline, stop);
         let response = match fetch_snapshot(&git, url, read).await {
             Ok(snapshot) => reply(200, &snapshot),
             Err(status) => failure(status),
@@ -288,7 +285,6 @@ struct Git {
     deadline: Instant,
     stop: watch::Receiver<bool>,
     store_bytes: u64,
-    admission: Option<Box<dyn Fn() -> bool + Send + Sync>>,
 }
 
 /// Only the Git read has this macOS availability rule. The Apple shim is an
@@ -392,7 +388,6 @@ impl Git {
             deadline,
             stop,
             store_bytes: STORE_BYTES,
-            admission: None,
         }
     }
 
@@ -471,7 +466,7 @@ impl Git {
     }
 
     fn retired(&self) -> bool {
-        *self.stop.borrow() || self.admission.as_ref().is_some_and(|current| !current())
+        *self.stop.borrow()
     }
     async fn over_budget(&self) -> u16 {
         loop {

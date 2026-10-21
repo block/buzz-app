@@ -814,6 +814,11 @@ async fn evidence(
         None => Ok(None),
     }
 }
+#[derive(Clone, Copy)]
+struct AuthorizationContext<'a> {
+    fi: Option<&'a FederatedIdentity>,
+    assertion: Option<&'a Authorization>,
+}
 async fn admit(
     host: &IdentityHost,
     fi: Option<&FederatedIdentity>,
@@ -839,6 +844,30 @@ async fn send(
     } else {
         None
     };
+    send_authorized(
+        host,
+        AuthorizationContext {
+            fi,
+            assertion: assertion.as_ref(),
+        },
+        url,
+        method,
+        body,
+        authenticated,
+        response_limit,
+    )
+    .await
+}
+
+async fn send_authorized(
+    host: &IdentityHost,
+    authorization: AuthorizationContext<'_>,
+    url: Url,
+    method: &str,
+    body: Option<String>,
+    authenticated: bool,
+    response_limit: usize,
+) -> Result<RelayResponse> {
     let mut request = client()?.request(
         reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| "Invalid relay method")?,
         url.clone(),
@@ -886,31 +915,34 @@ async fn send(
     } else {
         request = request.header("Accept", "application/nostr+json");
     }
-    admit(host, fi, assertion.as_ref()).await?;
-    if let Some(header) = assertion.as_ref().and_then(Authorization::header) {
+    if let Some(header) = authorization.assertion.and_then(Authorization::header) {
         request = request.header(HEADER, header);
     }
+    let mutation = method != "GET" && !matches!(url.path(), "/query" | "/gifs/search");
     // Never replay a write after a transport error: it may already have reached the relay.
-    let response = request
-        .send()
-        .await
-        .map_err(|_| "Relay request could not be confirmed")?;
-    if response.status() == 401 {
-        if let (Some(fi), Some(assertion)) = (
-            fi,
-            assertion
-                .as_ref()
-                .and_then(|authorization| authorization.assertion.as_ref()),
-        ) {
-            fi.reject_assertion(assertion).await;
+    let operation = async {
+        let response = request
+            .send()
+            .await
+            .map_err(|_| "Relay request could not be confirmed")?;
+        if response.status() == 401 {
+            if let (Some(fi), Some(assertion)) = (
+                authorization.fi,
+                authorization
+                    .assertion
+                    .and_then(|authorization| authorization.assertion.as_ref()),
+            ) {
+                fi.reject_assertion(assertion).await;
+            }
         }
+        read_response(response, response_limit).await
+    };
+    if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
+        fi.during_admitted_operation(host, assertion, mutation, operation)
+            .await?
+    } else {
+        operation.await
     }
-    let response = read_response(response, response_limit).await?;
-    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
-        let mutation = method != "GET" && !matches!(url.path(), "/query" | "/gifs/search");
-        fi.admit_response(host, assertion, mutation).await?;
-    }
-    Ok(response)
 }
 
 async fn read_response(mut response: reqwest::Response, limit: usize) -> Result<RelayResponse> {
@@ -1298,6 +1330,30 @@ async fn upload_file(
     progress: Option<UploadProgress>,
 ) -> Result<RelayResponse> {
     let assertion = evidence(host, fi, &url).await?;
+    upload_file_authorized(
+        host,
+        AuthorizationContext {
+            fi,
+            assertion: assertion.as_ref(),
+        },
+        url,
+        kind,
+        path,
+        (size, hash),
+        progress,
+    )
+    .await
+}
+
+async fn upload_file_authorized(
+    host: &IdentityHost,
+    authorization: AuthorizationContext<'_>,
+    url: Url,
+    kind: Option<&str>,
+    path: std::path::PathBuf,
+    (size, hash): (usize, String),
+    progress: Option<UploadProgress>,
+) -> Result<RelayResponse> {
     validate_upload_size(size)?;
     let kind = kind
         .filter(|kind| valid_type(kind))
@@ -1312,44 +1368,47 @@ async fn upload_file(
         vec![vec!["x".into(), hash.clone()]],
     )
     .await?;
-    admit(host, fi, assertion.as_ref()).await?;
     let mut request = client()?.put(url);
-    if let Some(header) = assertion.as_ref().and_then(Authorization::header) {
+    if let Some(header) = authorization.assertion.and_then(Authorization::header) {
         request = request.header(HEADER, header);
     }
-    let response = request
-        .timeout(Duration::from_secs(600))
-        .header("Authorization", auth)
-        .header("Content-Type", kind)
-        .header("X-SHA-256", hash)
-        .header(reqwest::header::CONTENT_LENGTH, size)
-        .body(reqwest::Body::wrap_stream(file_chunks(
-            file,
-            size as u64,
-            move |sent| {
-                if let Some(channel) = &progress {
-                    let _ = channel.send(sent);
-                }
-            },
-        )))
-        .send()
-        .await
-        .map_err(|_| "Upload did not finish")?;
-    if response.status() == 401 {
-        if let (Some(fi), Some(assertion)) = (
-            fi,
-            assertion
-                .as_ref()
-                .and_then(|authorization| authorization.assertion.as_ref()),
-        ) {
-            fi.reject_assertion(assertion).await;
+    let operation = async {
+        let response = request
+            .timeout(Duration::from_secs(600))
+            .header("Authorization", auth)
+            .header("Content-Type", kind)
+            .header("X-SHA-256", hash)
+            .header(reqwest::header::CONTENT_LENGTH, size)
+            .body(reqwest::Body::wrap_stream(file_chunks(
+                file,
+                size as u64,
+                move |sent| {
+                    if let Some(channel) = &progress {
+                        let _ = channel.send(sent);
+                    }
+                },
+            )))
+            .send()
+            .await
+            .map_err(|_| "Upload did not finish")?;
+        if response.status() == 401 {
+            if let (Some(fi), Some(assertion)) = (
+                authorization.fi,
+                authorization
+                    .assertion
+                    .and_then(|authorization| authorization.assertion.as_ref()),
+            ) {
+                fi.reject_assertion(assertion).await;
+            }
         }
+        read_response(response, 8192).await
+    };
+    if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
+        fi.during_admitted_operation(host, assertion, true, operation)
+            .await?
+    } else {
+        operation.await
     }
-    let response = read_response(response, 8192).await?;
-    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
-        fi.admit_response(host, assertion, true).await?;
-    }
-    Ok(response)
 }
 
 /// Largest whole-file media response buffered in memory: the relay's document
@@ -1863,7 +1922,7 @@ async fn fetch_media_bounded(
         .await
     };
     if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
-        fi.during_authorization(host, assertion, operation)
+        fi.during_admitted_operation(host, assertion, false, operation)
             .await
             .map_err(|_| 401u16)?
     } else {
@@ -1896,7 +1955,6 @@ async fn send_media(
         request = request.header(HEADER, header);
     }
     let upstream = request.send().await.map_err(|_| 502u16)?;
-    admit(host, fi, assertion).await.map_err(|_| 401u16)?;
     let status = upstream.status().as_u16();
     if status == 401 {
         if let (Some(fi), Some(assertion)) = (

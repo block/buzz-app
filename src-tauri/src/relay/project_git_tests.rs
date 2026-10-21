@@ -1,5 +1,5 @@
 use super::*;
-use std::io::Read as _;
+use std::io::{Read as _, Write as _};
 use std::process::Command as StdCommand;
 
 const OWNER: &str = "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB";
@@ -400,33 +400,120 @@ fn closes(mut stream: std::net::TcpStream) -> bool {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn retired_admission_kills_a_running_helper_and_refuses_the_next_git_command() {
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    };
+#[tokio::test(start_paused = true)]
+async fn git_read_outlives_assertion_expiry_and_stops_on_session_retirement() {
+    use crate::federated_identity::assertion::test_live_authorization;
+    use crate::identity::IdentityHost;
+
+    let identity = IdentityHost::fixture();
+    let (fi, authorization) =
+        test_live_authorization(&identity, "wss://relay.example", Duration::from_secs(1)).await;
     let (url, accepted) = silent_remote();
-    let directory = tempfile::tempdir().unwrap();
-    let mut git = production_git(directory.path());
-    let current = Arc::new(AtomicBool::new(true));
-    let captured = current.clone();
-    git.admission = Some(Box::new(move || captured.load(Ordering::SeqCst)));
-    let worker = tokio::spawn(async move {
-        let result = git.run(&["ls-remote", "--symref", "--", &url]).await;
-        (git, result)
+    let read = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
+    let (cancel, cancelled) = oneshot::channel();
+    let lease = (fi.clone(), authorization.clone());
+    let task = tokio::spawn(async move {
+        let proof_authorization = authorization.clone();
+        serve(
+            &url,
+            &read,
+            cancelled,
+            async move {
+                Ok(git_headers(
+                    "Authorization: Nostr fixture-proof".into(),
+                    Some(&proof_authorization),
+                ))
+            },
+            Some(lease),
+        )
+        .await
     });
-    let stream = accepted.recv_timeout(Duration::from_secs(5)).unwrap();
-    current.store(false, Ordering::SeqCst);
-    let (mut git, result) = worker.await.unwrap();
-    assert_eq!(result.err(), Some(CANCELLED));
+    let stream =
+        tokio::task::spawn_blocking(move || accepted.recv_timeout(Duration::from_secs(5)).unwrap())
+            .await
+            .unwrap();
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert!(
+        !task.is_finished(),
+        "assertion expiry stopped an already admitted Git read"
+    );
+    fi.close();
+    let response = task.await.unwrap().unwrap();
+    assert_eq!(response.status, CANCELLED);
     assert!(
         closes(stream),
-        "retired admission left a credential-bearing helper running"
+        "session retirement left a credential-bearing Git helper running"
     );
-    git.program = None;
-    assert_eq!(git.run(&["fetch", "HEAD"]).await.err(), Some(CANCELLED));
+    drop(cancel);
 }
+
+#[tokio::test(start_paused = true)]
+async fn completed_git_result_survives_assertion_expiry_and_discovery_retirement() {
+    use crate::federated_identity::assertion::test_live_authorization;
+    use crate::identity::IdentityHost;
+
+    let identity = IdentityHost::fixture();
+    let (fi, authorization) =
+        test_live_authorization(&identity, "wss://relay.example", Duration::from_secs(1)).await;
+    let (url, accepted) = silent_remote();
+    let read = read(json!({ "owner": OWNER, "dtag": "repo" })).unwrap();
+    let (cancel, cancelled) = oneshot::channel();
+    let result_identity = identity.clone();
+    let result_fi = fi.clone();
+    let result_authorization = authorization.clone();
+    let proof_authorization = result_authorization.clone();
+    let task = tokio::spawn(async move {
+        let lease = (result_fi.clone(), result_authorization.clone());
+        let response = serve(
+            &url,
+            &read,
+            cancelled,
+            async move {
+                Ok(git_headers(
+                    "Authorization: Nostr fixture-proof".into(),
+                    Some(&proof_authorization),
+                ))
+            },
+            Some(lease),
+        )
+        .await?;
+        result_fi
+            .admit_response(&result_identity, &result_authorization, false)
+            .await?;
+        Ok::<_, String>(response)
+    });
+    let mut stream = tokio::task::spawn_blocking(move || {
+        let mut stream = accepted.recv_timeout(Duration::from_secs(5)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0; 4096];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let count = stream.read(&mut chunk).unwrap();
+            assert_ne!(count, 0, "Git helper closed before dispatching its read");
+            request.extend_from_slice(&chunk[..count]);
+        }
+        assert!(String::from_utf8_lossy(&request).contains("/info/refs"));
+        stream
+    })
+    .await
+    .unwrap();
+
+    tokio::time::advance(Duration::from_secs(2)).await;
+    fi.close_discovery("test-live-authorization");
+    stream
+        .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        .unwrap();
+
+    let response = task.await.unwrap().unwrap();
+    assert_eq!(response.status, 502);
+    assert_eq!(response.body, failure(502).body);
+    assert!(authorization.remaining().is_zero());
+    drop(cancel);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelled_reads_release_slots_after_killing_remote_helpers() {
     let (url, accepted) = silent_remote();

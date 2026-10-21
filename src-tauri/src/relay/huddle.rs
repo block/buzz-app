@@ -277,6 +277,33 @@ async fn admit_membership(
         .as_ref()
         .is_some_and(|room| membership_allows(&events, authority, &call.viewer, &[room.as_str()])))
 }
+
+async fn while_audio_authorized<T>(
+    connection: &mut audio::Connection,
+    operation: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    let Some(expires_at) = connection.expires_at else {
+        return operation.await;
+    };
+    let cancellation = connection.cancellation.clone();
+    tokio::pin!(operation);
+    tokio::select! {
+        biased;
+        result = &mut operation => result,
+        _ = cancellation.cancelled() => {
+            drop(connection.socket.take());
+            match operation.as_mut().await {
+                Err(error) => Err(error),
+                Ok(_) => Err("Huddle authorization changed. Join again to reconnect.".into()),
+            }
+        }
+        _ = tokio::time::sleep_until(expires_at) => {
+            drop(connection.socket.take());
+            operation.as_mut().await?;
+            Err("Huddle authorization expired. Join again to reconnect.".into())
+        }
+    }
+}
 // Only relay-signed current rosters count. Joining an existing room may use
 // either roster; creating a room still supplies only its parent. The audio
 // endpoint remains authoritative for creator linkage, archive state and access.
@@ -393,29 +420,43 @@ async fn run(
             publish(host, fi, &call.community, lifecycle(48100, &call.parent, &room), &call.viewer).await?;
         }
         check_cancelled(&stop, &touched)?;
-        let (socket, peers) = tokio::select! {
+        let mut connection = tokio::select! {
             _ = stop.changed() => return Err("Huddle cancelled".into()),
             result = tokio::time::timeout(Duration::from_secs(15), audio::connect(host, fi, call, &room)) => result.map_err(|_| "Huddle connection timed out")??,
         };
         check_cancelled(&stop, &touched)?;
+        audio::ensure_authorized(connection.expires_at, &connection.cancellation)?;
         if !creating && !room_membership_confirmed {
             // Audio can add parent-chat members directly in the database without
             // updating NIP-29 discovery. Once audio has admitted this identity,
             // self PUT_USER republishes the signed roster without changing roles.
             // Never use audio participation itself as chat write authority.
-            publish(host, fi, &call.community, confirm_member(&room, &call.viewer), &call.viewer).await?;
+            while_audio_authorized(
+                &mut connection,
+                publish(host, fi, &call.community, confirm_member(&room, &call.viewer), &call.viewer),
+            ).await?;
             check_cancelled(&stop, &touched)?;
+            audio::ensure_authorized(connection.expires_at, &connection.cancellation)?;
             let confirmed = tokio::select! {
                 _ = stop.changed() => return Err("Huddle cancelled".into()),
-                result = admit_membership(host, fi, call) => result?,
+                result = while_audio_authorized(&mut connection, admit_membership(host, fi, call)) => result?,
             };
+            audio::ensure_authorized(connection.expires_at, &connection.cancellation)?;
             if !confirmed {
                 return Err("Huddle chat membership could not be confirmed. Try joining again.".into());
             }
         }
         check_cancelled(&stop, &touched)?;
-        updates.send(Update::Connected { room: room.clone(), participants: peers.values().cloned().collect() }).map_err(|_| "Huddle view closed")?;
-        audio::run(socket, peers, pcm, stop.clone(), updates, &touched).await
+        audio::ensure_authorized(connection.expires_at, &connection.cancellation)?;
+        updates.send(Update::Connected { room: room.clone(), participants: connection.peers.values().cloned().collect() }).map_err(|_| "Huddle view closed")?;
+        audio::run(
+            connection,
+            pcm,
+            stop.clone(),
+            updates,
+            &touched,
+        )
+        .await
     }.await;
     // Only unadvertised creation can be rolled back without ending someone else's
     // call. Otherwise socket/TTL cleanup belongs to the existing relay.

@@ -362,7 +362,7 @@ async fn plugin_import_git(
         let captured = assertion.clone();
         let guard = host.clone();
         let retired: Option<Box<dyn Fn() -> bool + Send>> = captured.map(|authorization| {
-            Box::new(move || !guard.authorization_current(&authorization))
+            Box::new(move || !guard.authorization_session_current(&authorization))
                 as Box<dyn Fn() -> bool + Send>
         });
         buzzodz_plugins::imports::prepare_git_authorized(
@@ -378,7 +378,7 @@ async fn plugin_import_git(
     })
     .await;
     if let Some(assertion) = &admitted {
-        if let Err(error) = fi.admit_authorization(&viewer, assertion).await {
+        if let Err(error) = fi.admit_response(&viewer, assertion, false).await {
             if let Ok(Some(preview)) = &result {
                 let mut pending = imports.0.lock().map_err(|_| "Import state unavailable")?;
                 if pending

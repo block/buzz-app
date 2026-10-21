@@ -129,7 +129,7 @@ pub(super) async fn read(
     let assertion = super::evidence(host, fi, url).await.map_err(|_| 401u16)?;
     let operation = read_inner(host, fi, assertion.as_ref(), url, start, end, video_limit);
     if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
-        fi.during_authorization(host, assertion, operation)
+        fi.during_admitted_operation(host, assertion, false, operation)
             .await
             .map_err(|_| 401u16)?
     } else {

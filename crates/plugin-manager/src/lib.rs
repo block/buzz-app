@@ -214,6 +214,8 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 /// The `BUZZ_BUILDERLAB_URL` build input's origin, or empty when unconfigured.
 pub const BUILDERLAB_ORIGIN: &str = env!("BUZZ_BUILDERLAB_ORIGIN");
+/// The matching Builderlab API base path, or empty when unconfigured.
+pub const BUILDERLAB_API_BASE_PATH: &str = env!("BUZZ_BUILDERLAB_API_BASE_PATH");
 pub fn bundled_manifests() -> Vec<Manifest> {
     let mut builderlab: Manifest = serde_json::from_str(include_str!(
         "../../../src/bundled/builderlab/manifest.json"

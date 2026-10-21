@@ -16,19 +16,48 @@ use std::sync::{
     Arc,
 };
 use tokio::sync::{Mutex, OnceCell};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 use zeroize::Zeroizing;
 
 pub(crate) const HEADER: &str = "Nostr-Federated-Identity";
+const ACQUISITION_RETRY_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn transient_acquisition_failure(code: &str) -> bool {
+    matches!(
+        code,
+        "clock-unavailable" | "identity-unavailable" | "network-unavailable" | "network-timeout"
+    )
+}
+
+fn admission_retired(mutation: bool) -> &'static str {
+    if mutation {
+        "Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying."
+    } else {
+        "Federated authorization changed"
+    }
+}
+
+fn monotonic_expiry(
+    expires_at: u64,
+    wall_now: std::time::SystemTime,
+    monotonic_now: Instant,
+) -> Option<(Instant, std::time::Duration)> {
+    let wall_expiry =
+        std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(expires_at))?;
+    let remaining = wall_expiry.duration_since(wall_now).unwrap_or_default();
+    Some((monotonic_now.checked_add(remaining)?, remaining))
+}
+
 #[derive(Clone)]
 pub(crate) struct Assertion {
     pub(crate) header: Zeroizing<String>,
-    pub(crate) expires_at: u64,
+    pub(crate) expires_at: Instant,
     pub(crate) revision: String,
     pub(crate) viewer: String,
     pub(crate) relay: String,
-    refresh_at: u64,
+    refresh_at: Instant,
 }
 #[derive(Clone)]
 pub(crate) struct Authorization {
@@ -43,24 +72,59 @@ impl Authorization {
             .as_ref()
             .map(|assertion| assertion.header.as_str())
     }
+
+    #[cfg(test)]
     pub(crate) fn remaining(&self) -> std::time::Duration {
         self.assertion
             .as_ref()
             .map_or(std::time::Duration::MAX, Assertion::remaining)
     }
 }
+#[cfg(test)]
+pub(crate) async fn test_live_authorization(
+    identity: &IdentityHost,
+    relay: &str,
+    lifetime: std::time::Duration,
+) -> (FederatedIdentity, Authorization) {
+    let host = super::tests::host(Arc::new(super::tests::Memory::default()));
+    {
+        let mut state = host.state();
+        state.session = Some(super::tests::record());
+        state.snapshot.status = Status::SignedIn;
+        state.restored = true;
+    }
+    let discovery = host
+        .discovery_generation(
+            relay,
+            Some(("test-live-authorization".into(), CancellationToken::new())),
+        )
+        .unwrap();
+    discovery.result.set(Ok(true)).unwrap();
+    let authorization = Authorization {
+        assertion: Some(Assertion {
+            header: Zeroizing::new("Bearer fixture-assertion".into()),
+            expires_at: Instant::now() + lifetime,
+            revision: host.snapshot().revision,
+            viewer: identity.viewer().await.unwrap(),
+            relay: relay.into(),
+            refresh_at: Instant::now(),
+        }),
+        relay: relay.into(),
+        discovery,
+        socket: false,
+    };
+    (host, authorization)
+}
 impl Assertion {
     pub(crate) fn remaining(&self) -> std::time::Duration {
-        std::time::UNIX_EPOCH
-            .checked_add(std::time::Duration::from_secs(self.expires_at))
-            .and_then(|expiry| expiry.duration_since(std::time::SystemTime::now()).ok())
-            .unwrap_or_default()
+        self.expires_at.saturating_duration_since(Instant::now())
     }
 }
 #[derive(Default)]
 pub(super) struct Acquisition {
     completed: AtomicU64,
     result: Mutex<Option<Result<Assertion, Failure>>>,
+    retry_at: Mutex<Option<Instant>>,
 }
 pub(super) type AssertionCache = std::collections::HashMap<String, Arc<Acquisition>>;
 
@@ -303,15 +367,24 @@ impl FederatedIdentity {
         {
             return Err(failure.code.into());
         }
-        let now = now().map_err(str::to_owned)? as u64;
         if let Some(assertion) = cached
             .as_ref()
             .and_then(|result| result.as_ref().ok())
-            .filter(|assertion| now < assertion.refresh_at)
+            .filter(|assertion| Instant::now() < assertion.refresh_at)
         {
             authorization.assertion = Some(assertion.clone());
             self.admit_authorization(identity, &authorization).await?;
             return Ok(authorization);
+        }
+        if let Some(Err(failure)) = cached.as_ref() {
+            if !transient_acquisition_failure(failure.code) {
+                return Err(failure.code.into());
+            }
+            let mut retry_at = entry.retry_at.lock().await;
+            if retry_at.is_some_and(|deadline| Instant::now() < deadline) {
+                return Err(failure.code.into());
+            }
+            *retry_at = None;
         }
         let result = tokio::select! {
             _ = cancel.cancelled() => return Err("Federated session changed".into()),
@@ -319,6 +392,12 @@ impl FederatedIdentity {
         };
         *cached = Some(result.clone());
         entry.completed.fetch_add(1, Ordering::Release);
+        if result
+            .as_ref()
+            .is_err_and(|failure| transient_acquisition_failure(failure.code))
+        {
+            *entry.retry_at.lock().await = Some(Instant::now() + ACQUISITION_RETRY_COOLDOWN);
+        }
         match result {
             Ok(assertion) => {
                 authorization.assertion = Some(assertion);
@@ -361,20 +440,20 @@ impl FederatedIdentity {
         assertion: &Assertion,
     ) -> Result<(), String> {
         let viewer = identity.viewer().await?;
-        if !self.current(&assertion.revision)
-            || now().map_err(str::to_owned)? as u64 >= assertion.expires_at
-            || viewer != assertion.viewer
+        if viewer != assertion.viewer
+            || assertion.remaining().is_zero()
+            || !self.current(&assertion.revision)
         {
             return Err("Federated authorization changed".into());
         }
         Ok(())
     }
-    pub(crate) fn authorization_current(&self, authorization: &Authorization) -> bool {
-        self.discovery_current(authorization)
-            && authorization.assertion.as_ref().is_none_or(|assertion| {
-                self.current(&assertion.revision)
-                    && now().is_ok_and(|time| (time as u64) < assertion.expires_at)
-            })
+    /// An admitted import can outlive discovery and assertion expiry, but not its FI session.
+    pub(crate) fn authorization_session_current(&self, authorization: &Authorization) -> bool {
+        authorization
+            .assertion
+            .as_ref()
+            .is_none_or(|assertion| self.current(&assertion.revision))
     }
     fn discovery_current(&self, authorization: &Authorization) -> bool {
         !authorization.discovery.stop.is_cancelled()
@@ -387,7 +466,7 @@ impl FederatedIdentity {
     ) -> Result<CancellationToken, String> {
         match &authorization.assertion {
             Some(assertion) => self.cancellation_for(&assertion.revision),
-            None => Ok(authorization.discovery.stop.clone()),
+            None => Ok(CancellationToken::new()),
         }
     }
     pub(crate) async fn admit_authorization(
@@ -428,19 +507,39 @@ impl FederatedIdentity {
         self.admit_authorization(identity, authorization).await?;
         Ok(result)
     }
+    pub(crate) async fn during_admitted_operation<T>(
+        &self,
+        identity: &IdentityHost,
+        authorization: &Authorization,
+        mutation: bool,
+        operation: impl std::future::Future<Output = T>,
+    ) -> Result<T, String> {
+        self.admit_authorization(identity, authorization).await?;
+        let cancellation = self.authorization_cancellation(authorization)?;
+        let result = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(admission_retired(mutation).into()),
+            result = operation => result,
+        };
+        self.admit_response(identity, authorization, mutation)
+            .await?;
+        Ok(result)
+    }
     pub(crate) async fn admit_response(
         &self,
         identity: &IdentityHost,
         authorization: &Authorization,
         mutation: bool,
     ) -> Result<(), String> {
-        self.admit_authorization(identity, authorization).await.map_err(|error| {
-            if mutation {
-                "Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying.".into()
-            } else {
-                error
-            }
-        })
+        let Some(assertion) = &authorization.assertion else {
+            return Ok(());
+        };
+        let viewer = identity.viewer().await.ok();
+        if self.current(&assertion.revision) && viewer.as_deref() == Some(assertion.viewer.as_str())
+        {
+            return Ok(());
+        }
+        Err(admission_retired(mutation).into())
     }
     pub(crate) async fn reject_assertion(&self, assertion: &Assertion) {
         let key = format!(
@@ -559,7 +658,15 @@ impl FederatedIdentity {
         })
         .await?;
         let assertion = Zeroizing::new(issued.assertion);
-        let now = now()? as u64;
+        // Use one precise wall-clock sample for NumericDate validation and the
+        // conversion to a monotonic deadline. Sampling the monotonic clock first
+        // keeps the derived deadline at or before the issuer's whole-second exp.
+        let monotonic_now = Instant::now();
+        let wall_now = std::time::SystemTime::now();
+        let now = wall_now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "clock-unavailable")?
+            .as_secs();
         validate_jwt(
             &assertion,
             &issued.nostr_pubkey,
@@ -569,17 +676,15 @@ impl FederatedIdentity {
             session_expiry,
             now,
         )?;
+        let (expires_at, lifetime) = monotonic_expiry(issued.expires_at, wall_now, monotonic_now)
+            .ok_or("invalid-assertion")?;
         Ok(Assertion {
             header: Zeroizing::new(format!("Bearer {}", assertion.as_str())),
-            expires_at: issued.expires_at,
+            expires_at,
             revision: revision.into(),
             viewer: viewer.into(),
             relay: relay.into(),
-            refresh_at: if issued.expires_at - now > 15 {
-                issued.expires_at.saturating_sub(15)
-            } else {
-                issued.expires_at
-            },
+            refresh_at: expires_at - lifetime.min(std::time::Duration::from_secs(15)),
         })
     }
 }
@@ -655,6 +760,54 @@ fn validate_jwt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monotonic_expiry_preserves_subsecond_wall_clock_precision() {
+        let wall_now = std::time::UNIX_EPOCH + std::time::Duration::from_millis(10_250);
+        let monotonic_now = Instant::now();
+        let (deadline, remaining) = monotonic_expiry(11, wall_now, monotonic_now).unwrap();
+        assert_eq!(remaining, std::time::Duration::from_millis(750));
+        assert_eq!(
+            deadline,
+            monotonic_now + std::time::Duration::from_millis(750)
+        );
+
+        let (_, expired) = monotonic_expiry(10, wall_now, monotonic_now).unwrap();
+        assert!(expired.is_zero());
+
+        assert!(monotonic_expiry(u64::MAX, std::time::UNIX_EPOCH, monotonic_now).is_none());
+    }
+
+    fn signed_in(host: &FederatedIdentity) {
+        let mut state = host.state();
+        state.session = Some(super::super::tests::record());
+        state.snapshot.status = Status::SignedIn;
+        state.restored = true;
+    }
+
+    async fn protected(
+        host: &FederatedIdentity,
+        identity: &IdentityHost,
+        relay: &str,
+        expires_at: Instant,
+    ) -> Authorization {
+        let discovery = host.discovery_generation(relay, None).unwrap();
+        discovery.result.set(Ok(true)).unwrap();
+        Authorization {
+            assertion: Some(Assertion {
+                header: Zeroizing::new("Bearer fixture".into()),
+                expires_at,
+                revision: host.snapshot().revision,
+                viewer: identity.viewer().await.unwrap(),
+                relay: relay.into(),
+                refresh_at: Instant::now(),
+            }),
+            relay: relay.into(),
+            discovery,
+            socket: false,
+        }
+    }
+
     #[tokio::test]
     async fn a_true_decision_cannot_attach_after_replacement_during_native_viewer_lookup() {
         use super::super::tests::{host, Memory};
@@ -668,11 +821,11 @@ mod tests {
         let authorization = Authorization {
             assertion: Some(Assertion {
                 header: Zeroizing::new("Bearer fixture".into()),
-                expires_at: now().unwrap() as u64 + 60,
+                expires_at: Instant::now() + std::time::Duration::from_secs(60),
                 revision: host.snapshot().revision,
                 viewer: identity.viewer().await.unwrap(),
                 relay: relay.into(),
-                refresh_at: 0,
+                refresh_at: Instant::now(),
             }),
             relay: relay.into(),
             discovery: old,
@@ -706,7 +859,7 @@ mod tests {
         occupied.await.unwrap().unwrap();
     }
     #[tokio::test]
-    async fn ordinary_admission_is_fenced_after_acquisition_before_dispatch_and_result_release() {
+    async fn ordinary_admission_is_fenced_before_dispatch_but_not_after_release() {
         use super::super::tests::{host, Memory};
         let host = host(Arc::new(Memory::default()));
         let identity = IdentityHost::fixture();
@@ -732,15 +885,12 @@ mod tests {
                 .as_deref(),
             Some("Federated community discovery changed")
         );
-        assert_eq!(
-            host.admit_response(&identity, &authorization, false)
-                .await
-                .err()
-                .as_deref(),
-            Some("Federated community discovery changed")
-        );
-        assert_eq!(host.admit_response(&identity, &authorization, true).await.err().as_deref(),
-            Some("Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying."));
+        host.admit_response(&identity, &authorization, false)
+            .await
+            .unwrap();
+        host.admit_response(&identity, &authorization, true)
+            .await
+            .unwrap();
     }
     #[tokio::test]
     async fn ordinary_operations_reuse_the_connection_discovery_without_a_network_round_trip() {
@@ -865,11 +1015,11 @@ mod tests {
             .unwrap();
         let assertion = Assertion {
             header: Zeroizing::new("Bearer fixture".into()),
-            expires_at: now().unwrap() as u64 + 60,
+            expires_at: Instant::now() + std::time::Duration::from_secs(60),
             revision: host.snapshot().revision,
             viewer: identity.viewer().await.unwrap(),
             relay: relay.into(),
-            refresh_at: 0,
+            refresh_at: Instant::now(),
         };
         let authorization = Authorization {
             assertion: Some(assertion),
@@ -1166,11 +1316,11 @@ mod tests {
         let identity = IdentityHost::fixture();
         let assertion = Assertion {
             header: Zeroizing::new("Bearer fixture".into()),
-            expires_at: now().unwrap() as u64 + 60,
+            expires_at: Instant::now() + std::time::Duration::from_secs(60),
             revision: host.snapshot().revision,
             viewer: identity.viewer().await.unwrap(),
             relay: "wss://relay.example".into(),
-            refresh_at: 0,
+            refresh_at: Instant::now(),
         };
         {
             let mut state = host.state();
@@ -1197,6 +1347,249 @@ mod tests {
             "Federated authorization changed"
         );
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn admitted_request_keeps_result_after_assertion_expiry_and_discovery_retirement() {
+        use super::super::tests::{host, Memory};
+        let host = host(Arc::new(Memory::default()));
+        signed_in(&host);
+        let identity = IdentityHost::fixture();
+        let relay = "wss://relay.example";
+        let authorization = protected(
+            &host,
+            &identity,
+            relay,
+            Instant::now() + std::time::Duration::from_secs(1),
+        )
+        .await;
+        let (started, observed) = tokio::sync::oneshot::channel();
+        let (release, held) = tokio::sync::oneshot::channel();
+        let worker = host.clone();
+        let request = tokio::spawn(async move {
+            worker
+                .during_admitted_operation(&identity, &authorization, false, async {
+                    let _ = started.send(());
+                    let _ = held.await;
+                    42
+                })
+                .await
+        });
+        observed.await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        let next = host
+            .discovery_generation(
+                relay,
+                Some(("replacement".into(), CancellationToken::new())),
+            )
+            .unwrap();
+        next.result.set(Ok(false)).unwrap();
+        release.send(()).unwrap();
+        assert_eq!(request.await.unwrap().unwrap(), 42);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn admitted_request_is_cancelled_when_its_federated_session_retires() {
+        use super::super::tests::{host, Memory};
+        let host = host(Arc::new(Memory::default()));
+        signed_in(&host);
+        let identity = IdentityHost::fixture();
+        let authorization = protected(
+            &host,
+            &identity,
+            "wss://relay.example",
+            Instant::now() + std::time::Duration::from_secs(60),
+        )
+        .await;
+        let (started, observed) = tokio::sync::oneshot::channel();
+        let (release, held) = tokio::sync::oneshot::channel::<()>();
+        let worker = host.clone();
+        let request = tokio::spawn(async move {
+            worker
+                .during_admitted_operation(&identity, &authorization, true, async {
+                    let _ = started.send(());
+                    let _ = held.await;
+                    42
+                })
+                .await
+        });
+        observed.await.unwrap();
+        host.retire(Status::SignedOut, None);
+        assert_eq!(
+            request.await.unwrap().unwrap_err(),
+            "Write result could not be confirmed; it may have completed. Inspect the existing operation before retrying."
+        );
+        assert!(release.send(()).is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn git_import_lease_ignores_assertion_and_discovery_retirement_but_not_session_retirement(
+    ) {
+        use super::super::tests::{host, Memory};
+        let host = host(Arc::new(Memory::default()));
+        signed_in(&host);
+        let relay = "wss://relay.example";
+        let authorization = protected(
+            &host,
+            &IdentityHost::fixture(),
+            relay,
+            Instant::now() + std::time::Duration::from_secs(1),
+        )
+        .await;
+
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        assert!(authorization.remaining().is_zero());
+        let replacement = host
+            .discovery_generation(
+                relay,
+                Some(("replacement".into(), CancellationToken::new())),
+            )
+            .unwrap();
+        replacement.result.set(Ok(false)).unwrap();
+        assert!(!host.current_discovery(relay, &authorization.discovery));
+        assert!(host.authorization_session_current(&authorization));
+
+        host.retire(Status::SignedOut, None);
+        assert!(!host.authorization_session_current(&authorization));
+    }
+
+    #[tokio::test]
+    async fn response_fence_rechecks_session_after_native_viewer_lookup() {
+        use super::super::tests::{host, Memory};
+        use futures_util::FutureExt;
+        let host = host(Arc::new(Memory::default()));
+        signed_in(&host);
+        let identity = IdentityHost::fixture();
+        let authorization = protected(
+            &host,
+            &identity,
+            "wss://relay.example",
+            Instant::now() + std::time::Duration::from_secs(60),
+        )
+        .await;
+        let (started, observed) = tokio::sync::oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let signing = identity.clone();
+        let signer = tokio::spawn(async move {
+            signing
+                .with_key(move |_, _| {
+                    let _ = started.send(());
+                    let _ = held.recv();
+                    Ok(())
+                })
+                .await
+        });
+        observed.await.unwrap();
+        let admission = host.admit_response(&identity, &authorization, true);
+        tokio::pin!(admission);
+        assert!(admission.as_mut().now_or_never().is_none());
+        host.retire(Status::SignedOut, None);
+        release.send(()).unwrap();
+        assert_eq!(admission.await.unwrap_err(), admission_retired(true));
+        signer.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn near_expiry_assertion_is_refreshed_for_a_later_explicit_join() {
+        use super::super::tests::{adapter, at_adapter, Memory};
+        let identity = IdentityHost::fixture();
+        let viewer = identity.viewer().await.unwrap();
+        let relay = "wss://relay.example";
+        let minted = now().unwrap() as u64;
+        let first_expiry = minted + 30;
+        let second_expiry = minted + 300;
+        let (base, server) = adapter(vec![
+            serde_json::json!({"assertion":jwt(&viewer,relay,minted,first_expiry),"nostr_pubkey":viewer,"expires_at":first_expiry}),
+            serde_json::json!({"assertion":jwt(&viewer,relay,minted,second_expiry),"nostr_pubkey":viewer,"expires_at":second_expiry}),
+        ])
+        .await;
+        let host = at_adapter(Arc::new(Memory::default()), base);
+        signed_in(&host);
+        host.discovered(relay, true);
+        let url = Url::parse(relay).unwrap();
+        let first = host.assertion_for_relay(&identity, &url).await.unwrap();
+        tokio::time::pause();
+        tokio::time::advance(std::time::Duration::from_secs(16)).await;
+        tokio::time::resume();
+        let second = host.assertion_for_relay(&identity, &url).await.unwrap();
+        assert_ne!(first.header(), second.header());
+        assert_eq!(server.await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn malformed_and_refused_assertion_responses_are_cached_for_the_session() {
+        use super::super::tests::{adapter_with_status, at_adapter, Memory};
+        for (status, body, expected) in [
+            (
+                200,
+                serde_json::json!({"unexpected":true}),
+                "invalid-response",
+            ),
+            (
+                403,
+                serde_json::json!({"error":"authorization_denied"}),
+                "authorization-denied",
+            ),
+        ] {
+            let (base, server) = adapter_with_status(vec![(status, body)]).await;
+            let host = at_adapter(Arc::new(Memory::default()), base);
+            signed_in(&host);
+            let identity = IdentityHost::fixture();
+            let relay = "wss://relay.example";
+            host.discovered(relay, true);
+            let url = Url::parse(relay).unwrap();
+            for _ in 0..2 {
+                assert_eq!(
+                    host.assertion_for_relay(&identity, &url)
+                        .await
+                        .err()
+                        .as_deref(),
+                    Some(expected)
+                );
+            }
+            assert_eq!(server.await.unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn transient_assertion_failures_are_suppressed_until_the_cooldown_expires() {
+        use super::super::tests::{adapter_with_status, at_adapter, Memory};
+        let identity = IdentityHost::fixture();
+        let viewer = identity.viewer().await.unwrap();
+        let relay = "wss://relay.example";
+        let minted = now().unwrap() as u64;
+        let expires = minted + 60;
+        let reply = serde_json::json!({"assertion":jwt(&viewer,relay,minted,expires),"nostr_pubkey":viewer,"expires_at":expires});
+        let (base, server) = adapter_with_status(vec![
+            (503, serde_json::json!({"error":"busy"})),
+            (503, serde_json::json!({"error":"busy"})),
+            (503, serde_json::json!({"error":"busy"})),
+            (200, reply),
+        ])
+        .await;
+        let host = at_adapter(Arc::new(Memory::default()), base);
+        signed_in(&host);
+        host.discovered(relay, true);
+        let url = Url::parse(relay).unwrap();
+        assert_eq!(
+            host.assertion_for_relay(&identity, &url)
+                .await
+                .err()
+                .as_deref(),
+            Some("network-unavailable")
+        );
+        tokio::time::pause();
+        assert_eq!(
+            host.assertion_for_relay(&identity, &url)
+                .await
+                .err()
+                .as_deref(),
+            Some("network-unavailable")
+        );
+        tokio::time::advance(ACQUISITION_RETRY_COOLDOWN).await;
+        tokio::time::resume();
+        assert!(host.assertion_for_relay(&identity, &url).await.is_ok());
+        assert_eq!(server.await.unwrap().len(), 4);
+    }
     #[tokio::test(start_paused = true)]
     async fn retirement_interrupts_a_pending_protected_operation_before_its_late_result() {
         use super::super::tests::{host, record, Memory};
@@ -1211,11 +1604,11 @@ mod tests {
         }
         let assertion = Assertion {
             header: Zeroizing::new("Bearer fixture".into()),
-            expires_at: now().unwrap() as u64 + 60,
+            expires_at: Instant::now() + std::time::Duration::from_secs(60),
             revision: host.snapshot().revision,
             viewer,
             relay: "wss://relay.example".into(),
-            refresh_at: 0,
+            refresh_at: Instant::now(),
         };
         let (started, observed) = tokio::sync::oneshot::channel();
         let (late, held) = tokio::sync::oneshot::channel::<()>();

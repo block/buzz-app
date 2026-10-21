@@ -262,12 +262,17 @@ pub(super) struct Wire {
 pub(super) async fn adapter(
     replies: Vec<serde_json::Value>,
 ) -> (String, tokio::task::JoinHandle<Vec<Wire>>) {
+    adapter_with_status(replies.into_iter().map(|reply| (200, reply)).collect()).await
+}
+pub(super) async fn adapter_with_status(
+    replies: Vec<(u16, serde_json::Value)>,
+) -> (String, tokio::task::JoinHandle<Vec<Wire>>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/mount", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
         let mut seen = Vec::new();
-        for reply in replies {
+        for (status, reply) in replies {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut head = Vec::new();
             while !head.ends_with(b"\r\n\r\n") {
@@ -294,11 +299,19 @@ pub(super) async fn adapter(
                 body,
             });
             let body = reply.to_string();
+            let reason = match status {
+                200 => "OK",
+                401 => "Unauthorized",
+                403 => "Forbidden",
+                429 => "Too Many Requests",
+                503 => "Service Unavailable",
+                _ => "Fixture Response",
+            };
             socket
                 .write_all(
                     format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
+                        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len(),
                     )
                     .as_bytes(),
                 )

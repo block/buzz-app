@@ -183,7 +183,10 @@ export function AgentDetails({
               onClick={onRemoved}
             />
           )}
-          <aside className={hero.hero} aria-label={`${agent.name} identity`}>
+          <aside
+            className={`${hero.hero} ${hero.panelHero}`}
+            aria-label={`${agent.name} identity`}
+          >
             <ProfileBackdrop src={backdrop}>
               {pack && <PackedAgentAvatar avatar={pack} fit="cover" />}
             </ProfileBackdrop>
@@ -208,7 +211,7 @@ export function AgentDetails({
               transition={identityTransition}
             >
               <h2
-                className="m-0 text-heading text-center break-words"
+                className="m-0 text-body-lg text-center break-words"
                 style={{ visibility: editingName ? "hidden" : undefined }}
               >
                 {agent.name}

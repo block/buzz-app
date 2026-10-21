@@ -280,7 +280,7 @@ export function ProfileSettings({
               aria-hidden={!previewReady || undefined}
             >
               <section aria-label="Profile preview" className={hero.hero}>
-                <ProfileBackdrop src={backdrop} kind="human" />
+                <ProfileBackdrop src={backdrop} />
                 <div>
                   <AvatarEditor
                     size="compact"
@@ -302,7 +302,7 @@ export function ProfileSettings({
                   />
                 </div>
                 <div className={styles.previewCopy}>
-                  <h3 className="text-heading">
+                  <h3 className="text-body-lg">
                     {profile.name.trim() || "Your profile"}
                   </h3>
                   {profile.about?.trim() ? (

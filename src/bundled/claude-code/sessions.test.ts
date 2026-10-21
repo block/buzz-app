@@ -786,3 +786,30 @@ it("marks a message whose process could not start as never delivered", async () 
     undelivered: true,
   });
 });
+
+it.each(["delete", "fresh"])(
+  "marks a message never delivered when starting over from a lost session fails (%s)",
+  async (failing) => {
+    const store = memoryStore();
+    store.set("c/root", { id: "lost", seen: 4, at: 1 });
+    const { pool } = sessions({ store });
+    if (failing === "delete")
+      vi.spyOn(store, "delete").mockRejectedValueOnce(new Error("Disk full"));
+    try {
+      await expect(
+        pool.deliver("c/root", "hello", 9, {
+          fresh: async () => {
+            if (failing === "fresh") throw new Error("Disk full");
+            return "hello again";
+          },
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        error: "Claude could not start over: Disk full",
+        undelivered: true,
+      });
+    } finally {
+      pool.dispose();
+    }
+  },
+);

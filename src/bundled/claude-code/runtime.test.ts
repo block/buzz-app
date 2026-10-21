@@ -1025,6 +1025,60 @@ it("shows the whole thread to a session started over from a lost one", async () 
   expect(fresh?.prompts[0]).toContain('<thread-context included="1" total="2"');
 });
 
+it("keeps a turn's notes for the next when starting over from a lost session fails", async () => {
+  const root = message("1", "Build is red");
+  const reply = (id: string) =>
+    message(id, "@Claude again?", {
+      created_at: 300 + Number(id),
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  const { deliver, claudes, data, agent } = setup([root, reply("2")]);
+  data.set(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [self]: { [`${channel}/${root.id}`]: { id: "lost", seen: 200, at: 1 } },
+    }),
+  );
+  const pending: Record<string, string[]> = {
+    [channel]: ["(I interrupted your reply)"],
+  };
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
+    pending[at] = [...kept, ...(pending[at] ?? [])];
+  });
+  // The first write forgetting the lost session fails.
+  const set = data.set.bind(data);
+  let failed = false;
+  vi.spyOn(data, "set").mockImplementation((key, value) => {
+    if (
+      !failed &&
+      key.startsWith("buzz.claude-code.sessions") &&
+      !value.includes('"lost"')
+    ) {
+      failed = true;
+      throw new Error("Disk full");
+    }
+    return set(key, value);
+  });
+  const handle = { ...agent, notes, restoreNotes };
+  await deliver({ type: "mention", event: reply("2") }, {
+    agent: handle,
+  } as unknown as Partial<Delivery>);
+  await flush(20);
+  expect(failed).toBe(true);
+  expect(pending[channel]).toEqual(["(I interrupted your reply)"]);
+  await deliver({ type: "mention", event: reply("3") }, {
+    agent: handle,
+  } as unknown as Partial<Delivery>);
+  await flush(20);
+  const fresh = claudes().find((process) => process.prompts.length);
+  expect(fresh?.prompts[0]).toContain("(I interrupted your reply)");
+  expect(pending[channel]).toEqual([]);
+});
+
 it("acts only on messages from its owner and the owner's agents", async () => {
   const secret = schnorr.utils.randomSecretKey();
   const owner = bytesToHex(schnorr.getPublicKey(secret));

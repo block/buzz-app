@@ -530,9 +530,12 @@ export class ClaudeRuntime {
               ...(effort ? { effort } : {}),
             },
           });
-          void delivered.then((result) => {
-            if (result.undelivered) agent.restoreNotes?.(channel, notes);
-          });
+          void delivered.then(
+            (result) => {
+              if (result.undelivered) agent.restoreNotes?.(channel, notes);
+            },
+            () => undefined,
+          );
         })();
         const done = handed.then(
           () => delivered,

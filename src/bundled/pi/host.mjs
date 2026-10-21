@@ -111,16 +111,15 @@ export class AuthFile {
       delete all[id];
     });
   }
-  /** As in `pi`, `$NAME` or `${NAME}` reads the key from the environment.
-   * A `!command` key, which `pi` runs for the key, is not run here: one
-   * host serves every agent, and a command would stop them all. */
+  /** A key `pi` gets some other way is not used here: a `!command` key would
+   * hold every agent the one host serves while it runs, and a `$NAME` or
+   * `${NAME}` key reads an environment the desktop app often doesn't have. */
   resolve(key) {
-    if (key.startsWith("!"))
+    if (/^(?:!|\$(?:\{\w+\}|\w+)$)/.test(key))
       throw new Error(
-        "Buzz doesn't run `!command` keys from Pi's auth.json. Enter the key in Buzz's Provider and model dialog instead.",
+        "Buzz doesn't use `!command` or `$NAME` keys from Pi's auth.json. Enter the key in Buzz's Provider and model dialog instead.",
       );
-    const name = /^\$(?:\{(\w+)\}|(\w+))$/.exec(key);
-    return name ? process.env[name[1] ?? name[2]] : key;
+    return key;
   }
   async locked(change) {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });

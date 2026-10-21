@@ -176,9 +176,12 @@ const auth = new AuthFile(data + "/auth.json");
 const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
 await auth.modify("p", async () => signIn);
 out.auth = { result: await auth.modify("p", async () => undefined), stored: await auth.read("p") };
-// A key \`pi\` gets by running a command is not run here.
+// A key \`pi\` gets by running a command, or from its environment, is not used here.
 await auth.modify("c", async () => ({ type: "api_key", key: "!echo secret" }));
 out.command = await auth.read("c").catch((error) => error.message);
+process.env.BUZZ_PI_TEST_KEY = "secret";
+await auth.modify("e", async () => ({ type: "api_key", key: "$BUZZ_PI_TEST_KEY" }));
+out.environment = await auth.read("e").catch((error) => error.message);
 console.log(JSON.stringify(out));
 `;
 
@@ -314,6 +317,9 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.defaults).toEqual({ provider: "faux", model: "faux-1" });
     const signIn = { type: "oauth", access: "a", refresh: "r", expires: 1 };
     expect(out.auth).toEqual({ result: signIn, stored: signIn });
-    expect(out.command).toMatch(/^Buzz doesn't run `!command` keys/);
+    expect(out.command).toMatch(
+      /^Buzz doesn't use `!command` or `\$NAME` keys/,
+    );
+    expect(out.environment).toBe(out.command);
   }, 90_000);
 });

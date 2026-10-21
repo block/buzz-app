@@ -153,9 +153,11 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
   request, at the newest compaction.
 - A provider that needs more than a key, such as Bedrock or Vertex, is set up
   with the `pi` command. Signing in from Buzz is not supported.
-- A `!command` key in `auth.json`, which the `pi` command runs to get the key,
-  is not run: one host serves every agent, and the command would hold them
-  all. Its turns fail and say so; enter the key in Buzz instead.
+- A `!command` or `$NAME` key in `auth.json`, which the `pi` command runs or
+  reads from its environment to get the key, is not used: one host serves
+  every agent, and a command would hold them all, and the desktop app often
+  lacks the shell's environment. Its turns fail and say so; enter the key in
+  Buzz instead.
 - Only Pi's built-in providers run. One that a Pi package adds (`packages` in
   Pi's settings), such as databricks, is not loaded: the provider field, the
   New agent Model field and a turn's error say so, and Use and Save wait for another.

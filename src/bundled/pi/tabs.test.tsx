@@ -446,7 +446,7 @@ it("lists Pi's conversations in the Activity tab, and shows a transcript", async
   );
 
   await user.click(
-    within(here).getByRole("button", { name: "View transcript" }),
+    within(here).getByRole("button", { name: /^View transcript/ }),
   );
   expect(await screen.findByText("Hello from chan/root")).toBeVisible();
   expect(screen.getByText("Hi there")).toBeVisible();

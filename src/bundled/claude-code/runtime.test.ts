@@ -18,7 +18,7 @@ import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
-import { localSessions } from "./sessions";
+import { AgentSessions, localSessions } from "./sessions";
 import { wake } from "../../features/agent-harness/wakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
 
@@ -406,6 +406,34 @@ it("ends a turn's prompt with the notes plugins left for it in its channel", asy
     claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
   expect(prompt).toMatch(/\n\n\(I interrupted your reply\)\n\n<attention>/);
   expect(notes).toHaveBeenCalledOnce();
+});
+
+it("keeps the notes of a turn Claude never started for the next, ahead of newer ones", async () => {
+  const mention = message("2", "@Claude go on", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, agent } = setup([mention]);
+  const pending: Record<string, string[]> = {
+    [channel]: ["(I interrupted your reply)"],
+  };
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
+    pending[at] = [...kept, ...(pending[at] ?? [])];
+  });
+  vi.spyOn(AgentSessions.prototype, "deliver").mockImplementationOnce(
+    async () => {
+      pending[channel] = ["(newer)"];
+      return { ok: false, error: "Claude could not start", undelivered: true };
+    },
+  );
+  await deliver({ type: "mention", event: mention }, {
+    agent: { ...agent, notes, restoreNotes },
+  } as unknown as Partial<Delivery>);
+  await flush(10);
+  expect(pending[channel]).toEqual(["(I interrupted your reply)", "(newer)"]);
 });
 
 it("hands a turn the notes plugins left while it was being prepared", async () => {

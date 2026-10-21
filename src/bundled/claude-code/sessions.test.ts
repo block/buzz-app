@@ -775,3 +775,14 @@ it("does not start metadata discovery after its agent is disposed during launch"
   await stopped;
   expect(claudes()).toHaveLength(0);
 });
+
+it("marks a message whose process could not start as never delivered", async () => {
+  const launched = Promise.reject(new Error("no settings"));
+  launched.catch(() => undefined);
+  const { pool } = sessions({ launched });
+  await expect(pool.deliver("a", "one", 1)).resolves.toEqual({
+    ok: false,
+    error: "Claude could not start",
+    undelivered: true,
+  });
+});

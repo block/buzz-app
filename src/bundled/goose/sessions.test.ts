@@ -544,6 +544,7 @@ describe("AgentSessions", () => {
     await expect(sessions.deliver("a", "one", 1)).resolves.toMatchObject({
       ok: false,
       error: expect.stringMatching(/HTTP MCP/),
+      undelivered: true,
     });
   });
 
@@ -575,6 +576,7 @@ describe("AgentSessions", () => {
     await expect(delivering).resolves.toEqual({
       ok: false,
       error: "goose was stopped",
+      undelivered: true,
     });
     await expect(once).resolves.toMatchObject({ ok: false });
     await flush(30);
@@ -759,6 +761,7 @@ describe("AgentSessions", () => {
     await expect(opening).resolves.toEqual({
       ok: false,
       error: "goose could not start: goose did not answer session/new in 60s",
+      undelivered: true,
     });
     expect(fake.geese[0]?.killed).toBe(true);
     expect(fake.servers.map((server) => server.closed)).toEqual([true]);

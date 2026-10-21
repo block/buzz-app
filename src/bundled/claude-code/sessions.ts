@@ -199,7 +199,8 @@ export class AgentSessions {
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
-    if (this.disposed) return { ok: false, error: "Claude was stopped" };
+    if (this.disposed)
+      return { ok: false, error: "Claude was stopped", undelivered: true };
     // A message that arrives while its conversation's process starts uses it.
     // Checked without awaiting first, so the first message opens it at once.
     const opening = this.opening.get(key);
@@ -365,15 +366,19 @@ export class AgentSessions {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         if (this.disposed) {
           void live.process.kill();
-          return { ok: false, error: "Claude was stopped" };
+          return { ok: false, error: "Claude was stopped", undelivered: true };
         }
         this.adopt(key, live, seen);
         return live;
       },
-      (error) => {
+      (error): Settled => {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         console.warn("Claude could not start", error);
-        return { ok: false, error: "Claude could not start" };
+        return {
+          ok: false,
+          error: "Claude could not start",
+          undelivered: true,
+        };
       },
     );
     this.opening.set(key, opened);

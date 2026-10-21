@@ -2496,7 +2496,28 @@ export function createChannelStore(
     (local?.snapshot() ?? []).map((item) => [item.event.id, item]),
   );
   const unsubscribeProfiles = directory.queries.subscribe(() => {
+    if (disposed || !transport) return;
+    for (const [id, head] of heads.entries())
+      heads.set(id, {
+        ...head,
+        rows: Object.freeze(
+          foldChannelMessages(id, transport.relayAuthor, head.events),
+        ),
+      });
+    for (const [id, tail] of tails.entries()) {
+      const next = {
+        ...tail,
+        preview: messagePreview(
+          foldChannelMessages(id, transport.relayAuthor, [
+            ...(heads.peek(id)?.events ?? []),
+            ...tail.events,
+          ]),
+        ),
+      };
+      tails.set(id, next, tailBytes(next));
+    }
     for (const state of windows.values()) setWindow(state, {});
+    setList(list);
     if (discoveryObserved) saveDiscovery();
   });
   const unsubscribeLocal = local?.subscribe(() => {

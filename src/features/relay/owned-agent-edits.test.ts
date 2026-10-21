@@ -13,7 +13,15 @@ import { createRelayReader } from "./reader";
 import { foldMessages } from "./fold";
 import { MessageProjection } from "./message-projection";
 import { createRelayProfiler } from "./profiling";
-import { keypair, message, roster, scriptedTransport, signed } from "./testing";
+import {
+  bounds,
+  flush,
+  keypair,
+  message,
+  roster,
+  scriptedTransport,
+  signed,
+} from "./testing";
 
 it("admits owner edits only after verifying the current signed profile, and revokes replaced evidence", async () => {
   const owner = keypair(),
@@ -239,3 +247,85 @@ it("lets the original author preserve attachments from a verified owner edit", (
     tags: [["h", "c"], ["e", original.id], media],
   });
 });
+
+it.each(["head", "tail"])(
+  "refolds an unopened channel's %s on owner verification and revocation",
+  async (mode) => {
+    const owner = keypair(),
+      agent = keypair(),
+      relay = keypair();
+    const wire = scriptedTransport(owner.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    const connection = createRelaySession(
+      {
+        ...wire.transport,
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { prepared: true },
+    );
+    const original = message(agent, "c", "Whole answer", 11);
+    const edit = signed(owner, {
+      kind: 40003,
+      created_at: 12,
+      content: "Spoken",
+      tags: [
+        ["h", "c"],
+        ["e", original.id],
+      ],
+    });
+    const profile = eventDto(
+      signed(agent, {
+        kind: 0,
+        created_at: 10,
+        content: "{}",
+        tags: [
+          [
+            "auth",
+            owner.pubkey,
+            "",
+            bytesToHex(
+              schnorr.sign(
+                createHash("sha256")
+                  .update(`nostr:agent-auth:${agent.pubkey}:`)
+                  .digest(),
+                owner.secret,
+              ),
+            ),
+          ],
+        ],
+      }),
+    );
+    const channels = connection.session.channels;
+    const preview = () =>
+      channels.list().channels.find((channel) => channel.id === "c")?.preview;
+    try {
+      live.receive([roster(relay, "c", [owner.pubkey, agent.pubkey], 1)]);
+      if (mode === "head") {
+        channels.prepare?.("c");
+        wire
+          .next()
+          .respond([
+            original,
+            edit,
+            bounds(relay, "c", "head", { has_more: false, next_cursor: null }),
+          ]);
+        await flush();
+      } else live.receive([original, edit]);
+      expect(connection.retainedChannels()).toEqual([]);
+      expect(preview()).toBe("Whole answer");
+      live.receive([profile]);
+      await vi.waitFor(() => expect(preview()).toBe("Spoken"));
+      live.receive([
+        eventDto(
+          signed(agent, { kind: 0, created_at: 13, content: "{}", tags: [] }),
+        ),
+      ]);
+      await vi.waitFor(() => expect(preview()).toBe("Whole answer"));
+    } finally {
+      connection.dispose();
+    }
+  },
+);

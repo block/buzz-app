@@ -3116,7 +3116,13 @@ export class AgentsService extends Service implements Agents {
     return Object.freeze({
       settings: this.settingsOf(identity, this.recordOf(identity)),
       epoch,
-      handoff: handoffFor(() => this.epochs.get(pubkey) ?? 0, epoch),
+      // A Delete taking effect before the first prompt supersedes it too.
+      handoff: handoffFor(() => {
+        const now = this.live(pubkey);
+        return now && this.lifecycleOf(now) === "active"
+          ? (this.epochs.get(pubkey) ?? 0)
+          : undefined;
+      }, epoch),
     });
   }
   /** The agent's settings as one resolution of its local row, synced copies

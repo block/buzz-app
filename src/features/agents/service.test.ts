@@ -25,6 +25,7 @@ import {
   artifactTemplate,
 } from "./agent-config-artifacts";
 import { revertTemplate } from "./agent-config-history";
+import { SUPERSEDED, type SettingsAttempt } from "./settings";
 import { TEAMS_MIGRATION_KEY, UNREADABLE_TEAM } from "./team-config";
 import {
   AgentsService,
@@ -7106,6 +7107,36 @@ describe("Delete as a recoverable archive", () => {
       expect(f.activity.reader.work()[0]).toMatchObject({ state: "error" }),
     );
     expect(f.run).not.toHaveBeenCalled();
+    await f.ctx.fiber.dispose();
+  });
+
+  it("refuses a first prompt handed off after an unconfirmed archive of a turn admitted before it", async () => {
+    const config = fakeConfig();
+    config.life.next = "archiving";
+    communityFake.value = config;
+    const f = await setup();
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(config.resume).toHaveBeenCalled());
+    let admitted!: (attempt: SettingsAttempt) => void;
+    const started = new Promise<SettingsAttempt>((resolve) => {
+      admitted = resolve;
+    });
+    let finish!: () => void;
+    f.run.mockImplementationOnce(async ({ attempt }) => {
+      admitted(attempt);
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    mention(f, "1");
+    // Admitted while active; its first prompt is held across the archive.
+    const attempt = await started;
+    await f.service.remove(bot);
+    expect(f.service.find(bot)?.lifecycle).toBe("archiving");
+    const send = vi.fn();
+    expect(() => attempt.handoff(attempt, send)).toThrow(SUPERSEDED);
+    expect(send).not.toHaveBeenCalled();
+    finish();
     await f.ctx.fiber.dispose();
   });
 

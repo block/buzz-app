@@ -6848,6 +6848,55 @@ it("submits both draft kinds after the run's handover deadline expires", async (
   }
 });
 
+it("refuses drafts through a delivery handle its replaced type kept", async () => {
+  const f = await setup();
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await f.service.create({ type: "example/echo", name: "Child" });
+  f.ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register<{ prompt: string }>({
+      id: "relay",
+      title: "Relay",
+      defaults: () => ({ config: { prompt: "" } }),
+      adopt: (carry, saved) => ({ prompt: carry.instructions ?? saved.prompt }),
+      run: vi.fn(),
+    });
+  let delivery!: Delivery<Config>;
+  const delivered = new Promise<void>((resolve) =>
+    f.run.mockImplementationOnce((accepted) => {
+      delivery = accepted;
+      resolve();
+    }),
+  );
+  f.emit({
+    events: [
+      event("1", {
+        tags: [
+          ["h", channel],
+          ["p", bot],
+        ],
+      }),
+    ],
+  });
+  try {
+    await delivered;
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]?.state).toBe("done"),
+    );
+    await f.service.retype(bot, "other/relay");
+    await expect(
+      delivery.agent.createAgent?.({ type: "example/echo", name: "Kid" }),
+    ).rejects.toThrow();
+    await expect(
+      delivery.agent.updateAgent?.({ agent: sibling, name: "Kid" }),
+    ).rejects.toThrow();
+    expect(f.service.creationRequests()).toEqual([]);
+    expect(f.service.updateRequests()).toEqual([]);
+  } finally {
+    await f.ctx.fiber.dispose();
+  }
+});
+
 it("clears declined requests and removed agents without late outcomes reviving activity", async () => {
   const f = await setup();
   await f.service.create({ type: "example/echo", name: "Echo" });

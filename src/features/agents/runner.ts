@@ -2087,6 +2087,8 @@ export class AgentRunners {
     agent: Agent,
     signal: AbortSignal,
   ): AgentHandle {
+    // Taken now, as a type change replaces the controller.
+    const lifetime = runner.controller.signal;
     return Object.freeze({
       pubkey: agent.pubkey,
       name: agent.name,
@@ -2133,11 +2135,11 @@ export class AgentRunners {
       // Drafts outlive the run's handover deadline, as a turn still working may
       // submit one, but not the agent or its type.
       createAgent: async (input: Readonly<{ type: string; name: string }>) => {
-        runner.controller.signal.throwIfAborted();
+        lifetime.throwIfAborted();
         return this.host.createAgent(agent, input);
       },
       updateAgent: async (input: AgentUpdateInput) => {
-        runner.controller.signal.throwIfAborted();
+        lifetime.throwIfAborted();
         return this.host.updateAgent(agent, input);
       },
       templates: () => this.host.templates(agent),

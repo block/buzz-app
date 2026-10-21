@@ -20,6 +20,10 @@ export type PullSnapshot = Readonly<{
   settled: boolean;
   /** The names of the head's checks that failed. */
   failed: readonly string[];
+  /** The feedback listed, by id: what the watch has seen, and new feedback
+   * whose text was read. */
+  ids: readonly string[];
+  /** The text of new feedback, read apart from the listing. */
   feedback: readonly Feedback[];
 }>;
 export type Feedback = Readonly<{
@@ -58,8 +62,11 @@ export const QUIET_MS = 90_000;
 export const WAKE_LIMIT = 20;
 /** Feedback ids kept beyond those a read returns. */
 const SEEN_SPARE = 200;
+/** New feedback whose text one read asks for; the rest waits for the next. */
+export const FEEDBACK_READ = 50;
 /** What a wake quotes at most: comments, characters of each, failed checks
- * and characters of each name. */
+ * and characters of each name. The manifest's `pull` command clips each body
+ * to one more character than BODY_CHARS. */
 const LISTED = 10;
 const BODY_CHARS = 1_000;
 const CHECKS = 20;
@@ -84,7 +91,7 @@ export function step(watch: Watch, snapshot: PullSnapshot, now: number): Step {
       watch,
       ended: snapshot.state === "MERGED" ? "merged" : "closed",
     };
-  const ids = snapshot.feedback.map((item) => item.id);
+  const { ids } = snapshot;
   // The first read only learns what was already there.
   const seen = new Set(watch.seen ?? ids);
   const arrived = snapshot.feedback.filter(
@@ -200,8 +207,10 @@ export function pullOf(url: string) {
   };
 }
 
-// Bodies make the answer large; these counts keep a busy pull request's under
-// the 1 MiB a host command may return.
+// Only ids, so that however long its feedback a busy pull request's answer
+// stays under the 1 MiB a host command may return. Every inline comment,
+// a reply on an old thread too, comes with a newly submitted review; pending
+// ones are not yet sent.
 const QUERY = `query($owner:String!,$name:String!,$number:Int!){
 viewer{login}
 repository(owner:$owner,name:$name){pullRequest(number:$number){
@@ -210,16 +219,28 @@ commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCo
 __typename
 ... on CheckRun{name status conclusion}
 ... on StatusContext{context state}}}}}}}
-reviews(last:50){nodes{databaseId author{login} state body url}}
-comments(last:50){nodes{databaseId author{login} body url}}
-reviewThreads(last:30){nodes{comments(last:10){nodes{databaseId author{login} body path url}}}}
+reviews(last:50,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]){nodes{id comments(first:100){nodes{id}}}}
+comments(last:50){nodes{id}}
 }}}`;
+// Clipped bodies, FEEDBACK_READ at most, keep this answer under it too.
+const FEEDBACK = `query($ids:[ID!]!){nodes(ids:$ids){__typename id
+... on PullRequestReview{author{login} state body url}
+... on IssueComment{author{login} body url}
+... on PullRequestReviewComment{author{login} body path url}}}`;
 
 /** The `gh api graphql --input -` request body that reads `pull`. */
 export function pullRequest(pull: NonNullable<ReturnType<typeof pullOf>>) {
   return JSON.stringify({
     query: QUERY,
     variables: { owner: pull.owner, name: pull.name, number: pull.number },
+  });
+}
+
+/** The request body that reads the text of feedback `ids` from a listing. */
+export function feedbackRequest(ids: readonly string[]) {
+  return JSON.stringify({
+    query: FEEDBACK,
+    variables: { ids: ids.map((id) => id.slice(id.indexOf("/") + 1)) },
   });
 }
 
@@ -282,34 +303,13 @@ export function parsePull(output: string): PullSnapshot | undefined {
     (rollup?.contexts as { totalCount?: unknown } | undefined)?.totalCount ===
       contexts.length &&
     !["PENDING", "EXPECTED"].includes(str(rollup?.state));
-  const feedback: Feedback[] = [
-    // A review's inline comments are listed with their threads; an empty
-    // COMMENTED review is only their wrapper.
-    ...nodes(pull.reviews)
-      .filter((node) => str(node.body).trim() || node.state !== "COMMENTED")
-      .map((node) => ({
-        id: `review/${String(node.databaseId)}`,
-        author: login(node),
-        url: str(node.url),
-        body: str(node.body),
-        state: str(node.state),
-      })),
-    ...nodes(pull.comments).map((node) => ({
-      id: `comment/${String(node.databaseId)}`,
-      author: login(node),
-      url: str(node.url),
-      body: str(node.body),
-    })),
-    ...nodes(pull.reviewThreads).flatMap((thread) =>
-      nodes(thread.comments).map((node) => ({
-        id: `inline/${String(node.databaseId)}`,
-        author: login(node),
-        url: str(node.url),
-        body: str(node.body),
-        path: str(node.path),
-      })),
-    ),
-  ];
+  const ids = [
+    ...nodes(pull.reviews).flatMap((review) => [
+      `review/${str(review.id)}`,
+      ...nodes(review.comments).map((node) => `inline/${str(node.id)}`),
+    ]),
+    ...nodes(pull.comments).map((node) => `comment/${str(node.id)}`),
+  ].filter((id) => !id.endsWith("/"));
   return {
     state: state as PullSnapshot["state"],
     viewer: str((data.viewer as Node | null)?.login),
@@ -318,6 +318,45 @@ export function parsePull(output: string): PullSnapshot | undefined {
     failed: checks
       .filter((check) => check.failed)
       .map((check) => check.name || "unnamed check"),
-    feedback,
+    ids,
+    feedback: [],
   };
+}
+
+const KINDS: Record<string, string> = {
+  PullRequestReview: "review",
+  IssueComment: "comment",
+  PullRequestReviewComment: "inline",
+};
+
+/** The feedback in a `feedbackRequest` response, or undefined when it has
+ * none. */
+export function parseFeedback(output: string): Feedback[] | undefined {
+  let found: unknown;
+  try {
+    found = (JSON.parse(output) as { data?: { nodes?: unknown } }).data?.nodes;
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(found)) return undefined;
+  return nodes({ nodes: found }).flatMap((node): Feedback[] => {
+    const kind = KINDS[str(node.__typename)];
+    const body = str(node.body);
+    // An empty COMMENTED review is only its inline comments' wrapper.
+    if (
+      !kind ||
+      (kind === "review" && node.state === "COMMENTED" && !body.trim())
+    )
+      return [];
+    return [
+      {
+        id: `${kind}/${str(node.id)}`,
+        author: login(node),
+        url: str(node.url),
+        body,
+        ...(kind === "review" ? { state: str(node.state) } : {}),
+        ...(kind === "inline" ? { path: str(node.path) } : {}),
+      },
+    ];
+  });
 }

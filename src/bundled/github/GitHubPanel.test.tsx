@@ -629,7 +629,7 @@ it("closes the merge confirmation when a refresh brings a newer push", async () 
   }
 });
 
-it("closes the merge confirmation when the pull request is retargeted", async () => {
+it("closes the merge confirmation when the pull request is retargeted, for good", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -654,6 +654,11 @@ it("closes the merge confirmation when the pull request is retargeted", async ()
     await vi.advanceTimersByTimeAsync(REFRESH_MS);
     await screen.findByRole("heading", { name: "Retargeted #9" });
     expect(dialog).not.toBeInTheDocument();
+    // Changing back does not open it again without another click.
+    base = "main";
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    await screen.findByRole("heading", { name: "Private change #9" });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   } finally {
     vi.useRealTimers();
   }

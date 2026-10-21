@@ -280,6 +280,8 @@ function Actions({
     asked.bypass === merge.bypass
       ? asked
       : undefined;
+  // Forgotten during render, so changing back does not reopen it.
+  if (asked && !confirming) setConfirming(undefined);
   const canAutoMerge =
     pull.canEnableAutoMerge &&
     !pull.autoMerge &&

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  FEEDBACK_READ,
+  feedbackRequest,
+  parseFeedback,
   parsePull,
   pullOf,
   QUIET_MS,
@@ -30,6 +33,7 @@ const snap = (over: Partial<PullSnapshot> = {}): PullSnapshot => ({
   failed: [],
   feedback: [],
   ...over,
+  ids: over.ids ?? (over.feedback ?? []).map((item) => item.id),
 });
 
 describe("step", () => {
@@ -102,6 +106,19 @@ describe("step", () => {
       ].join("\n"),
     );
     expect(quiet.watch.pending).toEqual([]);
+  });
+
+  it("leaves feedback the read did not include unseen", () => {
+    const base = step(watch, snap({ feedback: [comment("1")] }), 0).watch;
+    // 2 is listed but its text was not read, so it is not in `ids`.
+    const unread = step(base, snap({ ids: ["1"] }), 1);
+    expect(unread.watch.seen).toEqual(["1"]);
+    const read = step(
+      unread.watch,
+      snap({ feedback: [comment("1"), comment("2")] }),
+      2,
+    );
+    expect(read.watch.pending?.map((item) => item.id)).toEqual(["2"]);
   });
 
   it("keeps every id a read returns as seen, however many", () => {
@@ -182,6 +199,75 @@ describe("step", () => {
   });
 });
 
+describe("parseFeedback", () => {
+  it("reads each kind, leaving out the empty reviews that only wrap inline comments", () => {
+    const output = JSON.stringify({
+      data: {
+        nodes: [
+          {
+            __typename: "PullRequestReview",
+            id: "R1",
+            author: { login: "wes" },
+            state: "CHANGES_REQUESTED",
+            body: "Fix it",
+            url: "u1",
+          },
+          {
+            __typename: "PullRequestReview",
+            id: "R2",
+            author: { login: "wes" },
+            state: "COMMENTED",
+            body: " ",
+            url: "u2",
+          },
+          { __typename: "IssueComment", id: "I3", author: null, url: "u3" },
+          {
+            __typename: "PullRequestReviewComment",
+            id: "C4",
+            author: { login: "codex" },
+            body: "Here",
+            path: "src/a.ts",
+            url: "u4",
+          },
+          null,
+        ],
+      },
+    });
+    expect(parseFeedback(output)).toEqual([
+      {
+        id: "review/R1",
+        author: "wes",
+        url: "u1",
+        body: "Fix it",
+        state: "CHANGES_REQUESTED",
+      },
+      { id: "comment/I3", author: "ghost", url: "u3", body: "" },
+      {
+        id: "inline/C4",
+        author: "codex",
+        url: "u4",
+        body: "Here",
+        path: "src/a.ts",
+      },
+    ]);
+    expect(parseFeedback("not json")).toBeUndefined();
+    expect(parseFeedback(JSON.stringify({ data: null }))).toBeUndefined();
+  });
+
+  it("asks for the node ids of a read's worth of feedback within the command's input limit", () => {
+    const ids = Array.from(
+      { length: FEEDBACK_READ },
+      (_, i) =>
+        `inline/PRRC_kwDOUVULN88AAAABAiDYp${String(i).padStart(4, "0")}`,
+    );
+    const request = feedbackRequest(ids);
+    expect(JSON.parse(request).variables.ids[0]).toBe(
+      "PRRC_kwDOUVULN88AAAABAiDYp0000",
+    );
+    expect(new TextEncoder().encode(request).length).toBeLessThanOrEqual(4096);
+  });
+});
+
 describe("pullOf", () => {
   it("accepts pull request URLs only, in one spelling", () => {
     expect(
@@ -247,69 +333,25 @@ describe("parsePull", () => {
             },
             reviews: {
               nodes: [
-                {
-                  databaseId: 1,
-                  author: { login: "wes" },
-                  state: "CHANGES_REQUESTED",
-                  body: "Fix it",
-                  url: "u1",
-                },
-                {
-                  databaseId: 2,
-                  author: { login: "wes" },
-                  state: "COMMENTED",
-                  body: "",
-                  url: "u2",
-                },
+                { id: "R1", comments: { nodes: [] } },
+                { id: "R2", comments: { nodes: [{ id: "C4" }, { id: "C5" }] } },
               ],
             },
-            comments: { nodes: [{ databaseId: 3, author: null, url: "u3" }] },
-            reviewThreads: {
-              nodes: [
-                {
-                  comments: {
-                    nodes: [
-                      {
-                        databaseId: 4,
-                        author: { login: "codex" },
-                        path: "src/a.ts",
-                        line: 12,
-                        url: "u4",
-                      },
-                    ],
-                  },
-                },
-              ],
-            },
+            comments: { nodes: [{ id: "I3" }, null] },
           },
         },
       },
     });
 
-  it("reads failed checks, reviews, comments and inline comments", () => {
+  it("reads failed checks and the ids of reviews, comments and inline comments", () => {
     expect(parsePull(response())).toEqual({
       state: "OPEN",
       viewer: "baxen",
       head: "abc",
       settled: true,
       failed: ["unit"],
-      feedback: [
-        {
-          id: "review/1",
-          author: "wes",
-          url: "u1",
-          body: "Fix it",
-          state: "CHANGES_REQUESTED",
-        },
-        { id: "comment/3", author: "ghost", url: "u3", body: "" },
-        {
-          id: "inline/4",
-          author: "codex",
-          url: "u4",
-          body: "",
-          path: "src/a.ts",
-        },
-      ],
+      ids: ["review/R1", "review/R2", "inline/C4", "inline/C5", "comment/I3"],
+      feedback: [],
     });
   });
 

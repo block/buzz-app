@@ -293,20 +293,21 @@ export function createSoloPulls(
         .filter((url): url is string => !!url),
     ),
   ];
-  /** Merged and closed pull requests stay that way. */
+  /** A merged pull request stays that way; a closed one can reopen. */
   const settled = (url: string) => {
     const state = states.get(url);
-    return (
-      !!state &&
-      state !== "failed" &&
-      (state.state === "merged" || state.state === "closed")
-    );
+    return !!state && state !== "failed" && state.state === "merged";
   };
-  /** The next poll, while a shown chat links a pull request that can change. */
+  /** The next poll, while a shown chat's link is unread or links a pull
+   * request that can change. */
   const later = () => {
     clearTimeout(timer);
     timer = undefined;
-    if (!shown().some((url) => !settled(url))) return;
+    if (
+      ![...unread].some((channel) => listeners.has(channel)) &&
+      !shown().some((url) => !settled(url))
+    )
+      return;
     timer = setTimeout(
       () =>
         document.visibilityState === "visible" ? void refresh(true) : later(),
@@ -329,8 +330,8 @@ export function createSoloPulls(
       const channels = [...unread].filter((channel) => listeners.has(channel));
       if (channels.length) {
         const read = await readLinks(session, channels, signal);
-        // A refresh that was given up on, or replaced, changes nothing.
-        if (signal.aborted) return;
+        // A refresh that was stopped or replaced changes nothing.
+        if (current.signal.aborted) return;
         for (const [channel, url] of read) {
           links.set(channel, url);
           unread.delete(channel);
@@ -354,7 +355,8 @@ export function createSoloPulls(
           ),
         ),
       ]);
-      if (signal.aborted) return;
+      // One that timed out still records what it read, and what it could not.
+      if (current.signal.aborted) return;
       const read = (url: string, state: PullState | undefined) => {
         states.set(url, state ?? "failed");
         if (state) retryAt.delete(url);

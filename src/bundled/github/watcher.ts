@@ -5,6 +5,9 @@
 // the plugin's, its text data.
 import type { Context } from "@deepseek-ai/cordis";
 import {
+  FEEDBACK_READ,
+  feedbackRequest,
+  parseFeedback,
   parsePull,
   pullOf,
   pullRequest,
@@ -55,11 +58,28 @@ export function watchPulls(ctx: Context) {
     if (!disposed)
       localStorage.setItem(STORAGE_KEY, JSON.stringify([...watches.values()]));
   };
-  const read = async (url: string) => {
+  /** The pull request at `url`, with the text of feedback not in `seen`. */
+  const read = async (url: string, seen?: readonly string[]) => {
     const pull = pullOf(url);
     if (!pull) return undefined;
     const output = await ctx.host.runCommand("pull", pullRequest(pull));
-    return output === null ? undefined : parsePull(output);
+    const snapshot = output === null ? undefined : parsePull(output);
+    if (!snapshot || !seen) return snapshot;
+    const known = new Set(seen);
+    const asked = snapshot.ids
+      .filter((id) => !known.has(id))
+      .slice(0, FEEDBACK_READ);
+    if (!asked.length) return snapshot;
+    // Text is read apart, so CI results still arrive when it cannot be.
+    const text = await ctx.host.runCommand("pull", feedbackRequest(asked));
+    const feedback = text === null ? undefined : parseFeedback(text);
+    // What was not read stays unseen, to be read on a later poll.
+    const got = new Set(feedback ? asked : []);
+    return {
+      ...snapshot,
+      ids: snapshot.ids.filter((id) => known.has(id) || got.has(id)),
+      feedback: feedback ?? [],
+    };
   };
   /** Wakes the agent in the watch's conversation. Throws when this copy of
    * the app cannot run it now. */
@@ -104,7 +124,7 @@ export function watchPulls(ctx: Context) {
     try {
       for (const [key, watch] of [...watches]) {
         try {
-          const snapshot = await read(watch.url);
+          const snapshot = await read(watch.url, watch.seen);
           if (disposed) return;
           // Removed or replaced while it was read.
           if (watches.get(key) !== watch) continue;
@@ -164,7 +184,7 @@ export function watchPulls(ctx: Context) {
         throw new Error(
           "watch_pr needs a thread or a Solo chat to wake you in",
         );
-      const snapshot = await read(pull.url);
+      const snapshot = await read(pull.url, watches.get(key)?.seen);
       if (disposed) throw new Error("The GitHub plugin has stopped");
       if (!snapshot)
         throw new Error(

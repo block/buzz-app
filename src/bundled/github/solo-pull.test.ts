@@ -404,3 +404,71 @@ it("shows a link this device wrote before the next read", async () => {
   expect(pulls.get(chat)).toEqual({ url: pull, state: undefined });
   expect(changed).toHaveBeenCalled();
 });
+
+it("reads links again on the poll after a first read fails", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const relay = session([revision(chat, pull)]);
+  relay.snapshotRead.mockRejectedValueOnce(new Error("relay unavailable"));
+  const gh = vi.fn(async () => ({
+    r0: rollup("OPEN", {}, "SUCCESS"),
+  })) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
+  const pulls = createSoloPulls(relay.session, gh);
+  pulls.watch(chat, () => {});
+  await vi.waitFor(() => expect(relay.snapshotRead).toHaveBeenCalledOnce());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(pulls.get(chat)).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(SOLO_REFRESH_MS);
+  expect(relay.snapshotRead).toHaveBeenCalledTimes(2);
+  expect(pulls.get(chat)?.state?.checks).toBe("success");
+  // Once read, links are not read again on the poll.
+  await vi.advanceTimersByTimeAsync(SOLO_REFRESH_MS);
+  expect(relay.snapshotRead).toHaveBeenCalledTimes(2);
+});
+
+it("keeps polling a closed pull request, which can reopen", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const relay = session([revision(chat, pull)]);
+  const gh = vi
+    .fn()
+    .mockResolvedValueOnce({ r0: rollup("CLOSED") })
+    .mockResolvedValue({
+      r0: rollup("OPEN", {}, "SUCCESS"),
+    }) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
+  const pulls = createSoloPulls(relay.session, gh);
+  pulls.watch(chat, () => {});
+  await vi.waitFor(() => expect(pulls.get(chat)?.state?.state).toBe("closed"));
+  await vi.advanceTimersByTimeAsync(SOLO_REFRESH_MS);
+  expect(pulls.get(chat)?.state?.state).toBe("open");
+});
+
+it("keeps what a timed-out refresh read, and marks what it could not", async () => {
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  const relay = session([revision(chat, pull), revision(other, second)]);
+  let started = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string, init?: RequestInit) => {
+      started++;
+      if (input.includes("/buzz-app/"))
+        return new Response(JSON.stringify({ state: "open" }));
+      // The other never answers before the deadline.
+      return new Promise<Response>((_, reject) =>
+        init?.signal?.addEventListener("abort", () =>
+          reject(init.signal?.reason),
+        ),
+      );
+    }),
+  );
+  const pulls = createSoloPulls(relay.session, undefined);
+  pulls.watch(chat, () => {});
+  pulls.watch(other, () => {});
+  await vi.waitFor(() => expect(started).toBe(2));
+  try {
+    deadline.abort(new DOMException("Timed out", "TimeoutError"));
+    await vi.waitFor(() => expect(pulls.get(other)?.failed).toBe(true));
+    expect(pulls.get(chat)?.state).toEqual({ state: "open" });
+  } finally {
+    vi.restoreAllMocks();
+  }
+});

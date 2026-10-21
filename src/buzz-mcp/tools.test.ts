@@ -761,6 +761,96 @@ it("lists channels it can join as well as its own", async () => {
   );
 });
 
+it("lists system channels only when asked, as the relay serves them", async () => {
+  const { client, state } = relay();
+  const system = "5b7e2c1d-3a4f-4b6c-8d9e-0f1a2b3c4d5e";
+  const lobby = "6c8f3d2e-4b5a-4c7d-9e0f-1a2b3c4d5e6f";
+  state.push(
+    event({
+      kind: 39000,
+      tags: [["d", system], ["name", "config"], ["t", "system"], ["private"]],
+    }),
+    event({
+      kind: 39002,
+      tags: [
+        ["d", system],
+        ["t", "system"],
+        ["p", me, "", "owner"],
+      ],
+    }),
+    event({
+      kind: 39000,
+      tags: [
+        ["d", lobby],
+        ["name", "ops"],
+        ["t", "system"],
+      ],
+    }),
+  );
+  // The relay leaves system channels out of a read that neither opts in with
+  // `#t` nor names them by `#d`.
+  const query = client.query;
+  client.query = vi.fn(async (filters: readonly Filter[]) =>
+    (await query(filters)).filter(
+      (item) =>
+        !item.tags.some((t) => t[0] === "t" && t[1] === "system") ||
+        filters.some(
+          (filter) =>
+            (filter["#t"] as string[] | undefined)?.includes("system") ||
+            (filter["#d"] as string[] | undefined)?.includes(
+              item.tags[0]?.[1] ?? "",
+            ),
+        ),
+    ),
+  );
+  await expect(callTool(client, {}, "channels", {})).resolves.toBe(
+    `${room} plans`,
+  );
+  await expect(callTool(client, {}, "channels", { all: true })).resolves.toBe(
+    `${room} plans`,
+  );
+  await expect(
+    callTool(client, {}, "channels", { system: true }),
+  ).resolves.toBe(`${system} config (system, private)`);
+  await expect(
+    callTool(client, {}, "channels", { system: true, all: true }),
+  ).resolves.toBe(
+    `${system} config (system, private)\n${lobby} ops (system, not joined)`,
+  );
+});
+
+it("creates a system channel", async () => {
+  const { client, published } = relay();
+  const answer = await callTool(client, {}, "channel", {
+    action: "create",
+    name: "config",
+    visibility: "private",
+    type: "system",
+  });
+  const id = published[0]?.tags[0]?.[1] as string;
+  expect(published).toEqual([
+    {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", id],
+        ["name", "config"],
+        ["visibility", "private"],
+        ["channel_type", "system"],
+      ],
+    },
+  ]);
+  expect(answer).toBe(`created ${id}`);
+  await expect(
+    callTool(client, {}, "channel", {
+      action: "create",
+      name: "config",
+      visibility: "private",
+      type: "dm",
+    }),
+  ).rejects.toThrow("type must be stream, forum or system.");
+});
+
 it("finds a channel past the relay's first page, by name and then by ID", async () => {
   const { client, state, published } = relay();
   const channel = (n: number, name: string, created_at: number) => {

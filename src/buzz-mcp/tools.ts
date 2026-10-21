@@ -128,10 +128,11 @@ export const TOOLS: readonly Tool[] = [
       },
     },
   ),
-  tool("channels", "Channels you are in; with all, every one you can see.", {
-    q: str,
-    all: { type: "boolean" },
-  }),
+  tool(
+    "channels",
+    "Channels you are in; with all, every one you can see. system lists only system channels, which are otherwise left out.",
+    { q: str, all: { type: "boolean" }, system: { type: "boolean" } },
+  ),
   tool(
     "channel",
     "Channel details (default: current), or an action on it. create may use your owner's template, by name. delete is permanent.",
@@ -152,7 +153,7 @@ export const TOOLS: readonly Tool[] = [
       name: str,
       about: str,
       visibility: { type: "string", enum: ["open", "private"] },
-      type: { type: "string", enum: ["stream", "forum"] },
+      type: { type: "string", enum: ["stream", "forum", "system"] },
       ttl: {
         type: "integer",
         description: "Seconds without a message before it archives; 0: never.",
@@ -584,8 +585,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   async channels(tools, args) {
     const { client } = tools;
     const ids = new Set<string>();
+    // The relay leaves system channels out unless a read opts in to them.
+    const scope = args.system === true ? { "#t": ["system"] } : {};
     const membershipsComplete = await tools.scan(
-      { kinds: [39002], "#p": [client.pubkey] },
+      { kinds: [39002], "#p": [client.pubkey], ...scope },
       (event) => {
         const id = tag(event, "d");
         if (id) ids.add(id);
@@ -602,7 +605,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       !ids.size && !all
         ? true
         : await tools.scan(
-            all ? { kinds: [39000] } : { kinds: [39000], "#d": [...ids] },
+            all
+              ? { kinds: [39000], ...scope }
+              : { kinds: [39000], "#d": [...ids] },
             (event) => {
               const id = tag(event, "d") ?? "";
               const flags = [
@@ -1245,8 +1250,8 @@ class Tools {
     if (args.visibility !== "open" && args.visibility !== "private")
       throw new Error("visibility must be open or private.");
     const type = args.type ?? "stream";
-    if (type !== "stream" && type !== "forum")
-      throw new Error("type must be stream or forum.");
+    if (type !== "stream" && type !== "forum" && type !== "system")
+      throw new Error("type must be stream, forum or system.");
     // Found first, so a wrong name creates nothing.
     const template =
       args.template === undefined

@@ -180,8 +180,12 @@ viewport-capped scrolling. Below `40rem` viewport height, the top gutter becomes
 Expanded modals support tables, two-column content, or integrated navigation.
 When a short window or enlarged text leaves too little room below navigation
 chrome, the whole modal scrolls while retaining at least one control-height pane
-inside its insets. Navigation headers and each pane use the same inset; list
-rows retain their shared padding and align through the existing wrapper offset.
+inside its insets. Navigation headers use `space-4` vertically and the shared
+dialog inset horizontally; each pane retains that inset. List rows retain their
+shared padding and align through the existing wrapper offset. Host-contained
+sectioned modals center within their host, capped at 72rem wide and 48rem tall,
+with a `space-6` gutter. At viewport widths up to 30rem they fill the host to
+preserve usable space with enlarged text. Their panes scroll within that surface.
 
 Surface and contents enter together with a `0.75rem` upward fade over
 `duration-settle` (`220ms`) and `easing-enter`. Exit moves only `0.25rem` and uses

@@ -18,6 +18,11 @@ export type ChannelCreationInput = Readonly<{
   system?: true | undefined;
   setup?: ChannelSetup | undefined;
 }>;
+/** Whether a request asks for anything beyond the channel itself. A template
+ * that currently resolves to nothing still names itself in `setup`. */
+export const setupWork = (setup: ChannelSetup | undefined) =>
+  !!setup &&
+  !!(setup.canvas || setup.agents.length || setup.groupId || setup.starred);
 /** What the person chose. The agents and Canvas follow live inventory and the
  * template's contents, so they cannot make an unchanged form look new. */
 const requested = ({ setup, ...input }: ChannelCreationInput) =>
@@ -193,7 +198,7 @@ export function createChannelSetup({
         changed();
         opened(checking.id);
         await save(checking);
-        if (checking.input.setup)
+        if (setupWork(checking.input.setup))
           throw new Error(
             "Channel confirmed. Template setup was not continued; check its sidebar placement, Canvas and members before finishing them manually.",
           );

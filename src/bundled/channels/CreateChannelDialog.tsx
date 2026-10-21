@@ -261,10 +261,9 @@ function OpenCreateChannelDialog({
         visibility: privateChannel ? "private" : "open",
         ...(lifetime === "temporary" ? { ttlSeconds: temporaryTtl } : {}),
         ...(description.trim() ? { description: description.trim() } : {}),
-        ...(groupId ||
-        starred ||
-        templateSetup?.agents.length ||
-        templateSetup?.canvas
+        // The selected template stays part of the request even when it
+        // currently resolves to nothing, so a retry still matches it.
+        ...(groupId || starred || templateId
           ? {
               setup: {
                 agents: templateSetup?.agents ?? [],

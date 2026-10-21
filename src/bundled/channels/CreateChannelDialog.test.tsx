@@ -1081,6 +1081,13 @@ it("creates a plain channel from a template whose members are all elsewhere once
     expect(onCreate).toHaveBeenCalledWith({
       name: "plain",
       visibility: "open",
+      // Kept so a retry still matches once the template resolves differently.
+      setup: {
+        agents: [],
+        canvas: "",
+        groupId: "",
+        templateId: expect.any(String),
+      },
     }),
   );
 });
@@ -1129,6 +1136,13 @@ it("creates a plain channel from a template that adds nothing here", async () =>
     expect(onCreate).toHaveBeenCalledWith({
       name: "plain",
       visibility: "open",
+      // Kept so a retry still matches once the template resolves differently.
+      setup: {
+        agents: [],
+        canvas: "",
+        groupId: "",
+        templateId: expect.any(String),
+      },
     }),
   );
 });

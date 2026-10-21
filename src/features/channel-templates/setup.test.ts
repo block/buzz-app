@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, assert, expect, it, vi } from "vitest";
-import { createChannelSetup, type ChannelCreationInput } from "./setup";
+import {
+  createChannelSetup,
+  type ChannelCreationInput,
+  type ChannelSetup,
+} from "./setup";
 import type { Outbox, OutgoingEvent } from "../relay/outbox";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { createRelaySession } from "../relay/session";
@@ -16,6 +20,22 @@ const input: ChannelCreationInput = {
     agents: [agent],
     canvas: "# Plan",
     groupId: "work",
+    templateId: "daily",
+  },
+};
+const empty: ChannelSetup = {
+  agents: [],
+  canvas: "",
+  groupId: "",
+  templateId: "daily",
+};
+// The template resolved to agents and a Canvas in the general Channels section.
+const general: ChannelCreationInput = {
+  ...input,
+  setup: {
+    agents: [agent],
+    canvas: "# Plan",
+    groupId: "",
     templateId: "daily",
   },
 };
@@ -427,6 +447,37 @@ it("rechecks the same Create when only the inventory behind a form moved", async
   );
   expect(f.opts.create).toHaveBeenCalledTimes(1);
   expect(f.outbox.dismiss).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["empties", general, { ...input, setup: empty }],
+  ["fills", { ...input, setup: empty }, general],
+] as const)(
+  "rechecks the same Create when the selected template %s before a retry",
+  async (_, first, second) => {
+    const f = fixture();
+    f.opts.delivered.mockRejectedValueOnce(new Error("Unknown delivery"));
+    const run = f.setup.run(first, viewer.pubkey);
+    await expect(run.admission).rejects.toThrow("Unknown delivery");
+    await expect(run.completion).rejects.toThrow("Unknown delivery");
+    const retry = f.setup.run(second, viewer.pubkey);
+    await retry.admission;
+    await retry.completion.catch(() => {});
+    expect(f.opts.create).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("finishes an identical retry quietly when its template adds nothing", async () => {
+  const f = fixture();
+  const plain = { ...input, setup: empty };
+  f.opts.delivered.mockRejectedValueOnce(new Error("Unknown delivery"));
+  const run = f.setup.run(plain, viewer.pubkey);
+  await expect(run.admission).rejects.toThrow("Unknown delivery");
+  await expect(run.completion).rejects.toThrow("Unknown delivery");
+  const retry = f.setup.run(plain, viewer.pubkey);
+  await retry.admission;
+  await retry.completion;
+  expect(f.opts.create).toHaveBeenCalledTimes(1);
 });
 
 it("retires a proven-failed Create so the form can try a new attempt", async () => {

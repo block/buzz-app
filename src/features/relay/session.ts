@@ -12,6 +12,7 @@ import { parseLineup } from "../channel-templates/model";
 import { createChannelKit } from "../channel-templates/capability";
 import {
   createChannelSetup,
+  setupWork,
   type ChannelCreationInput,
 } from "../channel-templates/setup";
 import { createPresence } from "../presence/presence";
@@ -1629,7 +1630,7 @@ export function createRelaySession(
         opened = await run.admission;
         return opened;
       }
-      if (input.setup)
+      if (setupWork(input.setup))
         throw new Error("Template setup is unavailable on this host");
       const normalized: ChannelCreationInput = {
         name: input.name,

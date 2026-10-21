@@ -365,7 +365,6 @@ it.each([false, true])(
     const run = f.setup.run(draft, viewer.pubkey);
     await expect(run.admission).rejects.toThrow("Unknown delivery");
     await expect(run.completion).rejects.toThrow("Unknown delivery");
-    expect(f.setup.snapshot()).toEqual(draft);
     const saved = JSON.parse(localStorage.getItem(firstReceipt()) ?? "null");
     const next = f.setup.run(draft, viewer.pubkey);
     await expect(next.admission).resolves.toBe(saved.id);
@@ -376,13 +375,59 @@ it.each([false, true])(
       [saved.operations.create],
       [saved.operations.create, expect.any(Function)],
     ]);
-    expect(f.setup.snapshot()).toBeUndefined();
     expect(f.events.map((e) => e.event.kind)).toEqual([9007]);
     expect(f.outbox.retry).not.toHaveBeenCalled();
     expect(f.opts.star).not.toHaveBeenCalled();
     expect(f.opts.place).not.toHaveBeenCalled();
   },
 );
+
+it("abandons an uncertain attempt for a changed request or a closed form", async () => {
+  const f = fixture();
+  f.opts.delivered.mockRejectedValueOnce(new Error("Unknown delivery"));
+  const run = f.setup.run(input, viewer.pubkey);
+  await expect(run.admission).rejects.toThrow("Unknown delivery");
+  await expect(run.completion).rejects.toThrow("Unknown delivery");
+  const abandoned = f.events[0]?.event.id;
+  const changed = f.setup.run({ ...input, name: "Weekly" }, viewer.pubkey);
+  await changed.admission;
+  await changed.completion;
+  expect(f.opts.create).toHaveBeenCalledTimes(2);
+  expect(f.outbox.dismiss).toHaveBeenCalledWith(abandoned);
+
+  f.opts.delivered.mockRejectedValueOnce(new Error("Unknown delivery"));
+  const closing = f.setup.run(input, viewer.pubkey);
+  await expect(closing.admission).rejects.toThrow("Unknown delivery");
+  await expect(closing.completion).rejects.toThrow("Unknown delivery");
+  expect(receipts()).toHaveLength(1);
+  f.setup.forget();
+  await vi.waitFor(() => expect(receipts()).toHaveLength(0));
+  expect(f.events.some(({ event }) => event.kind === 9007)).toBe(false);
+});
+
+it("rechecks the same Create when only the inventory behind a form moved", async () => {
+  const f = fixture();
+  f.opts.delivered.mockRejectedValueOnce(new Error("Unknown delivery"));
+  const run = f.setup.run(input, viewer.pubkey);
+  await expect(run.admission).rejects.toThrow("Unknown delivery");
+  await expect(run.completion).rejects.toThrow("Unknown delivery");
+  const moved = {
+    ...input,
+    setup: {
+      groupId: "work",
+      templateId: "daily",
+      agents: [],
+      canvas: "# Plan v2",
+    },
+  };
+  const retry = f.setup.run(moved, viewer.pubkey);
+  await retry.admission;
+  await expect(retry.completion).rejects.toThrow(
+    "Template setup was not continued",
+  );
+  expect(f.opts.create).toHaveBeenCalledTimes(1);
+  expect(f.outbox.dismiss).not.toHaveBeenCalled();
+});
 
 it("retires a proven-failed Create so the form can try a new attempt", async () => {
   const f = fixture();
@@ -395,7 +440,6 @@ it("retires a proven-failed Create so the form can try a new attempt", async () 
   const run = f.setup.run(input, viewer.pubkey);
   await expect(run.admission).rejects.toThrow("Rejected");
   await expect(run.completion).rejects.toThrow("Rejected");
-  expect(f.setup.snapshot()).toBeUndefined();
   expect(receipts()).toHaveLength(0);
   const next = f.setup.run(input, viewer.pubkey);
   await next.admission;
@@ -596,22 +640,6 @@ it("releases a pending attempt when read-only confirmation proves it failed", as
   const check = f.setup.run(input, viewer.pubkey);
   await expect(check.admission).rejects.toThrow("Rejected");
   await expect(check.completion).rejects.toThrow("Rejected");
-  expect(f.setup.snapshot()).toBeUndefined();
   expect(receipts()).toHaveLength(0);
   expect(f.opts.create).toHaveBeenCalledOnce();
-});
-
-it("keeps admitted partial receipts out of a restarted Create without resuming them", async () => {
-  const f = fixture();
-  f.opts.confirm.mockRejectedValueOnce(new Error("Canvas unavailable"));
-  const run = f.setup.run(input, viewer.pubkey);
-  const id = await run.admission;
-  await expect(run.completion).rejects.toThrow("Canvas unavailable");
-  const frozen = localStorage.getItem(firstReceipt());
-  const restarted = createChannelSetup(f.opts);
-  expect(restarted.owns(id)).toBe(true);
-  expect(restarted.snapshot()).toBeUndefined();
-  expect(localStorage.getItem(firstReceipt())).toBe(frozen);
-  expect(f.events.map((e) => e.event.kind)).toEqual([9007, 40100]);
-  expect(f.outbox.retry).not.toHaveBeenCalled();
 });

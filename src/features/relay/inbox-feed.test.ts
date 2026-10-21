@@ -1,4 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
+import { eventDto } from "./events";
 import { createRelaySession } from "./session";
 import { keypair, message, metadata, roster, signed } from "./testing";
 import type { RelayEvent, ReadFilter } from "./events";
@@ -22,7 +26,7 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-function setup() {
+function setup(attributed = false) {
   const viewer = keypair(),
     relay = keypair(),
     alice = keypair();
@@ -40,6 +44,7 @@ function setup() {
   const owner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
+    ...(attributed ? { archiveAuthority: relay.pubkey } : {}),
     query,
     media: () => undefined,
     subscribe(callbacks) {
@@ -1075,63 +1080,114 @@ it.each(["disconnect", "unrelated revocation"] as const)(
   },
 );
 
-it("refresh checks a previously settled retained edit omitted after disconnect", async () => {
-  const h = setup();
-  h.admit([h.viewer.pubkey, h.alice.pubkey]);
-  h.live.state({ status: "connected", routes: [] });
-  const target = addressed(h, "original", 20);
-  const edit = signed(h.alice, {
-    kind: 40003,
-    created_at: 21,
-    content: "deleted edit",
-    tags: [
-      ["h", "room"],
-      ["e", target.id],
-    ],
-  });
-  const deletion = signed(h.alice, {
-    kind: 9005,
-    created_at: 22,
-    content: "",
-    tags: [["e", edit.id]],
-  });
-  const held = deferred<RelayEvent[]>();
-  let attempt = 0;
-  let tombstoneReads = 0;
-  h.query.mockImplementation(async ([filter]) => {
-    if (filter?.["#p"]) {
-      attempt++;
-      return [target];
+it.each(["author", "owner", "actor", "p"])(
+  "refresh checks a retained %s edit omitted after disconnect",
+  async (authority) => {
+    const attributed = authority === "actor" || authority === "p";
+    const h = setup(attributed);
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    h.live.state({ status: "connected", routes: [] });
+    const target = attributed
+      ? signed(h.relay, {
+          kind: 9,
+          created_at: 20,
+          content: "original",
+          tags: [
+            [authority, h.alice.pubkey],
+            ["h", "room"],
+            ["p", h.viewer.pubkey],
+          ],
+        })
+      : addressed(h, "original", 20);
+    const editor = authority === "author" ? h.alice : h.viewer;
+    if (authority !== "author") {
+      h.live.receive([
+        eventDto(
+          signed(h.alice, {
+            kind: 0,
+            created_at: 10,
+            content: "{}",
+            tags: [
+              [
+                "auth",
+                h.viewer.pubkey,
+                "",
+                bytesToHex(
+                  schnorr.sign(
+                    createHash("sha256")
+                      .update(`nostr:agent-auth:${h.alice.pubkey}:`)
+                      .digest(),
+                    h.viewer.secret,
+                  ),
+                ),
+              ],
+            ],
+          }),
+        ),
+      ]);
+      await vi.waitFor(() =>
+        expect(h.session.profiles.owner?.(h.alice.pubkey)).toBe(
+          h.viewer.pubkey,
+        ),
+      );
     }
-    if (filter?.until !== undefined) return [];
-    if (filter?.["#e"]?.includes(target.id)) return attempt === 1 ? [edit] : [];
-    if (filter?.["#e"]?.includes(edit.id)) {
-      tombstoneReads++;
-      return attempt === 1 ? [] : held.promise;
-    }
-    return [];
-  });
-  const feed = h.session.inboxFeed;
-  await feed.ensure();
-  expect(feed.snapshot()).toMatchObject({ status: "ready", incomplete: [] });
-  expect(rows(h)[0]?.preview).toBe("deleted edit");
-  h.live.state({ status: "retrying", routes: [] });
-  h.live.state({ status: "connected", routes: [] });
-  const next = feed.refresh();
-  try {
-    await vi.waitFor(() => expect(tombstoneReads).toBe(2));
-    expect(feed.snapshot()).toMatchObject({
-      status: "loading",
-      incomplete: [target.id],
+    const edit = signed(editor, {
+      kind: 40003,
+      created_at: 21,
+      content: "deleted edit",
+      tags: [
+        ["h", "room"],
+        ["e", target.id],
+      ],
     });
-    held.resolve([deletion]);
-    await next;
-    expect(rows(h)[0]?.preview).toBe("original");
+    const deletion = signed(editor, {
+      kind: 9005,
+      created_at: 22,
+      content: "",
+      tags: [["e", edit.id]],
+    });
+    const held = deferred<RelayEvent[]>();
+    let attempt = 0;
+    let tombstoneReads = 0;
+    h.query.mockImplementation(async ([filter]) => {
+      if (filter?.["#p"]) {
+        attempt++;
+        return [target];
+      }
+      if (filter?.until !== undefined) return [];
+      if (filter?.["#e"]?.includes(target.id))
+        return attempt === 1 ? [edit] : [];
+      if (filter?.["#e"]?.includes(edit.id)) {
+        tombstoneReads++;
+        return attempt === 1 ? [] : held.promise;
+      }
+      return [];
+    });
+    const feed = h.session.inboxFeed;
+    await feed.ensure();
     expect(feed.snapshot()).toMatchObject({ status: "ready", incomplete: [] });
-  } finally {
-    held.resolve([]);
-  }
-});
+    expect(rows(h)[0]?.preview).toBe("deleted edit");
+    h.live.state({ status: "retrying", routes: [] });
+    h.live.state({ status: "connected", routes: [] });
+    const next = feed.refresh();
+    try {
+      await vi.waitFor(() => expect(tombstoneReads).toBe(2));
+      expect(feed.snapshot()).toMatchObject({
+        status: "loading",
+        incomplete: [target.id],
+      });
+      held.resolve([deletion]);
+      await next;
+      expect(rows(h)[0]?.preview).toBe("original");
+      expect(feed.snapshot()).toMatchObject({
+        status: "ready",
+        incomplete: [],
+      });
+    } finally {
+      held.resolve([]);
+    }
+  },
+);
 
 it("a fully visibility-filtered auxiliary page is incomplete, not a false terminal page", async () => {
   const h = setup();

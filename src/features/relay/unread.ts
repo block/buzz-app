@@ -2392,7 +2392,15 @@ export function createUnread({
             name === "e" &&
             target &&
             contentKind(target) &&
-            target.pubkey === event.pubkey &&
+            (target.pubkey === event.pubkey ||
+              messageAuthor(target, signingAuthority) === event.pubkey ||
+              ([9, 40002].includes(target.kind) &&
+                event.tags.some(
+                  ([name, channel]) =>
+                    name === "h" && channel === channelOf(target),
+                ) &&
+                profiles?.owner?.(messageAuthor(target, signingAuthority)) ===
+                  event.pubkey)) &&
             !deleted(target)
           );
         })

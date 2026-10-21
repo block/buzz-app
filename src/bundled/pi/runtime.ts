@@ -710,6 +710,7 @@ export class PiRuntime {
       return;
     }
     const waits: (() => Promise<void>)[] = [];
+    const dropped: { submission: number; conversation: number }[] = [];
     for (const { submission, conversation, request, context } of unfinished) {
       const { handle } = entry;
       if (
@@ -722,11 +723,7 @@ export class PiRuntime {
       // A watch's or timer's run ends with the app, as other harnesses' do:
       // continued, it would have no deadline, lane or Stop.
       if (!context) {
-        await this.pi
-          .request("drop", { agent: pubkey, submission, conversation })
-          .catch((error: unknown) =>
-            console.warn("Pi could not end a left standalone turn", error),
-          );
+        dropped.push({ submission, conversation });
         continue;
       }
       // A conversation several threads share has no root: its answer goes to
@@ -779,6 +776,13 @@ export class PiRuntime {
     }
     // Only once every run's sends are counted: a wait continues all of them,
     // and one could send while a later run's thread is still looked up.
+    // Ending the others continues none.
+    if (dropped.length)
+      await this.pi
+        .request("drop", { agent: pubkey, submissions: dropped })
+        .catch((error: unknown) =>
+          console.warn("Pi could not end left standalone turns", error),
+        );
     for (const wait of waits) void wait();
     this.notify();
   }

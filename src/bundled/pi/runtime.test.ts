@@ -818,28 +818,67 @@ it("reports a run an earlier app left unfinished that fails, and stays silent fo
   expect(published[0]?.content).toContain("400 Bad model");
 });
 
-it("ends a watch's or timer's run an earlier app left, before any wait continues it", async () => {
-  const { host, deliver, published, runtime } = setup({
+it("ends the watch and timer runs an earlier app left once every left mention's sends are counted, before any wait", async () => {
+  // Left before a mention whose thread is looked up. Ending them is modelled
+  // as continuing Pi, as aborting a conversation does: the mention sends.
+  const later = reply("8", "@Pi older");
+  const looked = deferred();
+  const { host, deliver, published, runtime, session } = setup({
     unfinished: () => ({
       submissions: [
         { submission: 51, conversation: 9, request: "timer/left" },
+        { submission: 52, conversation: 10, request: "watch/left" },
         {
-          submission: 41,
-          conversation: 5,
-          request: "d".repeat(64),
-          context: { channel, root: root.id },
+          submission: 42,
+          conversation: 6,
+          request: later.id,
+          context: { channel },
         },
       ],
     }),
+    drop: async (_params, process) => {
+      await process.tool({
+        agent: self,
+        conversation: 6,
+        context: { channel, root: root.id },
+        name: "send",
+        arguments: { text: "Sent itself", audience: "everyone" },
+      });
+    },
+    wait: ({ submission }) =>
+      submission === 42
+        ? { status: "done", answer: 9, text: "Sent itself" }
+        : new Promise(() => {}),
   });
-  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  session.read.mockImplementation(async (filters?: { ids?: string[] }[]) => {
+    if (!filters?.[0]?.ids?.includes(later.id)) return [root];
+    await looked.promise;
+    return [later];
+  });
+  const run = deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  await vi.waitFor(() =>
+    expect(session.read).toHaveBeenCalledWith(
+      [{ ids: [later.id], limit: 1 }],
+      expect.anything(),
+    ),
+  );
+  expect(host.requests("drop")).toEqual([]);
+  looked.resolve();
+  await run;
   expect(host.requests("drop").map((item) => item.params)).toEqual([
-    { agent: self, submission: 51, conversation: 9 },
+    {
+      agent: self,
+      submissions: [
+        { submission: 51, conversation: 9 },
+        { submission: 52, conversation: 10 },
+      ],
+    },
   ]);
   const methods = host.processes[0]?.requests.map((item) => item.method) ?? [];
   expect(methods.indexOf("drop")).toBeLessThan(methods.indexOf("wait"));
+  await vi.waitFor(() => expect(runtime.working(self)).not.toContain(6));
   expect(runtime.working(self)).not.toContain(9);
-  expect(published).toEqual([]);
+  expect(published.map(({ content }) => content)).toEqual(["Sent itself"]);
 });
 
 it("keeps a standalone turn of this app's when it lists left runs again", async () => {

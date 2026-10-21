@@ -170,21 +170,33 @@ out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission });
 // Pi's settings as they are now, which the pi command changes.
 await writeFile(data + "/settings.json", JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
 out.defaults = await pi.rpc("defaults", {});
-// A one-off turn a stopped host left is listed with no place, and once
-// dropped no later delivery continues it.
-const w = held(), timing = held();
-faux.setResponses([async (_context, options) => { timing.release(); await abortable(w.gate, options?.signal); return fauxAssistantMessage("Late timer"); }]);
-const w1 = await pi.rpc("once", { ...turn("W", "timer"), context: undefined });
-await timing.gate;
+// One-off turns a stopped host left are listed with no place. Dropping them
+// continues nothing, not even a mention left beside them, which runs only
+// once it is waited for; and no later run continues them.
+const w = held(), leaving = held();
+let asked = 0;
+const leave = async (_context, options) => { if (++asked === 3) leaving.release(); await abortable(w.gate, options?.signal); return fauxAssistantMessage("Late"); };
+faux.setResponses([leave, leave, leave]);
+const m1 = await pi.rpc("deliver", turn("M", "twelfth"));
+const w1 = await pi.rpc("once", { ...turn("W1", "timer"), context: undefined });
+const w2 = await pi.rpc("once", { ...turn("W2", "watch"), context: undefined });
+await leaving.gate;
 await pi.stop();
 pi = start();
 await pi.rpc("open", { agent, tools });
+const order = [];
+faux.setResponses([() => { order.push("model"); return fauxAssistantMessage("Mention answer"); }]);
 const left = (await pi.rpc("unfinished", { agent })).submissions;
-await pi.rpc("drop", { agent, submission: w1.submission, conversation: w1.conversation });
+await pi.rpc("drop", { agent, submissions: [w1, w2].map(({ submission, conversation }) => ({ submission, conversation })) });
+order.push("dropped");
 const calls = faux.state.callCount;
-faux.setResponses([() => fauxAssistantMessage("After the timer")]);
-const y = await pi.rpc("deliver", turn("Y", "thirteenth"));
-out.timer = { left, wait: await pi.rpc("wait", { agent, submission: y.submission }), dropped: await pi.rpc("wait", { agent, submission: w1.submission }), calls: faux.state.callCount - calls };
+out.timer = {
+  left: left.map((item) => [item.request, !!item.context]),
+  mention: await pi.rpc("wait", { agent, submission: m1.submission }),
+  dropped: await Promise.all([w1, w2].map((x) => pi.rpc("wait", { agent, submission: x.submission }))),
+  calls: faux.state.callCount - calls,
+  order,
+};
 // A host whose storage another host took over stops running it, and leaves
 // its run there: changing the lock's time is what taking it over does.
 const k = held(), thinking = held();
@@ -359,19 +371,21 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.defaults).toEqual({ provider: "faux", model: "faux-1" });
     expect(out.timer).toEqual({
       left: [
-        {
-          submission: expect.any(Number),
-          conversation: expect.any(Number),
-          request: "W",
-        },
+        ["M", true],
+        ["W1", false],
+        ["W2", false],
       ],
-      wait: expect.objectContaining({
+      mention: expect.objectContaining({
         status: "done",
-        text: "After the timer",
+        text: "Mention answer",
       }),
-      dropped: { status: "unanswered", reason: "aborted" },
-      // Only the later delivery's: the dropped run asked the model nothing.
+      dropped: [
+        { status: "unanswered", reason: "aborted" },
+        { status: "unanswered", reason: "aborted" },
+      ],
+      // Only the mention's: the dropped runs asked the model nothing more.
       calls: 1,
+      order: ["dropped", "model"],
     });
     expect(out.lost).toEqual({ status: "closed" });
     expect(out.lostDeliver).toBe("The agent is not open");

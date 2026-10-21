@@ -757,19 +757,28 @@ export function serve({
         ),
       };
     },
-    /** Ends a run without continuing it: withdrawn while queued, aborted
-     * once placed. */
-    async drop({ agent, submission, conversation }) {
+    /** Ends runs without continuing them, and without running any of Pi's
+     * work first, as aborting a conversation would: a queued request is
+     * withdrawn, and a placed one's run is marked aborted, which it ends with
+     * once Pi runs again. */
+    async drop({ agent, submissions }) {
       const { harness } = await agentOf(agent);
-      const result = await harness.abortSubmission(
-        submission,
-        context,
-        conversation,
-      );
-      if (result === "already_placed")
-        await (await harness.conversation(conversation, context))?.abort(
+      const { tasks } = await harness.inspect(context);
+      for (const { submission, conversation } of submissions) {
+        const result = await harness.abortSubmission(
+          submission,
           context,
+          conversation,
         );
+        if (result !== "already_placed") continue;
+        for (const { record } of tasks)
+          if (
+            record.conversationId === conversation &&
+            !record.owner &&
+            !record.background
+          )
+            await harness.abortTask(record.id, context);
+      }
     },
     /** How a request settled: its answer's text, or why it has none. */
     async wait({ agent, submission }) {

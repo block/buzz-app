@@ -357,7 +357,7 @@
 }
 
 .pluginIcon[data-branded][data-category="productivity"] img {
-  filter: hue-rotate(-130deg) saturate(0.8);
+  filter: hue-rotate(-165deg) saturate(0.8);
 }
 
 :root[data-color-mode="dark"] .pluginIcon[data-branded] {

@@ -1121,6 +1121,14 @@ test("member helper aligns with content and Owner stays beside a person's name",
           (await avatar.boundingBox()).x,
           0,
         );
+        // Measure the settled layout, not the dialog's open transition.
+        await dialog.evaluate(async (element) => {
+          await Promise.all(
+            element
+              .getAnimations({ subtree: true })
+              .map((animation) => animation.finished),
+          );
+        });
         const nameBounds = await name.boundingBox();
         const ownerBounds = await owner.boundingBox();
         expect(ownerBounds.x).toBeGreaterThan(nameBounds.x + nameBounds.width);

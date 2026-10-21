@@ -1,6 +1,10 @@
 // Estimated cost of token counts at providers' published list prices, from
 // the price data `@pydantic/genai-prices` bundles. Harnesses that record their
 // own cost are not estimated.
+//
+// Keep no price data or per-model corrections here: we rely on genai-prices
+// alone so that nobody has to keep prices current. When a price is wrong or a
+// model is missing, fix it upstream in genai-prices and bump the package.
 import type { calcPrice } from "@pydantic/genai-prices";
 import type { TokenCounts } from "../../features/agents/service";
 

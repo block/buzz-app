@@ -53,6 +53,8 @@ type Load = Readonly<{
   usage: readonly AgentUsage[];
   /** Agents whose sessions could not be read this time. */
   failed: readonly Agent[];
+  /** Whether the price data failed to load, so costs are not estimated. */
+  unpriced: boolean;
 }>;
 const keyOf = (agent: Agent) => `${agent.pubkey}:${agent.type}`;
 /** The agent as a read sees it: a rename or new configuration reads again. */
@@ -76,7 +78,10 @@ function useUsage(agents: Agents, keys: string, reload: number) {
     const now = Date.now();
     setLoad((current) => current && { ...current, loading: true });
     // Without price data, estimates show as unknown rates rather than wrong.
-    const prices = loadPrices().catch(() => {});
+    const prices = loadPrices().then(
+      () => false,
+      () => true,
+    );
     void Promise.allSettled(
       targets.map(async (agent) => {
         const read = types.find((type) => type.key === agent.type)?.usage;
@@ -91,7 +96,7 @@ function useUsage(agents: Agents, keys: string, reload: number) {
         };
       }),
     ).then(async (results) => {
-      await prices;
+      const unpriced = await prices;
       if (controller.signal.aborted) return;
       setLoad((current) => ({
         loading: false,
@@ -112,6 +117,7 @@ function useUsage(agents: Agents, keys: string, reload: number) {
         failed: targets.filter(
           (_, index) => results[index]?.status === "rejected",
         ),
+        unpriced,
       }));
     });
     return () => controller.abort();
@@ -218,7 +224,11 @@ export function UsagePage({
   useEffect(() => {
     if (!retrying.current || loading) return;
     retrying.current = false;
-    if (!load?.failed.length && document.activeElement === document.body)
+    if (
+      !load?.failed.length &&
+      !load?.unpriced &&
+      document.activeElement === document.body
+    )
       refresh.current?.focus();
   }, [load, loading]);
 
@@ -317,15 +327,22 @@ export function UsagePage({
           </div>
         }
         notice={
-          load?.failed.length ? (
+          load?.failed.length || load?.unpriced ? (
             <p className={styles.notice} role="status">
-              Couldn’t read the sessions of{" "}
-              {load.failed.map((agent) => agent.name).join(", ")}
-              {load.failed.some((agent) =>
-                load.usage.some((entry) => keyOf(entry.agent) === keyOf(agent)),
-              )
-                ? "; showing what was read before. "
-                : ". "}
+              {load.failed.length > 0 && (
+                <>
+                  Couldn’t read the sessions of{" "}
+                  {load.failed.map((agent) => agent.name).join(", ")}
+                  {load.failed.some((agent) =>
+                    load.usage.some(
+                      (entry) => keyOf(entry.agent) === keyOf(agent),
+                    ),
+                  )
+                    ? "; showing what was read before. "
+                    : ". "}
+                </>
+              )}
+              {load.unpriced && "Couldn’t load prices to estimate costs. "}
               <Button
                 size="sm"
                 variant="ghost"

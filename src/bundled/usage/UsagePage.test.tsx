@@ -9,7 +9,13 @@ import type {
   RegisteredAgentType,
   SessionUsage,
 } from "../../features/agents/service";
+import { loadPrices } from "./pricing";
 import { UsagePage } from "./UsagePage";
+
+vi.mock("./pricing", async (actual) => {
+  const pricing = await actual<typeof import("./pricing")>();
+  return { ...pricing, loadPrices: vi.fn(pricing.loadPrices) };
+});
 
 vi.stubGlobal(
   "ResizeObserver",
@@ -200,6 +206,27 @@ it("names the agents it could not read and reads them again", async () => {
   expect(document.activeElement).toBe(
     screen.getByRole("button", { name: "Refresh usage" }),
   );
+});
+
+it("says when prices could not load, keeps the sessions shown and loads them again", async () => {
+  vi.mocked(loadPrices).mockRejectedValueOnce(new Error("chunk failed"));
+  render(
+    <UsagePage
+      agents={host([agent("Pixel")], async () => [session("a", 250_000)])}
+      open={vi.fn()}
+    />,
+  );
+  expect((await screen.findByRole("status")).textContent).toBe(
+    "Couldn’t load prices to estimate costs. Try again",
+  );
+  expect(
+    screen.getByText(summary("Pixel ran 1 session in the last 30 days.")),
+  ).toBeTruthy();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Try again" }));
+  await vi.waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  expect(loadPrices).toHaveBeenCalledTimes(2);
 });
 
 it("reads again when an agent is renamed or reconfigured", async () => {

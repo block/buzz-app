@@ -2113,6 +2113,13 @@ export class AgentRunners {
         runner.notes.delete(channelId);
         return notes;
       },
+      restoreNotes: (channelId: string, notes: readonly string[]) => {
+        if (notes.length)
+          runner.notes.set(channelId, [
+            ...notes,
+            ...(runner.notes.get(channelId) ?? []),
+          ]);
+      },
       attention: this.attention(agent.pubkey),
     });
   }

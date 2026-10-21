@@ -2950,6 +2950,33 @@ it("lets go of a rejected steering mention without ending the running turn", asy
   ]);
 });
 
+it("keeps a rejected steering mention's notes for the next turn, ahead of newer ones", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const write = f.process.write;
+  vi.spyOn(f.process, "write").mockImplementation(async (data) => {
+    const wire: Wire = JSON.parse(data);
+    if (wire.method !== "turn/steer" || wire.id == null) return write(data);
+    pending.channel = [...(pending.channel ?? []), "(newer)"];
+    f.emit({ id: wire.id, error: { code: -32600, message: "model busy" } });
+  });
+  const pending: Record<string, string[]> = {
+    channel: ["(I interrupted your reply)"],
+  };
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
+    pending[at] = [...kept, ...(pending[at] ?? [])];
+  });
+  const delivery = f.delivery("new request");
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, notes, restoreNotes },
+  });
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(pending.channel).toEqual(["(I interrupted your reply)", "(newer)"]);
+});
+
 it("finishes final sends normally and preserves the agent's background terminals", async () => {
   const f = fixture([{ processId: "dev-server" }]);
   await f.runtime.run(f.delivery("start server"));

@@ -331,6 +331,9 @@ export type AgentHandle = Readonly<{
   /** Takes the notes plugins left for its next turn in this channel, oldest
    * first; see `Agents.note`. */
   notes?(channelId: string): readonly string[];
+  /** Puts back notes taken for a turn that never began, ahead of any left
+   * since. */
+  restoreNotes?(channelId: string, notes: readonly string[]): void;
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
 }>;

@@ -26,7 +26,11 @@ export const IDLE_MS = 15 * 60_000;
  * every plugin, so other plugins keep room. */
 export const POOL_LIMIT = 48;
 const STOPPED: Settled = { ok: false, error: "goose was stopped" };
-const LATE: Settled = { ok: false, error: "goose did not start in time" };
+const LATE: Settled = {
+  ok: false,
+  error: "goose did not start in time",
+  undelivered: true,
+};
 /** Saved conversations per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
 

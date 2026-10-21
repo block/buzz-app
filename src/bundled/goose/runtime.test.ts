@@ -8,6 +8,7 @@ import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush } from "./goose-testing";
+import { AgentSessions } from "./sessions";
 import {
   DEFAULT_CONFIG,
   GooseRuntime,
@@ -747,6 +748,32 @@ it.each([false, true])(
     expect(pending[channel]).toEqual([]);
   },
 );
+
+it("keeps the notes of a turn goose never started for the next, ahead of newer ones", async () => {
+  const f = setup();
+  const pending: Record<string, string[]> = {
+    [channel]: ["(I interrupted your reply)"],
+  };
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
+    pending[at] = [...kept, ...(pending[at] ?? [])];
+  });
+  vi.spyOn(AgentSessions.prototype, "deliver").mockImplementationOnce(
+    async () => {
+      pending[channel] = ["(newer)"];
+      return {
+        ok: false,
+        error: "goose did not start in time",
+        undelivered: true,
+      };
+    },
+  );
+  await f.deliver(message("1", "@Gander go on"), {
+    agent: { ...f.agent, notes, restoreNotes },
+  } as unknown as Partial<Delivery>);
+  await flush(100);
+  expect(pending[channel]).toEqual(["(I interrupted your reply)", "(newer)"]);
+});
 
 it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
   const solo = setup({ solo: new Set([channel]), canvas: "Use tokens." });

@@ -57,6 +57,7 @@ import {
 import {
   AppServer,
   listModels,
+  Refused,
   type Spawn,
   type ToolCall,
   type ToolReply,
@@ -798,6 +799,12 @@ export class CodexRuntime {
                 queue();
                 return;
               }
+              // A refused steer took nothing in, so its notes are the next turn's.
+              if (error instanceof Refused && request.notes)
+                request.agent.restoreNotes?.(
+                  request.conversation.channelId,
+                  request.notes,
+                );
               request.failActivity(
                 `Steering was not accepted: ${message(error)}`,
               );

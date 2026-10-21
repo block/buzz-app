@@ -700,6 +700,7 @@ describe("AgentSessions", () => {
     await expect(late).resolves.toEqual({
       ok: false,
       error: "goose did not start in time",
+      undelivered: true,
     });
     release();
     await flush(30);
@@ -735,6 +736,7 @@ describe("AgentSessions", () => {
     await expect(expired).resolves.toEqual({
       ok: false,
       error: "goose did not start in time",
+      undelivered: true,
     });
     release();
     await expect(opening).resolves.toEqual({ ok: true });

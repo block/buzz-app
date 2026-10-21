@@ -1762,6 +1762,13 @@ it("leaves a plugin's note for an agent's next turn in a channel, once, while th
   expect(agent?.notes?.("elsewhere")).toEqual([]);
   expect(agent?.notes?.(channel)).toEqual(["(I interrupted your reply)"]);
   expect(agent?.notes?.(channel)).toEqual([]);
+  // A turn that never began puts its notes back ahead of newer ones.
+  ctx.agents.note(bot, channel, "(newer)");
+  agent?.restoreNotes?.(channel, ["(I interrupted your reply)"]);
+  expect(agent?.notes?.(channel)).toEqual([
+    "(I interrupted your reply)",
+    "(newer)",
+  ]);
 });
 
 it("hands out an agent's handle only to its new type's plugin once a change of type ends", async () => {

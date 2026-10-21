@@ -407,6 +407,7 @@ export class GooseRuntime {
         this.notify();
         void done
           .then((result) => {
+            if (result.undelivered) agent.restoreNotes?.(channel, notes);
             // Of the messages one turn answered, only one has its error or text.
             if (result.error !== undefined)
               return this.report(agent, channel, event, result.error, topLevel);

@@ -587,28 +587,30 @@ export function EditableInput({
     const replaceRecipients = (recipients: readonly MentionRecipient[]) => {
       if (!editable() || composing.current || editor.composing) return false;
       const source = projection();
+      const existing = new Set(
+        source.draft.recipients.map((person) => person.pubkey),
+      );
+      const requested = new Set(recipients.map((person) => person.pubkey));
       if (
-        source.draft.recipients.length === recipients.length &&
-        source.draft.recipients.every(
-          (person, i) =>
-            person.pubkey === recipients[i]?.pubkey &&
-            person.name === recipients[i]?.name,
-        )
+        existing.size === requested.size &&
+        [...existing].every((key) => requested.has(key))
       )
         return true;
+      const added = recipients.filter((person) => !existing.has(person.pubkey));
       const tr = closeHistory(editor.state.tr);
       for (const person of [...source.draft.recipients].reverse()) {
+        if (requested.has(person.pubkey)) continue;
         const end =
           person.end + (source.draft.text[person.end] === " " ? 1 : 0);
         tr.delete(source.position(person.start), source.position(end, -1));
       }
-      if (recipients.length) {
+      if (added.length) {
         const at = Selection.atStart(tr.doc).from;
         const code = tr.doc.resolve(at).parent.type.spec.code;
         tr.insert(
           at,
           Fragment.fromArray(
-            recipients.flatMap((person) => [
+            added.flatMap((person) => [
               code
                 ? composerSchema.text(`@${person.name}`, [
                     composerSchema.marks.recipient.create(person),
@@ -623,12 +625,17 @@ export function EditableInput({
           ),
         );
       }
+      const next = projectComposerDocument(tr.doc).draft;
       if (
-        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-        current.current.maxLength
+        next.recipients.length > 32 ||
+        composerMarkdown(next).length > current.current.maxLength
       )
         return false;
       tr.setSelection(editor.state.selection.map(tr.doc, tr.mapping));
+      if (editor.state.storedMarks)
+        tr.setStoredMarks(
+          tr.selection.$from.parent.type.allowedMarks(editor.state.storedMarks),
+        );
       const before = editor.state;
       editor.dispatch(tr);
       return editor.state !== before;

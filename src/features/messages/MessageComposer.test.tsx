@@ -8400,6 +8400,7 @@ it("recovers an uploaded follow-up instead of queuing it after its chat disappea
 
 it("replaces recipients atomically while preserving prose, selection and undo", async () => {
   const h = mount();
+  const replacement = { ...second, name: "Mary Jane" };
   h.fill("Before prose after");
   act(() => {
     h.input().setSelectionRange(7, 7);
@@ -8408,9 +8409,11 @@ it("replaces recipients atomically while preserving prose, selection and undo", 
   expect(h.input()).toHaveValue("Before @Honey prose after");
   act(() => {
     h.input().setSelectionRange(16, 21);
-    expect(h.commands().replaceRecipients([second, second])).toBe(true);
+    expect(h.commands().replaceRecipients([replacement, replacement])).toBe(
+      true,
+    );
   });
-  expect(h.input()).toHaveValue("@Honey Before prose after");
+  expect(h.input()).toHaveValue("@Mary Jane Before prose after");
   expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
     second.pubkey,
   ]);

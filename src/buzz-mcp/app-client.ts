@@ -118,6 +118,12 @@ export function appClient(
         throw new Error("Agent creation is unavailable on this host");
       return agent.createAgent(input);
     },
+    updateAgent: async (input) => {
+      check();
+      if (!agent.updateAgent)
+        throw new Error("Agent changes are unavailable on this host");
+      return agent.updateAgent(input);
+    },
     templates: async () => {
       check();
       return agent.templates();

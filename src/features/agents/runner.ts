@@ -7,6 +7,7 @@ import type {
   Agent,
   AgentAttention,
   AgentHandle,
+  AgentUpdateInput,
   RegisteredAgentType,
   Trigger,
 } from "./service";
@@ -372,6 +373,10 @@ export type RunnerHost = {
   createAgent(
     agent: Agent,
     input: Readonly<{ type: string; name: string }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  updateAgent(
+    agent: Agent,
+    input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
@@ -2128,6 +2133,10 @@ export class AgentRunners {
       createAgent: async (input: Readonly<{ type: string; name: string }>) => {
         signal.throwIfAborted();
         return this.host.createAgent(agent, input);
+      },
+      updateAgent: async (input: AgentUpdateInput) => {
+        signal.throwIfAborted();
+        return this.host.updateAgent(agent, input);
       },
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),

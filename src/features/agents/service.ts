@@ -299,6 +299,10 @@ export type AgentHandle = Readonly<{
   createAgent?(
     input: Readonly<{ type: string; name: string }>,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** Owner-reviewed changes to one of the owner's agents here. */
+  updateAgent?(
+    input: AgentUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
@@ -717,6 +721,27 @@ export type AgentCreationRequest = Readonly<{
   type: string;
   name: string;
 }>;
+/** Proposed changes; absent fields stay as they are. */
+export type AgentUpdate = Readonly<{
+  name?: string;
+  type?: string;
+  instructions?: string;
+}>;
+/** `agent` is a pubkey or the exact name of one of the owner's agents here. */
+export type AgentUpdateInput = AgentUpdate & Readonly<{ agent: string }>;
+/** An unsaved change request. Only the owner-facing review may approve it. */
+export type AgentUpdateRequest = AgentUpdate &
+  Readonly<{
+    id: string;
+    requester: string;
+    requesterName: string;
+    owner: string;
+    community: string;
+    agent: string;
+    agentName: string;
+    /** Its type when requested, shown as what the review changes from. */
+    agentType: string;
+  }>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -856,6 +881,11 @@ export type Agents = {
   dismissCreation(id: string): void;
   /** Creates only after the owner reviews the usual creation form. */
   approveCreation(id: string, input: NewAgent): Promise<Agent>;
+  /** Local, unsaved change requests; closing a review discards its request. */
+  updateRequests(): readonly AgentUpdateRequest[];
+  dismissUpdate(id: string): void;
+  /** Applies the owner-reviewed `change` to the request's agent. */
+  approveUpdate(id: string, change: AgentUpdate): Promise<void>;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -1144,6 +1174,7 @@ export class AgentsService extends Service implements Agents {
   private readonly toolNames = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private requests: readonly AgentCreationRequest[] = [];
+  private updates: readonly AgentUpdateRequest[] = [];
   private readonly approving = new Set<string>();
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
@@ -1354,7 +1385,7 @@ export class AgentsService extends Service implements Agents {
         if (!kind) throw new Error("That agent type is not available");
         if (kind.remote)
           throw new Error("A hosted agent's key stays with its provider");
-        if (this.requests.length >= 16)
+        if (this.requests.length + this.updates.length >= 16)
           throw new Error("Review the pending agent requests first");
         const id = crypto.randomUUID();
         this.requests = [
@@ -1367,6 +1398,55 @@ export class AgentsService extends Service implements Agents {
             community: binding.origin,
             type: input.type,
             name: input.name.trim(),
+          },
+        ];
+        this.notify();
+        return { requestId: id, saved: false };
+      },
+      updateAgent: async (agent, { agent: target, ...proposed }) => {
+        const binding = this.bindingOf(agent);
+        if (!binding || !this.live(agent.pubkey))
+          throw new Error("The requesting agent is no longer available");
+        const matches = this.identities.filter(
+          (identity) =>
+            !identity.deleted &&
+            !identity.deleting &&
+            identity.owner === agent.owner &&
+            originOf(identity.relay) === binding.origin &&
+            (identity.pubkey === target || identity.name === target),
+        );
+        const [identity] = matches;
+        if (!identity)
+          throw new Error("Your owner has no agent here by that name or key");
+        if (matches.length > 1)
+          throw new Error("Several agents have that name; use its pubkey");
+        const name = proposed.name?.trim();
+        const change: AgentUpdate = {
+          ...(name !== undefined && name !== identity.name && { name }),
+          ...(proposed.type !== undefined &&
+            proposed.type !== identity.type && { type: proposed.type }),
+          ...(proposed.instructions !== undefined && {
+            instructions: proposed.instructions,
+          }),
+        };
+        if (Object.keys(change).length === 0)
+          throw new Error("Propose at least one change");
+        this.updateKind(identity, change);
+        if (this.requests.length + this.updates.length >= 16)
+          throw new Error("Review the pending agent requests first");
+        const id = crypto.randomUUID();
+        this.updates = [
+          ...this.updates,
+          {
+            id,
+            requester: agent.pubkey,
+            requesterName: agent.name,
+            owner: agent.owner,
+            community: binding.origin,
+            agent: identity.pubkey,
+            agentName: identity.name,
+            agentType: identity.type,
+            ...change,
           },
         ];
         this.notify();
@@ -1427,11 +1507,19 @@ export class AgentsService extends Service implements Agents {
           this.notify();
         }),
         communities.subscribe(() => {
+          const { viewer } = communities.snapshot();
           const kept = this.requests.filter(
-            (request) => request.owner === communities.snapshot().viewer,
+            (request) => request.owner === viewer,
           );
-          if (kept.length !== this.requests.length) {
+          const updates = this.updates.filter(
+            (request) => request.owner === viewer,
+          );
+          if (
+            kept.length !== this.requests.length ||
+            updates.length !== this.updates.length
+          ) {
             this.requests = kept;
+            this.updates = updates;
             this.notify();
           }
           this.watch();
@@ -1693,6 +1781,61 @@ export class AgentsService extends Service implements Agents {
     } finally {
       this.approving.delete(id);
     }
+  }
+  updateRequests = () => this.updates;
+  dismissUpdate = (id: string) => {
+    if (this.approving.has(id)) return;
+    this.updates = this.updates.filter((request) => request.id !== id);
+    this.notify();
+  };
+  async approveUpdate(id: string, change: AgentUpdate) {
+    const request = this.updates.find((item) => item.id === id);
+    if (!request || this.approving.has(id))
+      throw new Error("No such pending agent request");
+    const identity = this.live(request.agent);
+    if (!identity || identity.deleting)
+      throw new Error(`${request.agentName} no longer exists`);
+    const binding = this.bindingOf(identity);
+    if (!binding || binding.controller.signal.aborted)
+      throw new Error("Connect to the agent's community first");
+    const kind = this.updateKind(identity, change);
+    const { pubkey } = identity;
+    const carry =
+      change.instructions === undefined
+        ? undefined
+        : { instructions: change.instructions };
+    this.approving.add(id);
+    try {
+      if (change.type !== undefined && change.type !== identity.type) {
+        const { config } = this.previewRetype(pubkey, change.type);
+        await this.retype(pubkey, change.type, {
+          config: carry && kind.adopt ? kind.adopt(carry, config) : config,
+        });
+      } else if (carry && kind.adopt)
+        await this.save(pubkey, {
+          config: kind.adopt(carry, this.recordOf(identity).config),
+        });
+      if (change.name !== undefined)
+        await this.save(pubkey, { name: change.name });
+      this.updates = this.updates.filter((item) => item.id !== id);
+      this.notify();
+    } finally {
+      this.approving.delete(id);
+    }
+  }
+  /** The type `change` leaves the agent with, refusing what it cannot apply. */
+  private updateKind(identity: AgentIdentity, change: AgentUpdate) {
+    if (change.name !== undefined && !change.name.trim())
+      throw new Error("Name the agent");
+    const kind = this.types().find(
+      (entry) => entry.key === (change.type ?? identity.type),
+    );
+    if (!kind) throw new Error("That agent type is not available");
+    if (kind.remote)
+      throw new Error("A hosted provider cannot take over a local agent key");
+    if (change.instructions !== undefined && !kind.adopt)
+      throw new Error(`${kind.title} agents have no instructions to change`);
+    return kind;
   }
   /** Whether watch classifiers can run on this device: there is a decision
    * backend, and on the `typesafe` backend a key is saved. */

@@ -2548,3 +2548,30 @@ it("validates creation inputs and reports hosts without agent creation", async (
     );
   expect(client.createAgent).not.toHaveBeenCalled();
 });
+
+it("validates change drafts and passes only the proposed fields", async () => {
+  const { client } = fake([]);
+  await expect(
+    callTool(client, {}, "agent_update", { agent: "Child", name: "Kid" }),
+  ).rejects.toThrow("unavailable");
+  client.updateAgent = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  for (const args of [{}, { agent: " ", name: "Kid" }, { agent: 1 }])
+    await expect(callTool(client, {}, "agent_update", args)).rejects.toThrow(
+      "required",
+    );
+  expect(client.updateAgent).not.toHaveBeenCalled();
+  await callTool(client, {}, "agent_update", {
+    agent: " Child ",
+    name: " Kid ",
+    type: " ",
+    instructions: "Review PRs.",
+  });
+  expect(client.updateAgent).toHaveBeenCalledWith({
+    agent: "Child",
+    name: "Kid",
+    instructions: "Review PRs.",
+  });
+});

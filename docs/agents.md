@@ -30,7 +30,7 @@ migration runs. Browser moves write the destination before removing the source
 and resume identical interrupted copies; differing destinations are left intact
 and reported as migration errors.
 
-## Creating agents from a conversation
+## Creating and changing agents from a conversation
 
 The shared tools offer `agent_types` to list installed local runtimes and
 `agent_create` to submit an unsaved creation draft using a listed type key and a display name.
@@ -41,6 +41,14 @@ bounded to 16 and do not survive reload or a change of signed-in owner.
 Approval binds the identity to the requesting agent's owner and community, even
 when another community is selected. Use `members` separately after creation to add
 it to a conversation. Agent tools do not expose draft approval.
+
+`agent_update` submits an unsaved draft of changes to one of the owner's local
+agents in the same community, named by pubkey or exact name: a new name, a type
+key from `agent_types`, or new instructions. Absent fields stay as they are. The
+owner reviews only the proposed fields, with the usual type-change preview, may
+edit them and saves to apply them; closing the review discards the request. A
+type change carries what the new type adopts, as a manual one does. Change
+requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 

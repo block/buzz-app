@@ -61,6 +61,12 @@ export const TOOLS: readonly Tool[] = [
     ["type", "name"],
   ),
   tool(
+    "agent_update",
+    "Submit an unsaved draft of changes to one of your owner's agents for them to review. agent is its pubkey or exact name; type is a key from agent_types. Nothing changes until they save it.",
+    { agent: str, name: str, type: str, instructions: str },
+    ["agent"],
+  ),
+  tool(
     "send",
     "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
@@ -321,6 +327,23 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const name = text(args.name)?.trim();
     if (!type || !name) throw new Error("type and name are required");
     return JSON.stringify(await client.createAgent({ type, name }));
+  },
+  async agent_update({ client }, args) {
+    if (!client.updateAgent)
+      throw new Error("Agent changes are unavailable on this host");
+    const agent = text(args.agent);
+    if (!agent) throw new Error("agent is required");
+    const name = text(args.name);
+    const type = text(args.type);
+    const instructions = text(args.instructions);
+    return JSON.stringify(
+      await client.updateAgent({
+        agent,
+        ...(name && { name }),
+        ...(type && { type }),
+        ...(instructions && { instructions }),
+      }),
+    );
   },
   async shared_sessions({ client, context }, args) {
     if (!context.channel) throw new Error("A current channel is required.");

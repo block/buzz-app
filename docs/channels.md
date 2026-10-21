@@ -985,6 +985,7 @@ edit their roles or remove someone else's agent. The service verifies signed
 ownership once per removal attempt, independently of display hints.
 
 DMs, archived channels and session channels have no administration actions.
+In a Solo chat only its owner can remove members, including other people's agents.
 No ownership transfer, community-admin override or new invitation restriction is
 introduced. Personal Leave remains a separate lifecycle operation; removing a
 member neither deletes their identity nor stops their agents.

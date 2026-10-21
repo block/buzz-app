@@ -357,7 +357,13 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
     document.documentElement.style.setProperty("--buzz-text-scale", "1"),
   );
 
-  await expect(search).toBeDisabled();
+  // A saved retry freezes the channel, not unrelated member search.
+  await expect(search).toBeEnabled();
+  await search.fill("be");
+  await expect(dialog.getByRole("button", { name: /^Select #/ })).toHaveCount(
+    0,
+  );
+  await search.fill("");
   await expect(participants).toHaveAttribute("aria-expanded", "false");
   await expect(
     dialog.getByText(/^Retry keeps the exact submitted recipients\./),
@@ -367,11 +373,7 @@ test("Share dialog keeps actions reachable across viewports and enlarged text an
   await expect(dialog).not.toBeVisible();
   await expect(trigger).toBeFocused();
   await trigger.press("Enter");
-  await expect(search).toBeDisabled();
-  // The locked search is skipped; focus starts on the first header control.
-  await expect(
-    dialog.getByRole("button", { name: "Refresh member data", exact: true }),
-  ).toBeFocused();
+  await expect(search).toBeFocused();
   await page.keyboard.press("Tab");
   await expect
     .poll(() => dialog.evaluate((el) => el.contains(document.activeElement)))

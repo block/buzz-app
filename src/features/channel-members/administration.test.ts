@@ -831,6 +831,7 @@ it.each([
   "unknown target",
   "dm",
   "archived",
+  "solo",
   "role edit",
 ])("owned-agent evidence does not bypass %s restrictions", async (failure) => {
   const h = ownedAgent();
@@ -848,12 +849,13 @@ it.each([
   if (failure === "unknown actor") h.setRoles("unknown", "bot");
   if (failure === "owner target") h.setRoles("member", "owner");
   if (failure === "unknown target") h.setRoles("member", "unknown");
-  if (["dm", "archived"].includes(failure))
+  if (["dm", "archived", "solo"].includes(failure))
     h.setEvents([
       h.record(39000, [
         ["d", id],
         ["t", failure === "dm" ? "dm" : "stream"],
         ...(failure === "archived" ? [["archived", "true"]] : []),
+        ...(failure === "solo" ? [["t", SOLO_LABEL]] : []),
       ]),
       ...h.events().slice(1),
     ]);

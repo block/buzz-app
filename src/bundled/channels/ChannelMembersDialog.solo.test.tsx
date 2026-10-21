@@ -1529,6 +1529,15 @@ it("distinguishes namesakes in results and adds only the chosen identity", async
       name: `Add Morgan (${labels.get(second.pubkey)})`,
     }),
   ).toBeVisible();
+  // Without a naming plugin the rows still differ visibly, by key only.
+  const shown = within(dialog)
+    .getAllByText(/^npub…/)
+    .map((node) => node.textContent);
+  expect(shown).toHaveLength(2);
+  expect(new Set(shown).size).toBe(2);
+  expect(shown).toContain(
+    firstAdd.getAttribute("aria-label")?.match(/\((npub…\w+)\)/)?.[1],
+  );
   await user.click(firstAdd);
   await waitFor(() =>
     expect(t.published.map((event) => event.kind)).toEqual([9000]),

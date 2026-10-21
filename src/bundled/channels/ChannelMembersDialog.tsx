@@ -111,6 +111,7 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   pubkey,
   name,
   keyLabel,
+  qualified,
   adding,
   picture,
   isAgent,
@@ -143,6 +144,8 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
   pubkey: string;
   name: string;
   keyLabel: string | undefined;
+  /** Another shown row has the same name; show the key so Add picks the right one. */
+  qualified: boolean;
   adding: boolean;
   picture: string | undefined;
   isAgent: boolean;
@@ -208,6 +211,11 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
               {name}
               {pubkey === session.viewer ? " (you)" : ""}
             </span>
+            {qualified && keyLabel && (
+              <span className="shrink-0 text-caption text-subtle">
+                {keyLabel}
+              </span>
+            )}
             {!adding && (roleLabel === "owner" || roleLabel === "admin") && (
               <span className="shrink-0 text-caption text-subtle">
                 {roleLabel === "owner" ? "Owner" : "Admin"}
@@ -889,6 +897,13 @@ export function ChannelMembersDialog({
       : [];
   });
   const keys = publicKeyLabels([...members, ...candidates.keys()]);
+  // A naming plugin is optional: same-named rows still need a visible difference.
+  const shownNames = new Map<string, number>();
+  for (const name of [
+    ...currentMembers.map((key) => label(key)),
+    ...visibleCandidates.map((person) => label(person.pubkey, person.name)),
+  ])
+    shownNames.set(name, (shownNames.get(name) ?? 0) + 1);
   // A confirmed addition replaces its focused Add button with a member row.
   // DOM removal does not emit blur, so restore focus only if it was not moved elsewhere.
   useLayoutEffect(() => {
@@ -1098,6 +1113,7 @@ export function ChannelMembersDialog({
         pubkey={key}
         name={name}
         keyLabel={keys.get(key)}
+        qualified={(shownNames.get(name) ?? 0) > 1}
         adding={adding}
         picture={picture ?? profiles.get(key)?.picture}
         isAgent={isAgent}
@@ -1360,7 +1376,7 @@ export function ChannelMembersDialog({
           />
         )
       }
-      initialFocus={solo && (share.busy || share.saved) ? true : input}
+      initialFocus={solo && share.busy ? true : input}
       finalFocus={() => (openingDestination.current ? false : trigger.current)}
     >
       {selection ? (
@@ -1395,8 +1411,8 @@ export function ChannelMembersDialog({
                           : "Add agents"
                 }
                 value={query}
-                // A pending share retry keeps its exact submitted audience.
-                disabled={solo && (share.busy || !!share.saved)}
+                // A saved share retry hides channel choices, so search stays open.
+                disabled={solo && share.busy}
                 onValueChange={(value) => {
                   setQuery(value);
                   if (value.length > 0) setSelectedRole("All");

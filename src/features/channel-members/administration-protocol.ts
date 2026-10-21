@@ -91,14 +91,14 @@ export function memberAuthority(
       "Member roles are inconsistent. Refresh members and roles.",
     );
   const activeChannel = type !== "dm" && archived !== "true";
-  // Solo chats let the owner remove people but never change roles.
+  // Solo chats let only their owner remove people, and never change roles.
   const solo = !!soloLabels(channelIdentity(metadata).labels);
   return Object.freeze({
     roles: Object.freeze(roles),
     canManage: activeChannel && !solo && elevated.has(viewer),
     canRemove: activeChannel && elevated.has(viewer),
     canRemoveOwnedAgent:
-      activeChannel && !!roles[viewer] && roles[viewer] !== "unknown",
+      activeChannel && !solo && !!roles[viewer] && roles[viewer] !== "unknown",
   });
 }
 

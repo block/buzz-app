@@ -135,6 +135,8 @@ export function createRelaySession(
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
     readPublisherLock?: ReadPublisherLock;
+    /** Overrides the 30-day read floor, for fixtures on a toy clock. */
+    readStateFloor?: () => number;
     deliveryTimeoutMs?: number;
   } = {},
 ) {
@@ -901,6 +903,7 @@ export function createRelaySession(
       options.readStateStorage ??
       browserReadStateStorage(readScope, transport?.viewer ?? ""),
     lock: options.readPublisherLock ?? browserReadPublisherLock(readScope),
+    floor: options.readStateFloor,
     notify,
     broadcastName: transport?.readState
       ? `buzz-read-state:${readScope}`

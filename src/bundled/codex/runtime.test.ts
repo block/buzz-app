@@ -264,8 +264,12 @@ function fixture(
     options = value;
     return process;
   });
-  const emit = (value: Wire) =>
+  /** The ids of the requests answered so far. */
+  const answered = new Set<Wire["id"]>();
+  const emit = (value: Wire) => {
+    if (value.id != null && !value.method) answered.add(value.id);
     options?.onStdout?.(`${JSON.stringify(value)}\n`);
+  };
   const publish = vi.fn(async (event: unknown) => ({
     ...(event as object),
     id: "d".repeat(64),
@@ -643,6 +647,7 @@ function fixture(
     sent,
     failing,
     held,
+    answered,
     emit,
     publish,
     read,
@@ -1189,7 +1194,8 @@ it("leaves a thread unpinned when a local save lands while its turn starts", asy
   f.runtime.restart(pubkey);
   f.held.delete("turn/start");
   turn.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  // The turn has started once its start is answered.
+  await vi.waitFor(() => expect(f.answered.has(f.starts()[1]?.id)).toBe(true));
   f.complete(1, "TWO");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
   await f.runtime.run(carrying("@Codex three", "SYNCED B"));
@@ -1238,7 +1244,8 @@ it("refuses a queued turn captured before a local save, and unpins the thread", 
   // A differing pick queues the second turn behind the first, holding
   // settings A while a save clears the pins.
   await f.runtime.run(carrying("@Codex two", "SYNCED A", "high"));
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  // It is admitted, on settings A, once it is shown working.
+  await vi.waitFor(() => expect(f.workingUntil).toHaveBeenCalledTimes(2));
   f.runtime.restart(pubkey, { ...TEST_CONFIG, instructions: "SYNCED B" });
   f.complete(0, "ONE");
   // Admitted before the save, it never starts on settings A.

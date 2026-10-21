@@ -7997,10 +7997,12 @@ describe("Delete as a recoverable archive", () => {
       await savingB;
       release();
       await savingC;
-      await vi.waitFor(() =>
-        expect(g.storage.getItem(recordKey(bot))).toContain("CONFIG C"),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      // B's strip waits behind C's save in the agent's change queue: once
+      // that queue drains, nothing is left that could replace C.
+      const { changes } = g.f.service as unknown as {
+        changes: Map<string, Promise<void>>;
+      };
+      while (changes.has(bot)) await changes.get(bot);
       expect(g.storage.getItem(recordKey(bot))).toContain("CONFIG C");
     } finally {
       accept();

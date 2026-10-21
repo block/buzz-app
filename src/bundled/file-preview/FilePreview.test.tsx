@@ -282,35 +282,85 @@ it("keeps uploaded composer attachments inside their existing modal without a se
   expect(open).not.toHaveBeenCalled();
 });
 
-it("retries a failed read and leaves plain text literal", async () => {
-  const text =
-    '# This stays plain text\n<script>alert("preview")</script>\n<img src="https://example.com/tracker.png">';
-  const fetch = vi
-    .fn<typeof globalThis.fetch>()
-    .mockRejectedValueOnce(new Error("File unavailable"))
-    .mockResolvedValueOnce(new Response(text));
-  vi.stubGlobal("fetch", fetch);
-  render(
-    <FilePreviewPanel
-      target={previewTarget(
-        { ...attachment, name: "notes.html", mime: "text/html" },
-        source,
-      )}
-      close={() => {}}
-    />,
-  );
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "File unavailable",
-  );
-  expect(
-    screen.getByRole("link", { name: "Download notes.html" }),
-  ).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-  const content = await screen.findByText(/# This stays plain text/);
-  expect(content.textContent).toBe(text);
-  expect(content.querySelector("script, img")).toBeNull();
-  expect(screen.queryByRole("heading")).toBeNull();
-});
+it.each([false, true])(
+  "preserves retry focus through failure and success (focus moved: %s)",
+  async (moveFocus) => {
+    const text =
+      '# This stays plain text\n<script>alert("preview")</script>\n<img src="https://example.com/tracker.png">';
+    const failed = deferred<Response>();
+    const recovered = deferred<Response>();
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockRejectedValueOnce(new Error("File unavailable"))
+      .mockImplementationOnce(() => failed.promise)
+      .mockImplementationOnce(() => recovered.promise);
+    vi.stubGlobal("fetch", fetch);
+    const user = userEvent.setup();
+    render(
+      <>
+        <FilePreviewPanel
+          target={previewTarget(
+            { ...attachment, name: "notes.html", mime: "text/html" },
+            source,
+          )}
+          close={() => {}}
+        />
+        <button type="button">Outside preview</button>
+      </>,
+    );
+    try {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "File unavailable",
+      );
+      const download = screen.getByRole("link", {
+        name: "Download notes.html",
+      });
+      const retry = screen.getByRole("button", { name: "Retry" });
+      const preview = screen.getByRole("region", {
+        name: "Preview: notes.html",
+      });
+      await user.tab();
+      expect(download).toHaveFocus();
+      await user.tab();
+      expect(retry).toHaveFocus();
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      expect(screen.getByRole("button", { name: "Retry" })).toBe(retry);
+      expect(retry).toHaveFocus();
+      expect(retry).toHaveAttribute("aria-busy", "true");
+      await user.keyboard("{Enter}");
+      expect(fetch).toHaveBeenCalledTimes(2);
+      await act(async () => failed.resolve(new Response("", { status: 503 })));
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "The file could not be loaded. Try again.",
+      );
+      expect(retry).toHaveFocus();
+      expect(retry).toBeEnabled();
+      expect(retry).not.toHaveAttribute("aria-busy", "true");
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+      expect(retry).toHaveFocus();
+      expect(retry).toHaveAttribute("aria-busy", "true");
+      const elsewhere = screen.getByRole("button", { name: "Outside preview" });
+      if (moveFocus) {
+        await user.tab();
+        expect(elsewhere).toHaveFocus();
+      }
+      await act(async () => recovered.resolve(new Response(text)));
+      const content = await screen.findByText(/# This stays plain text/);
+      expect(content.textContent).toBe(text);
+      expect(content.querySelector("script, img")).toBeNull();
+      expect(screen.queryByRole("heading")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      expect(moveFocus ? elsewhere : preview).toHaveFocus();
+    } finally {
+      await act(async () => {
+        failed.resolve(new Response(""));
+        recovered.resolve(new Response(""));
+      });
+    }
+  },
+);
 
 it("aborts retired reads and ignores a stale response after switching files", async () => {
   const first = deferred<Response>();

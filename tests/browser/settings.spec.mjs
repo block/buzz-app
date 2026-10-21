@@ -1003,7 +1003,7 @@ test("discarding community setup leaves the published profile unchanged", async 
     .getByRole("button", { name: "Join a community", exact: true })
     .click();
   await page
-    .getByRole("textbox", { name: "Relay URL", exact: true })
+    .getByRole("textbox", { name: "Community URL", exact: true })
     .fill("wss://primary.example");
   await button(page, "Continue").click();
   await expect(

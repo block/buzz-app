@@ -17,8 +17,8 @@ Click the avatar → **Settings → Profile**. With a community selected in the
 header's community picker, Save updates only your profile in that community;
 there is no separate profile-destination selector. In Personal space, Save edits
 the local default for new communities without publishing. Open the header's
-community picker, choose **Join a community** and type a **Relay URL**. With no
-community saved, the picker is labeled **Communities**; otherwise it shows the
+community picker, choose **Join a community** and type a **Community URL**. With
+no community saved, the picker is labeled **Communities**; otherwise it shows the
 selected community's icon or the Personal space globe. There
 is no destination dropdown. Accepts `wss://` or `https://` origins, for example
 `wss://relay.example.com` or `wss://other.example.com`, and other
@@ -163,7 +163,7 @@ private keys.
 Storage failure blocks the remote operation. Completing a native join requires
 successful local membership persistence before clearing its recovery record.
 
-After closing or restarting, open **Add a community** to resume the most recent
+After closing or restarting, open **Join a community** to resume the most recent
 unfinished destination. Continue makes a fresh authenticated profile read, with
 strong consistency. Successful access resumes profile setup even if the profile
 does not exist yet; it never requires reusing an expired invite after admission.

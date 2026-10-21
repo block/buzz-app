@@ -187,11 +187,11 @@ processes before upload; it requires ffmpeg installed on the host.
 
 The broker supports reads, live traffic and basic message sending **as your real
 account**. Profile changes and invite admission can also write to real communities.
-Use **Switch community → Add a community** and type the community's `wss://` or
+Use **Switch community → Join a community** and type the community's `wss://` or
 `https://` relay origin (no path, credentials, query or fragment). For example,
 `wss://relay.example.com` and `https://relay.example.com` identify the same relay
 origin. Continue contacts that destination using your
-identity; joining or publishing a profile is a later explicit step. Then open
+identity; you review the community before you join or publish a profile. Then open
 Messages, choose a channel, and click a GitHub reference. See
 [the channel extension contract and data budgets](docs/channels.md) for ownership,
 performance, validation, and limitations.

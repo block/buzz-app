@@ -332,7 +332,7 @@ export function CommunityDialog({
             ? `Your profile in ${info?.name && info.name !== "Buzz Relay" ? info.name : destination?.name}`
             : connectionFrom
               ? "Edit connection"
-              : "Add a community"
+              : "Join a community"
       }
     >
       <form
@@ -345,7 +345,7 @@ export function CommunityDialog({
         }}
       >
         {mode === "join" && step !== "destination" && destination && (
-          <p className={styles.note}>Relay: {destination.url}</p>
+          <p className={styles.note}>Community URL: {destination.url}</p>
         )}
         {unavailable ? (
           <p>
@@ -359,12 +359,12 @@ export function CommunityDialog({
           <>
             {step === "destination" && (
               <Field
-                label="Relay URL"
+                label="Community URL"
                 error={error || undefined}
                 description={
                   connectionFrom
                     ? undefined
-                    : "Enter a wss:// or https:// relay address without a path. Continue contacts this relay using your Buzz identity; joining or publishing a profile requires a later step."
+                    : "Paste the address the community shared with you. You can review it before you join."
                 }
               >
                 <Input
@@ -373,7 +373,7 @@ export function CommunityDialog({
                   autoComplete="url"
                   autoCapitalize="none"
                   spellCheck={false}
-                  placeholder="wss://relay.example.com"
+                  placeholder="wss://community.example.com"
                   maxLength={2048}
                   disabled={busy}
                   value={url}

@@ -5,7 +5,7 @@
 Configure your public `BUZZ_DEV_VIEWER` pin in `.env.local` using the
 [development setup](../README.md#relay-channels), then run `just web` or
 `just desktop` (one at a time); the development broker starts with the dev server.
-Add a community using the top-left community switcher, open Messages and click a supported GitHub URL in a message to open its object
+Join a community using the community picker, open Messages and click a supported GitHub URL in a message to open its object
 in a side panel. Pull requests show their change summary and a one-page checklist
 of checks, reviews, unresolved threads and merge state; issues, commits, and
 repositories show their relevant details. On desktop, the panel reads through the

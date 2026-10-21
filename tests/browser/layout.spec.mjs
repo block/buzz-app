@@ -405,7 +405,7 @@ test("separate sidebar and workspace surfaces, real link panel and compact commu
     .getByRole("button", { name: "Join a community", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Add a community", exact: true }),
+    page.getByRole("heading", { name: "Join a community", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);

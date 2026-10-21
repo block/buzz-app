@@ -4,6 +4,7 @@
 // conversation. Pi answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
 import { ownerReads } from "../../features/agents/reads";
+import { repositoriesContext } from "../../features/communities/repositories";
 import type { PluginModule } from "../../plugins/api";
 import { PiLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
@@ -25,6 +26,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (pubkey) => ownerReads(agents.relay(pubkey), pubkey),
     (pubkey, signal) => agents.core(pubkey, signal),
     () => agents.tools(),
+    repositoriesContext,
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,

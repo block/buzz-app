@@ -52,6 +52,7 @@ function setup(
   added: readonly AddedTool[] = [],
   /** The channel's Canvas, as it reads now. */
   canvas?: { content: string; pubkey?: string },
+  repositories?: (scope: string | undefined) => string,
 ) {
   let submissions = 0;
   const host = fakeHost({
@@ -107,7 +108,12 @@ function setup(
     },
   };
   const relay = {
-    snapshot: () => ({ status: "ready", session, viewer: alice }),
+    snapshot: () => ({
+      status: "ready",
+      session,
+      viewer: alice,
+      scope: `https://agent.example:${alice}`,
+    }),
   } as unknown as RelayData;
   const core = vi.fn(async () => null as string | null | undefined);
   const runtime = new PiRuntime(
@@ -115,6 +121,7 @@ function setup(
     (pubkey) => ownerReads(relay, pubkey),
     core,
     () => added,
+    repositories,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -232,6 +239,18 @@ it("hands an owner's mention to its thread's Pi conversation", async () => {
   expect(String(delivered?.params.instructions)).toContain(self);
   expect(turn.workingUntil).toHaveBeenCalledTimes(1);
   expect(published).toEqual([]);
+});
+
+it("hands a conversation its own community repositories without changing its workspace", async () => {
+  const repositories = vi.fn(
+    () => "<community-repositories>/code/own</community-repositories>",
+  );
+  const { host, deliver } = setup({}, [], undefined, repositories);
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  const [delivered] = host.requests("deliver");
+  expect(repositories).toHaveBeenCalledWith(`https://agent.example:${alice}`);
+  expect(String(delivered?.params.instructions)).toContain("/code/own");
+  expect(delivered?.params.cwd).toBe("~/.buzz");
 });
 
 it("shows a conversation only the messages it was not shown, nor its own replies", async () => {
@@ -797,6 +816,67 @@ it("reports a run an earlier app left unfinished that fails, and stays silent fo
   await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
   await vi.waitFor(() => expect(published).toHaveLength(1));
   expect(published[0]?.content).toContain("400 Bad model");
+});
+
+it("posts no answer for a left run that sent once another left run's wait continued it", async () => {
+  // The second run's thread is looked up; the first's wait continues every
+  // run, and the second sends its answer itself.
+  const later = reply("8", "@Pi older");
+  const looked = deferred();
+  const sent = deferred();
+  const { host, deliver, published, runtime, session } = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: 5,
+          request: "d".repeat(64),
+          context: { channel, root: root.id },
+        },
+        {
+          submission: 42,
+          conversation: 6,
+          request: later.id,
+          context: { channel },
+        },
+      ],
+    }),
+    wait: async ({ submission }, process) => {
+      if (submission === 41) {
+        await process.tool({
+          agent: self,
+          conversation: 6,
+          context: { channel, root: root.id },
+          name: "send",
+          arguments: { text: "Sent itself", audience: "everyone" },
+        });
+        sent.resolve();
+        return new Promise(() => {});
+      }
+      if (submission === 42) {
+        await sent.promise;
+        return { status: "done", answer: 9, text: "Sent itself" };
+      }
+      return new Promise(() => {});
+    },
+  });
+  session.read.mockImplementation(async (filters?: { ids?: string[] }[]) => {
+    if (!filters?.[0]?.ids?.includes(later.id)) return [root];
+    await looked.promise;
+    return [later];
+  });
+  const run = deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  await vi.waitFor(() =>
+    expect(session.read).toHaveBeenCalledWith(
+      [{ ids: [later.id], limit: 1 }],
+      expect.anything(),
+    ),
+  );
+  expect(host.requests("wait")).toEqual([]);
+  looked.resolve();
+  await run;
+  await vi.waitFor(() => expect(runtime.working(self)).not.toContain(6));
+  expect(published.map(({ content }) => content)).toEqual(["Sent itself"]);
 });
 
 it("answers and reports left runs of a conversation threads share in their mentions' thread, and lists left runs again after a failed listing", async () => {

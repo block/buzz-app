@@ -173,6 +173,9 @@ export class PiRuntime {
     private readonly core: Agents["core"],
     /** The tools plugins add to every conversation now. */
     private readonly added: () => readonly AddedTool[] = () => [],
+    /** Desktop-local repository instructions; standalone hosts keep their own layout. */
+    private readonly repositories: (scope: string | undefined) => string = () =>
+      "",
   ) {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
@@ -705,6 +708,7 @@ export class PiRuntime {
       console.warn("Pi could not list an agent's unfinished runs", error);
       return;
     }
+    const waits: (() => Promise<void>)[] = [];
     for (const { submission, conversation, request, context } of unfinished) {
       const { handle } = entry;
       if (!handle || request === current || entry.receipts.has(request))
@@ -730,31 +734,36 @@ export class PiRuntime {
       active.set(receipt.scope, receipt);
       entry.active.set(conversation, active);
       const sends = entry.sends.get(conversation) ?? 0;
-      void this.settle(entry, pubkey, submission)
-        .then(async (waited) => {
-          if (!ours()) return;
-          if (waited.status === "done")
-            await this.answer(
-              entry,
-              handle,
-              conversation,
-              { where, sends },
-              waited,
-            );
-          else if (
-            waited.status === "unanswered" &&
-            waited.reason !== "aborted"
-          )
-            await this.report(handle, where, unanswered(waited));
-        })
-        .catch(async (error: unknown) => {
-          if (ours() && !entry.closed)
-            await this.report(handle, where, errorText(error));
-        })
-        .finally(() => {
-          if (ours()) this.forget(entry, request);
-        });
+      waits.push(() =>
+        this.settle(entry, pubkey, submission)
+          .then(async (waited) => {
+            if (!ours()) return;
+            if (waited.status === "done")
+              await this.answer(
+                entry,
+                handle,
+                conversation,
+                { where, sends },
+                waited,
+              );
+            else if (
+              waited.status === "unanswered" &&
+              waited.reason !== "aborted"
+            )
+              await this.report(handle, where, unanswered(waited));
+          })
+          .catch(async (error: unknown) => {
+            if (ours() && !entry.closed)
+              await this.report(handle, where, errorText(error));
+          })
+          .finally(() => {
+            if (ours()) this.forget(entry, request);
+          }),
+      );
     }
+    // Only once every run's sends are counted: a wait continues all of them,
+    // and one could send while a later run's thread is still looked up.
+    for (const wait of waits) void wait();
     this.notify();
   }
 
@@ -824,6 +833,7 @@ export class PiRuntime {
       instructions: systemPrompt({
         scope,
         cwd: workspace,
+        repositories: this.repositories(this.reads(pubkey)?.scope),
         ...(entry.name ? { agent: { name: entry.name, pubkey } } : {}),
         instructions,
         team: entry.team,

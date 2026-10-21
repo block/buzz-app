@@ -85,14 +85,18 @@ export class AuthFile {
       throw new Error(`${this.path} is not a JSON object`);
     return parsed;
   }
+  /** Every entry, read under the lock: `pi` rewrites the file in place. */
+  all() {
+    return this.locked((all) => all, false);
+  }
   async read(id) {
-    const credential = (await this.load())[id];
+    const credential = (await this.all())[id];
     return credential?.type === "api_key" && credential.key
       ? { ...credential, key: this.resolve(credential.key) }
       : credential;
   }
   async list() {
-    return Object.entries(await this.load()).map(([providerId, value]) => ({
+    return Object.entries(await this.all()).map(([providerId, value]) => ({
       providerId,
       type: value.type,
     }));
@@ -121,7 +125,7 @@ export class AuthFile {
       );
     return key;
   }
-  async locked(change) {
+  async locked(change, save = true) {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     await writeFile(this.path, "{}", { flag: "wx", mode: 0o600 }).catch(
       (error) => {
@@ -136,9 +140,10 @@ export class AuthFile {
     try {
       const all = await this.load();
       const result = await change(all);
-      await writeFile(this.path, `${JSON.stringify(all, null, 2)}\n`, {
-        mode: 0o600,
-      });
+      if (save)
+        await writeFile(this.path, `${JSON.stringify(all, null, 2)}\n`, {
+          mode: 0o600,
+        });
       return result;
     } finally {
       await release();
@@ -148,7 +153,7 @@ export class AuthFile {
 
 /** Why a provider that a Pi package adds, which Buzz doesn't load, can't run. */
 const notBuiltIn = (id) =>
-  `Buzz can use only Pi's built-in providers, and ${id} isn't one. It may come from a Pi package. Choose another provider in the agent's Settings.`;
+  `Buzz can use only Pi's built-in providers, and ${id} isn't one. It may come from a Pi package. Choose another provider in the agent's Identity tab.`;
 
 /** The default provider, model and thinking level in Pi's settings. */
 async function piDefaults(dir) {
@@ -238,7 +243,7 @@ export function serve({
     if (id && !models.getProvider(id)) throw new Error(notBuiltIn(id));
     if (!id || !modelId)
       throw new Error(
-        "This agent has no model. Choose a provider and model in its Settings.",
+        "This agent has no model. Choose a provider and model in its Identity tab.",
       );
     const found = models.getModel(id, modelId);
     if (!found) throw new Error(`Pi has no model ${modelId} from ${id}`);

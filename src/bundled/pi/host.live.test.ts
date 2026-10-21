@@ -29,6 +29,7 @@ import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import lockfile from "proper-lockfile";
 import { AuthFile, serve } from "./host.mjs";
 const data = process.argv[2];
 const faux = fauxProvider();
@@ -182,6 +183,15 @@ out.command = await auth.read("c").catch((error) => error.message);
 process.env.BUZZ_PI_TEST_KEY = "secret";
 await auth.modify("e", async () => ({ type: "api_key", key: "$BUZZ_PI_TEST_KEY" }));
 out.environment = await auth.read("e").catch((error) => error.message);
+// A read waits out a write \`pi\` makes in place under the same lock, rather
+// than seeing it half done; the pause gives a read that didn't wait its chance.
+const writing = await lockfile.lock(data + "/auth.json", { realpath: false });
+await writeFile(data + "/auth.json", '{"p":');
+const reading = auth.read("p").catch((error) => error.message);
+await new Promise((resolve) => setTimeout(resolve, 100));
+await writeFile(data + "/auth.json", JSON.stringify({ p: signIn }));
+await writing();
+out.whileWritten = await reading;
 console.log(JSON.stringify(out));
 `;
 
@@ -321,5 +331,6 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       /^Buzz doesn't use `!command` or `\$NAME` keys/,
     );
     expect(out.environment).toBe(out.command);
+    expect(out.whileWritten).toEqual(signIn);
   }, 90_000);
 });

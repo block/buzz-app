@@ -1885,3 +1885,63 @@ it.each(["acquisition", "authorization"])(
     }
   },
 );
+
+it.each(["folder", "git"])(
+  "keeps saved %s acquisition errors recoverable and focuses retry through repeated failure",
+  async (source) => {
+    const acquire = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Source unavailable"))
+      .mockRejectedValueOnce(new Error("Source unavailable"))
+      .mockResolvedValueOnce({
+        ...rememberedPreview,
+        candidates: [rememberedPreview.candidates[0]],
+      });
+    const props = savedFolderProps({
+      checkFolder: vi.fn(async () => "new"),
+      previewFolder: acquire,
+      git: acquire,
+      discard: vi.fn(async () => {}),
+    });
+    const catalog: Catalog = props.catalog;
+    if (source === "git")
+      catalog.plugins[0] = {
+        ...rememberedPlugin,
+        updateSource: {
+          repository: "https://example.com/plugin.git",
+          reference: "main",
+          path: "dist",
+        },
+      };
+    const authorizeGit = vi.fn(async () => null);
+    render(
+      <PluginImport
+        {...props}
+        catalog={catalog}
+        initialUpdateAvailable
+        authorizeGit={authorizeGit}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Update" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Source unavailable",
+    );
+    const retry = screen.getByRole("button", { name: "Try again" });
+    await waitFor(() => expect(retry).toHaveFocus());
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    fireEvent.click(retry);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Source unavailable",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Try again" })).toHaveFocus(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByRole("dialog", { name: "Update Remembered" });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Update$/ })).toHaveFocus(),
+    );
+    expect(acquire).toHaveBeenCalledTimes(3);
+    if (source === "git") expect(authorizeGit).toHaveBeenCalledTimes(3);
+  },
+);

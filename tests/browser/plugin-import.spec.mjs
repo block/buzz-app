@@ -118,6 +118,13 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
             ? `${candidate.path}-${window.importCategory}`
             : candidate.revision;
         }
+        if (command === "plugin_import_git" && args?.checkOnly) {
+          const result = structuredClone(preview);
+          if (window.importCategory)
+            for (const candidate of result.candidates)
+              candidate.revision = `${candidate.path}-${window.importCategory}`;
+          return result;
+        }
         if (
           command === "plugin_update_preview" ||
           command === "plugin_import_folder" ||
@@ -131,6 +138,8 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
               await new Promise((resolve) => {
                 window.resolveImport = resolve;
               });
+            if (window.importAcquisitionError)
+              throw new Error(window.importAcquisitionError);
             if (args?.repository === "bad")
               throw new Error("Repository unavailable");
             importSource =
@@ -1435,3 +1444,67 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   });
   expect(installs[1]).toEqual(installs[0]);
 });
+
+// Browser-only: the real modal must retain keyboard focus through failed retries.
+for (const source of ["folder", "git"]) {
+  test(`saved ${source} acquisition retries stay focused inside the update modal`, async ({
+    page,
+    app,
+  }) => {
+    const sample = {
+      path: "dist",
+      revision: "one",
+      manifest: { id: "example.recovery", name: "Recovery", apiVersion: 1 },
+    };
+    await nativeImports(page, [sample]);
+    await openPlugins(page, app.origin);
+    await button(page, "Add").click();
+    if (source === "git") {
+      await page.getByLabel("Git or GitHub repository").fill("example/plugins");
+      await button(page, "Find plugins").click();
+    } else await button(page, "Browse plugin folder").click();
+    await button(page, "Install plugin").click();
+    await expectOnlySettings(page);
+    await button(page, "View Recovery details").click();
+    await page.evaluate(() => {
+      window.importCategory = "productivity";
+    });
+    if (source === "git") {
+      await button(page, "Check for updates").click();
+    } else {
+      await expect(button(page, "Update")).toBeVisible();
+    }
+    await page.evaluate(() => {
+      window.importAcquisitionError = "Saved source unavailable";
+    });
+    await button(page, "Update").click();
+    const dialog = page.getByRole("dialog", {
+      name: "Update plugin",
+      exact: true,
+    });
+    const retry = dialog.getByRole("button", {
+      name: "Try again",
+      exact: true,
+    });
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Saved source unavailable",
+    );
+    await expect(retry).toBeFocused();
+    await retry.press("Enter");
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Saved source unavailable",
+    );
+    await expect(retry).toBeFocused();
+    await page.evaluate(() => {
+      window.importAcquisitionError = null;
+    });
+    await retry.press("Enter");
+    const review = page.getByRole("dialog", {
+      name: "Update Recovery",
+      exact: true,
+    });
+    await expect(
+      review.getByRole("button", { name: "Update", exact: true }),
+    ).toBeFocused();
+  });
+}

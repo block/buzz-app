@@ -274,12 +274,14 @@ export function PluginImport({
     pending.current = true;
     const current = lifetime.current;
     setLoading(true);
-    setError(null);
+    if (!savedSource) setError(null);
     setPreview(null);
     setShowUnchanged(false);
     setEnableOnInstall(true);
     try {
       const result = await operation();
+      if (!result && updateId && savedSource)
+        throw new Error("No update source found. Try again.");
       const next =
         result && updateId
           ? {
@@ -614,14 +616,14 @@ export function PluginImport({
             <Button
               ref={errorBack}
               type="button"
-              disabled={blocked}
+              disabled={busy || discarding}
+              loading={loading}
               onClick={() => {
-                if (!preview && savedSource && "root" in savedSource)
-                  errorTrigger.current = browse.current;
-                setError(null);
+                if (!preview && savedSource) prepareReview();
+                else setError(null);
               }}
             >
-              Back
+              {!preview && savedSource ? "Try again" : "Back"}
             </Button>
           ) : showUnchanged ? (
             <Button ref={unchangedBack} onClick={() => setShowUnchanged(false)}>

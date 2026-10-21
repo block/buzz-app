@@ -247,7 +247,11 @@ export function AgentChoice({
         <div className={styles.controls}>
           <div className={styles.status}>
             <span className={styles.statusIcon}>
-              <CircleNotchIcon size={20} aria-hidden="true" />
+              <CircleNotchIcon
+                size={20}
+                className="motion-safe:animate-spin"
+                aria-hidden="true"
+              />
             </span>
             <div className={styles.statusCopy}>
               <ShimmerText>Loading model and effort…</ShimmerText>

@@ -230,13 +230,15 @@ it.each(["side", "main"] as const)(
       } as unknown as Navigation,
       true,
     );
+    const root = h.root;
+    if (!root) throw new Error("Routed thread root unavailable");
     const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
     await screen.findByRole("tab", { name: "Initiating thread" });
     act(() =>
       expect(
         h.panels.requestOpen({
           channelId: "alpha",
-          rootId: h.root,
+          rootId: root,
           target: "https://app.example/",
         }),
       ).toBe(true),
@@ -248,7 +250,7 @@ it.each(["side", "main"] as const)(
     expect(open).not.toHaveBeenCalled();
     expect(tabs.result.current.tabs).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ kind: "thread", messageId: h.root }),
+        expect.objectContaining({ kind: "thread", messageId: root }),
       ]),
     );
     await h.user.click(screen.getByRole("button", { name: "Close App tab" }));

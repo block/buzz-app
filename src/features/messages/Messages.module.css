@@ -1033,6 +1033,8 @@ html[data-keyboard-navigation] .audioSeek:focus-visible {
     max(16rem, calc(min(28rem, 56vh) * var(--media-ratio, 16 / 9)))
   );
   max-width: 100%;
+  /* Extreme metadata uses a bounded frame; contain preserves the full media. */
+  max-height: min(28rem, 56vh);
   aspect-ratio: var(--media-ratio, 16 / 9);
   overflow: visible;
   margin-block: var(--space-1);
@@ -1047,6 +1049,7 @@ button.mediaPreview {
   cursor: zoom-in;
 }
 .mediaPreviewThread {
+  max-height: min(22rem, 45vh);
   width: min(
     32rem,
     max(16rem, calc(min(22rem, 45vh) * var(--media-ratio, 16 / 9)))
@@ -1059,7 +1062,7 @@ button.mediaPreview {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   background: var(--surface-inverse);
 }
 .mediaPoster {
@@ -1068,7 +1071,7 @@ button.mediaPreview {
   z-index: 1;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   pointer-events: none;
 }
 .mediaPlay,
@@ -2229,6 +2232,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 /* Shared media review and compact video surfaces. */
 .mediaPreview[data-video-preview] {
+  /* Ordinary 9:16 portraits still fit at the readable 16rem width. */
+  max-height: min(32rem, 70vh);
   width: min(24rem, max(16rem, calc(var(--media-ratio, 16 / 9) * 11.25rem)));
 }
 .mediaPreview[data-video-preview] .mediaExpand {

@@ -1,3 +1,4 @@
+import { GitHubBody } from "../../src/bundled/github/GitHubBody";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
 import { ConversationService } from "../../src/features/conversation/service";
@@ -219,6 +220,14 @@ function Fixture() {
         : undefined,
   );
   const trigger = useRef<HTMLElement | null>(null);
+  if (new URLSearchParams(location.search).has("tall-image"))
+    return (
+      <GitHubBody
+        url="https://github.com/block/buzz-app/pull/1473"
+        body="![Tall screenshot](https://user-images.githubusercontent.com/fixture/tall.png)"
+      />
+    );
+
   return (
     <main style={{ maxWidth: 900, padding: "80px 40px", margin: "0 auto" }}>
       <p

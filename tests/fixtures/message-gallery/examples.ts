@@ -696,6 +696,22 @@ export const groups: Group[] = [
         },
       ),
       single(
+        "video-extreme",
+        "Extreme video metadata",
+        "An extreme aspect ratio keeps the preview and controls bounded.",
+        "",
+        {
+          attachments: [
+            {
+              url: "https://fixture.test/video",
+              kind: "video",
+              previewUrl: "https://fixture.test/poster",
+              dimensions: { width: 1, height: 1000000 },
+            },
+          ],
+        },
+      ),
+      single(
         "video-unavailable",
         "Unavailable video",
         "The same row when video media cannot be resolved.",

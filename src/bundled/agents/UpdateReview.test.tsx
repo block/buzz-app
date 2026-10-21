@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
@@ -65,8 +71,14 @@ function fixture(change: Partial<AgentUpdateRequest>, waiting = false) {
     type: "test/echo",
     config: { reply: "Be brief.", model: "large" },
   } as unknown as Agent;
-  const snapshot = { running: [agent] };
+  let snapshot = { running: [agent] };
   const agents = {
+    /** Sets which agents are connected now. */
+    connect: (running: readonly Agent[]) => {
+      snapshot = { running: [...running] };
+      for (const listener of listeners) listener();
+    },
+    agent,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -138,6 +150,25 @@ it("reviews the next request while another's agent is not connected", async () =
   await user.click(screen.getByRole("button", { name: /^Close$/ }));
   await waitFor(() =>
     expect(agents.dismissUpdate).toHaveBeenCalledWith("draft"),
+  );
+});
+
+it("keeps the owner's edits while agents connect and disconnect", async () => {
+  const user = userEvent.setup();
+  const agents = fixture({ name: "Kid" }, true);
+  const name = await screen.findByDisplayValue("Kid");
+  await user.clear(name);
+  await user.type(name, "Reviewer");
+  const earlier = { ...agents.agent, pubkey: "d".repeat(64) } as Agent;
+  act(() => agents.connect([earlier, agents.agent]));
+  act(() => agents.connect([earlier]));
+  expect(screen.getByDisplayValue("Reviewer")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /^Save changes$/ }));
+  await waitFor(() =>
+    expect(agents.approveUpdate).toHaveBeenCalledWith(
+      "draft",
+      expect.objectContaining({ name: "Reviewer" }),
+    ),
   );
 });
 

@@ -187,9 +187,11 @@ sides no longer share) stops until then, and a session the service has ended
 signs the plugin out. A service that answers any of the routes with 404 has no
 known-communities routes yet, or not all of them: sync stops until the next
 sign-in. The owner reports nothing to the app, so a halted or parked sync is
-not shown anywhere yet. A listed address this device could never save is left
-out and counted in a console warning, so one bad row cannot stop the account's
-sync.
+not shown anywhere yet; each refusal is named once in a console warning (the
+route, the address and the reason), since an account without the routes'
+server capability is refused on every sign-in and would otherwise leave no
+trace on the device. A listed address this device could never save is left
+out and counted the same way, so one bad row cannot stop the account's sync.
 Signing out or disabling the plugin abandons the request in flight and leaves
 the queue intact.
 

@@ -5,7 +5,7 @@ import {
 } from "../../../features/communities/known-communities";
 import type { KnownCommunities } from "../../../features/communities/service";
 import type { OAuthSession } from "../oauth/session";
-import type { KnownCommunitiesClient, UpdateResult } from "./client";
+import type { KnownCommunitiesClient, Refusal, UpdateResult } from "./client";
 
 const backoff = (failures: number) => Math.min(60_000, 1000 * 2 ** failures);
 /** The service has no such route: not yet deployed, or only partly. */
@@ -14,6 +14,13 @@ const missing = (result: UpdateResult) =>
 /** An intent's identity for parking: the newer intent that replaces a parked
  * one is a different request and goes out. */
 const key = (op: PendingOp) => `${op.removed ? "-" : "+"}${op.url}`;
+/** The owner reports nothing to the app, so a refusal is at least logged. */
+const warn = (what: string, result: Refusal, then: string) =>
+  console.warn(
+    `Builderlab ${what} ${
+      result.kind === "rejected" ? `HTTP ${result.status}` : result.kind
+    }; known-communities sync ${then}.`,
+  );
 
 /** Drains the known-community outbox to the account service and reconciles
  * its list, for one plugin lifetime. It runs only while signed in: each
@@ -68,6 +75,7 @@ export function startKnownCommunitiesSync({
       if (!listed) {
         const list = await client.list(signal);
         if (list.kind !== "listed") {
+          warn("list answered", list, "stops until the next sign-in");
           halted = true;
           return;
         }
@@ -99,10 +107,20 @@ export function startKnownCommunitiesSync({
           await knownCommunities.apply(
             acknowledge(knownCommunities.snapshot().sync, op),
           );
-        else if (result.kind === "forbidden" || missing(result)) {
-          halted = true;
-          return;
-        } else parked.add(key(op));
+        else {
+          const what = `${op.removed ? "remove" : "add"} ${op.url} answered`;
+          if (result.kind === "forbidden" || missing(result)) {
+            warn(what, result, "stops until the next sign-in");
+            halted = true;
+            return;
+          }
+          warn(
+            what,
+            result,
+            "skips it until it is replaced or the next sign-in",
+          );
+          parked.add(key(op));
+        }
       }
       failures = 0;
       // A parked intent that was replaced or withdrawn no longer counts, so

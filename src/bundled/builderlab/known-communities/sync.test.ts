@@ -262,6 +262,7 @@ it.each([
     requests: 2,
   },
 ])("halts until the next sign-in when $name", async ({ arrange, requests }) => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const h = await fixture({
     signedIn: false,
     snapshot: { sync: queued(primary) },
@@ -274,8 +275,12 @@ it.each([
     h.client.remove.mock.calls.length;
   await until(() => expect(calls()).toBe(requests));
   await vi.advanceTimersByTimeAsync(0);
-  // Halted, not failed: no retry is scheduled.
+  // Halted, not failed: no retry is scheduled, and the device says why.
   expect(vi.getTimerCount()).toBe(0);
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0]?.[0]).toMatch(
+    /^Builderlab (list|add wss:\/\/primary\.example) answered (forbidden|invalid_response|HTTP 40[45]); .* stops until the next sign-in\.$/,
+  );
   window.dispatchEvent(new Event("online"));
   h.enqueue(secondary);
   await vi.advanceTimersByTimeAsync(120_000);
@@ -446,6 +451,7 @@ it.each([
 ])(
   "parks an add the service answers $kind, keeps sending others, and sends the intent that replaces it",
   async (refusal) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const h = await fixture({
       snapshot: { sync: queued(primary, secondary) },
       arrange: (client) =>
@@ -457,6 +463,12 @@ it.each([
       expect(h.outbox()).toEqual([{ url: primary, removed: false }]),
     );
     expect(h.client.add).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toBe(
+      `Builderlab add ${primary} answered ${
+        refusal.kind === "rejected" ? "HTTP 415" : refusal.kind
+      }; known-communities sync skips it until it is replaced or the next sign-in.`,
+    );
     // Triggers and time pass it over, and the same intent queued again is
     // the same request: still parked.
     window.dispatchEvent(new Event("online"));

@@ -395,6 +395,19 @@ export function teamRunner(deps: RunnerDeps) {
    * is never auto-stopped: Recover exists to act on an archived team, and
    * its step decides from the metadata it reads, not from `mode`. */
   const intentKinds = (op: TeamOp) => !LIFECYCLE[op.kind];
+  /** Whether Recover `recover` retires `older`: an earlier Delete on its
+   * team known never to have sent, so it can't archive the recovered team
+   * later. One that may have sent stays, fencing the Recover until it
+   * resolves. */
+  const retires = (recover: TeamOp, older: TeamOp) =>
+    recover.kind === "recover" &&
+    older.kind === "delete" &&
+    older.mode === "may-send" &&
+    older.seq < recover.seq &&
+    older.owner === recover.owner &&
+    older.community === recover.community &&
+    older.teamId === recover.teamId &&
+    !unresolved(older);
 
   /** Stores a new change, numbered after every record saved before it. A
    * Delete stops every older record on the team in the same write, as
@@ -432,15 +445,7 @@ export function teamRunner(deps: RunnerDeps) {
               mode: "reconcile-only",
               stop: "deleted",
             };
-          // A Recover retires an older Delete known never to have sent, so
-          // it can't archive the recovered team later. One that may have
-          // sent stays, fencing the Recover until it resolves.
-          else if (
-            op.kind === "recover" &&
-            older.kind === "delete" &&
-            !unresolved(older)
-          )
-            changes[older.id] = undefined;
+          else if (retires(op, older)) changes[older.id] = undefined;
         }
         return changes;
       })
@@ -901,6 +906,18 @@ export function teamRunner(deps: RunnerDeps) {
   ): Promise<TeamOp | undefined> {
     if (!channel) return op;
     if (op.channel !== channel) op = await save({ ...op, channel });
+    // A Delete that was uncertain when this Recover was submitted may since
+    // have proven unsent; retire it before Recover dispatches or completes.
+    const recover = op;
+    if (
+      await ops.update((records) => {
+        const changes: Record<string, undefined> = {};
+        for (const older of Object.values(records))
+          if (retires(recover, older)) changes[older.id] = undefined;
+        return Object.keys(changes).length ? changes : undefined;
+      })
+    )
+      deps.changed();
     const archive = op.kind === "delete";
     const settled = async () => {
       const archived = await channels.archived(channel, signal);

@@ -521,6 +521,45 @@ describe("team operations: witnesses", () => {
     expect(w.ops.get(del.op.id)).toBeUndefined();
   });
 
+  it("a Recover retires an older Delete whose held preflight fails after Recover was submitted", async () => {
+    const w = world();
+    const teamId = await existing(w, []);
+    const entered = gate();
+    const release = gate();
+    w.hooks.archive = async () => {
+      entered.open();
+      await release.promise;
+      throw new Error("permission read failed");
+    };
+    const lifecycle = { name: "", instructions: "", members: [] };
+    const del = w.runner.start({
+      kind: "delete",
+      teamId,
+      channel: CH,
+      intent: lifecycle,
+    });
+    // The Delete waits in its preflight, claimed maybe-sent; another device
+    // archives the team, and Recover is submitted while it may still send.
+    await entered.promise;
+    w.relay.archived = true;
+    const recover = w.runner.start({
+      kind: "recover",
+      teamId,
+      channel: CH,
+      intent: lifecycle,
+    });
+    release.open();
+    expect((await del.done)?.commands[0]?.state).toBe("planned");
+    w.hooks.archive = undefined;
+    expect(await recover.done).toBeUndefined();
+    expect(w.relay.archived).toBe(false);
+    // Nothing is left to archive the recovered team on a later resume.
+    expect(w.ops.get(del.op.id)).toBeUndefined();
+    await w.runner.resume();
+    expect(w.relay.archived).toBe(false);
+    expect(w.channels.archive).toHaveBeenCalledTimes(1);
+  });
+
   it("13: a restart between sending a member change and recording it: maybe-sent until a roster read shows it", async () => {
     const w = world();
     const teamId = await existing(w, []);

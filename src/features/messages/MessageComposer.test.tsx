@@ -3045,6 +3045,11 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
   expect(
     await screen.findByLabelText("Effort for Honey's next run"),
   ).toHaveAttribute("aria-valuetext", "High");
+  // A mentioned agent's profile may not be loaded yet (not a member), so ask for it.
+  expect(h.session.profiles.ensure).toHaveBeenCalledWith(
+    [first.pubkey],
+    "background",
+  );
   // Artwork arriving after the picker opens must use authenticated thumbnails.
   h.setProfiles(
     new Map([

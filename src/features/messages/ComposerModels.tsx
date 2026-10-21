@@ -6,6 +6,7 @@ import { selectProfiles } from "../relay/profile-selection";
 import type { ProfileQueries } from "../relay/profile-directory";
 import {
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -86,6 +87,11 @@ export function ComposerModels({
     () => selectProfiles(profiles, profileKey.split(":")),
     [profiles, profileKey],
   );
+  // A mentioned agent need not be a member yet, so its profile may not be loaded.
+  useEffect(() => {
+    if (profileKey)
+      void profiles.ensure(profileKey.split(":"), "background").catch(() => {});
+  }, [profiles, profileKey]);
   const portraits = useSyncExternalStore(
     selection.subscribe,
     selection.snapshot,

@@ -22,6 +22,10 @@ import { useNamePrompt } from "./useNamePrompt";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+// A failed save's error sits below the whole form, often out of view.
+const reveal = (element: HTMLElement | null) => {
+  element?.scrollIntoView({ block: "nearest" });
+};
 
 /** Use each registered provider's icon in creation and library cards. */
 export function TypeIcon({ type }: { type: RegisteredAgentType | undefined }) {
@@ -315,7 +319,12 @@ export function AgentCreateDialog({
           )}
         </div>
         {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
+          <p
+            key={error}
+            ref={reveal}
+            role="alert"
+            className="m-0 text-body-sm text-danger"
+          >
             {error}
           </p>
         )}

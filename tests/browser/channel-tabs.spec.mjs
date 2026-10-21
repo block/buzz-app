@@ -17,8 +17,6 @@ test.use({
   companionFixture: true,
   readState: true,
   soloChannels: ["beta"],
-  // The saved sidebar files shared Beta in a section, so Team navigation lists it.
-  savedSidebar: true,
   sessionMembers: { beta: [agent] },
   historyCounts: { alpha: 2, beta: 1 },
 });
@@ -249,7 +247,8 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   });
   await expect(reply).toBeFocused();
   await reply.fill("Alpha reply draft");
-  await page.locator('button[data-channel-id="beta"]').click();
+  // Shared Beta lists with the viewer's chats.
+  await page.locator('button[data-solo-channel-id="beta"]').click();
   await expect(workspace).toHaveCount(0);
   await page.locator('button[data-channel-id="alpha"]').click();
   await expect(

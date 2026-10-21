@@ -13,16 +13,20 @@ channel membership remains access authority.
   Discovery derives `channelType: "solo"` from it alone. A Solo channel gets
   the chat treatment for everyone: a timeline that loads history on scroll and
   top-level agent replies. It reads, caches and threads like any channel. The creator (the relay-written `P`) also gets the
-  owner's treatment: the agent-tagged composer, Share, the Workspace control, Chat
+  owner's treatment: the default-agent composer, Share, Chat
   settings and Chat actions. Both come from the channel, in the shared
   conversation scope (`features/conversation/Conversation.tsx`), so every view
   of a chat (the main reader or a secondary tab) composes under the same rules.
   Other channels are threaded. Conversion to a channel clears the label.
-- **The label decides the sidebar.** The viewer's own Solo chats list under Solo;
-  ordinary channels list under Team. Someone else’s shared Solo chat stays out
-  of the default sidebar unless the viewer explicitly starred it or assigned it
-  to an existing Team section. Access, search and opening its posted card are
-  unchanged; opening an unfiled shared chat does not switch the sidebar filter. The sidebar's All / Solo / Team filter lists Solo workspaces and chats above
+- **The label decides the sidebar.** Every Solo chat the viewer is a member of
+  lists under Solo: their own and any shared with them, whether added directly or
+  through a shared link's access grant. A shared chat starts in Chats and the
+  viewer may file it in one of their own workspaces; it never lists under Team.
+  Ordinary channels list under Team. Opening a chat without membership adds
+  nothing to the sidebar.
+- **Tags follow company.** Alone with agents, a send must tag one. Once another
+  person is a member, people can talk without a tag; agents still answer only
+  when tagged. The sidebar's All / Solo / Team filter lists Solo workspaces and chats above
   Team's channel sections; it never changes the open conversation. Opening a
   destination reveals its inventory unless the filter is All; an unlisted
   conversation waits for the channel list rather than guess. Solo is always on.

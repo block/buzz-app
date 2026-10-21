@@ -35,6 +35,7 @@ import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
+import { soloHasPeople } from "../solo/people";
 import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
@@ -412,6 +413,12 @@ function Composer({
     };
   }, []);
   const mentionRoster = useContext(DraftMentionRoster);
+  const profileSnapshot = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+    session.profiles.snapshot,
+  );
+  const knownAgents = useKnownAgentPubkeys(session, profileSnapshot);
   const solo = !!soloConversation || ownSoloConversation;
   const host = fullSession(session);
   const agentChoices = inviteAgents || solo;
@@ -1184,7 +1191,17 @@ function Composer({
       }
     }
   });
-  const needsRecipient = requireMention || solo;
+  // Alone in a Solo chat, a send addresses agents; with people it is a conversation.
+  const needsRecipient =
+    (requireMention || solo) &&
+    !(
+      !submission &&
+      soloHasPeople(
+        list.channels.find((item) => item.id === channelId)?.members,
+        session.viewer,
+        knownAgents,
+      )
+    );
   const recipientHint = submission
     ? "Tag an agent to send"
     : "Tag a person or agent to send";

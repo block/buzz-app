@@ -49,7 +49,10 @@ function fixture({
   type = "solo",
   target,
   behindSettings = false,
+  people = [],
 }: {
+  /** Other people in the chat besides the viewer and its agent. */
+  people?: readonly string[];
   /** Whether the viewer created the chat, rather than joining it as a guest. */
   placed?: boolean;
   type?: "solo" | "stream";
@@ -90,7 +93,7 @@ function fixture({
     channelType: type,
     private: true as const,
     creator: placed ? viewer.pubkey : agent,
-    members: [viewer.pubkey, agent],
+    members: [viewer.pubkey, agent, ...people],
   };
   let list = { status: "ready" as const, channels: [channel] };
   const listListeners = new Set<() => void>();
@@ -511,13 +514,16 @@ it("gives the owner's Solo chat its tag requirement and project", async () => {
   expect(f.send).not.toHaveBeenCalled();
 });
 
-it("requires a guest to address someone explicitly in a shared Solo chat", async () => {
+it("requires a tag from a guest alone with agents, who can still file the chat", async () => {
   const f = fixture({ placed: false });
   f.mount();
   const input = await screen.findByRole("textbox", {
     name: "Message your agents",
   });
-  expect(screen.queryByRole("button", { name: "Add workspace" })).toBeNull();
+  // A shared chat is the guest's to file in their own workspaces.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Add workspace" })).toBeEnabled(),
+  );
   const user = userEvent.setup();
   await user.click(input);
   await user.keyboard("Hello team{Enter}");
@@ -528,6 +534,25 @@ it("requires a guest to address someone explicitly in a shared Solo chat", async
   ).toBeVisible();
   expect(f.send).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["owner", true],
+  ["guest", false],
+] as const)(
+  "lets the %s talk without a tag once another person is in the chat",
+  async (_, placed) => {
+    const f = fixture({ placed, people: ["c".repeat(64)] });
+    f.mount();
+    const input = await screen.findByRole("textbox", {
+      name: "Message your agents",
+    });
+    const user = userEvent.setup();
+    await user.click(input);
+    await user.keyboard("Hello team{Enter}");
+    await waitFor(() => expect(f.send).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Tag a person or agent to send")).toBeNull();
+  },
+);
 
 it.each([
   ["archive", "Archive", "Archive chat: Planning"],

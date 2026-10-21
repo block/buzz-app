@@ -11,7 +11,7 @@ export function soloLabels(labels: readonly string[] | undefined): boolean {
 }
 
 /** The viewer's own Solo chat: one they created. Anyone else in a shared
- * Solo chat sees its flat treatment; Team navigation lists it only when explicitly filed. */
+ * Solo chat sees its flat treatment and finds it with their own chats. */
 export function ownSolo(
   channel:
     | Readonly<{

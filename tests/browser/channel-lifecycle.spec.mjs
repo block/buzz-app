@@ -453,12 +453,7 @@ test("pending toast in narrow navigation preserves visible recovery after uncert
 // Browser-only: recover an archived Solo chat after leaving its URL via the real
 // search -> header -> Settings route. The empty Solo chat has no message fallback.
 test.describe("Solo chat lifecycle", () => {
-  // A shared Solo chat reaches Team navigation only once filed, here by a star.
-  test.use({
-    soloChannels: ["11111111-1111-4111-8111-111111111111"],
-    savedSidebar: true,
-    savedStars: ["alpha", "11111111-1111-4111-8111-111111111111"],
-  });
+  test.use({ soloChannels: ["11111111-1111-4111-8111-111111111111"] });
 
   test("sidebar and header manage a Solo chat and recover it through name search", async ({
     page,

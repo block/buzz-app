@@ -17,7 +17,6 @@ import { useRecoveryShown } from "../relay/RecoveryNotice";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
 import { buzzLinkTarget } from "../navigation/buzz-links";
-import { ownSolo } from "../solo/labels";
 import { resetNewChatProject } from "../solo/SoloDraft";
 import { NewWorkspace } from "../solo/NewWorkspace";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -102,7 +101,11 @@ export function SoloInventory({
     });
   };
   const conversations = list.channels
-    .filter((item) => !item.archived && ownSolo(item, session.viewer))
+    // Solo chats the viewer belongs to: their own and those shared with them.
+    // Opening one from a link without membership adds nothing here.
+    .filter(
+      (item) => !item.archived && !item.readOnly && item.channelType === "solo",
+    )
     .sort(
       (a, b) =>
         (b.lastActivityAt ?? b.updatedAt ?? 0) -

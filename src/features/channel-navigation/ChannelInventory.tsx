@@ -209,7 +209,7 @@ export function ChannelInventory({
     (channel) =>
       !channel.huddle &&
       !channel.metadataPending &&
-      inTeamInventory(channel, queries.viewer, preferences.data) &&
+      inTeamInventory(channel) &&
       (!preparingDm ||
         preparingDm.existing.has(channel.id) ||
         channel.channelType !== "dm" ||

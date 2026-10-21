@@ -1,6 +1,3 @@
-import { inTeamInventory } from "../../features/channel-navigation/team-inventory";
-import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
-import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
 import {
   useEffect,
   useState,
@@ -29,7 +26,6 @@ import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
 import { targetKey } from "../../features/navigation/targets";
 import { readView, writeView } from "../../shared/view-state";
-import { ownSolo } from "../../features/solo/labels";
 import type { ChannelList } from "../../features/relay/contracts";
 
 const noSubscription = () => () => {};
@@ -93,9 +89,6 @@ function ScopedSidebar({
         typeof saved?.location === "string" ? saved.location : undefined,
     };
   });
-  const teamPreferences = useSidebarPreferences(
-    connection.session.sidebarPreferences,
-  );
   const target = props.target;
   const local =
     "scope" in target &&
@@ -121,12 +114,7 @@ function ScopedSidebar({
     soloPreferences?.status !== "loading";
   const destination = local
     ? target.kind === "conversation"
-      ? conversationDestination(
-          channelList,
-          target.channelId,
-          connection.session?.viewer,
-          teamPreferences.data,
-        )
+      ? conversationDestination(channelList, target.channelId)
       : target.kind === "page" && target.pluginId === "buzz.channels"
         ? soloDraft(target.route?.params)
           ? "solo"
@@ -272,16 +260,8 @@ function ScopedSidebar({
 }
 
 /** Unknown until the channel list can say; a channel outside it is Team's. */
-function conversationDestination(
-  list: ChannelList | undefined,
-  id: string,
-  viewer: string | undefined,
-  preferences: SidebarPreferences | undefined,
-) {
+function conversationDestination(list: ChannelList | undefined, id: string) {
   const channel = list?.channels.find((item) => item.id === id);
   if (!channel && list?.status !== "ready") return undefined;
-  if (ownSolo(channel, viewer)) return "solo";
-  if (channel && !inTeamInventory(channel, viewer, preferences))
-    return undefined;
-  return "team";
+  return channel?.channelType === "solo" ? "solo" : "team";
 }

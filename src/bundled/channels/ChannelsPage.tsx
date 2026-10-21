@@ -23,7 +23,6 @@ import {
   soloDraft,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
-import { ownSolo } from "../../features/solo/labels";
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { SoloHeading } from "./SoloHeading";
@@ -601,7 +600,6 @@ function ChannelWorkspace({
   const solo = current?.channelType === "solo";
   // Solo has no main tab workspace; its threads open beside the chat.
   const threadPane = solo ? ("side" as const) : undefined;
-  const personal = ownSolo(current, queries.viewer);
   // Confirmations belong to this visit; a Solo conversation that leaves the
   // owner's view returns them to a new draft rather than an empty page.
   const chooseLifecycle = (
@@ -1464,7 +1462,7 @@ function ChannelWorkspace({
             !routedThread
           }
           trailingTool={
-            personal ? (
+            solo ? (
               <WorkspaceControl
                 session={queries}
                 channelId={current.id}

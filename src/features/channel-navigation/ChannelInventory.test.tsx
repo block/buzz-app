@@ -1337,15 +1337,12 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
   }
 });
 
-it.each(["star", "section", "deleted-section"])(
-  "keeps shared chats only when explicitly filed (%s)",
+it.each(["star", "section", "unfiled"])(
+  "lists a shared chat with the viewer's chats, never under Team (%s)",
   async (placement) => {
     const data = {
       sections: [{ id: "work", name: "Work", order: 0 }],
-      assignments:
-        placement === "star"
-          ? {}
-          : { beta: placement === "section" ? "work" : "gone" },
+      assignments: placement === "section" ? { beta: "work" } : {},
       starred: placement === "star" ? ["beta"] : [],
       muted: [],
     };
@@ -1367,14 +1364,14 @@ it.each(["star", "section", "deleted-section"])(
     ]);
     render(h.view("alpha"));
     await screen.findByRole("button", { name: "Team channel" });
-    if (placement === "deleted-section")
-      expect(screen.queryByRole("button", { name: "Shared work" })).toBeNull();
-    else
-      expect(screen.getByRole("button", { name: "Shared work" })).toBeVisible();
+    // One row, in the Solo list (which the sidebar navigation contains).
+    const rows = screen.getAllByRole("button", { name: "Shared work" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.closest("nav")).toHaveAccessibleName("Solo conversations");
   },
 );
 
-it("opening an unfiled shared chat leaves the Solo filter and sidebar alone", async () => {
+it("opening a shared chat lists it once, with the viewer's chats", async () => {
   const h = fixture();
   h.publish("beta", {
     channelType: "solo",
@@ -1389,8 +1386,7 @@ it("opening an unfiled shared chat leaves the Solo filter and sidebar alone", as
     "aria-selected",
     "true",
   );
-  expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
-  expect(
-    h.session.channels.list().channels.some((channel) => channel.id === "beta"),
-  ).toBe(true);
+  const rows = await screen.findAllByRole("button", { name: "beta" });
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.closest("nav")).toHaveAccessibleName("Solo conversations");
 });

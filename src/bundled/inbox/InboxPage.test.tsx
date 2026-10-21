@@ -3484,11 +3484,15 @@ it.each([true, false])(
     );
   },
 );
-it("Inbox Solo chat activity with multiple agents requires an explicit recipient", async () => {
+it("Inbox Solo chat activity shared with a person sends without a tag", async () => {
   const h = fixture({
     withWriter: true,
     soloChannel: true,
     memberAgents: 2,
+  });
+  writeView(h.owner.session.scope, "draft:room", {
+    text: "No tag needed",
+    recipients: [],
   });
   render(h.view);
   await screen.findByText("Please review this");
@@ -3499,17 +3503,14 @@ it("Inbox Solo chat activity with multiple agents requires an explicit recipient
   const editor = await screen.findByRole("textbox", {
     name: "Message your agents",
   });
-  fireEvent.change(editor, { target: { value: "Choose someone first" } });
-  expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
+  expect(editor).toHaveValue("No tag needed");
+  // Alice is a member, so the viewer isn't alone with agents.
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
   );
-  fireEvent.keyDown(editor, { key: "Enter" });
-  expect(
-    await screen.findByText("Tag a person or agent to send"),
-  ).toBeInTheDocument();
-  expect(h.published).toEqual([]);
-  expect(editor).toHaveValue("Choose someone first");
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(h.published).toHaveLength(1));
+  expect(h.published[0]?.tags.filter(([name]) => name === "p")).toEqual([]);
 });
 
 it("a Solo chat row shows, and is ordered by, a later agent reply that is not Inbox evidence", async () => {

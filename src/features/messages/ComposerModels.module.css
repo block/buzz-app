@@ -223,9 +223,8 @@ html[data-keyboard-input] .slider * {
 .status {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  min-height: var(--space-16);
-  padding: var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-1);
 }
 .statusIcon {
   display: grid;

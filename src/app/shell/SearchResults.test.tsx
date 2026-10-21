@@ -3709,6 +3709,102 @@ it.each([
   }
 });
 
+it.each([
+  {
+    name: "keeps an exactly named chat ahead of an exact agent's many chats",
+    named: "chat" as const,
+    groups: ["Agents", "Chats"],
+  },
+  {
+    name: "does not let an exact agent's chats claim an exact name",
+    named: "channel" as const,
+    // Channels has the exact name; the agent's chats only inherit it.
+    groups: ["Agents", "Channels", "Chats"],
+  },
+])("$name", async ({ named, groups }) => {
+  localStorage.clear();
+  const relay = keypair(),
+    viewer = keypair(),
+    mine = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const chat = (id: string, name: string, at: number, members: string[]) => [
+    metadata(relay, id, name, at, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+    ]),
+    roster(relay, id, [viewer.pubkey, ...members]),
+  ];
+  const discovery = [
+    // More chats with the agent than the group shows, all newer.
+    ...Array.from({ length: 9 }, (_, index) =>
+      chat(`agent-chat-${index}`, `Task ${index}`, 1700000010 + index, [
+        mine.pubkey,
+      ]),
+    ).flat(),
+    ...(named === "chat"
+      ? chat("named-chat", "scout", 1700000001, [])
+      : [
+          metadata(relay, "named-channel", "scout"),
+          roster(relay, "named-channel", [viewer.pubkey]),
+        ]),
+    profile(mine, { name: "Scout", is_agent: true }),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [];
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const source = owner.session.agentChoices;
+  const choices = {
+    ...source.snapshot(),
+    identities: [{ pubkey: mine.pubkey, name: "Scout", managed: true }],
+    selectable: [{ pubkey: mine.pubkey, name: "Scout", managed: true }],
+  };
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as typeof owner.session;
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="scout"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        usageScope={usage}
+        openConversation={vi.fn()}
+        openAgentSession={vi.fn()}
+      />,
+    );
+    await screen.findByRole("group", { name: "Agents" });
+    if (named === "channel")
+      await screen.findByRole("group", { name: "Channels" });
+    const chats = within(await screen.findByRole("group", { name: "Chats" }));
+    await waitFor(() => expect(chats.getAllByRole("option")).toHaveLength(8));
+    if (named === "chat")
+      expect(chats.getAllByRole("option")[0]).toHaveTextContent(/^scout/);
+    const labels = screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(labels.slice(0, groups.length)).toEqual(groups);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("preserves remembered page ranking when inline settings match", async () => {
   localStorage.clear();
   recordChoice(usage, "sound", "Ultrasound");
@@ -3955,6 +4051,8 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
     status: "ready" as const,
     hidden: Object.freeze(["relay-dm"]),
   };
+  // The confirmed open is what restores a hidden DM's sidebar row.
+  const open = vi.fn(async () => "local-dm");
   const session = {
     ...owner.session,
     channelLifecycle: {
@@ -3962,7 +4060,13 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
       snapshot: () => visibility,
       subscribe: () => () => {},
     },
+    directMessages: {
+      ...owner.session.directMessages,
+      available: true,
+      open,
+    },
   } as typeof owner.session;
+  const openConversation = vi.fn();
   try {
     render(
       <SearchResults
@@ -3971,7 +4075,7 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
-        openConversation={() => {}}
+        openConversation={openConversation}
         sidebarScope={scope}
       />,
     );
@@ -3989,6 +4093,22 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
     expect(
       await screen.findByRole("option", { name: /sco from relay/ }),
     ).toBeVisible();
+    // Choosing the person opens the locally hidden DM through the confirmed
+    // open, not the plain shortcut that leaves its row hidden.
+    const people = within(await screen.findByRole("group", { name: "People" }));
+    fireEvent.click(await people.findByRole("option", { name: /Scotty/ }));
+    await waitFor(() =>
+      expect(openConversation).toHaveBeenCalledExactlyOnceWith("local-dm"),
+    );
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      [dms[0]?.key.pubkey],
+      expect.any(AbortSignal),
+    );
+    // When the sidebar restores the row, search follows without remounting.
+    act(() => {
+      writeView(scope, "hidden-dms", []);
+    });
+    expect(await direct.findByRole("option", { name: /Scotty/ })).toBeVisible();
   } finally {
     cleanup();
     owner.dispose();

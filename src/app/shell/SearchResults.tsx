@@ -12,7 +12,7 @@ import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
-import { savedHiddenDmIds } from "../../bundled/channels/useHiddenDms";
+import { useSavedHiddenDmIds } from "../../bundled/channels/useHiddenDms";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
 import { archiveHides } from "../../features/relay/identity-archives";
@@ -138,16 +138,13 @@ export function SearchResults({
   );
   // A DM hidden from the sidebar (Remove from Team, or Hide conversation) has
   // no row here either. Its messages still match, and choosing the person
-  // opens it again, which also restores its sidebar row.
+  // opens it again through the confirmed open, which restores its sidebar row.
   const dmVisibility = useSyncExternalStore(
     session.channelLifecycle.subscribe,
     session.channelLifecycle.snapshot,
     session.channelLifecycle.snapshot,
   );
-  const savedHidden = useMemo(
-    () => (sidebarScope ? savedHiddenDmIds(sidebarScope) : new Set<string>()),
-    [sidebarScope],
-  );
+  const savedHidden = useSavedHiddenDmIds(sidebarScope);
   const sidebarHidden = (channel: ChannelSummary) =>
     channel.channelType === "dm" &&
     (savedHidden.has(channel.id) || dmVisibility.hidden.includes(channel.id));
@@ -708,13 +705,18 @@ export function SearchResults({
   // the agent's order, so they follow its "New chat" row; other chats found
   // by name come after them. Live chats come before archived ones, and newer
   // before older.
+  // A chat's exactness comes from its own name only. A chat found through an
+  // exactly named agent inherits the agent's score but is not an exact name.
   const chatRank = (channel: ChannelSummary) => {
     const named = matchingAll.includes(channel)
       ? channelRank(channel)
       : Infinity;
     return exact(named)
-      ? named
-      : (newChatAmong(channel.members)?.score ?? named);
+      ? { rank: named, exactName: true }
+      : {
+          rank: newChatAmong(channel.members)?.score ?? named,
+          exactName: false,
+        };
   };
   const chatResults = channels
     .filter(
@@ -725,11 +727,11 @@ export function SearchResults({
     .map((channel) => ({
       channel,
       agent: !!newChatAmong(channel.members),
-      rank: chatRank(channel),
+      ...chatRank(channel),
     }))
     .sort(
       (a, b) =>
-        Number(exact(b.rank)) - Number(exact(a.rank)) ||
+        Number(b.exactName) - Number(a.exactName) ||
         Number(b.agent) - Number(a.agent) ||
         a.rank - b.rank ||
         Number(!!a.channel.archived) - Number(!!b.channel.archived) ||
@@ -804,9 +806,16 @@ export function SearchResults({
           channel.participants?.length === 1 &&
           channel.participants[0] === pubkey,
       );
-    if (existing) return openConversation(existing.id);
+    // Opening a DM hidden on this device goes through the confirmed open,
+    // which restores its sidebar row. A visible DM just opens.
+    if (
+      existing &&
+      (!sidebarHidden(existing) || !session.directMessages.available)
+    )
+      return openConversation(existing.id);
     if (
       agent &&
+      !existing &&
       !session.agentChoices
         .snapshot()
         .identities.some((item) => item.managed && item.pubkey === pubkey)
@@ -1042,6 +1051,7 @@ export function SearchResults({
                       conversationDestination(channel),
                     ),
                     best: Math.min(...chatResults.map(({ rank }) => rank)),
+                    exactName: chatResults.some(({ exactName }) => exactName),
                   },
                   {
                     label: "Channels",
@@ -1075,21 +1085,26 @@ export function SearchResults({
                     ),
                   },
                 ]
-                  .map((group) => ({
-                    ...group,
-                    lead:
-                      exact(group.best) ||
-                      (newChats.size > 0 &&
-                        (group.label === "Agents" || group.label === "Chats")),
-                  }))
+                  .map(({ exactName, ...group }) => {
+                    const named = exactName ?? exact(group.best);
+                    return {
+                      ...group,
+                      named,
+                      lead:
+                        named ||
+                        (newChats.size > 0 &&
+                          (group.label === "Agents" ||
+                            group.label === "Chats")),
+                    };
+                  })
                   .sort(
                     (a, b) =>
-                      Number(exact(b.best)) - Number(exact(a.best)) ||
+                      Number(b.named) - Number(a.named) ||
                       Number(b.lead) - Number(a.lead) ||
                       (a.lead ? 0 : a.best - b.best),
                   )
                   // Inline settings slot in by rank, so they follow too.
-                  .map(({ best, lead, ...group }) => ({
+                  .map(({ best, lead, named: _named, ...group }) => ({
                     ...group,
                     rank: lead ? -Infinity : best,
                   })),

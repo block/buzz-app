@@ -335,13 +335,14 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!agent) throw new Error("agent is required");
     const name = text(args.name);
     const type = text(args.type);
-    const instructions = text(args.instructions);
+    // Empty instructions propose clearing them.
+    const { instructions } = args;
     return JSON.stringify(
       await client.updateAgent({
         agent,
         ...(name && { name }),
         ...(type && { type }),
-        ...(instructions && { instructions }),
+        ...(typeof instructions === "string" && { instructions }),
       }),
     );
   },

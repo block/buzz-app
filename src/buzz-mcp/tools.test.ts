@@ -2574,4 +2574,12 @@ it("validates change drafts and passes only the proposed fields", async () => {
     name: "Kid",
     instructions: "Review PRs.",
   });
+  await callTool(client, {}, "agent_update", {
+    agent: "Child",
+    instructions: "",
+  });
+  expect(client.updateAgent).toHaveBeenLastCalledWith({
+    agent: "Child",
+    instructions: "",
+  });
 });

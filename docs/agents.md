@@ -45,9 +45,10 @@ it to a conversation. Agent tools do not expose draft approval.
 `agent_update` submits an unsaved draft of changes to one of the owner's local
 agents in the same community, named by pubkey or exact name: a new name, a type
 key from `agent_types`, or new instructions. Absent fields stay as they are. The
-owner reviews only the proposed fields, with the usual type-change preview, may
-edit them and saves to apply them; closing the review discards the request. A
-type change carries what the new type adopts, as a manual one does. Change
+owner reviews them in the New agent form, titled Edit and filled in with the
+agent's settings and the proposed changes, with the usual type-change preview;
+saving applies what the owner reviewed, and closing the review discards the
+request. A type change carries what the new type adopts, as a manual one does. Change
 requests share the creation requests' local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.

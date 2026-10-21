@@ -882,25 +882,128 @@ it("ends the watch and timer runs an earlier app left once every left mention's 
 });
 
 it("keeps a standalone turn of this app's when it lists left runs again", async () => {
-  let listings = 0;
   let own: string | undefined;
-  const { host, deliver, runOnce } = setup({
+  let waits = 0;
+  const { host, runOnce } = setup({
     once: ({ request }) => {
       own = String(request);
       return { submission: 51, conversation: 9 };
     },
-    unfinished: () => {
-      if (++listings === 1) throw new Error("busy");
-      return {
-        submissions: [{ submission: 51, conversation: 9, request: own }],
-      };
+    unfinished: () => ({
+      submissions: own
+        ? [{ submission: 51, conversation: 9, request: own }]
+        : [],
+    }),
+    // Its storage fails once, so it is opened again and left runs listed again.
+    wait: () =>
+      ++waits === 1
+        ? { status: "reopen" }
+        : { status: "done", answer: 5, text: "Done." },
+  });
+  await expect(runOnce("watch", "Check the build")).resolves.toEqual({
+    ok: true,
+  });
+  expect(host.requests("unfinished")).toHaveLength(2);
+  expect(host.requests("drop")).toEqual([]);
+});
+
+it("hands over no turn and waits for no left run while Pi could not end a left standalone run, and ends it at the next turn first", async () => {
+  // Pi continues every run once asked anything: one left for no one is
+  // ended before any wait, or not continued at all.
+  let drops = 0;
+  const left = {
+    submission: 42,
+    conversation: 6,
+    request: "d".repeat(64),
+    context: { channel, root: root.id },
+  };
+  const { host, deliver, settled, published, runtime } = setup({
+    unfinished: () => ({
+      submissions: [
+        { submission: 51, conversation: 9, request: "timer/left" },
+        left,
+      ],
+    }),
+    drop: () => {
+      if (++drops === 1) throw new Error("database is locked");
     },
   });
-  void runOnce("watch", "Check the build");
-  await vi.waitFor(() => expect(own).toBeDefined());
-  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
-  expect(listings).toBe(2);
-  expect(host.requests("drop")).toEqual([]);
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await first.run.catch(() => undefined);
+  await expect(settled(first)).resolves.toEqual({
+    ok: false,
+    error: "database is locked",
+  });
+  expect(host.requests("deliver")).toEqual([]);
+  expect(host.requests("wait")).toEqual([]);
+  expect(runtime.working(self)).not.toContain(left.conversation);
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.content).toContain("database is locked");
+
+  await deliver({ type: "mention", event: reply("3", "@Pi again") }).run;
+  expect(host.requests("drop")).toHaveLength(2);
+  const methods = host.processes[0]?.requests.map((item) => item.method) ?? [];
+  expect(methods.lastIndexOf("drop")).toBeLessThan(methods.indexOf("wait"));
+  expect(methods.lastIndexOf("drop")).toBeLessThan(methods.indexOf("deliver"));
+  expect(host.requests("wait").map((item) => item.params.submission)).toContain(
+    left.submission,
+  );
+});
+
+it("ends a standalone run left for no one before it waits again in an agent opened again", async () => {
+  // Its storage failed while a watch's run was abandoned: ended before the
+  // wait that would continue it.
+  let waits = 0;
+  let reopened = false;
+  const { host, deliver, settled } = setup({
+    open: () => {
+      if (host.requests("open").length > 1) reopened = true;
+    },
+    unfinished: () => ({
+      submissions: reopened
+        ? [{ submission: 51, conversation: 9, request: "watch/abandoned" }]
+        : [],
+    }),
+    wait: () =>
+      ++waits === 1
+        ? { status: "reopen" }
+        : { status: "done", answer: 5, text: "Resumed." },
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  const methods = host.processes[0]?.requests.map((item) => item.method) ?? [];
+  expect(methods.slice(methods.indexOf("wait") + 1)).toEqual([
+    "open",
+    "unfinished",
+    "drop",
+    "wait",
+  ]);
+});
+
+it("waits for no run again in an agent opened again while Pi could not end a standalone run left for no one", async () => {
+  let reopened = false;
+  const { host, deliver, settled } = setup({
+    open: () => {
+      if (host.requests("open").length > 1) reopened = true;
+    },
+    unfinished: () => ({
+      submissions: reopened
+        ? [{ submission: 51, conversation: 9, request: "watch/abandoned" }]
+        : [],
+    }),
+    drop: () => {
+      throw new Error("database is locked");
+    },
+    wait: () => ({ status: "reopen" }),
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({
+    ok: false,
+    error: "database is locked",
+  });
+  expect(host.requests("wait")).toHaveLength(1);
 });
 
 it("posts no answer for a left run that sent once another left run's wait continued it", async () => {
@@ -993,11 +1096,15 @@ it("answers and reports left runs of a conversation threads share in their menti
       (filters?.[0]?.ids ?? [root.id]).includes(event.id),
     ),
   );
-  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
-  expect(published).toHaveLength(0);
+  // A turn that could not list them hands nothing over, and says so.
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run.catch(
+    () => undefined,
+  );
+  await vi.waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]?.content).toContain("busy");
   await deliver({ type: "mention", event: reply("3", "@Pi again") }).run;
-  await vi.waitFor(() => expect(published).toHaveLength(2));
-  expect(published.map(({ content }) => content)).toEqual([
+  await vi.waitFor(() => expect(published).toHaveLength(3));
+  expect(published.slice(1).map(({ content }) => content)).toEqual([
     "Finished the old one.",
     expect.stringContaining("400 Bad model"),
   ]);
@@ -1025,8 +1132,10 @@ it("waits for a turn again in a new host when the host stops", async () => {
   await turn.run;
   await expect(settled(turn)).resolves.toEqual({ ok: true });
   expect(host.processes).toHaveLength(2);
+  // What the stopped host left for no one is ended before the wait continues it.
   expect(host.processes[1]?.requests.map((request) => request.method)).toEqual([
     "open",
+    "unfinished",
     "wait",
   ]);
   expect(published.map((item) => item.content)).toEqual(["Resumed."]);

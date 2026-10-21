@@ -834,6 +834,23 @@ it("lists only the channel types asked for", async () => {
     );
 });
 
+it("keeps a roster signed before NIP-CL joined when listing by type", async () => {
+  const { client, state } = relay();
+  // NIP-CL: an older roster event can lack the type tag.
+  const roster = state.findIndex((e) => e.kind === 39002);
+  const old = state[roster] as BuzzEvent;
+  state[roster] = { ...old, tags: old.tags.filter((t) => t[0] !== "t") };
+  await expect(
+    callTool(client, {}, "channels", { types: ["stream"] }),
+  ).resolves.toBe(`${room} plans`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["stream"], all: true }),
+  ).resolves.toBe(`${room} plans`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["forum"], all: true }),
+  ).resolves.toBe("No channels.");
+});
+
 it("lists system channels only when asked, as the relay serves them", async () => {
   const { client, state } = relay();
   const system = "5b7e2c1d-3a4f-4b6c-8d9e-0f1a2b3c4d5e";

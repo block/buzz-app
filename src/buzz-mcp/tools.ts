@@ -608,14 +608,22 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     )
       throw new Error(`types must list some of ${CHANNEL_TYPES.join(", ")}.`);
     const scope = types ? { "#t": [...new Set(types)] } : {};
-    const membershipsComplete = await tools.scan(
-      { kinds: [39002], "#p": [client.pubkey], ...scope },
-      (event) => {
-        const id = tag(event, "d");
-        if (id) ids.add(id);
-        return true;
-      },
-    );
+    // Membership must not depend on the type tag: a roster signed before
+    // NIP-CL has none. So the type filter applies to the channel read only,
+    // and the membership read uses `#t` only to opt in to system channels.
+    const member = (event: BuzzEvent) => {
+      const id = tag(event, "d");
+      if (id) ids.add(id);
+      return true;
+    };
+    const memberships = { kinds: [39002], "#p": [client.pubkey] };
+    let membershipsComplete = true;
+    if (!types || types.some((type) => type !== "system"))
+      membershipsComplete = await tools.scan(memberships, member);
+    if (types?.includes("system"))
+      membershipsComplete =
+        (await tools.scan({ ...memberships, "#t": ["system"] }, member)) &&
+        membershipsComplete;
     const all = args.all === true;
     const q = text(args.q)?.toLowerCase();
     const rows: string[] = [];
@@ -628,7 +636,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         : await tools.scan(
             all
               ? { kinds: [39000], ...scope }
-              : { kinds: [39000], "#d": [...ids] },
+              : { kinds: [39000], "#d": [...ids], ...scope },
             (event) => {
               const id = tag(event, "d") ?? "";
               const flags = [

@@ -741,6 +741,60 @@ describe("GooseProcess", () => {
     ).toBe("superseded");
   });
 
+  it("never hands activity back to a stopped turn in another thread", async () => {
+    const { goose, process, release } = await slow("session/cancel");
+    process.hold = true;
+    let looked = false;
+    const session = await goose.open({
+      cwd: "/work",
+      systemPrompt: "",
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      models: () => {
+        looked = true;
+        return new Promise<Models>(() => {});
+      },
+    });
+    const local = createLocalAgentActivity();
+    const receipt = (messageId: string, scope: string) => {
+      const work = local.begin({
+        scope: "conversation",
+        agent: "goose",
+        channelId: "channel",
+        messageId,
+        threadRootId: scope,
+      });
+      const activity = {
+        activityScope: scope,
+        step: work.step,
+        acknowledged: work.started,
+        superseded: work.supersede,
+      };
+      return { work, activity };
+    };
+    const A = receipt("A", "X");
+    const a = session.send("A", A.activity);
+    await flush();
+    const C = receipt("C", "Y");
+    const c = session.send("C", C.activity);
+    await flush();
+    // Stopping C stops the whole session, A with it.
+    session.interrupt();
+    await flush();
+    const timeout = new AbortController();
+    const B = receipt("B", "X");
+    const b = session.send("B", B.activity, "o3", undefined, timeout.signal);
+    release();
+    A.work.finish(await a);
+    C.work.finish(await c);
+    await vi.waitFor(() => expect(looked).toBe(true));
+    // B runs out of time in its model lookup, before it prompts.
+    timeout.abort();
+    B.work.finish(await b);
+    expect(
+      local.reader.work().find((row) => row.messageId === "A")?.state,
+    ).toBe("superseded");
+  });
+
   it("never hands activity back to a stopped turn through a longer displacement chain", async () => {
     const { open, process } = await start();
     process.hold = true;

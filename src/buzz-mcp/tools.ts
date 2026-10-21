@@ -1464,9 +1464,8 @@ class Tools {
   /** Messages oldest first with their latest edits, a line each: its ID,
    * author and its claimed (unverified) agent owner, channel and thread,
    * omitting what `scope` names. Other agent read surfaces trim the same
-   * fields; change them together: the `buzz` CLI's agent format (block/buzz
-   * `crates/buzz-cli/src/commands/event_output.rs`) and kgoose's hosted read
-   * tools (squareup/cash-server `BuzzExtensionClient.messageJson`). */
+   * fields, so change them together, including the `buzz` CLI's agent format
+   * (block/buzz `crates/buzz-cli/src/commands/event_output.rs`). */
   async messages(
     events: readonly BuzzEvent[],
     scope: Readonly<{ channel?: string; root?: string }>,

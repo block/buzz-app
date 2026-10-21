@@ -252,7 +252,9 @@ it("shows each entry's time under it, with the full date on hover, except the pr
       state={() => "ended"}
     />,
   );
-  const stamps = [...container.querySelectorAll("article > div time")];
+  const stamps = [
+    ...container.querySelectorAll<HTMLTimeElement>("article > div time"),
+  ];
   expect(stamps.map((stamp) => stamp.getAttribute("datetime"))).toEqual([
     new Date(at + 3000).toISOString(),
     new Date(at + 70_000).toISOString(),

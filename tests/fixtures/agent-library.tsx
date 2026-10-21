@@ -1,10 +1,13 @@
 import { agentAvatars } from "../../src/features/agents/avatar-packs";
 import { createRoot } from "react-dom/client";
+import { CreationReview } from "../../src/bundled/agents/CreationReview";
 import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
 import type {
   Agent,
   Agents,
   RegisteredAgentType,
+  AgentCreationRequest,
+  NewAgent,
 } from "../../src/features/agents/service";
 import type { RelayData } from "../../src/features/relay/service";
 import { AgentInstructions } from "../../src/features/agents/AgentInstructions";
@@ -57,9 +60,40 @@ const snapshot = {
   ),
 };
 const types = [type];
+const reviewing = new URLSearchParams(location.search).has("review");
+let requests: readonly AgentCreationRequest[] = reviewing
+  ? [
+      {
+        id: "draft",
+        requester: "a".repeat(64),
+        requesterName: "Parent",
+        owner: "f".repeat(64),
+        community: "https://relay.example",
+        type: type.key,
+        name: "Child",
+      },
+    ]
+  : [];
+const listeners = new Set<() => void>();
+const reviewed: NewAgent[] = [];
+const dismissCreation = () => {
+  requests = [];
+  for (const listener of listeners) listener();
+};
+Object.assign(window, { creationReviewResult: () => reviewed });
 const agents = {
   snapshot: () => snapshot,
-  subscribe: () => () => {},
+  subscribe: (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  },
+  creationRequests: () => requests,
+  dismissCreation,
+  approveCreation: async (_id: string, input: NewAgent) => {
+    reviewed.push(input);
+    dismissCreation();
+    return {} as Agent;
+  },
   types: () => types,
   find: (pubkey: string) =>
     snapshot.agents.find((agent) => agent.pubkey === pubkey),
@@ -77,5 +111,6 @@ if (!root) throw new Error("Missing fixture root");
 createRoot(root).render(
   <div className="h-screen">
     <AgentsPage agents={agents} relay={relay} />
+    {reviewing && <CreationReview agents={agents} />}
   </div>,
 );

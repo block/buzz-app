@@ -365,6 +365,9 @@ function setup(
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),
     wake: vi.fn(),
+    creationRequests: () => [],
+    dismissCreation: vi.fn(),
+    approveCreation: vi.fn(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

@@ -294,9 +294,11 @@ export type AgentHandle = Readonly<{
   pubkey: string;
   name: string;
   owner: string;
-  /** Installed local types and creation for this agent's owner and community. */
+  /** Installed local types and owner-reviewed creation requests. */
   agentTypes?(): readonly Readonly<{ key: string; title: string }>[];
-  createAgent?(input: Readonly<{ type: string; name: string }>): Promise<Agent>;
+  createAgent?(
+    input: Readonly<{ type: string; name: string }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
@@ -705,6 +707,16 @@ export type RetypePreview = Readonly<{
     outcome: "reset" | "dropped";
   }>[];
 }>;
+/** An unsaved creation request. Only the owner-facing review may approve it. */
+export type AgentCreationRequest = Readonly<{
+  id: string;
+  requester: string;
+  requesterName: string;
+  owner: string;
+  community: string;
+  type: string;
+  name: string;
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -839,6 +851,11 @@ export type Agents = {
    * hosted type at its provider. A hosted one whose setup then fails is kept
    * as `unfinished`. */
   create(input: NewAgent): Promise<Agent>;
+  /** Local, unsaved requests; closing a review discards its request. */
+  creationRequests(): readonly AgentCreationRequest[];
+  dismissCreation(id: string): void;
+  /** Creates only after the owner reviews the usual creation form. */
+  approveCreation(id: string, input: NewAgent): Promise<Agent>;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -1126,6 +1143,8 @@ export class AgentsService extends Service implements Agents {
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
   private readonly listeners = new Set<() => void>();
+  private requests: readonly AgentCreationRequest[] = [];
+  private readonly approving = new Set<string>();
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
   private identities: readonly AgentIdentity[] = [];
@@ -1326,24 +1345,32 @@ export class AgentsService extends Service implements Agents {
         this.types()
           .filter((type) => !type.remote)
           .map(({ key, title }) => ({ key, title })),
-      createAgent: (agent, input) => {
+      createAgent: async (agent, input) => {
         const binding = this.bindingOf(agent);
         if (!binding || !this.live(agent.pubkey))
-          throw new Error("The creating agent is no longer available");
+          throw new Error("The requesting agent is no longer available");
         if (!input.name.trim()) throw new Error("Name the agent");
-        return this.add(
-          input.type,
-          async (native, destination, owner) => ({
-            agent: await native.create(
-              destination,
-              owner,
-              input.type,
-              input.name.trim(),
-            ),
-          }),
-          {},
-          binding,
-        );
+        const kind = this.types().find((entry) => entry.key === input.type);
+        if (!kind) throw new Error("That agent type is not available");
+        if (kind.remote)
+          throw new Error("A hosted agent's key stays with its provider");
+        if (this.requests.length >= 16)
+          throw new Error("Review the pending agent requests first");
+        const id = crypto.randomUUID();
+        this.requests = [
+          ...this.requests,
+          {
+            id,
+            requester: agent.pubkey,
+            requesterName: agent.name,
+            owner: agent.owner,
+            community: binding.origin,
+            type: input.type,
+            name: input.name.trim(),
+          },
+        ];
+        this.notify();
+        return { requestId: id, saved: false };
       },
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
@@ -1400,6 +1427,13 @@ export class AgentsService extends Service implements Agents {
           this.notify();
         }),
         communities.subscribe(() => {
+          const kept = this.requests.filter(
+            (request) => request.owner === communities.snapshot().viewer,
+          );
+          if (kept.length !== this.requests.length) {
+            this.requests = kept;
+            this.notify();
+          }
           this.watch();
           this.update();
         }),
@@ -1620,6 +1654,45 @@ export class AgentsService extends Service implements Agents {
       }),
       { config, picture },
     );
+  }
+  creationRequests = () => this.requests;
+  dismissCreation = (id: string) => {
+    if (this.approving.has(id)) return;
+    this.requests = this.requests.filter((request) => request.id !== id);
+    this.notify();
+  };
+  async approveCreation(id: string, input: NewAgent) {
+    const request = this.requests.find((item) => item.id === id);
+    if (!request || this.approving.has(id))
+      throw new Error("No such pending agent request");
+    const binding = this.bindingOf({
+      relay: request.community,
+      owner: request.owner,
+    });
+    if (!binding || binding.controller.signal.aborted)
+      throw new Error("Connect to the requesting community first");
+    if (!input.name.trim()) throw new Error("Name the agent");
+    this.approving.add(id);
+    try {
+      const agent = await this.add(
+        input.type,
+        async (native, destination, owner) => ({
+          agent: await native.create(
+            destination,
+            owner,
+            input.type,
+            input.name.trim(),
+          ),
+        }),
+        input,
+        binding,
+      );
+      this.requests = this.requests.filter((item) => item.id !== id);
+      this.notify();
+      return agent;
+    } finally {
+      this.approving.delete(id);
+    }
   }
   /** Whether watch classifiers can run on this device: there is a decision
    * backend, and on the `typesafe` backend a key is saved. */

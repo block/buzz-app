@@ -116,13 +116,7 @@ export function appClient(
       check();
       if (!agent.createAgent)
         throw new Error("Agent creation is unavailable on this host");
-      const created = await agent.createAgent(input);
-      return {
-        pubkey: created.pubkey,
-        name: created.name,
-        type: created.type,
-        owner: created.owner,
-      };
+      return agent.createAgent(input);
     },
     templates: async () => {
       check();

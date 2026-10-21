@@ -56,7 +56,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_create",
-    "Create an agent for your owner in your community, with the type's default settings. Use a key from agent_types. Does not add it to a conversation.",
+    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types.",
     { type: str, name: str },
     ["type", "name"],
   ),

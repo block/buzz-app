@@ -5,6 +5,8 @@ import type {
   Agent,
   Agents,
   RegisteredAgentType,
+  NewAgent,
+  AgentCreationRequest,
 } from "../../features/agents/service";
 import { RobotIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -39,17 +41,21 @@ export function AgentCreateDialog({
   community,
   onClose,
   onCreated,
+  request,
+  onCreate,
 }: {
   agents: Agents;
   types: readonly RegisteredAgentType[];
   community?: string | undefined;
   onClose(): void;
   onCreated(agent: Agent): void;
+  request?: AgentCreationRequest;
+  onCreate?(input: NewAgent): Promise<Agent>;
 }) {
   const [open, setOpen] = useState(true);
-  const [name, setName] = useState("");
+  const [name, setName] = useState(request?.name ?? "");
   const [picture, setPicture] = useState(() => randomAgentAvatar().url);
-  const [typeKey, setTypeKey] = useState(types[0]?.key ?? "");
+  const [typeKey, setTypeKey] = useState(request?.type ?? types[0]?.key ?? "");
   const type = types.find((item) => item.key === typeKey) ?? types[0];
   const [config, setConfig] = useState(() => startingConfig(type));
   const [dirty, setDirty] = useState(false);
@@ -84,7 +90,9 @@ export function AgentCreateDialog({
     setPending(true);
     setError("");
     try {
-      const agent = await agents.create({
+      const agent = await (
+        onCreate ?? ((input: NewAgent) => agents.create(input))
+      )({
         type: type.key,
         name: name.trim(),
         ...(picture ? { picture } : {}),
@@ -109,6 +117,11 @@ export function AgentCreateDialog({
         if (!next) onClose();
       }}
       title="Create agent"
+      description={
+        request
+          ? `${request.requesterName} requested this agent in ${request.community}. Review its settings before creating it.`
+          : undefined
+      }
       size="wide"
       height="stable-tall"
       chromeSpacing="padded"

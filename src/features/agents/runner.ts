@@ -372,7 +372,7 @@ export type RunnerHost = {
   createAgent(
     agent: Agent,
     input: Readonly<{ type: string; name: string }>,
-  ): Promise<Agent>;
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */

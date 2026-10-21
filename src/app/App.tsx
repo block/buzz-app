@@ -13,6 +13,7 @@ import { modalWindowDragHandlers } from "./shell/title-bar";
 import { isTauri } from "@tauri-apps/api/core";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
+import { CreationReview } from "../bundled/agents/CreationReview";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
 import {
   useEffect,
@@ -332,6 +333,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           >
             <UpdateNotice updates={services.updates} />
             <InterruptedNotice agents={services.agents} />
+            <CreationReview agents={services.agents} />
             {!settings && startup === "recovery" ? (
               <RecoveryScreen plugins={plugins} />
             ) : !settings &&

@@ -6,8 +6,7 @@ Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive
 display, activity, names, inventory and usage. The v1 Agents page, Profiles plugin,
-Channel templates plugin, agent snapshots, team bundles, community catalog and
-agent-management request popups are gone, as are the native `agent_control_*`,
+Channel templates plugin, agent snapshots, team bundles, community catalog are gone, as are the native `agent_control_*`,
 model-discovery and harness-install commands behind them.
 
 Agents was called Agents2 while v1 still shipped. Startup now moves its identity
@@ -34,10 +33,14 @@ and reported as migration errors.
 ## Creating agents from a conversation
 
 The shared tools offer `agent_types` to list installed local runtimes and
-`agent_create` to create an agent using a listed type key and a display name.
-Creation uses the runtime's default settings and binds the identity to the calling
-agent's owner and community, even when another community is selected in the app.
-It returns the new public key. Use `members` separately to add it to a conversation.
+`agent_create` to submit an unsaved creation draft using a listed type key and a display name.
+It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
+the usual Create agent form, may edit the name, runtime and settings, and creates
+only by submitting it. Closing the form discards the request. Requests are local,
+bounded to 16 and do not survive reload or a change of signed-in owner.
+Approval binds the identity to the requesting agent's owner and community, even
+when another community is selected. Use `members` separately after creation to add
+it to a conversation. Agent tools do not expose draft approval.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 

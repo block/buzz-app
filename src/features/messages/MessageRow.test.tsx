@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { StrictMode } from "react";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import { npubEncode } from "nostr-tools/nip19";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
@@ -23,7 +25,7 @@ import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
 import { MessageManagement } from "./MessageManagement";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
@@ -3615,5 +3617,115 @@ it("keeps a failed card's attachments listed under StrictMode", () => {
   } finally {
     view.unmount();
     error.mockRestore();
+  }
+});
+
+const listed = { channels: [], status: "ready" };
+
+it.each([
+  {
+    case: "signed owner",
+    forged: false,
+    viewer: undefined,
+    label: "Logan’s agent",
+  },
+  {
+    case: "viewer's agent",
+    forged: false,
+    viewer: "owner",
+    label: "Your agent",
+  },
+  { case: "forged owner", forged: true, viewer: undefined, label: undefined },
+])(
+  "names an agent's owner from its signed profile ($case)",
+  async ({ forged, viewer, label }) => {
+    const agent = keypair();
+    const owner = keypair();
+    const signer = forged ? keypair() : owner;
+    const conditions = "";
+    const sig = bytesToHex(
+      schnorr.sign(
+        new Uint8Array(
+          await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(
+              `nostr:agent-auth:${agent.pubkey}:${conditions}`,
+            ),
+          ),
+        ),
+        signer.secret,
+      ),
+    );
+    const head = signed(agent, {
+      kind: 0,
+      content: JSON.stringify({ name: "Quinn" }),
+      tags: [["auth", owner.pubkey, conditions, sig]],
+    });
+    const quinn: Profile = { name: "Quinn", isAgent: true };
+    const profiles = new Map<string, Profile>([
+      [agent.pubkey, quinn],
+      [owner.pubkey, { name: "Logan" }],
+    ]);
+    const ensure = vi.fn(async () => {});
+    const subscribe = () => () => {};
+    const session = {
+      channels: { list: () => listed, subscribeList: subscribe },
+      messages: {},
+      profiles: {
+        snapshot: () => profiles,
+        subscribe,
+        ensure,
+        event: (key: string) => (key === agent.pubkey ? head : undefined),
+      },
+    } as unknown as RelaySession;
+    const view = renderMessage({
+      row: { ...row, authorId: agent.pubkey },
+      profile: quinn,
+      // Timelines pass row-selected profiles, which never include the owner.
+      participantProfiles: new Map([[agent.pubkey, quinn]]),
+      session,
+      viewer: viewer === "owner" ? owner.pubkey : row.authorId,
+    });
+    try {
+      const byline = view.container.querySelector("strong")?.parentElement;
+      // The mention-chip agent mark sits beside the name either way.
+      expect(byline?.querySelector("svg")).not.toBeNull();
+      if (label) {
+        await waitFor(() =>
+          expect(view.container).toHaveTextContent(`Quinn· ${label}`),
+        );
+        expect(ensure).toHaveBeenCalledWith([owner.pubkey], "background");
+      } else {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        });
+        expect(view.container).not.toHaveTextContent("agent");
+        expect(ensure).not.toHaveBeenCalled();
+      }
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+it("shows no agent mark or owner for a person", () => {
+  const event = vi.fn();
+  const subscribe = () => () => {};
+  const none = new Map();
+  const session = {
+    channels: { list: () => listed, subscribeList: subscribe },
+    messages: {},
+    profiles: { snapshot: () => none, subscribe, event, ensure: vi.fn() },
+  } as unknown as RelaySession;
+  const view = renderMessage({ session, profile: { name: "Ana" } });
+  try {
+    expect(
+      view.container
+        .querySelector("strong")
+        ?.parentElement?.querySelector("svg"),
+    ).toBeNull();
+    expect(event).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
   }
 });

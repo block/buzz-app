@@ -28,7 +28,14 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
  * newest first and a page at a time, as the relay does. */
 function fake(
   events: readonly BuzzEvent[] = [],
-  { keep = false }: { keep?: boolean } = {},
+  {
+    keep = false,
+    hidden = () => false,
+  }: {
+    keep?: boolean;
+    /** Leaves an event out of a filter's results before its limit applies. */
+    hidden?: (filter: Filter, item: BuzzEvent) => boolean;
+  } = {},
 ) {
   // With keep, a publication joins the community as a fresh event.
   const kept: BuzzEvent[] = [];
@@ -45,6 +52,7 @@ function fake(
     if (until !== undefined && item.created_at > until) return false;
     if (item.created_at === until && before_id && item.id <= before_id)
       return false;
+    if (hidden(filter, item)) return false;
     return Object.entries(filter).every(([key, value]) => {
       if (key === "kinds") return (value as number[]).includes(item.kind);
       if (key === "ids") return (value as string[]).includes(item.id);
@@ -688,7 +696,16 @@ function relay(refused: Readonly<Record<string, string>> = {}) {
     }),
     profile(alice, "Alice Smith"),
   ];
-  const { client, published } = fake(state);
+  // Like the relay, this leaves system channels out of a filter that neither
+  // opts in with `#t` nor names them by `#d`, before the filter's limit.
+  const { client, published } = fake(state, {
+    hidden: (filter, item) =>
+      item.tags.some((t) => t[0] === "t" && t[1] === "system") &&
+      !(filter["#t"] as string[] | undefined)?.includes("system") &&
+      !(filter["#d"] as string[] | undefined)?.includes(
+        item.tags[0]?.[1] ?? "",
+      ),
+  });
   /** Replaces channel `id`'s state event of `kind` with one tagged anew. */
   const put = (kind: number, id: string, change: (tags: Tags) => Tags) => {
     const at = state.findIndex((e) => e.kind === kind && e.tags[0]?.[1] === id);
@@ -754,22 +771,6 @@ function relay(refused: Readonly<Record<string, string>> = {}) {
       );
     return event({ ...template, pubkey: me, id: "e".repeat(64) });
   });
-  // The relay leaves system channels out of a read that neither opts in with
-  // `#t` nor names them by `#d`.
-  const query = client.query;
-  client.query = vi.fn(async (filters: readonly Filter[]) =>
-    (await query(filters)).filter(
-      (item) =>
-        !item.tags.some((t) => t[0] === "t" && t[1] === "system") ||
-        filters.some(
-          (filter) =>
-            (filter["#t"] as string[] | undefined)?.includes("system") ||
-            (filter["#d"] as string[] | undefined)?.includes(
-              item.tags[0]?.[1] ?? "",
-            ),
-        ),
-    ),
-  );
   return { client, published, state };
 }
 

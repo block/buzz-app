@@ -164,7 +164,12 @@ export const TOOLS: readonly Tool[] = [
       name: str,
       about: str,
       visibility: { type: "string", enum: ["open", "private"] },
-      type: { type: "string", enum: ["stream", "forum", "system"] },
+      type: {
+        type: "string",
+        enum: ["stream", "forum", "system"],
+        description:
+          "system: left out of ordinary channel lists. An open one is still found by anyone who lists system channels.",
+      },
       ttl: {
         type: "integer",
         description: "Seconds without a message before it archives; 0: never.",

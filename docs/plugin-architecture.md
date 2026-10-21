@@ -1100,12 +1100,16 @@ mounted page; see [sidebar ownership](channels.md#ownership).
 
 ## Conversation contributions
 
-`registerMessage({ id, title, matches, component })` contributes an optional whole
+`registerMessage({ id, title, matches, ownsAttachment?, component })` contributes an optional whole
 message body. Components receive `{ message: ChannelMessage, canOpen, open }`; the first active
 match wins, throwing matchers are skipped, and render failure/removal restores the
 host body. Registration uses the same owned contribution lifetime as inline/link
 renderers. The host retains author/time chrome, actions, attachments and session
-ownership. `MessageRenderer` is a host-matched author-preview type, not event
+ownership. `ownsAttachment(message, attachment)` lets the component claim the
+attachments it draws itself: the host leaves those out of its list, keeps the
+others, and lists every one again if the component fails. Claims count only
+while the host draws that component; attachment-only and session-card-only
+messages skip it, so their attachments stay listed. A throwing claim is false. `MessageRenderer` is a host-matched author-preview type, not event
 admission or cross-version capability negotiation.
 
 `registerMessageAction({ id, title, icon?, matches, component, marker? })` adds an
@@ -1277,7 +1281,7 @@ selected recipient metadata. Token renderers are display-only while editing.
 Names pasted as text never create notification intent.
 
 Tools receive `insertText`, `insertMention({ pubkey, name })`,
-`insertMentions([{ pubkey, name }, …])`, `insertResource` and `focus` commands,
+`insertMentions([{ pubkey, name }, …])`, `replaceRecipients`, `insertResource` and `focus` commands,
 and read-only `recipients`: the draft's selected mentions as `{ pubkey, name }` in
 draft order, so a tool can act for whoever the draft addresses. There is one entry
 per mention, so a person mentioned twice appears twice. Recipients the host adds
@@ -1295,6 +1299,8 @@ individual recipients in one undoable edit. It deduplicates batch keys and rejec
 ineligible, or the resulting draft exceeds its text or 32-mention limit. While
 editing an existing message, both mention commands insert identity references
 without changing the original notification recipients.
+
+`replaceRecipients([{ pubkey, name }, …])` changes the recipient set in one undoable transaction, preserving prose, formatting, focus and the mapped selection. Mentions that stay keep their names and positions, including duplicates; new recipients are inserted at the start. An unchanged set does not edit the draft, regardless of order. Removed mentions also remove one following space when present, leaving punctuation unchanged. An empty array clears selected mentions. Automatic replacement does not update recent-mention rankings. It uses the same admission and lifetime checks as insertion and rejects the entire edit for invalid or unavailable recipients or length limits. It returns false while editing a sent message. Plain-text names do not become recipients.
 
 `insertResource({ uri, label })` inserts a host-owned inline reference to plugin
 content, such as a repository issue or pull request. The host normalizes the label
@@ -1430,6 +1436,63 @@ media response. Native microphone permissions were exercised in the staging app.
 ## Desktop browser
 
 Plugins can render the host-provided [`browser.View` component](browser.md) inside a panel. It opens HTTP(S) pages beside the conversation on macOS desktop. The host owns website rendering, navigation controls, and native session cleanup. Remote pages receive no Buzz IPC bridge; plugin JavaScript remains trusted same-process code. The [capability guide](browser.md#try-the-capability-with-a-local-plugin) includes a complete local-plugin example and installation steps.
+
+## Decisions
+
+The host composes one `DecisionsService` in `app/services.ts`. Plugins, bundled
+or external, declare `inject = ["decisions"]` and call `ctx.decisions.decide`
+to ask typed questions about a piece of text. One provider answers every
+question in one call:
+
+```ts
+import type { Context } from "@buzz/author";
+export const inject = ["decisions"];
+export async function apply(ctx: Context) {
+  const result = await ctx.decisions.decide({
+    state: "The build is broken on main.",
+    questions: {
+      urgent: { type: "yes_no", instructions: "It needs attention now." },
+      topic: {
+        type: "choice",
+        instructions: "What is it about?",
+        options: { build: "CI or builds", other: "Anything else" },
+      },
+      severity: { type: "score", instructions: "How severe?", levels: ["low", "medium", "high"] },
+    },
+    timeoutMs: 5_000,
+  });
+  if (result.outcome === "answered") {
+    const urgent = result.answers.urgent; // { type: "yes_no", probability }
+  }
+}
+```
+
+A request has 1 to 32 questions, keyed by an answer name of at most 64
+characters. `choice` takes 2 to 255 options (value -> when to pick it); `score`
+takes 2 to 10 level labels, lowest first. A `yes_no` answer is a probability;
+a `choice` answer is the picked value with its confidence; a `score` answer is
+where it falls on the 0-based scale (it can be fractional), with a confidence.
+Probabilities are 0 to 1. `timeoutMs` is clamped to 1 to 30 seconds.
+
+`decide` never rejects. It resolves with `{ outcome: "failed", reason }` when
+this build has no decision provider (`unavailable`), the chosen provider has no
+saved key (`missing_credentials`), the provider refused the key
+(`unauthorized`), the questions are malformed (`invalid_request`), the request
+is over 128 KiB (`input_limit`), or the call times out, fails, or returns
+answers that do not fit the questions. A failed call is not retried and never
+falls back to another provider.
+
+TypeSafe is the only provider. The user manages its key in Settings > Decisions
+API. `ctx.decisions.backend()` names the provider:
+
+| Provider | Credentials |
+|----------|-------------|
+| `typesafe` (default) | The user's TypeSafe key, read only by native code |
+
+Native code (`src-tauri/src/decisions.rs`) owns the endpoints, the key, the
+limits and the answer checks, so a plugin sees the same answers whichever
+provider runs. Plugins cannot choose the provider. `state` and every question go
+to the provider, so send only what the decision needs.
 
 ## In-app keyboard shortcuts
 

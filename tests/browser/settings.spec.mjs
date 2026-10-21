@@ -588,12 +588,12 @@ confirmedPresence(
         "Notifications",
         "Shortcuts",
         "Agent setup",
+        "Decisions API",
         "Channel templates",
         "Software updates",
         "Manage plugins",
         "Builderlab agents",
         "Builderlab hosting",
-        "Jev classifier",
       ]) {
         await tab();
         await expect(

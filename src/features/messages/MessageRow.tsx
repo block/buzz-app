@@ -51,11 +51,12 @@ import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
-import { MessageBody } from "../conversation/MessageBody";
+import { MessageCard, useMessageRenderer } from "../conversation/MessageBody";
 import { TargetOpenerProvider, WithTargetOpener } from "../conversation/opener";
 import { InlineText } from "../conversation/InlineText";
 import type {
   ConversationExtensions,
+  MessageRenderer,
   MessageSummaryActivity,
 } from "../conversation/contracts";
 import {
@@ -397,22 +398,54 @@ function MessageRowContent({
       </MenuItem>
     </>
   );
-  const actionItems = actions.map((action) => (
-    <MenuItem key={action.key} onClick={() => setOpenAction(action)}>
-      {action.icon && (
-        <MenuIcon>
-          <ContributionBoundary key={contributionKey(action)} fallback={null}>
-            <action.icon />
-          </ContributionBoundary>
-        </MenuIcon>
-      )}
-      {action.title}
-    </MenuItem>
-  ));
+  const actionItems = actions.map((action) =>
+    action.placement === "menu" && session && extensions?.actions ? (
+      <ContributionBoundary key={contributionKey(action)} fallback={null}>
+        <WithTargetOpener
+          component={action.component}
+          props={{
+            message: row,
+            session,
+            close: () => setOpenAction(undefined),
+          }}
+          registry={extensions.actions}
+          entry={action}
+        />
+      </ContributionBoundary>
+    ) : (
+      <MenuItem key={action.key} onClick={() => setOpenAction(action)}>
+        {action.icon && (
+          <MenuIcon>
+            <ContributionBoundary key={contributionKey(action)} fallback={null}>
+              <action.icon />
+            </ContributionBoundary>
+          </MenuIcon>
+        )}
+        {action.title}
+      </MenuItem>
+    ),
+  );
+  // A message renderer may draw some attachments itself. Its claims count only
+  // while its card is mounted, and they return to the host list while its
+  // fallback shows. A remounted card starts healthy and claims again.
+  const bodyShown = !attachmentOnly && !cardsOnly;
+  const messageRenderer = useMessageRenderer(extensions?.messages, row);
+  const [failedRenderer, setFailedRenderer] = useState<MessageRenderer>();
+  const claims =
+    bodyShown && messageRenderer !== failedRenderer
+      ? messageRenderer?.ownsAttachment
+      : undefined;
+  const claimed = (attachment: ChannelMessage["attachments"][number]) => {
+    try {
+      return !!claims?.call(messageRenderer, row, attachment);
+    } catch {
+      return false;
+    }
+  };
   // Keep mixed attachments in sender order; only adjacent images share a strip.
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
-    if (!safeMessageUrl(attachment.url)) continue;
+    if (!safeMessageUrl(attachment.url) || claimed(attachment)) continue;
     const previous = attachmentGroups.at(-1);
     if (
       (attachment.kind === "image" || attachment.kind === "file") &&
@@ -875,7 +908,7 @@ function MessageRowContent({
                   ))}
                 </div>
               )}
-              {!attachmentOnly && !cardsOnly && (
+              {bodyShown && (
                 <div
                   className={
                     shownRow || row.huddle ? undefined : styles.messageBubble
@@ -907,9 +940,22 @@ function MessageRowContent({
                     </div>
                   )}
                   {extensions?.messages ? (
-                    <MessageBody registry={extensions.messages} message={row}>
+                    <MessageCard
+                      registry={extensions.messages}
+                      renderer={messageRenderer}
+                      message={row}
+                      onFailedChange={(renderer, failed) =>
+                        setFailedRenderer((current) =>
+                          failed
+                            ? renderer
+                            : current === renderer
+                              ? undefined
+                              : current,
+                        )
+                      }
+                    >
                       {body}
-                    </MessageBody>
+                    </MessageCard>
                   ) : (
                     body
                   )}

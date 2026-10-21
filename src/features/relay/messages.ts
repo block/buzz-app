@@ -121,6 +121,8 @@ export function createMessages(
       (attachmentSource.id !== original.id &&
         (attachmentSource.kind !== 40003 ||
           (!ownedMessage(attachmentSource) &&
+            attachmentSource.pubkey !==
+              profiles?.owner?.(messageAuthor(original, signingAuthority)) &&
             (!ownerEdit ||
               messageAuthor(attachmentSource, signingAuthority) !==
                 messageAuthor(original, signingAuthority))) ||

@@ -1,3 +1,6 @@
+import { createMessages } from "./messages";
+import type { Outbox } from "./outbox";
+import type { ProfileQueries } from "./profile-directory";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -200,4 +203,39 @@ it("publishes an owned-agent edit through the real session and refuses a foreign
   } finally {
     connection.dispose();
   }
+});
+
+it("lets the original author preserve attachments from a verified owner edit", () => {
+  const author = keypair(),
+    owner = keypair();
+  const media = ["imeta", "url https://example.test/image.png", "m image/png"];
+  const original = signed(author, {
+    kind: 9,
+    content: "Original",
+    tags: [["h", "c"], media],
+  });
+  const source = signed(owner, {
+    kind: 40003,
+    content: "Spoken",
+    tags: [["h", "c"], ["e", original.id], media],
+  });
+  const send = vi.fn(() => "operation");
+  const messages = createMessages(
+    { supports: () => true, send } as unknown as Outbox,
+    author.pubkey,
+    (id) => [original, source].find((event) => event.id === id),
+    () => [],
+    () => {},
+    () => true,
+    undefined,
+    undefined,
+    undefined,
+    { owner: () => owner.pubkey } as unknown as ProfileQueries,
+  );
+  expect(messages.edit(original.id, "Revised", source.id)).toBe("operation");
+  expect(send).toHaveBeenCalledWith({
+    kind: 40003,
+    content: "Revised",
+    tags: [["h", "c"], ["e", original.id], media],
+  });
 });

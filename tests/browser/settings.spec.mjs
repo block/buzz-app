@@ -609,6 +609,21 @@ confirmedPresence(
   },
 );
 
+/** A viewer with no saved community starts on the join screen, not the shell. */
+const savedCommunity = (page, viewer) =>
+  page.addInitScript((viewer) => {
+    const key = `buzz-client.v1:${viewer}`;
+    if (!localStorage.getItem(key))
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          profile: { name: "Browser Fixture", picture: "" },
+          memberships: [{ id: "primary", name: "Primary" }],
+          selected: null,
+        }),
+      );
+  }, viewer);
+
 test("hosted deletion reload keeps the UUID until an enabled manual replay", async ({
   page,
   app,
@@ -626,6 +641,7 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
   await page.route("**/api/relay/identity", (route) =>
     route.fulfill({ json: { viewer: owner } }),
   );
+  await savedCommunity(page, owner);
   await page.route("**/api/builderlab/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").at(-1);
     calls.push(action);
@@ -727,6 +743,7 @@ test("hosted deletion keeps a foreign owner's full npub inside the dialog and no
   await page.route("**/api/relay/identity", (route) =>
     route.fulfill({ json: { viewer: owner } }),
   );
+  await savedCommunity(page, owner);
   await page.route("**/api/builderlab/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").at(-1);
     if (action === "auth")

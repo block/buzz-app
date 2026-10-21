@@ -32,13 +32,13 @@ export function MessageBody({
   registry,
   message,
   children,
-  onFailed,
+  onFailedChange,
 }: {
   registry: ContributionReader<MessageRenderer>;
   message: ChannelMessage;
   children: ReactNode;
-  /** Called with the renderer that failed, after the fallback replaces it. */
-  onFailed?: (renderer: MessageRenderer) => void;
+  /** Reports a renderer's failure while its fallback is mounted. */
+  onFailedChange?: (renderer: MessageRenderer, failed: boolean) => void;
 }) {
   const renderer = useMessageRenderer(registry, message);
   return (
@@ -46,7 +46,7 @@ export function MessageBody({
       registry={registry}
       renderer={renderer}
       message={message}
-      onFailed={onFailed}
+      onFailedChange={onFailedChange}
     >
       {children}
     </MessageCard>
@@ -59,21 +59,28 @@ export function MessageCard({
   renderer,
   message,
   children,
-  onFailed,
+  onFailedChange,
 }: {
   registry: ContributionReader<MessageRenderer>;
   renderer: ReturnType<typeof useMessageRenderer>;
   message: ChannelMessage;
   children: ReactNode;
-  /** Called with the renderer that failed, after the fallback replaces it. */
-  onFailed?: ((renderer: MessageRenderer) => void) | undefined;
+  /**
+   * Called with true when the fallback replaces `renderer`, and with false when
+   * that failed card unmounts: its next mount starts healthy.
+   */
+  onFailedChange?:
+    | ((renderer: MessageRenderer, failed: boolean) => void)
+    | undefined;
 }) {
   if (!renderer) return children;
   return (
     <ContributionBoundary
       key={`${contributionKey(renderer)}:${message.channelId}:${message.id}`}
       fallback={children}
-      onFailed={onFailed && (() => onFailed(renderer))}
+      onFailedChange={
+        onFailedChange && ((failed) => onFailedChange(renderer, failed))
+      }
     >
       <WithTargetOpener
         component={renderer.component}

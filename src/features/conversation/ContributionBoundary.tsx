@@ -15,7 +15,8 @@ export class ContributionBoundary extends Component<
   {
     children: ReactNode;
     fallback: ReactNode;
-    onFailed?: (() => void) | undefined;
+    /** True when the fallback replaces the children; false when a failed boundary unmounts. */
+    onFailedChange?: ((failed: boolean) => void) | undefined;
   },
   { failed: boolean }
 > {
@@ -24,7 +25,11 @@ export class ContributionBoundary extends Component<
     return { failed: true };
   }
   componentDidCatch() {
-    this.props.onFailed?.();
+    this.props.onFailedChange?.(true);
+  }
+  // A remount starts healthy, so anything keyed to this failure must reset too.
+  componentWillUnmount() {
+    if (this.state.failed) this.props.onFailedChange?.(false);
   }
   render() {
     return this.state.failed ? this.props.fallback : this.props.children;

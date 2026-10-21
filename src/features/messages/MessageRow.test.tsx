@@ -3368,3 +3368,86 @@ it("returns claimed attachments when a card fails late and claims again after re
     error.mockRestore();
   }
 });
+
+it.each(["unmatched", "collapsed"] as const)(
+  "claims attachments again when a failed card remounts healthy (%s)",
+  async (unmount) => {
+    let fail = true;
+    const entry = {
+      id: "card",
+      title: "Card",
+      key: "fixture.card:card",
+      pluginId: "fixture.card",
+      revision: "one",
+      matches: (message: { content: string }) =>
+        message.content.includes("card"),
+      ownsAttachment: (_message: unknown, attachment: { url: string }) =>
+        attachment.url.endsWith("shot.png"),
+      component: () => {
+        if (fail) throw new Error("broken renderer");
+        return <p>Plugin card</p>;
+      },
+    };
+    // Stable snapshots: useSyncExternalStore rereads on every render.
+    const none: never[] = [];
+    const entries = [entry];
+    const extensions = {
+      tools: { snapshot: () => none, subscribe: () => () => {} },
+      inline: { snapshot: () => none, subscribe: () => () => {} },
+      messages: { snapshot: () => entries, subscribe: () => () => {} },
+    };
+    const message = {
+      ...row,
+      content: "A card",
+      replyCount: 0,
+      ...(unmount === "collapsed" ? { audience: "agents" as const } : {}),
+      attachments: [
+        {
+          kind: "file" as const,
+          url: "https://media.test/shot.png",
+          name: "shot.png",
+        },
+      ],
+    };
+    const render = (next: typeof message) => (
+      <MessageRow
+        row={next}
+        profile={{ name: "author" }}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={extensions}
+      />
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = renderDom(render(message));
+    const toggle = () =>
+      fireEvent.click(screen.getByRole("button", { name: /^author: A card/ }));
+    const listed = () => screen.queryAllByText("shot.png").length;
+    try {
+      if (unmount === "collapsed") toggle();
+      expect(screen.queryByText("Plugin card")).toBeNull();
+      expect(listed()).toBe(1);
+
+      fail = false;
+      if (unmount === "unmatched") {
+        // An edit stops the match, then a later edit matches again.
+        view.rerender(render({ ...message, content: "A note" }));
+        expect(listed()).toBe(1);
+        view.rerender(render({ ...message }));
+      } else {
+        // Closing to completion unmounts the panel; reopening remounts it.
+        toggle();
+        await waitFor(() => expect(listed()).toBe(0));
+        expect(screen.getAllByText("A card")).toHaveLength(1);
+        toggle();
+      }
+      expect(screen.getByText("Plugin card")).toBeInTheDocument();
+      expect(listed()).toBe(0);
+    } finally {
+      view.unmount();
+      error.mockRestore();
+    }
+  },
+);

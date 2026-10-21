@@ -426,7 +426,8 @@ function MessageRowContent({
     ),
   );
   // A message renderer may draw some attachments itself. Its claims count only
-  // while its card is mounted, and they return to the host list if it fails.
+  // while its card is mounted, and they return to the host list while its
+  // fallback shows. A remounted card starts healthy and claims again.
   const bodyShown = !attachmentOnly && !cardsOnly;
   const messageRenderer = useMessageRenderer(extensions?.messages, row);
   const [failedRenderer, setFailedRenderer] = useState<MessageRenderer>();
@@ -943,7 +944,15 @@ function MessageRowContent({
                       registry={extensions.messages}
                       renderer={messageRenderer}
                       message={row}
-                      onFailed={setFailedRenderer}
+                      onFailedChange={(renderer, failed) =>
+                        setFailedRenderer((current) =>
+                          failed
+                            ? renderer
+                            : current === renderer
+                              ? undefined
+                              : current,
+                        )
+                      }
                     >
                       {body}
                     </MessageCard>

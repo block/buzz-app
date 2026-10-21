@@ -57,8 +57,8 @@ export function Select({
   align?: "start" | "center" | "end";
   variant?: "inline" | "field" | "compact" | "preference";
   /** Match adjacent controls without changing the selection treatment. */
-  size?: "sm" | "md";
-  appearance?: "outlined" | "subtle";
+  size?: "xs" | "sm" | "md";
+  appearance?: "outlined" | "subtle" | "ghost" | "glass-ghost";
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];
@@ -134,9 +134,9 @@ export function Select({
                 }
                 variant={
                   variant === "compact"
-                    ? appearance === "subtle"
-                      ? "subtle"
-                      : "outline"
+                    ? appearance === "outlined"
+                      ? "outline"
+                      : appearance
                     : "ghost"
                 }
                 size={size ?? (variant === "compact" ? "sm" : "md")}

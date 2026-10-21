@@ -1,5 +1,94 @@
 import { test, expect } from "./source-fixture.mjs";
 
+// Real flex geometry and clipping are the contract; jsdom cannot detect text
+// painting over adjacent effort labels in a constrained model trigger.
+test("card model defaults and effort labels do not overlap", async ({
+  page,
+}) => {
+  for (const model of ["gpt-6-sol", "gpt-6-sol-extended-context-preview"]) {
+    await page.goto(
+      `/tests/fixtures/agent-library.html?inheritedModel=${model}`,
+    );
+    const trigger = page
+      .getByRole("gridcell", { name: "Ada", exact: true })
+      .getByRole("button", {
+        name: `Model: ${model} · Default, Automatic`,
+        exact: true,
+      });
+    await expect(trigger).toBeVisible();
+    for (const theme of ["light", "dark"]) {
+      for (const width of [390, 800, 1280]) {
+        await page.setViewportSize({ width, height: 950 });
+        for (const fontSize of [16, 20]) {
+          await page.evaluate(
+            ({ theme, fontSize }) => {
+              document.documentElement.classList.toggle(
+                "dark",
+                theme === "dark",
+              );
+              document.documentElement.dataset.colorMode = theme;
+              document.documentElement.style.fontSize = `${fontSize}px`;
+            },
+            { theme, fontSize },
+          );
+          const geometry = await trigger.evaluate((button) => {
+            const model = button.querySelector(".buzz-select-value");
+            const source = button.querySelector(".buzz-select-value-suffix");
+            const effort = button.querySelector(".text-body-sm");
+            const content = source.parentElement;
+            const caret = button.querySelector("svg:last-child");
+            return {
+              sourceAfterModel:
+                source.getBoundingClientRect().left >=
+                model.getBoundingClientRect().right - 0.5,
+              effortAfterSource:
+                effort.getBoundingClientRect().left >=
+                source.getBoundingClientRect().right - 0.5,
+              contentBeforeCaret:
+                content.getBoundingClientRect().right <=
+                caret.getBoundingClientRect().left + 0.5,
+              contained: getComputedStyle(content).overflow === "hidden",
+              modelTruncates:
+                getComputedStyle(model).textOverflow === "ellipsis",
+              effortTruncates:
+                getComputedStyle(effort).textOverflow === "ellipsis",
+            };
+          });
+          expect(
+            geometry,
+            `${model}, ${theme}, ${width}px, ${fontSize}px text`,
+          ).toEqual({
+            sourceAfterModel: true,
+            effortAfterSource: true,
+            contentBeforeCaret: true,
+            contained: true,
+            modelTruncates: true,
+            effortTruncates: true,
+          });
+        }
+      }
+    }
+    await trigger.focus();
+    await trigger.press("Enter");
+    await expect(
+      page.getByRole("menu", {
+        name: `Model: ${model} · Default, Automatic`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await expect(
+      page.getByRole("menu", {
+        name: `Model: ${model} · Default, Automatic`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+  }
+});
+
 // The real cascade and WebKit accessibility tree require a browser. Service
 // concurrency, recovery and snapshot-state permutations stay in colocated tests.
 test("agent cards expose selection and creation preserves focus and selected borders", async ({

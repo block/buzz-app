@@ -608,6 +608,19 @@ Opaque contrast checks do not validate translucent materials over arbitrary
 content. Inspect the actual background, text and interaction states wherever
 glass remains; the flat shell does not establish a general glass contrast guarantee.
 
+Proposed: compact `Select appearance="ghost"` reuses the ghost Button recipe for
+compact model choices. It retains the chevron, keyboard focus, and normal
+hover/pressed states while leaving the artwork visible at rest.
+
+Proposed: `Button` / `IconButton variant="glass-ghost"` is quiet at rest over
+artwork and reveals the complete primary glass material on pointer hover or
+while pressed/expanded. Compact Select forwards `appearance="glass-ghost"`.
+Agent-card menus and model choices use it. Blur stays fixed; artwork and control
+geometry do not animate. Reduced transparency, forced colors, and unsupported
+backdrop filtering use an opaque panel fill with a boundary. Keep the ordinary
+shared keyboard focus ring and disabled behavior.
+
+
 ### Match controls to their surface
 
 The shell groups creation, page tabs, and search in one `chrome-navigation`

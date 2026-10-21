@@ -56,6 +56,7 @@ import {
   DownloadIcon,
   PlusIcon,
   RobotIcon,
+  StarFilledIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -761,7 +762,13 @@ function Inventory({
             const card = (
               <InventoryCard
                 tag={
-                  agent.pubkey === defaultAgent ? "Default agent" : undefined
+                  agent.pubkey === defaultAgent ? (
+                    <Tooltip content="Default agent">
+                      <span role="img" aria-label="Default agent">
+                        <StarFilledIcon size={16} aria-hidden="true" />
+                      </span>
+                    </Tooltip>
+                  ) : undefined
                 }
                 service={service}
                 type={type}
@@ -861,6 +868,7 @@ function InventoryCard({
         render={
           <IconButton
             aria-label={`Actions for ${agent.name}`}
+            variant="glass-ghost"
             size="sm"
             icon={<DotsThreeIcon size={16} />}
           />
@@ -911,7 +919,7 @@ function InventoryCard({
           {Model && (
             <Model
               config={agent.config}
-              modelAppearance="subtle"
+              modelAppearance="glass-ghost"
               disabled={saving}
               onChange={(config) => void save(config)}
             />

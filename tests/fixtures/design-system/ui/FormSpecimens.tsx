@@ -469,6 +469,16 @@ export function SelectExamples() {
           onValueChange={setInline}
           groups={workspaceGroups}
         />
+        <Select
+          label="Quiet card workspace"
+          size="xs"
+          variant="compact"
+          appearance="ghost"
+          leading={<CodeIcon size={16} aria-hidden="true" />}
+          value={inline}
+          onValueChange={setInline}
+          groups={workspaceGroups}
+        />
       </FormExample>
     </div>
   );

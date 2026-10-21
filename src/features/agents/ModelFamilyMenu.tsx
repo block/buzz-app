@@ -3,6 +3,7 @@ import { ModelIcon, type ModelChoice } from "./ModelPicker";
 import { CaretDownIcon, CheckIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import styles from "./ModelFamilyMenu.module.css";
 import {
   MenuRoot,
   MenuTrigger,
@@ -55,7 +56,7 @@ export function ModelFamilyMenu({
 }: {
   leading?: ReactNode;
   inherited?: boolean;
-  appearance?: "outlined" | "subtle";
+  appearance?: "outlined" | "subtle" | "ghost" | "glass-ghost";
   resetLabel?: string | undefined;
   label: string;
   effort?: string | undefined;
@@ -88,25 +89,33 @@ export function ModelFamilyMenu({
             disabled={disabled}
             loading={loading}
             focusableWhenDisabled={loading && !disabled}
-            variant={appearance === "subtle" ? "subtle" : "outline"}
+            variant={appearance === "outlined" ? "outline" : appearance}
             shape="control"
-            size="sm"
+            size={
+              appearance === "ghost" || appearance === "glass-ghost"
+                ? "xs"
+                : "sm"
+            }
             aria-label={`${label}: ${selectedLabel}${effortLabel ? `, ${effortLabel}` : ""}`}
             title={selectedLabel}
           >
             {leading ?? <ModelIcon model={selected.id || selected.label} />}
-            {/* Select's value text: only the name ellipsizes, not Default. */}
-            <span className="buzz-select-value-text">
-              <span className="buzz-select-value">{selected.label}</span>
+            {/* Keep Default together while model and effort names yield space. */}
+            <span className={styles.value}>
+              <span className={`buzz-select-value ${styles.model}`}>
+                {selected.label}
+              </span>
               {inherited && (
                 <span className="buzz-select-value-suffix text-subtle">
                   {" · Default"}
                 </span>
               )}
+              {effortLabel && (
+                <span className={`${styles.effort} text-body-sm text-subtle`}>
+                  {effortLabel}
+                </span>
+              )}
             </span>
-            {effortLabel && (
-              <span className="text-body-sm text-subtle">{effortLabel}</span>
-            )}
             <CaretDownIcon size={16} aria-hidden="true" />
           </Button>
         )}

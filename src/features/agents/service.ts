@@ -205,7 +205,7 @@ export type AgentViewProps<Config = unknown> = {
  * picture around it. */
 export type AgentCreateProps<Config = unknown> = {
   /** Model fields may use the compact card treatment in the library. */
-  modelAppearance?: "subtle";
+  modelAppearance?: "subtle" | "ghost" | "glass-ghost";
   config: Config;
   onChange(config: Config): void;
   disabled: boolean;

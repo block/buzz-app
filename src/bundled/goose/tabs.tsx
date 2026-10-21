@@ -1090,7 +1090,7 @@ export function createTabs({
             resetLabel="Use Goose default"
             allowCustomModel
             label="Goose model"
-            appearance={modelAppearance === "subtle" ? "subtle" : "outlined"}
+            appearance={modelAppearance ?? "outlined"}
             models={choices}
             value={current.model}
             defaultModel={fallback}

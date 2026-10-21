@@ -187,7 +187,7 @@ export function ProfilePeek({
       <div className={styles.content} {...focusRegion}>
         <div className={styles.lockup} data-no-picture={!picture || undefined}>
           <div className={styles.backdrop}>
-            <ProfileBackdrop src={picture} kind={agent ? "agent" : "human"} />
+            <ProfileBackdrop src={picture} />
           </div>
           <div className={styles.artwork}>
             <div className={styles.portrait}>

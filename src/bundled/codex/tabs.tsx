@@ -1,5 +1,11 @@
+import activityStyles from "../../features/agents/ActivityLayout.module.css";
+import { formatItemTimestamp } from "../../shared/datetime";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
-import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  ArrowsClockwiseIcon,
+  CaretRightIcon,
+} from "../../shared/design-system/icons";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
@@ -753,17 +759,24 @@ export function createTabs(
       return () => abort.abort();
     }, [conversation, attempt]);
     return (
-      <div className="grid gap-4">
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            loading={loading}
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            Refresh
-          </Button>
-        </div>
+      <div className={activityStyles.transcript}>
+        <InlineHeader
+          title="Transcript"
+          actions={
+            <IconButton
+              aria-label="Refresh transcript"
+              title="Refresh transcript"
+              loading={loading}
+              onClick={() => setAttempt((value) => value + 1)}
+              icon={<ArrowsClockwiseIcon size="1rem" aria-hidden="true" />}
+            />
+          }
+        />
+        {read && loading && (
+          <span role="status" className="sr-only">
+            Refreshing transcript…
+          </span>
+        )}
         {!read ? (
           <p role="status" className="m-0">
             Reading the Codex session…
@@ -822,13 +835,22 @@ export function createTabs(
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
     const unbound = sessions.filter((view) => !saved.has(view.key));
-    const detail = (text: string) => (
-      <pre className="m-0 max-h-48 overflow-auto whitespace-pre-wrap text-caption">
-        {text}
-      </pre>
-    );
+    const detail = (text: string, status?: string) =>
+      status !== "Working" ? (
+        <p className="m-0 whitespace-pre-wrap break-words text-body-sm text-subtle">
+          {text}
+        </p>
+      ) : (
+        <details className={activityStyles.details}>
+          <summary className="text-body-sm text-subtle">
+            <CaretRightIcon size={14} aria-hidden="true" />
+            <span>Latest activity</span>
+          </summary>
+          <pre className={`${activityStyles.detail} text-mono`}>{text}</pre>
+        </details>
+      );
     return (
-      <div className="grid gap-4">
+      <div className={activityStyles.activity}>
         {conversation && (
           <OpenedConversation
             conversation={conversation}
@@ -840,56 +862,71 @@ export function createTabs(
             onView={() => here && show(here)}
           />
         )}
-        <section className="grid gap-1">
+        <section className={activityStyles.section}>
           <InlineHeader title="Recent conversations" />
-          {recent.length || unbound.length ? (
-            <SettingsGroup>
-              {/* Work that failed before Codex started a thread has no binding. */}
-              {unbound.map((view) => (
-                <PreferenceRow
-                  key={view.key}
-                  title={<code className="break-all">{view.key}</code>}
-                  subtitle={
-                    <>
-                      {view.status}
-                      {view.detail && detail(view.detail)}
-                    </>
-                  }
-                />
-              ))}
-              {recent.map((conversation) => {
-                const view = views.get(conversation.key);
-                return (
-                  <PreferenceRow
-                    key={conversation.key}
-                    title={label(conversation)}
-                    subtitle={
-                      <>
-                        {[
-                          view?.status,
-                          conversation.at
-                            ? new Date(conversation.at).toLocaleString()
-                            : undefined,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                        {view?.detail && detail(view.detail)}
-                      </>
-                    }
-                    trailing={
-                      <Button size="sm" onClick={() => show(conversation)}>
-                        View transcript
-                      </Button>
-                    }
-                  />
-                );
-              })}
-            </SettingsGroup>
-          ) : (
-            <p className="m-0 text-body-sm text-subtle">
-              None. A conversation's session starts when the agent is mentioned.
-            </p>
-          )}
+          <SettingsGroup layout="form">
+            {recent.length || unbound.length ? (
+              <ul className={activityStyles.list}>
+                {/* Work that failed before Codex started a thread has no binding. */}
+                {unbound.map((view) => (
+                  <li key={view.key} className={activityStyles.entry}>
+                    <p className="m-0 break-words text-body-sm">
+                      <code>{view.key}</code> · {view.status}
+                    </p>
+                    {view.detail && detail(view.detail, view.status)}
+                  </li>
+                ))}
+                {recent.map((conversation) => {
+                  const view = views.get(conversation.key);
+                  return (
+                    <li key={conversation.key} className={activityStyles.entry}>
+                      <div className={activityStyles.row}>
+                        <div className={activityStyles.copy}>
+                          <p
+                            className="m-0 truncate text-label-sm"
+                            title={label(conversation)}
+                          >
+                            {conversation.name
+                              ? `#${conversation.name}`
+                              : conversation.channelId.slice(0, 8)}
+                          </p>
+                          <p className="m-0 text-body-sm text-subtle">
+                            {[
+                              conversation.root
+                                ? `Thread ${conversation.root.slice(0, 8)}`
+                                : "Channel",
+                              view?.status,
+                              conversation.at
+                                ? formatItemTimestamp(conversation.at / 1000, {
+                                    withTime: true,
+                                  })
+                                : undefined,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="subtle"
+                          size="sm"
+                          aria-label={`View transcript: ${label(conversation)}`}
+                          onClick={() => show(conversation)}
+                        >
+                          View transcript
+                        </Button>
+                      </div>
+                      {view?.detail && detail(view.detail, view.status)}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="m-0 text-body-sm text-subtle">
+                No other conversations saved in this app yet.
+              </p>
+            )}
+          </SettingsGroup>
         </section>
         {open && (
           <PanelSubview

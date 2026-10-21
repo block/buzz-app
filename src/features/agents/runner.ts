@@ -1614,6 +1614,7 @@ export class AgentRunners {
         name: this.host.displayName(agent, event.pubkey),
       },
       context,
+      community: agent.relay,
     });
     return pass ? result : undefined;
   }

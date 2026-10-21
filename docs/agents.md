@@ -762,8 +762,11 @@ continues to use a searchable Combobox.
 
 Provider dropdowns are intentionally text-only. The model control shows the
 selected model family icon, not the Goose runtime or Databricks/provider mark,
-as explicitly confirmed by the product owner. Goose device defaults have no
-reset action: omitting a model in Goose retains its stored provider model.
+as explicitly confirmed by the product owner. On agent cards the Goose mark
+precedes it to name the harness, as Pi's card chip does, and the chip leaves
+the thinking level and "Default" to its menu and accessible label so the model
+name keeps its room. Goose device defaults have no reset action: omitting a
+model in Goose retains its stored provider model.
 
 ## Usage
 

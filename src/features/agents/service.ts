@@ -782,8 +782,7 @@ export type Agents = {
   /** Wakes an agent this copy of the app runs in one of its conversations,
    * as a mention there would, but with no message: the agent is told `text`
    * comes from this plugin, not its owner, and is data. `root` is the
-   * thread; leave it out for a channel-level conversation such as a Solo
-   * chat. Throws when this copy does not run the agent or its queue is full;
+   * thread's root event id; leave it out for a Solo chat. Throws when this copy does not run the agent or its queue is full;
    * like a mention, a queued wake is dropped if the agent stops running here. */
   wake(
     pubkey: string,
@@ -1467,11 +1466,15 @@ export class AgentsService extends Service implements Agents {
     if (!plugin) throw new Error("Only a plugin wakes an agent");
     if (!channel || !text.trim())
       throw new Error("A wake needs a channel and text");
+    // Harnesses find the thread from a well-formed id; any other would leave
+    // them answering at the wake's own id.
+    if (root !== undefined && !/^[0-9a-f]{64}$/i.test(root))
+      throw new Error("A wake's root must be the thread's 64-hex event id");
     this.runners.wakeIn(pubkey, {
       type: "plugin",
       plugin,
       channel,
-      ...(root ? { root } : {}),
+      ...(root ? { root: root.toLowerCase() } : {}),
       text,
       id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
       at: Math.floor(Date.now() / 1000),

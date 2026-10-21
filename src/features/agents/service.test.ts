@@ -1017,7 +1017,7 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
 });
 
 describe("a plugin's wake", () => {
-  const root = "r".repeat(64);
+  const root = "e".repeat(64);
   /** Once this copy holds the agent. */
   const held = async (native: ReturnType<typeof fakeNative>) => {
     await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
@@ -1101,7 +1101,7 @@ describe("a plugin's wake", () => {
       ]);
   });
 
-  it("throws outside a plugin, without text, or for an agent this copy does not run", async () => {
+  it("throws outside a plugin, without text or a well-formed root, or for an agent this copy does not run", async () => {
     const { service, plugin, native } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });
     await held(native);
@@ -1111,6 +1111,10 @@ describe("a plugin's wake", () => {
     expect(() => plugin.agents.wake(bot, { channel, text: " " })).toThrow(
       /needs a channel and text/,
     );
+    for (const bad of ["", "note1abc", "r".repeat(63), ` ${"a".repeat(64)}`])
+      expect(() =>
+        plugin.agents.wake(bot, { channel, root: bad, text: "hi" }),
+      ).toThrow(/64-hex event id/);
     expect(() => plugin.agents.wake(sibling, { channel, text: "hi" })).toThrow(
       /does not run that agent/,
     );

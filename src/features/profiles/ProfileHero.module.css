@@ -27,15 +27,19 @@
   overflow: hidden;
   border-radius: inherit;
   pointer-events: none;
+  mask-image: var(--profile-backdrop-mask, none);
 }
 .avatarBackdropImage {
   width: 100%;
   height: 100%;
   background-size: cover;
   background-position: center;
-  filter: blur(var(--blur-lg)) saturate(3);
-  transform: scale(1.2);
-  opacity: 0.5;
+  filter: var(--profile-backdrop-filter, blur(var(--blur-lg)) saturate(3));
+  transform: scale(var(--profile-backdrop-scale, 1.2));
+  opacity: var(--profile-backdrop-opacity, 0.5);
+  transition:
+    opacity var(--profile-backdrop-duration, 0s) var(--easing-state),
+    transform var(--profile-backdrop-duration, 0s) var(--easing-enter);
 }
 .avatarBackdropImage[data-kind="human"] {
   filter: blur(var(--blur-lg)) saturate(1.5);

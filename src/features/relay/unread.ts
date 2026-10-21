@@ -2377,7 +2377,8 @@ export function createUnread({
       return owners && [...owners].every(allowed) ? event : undefined;
     },
     // Edits omitted by later relay queries can still affect the shared fold.
-    // Read their deletion evidence too; no second edit cache or projection.
+    // Discover tombstones before ownership verification can expose retained edits.
+    // Display authorization stays in the shared fold; no second edit projection.
     retainedEditIds(ids: readonly string[]) {
       if (closed) return [];
       const targets = new Set(ids);
@@ -2398,9 +2399,7 @@ export function createUnread({
                 event.tags.some(
                   ([name, channel]) =>
                     name === "h" && channel === channelOf(target),
-                ) &&
-                profiles?.owner?.(messageAuthor(target, signingAuthority)) ===
-                  event.pubkey)) &&
+                ))) &&
             !deleted(target)
           );
         })

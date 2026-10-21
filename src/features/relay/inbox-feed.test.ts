@@ -1080,9 +1080,17 @@ it.each(["disconnect", "unrelated revocation"] as const)(
   },
 );
 
-it.each(["author", "owner", "actor", "p"])(
-  "refresh checks a retained %s edit omitted after disconnect",
-  async (authority) => {
+it.each([
+  ["author", false],
+  ["owner", false],
+  ["actor", false],
+  ["p", false],
+  ["owner", true],
+  ["actor", true],
+  ["p", true],
+] as const)(
+  "refresh checks a retained %s edit omitted after disconnect (ownership pending=%s)",
+  async (authority, pendingOwnership) => {
     const attributed = authority === "actor" || authority === "p";
     const h = setup(attributed);
     h.admit([h.viewer.pubkey, h.alice.pubkey]);
@@ -1100,31 +1108,31 @@ it.each(["author", "owner", "actor", "p"])(
         })
       : addressed(h, "original", 20);
     const editor = authority === "author" ? h.alice : h.viewer;
-    if (authority !== "author") {
-      h.live.receive([
-        eventDto(
-          signed(h.alice, {
-            kind: 0,
-            created_at: 10,
-            content: "{}",
-            tags: [
-              [
-                "auth",
-                h.viewer.pubkey,
-                "",
-                bytesToHex(
-                  schnorr.sign(
-                    createHash("sha256")
-                      .update(`nostr:agent-auth:${h.alice.pubkey}:`)
-                      .digest(),
-                    h.viewer.secret,
-                  ),
+    const profile = (at: number) =>
+      eventDto(
+        signed(h.alice, {
+          kind: 0,
+          created_at: at,
+          content: "{}",
+          tags: [
+            [
+              "auth",
+              h.viewer.pubkey,
+              "",
+              bytesToHex(
+                schnorr.sign(
+                  createHash("sha256")
+                    .update(`nostr:agent-auth:${h.alice.pubkey}:`)
+                    .digest(),
+                  h.viewer.secret,
                 ),
-              ],
+              ),
             ],
-          }),
-        ),
-      ]);
+          ],
+        }),
+      );
+    if (authority !== "author") {
+      h.live.receive([profile(10)]);
       await vi.waitFor(() =>
         expect(h.session.profiles.owner?.(h.alice.pubkey)).toBe(
           h.viewer.pubkey,
@@ -1167,10 +1175,24 @@ it.each(["author", "owner", "actor", "p"])(
     await feed.ensure();
     expect(feed.snapshot()).toMatchObject({ status: "ready", incomplete: [] });
     expect(rows(h)[0]?.preview).toBe("deleted edit");
-    h.live.state({ status: "retrying", routes: [] });
-    h.live.state({ status: "connected", routes: [] });
-    const next = feed.refresh();
+    const verification = deferred<ArrayBuffer>();
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(`nostr:agent-auth:${h.alice.pubkey}:`),
+    );
+    const heldDigest = pendingOwnership
+      ? vi
+          .spyOn(crypto.subtle, "digest")
+          .mockImplementationOnce(() => verification.promise)
+      : undefined;
     try {
+      if (pendingOwnership) {
+        h.live.receive([profile(23)]);
+        expect(h.session.profiles.owner?.(h.alice.pubkey)).toBeUndefined();
+      }
+      h.live.state({ status: "retrying", routes: [] });
+      h.live.state({ status: "connected", routes: [] });
+      const next = feed.refresh();
       await vi.waitFor(() => expect(tombstoneReads).toBe(2));
       expect(feed.snapshot()).toMatchObject({
         status: "loading",
@@ -1178,6 +1200,13 @@ it.each(["author", "owner", "actor", "p"])(
       });
       held.resolve([deletion]);
       await next;
+      verification.resolve(digest);
+      if (pendingOwnership)
+        await vi.waitFor(() =>
+          expect(h.session.profiles.owner?.(h.alice.pubkey)).toBe(
+            h.viewer.pubkey,
+          ),
+        );
       expect(rows(h)[0]?.preview).toBe("original");
       expect(feed.snapshot()).toMatchObject({
         status: "ready",
@@ -1185,6 +1214,8 @@ it.each(["author", "owner", "actor", "p"])(
       });
     } finally {
       held.resolve([]);
+      verification.resolve(digest);
+      heldDigest?.mockRestore();
     }
   },
 );
@@ -1470,7 +1501,7 @@ it.each(["revoke-regrant", "dispose"] as const)(
   },
 );
 
-it("retained dependency closure checks only live author edits of the exact addressed target", async () => {
+it("retained dependency closure checks live same-channel edit candidates of the exact addressed target", async () => {
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const target = addressed(h, "original", 20);
@@ -1524,7 +1555,7 @@ it("retained dependency closure checks only live author edits of the exact addre
     { kinds: [40003, 5, 9005], "#e": [target.id], limit: 500 },
     {
       kinds: [5, 9005],
-      "#e": [originalEdit.id, newestEdit.id].sort(),
+      "#e": [originalEdit.id, newestEdit.id, wrongAuthor.id].sort(),
       limit: 500,
     },
   ]);

@@ -581,6 +581,18 @@ test("compact timeline actions slide under the top edge, track scrolling and pre
       .getByRole("button", { name: /^View .* profile$/ })
       .first();
     await avatar.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(avatar).toBeFocused();
+    const preview = page.getByRole("dialog", { name: /profile preview$/ });
+    await expect(preview).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(
+      preview.getByRole("button", { name: "View profile", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(preview).toBeHidden();
+    await expect(avatar).toBeFocused();
     await shown(actions);
     await page.keyboard.press("Tab");
     await expect(actions.getByRole("button").first()).toBeFocused();

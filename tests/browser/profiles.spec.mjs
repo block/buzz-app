@@ -817,8 +817,13 @@ test("profile preview fits enlarged text and stops its status with reduced motio
     exact: true,
   });
   await expect(page.locator("html")).toHaveCSS("--buzz-text-scale", "2");
-  await page.keyboard.press("Tab");
-  await avatar.focus();
+  await expect(avatar).toBeVisible();
+  await page.getByRole("button", { name: "Toggle appearance" }).focus();
+  for (let i = 0; i < 20; i++) {
+    await page.keyboard.press("Tab");
+    if (await avatar.evaluate((node) => node === document.activeElement)) break;
+  }
+  await expect(avatar).toBeFocused();
   const preview = page.getByRole("dialog", { name: "Viewer profile preview" });
   await expect(preview).toBeVisible();
   await expect(preview).toHaveCSS("transform", "none");

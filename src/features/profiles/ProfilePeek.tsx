@@ -147,9 +147,25 @@ export function ProfilePeek({
       id={previewId}
       open={open}
       onOpenChange={(next, details) => {
+        // Crossing an avatar on the active toolbar's safe pointer route must
+        // not put a new preview between the message and its actions.
+        const avatar = document.getElementById(triggerId);
+        if (
+          next &&
+          details.reason === "trigger-hover" &&
+          document.activeElement !== avatar &&
+          avatar?.closest("[data-actions-revealed]")
+        ) {
+          details.cancel();
+          return;
+        }
         // Return focus is not a fresh request to preview the same identity.
         if (next && returningFromProfile.current) {
-          if (details.reason === "trigger-hover" && pointerLeft.current) {
+          if (
+            returningFromProfile.current === "returned" &&
+            details.reason === "trigger-hover" &&
+            pointerLeft.current
+          ) {
             returningFromProfile.current = null;
             setWatchReturnPointer(false);
           } else {

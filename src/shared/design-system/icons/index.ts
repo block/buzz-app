@@ -559,3 +559,6 @@ export const ArrowsDiagonalMinimize2Icon = defineIcon(
 
 import TablerPhoneIcon from "@tabler/icons-react/dist/esm/icons/IconPhone.mjs";
 export const PhoneIcon = defineIcon("tabler", TablerPhoneIcon);
+
+import TablerFoldIcon from "@tabler/icons-react/dist/esm/icons/IconFold.mjs";
+export const FoldIcon = defineIcon("tabler", TablerFoldIcon);

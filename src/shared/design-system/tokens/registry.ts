@@ -731,6 +731,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "border-floating-separator",
+        variable: "--border-floating-separator",
+        pointsAt: "neutral-5 light / neutral-6 dark",
+        use: "A quiet separator within floating cards.",
+        status: "core",
+      },
+      {
         token: "border-prominent",
         variable: "--border-prominent",
         pointsAt: "neutral-8 light / neutral-8 dark",

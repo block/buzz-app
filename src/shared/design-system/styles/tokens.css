@@ -1111,6 +1111,7 @@
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-3);
   --border-message-thread: var(--neutral-4);
+  --border-floating-separator: var(--neutral-5);
   --scrollbar-thumb: var(--neutral-8);
   --scrollbar-thumb-quiet: color-mix(
     in srgb,
@@ -1238,6 +1239,7 @@
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-4);
   --border-message-thread: var(--neutral-6);
+  --border-floating-separator: var(--neutral-6);
   --scrollbar-thumb: var(--neutral-9);
   --scrollbar-thumb-quiet: color-mix(
     in srgb,

@@ -1011,6 +1011,11 @@ show these contracts and their compositions.
 
 ### Panel headers
 
+Composer model cards explicitly use `PanelHeader variant="card"`: one line with
+a truncating agent name, fixed trailing icon actions, and an edge-to-edge
+`border-floating-separator` for a quiet, visible boundary on the floating surface.
+This does not change workspace headers or authorize adding chrome to other content cards.
+
 Every workspace pane and full-page destination has one shared `PanelHeader` at
 its top, outside the scrolling body. If the containing workspace already supplies
 that header, reuse it rather than adding a second one. Keep the frame present

@@ -1111,7 +1111,7 @@ test("plugin details preserves the catalog scroll position on open and close", a
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
   const catalog = settingsDialog(page).locator(".buzz-settings-page");
-  const trigger = button(page, "View Usage & costs details");
+  const trigger = button(page, "View Usage details");
   await trigger.scrollIntoViewIfNeeded();
   const before = await catalog.evaluate((element) => element.scrollTop);
   expect(before).toBeGreaterThan(0);
@@ -1126,7 +1126,7 @@ test("plugin details preserves the catalog scroll position on open and close", a
   await expect
     .poll(() => catalog.evaluate((element) => element.scrollTop))
     .toBe(before);
-  await expect(button(page, "More actions for Usage & costs")).toHaveCount(0);
+  await expect(button(page, "More actions for Usage")).toHaveCount(0);
 });
 
 // Real shell + shared presentation + browser storage across reload. State/error

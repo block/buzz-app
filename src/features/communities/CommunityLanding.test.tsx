@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { CommunityLanding } from "./CommunityLanding";
@@ -53,7 +53,7 @@ it("opens the join steps from a pasted invite page link", async () => {
     screen.queryByRole("button", { name: "Create a community" }),
   ).not.toBeInTheDocument();
   await user.type(
-    screen.getByLabelText("Invite link"),
+    screen.getByLabelText("Invite or community link"),
     "https://relay.example/invite/v2.invite",
   );
   await user.click(screen.getByRole("button", { name: "Join" }));
@@ -62,13 +62,30 @@ it("opens the join steps from a pasted invite page link", async () => {
   expect(screen.getByDisplayValue("https://relay.example")).toBeVisible();
 });
 
+it("opens the join steps from a community address", async () => {
+  const user = userEvent.setup();
+  landing();
+  await user.type(
+    screen.getByLabelText("Invite or community link"),
+    "https://relay.example",
+  );
+  await user.click(screen.getByRole("button", { name: "Join" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    within(dialog).getByDisplayValue("https://relay.example"),
+  ).toBeVisible();
+});
+
 it("asks for the invite link when the pasted value is not one", async () => {
   const user = userEvent.setup();
   landing();
-  await user.type(screen.getByLabelText("Invite link"), "not a link");
+  await user.type(
+    screen.getByLabelText("Invite or community link"),
+    "not a link",
+  );
   await user.click(screen.getByRole("button", { name: "Join" }));
   expect(
-    await screen.findByText("Paste the invite link you were sent."),
+    await screen.findByText("Paste an invite or community link."),
   ).toBeVisible();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

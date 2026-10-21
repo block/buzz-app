@@ -146,8 +146,8 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
 - Runs left unfinished when the app quit continue at the first turn after it
   starts again, in whatever thread. A mention's run shows as working and its
   answer or failure is posted where it would have been, but it shows no steps
-  and Stop does not reach it. A watch's or timer's run continues unseen, with
-  no deadline.
+  and Stop does not reach it. A watch's or timer's run is ended instead, as
+  quitting ends other harnesses' turns: continued, it would have no deadline.
 - Pi durable records some requests that have no answer, such as compaction's,
   only in its totals. Usage counts each model's share of those as one more
   request, at the newest compaction.

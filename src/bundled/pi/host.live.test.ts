@@ -170,6 +170,21 @@ out.failedResumed = await pi.rpc("wait", { agent, submission: l1.submission });
 // Pi's settings as they are now, which the pi command changes.
 await writeFile(data + "/settings.json", JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1" }));
 out.defaults = await pi.rpc("defaults", {});
+// A one-off turn a stopped host left is listed with no place, and once
+// dropped no later delivery continues it.
+const w = held(), timing = held();
+faux.setResponses([async (_context, options) => { timing.release(); await abortable(w.gate, options?.signal); return fauxAssistantMessage("Late timer"); }]);
+const w1 = await pi.rpc("once", { ...turn("W", "timer"), context: undefined });
+await timing.gate;
+await pi.stop();
+pi = start();
+await pi.rpc("open", { agent, tools });
+const left = (await pi.rpc("unfinished", { agent })).submissions;
+await pi.rpc("drop", { agent, submission: w1.submission, conversation: w1.conversation });
+const calls = faux.state.callCount;
+faux.setResponses([() => fauxAssistantMessage("After the timer")]);
+const y = await pi.rpc("deliver", turn("Y", "thirteenth"));
+out.timer = { left, wait: await pi.rpc("wait", { agent, submission: y.submission }), dropped: await pi.rpc("wait", { agent, submission: w1.submission }), calls: faux.state.callCount - calls };
 // A host whose storage another host took over stops running it, and leaves
 // its run there: changing the lock's time is what taking it over does.
 const k = held(), thinking = held();
@@ -342,6 +357,22 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       text: "Late answer",
     });
     expect(out.defaults).toEqual({ provider: "faux", model: "faux-1" });
+    expect(out.timer).toEqual({
+      left: [
+        {
+          submission: expect.any(Number),
+          conversation: expect.any(Number),
+          request: "W",
+        },
+      ],
+      wait: expect.objectContaining({
+        status: "done",
+        text: "After the timer",
+      }),
+      dropped: { status: "unanswered", reason: "aborted" },
+      // Only the later delivery's: the dropped run asked the model nothing.
+      calls: 1,
+    });
     expect(out.lost).toEqual({ status: "closed" });
     expect(out.lostDeliver).toBe("The agent is not open");
     expect(out.lostLeft).toEqual(["K"]);

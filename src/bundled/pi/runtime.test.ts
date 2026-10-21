@@ -818,6 +818,52 @@ it("reports a run an earlier app left unfinished that fails, and stays silent fo
   expect(published[0]?.content).toContain("400 Bad model");
 });
 
+it("ends a watch's or timer's run an earlier app left, before any wait continues it", async () => {
+  const { host, deliver, published, runtime } = setup({
+    unfinished: () => ({
+      submissions: [
+        { submission: 51, conversation: 9, request: "timer/left" },
+        {
+          submission: 41,
+          conversation: 5,
+          request: "d".repeat(64),
+          context: { channel, root: root.id },
+        },
+      ],
+    }),
+  });
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(host.requests("drop").map((item) => item.params)).toEqual([
+    { agent: self, submission: 51, conversation: 9 },
+  ]);
+  const methods = host.processes[0]?.requests.map((item) => item.method) ?? [];
+  expect(methods.indexOf("drop")).toBeLessThan(methods.indexOf("wait"));
+  expect(runtime.working(self)).not.toContain(9);
+  expect(published).toEqual([]);
+});
+
+it("keeps a standalone turn of this app's when it lists left runs again", async () => {
+  let listings = 0;
+  let own: string | undefined;
+  const { host, deliver, runOnce } = setup({
+    once: ({ request }) => {
+      own = String(request);
+      return { submission: 51, conversation: 9 };
+    },
+    unfinished: () => {
+      if (++listings === 1) throw new Error("busy");
+      return {
+        submissions: [{ submission: 51, conversation: 9, request: own }],
+      };
+    },
+  });
+  void runOnce("watch", "Check the build");
+  await vi.waitFor(() => expect(own).toBeDefined());
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  expect(listings).toBe(2);
+  expect(host.requests("drop")).toEqual([]);
+});
+
 it("posts no answer for a left run that sent once another left run's wait continued it", async () => {
   // The second run's thread is looked up; the first's wait continues every
   // run, and the second sends its answer itself.

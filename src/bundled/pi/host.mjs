@@ -732,10 +732,10 @@ export function serve({
       );
       return submit(conversation, turn, false);
     },
-    /** The requests of runs Pi has not finished, in conversations the agent
-     * has a place for, with where each one's tools default to. A host that
-     * stopped leaves them; a later delivery or wait, for any conversation,
-     * continues all of them. */
+    /** The requests of runs Pi has not finished, with where each one's tools
+     * default to when the agent has a place for its conversation; a one-off
+     * turn's has none. A host that stopped leaves them; a later delivery or
+     * wait, for any conversation, continues all of them. */
     async unfinished({ agent }) {
       const opened = await agentOf(agent);
       const { submissions } = await opened.harness.inspect(context);
@@ -743,19 +743,33 @@ export function serve({
         submissions: submissions.flatMap(
           ({ id, conversationId, requestId }) => {
             const place = opened.contexts.get(conversationId);
-            return place && requestId
+            return requestId
               ? [
                   {
                     submission: id,
                     conversation: conversationId,
                     request: requestId,
-                    context: place,
+                    ...(place ? { context: place } : {}),
                   },
                 ]
               : [];
           },
         ),
       };
+    },
+    /** Ends a run without continuing it: withdrawn while queued, aborted
+     * once placed. */
+    async drop({ agent, submission, conversation }) {
+      const { harness } = await agentOf(agent);
+      const result = await harness.abortSubmission(
+        submission,
+        context,
+        conversation,
+      );
+      if (result === "already_placed")
+        await (await harness.conversation(conversation, context))?.abort(
+          context,
+        );
     },
     /** How a request settled: its answer's text, or why it has none. */
     async wait({ agent, submission }) {

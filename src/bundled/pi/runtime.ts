@@ -134,6 +134,8 @@ type Entry = {
   >;
   /** Mentions handed to Pi and not settled, by request. */
   receipts: Map<string, Receipt>;
+  /** Standalone turns handed to Pi and not settled, by request. */
+  standalone: Set<string>;
   /** The request each conversation's activity shows, by its scope. */
   active: Map<number, Map<string, Receipt>>;
   /** `send` calls that succeeded in each conversation. */
@@ -514,6 +516,7 @@ export class PiRuntime {
     entry.handle = agent;
     entry.team = team ?? "";
     let stop: (() => void) | undefined;
+    let request: string | undefined;
     try {
       await this.open(agent.pubkey);
       entry.adopted ??= this.adopt(entry, agent.pubkey);
@@ -528,15 +531,12 @@ export class PiRuntime {
         delivery.effort,
       );
       signal.throwIfAborted();
+      request = `${key}/${crypto.randomUUID()}`;
+      entry.standalone.add(request);
       const { submission, conversation } = await this.pi.request<{
         submission: number;
         conversation: number;
-      }>("once", {
-        agent: agent.pubkey,
-        text,
-        request: `${key}/${crypto.randomUUID()}`,
-        ...turn,
-      });
+      }>("once", { agent: agent.pubkey, text, request, ...turn });
       // A removed agent's storage is closed, and stays so.
       stop = () => {
         if (!entry.closed)
@@ -554,6 +554,7 @@ export class PiRuntime {
       return { ok: false, error: errorText(error) };
     } finally {
       if (stop) signal.removeEventListener("abort", stop);
+      if (request) entry.standalone.delete(request);
     }
   }
 
@@ -688,15 +689,15 @@ export class PiRuntime {
 
   /** Takes on the runs an earlier app left unfinished in Pi's storage, which
    * any delivery continues, in whatever thread: they show as working, and
-   * their answers are posted and failures reported as a delivery's are. Stop
-   * and a standalone turn's deadline are not restored. `current` is the
-   * request being delivered, which its own run waits for. */
+   * their answers are posted and failures reported as a delivery's are, but
+   * Stop is not restored. Standalone turns' runs are ended instead. `current`
+   * is the request being delivered, which its own run waits for. */
   private async adopt(entry: Entry, pubkey: string, current?: string) {
     let unfinished: readonly {
       submission: number;
       conversation: number;
       request: string;
-      context: { channel: string; root?: string; topLevel?: boolean };
+      context?: { channel: string; root?: string; topLevel?: boolean };
     }[];
     try {
       ({ submissions: unfinished } = await this.pi.request<{
@@ -711,8 +712,23 @@ export class PiRuntime {
     const waits: (() => Promise<void>)[] = [];
     for (const { submission, conversation, request, context } of unfinished) {
       const { handle } = entry;
-      if (!handle || request === current || entry.receipts.has(request))
+      if (
+        !handle ||
+        request === current ||
+        entry.receipts.has(request) ||
+        entry.standalone.has(request)
+      )
         continue;
+      // A watch's or timer's run ends with the app, as other harnesses' do:
+      // continued, it would have no deadline, lane or Stop.
+      if (!context) {
+        await this.pi
+          .request("drop", { agent: pubkey, submission, conversation })
+          .catch((error: unknown) =>
+            console.warn("Pi could not end a left standalone turn", error),
+          );
+        continue;
+      }
       // A conversation several threads share has no root: its answer goes to
       // the thread of the mention, whose id is the request.
       const root =
@@ -1009,6 +1025,7 @@ export class PiRuntime {
       name: agent.name,
       policies: new Map(),
       receipts: new Map(),
+      standalone: new Set(),
       active: new Map(),
       sends: new Map(),
       posted: new Map(),

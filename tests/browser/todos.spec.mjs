@@ -1,8 +1,9 @@
 import { pluginAction } from "./plugin-settings.mjs";
 import {
+  closeSettings,
   openPage,
+  openSettings,
   selectSettingsSection,
-  settleShellToggle,
 } from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
@@ -65,14 +66,10 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   });
   const button = (name) => page.getByRole("button", { name, exact: true });
   const plugins = async () => {
-    await button("Your profile").click();
-    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     await selectSettingsSection(page, "Manage plugins");
   };
   const messages = async () => {
-    await settleShellToggle(page);
-    const disclosure = button("Show navigation");
-    if (await disclosure.isVisible()) await disclosure.click();
     await openPage(page, "Messages");
     await expect(
       page
@@ -89,6 +86,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(enabled).toHaveAccessibleName(/^Enable /);
   await enabled.click();
   await expect(enabled).toHaveAccessibleName(/^Disable /);
+  await closeSettings(page);
   await messages();
   await launcher.click();
   const drawer = page.getByRole("region", {
@@ -151,11 +149,42 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await launcher.click();
   await expect(assignee).toHaveAttribute("aria-description", /Fixture Reader/);
   const expectCompactRow = async () => {
+    // Reopening and resizing animate both the dock and its parent grid.
+    await dock.evaluate(async (element) => {
+      await Promise.all(
+        [
+          ...element.getAnimations(),
+          ...element.parentElement.getAnimations(),
+        ].map((animation) => animation.finished),
+      );
+    });
     const row = assignee.locator("xpath=ancestor::li");
     const label = row.getByRole("checkbox").locator("..");
-    const rowBounds = await row.boundingBox();
-    const labelBounds = await label.boundingBox();
-    const triggerBounds = await assignee.boundingBox();
+    // Opening the dock moves every row. Observe the completed animation, then
+    // sample all geometry in one browser task so coordinates share a frame.
+    await dock.evaluate(async (element) => {
+      await Promise.all(
+        [element, element.parentElement]
+          .flatMap((node) => node?.getAnimations() ?? [])
+          .map((animation) => animation.finished),
+      );
+    });
+    const status = row.getByRole("button", { name: "Status for Ship it" });
+    const { rowBounds, labelBounds, triggerBounds, statusBounds, fits } =
+      await row.evaluate(
+        (element, { label, trigger, status }) => ({
+          rowBounds: element.getBoundingClientRect().toJSON(),
+          labelBounds: label.getBoundingClientRect().toJSON(),
+          triggerBounds: trigger.getBoundingClientRect().toJSON(),
+          statusBounds: status.getBoundingClientRect().toJSON(),
+          fits: element.scrollWidth <= element.clientWidth,
+        }),
+        {
+          label: await label.elementHandle(),
+          trigger: await assignee.elementHandle(),
+          status: await status.elementHandle(),
+        },
+      );
     expect(triggerBounds.x).toBeGreaterThanOrEqual(
       labelBounds.x + labelBounds.width,
     );
@@ -165,18 +194,13 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     expect(triggerBounds.y + triggerBounds.height / 2).toBeLessThanOrEqual(
       labelBounds.y + labelBounds.height,
     );
-    const statusBounds = await row
-      .getByRole("button", { name: "Status for Ship it" })
-      .boundingBox();
     expect(triggerBounds.x).toBeGreaterThanOrEqual(
       statusBounds.x + statusBounds.width,
     );
     expect(triggerBounds.x + triggerBounds.width).toBeLessThanOrEqual(
       rowBounds.x + rowBounds.width + 1,
     );
-    expect(await row.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
-      true,
-    );
+    expect(fits).toBe(true);
     await expect(assignee).toHaveAttribute("data-size", "sm");
     await expect(assignee).toHaveAttribute("data-icon-variant", "avatar");
   };
@@ -246,6 +270,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await plugins();
   await enabled.click();
   await expect(enabled).toHaveAccessibleName(/^Enable /);
+  await closeSettings(page);
   await messages();
   await expect(launcher).toHaveCount(0);
   await expect(drawer).toHaveCount(0);

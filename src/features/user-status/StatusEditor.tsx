@@ -177,8 +177,10 @@ export function StatusEditor({
   }
   return (
     <Dialog
+      size="compact"
       open
       title="Set a status"
+      dismissOnOutsideClick={false}
       closeLabel="Close status editor"
       onOpenChange={(open) => {
         if (!open) close();

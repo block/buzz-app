@@ -48,7 +48,7 @@ const setup = (
     providers: [{ providerId: "openai", defaultModel: "gpt-default" }],
   });
   const process = new SharedProcess(
-    fake.spawn,
+    fake,
     serve ? serve(fake.serve) : fake.serve,
   );
   /** Another agent in the same goose. */
@@ -64,7 +64,7 @@ const setup = (
     };
     let choice: Choice = { provider: "", model: "" };
     const sessions = new AgentSessions({
-      spawn: fake.spawn,
+      resolveDirectory: fake.resolveDirectory,
       tools: agentTools,
       process,
       pool,
@@ -383,6 +383,45 @@ describe("AgentSessions", () => {
     expect(goose?.killed).toBe(false);
   });
 
+  it("reports a failed immediate compaction", async () => {
+    const { fake, sessions } = setup();
+    // Without a session there is nothing to compact.
+    await expect(sessions.reset("a", "compact")).resolves.toEqual({ ok: true });
+    await sessions.deliver("a", "one", 1);
+    const goose = fake.geese[0];
+    expect(goose?.turns.map((turn) => turn.text)).toEqual(["one"]);
+    if (goose) goose.hold = true;
+    const compacted = sessions.reset("a", "compact");
+    await flush(30);
+    // goose ends a failed compaction like any turn, saying why in its text.
+    goose?.update("session-1", {
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: "Request failed: Resource not found (404)",
+      },
+    });
+    await flush(30);
+    goose?.turns[1]?.finish();
+    await expect(compacted).resolves.toEqual({
+      ok: false,
+      error: "Request failed: Resource not found (404)",
+    });
+    expect(goose?.turns).toHaveLength(2);
+  });
+
+  it("answers in a new session when asked to", async () => {
+    const { fake, sessions } = setup();
+    await sessions.deliver("a", "one", 1);
+    await sessions.reset("a", "new");
+    await sessions.deliver("a", "two", 2);
+    expect(fake.geese[0]?.closed).toEqual(["session-1"]);
+    expect(fake.geese[0]?.turns.map((turn) => turn.sessionId)).toEqual([
+      "session-1",
+      "session-2",
+    ]);
+  });
+
   it("closes a quiet conversation's session", async () => {
     vi.useFakeTimers();
     const { fake, sessions } = setup();
@@ -451,9 +490,9 @@ describe("AgentSessions", () => {
     });
     const store = new Map<string, SavedConversation>();
     const sessions = new AgentSessions({
-      spawn: fake.spawn,
+      resolveDirectory: fake.resolveDirectory,
       tools,
-      process: new SharedProcess(fake.spawn, fake.serve),
+      process: new SharedProcess(fake, fake.serve),
       pool: new ServerPool(),
       store: { set: (key, saved) => void store.set(key, saved) },
       launch: async () => {
@@ -480,9 +519,9 @@ describe("AgentSessions", () => {
   it("reports why goose could not start", async () => {
     const fake = fakeSpawn({ http: false });
     const sessions = new AgentSessions({
-      spawn: fake.spawn,
+      resolveDirectory: fake.resolveDirectory,
       tools,
-      process: new SharedProcess(fake.spawn, fake.serve),
+      process: new SharedProcess(fake, fake.serve),
       pool: new ServerPool(),
       launch: async () => ({ workspace: "/w", systemPrompt: "" }),
       choice: () => ({ provider: "", model: "" }),
@@ -505,9 +544,9 @@ describe("AgentSessions", () => {
       return { workspace: "/w", systemPrompt: "" };
     });
     const sessions = new AgentSessions({
-      spawn: fake.spawn,
+      resolveDirectory: fake.resolveDirectory,
       tools,
-      process: new SharedProcess(fake.spawn, fake.serve),
+      process: new SharedProcess(fake, fake.serve),
       pool: new ServerPool(),
       launch,
       choice: () => ({ provider: "", model: "" }),
@@ -741,6 +780,7 @@ describe("AgentSessions", () => {
       pool,
       // Another conversation needs a server the moment this session opens.
       onChange: () => {
+        if (fake.geese[0]?.turns.length) return;
         evicted ??= pool.evict() ?? null;
       },
     });

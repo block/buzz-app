@@ -28,6 +28,8 @@ it("starts Claude as the SDK does and initializes it with the system prompt", as
     "stream-json",
     "--verbose",
     "--replay-user-messages",
+    "--thinking-display",
+    "summarized",
     "--permission-mode",
     "bypassPermissions",
     "--model",
@@ -88,9 +90,17 @@ it("is active in a turn of its own or with background work, but not for ambient 
   sessionState(fake, "running");
   expect(claude.active).toBe(true);
   expect(claude.busy).toBe(false);
+  await claude.interrupt();
+  if (!fake) throw new Error("Expected Claude process");
+  expect(interrupts(fake)).toHaveLength(1);
   sessionState(fake, "idle");
   expect(claude.active).toBe(false);
   expect(quiet).toHaveBeenCalledTimes(2);
+  fake.hold = true;
+  const later = claude.send("later");
+  await flush();
+  fake.finish({ error: "Provider failed" });
+  await expect(later).resolves.toEqual({ ok: false, error: "Provider failed" });
 });
 
 it("answers both messages of a turn that took a second one mid-way", async () => {
@@ -485,7 +495,8 @@ it("serves the Buzz tools over the pipe and ends a turn on a final send", async 
   const config =
     fake.options.args?.[fake.options.args.indexOf("--mcp-config") + 1];
   expect(JSON.parse(config ?? "{}")).toEqual({
-    mcpServers: { buzz: { type: "sdk", name: "buzz", alwaysLoad: true } },
+    // Each tool says whether it loads up front, not the server.
+    mcpServers: { buzz: { type: "sdk", name: "buzz" } },
   });
   expect(fake.received[0]).toMatchObject({
     request: {

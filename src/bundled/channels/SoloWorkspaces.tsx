@@ -1,6 +1,8 @@
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
 import { SoloShare, ChatAccessIndicator } from "./SoloShare";
+import { SoloChatName } from "./SoloChatName";
+import { canEditLifetime } from "../../features/solo/Lifetime";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -68,7 +70,10 @@ export function SoloWorkspaces({
   navigator?: Navigation | undefined;
   scope: string;
   chats: readonly ChatListItem[];
-  renderChat: (item: ChatListItem) => ReactNode;
+  renderChat: (
+    item: ChatListItem,
+    rename: (() => boolean) | undefined,
+  ) => ReactNode;
   onNew?: (projectId?: string) => void;
 }) {
   useChatConversions(session);
@@ -108,9 +113,13 @@ export function SoloWorkspaces({
   const currentVisit = useRef(visit);
   currentVisit.current = visit;
   const [chatSettings, setChatSettings] = useState<{
+    rename?: boolean;
     item: ChatListItem;
     visit: AbortSignal | undefined;
   }>();
+  const [renaming, setRenaming] = useState<string>();
+  if (renaming && !chats.some((chat) => chat.id === renaming))
+    setRenaming(undefined);
   const [deleting, setDeleting] = useState<string>();
   const [projectError, setProjectError] = useState("");
   const [readError, setReadError] = useState<{ id: string; message: string }>();
@@ -118,11 +127,20 @@ export function SoloWorkspaces({
   const [rowFocus, setRowFocus] = useState<string>();
   useLayoutEffect(() => {
     if (!rowFocus) return;
+    const project =
+      snapshot.data?.sections.find(
+        (section) => section.id === snapshot.data?.assignments[rowFocus],
+      )?.id ?? "";
+    // Resolve against current visibility when focus is restored, including when
+    // collapse was requested after the asynchronous save began.
+    const target = collapsed.includes(project)
+      ? `project-${project}`
+      : rowFocus;
     document
-      .querySelector<HTMLElement>(`[data-solo-menu-id="${rowFocus}"] button`)
+      .querySelector<HTMLElement>(`[data-solo-menu-id="${target}"] button`)
       ?.focus({ preventScroll: true });
     setRowFocus(undefined);
-  }, [rowFocus]);
+  }, [rowFocus, collapsed, snapshot.data]);
   const [creatingFor, setCreatingFor] = useState<ChatListItem>();
   const [settingsFor, setSettingsFor] = useState<{
     id: string;
@@ -142,6 +160,11 @@ export function SoloWorkspaces({
       rows: chats.filter((item) => !ids.has(assigned[item.id] ?? "")),
     },
   ];
+  // A collapse request takes effect after the editor closes. Keep its draft and
+  // save owner mounted and reachable, including when a save needs recovery.
+  const renamingProject = projects.find((project) =>
+    project.rows.some((item) => item.id === renaming),
+  )?.id;
   const move = (id: string, projectId?: string) => {
     const saving = preferences.assign(id, projectId);
     toggle(projectId ?? "", true);
@@ -185,9 +208,8 @@ export function SoloWorkspaces({
     );
   };
   const toggle = (id: string, open: boolean) => {
-    const next = open
-      ? collapsed.filter((key) => key !== id)
-      : [...collapsed, id];
+    const next = collapsed.filter((key) => key !== id);
+    if (!open) next.push(id);
     setCollapsed(next);
     writeView(scope, collapsedKey, next);
   };
@@ -244,8 +266,18 @@ export function SoloWorkspaces({
               key={project.id}
               className={`${styles.project} ${channelStyles.channelSection}`}
               data-project={project.id ? "" : undefined}
-              open={!collapsed.includes(project.id)}
-              onOpenChange={(open) => toggle(project.id, open)}
+              open={
+                !collapsed.includes(project.id) ||
+                renamingProject === project.id
+              }
+              onOpenChange={(open) =>
+                toggle(
+                  project.id,
+                  renamingProject === project.id
+                    ? collapsed.includes(project.id)
+                    : open,
+                )
+              }
               data-animate={animate || undefined}
             >
               <ChatActionsMenu
@@ -275,7 +307,9 @@ export function SoloWorkspaces({
                       tone="danger"
                       data-delete-solo-project=""
                       disabled={
-                        !preferences.sectionRemovalWritable || !!deleting
+                        !preferences.sectionRemovalWritable ||
+                        !!deleting ||
+                        renamingProject === project.id
                       }
                       onClick={() => {
                         setDeleting(project.id);
@@ -300,7 +334,10 @@ export function SoloWorkspaces({
                 <Collapsible.Trigger
                   type="button"
                   className={`${channelStyles.sidebarSectionHeading} ${styles.projectHeading}`}
-                  aria-expanded={!collapsed.includes(project.id)}
+                  aria-expanded={
+                    !collapsed.includes(project.id) ||
+                    renamingProject === project.id
+                  }
                   onClick={(event) => setAnimate(event.detail > 0)}
                 >
                   <span className={channelStyles.sectionTitle}>
@@ -319,6 +356,19 @@ export function SoloWorkspaces({
                   const channel = channels.channels.find(
                     (channel) => channel.id === item.id,
                   );
+                  if (renaming === item.id)
+                    return (
+                      <SoloChatName
+                        key={item.id}
+                        session={session}
+                        id={item.id}
+                        title={item.title}
+                        close={(focus) => {
+                          setRenaming(undefined);
+                          if (focus) setRowFocus(item.id);
+                        }}
+                      />
+                    );
                   return (
                     <ChatActionsMenu
                       key={item.id}
@@ -344,6 +394,9 @@ export function SoloWorkspaces({
                             onMove={(projectId) => move(item.id, projectId)}
                             onNewWorkspace={() => setCreatingFor(item)}
                             onCopy={copy}
+                            onRename={() =>
+                              setChatSettings({ item, visit, rename: true })
+                            }
                             onSettings={() => setChatSettings({ item, visit })}
                             onLifecycle={
                               handoff &&
@@ -366,7 +419,23 @@ export function SoloWorkspaces({
                         channelId={item.id}
                         sectionKey={DROP + project.id}
                       >
-                        {renderChat(item)}
+                        {renderChat(
+                          item,
+                          !renaming &&
+                            deleting !== project.id &&
+                            canEditLifetime(session, channel)
+                            ? () => {
+                                if (
+                                  renaming ||
+                                  deleting === project.id ||
+                                  !canEditLifetime(session, channel)
+                                )
+                                  return false;
+                                setRenaming(item.id);
+                                return true;
+                              }
+                            : undefined,
+                        )}
                       </DraggableChannel>
                     </ChatActionsMenu>
                   );
@@ -381,7 +450,7 @@ export function SoloWorkspaces({
                       aria-label={`New chat in ${project.name}`}
                       title={`New chat in ${project.name}`}
                       icon={
-                        <span className="shell-page-icon">
+                        <span className={styles.conversationIcon}>
                           <PlusIcon size={16} strokeWidth={2.5} />
                         </span>
                       }
@@ -431,6 +500,7 @@ export function SoloWorkspaces({
       )}
       {chatSettings && (
         <WorkspaceSettings
+          focusName={chatSettings.rename}
           key={chatSettings.item.id}
           signal={chatSettings.visit}
           finalFocus={() =>
@@ -551,7 +621,7 @@ function ChatActionsMenu({
     false;
   if (!enabled)
     return (
-      <div className={className}>
+      <div className={className} data-solo-menu-id={id}>
         {children}
         {trailing}
       </div>

@@ -11,12 +11,14 @@ import {
   GooseProcess,
   type ActivityReceipt,
   type Choice,
+  type GooseHost,
   type GooseSession,
   type ServeMcp,
   type Settled,
-  type Spawn,
   type ToolServer,
 } from "./goose";
+import type { SessionAction } from "../../features/agents/service";
+import { absoluteWorkspace } from "../codex/config";
 
 /** A conversation's session closes after this long without a message. */
 export const IDLE_MS = 15 * 60_000;
@@ -90,7 +92,7 @@ export class ServerPool {
 export class SharedProcess {
   private ready: Promise<GooseProcess> | undefined;
   constructor(
-    private readonly spawn: Spawn,
+    private readonly host: GooseHost,
     /** Starts a session's MCP server for its agent's tools. */
     private readonly serve: ServeMcp,
   ) {}
@@ -100,8 +102,8 @@ export class SharedProcess {
   get(): Promise<GooseProcess> {
     if (this.ready) return this.ready;
     const ready = (async () =>
-      GooseProcess.start(this.spawn, {
-        cwd: await absolute(this.spawn, "~"),
+      GooseProcess.start(this.host.spawn, {
+        cwd: await this.host.resolveDirectory("~"),
         serve: this.serve,
       }))();
     const forget = () => {
@@ -127,7 +129,8 @@ export type Launch = Readonly<{
 }>;
 
 export type SessionsOptions = Readonly<{
-  spawn: Spawn;
+  /** The host's, for the workspace's absolute path. */
+  resolveDirectory: GooseHost["resolveDirectory"];
   /** Answers the agent's Buzz tools. */
   tools: ToolServer;
   /** The process all goose agents' sessions open in. */
@@ -182,6 +185,9 @@ export class AgentSessions {
   /** What this conversation's session has been shown. */
   seen(key: string) {
     return this.shown.get(key) ?? 0;
+  }
+  active(key: string) {
+    return this.opening.has(key) || !!this.live.get(key)?.session.working;
   }
   /** Conversations with a session, whether each is working, and when each
    * last took in a message or ended a turn. */
@@ -300,6 +306,27 @@ export class AgentSessions {
     await this.opening.get(key)?.catch(() => undefined);
     this.live.get(key)?.session.interrupt();
   }
+  /** Waits for the conversation's session to finish its work, then compacts
+   * it or closes it, so the message opens a new one. Without an open session
+   * there is nothing to do. */
+  async reset(key: string, action: SessionAction): Promise<Settled> {
+    const live = this.live.get(key);
+    if (!live?.session.open) return { ok: true };
+    await live.session.idle();
+    if (this.disposed) return STOPPED;
+    if (this.live.get(key) !== live || !live.session.open) return { ok: true };
+    if (action === "new") {
+      this.drop(key, live);
+      return { ok: true };
+    }
+    const result = await this.answer(key, live, "/compact", {}, undefined);
+    // goose ends the turn either way, and says which in its text.
+    if (!result.ok || result.text === "Compaction complete") return result;
+    return {
+      ok: false,
+      error: result.text || "goose could not compact the session",
+    };
+  }
 
   /** Runs one turn in a new session, then closes it. `label` names it in the
    * snapshot. It gives up, and stops the turn, once `signal` aborts.
@@ -376,7 +403,7 @@ export class AgentSessions {
     title: string | undefined,
     use: (live: Live) => unknown,
   ): Promise<Live> {
-    const { pool, spawn } = this.options;
+    const { pool, resolveDirectory } = this.options;
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint();
     const launch = await this.options.launch();
@@ -384,7 +411,7 @@ export class AgentSessions {
     if (this.disposed) throw new Error("goose was stopped");
     const [process, cwd] = await Promise.all([
       this.options.process.get(),
-      absolute(spawn, launch.workspace),
+      absolute(resolveDirectory, launch.workspace),
     ]);
     if (process !== this.process) {
       this.process = process;
@@ -457,6 +484,10 @@ export class AgentSessions {
     model: string | undefined,
   ) {
     const sent = live.session.send(text, activity, model);
+    // A final Buzz send can answer before goose finishes its model work.
+    void live.session.idle().then(() => {
+      if (this.live.get(key) === live) this.options.onChange?.();
+    });
     // Sending made it busy; a snapshot read when it opened is not.
     this.options.onChange?.();
     const settled = await sent;
@@ -535,20 +566,13 @@ export function localSessions(
   };
 }
 
-/** `workspace` as an absolute path, which ACP sessions need: the host
- * resolves `~/…` for the process it starts there. */
-export async function absolute(spawn: Spawn, workspace: string) {
-  if (workspace.startsWith("/")) return workspace;
-  let directory = "";
-  const process = await spawn("workspace", {
-    cwd: workspace,
-    onStdout: (data) => {
-      directory += data;
-    },
-  });
-  if ((await process.exited) !== 0 || !directory.trim())
-    throw new Error(`Could not find the workspace ${workspace}`);
-  return directory.trim();
+/** `workspace` as an absolute path, which ACP sessions need. One already
+ * absolute stays as written, as the sessions started in it recorded it. */
+export async function absolute(
+  resolveDirectory: GooseHost["resolveDirectory"],
+  workspace: string,
+) {
+  return absoluteWorkspace(workspace) ? workspace : resolveDirectory(workspace);
 }
 
 /** `work`, or a rejection with `signal`'s reason once it aborts. */

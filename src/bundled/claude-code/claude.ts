@@ -111,6 +111,9 @@ export class ClaudeProcess {
   private buffer = "";
   private stderr = "";
   private lastError: string | undefined;
+  /** A `/compact` was sent: its failure fails the turn, unlike an automatic
+   * compaction's mid-turn. */
+  private compacting = false;
   private alive = true;
   /** The owner stopped the running turn, so how it ends is not a failure. */
   private stopping = false;
@@ -121,6 +124,7 @@ export class ClaudeProcess {
   /** Its live background tasks that are activity, as Claude last listed them. */
   private tasks = 0;
   /** Called when it was active and is no longer. */
+  onActivity: (() => void) | undefined;
   onQuiet?: () => void;
   private requests = 0;
   /** Control requests awaiting Claude's answer, by request id. */
@@ -179,6 +183,9 @@ export class ClaudeProcess {
         "stream-json",
         "--verbose",
         "--replay-user-messages",
+        // Recent models return empty thinking unless asked for summaries.
+        "--thinking-display",
+        "summarized",
         ...(launch.discovery
           ? [
               "--safe-mode",
@@ -203,12 +210,9 @@ export class ClaudeProcess {
               "--mcp-config",
               JSON.stringify({
                 mcpServers: {
-                  // Listed up front, so Claude need not search for them first.
-                  [TOOL_SERVER]: {
-                    type: "sdk",
-                    name: TOOL_SERVER,
-                    alwaysLoad: true,
-                  },
+                  // Its tools load on search, but for those it marks with
+                  // `_meta["anthropic/alwaysLoad"]`.
+                  [TOOL_SERVER]: { type: "sdk", name: TOOL_SERVER },
                 },
               }),
             ]
@@ -316,6 +320,7 @@ export class ClaudeProcess {
     const uuid = crypto.randomUUID();
     this.receipts.set(uuid, activity);
     this.pending++;
+    if (text === "/compact") this.compacting = true;
     const settled = new Promise<Settled>((resolve) =>
       this.waiters.push(resolve),
     );
@@ -337,7 +342,7 @@ export class ClaudeProcess {
   /** Stops the running turn, as the SDK's `interrupt` does; messages folded
    * into it end with it. The turn then settles as Claude ends it. */
   async interrupt() {
-    if (!this.alive || !this.busy) return;
+    if (!this.alive || !this.active) return;
     this.stopping = true;
     const answer = await this.call({ subtype: "interrupt" });
     if (answer.subtype === "error" && this.alive) {
@@ -428,6 +433,7 @@ export class ClaudeProcess {
     this.activeReceipts.clear();
     this.lastError = undefined;
     this.stopping = false;
+    this.compacting = false;
     for (const resolve of this.waiters.splice(0)) resolve(settled);
   }
 
@@ -484,6 +490,8 @@ export class ClaudeProcess {
       const active = this.active;
       this.working = message.state !== "idle";
       if (!this.working && this.pending) this.done();
+      if (!this.active) this.stopping = false;
+      if (active !== this.active) this.onActivity?.();
       if (active && !this.active) this.onQuiet?.();
       return;
     }
@@ -497,7 +505,22 @@ export class ClaudeProcess {
       this.tasks = message.tasks.filter(
         (task) => !(task as Message | null)?.ambient,
       ).length;
+      if (!this.active) this.stopping = false;
+      if (active !== this.active) this.onActivity?.();
       if (active && !this.active) this.onQuiet?.();
+      return;
+    }
+    // `/compact` ends in a successful result even when compacting failed.
+    if (
+      this.compacting &&
+      message.type === "system" &&
+      message.subtype === "status" &&
+      message.compact_result === "failed"
+    ) {
+      this.lastError =
+        typeof message.compact_error === "string" && message.compact_error
+          ? message.compact_error
+          : "Claude could not compact the session";
       return;
     }
     if (

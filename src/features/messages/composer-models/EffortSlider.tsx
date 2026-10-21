@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { Effort } from "../../agents/service";
 import { Avatar } from "../../../shared/design-system/ui/Avatar";
+import { EffortMesh } from "./EffortMesh";
 import { useRubberTrack } from "./useRubberTrack";
 import styles from "../ComposerModels.module.css";
 
@@ -106,22 +107,7 @@ export function EffortSlider({
                 "calc(var(--thumb-width) + var(--effort-progress) * (100% - var(--thumb-width)))",
             }}
           >
-            {avatarSrc && (
-              <span className={styles.mesh} aria-hidden="true">
-                <span
-                  className={styles.meshLayer}
-                  style={{
-                    backgroundImage: `url(${JSON.stringify(avatarSrc)})`,
-                  }}
-                />
-                <span
-                  className={styles.meshLayer}
-                  style={{
-                    backgroundImage: `url(${JSON.stringify(avatarSrc)})`,
-                  }}
-                />
-              </span>
-            )}
+            <EffortMesh avatarSrc={avatarSrc} effort={known ? at / last : 0} />
           </Slider.Indicator>
           {efforts.map((effort, stop) => (
             <span

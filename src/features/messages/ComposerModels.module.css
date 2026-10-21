@@ -187,39 +187,18 @@ html[data-keyboard-navigation] .thumb:focus-within {
   padding: 0;
   border: 0;
 }
-/* The avatar itself, stretched and blurred into a drifting wash that moves
- * faster at higher effort. Without an avatar the accent fill remains. */
 .mesh {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
-.meshLayer {
+.meshCanvas {
   position: absolute;
-  inset-block: calc(-1 * var(--space-4));
-  inset-inline-start: calc(-1 * var(--space-4));
-  width: calc(100cqw + 2 * var(--space-4));
-  background-position: center;
-  background-size: 100% 100%;
-  filter: blur(var(--blur-sm)) saturate(calc(1.6 + var(--effort-progress)));
-  animation: effort-drift calc(16s - 12s * var(--effort-progress)) ease-in-out
-    infinite alternate;
-}
-/* A mirrored, offset second pass keeps the colors crossing rather than sliding. */
-.meshLayer + .meshLayer {
-  transform: scaleX(-1);
-  opacity: 0.55;
-  animation-direction: alternate-reverse;
-}
-@keyframes effort-drift {
-  from {
-    translate: -10% 12%;
-    scale: 2;
-  }
-  to {
-    translate: 10% -12%;
-    scale: 2.6;
-  }
+  left: calc(-1 * var(--mesh-bleed));
+  top: calc(-1 * var(--mesh-bleed));
+  width: calc(100cqw + 2 * var(--mesh-bleed));
+  height: calc(100% + 2 * var(--mesh-bleed));
+  filter: blur(var(--mesh-blur));
 }
 .slider[data-pointer-moving] .thumb,
 .slider[data-pointer-moving] .indicator,
@@ -230,9 +209,6 @@ html[data-keyboard-input] .slider * {
 @media (prefers-reduced-motion: reduce) {
   .slider * {
     transition: none;
-  }
-  .meshLayer {
-    animation: none;
   }
   .slider[data-dragging] .thumbFace {
     transform: none;

@@ -3111,6 +3111,7 @@ it("drops an effort a retyped agent no longer offers before sending", async () =
     },
   ];
   const agents = {
+    sessionState: () => "unavailable" as const,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -3185,6 +3186,7 @@ it.each([
       { key: "goose", models: discover },
     ];
     const agents = {
+      sessionState: () => "unavailable" as const,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -3242,6 +3244,7 @@ it.each([
     let types: readonly object[] = [tunable];
     const listeners = new Set<() => void>();
     const agents = {
+      sessionState: () => "unavailable" as const,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -3324,6 +3327,7 @@ it.each([
     const listeners = new Set<() => void>();
     const types = [{ key: "test/agent", models: () => listing() }];
     const agents = {
+      sessionState: () => "unavailable" as const,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);

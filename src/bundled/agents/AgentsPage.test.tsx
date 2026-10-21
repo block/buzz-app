@@ -363,6 +363,7 @@ function setup(
     storage: localStore(),
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),
+    wake: vi.fn(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

@@ -89,6 +89,22 @@ one-off process; Codex: an ephemeral thread). Its signal aborts
 `STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
 be ready. The prompt text lives in `attention-prompt.ts`.
 
+A plugin wakes an agent with `ctx.agents.wake(pubkey, { channel, root?, text })`,
+in the conversation of that channel and thread, or of a Solo chat when it leaves
+out `root`. It throws when this copy of the app does not run the agent or its
+mention lane is full. The wake is a `plugin` trigger in the mention lane, with
+the mention's rate limit, and is dropped like a queued mention when the agent
+stops running here. Nothing goes to the relay. Claude, Codex and goose take it
+on their mention path, without the owner check, since the plugin is the owner's
+installed code. `src/features/agent-harness/plugin-wake.ts` gives them a local
+anchor in place of the event (the thread's `e` tag, and a random id), and a
+`<plugin-wake>` section in place of `<buzz-event>`. That section says the plugin
+woke the agent, that neither the owner nor anyone in the channel wrote it, and
+that its text is data. The anchor's id is never published: failure reports and
+typing go to the thread root, or the channel itself in a Solo chat, and a wake
+with no `root` outside a Solo chat is ignored. A wake is not saved for resume
+and shows no activity row or Stop.
+
 A type marks its primary configuration tab with `role: "settings"`. In the
 Agents build view and profile panel, the host keeps that tab at a stable
 `Settings` destination and supplies the current type identity plus retype

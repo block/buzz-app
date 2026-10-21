@@ -40,6 +40,10 @@ import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
 import {
+  wakeAnchor,
+  wakeLands,
+} from "../../features/agent-harness/plugin-wake";
+import {
   CONTEXT_LIMIT,
   type Scope,
   steerPrompt,
@@ -294,9 +298,12 @@ export class GooseRuntime {
   }: Delivery) {
     const settings = config(raw);
     // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention") return ignored?.();
+    if (trigger.type !== "mention" && trigger.type !== "plugin")
+      return ignored?.();
+    // A plugin's wake is the owner's installed code, not a message to check.
+    const wake = trigger.type === "plugin" ? trigger : undefined;
     // goose runs commands as you; mentions need owner or delegated authority.
-    {
+    if (trigger.type === "mention") {
       const snapshot = this.relay(agent.pubkey)?.snapshot();
       if (
         !(await fromOwner(trigger.event, agent.owner, {
@@ -319,7 +326,8 @@ export class GooseRuntime {
     const entry = this.entry(agent.pubkey, settings);
     entry.handle = agent;
     entry.team = team ?? "";
-    const { event } = trigger;
+    const event =
+      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
@@ -330,6 +338,7 @@ export class GooseRuntime {
       channel,
       signal,
     );
+    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) => {
       const turn = await this.turn(
@@ -350,7 +359,12 @@ export class GooseRuntime {
             : where.id.slice(0, 8),
         text: this.review(
           entry,
-          turnPrompt({ ...turn, agent: agent.pubkey, label: "@mention" }),
+          turnPrompt({
+            ...turn,
+            agent: agent.pubkey,
+            label: "@mention",
+            ...(wake ? { wake } : {}),
+          }),
         ),
       };
     };

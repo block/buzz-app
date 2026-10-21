@@ -519,7 +519,8 @@ function fixture(
    * in its Interest's lane, which the runner holds. */
   const wakeTurn = (delivery: Delivery) => {
     const { trigger } = delivery;
-    if (trigger.type === "mention") throw new Error("Expected a wake");
+    if (trigger.type === "mention" || trigger.type === "plugin")
+      throw new Error("Expected a wake");
     delivery.workingUntil(
       wake(
         delivery.agent,
@@ -1862,6 +1863,68 @@ it("ends a turn without a reply silently, and publishes an unexpected exit", asy
     ok: false,
     error: expect.stringContaining("Codex exited"),
   });
+});
+/** A plugin's wake; its id is its own, which nothing may publish. */
+const WAKE_ID = "8".repeat(64);
+const pluginWake = (
+  f: ReturnType<typeof fixture>,
+  threadRoot?: string,
+  ignored?: () => void,
+): Delivery => ({
+  ...f.delivery("unused"),
+  trigger: {
+    type: "plugin",
+    plugin: "github",
+    channel: "channel",
+    ...(threadRoot ? { root: threadRoot } : {}),
+    text: "CI failed: lint",
+    id: WAKE_ID,
+    at: 20,
+  },
+  ...(ignored ? { ignored } : {}),
+});
+it("takes a plugin's wake in its thread's conversation, as the plugin's and not a message", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("@Codex watch my PR"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0);
+  await f.runtime.run(pluginWake(f, root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const [first, next] = f
+    .starts()
+    .map((wire) => wire.params as { threadId: string });
+  expect(next?.threadId).toBe(first?.threadId);
+  const input = JSON.stringify(next);
+  expect(input).toContain("<plugin-wake plugin=");
+  expect(input).toContain("neither your owner nor anyone in the channel");
+  expect(input).toContain("CI failed: lint");
+  expect(input).not.toContain("<buzz-event");
+  expect(input).not.toContain(WAKE_ID);
+});
+it("reports a failed wake at its thread's root, never at the wake's own id", async () => {
+  const f = fixture();
+  await f.runtime.run(pluginWake(f, root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.exits.resolve(3);
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    tags: expect.arrayContaining([["e", root, "", "reply"]]),
+  });
+  expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
+});
+it("takes a wake with no thread only in a Solo chat", async () => {
+  const f = fixture();
+  const ignored = vi.fn();
+  await f.runtime.run(pluginWake(f, undefined, ignored));
+  expect(ignored).toHaveBeenCalled();
+  expect(f.starts()).toHaveLength(0);
+  f.soloChannels.add("channel");
+  await f.runtime.run(pluginWake(f));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const input = JSON.stringify(f.starts()[0]?.params);
+  expect(input).toContain("<plugin-wake plugin=");
+  expect(input).toContain("top-level");
+  expect(input).not.toContain(WAKE_ID);
 });
 it("sets no deadline of its own on a turn", async () => {
   // Any deadline Buzz set would already have passed.

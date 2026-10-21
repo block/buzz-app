@@ -129,6 +129,13 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+`ctx.agents.wake(pubkey, { channel, root?, text })` wakes an agent this copy of
+the app runs in one of its conversations, as a mention there would, with no
+message. `root` is the thread; leave it out for a Solo chat. The agent is told
+the text comes from the plugin, not its owner, and is data, so quote what others
+wrote (comments, check output) rather than phrasing it as instructions. It
+throws when this copy does not run the agent or its queue is full.
+
 An agent type's `run` gets the agent's handle, which publishes, reads and
 uploads as the agent. For agents that act on something other than a message,
 such as a call, `ctx.agents.handle(pubkey)` returns the same handle outside any

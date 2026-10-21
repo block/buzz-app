@@ -339,7 +339,6 @@ export class GooseRuntime {
       signal,
     );
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
-    const notes = agent.notes?.(channel) ?? [];
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) => {
       const turn = await this.turn(
@@ -358,19 +357,15 @@ export class GooseRuntime {
           : where.dm
             ? "DM"
             : where.id.slice(0, 8),
-        text: this.review(
-          entry,
-          turnPrompt({
-            ...turn,
-            agent: agent.pubkey,
-            label: "@mention",
-            ...(wake ? { wake } : {}),
-          }),
-          notes,
-        ),
+        text: turnPrompt({
+          ...turn,
+          agent: agent.pubkey,
+          label: "@mention",
+          ...(wake ? { wake } : {}),
+        }),
       };
     };
-    const { key, text, place } = await prompt(false);
+    const { key, text: prepared, place } = await prompt(false);
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.pubkey}/${key}`,
@@ -379,6 +374,10 @@ export class GooseRuntime {
         // the short deadline for handing a message to the harness.
         if (this.agents.get(agent.pubkey) !== entry) return;
         if (!deferred) signal.throwIfAborted();
+        // Plugins' notes wait until the turn is handed over, so one that
+        // fails or is cancelled before then leaves them for the next.
+        const notes = agent.notes?.(channel) ?? [];
+        const text = this.review(entry, prepared, notes);
         entry.contexts.set(
           key,
           topLevel
@@ -389,7 +388,8 @@ export class GooseRuntime {
         );
         const done = entry.sessions.deliver(key, text, event.created_at, {
           steer: steerPrompt(text),
-          fresh: async () => (await prompt(true)).text,
+          fresh: async () =>
+            this.review(entry, (await prompt(true)).text, notes),
           title: sessionTitle(entry.name, place, key.split("/")[1]),
           // A Solo chat takes the name goose gives its first session.
           ...(topLevel && named ? { named } : {}),

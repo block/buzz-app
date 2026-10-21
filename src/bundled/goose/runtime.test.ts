@@ -697,6 +697,57 @@ it("ends a turn's prompt with the notes plugins left for it in its channel", asy
   expect(notes).toHaveBeenCalledOnce();
 });
 
+it.each([false, true])(
+  "hands a turn the notes plugins left while it was being prepared, and keeps them for the next when it is cancelled first (cancelled: %s)",
+  async (cancelled) => {
+    const f = setup();
+    const pending: Record<string, string[]> = {};
+    const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+    const note = () => {
+      pending[channel] = ["(I interrupted your reply)"];
+    };
+    // One left before a cancelled turn stays for the next.
+    if (cancelled) note();
+    let release!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.read.mockImplementationOnce(async () => {
+      await reading;
+      return [];
+    });
+    const controller = new AbortController();
+    const done = f.deliver(
+      message("1", "@Gander go on", {
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["e", "d".repeat(64), "", "reply"],
+        ],
+      }),
+      {
+        agent: { ...f.agent, notes },
+        signal: controller.signal,
+      } as unknown as Partial<Delivery>,
+    );
+    await vi.waitFor(() => expect(f.read).toHaveBeenCalled());
+    if (cancelled) controller.abort();
+    else note();
+    release();
+    if (cancelled) {
+      await expect(done).rejects.toMatchObject({ name: "AbortError" });
+      expect(pending[channel]).toEqual(["(I interrupted your reply)"]);
+      return;
+    }
+    await done;
+    await flush(100);
+    expect(f.goose()?.turns[0]?.text).toMatch(
+      /\n\n\(I interrupted your reply\)$/,
+    );
+    expect(pending[channel]).toEqual([]);
+  },
+);
+
 it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
   const solo = setup({ solo: new Set([channel]), canvas: "Use tokens." });
   await solo.deliver(message("1", "@Gander hi"));

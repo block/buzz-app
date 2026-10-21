@@ -92,7 +92,8 @@ type Request = {
   failActivity(reason: string): void;
   /** Given again after a reload stopped its turn partway. */
   resumed?: true;
-  /** Notes plugins left for this turn. */
+  /** Notes plugins left for this turn, taken when its input is first built:
+   * one that fails or is cancelled before then leaves them for the next. */
   notes?: readonly string[];
 };
 /** `at` is when the binding last took in a message or ended a turn; bindings
@@ -194,9 +195,10 @@ const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 /** The note at the end of a request's turn input, if any. */
 function noteOf(request: Request) {
+  request.notes ??= request.agent.notes?.(request.conversation.channelId) ?? [];
   const notes = [
     request.resumed ? RESUMED_PROMPT : undefined,
-    ...(request.notes ?? []),
+    ...request.notes,
     turnNote(request.agent),
   ].filter(Boolean);
   return notes.length ? notes.join("\n\n") : undefined;
@@ -678,7 +680,6 @@ export class CodexRuntime {
     const failActivity = (error: string) =>
       finishActivity({ ok: false, error });
     delivery.workingUntil(replied);
-    const notes = agent.notes?.(channelId) ?? [];
     // Codex makes one more model call after a final send before its turn
     // ends; the agent is done working on this request once it has replied.
     const request: Request = {
@@ -706,7 +707,6 @@ export class CodexRuntime {
       ...(trigger.type === "mention" && trigger.resumed
         ? { resumed: true }
         : {}),
-      ...(notes.length ? { notes } : {}),
       ...(topLevel && delivery.named ? { named: delivery.named } : {}),
     };
     if (!validWorkspace(settings.workspace)) {

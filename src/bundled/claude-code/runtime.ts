@@ -463,7 +463,6 @@ export class ClaudeRuntime {
         // the short deadline for handing a message to the harness.
         if (this.agents.get(agent.pubkey) !== entry) return;
         if (!deferred) signal.throwIfAborted();
-        const notes = agent.notes?.(channel) ?? [];
         // `fresh` is for a session that has been shown nothing yet.
         const prompt = async (fresh: boolean) => {
           const text = turnPrompt({
@@ -480,13 +479,9 @@ export class ClaudeRuntime {
             label: "@mention",
             ...(wake ? { wake } : {}),
           });
-          return this.review(
-            entry,
-            trigger.type === "mention" && trigger.resumed
-              ? `${text}\n\n${RESUMED_PROMPT}`
-              : text,
-            notes,
-          );
+          return trigger.type === "mention" && trigger.resumed
+            ? `${text}\n\n${RESUMED_PROMPT}`
+            : text;
         };
         // A turn keeps the posting policy it was admitted with: a request under
         // the other policy waits for the conversation's turns to settle rather
@@ -502,11 +497,15 @@ export class ClaudeRuntime {
             delivered = Promise.resolve({ ok: true });
             return;
           }
-          const text = await prompt(false);
+          const prepared = await prompt(false);
           if (interrupted) {
             delivered = Promise.resolve({ ok: true });
             return;
           }
+          // Plugins' notes wait until the turn is handed over, so one that
+          // fails or is cancelled before then leaves them for the next.
+          const notes = agent.notes?.(channel) ?? [];
+          const text = this.review(entry, prepared, notes);
           // A conversation's tools default to its thread; a session shared by
           // several threads is told which to reply in instead.
           entry.contexts.set(
@@ -519,7 +518,7 @@ export class ClaudeRuntime {
           );
           delivered = entry.sessions.deliver(key, text, event.created_at, {
             steer: steerPrompt(text),
-            fresh: () => prompt(true),
+            fresh: async () => this.review(entry, await prompt(true), notes),
             activityScope: topLevel
               ? channel
               : (threadReference(event)?.rootId ?? event.id),

@@ -408,6 +408,43 @@ it("ends a turn's prompt with the notes plugins left for it in its channel", asy
   expect(notes).toHaveBeenCalledOnce();
 });
 
+it("hands a turn the notes plugins left while it was being prepared", async () => {
+  const mention = message("2", "@Claude go on", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+      ["e", "d".repeat(64), "", "reply"],
+    ],
+  });
+  const { deliver, claudes, agent, read } = setup([mention]);
+  const pending: Record<string, string[]> = {};
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  let release!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  read.mockImplementationOnce(async () => {
+    await reading;
+    return [mention];
+  });
+  const done = deliver({ type: "mention", event: mention }, {
+    agent: { ...agent, notes },
+  } as unknown as Partial<Delivery>);
+  await vi.waitFor(() => expect(read).toHaveBeenCalled());
+  pending[channel] = ["(I interrupted your reply)"];
+  pending.elsewhere = ["(not for this turn)"];
+  release();
+  await done;
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toMatch(/\n\n\(I interrupted your reply\)\n\n<attention>/);
+  expect(pending).toEqual({
+    [channel]: [],
+    elsewhere: ["(not for this turn)"],
+  });
+});
+
 const EFFORTS = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },

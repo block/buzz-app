@@ -2,6 +2,7 @@ import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import {
   cloneElement,
   useId,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -9,14 +10,11 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { behindActiveOverlay, observeOverlays } from "../overlayLayer";
 import { FAMILIAR_HINT_REST_MS, HELPFUL_HINT_REST_MS } from "./hoverIntent";
 
 /** DESIGN.md "Hover timing": how long a hint waits for a resting pointer. */
 export type HintTiming = "helpful" | "familiar";
-
-const promote = (positioner: HTMLDivElement | null) => {
-  positioner?.showPopover?.();
-};
 
 /** Hints in one provider open instantly while a neighbor is showing. */
 export function TooltipProvider({ children }: { children: ReactNode }) {
@@ -54,6 +52,14 @@ export function Tooltip({
 }) {
   const id = useId();
   const [trigger, setTrigger] = useState<HTMLElement | null>(null);
+  const promote = useCallback((positioner: HTMLDivElement) => {
+    const update = () => {
+      if (trigger && behindActiveOverlay(trigger)) positioner.hidePopover?.();
+      else positioner.showPopover?.();
+    };
+    update();
+    return observeOverlays(update);
+  }, [trigger]);
   const [localOpen, setLocalOpen] = useState(false);
   const pressed = useRef(false);
   // Focus returning to a pressed trigger, such as when its menu closes, is not
@@ -85,9 +91,6 @@ export function Tooltip({
     [children.props["aria-describedby"], open && !expanded ? id : undefined]
       .filter(Boolean)
       .join(" ") || undefined;
-  // A native top-layer surface, such as a preview card, paints above any
-  // z-index. A hint inside one joins the top layer after it.
-  const topLayer = !!trigger?.closest(":popover-open");
   return (
     <BaseTooltip.Root
       open={open}
@@ -115,8 +118,6 @@ export function Tooltip({
       />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner
-          popover={topLayer ? "manual" : undefined}
-          ref={topLayer ? promote : undefined}
           // A host can keep hints inside its pane, including when a sibling
           // pane contains native content above the document's paint layer.
           collisionBoundary={
@@ -131,6 +132,8 @@ export function Tooltip({
           // Fixed hints never add page scroll width, even while WebKit keeps
           // one open across a resize.
           positionMethod="fixed"
+          popover="manual"
+          ref={promote}
           className="buzz-tooltip-positioner"
         >
           <BaseTooltip.Popup

@@ -184,7 +184,7 @@ inside its insets. Navigation headers use `space-4` vertically and the shared
 dialog inset horizontally; each pane retains that inset. List rows retain their
 shared padding and align through the existing wrapper offset. Host-contained
 sectioned modals center within their host, capped at 72rem wide and 48rem tall,
-with a `space-6` gutter. At viewport widths up to 30rem they fill the host to
+with a `space-4` gutter. At viewport widths up to 30rem they fill the host to
 preserve usable space with enlarged text. Their panes scroll within that surface.
 
 Surface and contents enter together with a `0.75rem` upward fade over

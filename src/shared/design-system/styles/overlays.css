@@ -319,10 +319,10 @@
   }
   /* Sectioned settings need a bounded workspace, even inside a large host. */
   .buzz-dialog[data-contained][data-navigation][data-placement="center"] {
-    inset: var(--space-6) 0;
+    inset: var(--space-4) 0;
     margin-block: auto;
-    width: min(72rem, calc(100% - 2 * var(--space-6)));
-    height: min(48rem, calc(100% - 2 * var(--space-6)));
+    width: min(72rem, calc(100% - 2 * var(--space-4)));
+    height: min(48rem, calc(100% - 2 * var(--space-4)));
   }
   @media (max-width: 30rem) {
     .buzz-dialog[data-contained][data-navigation][data-placement="center"] {

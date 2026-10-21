@@ -73,6 +73,7 @@
 .organizedRow > :first-child {
   --interaction-row-hover: transparent;
   --interaction-selected: transparent;
+  --interaction-pressed: transparent;
   flex: 1;
   min-width: 0;
 }

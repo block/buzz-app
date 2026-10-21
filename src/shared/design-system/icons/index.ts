@@ -547,3 +547,15 @@ export const FileSpreadsheetIcon = defineIcon(
   "tabler",
   TablerFileSpreadsheetIcon,
 );
+
+import TablerPhoneEndIcon from "@tabler/icons-react/dist/esm/icons/IconPhoneEnd.mjs";
+export const PhoneEndIcon = defineIcon("tabler", TablerPhoneEndIcon);
+
+import TablerArrowsDiagonalMinimize2Icon from "@tabler/icons-react/dist/esm/icons/IconArrowsDiagonalMinimize2.mjs";
+export const ArrowsDiagonalMinimize2Icon = defineIcon(
+  "tabler",
+  TablerArrowsDiagonalMinimize2Icon,
+);
+
+import TablerPhoneIcon from "@tabler/icons-react/dist/esm/icons/IconPhone.mjs";
+export const PhoneIcon = defineIcon("tabler", TablerPhoneIcon);

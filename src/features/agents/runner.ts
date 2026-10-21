@@ -302,6 +302,8 @@ const message = (error: unknown) =>
 
 /** What the runner needs of its host. */
 export type RunnerHost = {
+  /** Session controls refresh when this copy gains or loses native custody. */
+  ownershipChanged?(): void;
   /** The agent, while its community is live to run it in. */
   ready(pubkey: string): Agent | undefined;
   /** A running agent, in any community. */
@@ -566,6 +568,21 @@ export class AgentRunners {
   /** Whether a change of type holds the agent's runner now. */
   transitioning(pubkey: string) {
     return this.runners.get(pubkey)?.transitioning === true;
+  }
+  /** Session mutations require a current, successful native custody check. */
+  async control<T>(pubkey: string, change: () => Promise<T>): Promise<T> {
+    const runner = this.runners.get(pubkey);
+    if (
+      !runner ||
+      !(await this.claimForRetype(runner)) ||
+      this.runners.get(pubkey) !== runner ||
+      runner.transitioning ||
+      !this.host.ready(pubkey)
+    )
+      throw new Error(
+        "Use session controls in the Buzz app that runs this agent.",
+      );
+    return change();
   }
   /** Runs `change` while a change of type holds the agent's idle runner: no
    * turn starts meanwhile, and its queue resumes after. Refused while a turn
@@ -2160,23 +2177,28 @@ export class AgentRunners {
     };
   }
 
+  private claimed(runner: Runner, held: boolean) {
+    const before = this.runs(runner.pubkey);
+    runner.mayHold = held;
+    runner.asked = true;
+    this.heldChanged(runner, before);
+    if (before !== this.runs(runner.pubkey)) this.host.ownershipChanged?.();
+    return held;
+  }
   private async claim(runner: Runner) {
-    const held = this.runs(runner.pubkey);
     try {
-      runner.mayHold = (await this.host.custody?.claim(runner.pubkey)) ?? false;
-      runner.asked = true;
-      return runner.mayHold;
+      return this.claimed(
+        runner,
+        (await this.host.custody?.claim(runner.pubkey)) ?? false,
+      );
     } catch (error) {
-      runner.mayHold = true;
-      runner.asked = true;
+      this.claimed(runner, true);
       // Answering twice beats not answering at all.
       console.warn(
         `Agent ${this.host.agent(runner.pubkey)?.name} was not claimed`,
         error,
       );
       return true;
-    } finally {
-      this.heldChanged(runner, held);
     }
   }
   /** The notice lists an agent's saved turns only while this copy holds it,
@@ -2188,14 +2210,14 @@ export class AgentRunners {
   /** Claims exclusively for a provider migration. Unlike turn execution,
    * uncertainty is unsafe here because changing native type is destructive. */
   private async claimForRetype(runner: Runner) {
-    runner.mayHold = (await this.host.custody?.claim(runner.pubkey)) ?? false;
-    return runner.mayHold;
+    return this.claimed(
+      runner,
+      (await this.host.custody?.claim(runner.pubkey)) ?? false,
+    );
   }
   private async release(runner: Runner) {
     if (!runner.mayHold) return;
-    const held = this.runs(runner.pubkey);
-    runner.mayHold = false;
-    this.heldChanged(runner, held);
+    this.claimed(runner, false);
     await this.host.custody
       ?.release(runner.pubkey)
       .catch((error) =>

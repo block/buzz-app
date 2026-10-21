@@ -177,6 +177,7 @@ it("keeps preview and native download as separate keyboard actions", async () =>
       source={nativeSource}
       onOpenLink={() => false}
       onPreview={preview}
+      typeLabel="Markdown"
     />,
   );
   const user = userEvent.setup();

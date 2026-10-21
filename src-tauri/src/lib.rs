@@ -354,7 +354,17 @@ async fn plugin_import_git(
     repository: String,
     reference: String,
     authorization: Option<String>,
+    check_only: Option<bool>,
 ) -> Result<Option<Preview>, String> {
+    if check_only == Some(true) {
+        // Checks own only their clone; they must never lock or replace Add's preview.
+        return tauri::async_runtime::spawn_blocking(move || {
+            prepare_git(&repository, &reference, authorization.as_deref())
+                .map(|prepared| Some(prepared.preview))
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    }
     prepare_import(imports.inner().clone(), move || {
         prepare_git(&repository, &reference, authorization.as_deref()).map(Some)
     })
@@ -896,6 +906,41 @@ mod tests {
         title_bar_double_click_action, title_bar_fill_target, TitleBarDoubleClickAction,
         TitleBarFillFrame, TitleBarFrame,
     };
+
+    #[test]
+    fn git_checks_never_acquire_or_replace_the_import_slot() {
+        use tauri::Manager as _;
+        let app = tauri::test::mock_builder()
+            .manage(super::Imports::default())
+            .build(super::app_context())
+            .unwrap();
+        let imports = app.state::<super::Imports>();
+        let folder = tempfile::tempdir().unwrap();
+        let prepared = super::prepare_folder(folder.path()).unwrap();
+        let token = prepared.preview.token.clone();
+        let mut pending = imports.0.lock().unwrap();
+        *pending = Some(prepared);
+        // Invalid references fail before network access, after reaching Git validation.
+        let check = |check_only| {
+            tauri::async_runtime::block_on(super::plugin_import_git(
+                app.state(),
+                "https://example.invalid/plugins".into(),
+                "--invalid".into(),
+                None,
+                Some(check_only),
+            ))
+            .err()
+            .unwrap()
+        };
+        assert_eq!(check(false), "Another import is in progress");
+        assert!(check(true).contains("branch or tag"));
+        drop(pending);
+        assert!(check(true).contains("branch or tag"));
+        assert_eq!(
+            imports.0.lock().unwrap().as_ref().unwrap().preview.token,
+            token
+        );
+    }
 
     fn frame(x: f64, y: f64, width: f64, height: f64) -> TitleBarFrame {
         TitleBarFrame {

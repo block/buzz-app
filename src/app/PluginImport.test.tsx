@@ -1243,7 +1243,11 @@ it("uses the live enabled state after checking a saved Git update", async () => 
         }),
     );
   const manager = {
-    imports: { git, discard: vi.fn(async () => {}) },
+    imports: {
+      checkGit: git,
+      git: vi.fn(async () => rememberedPreview),
+      discard: vi.fn(async () => {}),
+    },
     installImport: vi.fn(async () => true),
     change: vi.fn(),
   } as unknown as PluginManager;
@@ -1301,6 +1305,7 @@ it.each([
         previewFolder: vi.fn(async () => rememberedPreview),
         folder: vi.fn(async () => rememberedPreview),
         git: vi.fn(async () => rememberedPreview),
+        checkGit: vi.fn(async () => rememberedPreview),
         discard: vi.fn(async () => {}),
       },
       installImport: vi.fn(async () => true),
@@ -1788,3 +1793,95 @@ it("clears a retained update action after the saved source check fails", async (
   await waitFor(() => expect(changed).toHaveBeenLastCalledWith(false));
   expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
 });
+
+it.each(["acquisition", "authorization"])(
+  "keeps Add's preview installable while a Git check awaits %s",
+  async (stage) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const checkGit = vi.fn(async () => {
+      if (stage === "acquisition") await gate;
+      return rememberedPreview;
+    });
+    const authorizeGit = vi.fn(async () => {
+      if (stage === "authorization") await gate;
+      return null;
+    });
+    const imports = {
+      checkGit,
+      git: vi.fn(),
+      folder: vi.fn(async () => ({
+        ...rememberedPreview,
+        token: "add-preview",
+        candidates: [rememberedPreview.candidates[0]],
+      })),
+      discard: vi.fn(async () => {}),
+    };
+    const manager = {
+      imports,
+      installImport: vi.fn(async () => true),
+      change: vi.fn(),
+    } as unknown as PluginManager;
+    const catalog: Catalog = {
+      profile: "test",
+      location: "test",
+      plugins: [
+        {
+          ...rememberedPlugin,
+          updateSource: {
+            repository: "https://example.com/plugin.git",
+            reference: "main",
+            path: "dist",
+          },
+        },
+      ],
+    };
+    render(
+      <>
+        <PluginImport
+          plugins={manager}
+          catalog={catalog}
+          busy={false}
+          updateId={rememberedManifest.id}
+          authorizeGit={authorizeGit}
+        />
+        <PluginImport
+          plugins={manager}
+          catalog={{ ...catalog, plugins: [] }}
+          busy={false}
+        />
+      </>,
+    );
+    try {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Check for updates" }),
+      );
+      await waitFor(() => expect(authorizeGit).toHaveBeenCalledOnce());
+      if (stage === "acquisition")
+        await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Browse plugin folder" }),
+      );
+      await screen.findByRole("dialog", { name: "Review plugin access" });
+      await act(async () => {
+        release();
+        await gate;
+      });
+      await waitFor(() => expect(checkGit).toHaveBeenCalledOnce());
+      expect(imports.git).not.toHaveBeenCalled();
+      expect(imports.discard).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
+      await waitFor(() =>
+        expect(manager.installImport).toHaveBeenCalledWith(
+          "add-preview",
+          "dist",
+        ),
+      );
+    } finally {
+      release();
+    }
+  },
+);

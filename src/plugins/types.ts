@@ -63,6 +63,12 @@ export type PluginImports = {
     reference: string,
     authorization?: string,
   ): Promise<ImportPreview | null>;
+  /** Reads Git metadata without acquiring or replacing an installation preview. */
+  checkGit(
+    repository: string,
+    reference: string,
+    authorization?: string,
+  ): Promise<ImportPreview | null>;
   install(token: string, path: string): Promise<StorageResult>;
   discard(token: string): Promise<void>;
 };

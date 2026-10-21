@@ -904,7 +904,7 @@ the prominent action position in both the pane and its list row; Enable/Disable
 moves into their ellipsis menus while Update is available. The row retains the latest
 check result for the installed revision and opens the pane’s review, checking the
 saved source again when the pane reopens. Known Git results remain visible on reopen;
-Git is checked explicitly, and its check preview is discarded immediately. Choosing
+Git is checked explicitly through a read-only acquisition that never locks or replaces the shared import preview. Choosing
 Update reacquires the Git source with fresh authorization. Only the open pane polls local folders.
 The menus also offer Review access, reusing the import review’s disclosures
 for the installed manifest, and Delete with confirmation. These menus appear only for
@@ -920,8 +920,8 @@ and `user@host:owner/repository.git` shorthand, including organization-specific
 usernames. The importer uses the desktop process's inherited `SSH_AUTH_SOCK` and
 known hosts, with interactive prompts and SSH config disabled. If normal Git uses
 an `IdentityAgent` from SSH config, launch the app with that socket in
-`SSH_AUTH_SOCK`; otherwise terminal Git can authenticate while the app cannot. Each check creates an
-immutable preview, discarded when details close or a check is replaced. The source
+`SSH_AUTH_SOCK`; otherwise terminal Git can authenticate while the app cannot. Each check reads metadata from its own temporary clone; only Update retains an
+immutable installation preview. The source
 follows the current revision through update and rollback. Rollback requires confirmation
 in Settings and consumes the previous revision: it cannot toggle forward again. The
 enabled/disabled choice is preserved; a later update establishes a new rollback target. Missing sources or changed

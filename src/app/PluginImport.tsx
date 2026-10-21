@@ -400,12 +400,12 @@ export function PluginImport({
     const source = savedSource;
     if (!imports || !source || !("repository" in source)) return;
     const acquire = async () => {
-      if (lifetime.current.token) {
+      if (!checkOnly && lifetime.current.token) {
         await imports.discard(lifetime.current.token);
         lifetime.current.token = "";
       }
       const signed = await authorizeGit?.(source.repository);
-      return imports.git(
+      return (checkOnly ? imports.checkGit : imports.git)(
         signed?.repository ?? source.repository,
         source.reference,
         signed?.token,
@@ -418,23 +418,19 @@ export function PluginImport({
     void checkSource(async () => {
       const result = await acquire();
       if (!result) throw new Error("No update source found");
-      try {
-        const candidate = result.candidates.find(
-          (item) => item.manifest.id === updateId && item.path === source.path,
+      const candidate = result.candidates.find(
+        (item) => item.manifest.id === updateId && item.path === source.path,
+      );
+      if (!candidate)
+        throw new Error(
+          result.warnings.find((warning) =>
+            warning.startsWith(
+              `${source.path === "." ? "Selected folder" : source.path}:`,
+            ),
+          ) ??
+            "The saved repository no longer contains this plugin at its installed path.",
         );
-        if (!candidate)
-          throw new Error(
-            result.warnings.find((warning) =>
-              warning.startsWith(
-                `${source.path === "." ? "Selected folder" : source.path}:`,
-              ),
-            ) ??
-              "The saved repository no longer contains this plugin at its installed path.",
-          );
-        return candidate.revision;
-      } finally {
-        await imports.discard(result.token);
-      }
+      return candidate.revision;
     });
   }
   const addButton = (

@@ -59,7 +59,7 @@ export async function conversationHistory(
       ) < 0,
   );
   const owners = new Map<string, { owner: string; profile: RelayEvent }>();
-  if (profiles) {
+  if (profiles && found.length) {
     const authors = [
       ...new Set(found.map((item) => messageAuthor(item, signingAuthority))),
     ];

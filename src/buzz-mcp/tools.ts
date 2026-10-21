@@ -1462,7 +1462,10 @@ class Tools {
   }
 
   /** Messages oldest first with their latest edits, a line each: its ID,
-   * author, channel and thread, leaving out those `scope` already names. */
+   * author and its claimed (unverified) agent owner, channel and thread,
+   * omitting what `scope` names. Other agent read surfaces trim the same
+   * fields, so change them together, including the `buzz` CLI's agent format
+   * (block/buzz `crates/buzz-cli/src/commands/event_output.rs`). */
   async messages(
     events: readonly BuzzEvent[],
     scope: Readonly<{ channel?: string; root?: string }>,
@@ -1477,13 +1480,19 @@ class Tools {
     return messages.map((event) => {
       const name = names.get(event.pubkey);
       const channel = tag(event, "h");
-      const thread = threadReference(event)?.rootId;
+      const owner = tag(event, "auth");
+      const reference = threadReference(event);
+      const thread = reference?.rootId;
       return [
         event.id,
         `from ${event.pubkey}`,
         name && JSON.stringify(name),
+        owner && `claimed owner ${owner}`,
         channel && channel !== scope.channel && `in ${channel}`,
         thread && thread !== scope.root && `re ${thread}`,
+        reference &&
+          reference.parentId !== thread &&
+          `reply_to ${reference.parentId}`,
         `at ${time(event.created_at)}: ${event.content}`,
       ]
         .filter(Boolean)

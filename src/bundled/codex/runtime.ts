@@ -80,6 +80,8 @@ type Request = {
   step?: (tool: string, target?: string) => void;
   acknowledged?: () => void;
   superseded?: () => void;
+  /** Takes a title for a new Solo chat; see `Delivery.named`. */
+  named?: (title: string) => void;
   failActivity(reason: string): void;
   /** Given again after a reload stopped its turn partway. */
   resumed?: true;
@@ -169,6 +171,16 @@ export type SavedConversation = {
 const STOP_LINGER_MS = 1_000;
 const LINGER_POLL_MS = 100;
 const input = (text: string) => [{ type: "text", text, text_elements: [] }];
+/** Codex's own small model for titles, and its title rules. */
+const TITLE_MODEL = "gpt-5.6-luna";
+const TITLE_SCHEMA = {
+  type: "object",
+  properties: { title: { type: "string", minLength: 1, maxLength: 36 } },
+  required: ["title"],
+  additionalProperties: false,
+};
+const titlePrompt = (text: string) =>
+  `Generate a concise, single-line task title of at most 36 characters and under five words where possible. Start with an imperative verb. Capitalize only the first word unless the user's language, proper nouns, acronyms, or code terms require otherwise. Write in the user's language. Do not use quotes, markdown, or trailing punctuation. Do not answer the request.\n\nUser prompt:\n${[...text].slice(0, 800).join("")}`;
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 /** The note at the end of a request's turn input, if any. */
@@ -674,6 +686,7 @@ export class CodexRuntime {
       ...(delivery.acknowledged ? { acknowledged: delivery.acknowledged } : {}),
       ...(delivery.superseded ? { superseded: delivery.superseded } : {}),
       ...(trigger.resumed ? { resumed: true } : {}),
+      ...(topLevel && delivery.named ? { named: delivery.named } : {}),
     };
     if (!validWorkspace(settings.workspace)) {
       failActivity(
@@ -1230,6 +1243,75 @@ export class CodexRuntime {
       throw error;
     }
   }
+  /** Titles a chat from its first message as Codex's own app does: one
+   * structured turn on an ephemeral read-only thread, on its small title
+   * model when the account has it. The host decides whether the chat takes it. */
+  private async offerTitle(
+    rpc: AppServer,
+    named: (title: string) => void,
+    text: string,
+    stopped: AbortSignal,
+    // The conversation's thread settings: its workspace, model, and Codex
+    // config with MCP servers, plugins, apps and web search off.
+    {
+      cwd,
+      model,
+      config,
+    }: Readonly<{
+      cwd: string;
+      model: string;
+      config: Record<string, unknown>;
+    }>,
+  ) {
+    const models = await listModels(rpc);
+    const selected =
+      models.find((row) => row.model === TITLE_MODEL) ??
+      models.find((row) => row.model === model);
+    if (!selected) return;
+    const low = selected.supportedReasoningEfforts.some(
+      (level) => level.reasoningEffort === "low",
+    );
+    const signal = AbortSignal.any([stopped, AbortSignal.timeout(60_000)]);
+    const turn: { threadId?: string; turnId?: string; finished: boolean } = {
+      finished: false,
+    };
+    let reply = "";
+    const followed = follow(rpc, signal, turn, (method, item) => {
+      if (method === "item/completed" && item.type === "agentMessage")
+        reply = item.text ?? "";
+    });
+    try {
+      const started = await rpc.request<{ thread: { id: string } }>(
+        "thread/start",
+        {
+          model: selected.model,
+          cwd,
+          approvalPolicy: "never",
+          sandbox: "read-only",
+          ephemeral: true,
+          config,
+        },
+      );
+      turn.threadId = started.thread.id;
+      await rpc.request("turn/start", {
+        threadId: turn.threadId,
+        input: input(titlePrompt(text)),
+        model: selected.model,
+        ...(low ? { effort: "low" } : {}),
+        outputSchema: TITLE_SCHEMA,
+      });
+      if ((await followed.completed) !== "completed" || stopped.aborted) return;
+      const title = (JSON.parse(reply) as { title?: unknown }).title;
+      if (typeof title === "string" && title.trim()) named(title.trim());
+    } finally {
+      followed.stop();
+      if (turn.threadId)
+        await rpc
+          .request("thread/unsubscribe", { threadId: turn.threadId })
+          .catch(() => undefined);
+    }
+  }
+
   /** What a thread for `agent` starts or resumes with in `workspace`, and the
    * model and effort its turn runs on: `pick`'s when available. */
   private async prepare(
@@ -1430,6 +1512,18 @@ export class CodexRuntime {
       });
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);
+      // A conversation new to this agent: name its Solo chat meanwhile.
+      if (request.named && !existing)
+        void this.offerTitle(
+          rpc,
+          request.named,
+          text,
+          entry.abort.signal,
+          params,
+        ).catch((error) => {
+          if (!entry.abort.signal.aborted)
+            console.warn("Codex could not title the chat", error);
+        });
       // Empty threads have no resumable rollout until a user turn is accepted.
       this.save(request, entry, key, {
         threadId: started.thread.id,

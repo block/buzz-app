@@ -762,6 +762,40 @@ it("compacts or starts a new session only while idle, and hands a mention over o
   ]);
 });
 
+it("refuses Compact or New when a run taken on first is in the same conversation", async () => {
+  const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
+  const { host, runtime } = setup({
+    unfinished: () => ({
+      submissions: [{ ...left, context: { channel, root: root.id } }],
+    }),
+  });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  expect(runtime.sessionState(agent, thread)).toBe("idle");
+  await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
+    "Wait for the active turn",
+  );
+  expect(host.requests("session")).toEqual([]);
+  expect(runtime.sessionState(agent, thread)).toBe("active");
+});
+
+it("sends no Compact that an Interrupt cut off while it was preparing", async () => {
+  const listed = deferred<unknown>();
+  const { host, runtime } = setup({ unfinished: () => listed.promise });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  const compacting = runtime.session(agent, thread, "compact");
+  await vi.waitFor(() => expect(host.requests("unfinished")).toHaveLength(1));
+  expect(runtime.sessionState(agent, thread)).toBe("compacting");
+  const interrupting = runtime.session(agent, thread, "interrupt");
+  listed.resolve({ submissions: [] });
+  await expect(compacting).rejects.toThrow("interrupted");
+  await interrupting;
+  expect(host.requests("session").map((item) => item.params)).toEqual([
+    { agent: self, key: `${channel}/${root.id}`, action: "interrupt" },
+  ]);
+});
+
 it("takes on a run an earlier app left before compacting, with no mention since", async () => {
   const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
   const order: string[] = [];

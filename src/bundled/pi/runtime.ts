@@ -350,7 +350,7 @@ export class PiRuntime {
     const control = `${agent.pubkey}/${key}`;
     // Pi continues every run once asked anything: its left runs are taken on
     // first, and posting their answers needs the agent's handle.
-    const act = async () => {
+    const act = async (signal?: AbortSignal) => {
       const handle =
         this.agents.get(agent.pubkey)?.handle ?? this.handle(agent.pubkey);
       if (!handle)
@@ -359,6 +359,13 @@ export class PiRuntime {
       entry.handle ??= handle;
       await this.open(agent.pubkey);
       await this.adopted(entry, agent.pubkey);
+      // An Interrupt while this prepared, or a left run just taken on here,
+      // stops a Compact or New: both act only on an idle conversation.
+      if (signal) {
+        signal.throwIfAborted();
+        if ([...entry.receipts.values()].some((taken) => taken.key === key))
+          throw new Error("Wait for the active turn to finish first.");
+      }
       await this.pi.request("session", { agent: agent.pubkey, key, action });
     };
     if (action === "interrupt") {
@@ -369,7 +376,7 @@ export class PiRuntime {
       throw new Error("Wait for the active turn to finish first.");
     return this.controls.run(control, action, async (signal) => {
       signal.throwIfAborted();
-      await act();
+      await act(signal);
     });
   }
 

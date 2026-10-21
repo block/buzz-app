@@ -77,7 +77,7 @@ test("Canvas history previews and restores without losing the editor draft", asy
   await page
     .getByRole("menuitem", { name: "View canvas", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", {
+  const dialog = page.getByRole("region", {
     name: "Channel Canvas",
     exact: true,
   });

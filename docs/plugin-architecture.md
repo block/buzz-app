@@ -317,7 +317,11 @@ Disabling or replacing a plugin retires its open tab; a channel change or loss o
 eligibility closes it and unmounts its archive reader. Re-enabling never reopens a
 stale tab. Eligibility and `channelContext` are presentation, **not authority**:
 the panel must independently verify access before reading any sensitive data and
-fence asynchronous reads on revocation.
+fence asynchronous reads on revocation. Channels registers **View canvas** this
+way, alongside Shared sessions. Canvas has no separate plugin toggle; Solo,
+Todos, and agents use the same session capability. Its editor keeps the channel's
+draft locally, so reopening after a channel change restores it. Members of archived
+channels can read Canvas and History, but cannot edit, save, or restore through the panel.
 
 ### Settings cards
 

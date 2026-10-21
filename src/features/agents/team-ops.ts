@@ -249,9 +249,10 @@ export class TeamOps {
 const nextSeq = (records: Readonly<Record<string, TeamOp>>) =>
   Math.max(0, ...Object.values(records).map((op) => op.seq)) + 1;
 
-/** Whether a record still holds something whose outcome is unknown. */
+/** Whether a record still holds something whose outcome is unknown. A
+ * revision never delivered (`sends: 0`) can't land, so it isn't. */
 export const unresolved = (op: TeamOp) =>
-  !!op.candidate || op.commands.some((c) => c.state === "maybe-sent");
+  !!op.candidate?.sends || op.commands.some((c) => c.state === "maybe-sent");
 
 /** Whether a move or import has its relay team: adopted, or our create
  * proven current. A pending or refused create is not established. */
@@ -340,11 +341,12 @@ export function teamRunner(deps: RunnerDeps) {
    * land before they resume. A stopped record keeps its uncertain marks. */
   const holds = (claimed: TeamOp) =>
     ops.get(claimed.id) === claimed && !fenced(claimed.teamId, claimed.id);
-  /** Takes back a command claim `holds()` stopped before the adapter saw
-   * it: each command still exactly as claimed returns to its state in
-   * `prior`. Newer fields stay, and so does any other uncertainty. */
+  /** Takes back a claim `holds()` stopped before the adapter saw it: each
+   * command, and the held revision's send count, still exactly as claimed
+   * returns to its state in `prior`. Newer fields stay, and so does any
+   * other uncertainty. */
   async function unclaim(prior: TeamOp, claimed: TeamOp) {
-    const key = (c: Command) => JSON.stringify(c);
+    const key = (value: unknown) => JSON.stringify(value);
     const applied = await ops.update((records) => {
       const now = records[prior.id];
       if (!now) return undefined;
@@ -356,7 +358,20 @@ export function teamRunner(deps: RunnerDeps) {
         changed = true;
         return was;
       });
-      return changed ? { [prior.id]: { ...now, commands } } : undefined;
+      const back =
+        now.candidate &&
+        key(now.candidate) === key(claimed.candidate) &&
+        key(prior.candidate) !== key(claimed.candidate);
+      if (back) changed = true;
+      return changed
+        ? {
+            [prior.id]: {
+              ...now,
+              commands,
+              ...(back ? { candidate: prior.candidate } : {}),
+            },
+          }
+        : undefined;
     });
     if (applied) deps.changed();
     return ops.get(prior.id);
@@ -744,7 +759,8 @@ export function teamRunner(deps: RunnerDeps) {
       return ops.get(op.id);
     const sends = held.sends + 1;
     const claimed = { ...now, candidate: { ...held, sends } };
-    if (!(await claim(now, claimed)) || !holds(claimed)) return ops.get(op.id);
+    if (!(await claim(now, claimed))) return ops.get(op.id);
+    if (!holds(claimed)) return unclaim(now, claimed);
     const sent = await deliver(
       deps.writer,
       held.event,

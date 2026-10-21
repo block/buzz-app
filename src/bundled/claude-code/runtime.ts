@@ -468,6 +468,18 @@ export class ClaudeRuntime {
       `${place.channelId}/${place.root}`,
     );
   }
+  /** The scope a top-level message in `channelId` resolves to; its thread is
+   * not sent yet, so only a channel pin can decide it. */
+  scopeAt(agent: Agent, channelId: string): Config["scope"] {
+    return this.pinnedKey(
+      this.agents.get(agent.pubkey),
+      { settings: agent.settings, epoch: agent.epoch },
+      channelId,
+      `${channelId}/`,
+    ) === channelId
+      ? "channel"
+      : "thread";
+  }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
     if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";

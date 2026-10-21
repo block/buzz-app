@@ -4065,6 +4065,9 @@ describe("session actions", () => {
       expect(
         f.runtime.sessionState(agent, { ...place, root: "another-thread" }),
       ).toBe(pinned === "channel" ? "active" : "idle");
+      // A top-level message joins a pinned channel conversation; with only a
+      // thread pinned, the remote channel scope picks the channel too.
+      expect(f.runtime.scopeAt(agent, place.channelId)).toBe("channel");
       await f.complete();
       await vi.waitFor(() =>
         expect(f.runtime.sessionState(agent, place)).toBe("idle"),

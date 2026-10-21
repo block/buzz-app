@@ -1437,6 +1437,7 @@ it.each(["never", "before the failure", "after the failure"])(
     const types = [{ key: "test/agent", models: () => models }];
     const agents = {
       sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
       subscribe: () => () => {},
       snapshot: () => snapshot,
       types: () => types,
@@ -2449,6 +2450,7 @@ it("opens the model picker while discovery is pending, then fills its controls",
   const types = [{ key: "test/agent", models: () => pending.promise }];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -2476,10 +2478,12 @@ const sessionAgents = (
   scope: "thread" | "channel",
   models = [{ id: "fast", label: "Fast", efforts: [] }],
 ) => {
-  const snapshot = {
+  let snapshot = {
     status: "ready",
     agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
   };
+  /** The scope of a channel conversation the runtime has pinned, if any. */
+  let pinned: "thread" | "channel" | undefined;
   let state: "idle" | "active" | "compacting" | "unavailable" = "idle";
   const listeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
@@ -2514,7 +2518,18 @@ const sessionAgents = (
     find: (pubkey: string) =>
       snapshot.agents.find((agent) => agent.pubkey === pubkey),
     sessionState: () => state,
+    sessionScope: () => pinned ?? scope,
     session,
+    /** A remote edit of the agent's scope, with no local Save or Restart. */
+    editScope(next: typeof scope) {
+      scope = next;
+      snapshot = { ...snapshot, agents: [...snapshot.agents] };
+      for (const listener of serviceListeners) listener();
+    },
+    pin(next: typeof pinned) {
+      pinned = next;
+      for (const listener of listeners) listener();
+    },
     setSessionState(
       next: typeof state,
       source: "harness" | "agents" = "harness",
@@ -2525,9 +2540,58 @@ const sessionAgents = (
     },
   } as unknown as Agents & {
     session: typeof session;
+    editScope(next: "thread" | "channel"): void;
+    pin(next: "thread" | "channel" | undefined): void;
     setSessionState(next: typeof state, source?: "harness" | "agents"): void;
   };
 };
+
+const openSessionPopover = async (h: ReturnType<typeof mount>) => {
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(
+    await screen.findByRole("button", { name: /Model.*effort/ }),
+  );
+};
+
+it("keeps a pinned channel conversation's controls in the channel composer after a remote edit to thread scope", async () => {
+  const agents = sessionAgents("channel");
+  agents.pin("channel");
+  agents.editScope("thread");
+  const h = mount({}, undefined, undefined, agents);
+  await openSessionPopover(h);
+  await h.user.click(
+    await screen.findByRole("button", { name: "Compact session" }),
+  );
+  expect(agents.session).toHaveBeenLastCalledWith(
+    first.pubkey,
+    { channelId: "channel" },
+    "compact",
+  );
+  // Once that conversation ends, a top-level message starts a thread.
+  act(() => agents.pin(undefined));
+  expect(screen.queryByRole("button", { name: "Compact session" })).toBeNull();
+});
+
+it("shows channel controls once a remote edit moves an unpinned agent to channel scope", async () => {
+  const agents = sessionAgents("thread");
+  const h = mount({}, undefined, undefined, agents);
+  act(() => agents.editScope("channel"));
+  await openSessionPopover(h);
+  expect(
+    await screen.findByRole("button", { name: "Compact session" }),
+  ).toBeInTheDocument();
+});
+
+it("hides session controls for a fresh top-level message to an unpinned thread-scoped agent", async () => {
+  const agents = sessionAgents("thread", [
+    { id: "fast", label: "Fast", efforts: [] },
+    { id: "deep", label: "Deep", efforts: [] },
+  ]);
+  const h = mount({}, undefined, undefined, agents);
+  await openSessionPopover(h);
+  await screen.findByRole("button", { name: "Model for Honey's next run" });
+  expect(screen.queryByRole("button", { name: "Compact session" })).toBeNull();
+});
 
 it("restores an attachment draft instead of publishing when compaction starts during upload", async () => {
   const agents = sessionAgents("channel");
@@ -2891,6 +2955,7 @@ it.each([
     ];
     const agents = {
       sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
       subscribe: () => () => {},
       snapshot: () => snapshot,
       types: () => types,
@@ -2959,6 +3024,7 @@ it("keeps an active Claude model when a follow-up composer picker is untouched",
   ];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -3025,6 +3091,7 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -3112,6 +3179,7 @@ it("drops an effort a retyped agent no longer offers before sending", async () =
   ];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -3187,6 +3255,7 @@ it.each([
     ];
     const agents = {
       sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -3245,6 +3314,7 @@ it.each([
     const listeners = new Set<() => void>();
     const agents = {
       sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -3328,6 +3398,7 @@ it.each([
     const types = [{ key: "test/agent", models: () => listing() }];
     const agents = {
       sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -3408,6 +3479,7 @@ it.each(["settings refresh", "model pick"])(
     ];
     const agents = {
       sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -3496,6 +3568,7 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -3616,6 +3689,7 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,

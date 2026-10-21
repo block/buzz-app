@@ -216,6 +216,7 @@ async function setup({
       ? {
           sessionControls: {
             scope: () => "thread" as const,
+            scopeAt: () => "thread" as const,
             subscribe: () => () => {},
             ...sessionControls,
           },

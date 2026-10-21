@@ -284,6 +284,7 @@ function setup(
     relay: () => undefined,
     handle: () => undefined,
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     session: vi.fn(async () => {}),
     register: vi.fn(),
     addTool: vi.fn(),

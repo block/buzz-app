@@ -688,6 +688,10 @@ export type AgentType<Config = unknown> = {
    * Solo chat is one session either way. */
   sessionControls?: {
     scope(agent: Agent<Config>): "thread" | "channel";
+    /** The scope a top-level message in `channelId` resolves to now: that of
+     * a conversation pinned there, which a remote edit never moves, or else
+     * `scope`'s. */
+    scopeAt(agent: Agent<Config>, channelId: string): "thread" | "channel";
     state(agent: Agent<Config>, place: SessionPlace): SessionState;
     run(
       agent: Agent<Config>,
@@ -970,6 +974,12 @@ export type Agents = {
   interruptible(pubkey: string): boolean;
   /** Session controls are available only in the copy holding this agent. */
   sessionState(pubkey: string, place: SessionPlace): SessionState;
+  /** The scope a top-level message in `channelId` resolves to, or undefined
+   * for an agent whose type offers no session controls. */
+  sessionScope(
+    pubkey: string,
+    channelId: string,
+  ): "thread" | "channel" | undefined;
   session(
     pubkey: string,
     place: SessionPlace,
@@ -2294,6 +2304,11 @@ export class AgentsService extends Service implements Agents {
     )
       return "unavailable";
     return type?.sessionControls?.state(agent, place) ?? "unavailable";
+  }
+  sessionScope(pubkey: string, channelId: string) {
+    const agent = this.agent(pubkey);
+    const type = agent && this.types().find((kind) => kind.key === agent.type);
+    return agent && type?.sessionControls?.scopeAt(agent, channelId);
   }
   async session(
     pubkey: string,

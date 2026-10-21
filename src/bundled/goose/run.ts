@@ -25,6 +25,7 @@ export const gooseRun = (
   },
   sessionControls: {
     scope: (agent) => config(agent.config).scope,
+    scopeAt: (agent, channelId) => runtime.scopeAt(agent, channelId),
     state: (agent, place) => runtime.sessionState(agent, place),
     run: (agent, place, action) => runtime.session(agent, place, action),
     subscribe: (listener) => runtime.subscribe(listener),

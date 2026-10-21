@@ -271,6 +271,18 @@ export class CodexRuntime {
       ? toolRoot
       : undefined;
   }
+  /** The scope a top-level message in `channelId` resolves to; its thread is
+   * not sent yet, so only a channel pin can decide it. */
+  scopeAt(agent: Agent, channelId: string) {
+    return this.pinnedRoot(
+      agent.pubkey,
+      channelId,
+      "unsent",
+      this.resolveConfig(agent.config).scope,
+    )
+      ? "thread"
+      : "channel";
+  }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
     if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";

@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   AgentsContext,
+  useChannelScoped,
   useSessionState,
   useMentionModels,
 } from "../agents/react";
@@ -63,11 +64,22 @@ export function ComposerModels({
 }) {
   const [open, setOpen] = useState(false);
   const listed = useMentionModels(pubkeys);
+  // A pinned channel conversation keeps taking top-level messages after a
+  // remote edit to thread scope, so its controls stay with it.
+  const channelScoped = useChannelScoped(
+    useContext(AgentsContext),
+    pubkeys,
+    place.channelId,
+  );
   const choices = useMemo<readonly MentionModelChoice[]>(() => {
     const visible = listed.filter((choice) => !choice.hidden);
     return startsThread
       ? visible.flatMap((choice) => {
-          if (choice.session !== "thread") return [choice];
+          if (
+            choice.session !== "thread" ||
+            channelScoped.split(":").includes(choice.pubkey)
+          )
+            return [choice];
           const { session: _, ...rest } = choice;
           return rest.loading ||
             rest.models.length > 1 ||
@@ -76,7 +88,7 @@ export function ComposerModels({
             : [];
         })
       : visible;
-  }, [listed, startsThread]);
+  }, [listed, startsThread, channelScoped]);
   /** The type each agent's picks were last checked against. */
   const checked = useRef(new Map<string, string>());
   const thumb = useRef<HTMLInputElement>(null);

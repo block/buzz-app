@@ -62,19 +62,14 @@ export function useAgent(agents: Agents | undefined, pubkey: string) {
 const EMPTY_TYPES = [] as const;
 const noTypes = () => EMPTY_TYPES;
 
-/** The state of the targeted harness sessions. Any compaction blocks a send
- * to those targets; ordinary active turns keep accepting steering. */
-export function useSessionState(
-  agents: Agents | undefined,
-  pubkeys: readonly string[],
-  place: SessionPlace,
-): SessionState {
+/** Subscribes to the agents and to every type's session controls. */
+function useSessionSubscribe(agents: Agents | undefined) {
   const types = useSyncExternalStore(
     agents?.subscribe ?? noSubscribe,
     agents?.types ?? noTypes,
     noTypes,
   );
-  const subscribe = useCallback(
+  return useCallback(
     (listener: () => void) => {
       const stops = [
         agents?.subscribe(listener),
@@ -86,8 +81,36 @@ export function useSessionState(
     },
     [agents, types],
   );
+}
+
+/** The mentioned agents a channel's top-level message would reach in a
+ * channel conversation, as their runtimes resolve it now, joined by ":". */
+export function useChannelScoped(
+  agents: Agents | undefined,
+  pubkeys: readonly string[],
+  channelId: string,
+): string {
   return useSyncExternalStore(
-    subscribe,
+    useSessionSubscribe(agents),
+    () =>
+      pubkeys
+        .filter(
+          (pubkey) => agents?.sessionScope(pubkey, channelId) === "channel",
+        )
+        .join(":"),
+    () => "",
+  );
+}
+
+/** The state of the targeted harness sessions. Any compaction blocks a send
+ * to those targets; ordinary active turns keep accepting steering. */
+export function useSessionState(
+  agents: Agents | undefined,
+  pubkeys: readonly string[],
+  place: SessionPlace,
+): SessionState {
+  return useSyncExternalStore(
+    useSessionSubscribe(agents),
     () => {
       const states = pubkeys.map(
         (pubkey) => agents?.sessionState(pubkey, place) ?? "unavailable",

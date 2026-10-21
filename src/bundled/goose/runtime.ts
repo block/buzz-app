@@ -318,6 +318,17 @@ export class GooseRuntime {
     if (pinnedAs(channel, "channel")) return "channel";
     return scope;
   }
+  /** The scope a top-level message in `channel` resolves to; its thread is
+   * not sent yet, so only a channel pin can decide it. */
+  scopeAt(agent: Agent, channel: string): Scope {
+    return this.scopeOf(
+      this.agents.get(agent.pubkey)?.sessions,
+      channel,
+      `${channel}/`,
+      config(agent.config).scope,
+      agent.epoch,
+    );
+  }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
     if (this.controls.compacting(`${agent.pubkey}/${key}`)) return "compacting";

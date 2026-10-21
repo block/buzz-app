@@ -371,6 +371,29 @@ describe("GooseRuntime", () => {
     ]);
   });
 
+  it("leaves a Solo chat's session for goose to name, and offers that name", async () => {
+    const solo = setup({ hold: true, solo: new Set([channel]) });
+    const named = vi.fn();
+    await solo.deliver(message("1", "@Gander fix the login bug"), { named });
+    await flush(100);
+    const process = solo.goose();
+    expect(process?.opened[0]?._meta).not.toHaveProperty("sessionTitle");
+    process?.update(process.turns[0]?.sessionId ?? "", {
+      sessionUpdate: "session_info_update",
+      title: "Fix login bug",
+      _meta: { messageCount: 1, userSetName: false },
+    });
+    await flush(100);
+    expect(named).toHaveBeenCalledExactlyOnceWith("Fix login bug");
+    // A channel's session keeps Buzz's title, which goose never replaces.
+    const team = setup({ hold: true });
+    await team.deliver(message("1", "@Gander hi"), { named: vi.fn() });
+    await flush(100);
+    expect(team.goose()?.opened[0]?._meta).toMatchObject({
+      sessionTitle: "Buzz agent · #general · 11111111",
+    });
+  });
+
   it("names the agent in a timer's prompt, so its session is listed as the agent's", async () => {
     const { runOnce, goose } = setup();
     await expect(

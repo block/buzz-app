@@ -243,6 +243,20 @@ describe("AgentSessions", () => {
     expect(goose?.turns.at(-1)?.text).toBe("everything so far");
   });
 
+  it("leaves only a conversation's first session for goose to name", async () => {
+    const { fake, sessions, change } = setup();
+    const named = vi.fn();
+    await sessions.deliver("a", "one", 1, { title: "Buzz", named });
+    change({ systemPrompt: "newer" }, false);
+    await sessions.deliver("a", "two", 2, { title: "Buzz", named });
+    // A reopened session would cost another naming call for a named chat.
+    expect(
+      fake.geese[0]?.opened.map(
+        (session) => (session._meta as { sessionTitle?: string }).sessionTitle,
+      ),
+    ).toEqual([undefined, "Buzz"]);
+  });
+
   it("switches the live session's provider and model between turns", async () => {
     const { fake, sessions, choose } = setup();
     await sessions.deliver("a", "one", 1);

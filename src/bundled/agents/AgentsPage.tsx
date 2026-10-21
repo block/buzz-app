@@ -904,24 +904,26 @@ function InventoryCard({
         )
       }
     >
-      <div
-        data-card-control=""
-        className="flex min-w-0 max-w-full flex-col items-center gap-2"
-      >
-        {Model && (
-          <Model
-            config={agent.config}
-            modelAppearance="subtle"
-            disabled={saving}
-            onChange={(config) => void save(config)}
-          />
-        )}
-        {error && (
-          <span role="alert" className="text-body-sm text-danger">
-            {error}
-          </span>
-        )}
-      </div>
+      {(Model || error) && (
+        <div
+          data-card-control=""
+          className="flex min-w-0 max-w-full flex-col items-center gap-2"
+        >
+          {Model && (
+            <Model
+              config={agent.config}
+              modelAppearance="subtle"
+              disabled={saving}
+              onChange={(config) => void save(config)}
+            />
+          )}
+          {error && (
+            <span role="alert" className="text-body-sm text-danger">
+              {error}
+            </span>
+          )}
+        </div>
+      )}
     </AgentCard>
   );
 }

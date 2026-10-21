@@ -1311,6 +1311,10 @@ NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+Its `text` variant is a text-only row action, such as a capped list's Show
+more and Show less: the base navigation item's type and padding with no fill, resting in
+`--text-subtle` and strengthening to `--text-standard` on hover and keyboard
+focus. Use it where a fill would read as another destination.
 
 PreviewCard may expose one supplemental action through `actionRef`, such as copying
 an identity's full npub. Action previews open without a delay so immediate Tab

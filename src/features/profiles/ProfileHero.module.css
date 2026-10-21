@@ -27,16 +27,22 @@
   overflow: hidden;
   border-radius: inherit;
   pointer-events: none;
-  mask-image: linear-gradient(to bottom, black, 25%, transparent);
+  mask-image: var(
+    --profile-backdrop-mask,
+    linear-gradient(to bottom, black, 25%, transparent)
+  );
 }
 .avatarBackdropImage {
   width: 100%;
   height: 100%;
   background-size: cover;
   background-position: center;
-  filter: blur(40px) saturate(4);
-  transform: scale(2);
-  opacity: 0.64;
+  filter: var(--profile-backdrop-filter, blur(40px) saturate(4));
+  transform: scale(var(--profile-backdrop-scale, 2));
+  opacity: var(--profile-backdrop-opacity, 0.64);
+  transition:
+    opacity var(--profile-backdrop-duration, 0s) var(--easing-state),
+    transform var(--profile-backdrop-duration, 0s) var(--easing-enter);
 }
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
   .avatarBackdrop {

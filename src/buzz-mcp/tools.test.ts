@@ -303,6 +303,72 @@ it("reads the current thread with each message's latest edit", async () => {
   ]);
 });
 
+it.each([
+  ["channel", { channel: "chan" }],
+  ["search", { q: "hello" }],
+  ["current thread", {}],
+  ["explicit thread", { thread: nested }],
+] as const)(
+  "keeps agent ownership and nested reply context in a %s read",
+  async (_, args) => {
+    const id = "3".repeat(64);
+    const signature = "7".repeat(128);
+    const auth = ["auth", bob, "kind=9&created_at<999", "8".repeat(128)];
+    const message = event({
+      id,
+      content: "hello",
+      sig: signature,
+      tags: [
+        ["h", "chan"],
+        auth,
+        ["e", root, "", "root"],
+        ["e", nested, "", "reply"],
+      ],
+    });
+    const { client } = fake([
+      ...community,
+      message,
+      event({
+        kind: 40003,
+        created_at: 120,
+        content: "hello, edited",
+        tags: [["e", id]],
+      }),
+    ]);
+    const response = (await respond(
+      client,
+      { channel: "chan", root },
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "read", arguments: args },
+      },
+    )) as {
+      result: { content: { type: string; text: string }[]; isError?: boolean };
+    };
+    expect(response.result.isError).not.toBe(true);
+    const text = response.result.content.map((item) => item.text).join("\n");
+    const line = text.split("\n").find((line) => line.startsWith(id));
+    expect(line).toContain(`from ${alice} "Alice Smith" claimed owner ${bob}`);
+    expect(line).toContain(`reply_to ${nested}`);
+    expect(line).toContain("hello, edited");
+    if ("channel" in args || "q" in args) expect(line).toContain(`re ${root}`);
+    else expect(text.split("\n")[0]).toBe(`thread ${root} in chan`);
+    // Human authors and direct replies keep their compact, unambiguous form.
+    expect(
+      text.split("\n").find((line) => line.startsWith(root)),
+    ).not.toContain("owner");
+    expect(
+      text.split("\n").find((line) => line.startsWith(nested)),
+    ).not.toContain("reply_to");
+    for (const omitted of [signature, auth[2], auth[3]])
+      expect(text).not.toContain(omitted);
+    expect(message.tags).toContain(auth);
+    expect(message.sig).toBe(signature);
+  },
+);
+
 const reply = (id: string, created_at: number) =>
   event({
     id,

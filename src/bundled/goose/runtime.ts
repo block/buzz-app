@@ -93,7 +93,8 @@ export function standalonePrompt(agent: string, text: string) {
 }
 
 /** A session's title in goose, as harness agents name theirs:
- * `Agent · #channel`, and the thread's root when each thread is a session. */
+ * `Agent · #channel`, and the thread's root when each thread is a session.
+ * A Solo chat's first session keeps it only if goose names no sessions. */
 export function sessionTitle(
   agent: string | undefined,
   place: string,
@@ -289,6 +290,7 @@ export class GooseRuntime {
     acknowledged,
     superseded,
     interruptible,
+    named,
   }: Delivery) {
     const settings = config(raw);
     // Watches and timers come as standalone turns (`runOnce`).
@@ -373,6 +375,8 @@ export class GooseRuntime {
           steer: steerPrompt(text),
           fresh: async () => (await prompt(true)).text,
           title: sessionTitle(entry.name, place, key.split("/")[1]),
+          // A Solo chat takes the name goose gives its first session.
+          ...(topLevel && named ? { named } : {}),
           ...(!deferred ? { signal } : {}),
           ...(model ? { model } : {}),
           activityScope: topLevel

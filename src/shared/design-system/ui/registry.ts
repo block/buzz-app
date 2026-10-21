@@ -764,6 +764,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "row",
       "pill",
       "option",
+      "text",
       "inset",
       "selected",
       "highlighted",

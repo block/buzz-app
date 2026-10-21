@@ -3466,6 +3466,77 @@ it("continues an owner's Solo chat as one channel conversation posted at the top
   ]);
 });
 
+it("titles a new Solo chat once, from its first message on an ephemeral read-only thread", async () => {
+  const f = fixture();
+  asSoloChat(f);
+  const named = vi.fn();
+  const titling = () =>
+    f.sent.filter(
+      (wire) =>
+        wire.method === "thread/start" &&
+        (wire.params as { ephemeral?: boolean }).ephemeral,
+    );
+  await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // Without Codex's title model in the catalog, the chat's own model titles it.
+  expect(titling()[0]?.params).toMatchObject({
+    model: "test-model",
+    approvalPolicy: "never",
+    sandbox: "read-only",
+  });
+  expect(f.starts()[1]?.params).toMatchObject({
+    threadId: "thread-2",
+    model: "test-model",
+    effort: "low",
+    outputSchema: { required: ["title"] },
+  });
+  expect(inputText(f.starts()[1])).toContain("fix the login bug");
+  f.emit({
+    method: "item/completed",
+    params: {
+      threadId: "thread-2",
+      item: { type: "agentMessage", text: '{"title":" Fix login bug "}' },
+    },
+  });
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-2",
+      turn: { id: "turn-2", status: "completed" },
+    },
+  });
+  await vi.waitFor(() => expect(named).toHaveBeenCalledWith("Fix login bug"));
+  await vi.waitFor(() =>
+    expect(
+      f.sent.find((wire) => wire.method === "thread/unsubscribe")?.params,
+    ).toEqual({ threadId: "thread-2" }),
+  );
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  // A resumed conversation is not new, so it is not titled again.
+  await f.runtime.run({ ...f.delivery("@Codex later"), named });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(3));
+  expect(titling()).toHaveLength(1);
+  expect(named).toHaveBeenCalledOnce();
+});
+
+it("does not title a conversation outside a Solo chat", async () => {
+  const f = fixture();
+  const named = vi.fn();
+  await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
+    1,
+  );
+  expect(named).not.toHaveBeenCalled();
+});
+
 it("finishes a Solo turn under its policy when the chat is converted mid-turn", async () => {
   const f = fixture();
   const soloChannels = asSoloChat(f);

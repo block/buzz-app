@@ -1107,8 +1107,9 @@ host body. Registration uses the same owned contribution lifetime as inline/link
 renderers. The host retains author/time chrome, actions, attachments and session
 ownership. `ownsAttachment(message, attachment)` lets the component claim the
 attachments it draws itself: the host leaves those out of its list, keeps the
-others, and lists every one again if the component fails. A throwing claim is
-false. `MessageRenderer` is a host-matched author-preview type, not event
+others, and lists every one again if the component fails. Claims count only
+while the host draws that component; attachment-only and session-card-only
+messages skip it, so their attachments stay listed. A throwing claim is false. `MessageRenderer` is a host-matched author-preview type, not event
 admission or cross-version capability negotiation.
 
 `registerMessageAction({ id, title, icon?, matches, component, marker? })` adds an

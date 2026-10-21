@@ -51,7 +51,7 @@ import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
 import { profileTarget, profileActivityViewTarget } from "../profiles/target";
-import { MessageBody, useMessageRenderer } from "../conversation/MessageBody";
+import { MessageCard, useMessageRenderer } from "../conversation/MessageBody";
 import { TargetOpenerProvider, WithTargetOpener } from "../conversation/opener";
 import { InlineText } from "../conversation/InlineText";
 import type {
@@ -425,12 +425,13 @@ function MessageRowContent({
       </MenuItem>
     ),
   );
-  // A message renderer may draw some attachments itself. They return to the
-  // host list if that renderer fails.
+  // A message renderer may draw some attachments itself. Its claims count only
+  // while its card is mounted, and they return to the host list if it fails.
+  const bodyShown = !attachmentOnly && !cardsOnly;
   const messageRenderer = useMessageRenderer(extensions?.messages, row);
   const [failedRenderer, setFailedRenderer] = useState<MessageRenderer>();
   const claims =
-    messageRenderer !== failedRenderer
+    bodyShown && messageRenderer !== failedRenderer
       ? messageRenderer?.ownsAttachment
       : undefined;
   const claimed = (attachment: ChannelMessage["attachments"][number]) => {
@@ -906,7 +907,7 @@ function MessageRowContent({
                   ))}
                 </div>
               )}
-              {!attachmentOnly && !cardsOnly && (
+              {bodyShown && (
                 <div
                   className={
                     shownRow || row.huddle ? undefined : styles.messageBubble
@@ -938,13 +939,14 @@ function MessageRowContent({
                     </div>
                   )}
                   {extensions?.messages ? (
-                    <MessageBody
+                    <MessageCard
                       registry={extensions.messages}
+                      renderer={messageRenderer}
                       message={row}
                       onFailed={setFailedRenderer}
                     >
                       {body}
-                    </MessageBody>
+                    </MessageCard>
                   ) : (
                     body
                   )}

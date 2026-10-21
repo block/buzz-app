@@ -41,6 +41,33 @@ export function MessageBody({
   onFailed?: (renderer: MessageRenderer) => void;
 }) {
   const renderer = useMessageRenderer(registry, message);
+  return (
+    <MessageCard
+      registry={registry}
+      renderer={renderer}
+      message={message}
+      onFailed={onFailed}
+    >
+      {children}
+    </MessageCard>
+  );
+}
+
+/** Draws an already selected renderer, so its caller can rely on the same choice. */
+export function MessageCard({
+  registry,
+  renderer,
+  message,
+  children,
+  onFailed,
+}: {
+  registry: ContributionReader<MessageRenderer>;
+  renderer: ReturnType<typeof useMessageRenderer>;
+  message: ChannelMessage;
+  children: ReactNode;
+  /** Called with the renderer that failed, after the fallback replaces it. */
+  onFailed?: ((renderer: MessageRenderer) => void) | undefined;
+}) {
   if (!renderer) return children;
   return (
     <ContributionBoundary

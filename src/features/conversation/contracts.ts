@@ -175,8 +175,9 @@ export type MessageRenderer = Readonly<{
   title: string;
   matches(message: ChannelMessage): boolean;
   /** True for each attachment the component draws itself. The host leaves
-   * those out of its attachment list, and lists them again if the component
-   * fails. A throwing claim is treated as false. */
+   * those out of its attachment list only while it draws the component, and
+   * lists them again if the component fails. A throwing claim is treated as
+   * false. */
   ownsAttachment?(
     message: ChannelMessage,
     attachment: ChannelMessage["attachments"][number],

@@ -3183,9 +3183,24 @@ it.each([
     card: false,
     listed: ["notes.txt", "shot.png"],
   },
+  // The host skips the message body here, so the card never mounts.
+  {
+    claim: "shot",
+    fails: false,
+    card: false,
+    listed: ["notes.txt", "shot.png"],
+    content: "",
+  },
+  {
+    claim: "shot",
+    fails: false,
+    card: false,
+    listed: ["notes.txt", "shot.png"],
+    content: "[Session: PR 45 fixes](buzz://channel/session-id)",
+  },
 ])(
   "lists only the attachments a message renderer does not claim: %o",
-  ({ claim, fails, card, listed }) => {
+  ({ claim, fails, card, listed, content }) => {
     const entry = {
       id: "card",
       title: "Card",
@@ -3217,6 +3232,7 @@ it.each([
       <MessageRow
         row={{
           ...row,
+          ...(content === undefined ? {} : { content }),
           replyCount: 0,
           attachments: [
             {
@@ -3245,7 +3261,7 @@ it.each([
     );
     try {
       expect(!!screen.queryByText("Plugin card")).toBe(card);
-      expect(!!screen.queryByText("Root")).toBe(!card);
+      expect(!!screen.queryByText("Root")).toBe(!card && content === undefined);
       for (const name of ["notes.txt", "shot.png"])
         expect(screen.queryAllByText(name)).toHaveLength(
           listed.includes(name) ? 1 : 0,
@@ -3256,3 +3272,99 @@ it.each([
     }
   },
 );
+
+it("returns claimed attachments when a card fails late and claims again after reinstall", () => {
+  let fail = false;
+  const install = (revision: string) => ({
+    id: "card",
+    title: "Card",
+    key: `fixture.card:card:${revision}`,
+    pluginId: "fixture.card",
+    revision,
+    matches: () => true,
+    ownsAttachment: (_message: unknown, attachment: { url: string }) =>
+      attachment.url.endsWith("shot.png"),
+    component: () => {
+      if (fail) throw new Error("broken renderer");
+      return <p>Plugin card</p>;
+    },
+  });
+  // Stable snapshots: useSyncExternalStore rereads on every render.
+  const none: never[] = [];
+  let entries = [install("one")];
+  const listeners = new Set<() => void>();
+  const messages = {
+    snapshot: () => entries,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const update = (next: typeof entries) =>
+    act(() => {
+      entries = next;
+      for (const listener of listeners) listener();
+    });
+  const message = {
+    ...row,
+    replyCount: 0,
+    attachments: [
+      {
+        kind: "file" as const,
+        url: "https://media.test/notes.txt",
+        name: "notes.txt",
+      },
+      {
+        kind: "file" as const,
+        url: "https://media.test/shot.png",
+        name: "shot.png",
+      },
+    ],
+  };
+  const extensions = {
+    tools: { snapshot: () => none, subscribe: () => () => {} },
+    inline: { snapshot: () => none, subscribe: () => () => {} },
+    messages,
+  };
+  const render = (next: typeof message) => (
+    <MessageRow
+      row={next}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+      extensions={extensions}
+    />
+  );
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const view = renderDom(render(message));
+  const listed = (name: string) => screen.queryAllByText(name).length;
+  try {
+    expect(screen.getByText("Plugin card")).toBeInTheDocument();
+    expect(listed("shot.png")).toBe(0);
+
+    // The same registration fails on a later render.
+    fail = true;
+    view.rerender(render({ ...message }));
+    expect(screen.queryByText("Plugin card")).toBeNull();
+    expect(screen.getByText("Root")).toBeInTheDocument();
+    expect(listed("shot.png")).toBe(1);
+    expect(listed("notes.txt")).toBe(1);
+
+    // A reinstalled plugin is a new registration and gets a fresh start.
+    fail = false;
+    update([install("two")]);
+    expect(screen.getByText("Plugin card")).toBeInTheDocument();
+    expect(listed("shot.png")).toBe(0);
+    expect(listed("notes.txt")).toBe(1);
+
+    // Removing the plugin lists every attachment again.
+    update([]);
+    expect(screen.queryByText("Plugin card")).toBeNull();
+    expect(listed("shot.png")).toBe(1);
+  } finally {
+    view.unmount();
+    error.mockRestore();
+  }
+});

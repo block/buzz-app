@@ -238,13 +238,38 @@ export class CodexRuntime {
   private readonly controls = new SessionControls(() => {
     for (const listener of this.listeners) listener();
   });
+  /** The conversation a control acts on: the one a turn in `place` goes to. */
   private controlKey(agent: Agent, place: SessionPlace) {
     return JSON.stringify([
       place.channelId,
-      this.resolveConfig(agent.config).scope === "channel"
-        ? "channel"
-        : (place.root ?? "channel"),
+      this.pinnedRoot(
+        agent.pubkey,
+        place.channelId,
+        place.root,
+        this.resolveConfig(agent.config).scope,
+      ) ?? "channel",
     ]);
+  }
+  /** The thread root a turn under `toolRoot` goes to, or none for the
+   * channel's conversation. A thread pinned since the last local Save keeps
+   * the key its own scope gave it, so a remote scope change never moves it;
+   * the thread's wins. Otherwise `scope` picks. */
+  private pinnedRoot(
+    pubkey: string,
+    channelId: string,
+    toolRoot: string | undefined,
+    scope: string,
+  ) {
+    const saved = this.bindings(pubkey)?.saved ?? {};
+    const pinnedAs = (root: string, as: string) => {
+      const pin = saved[JSON.stringify([channelId, root])]?.pin;
+      return !!pin && this.resolveConfig(pin.config).scope === as;
+    };
+    return toolRoot &&
+      (pinnedAs(toolRoot, "thread") ||
+        (!pinnedAs("channel", "channel") && scope !== "channel"))
+      ? toolRoot
+      : undefined;
   }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
@@ -725,19 +750,12 @@ export class CodexRuntime {
     delivery.signal.throwIfAborted();
     const toolRoot =
       channel?.dm || topLevel ? undefined : rootOf(trigger.event);
-    // A thread pinned since the last local Save keeps the key its own scope
-    // gave it, so a remote scope change never moves it; the thread's wins.
-    const saved = this.bindings(agent.pubkey)?.saved ?? {};
-    const pinnedAs = (root: string, scope: string) => {
-      const pin = saved[JSON.stringify([channelId, root])]?.pin;
-      return !!pin && this.resolveConfig(pin.config).scope === scope;
-    };
-    const root =
-      toolRoot &&
-      (pinnedAs(toolRoot, "thread") ||
-        (!pinnedAs("channel", "channel") && settings.scope !== "channel"))
-        ? toolRoot
-        : undefined;
+    const root = this.pinnedRoot(
+      agent.pubkey,
+      channelId,
+      toolRoot,
+      settings.scope,
+    );
     delivery.signal.throwIfAborted();
     let finishActivity!: (result: WorkOutcome) => void;
     const replied = new Promise<WorkOutcome>((resolve) => {

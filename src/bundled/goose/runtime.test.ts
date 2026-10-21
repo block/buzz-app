@@ -1065,6 +1065,37 @@ it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", as
   expect(shared.goose()?.turns[0]?.text).not.toContain("workspace-canvas");
 });
 
+it.each([
+  ["thread", "channel"],
+  ["channel", "thread"],
+] as const)(
+  "aims session controls at a %s-scoped conversation after a remote change to %s scope",
+  async (pinned, remote) => {
+    const f = setup({ hold: true, scope: pinned });
+    const root = message("1", "hello");
+    const place = { channelId: channel, root: root.id };
+    const agent = asRow(f.agent, { ...DEFAULT_CONFIG, scope: remote }, 0, {
+      pubkey: self,
+    });
+    try {
+      await f.deliver(root);
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      expect(f.runtime.sessionState(agent, place)).toBe("active");
+      // Another thread goes where its own turn would: to a pinned channel
+      // conversation, otherwise to a conversation of its own.
+      expect(
+        f.runtime.sessionState(agent, { ...place, root: "another-thread" }),
+      ).toBe(pinned === "channel" ? "active" : "idle");
+      await f.runtime.session(agent, place, "interrupt");
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
 it("compacts idle Goose immediately, keeps active controls through the turn, and resets without a message", async () => {
   const f = setup({ hold: true, reply: "Compaction complete" });
   const root = message("1", "hello");

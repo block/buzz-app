@@ -458,10 +458,15 @@ export class ClaudeRuntime {
     for (const listener of this.listeners) listener();
   }
   private readonly controls = new SessionControls(() => this.notify());
+  /** The conversation a control acts on: the one a turn in `place` goes to. */
   private controlKey(agent: Agent, place: SessionPlace) {
-    return config(agent.config).scope === "channel" || !place.root
-      ? place.channelId
-      : `${place.channelId}/${place.root}`;
+    if (!place.root) return place.channelId;
+    return this.pinnedKey(
+      this.agents.get(agent.pubkey),
+      { settings: agent.settings, epoch: agent.epoch },
+      place.channelId,
+      `${place.channelId}/${place.root}`,
+    );
   }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
@@ -819,11 +824,27 @@ export class ClaudeRuntime {
   ) {
     const summary = await this.reads(self)?.channel(channelId);
     if (topLevel || summary?.dm === true) return channelId;
-    const thread = `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
+    return this.pinnedKey(
+      entry,
+      attempt,
+      channelId,
+      `${channelId}/${threadReference(event)?.rootId ?? event.id}`,
+    );
+  }
+  /** Which of `channelId` and `thread` a turn admitted on `attempt` goes to.
+   * One pinned at its epoch keeps the key its own scope gave it, and the
+   * thread's wins; otherwise the attempt's scope picks. */
+  private pinnedKey(
+    entry: Entry | undefined,
+    attempt: Pick<Applied, "settings" | "epoch">,
+    channelId: string,
+    thread: string,
+  ) {
     const pinnedAs = (key: string, scope: Config["scope"]) => {
-      const pin = entry.sessions.pinOf(key);
+      const pin = entry?.sessions.pinOf(key);
       return (
-        pin?.epoch === attempt.epoch &&
+        !!pin &&
+        pin.epoch === attempt.epoch &&
         this.resolveConfig(pin.settings.config).scope === scope
       );
     };

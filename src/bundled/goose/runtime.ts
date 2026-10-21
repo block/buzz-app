@@ -284,10 +284,39 @@ export class GooseRuntime {
     for (const listener of this.listeners) listener();
   }
   private readonly controls = new SessionControls(() => this.notify());
+  /** The conversation a control acts on: the one a turn in `place` goes to. */
   private controlKey(agent: Agent, place: SessionPlace) {
-    return config(agent.config).scope === "channel" || !place.root
+    if (!place.root) return place.channelId;
+    const thread = `${place.channelId}/${place.root}`;
+    return this.scopeOf(
+      this.agents.get(agent.pubkey)?.sessions,
+      place.channelId,
+      thread,
+      config(agent.config).scope,
+      agent.epoch,
+    ) === "channel"
       ? place.channelId
-      : `${place.channelId}/${place.root}`;
+      : thread;
+  }
+  /** The scope a conversation in `channel` resolves to. One pinned at `epoch`
+   * keeps the scope it was pinned with, so a remote scope change never moves
+   * it, and `thread`'s wins; otherwise `scope` picks. */
+  private scopeOf(
+    sessions: AgentSessions | undefined,
+    channel: string,
+    thread: string,
+    scope: Scope,
+    epoch: number,
+  ): Scope {
+    const pinnedAs = (key: string, as: Scope) => {
+      const pin = sessions?.pinOf(key);
+      return (
+        !!pin && pin.epoch === epoch && config(pin.settings.config).scope === as
+      );
+    };
+    if (pinnedAs(thread, "thread")) return "thread";
+    if (pinnedAs(channel, "channel")) return "channel";
+    return scope;
   }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
@@ -385,21 +414,14 @@ export class GooseRuntime {
       channel,
       signal,
     );
-    // A conversation pinned since the last local Save keeps the key its own
-    // scope gave it, so a remote scope change never moves it; the thread's
-    // wins. Chosen once, so a rebuilt prompt goes to the same conversation.
-    const root = `${channel}/${threadReference(event)?.rootId ?? event.id}`;
-    const pinnedAs = (key: string, as: Scope) => {
-      const pin = entry.sessions.pinOf(key);
-      return (
-        pin?.epoch === attempt.epoch && config(pin.settings.config).scope === as
-      );
-    };
-    const scope = pinnedAs(root, "thread")
-      ? "thread"
-      : pinnedAs(channel, "channel")
-        ? "channel"
-        : admitted;
+    // Chosen once, so a rebuilt prompt goes to the same conversation.
+    const scope = this.scopeOf(
+      entry.sessions,
+      channel,
+      `${channel}/${threadReference(event)?.rootId ?? event.id}`,
+      admitted,
+      attempt.epoch,
+    );
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) => {
       const turn = await this.turn(

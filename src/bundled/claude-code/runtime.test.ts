@@ -2009,11 +2009,57 @@ it("hands no Canvas to a shared channel's turns", async () => {
   runtime.dispose();
 });
 
+it.each([
+  ["thread", "channel"],
+  ["channel", "thread"],
+] as const)(
+  "aims session controls at a %s-scoped conversation after a remote change to %s scope",
+  async (pinned, remote) => {
+    const f = setup([], { hold: true });
+    const root = message("1", "hello");
+    const place = { channelId: channel, root: root.id };
+    const config = { ...DEFAULT_CONFIG, scope: remote };
+    const agent = {
+      ...f.agent,
+      config,
+      settings: settingsOf(config, { name: "Claude" }),
+      epoch: 0,
+    } as unknown as Agent;
+    try {
+      await f.deliver(
+        { type: "mention", event: root },
+        { ...DEFAULT_CONFIG, scope: pinned },
+      );
+      const process = f.claudes()[0];
+      if (!process) throw new Error("Expected Claude process");
+      await vi.waitFor(() => expect(process.prompts).toHaveLength(1));
+      expect(f.runtime.sessionState(agent, place)).toBe("active");
+      // Another thread goes where its own turn would: to a pinned channel
+      // conversation, otherwise to a conversation of its own.
+      expect(
+        f.runtime.sessionState(agent, { ...place, root: "another-thread" }),
+      ).toBe(pinned === "channel" ? "active" : "idle");
+      process.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
 it("controls an idle Claude session without sending a message, and rejects reset while active", async () => {
   const f = setup([], { hold: true });
   const root = message("1", "hello");
   const place = { channelId: channel, root: root.id };
-  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  // As the host gives it: settings and an epoch with the config.
+  const agent = {
+    ...f.agent,
+    config: DEFAULT_CONFIG,
+    settings: settingsOf(DEFAULT_CONFIG, { name: "Claude" }),
+    epoch: 0,
+  } as unknown as Agent;
   try {
     await f.deliver({ type: "mention", event: root });
     const process = f.claudes()[0];
@@ -2062,7 +2108,13 @@ it("interrupts a turn still loading its prompt before Claude receives it", async
   f.read.mockImplementationOnce(async () => history);
   const root = message("1", "hello");
   const place = { channelId: channel, root: root.id };
-  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  // As the host gives it: settings and an epoch with the config.
+  const agent = {
+    ...f.agent,
+    config: DEFAULT_CONFIG,
+    settings: settingsOf(DEFAULT_CONFIG, { name: "Claude" }),
+    epoch: 0,
+  } as unknown as Agent;
   const delivered = f.deliver({
     type: "mention",
     event: message("2", "followup", {
@@ -2109,7 +2161,13 @@ it("keeps an accepted Claude handoff past its deadline while compaction runs", a
   const f = setup([], { hold: true });
   const root = message("1", "hello");
   const place = { channelId: channel, root: root.id };
-  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  // As the host gives it: settings and an epoch with the config.
+  const agent = {
+    ...f.agent,
+    config: DEFAULT_CONFIG,
+    settings: settingsOf(DEFAULT_CONFIG, { name: "Claude" }),
+    epoch: 0,
+  } as unknown as Agent;
   const handover = new AbortController();
   let finishCompaction: (() => void) | undefined;
   try {

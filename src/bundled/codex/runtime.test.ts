@@ -4043,6 +4043,35 @@ describe("session actions", () => {
     await f.complete();
   });
 
+  it.each([
+    ["thread", "channel"],
+    ["channel", "thread"],
+  ] as const)(
+    "aims session controls at a %s-scoped conversation after a remote change to %s scope",
+    async (pinned, remote) => {
+      const f = fixture();
+      const delivery = f.delivery("first");
+      const config = { ...(delivery.config as object), scope: pinned };
+      const agent = {
+        ...delivery.agent,
+        config: { ...config, scope: remote },
+      } as unknown as Agent;
+      const place = { channelId: "channel", root };
+      await f.runtime.run({ ...delivery, config });
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      expect(f.runtime.sessionState(agent, place)).toBe("active");
+      // Another thread goes where its own turn would: to a pinned channel
+      // conversation, otherwise to a conversation of its own.
+      expect(
+        f.runtime.sessionState(agent, { ...place, root: "another-thread" }),
+      ).toBe(pinned === "channel" ? "active" : "idle");
+      await f.complete();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+    },
+  );
+
   it("resets durably without a message, and preserves the binding if the write fails", async () => {
     const f = fixture();
     const delivery = f.delivery("first");

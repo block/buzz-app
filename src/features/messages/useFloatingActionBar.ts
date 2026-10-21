@@ -123,6 +123,8 @@ export function useFloatingActionBar(
       )
         return false;
       if (bar.contains(target) || contentAt(target)) return true;
+      // Caption edits can leave attachment bounds cached until the next frame.
+      if (target.closest("[data-message-attachments]")) return false;
       // Retain only an active hover: content gaps and the tapered route to the
       // toolbar are pass-through geometry, never activation or hit surfaces.
       const bounds = contentBounds.current;

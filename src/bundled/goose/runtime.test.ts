@@ -797,6 +797,41 @@ it("shows a turn a reload stopped what it already posted, and to carry on", asyn
   expect(next).not.toContain(RESUMED_PROMPT);
 });
 
+it("shows each resumed thread its own progress in one channel session", async () => {
+  const first = message("1", "@Gander count in one");
+  const second = message("2", "@Gander count in two");
+  const progress = (id: string, root: RelayEvent, content: string) =>
+    message(id, content, {
+      pubkey: self,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  // Each thread's progress is newer than both mentions.
+  const replies = [
+    progress("5", second, "Two reached 10"),
+    progress("6", first, "One reached 10"),
+  ];
+  const f = setup({ scope: "channel" });
+  f.read.mockImplementation((async (filters: { "#e"?: string[] }[]) =>
+    replies.filter((reply) =>
+      filters.some((filter) =>
+        filter["#e"]?.includes(reply.tags[1]?.[1] ?? ""),
+      ),
+    )) as never);
+  await f.run({ type: "mention", event: first, resumed: true });
+  await flush(100);
+  await f.run({ type: "mention", event: second, resumed: true });
+  await flush(100);
+  const turns = f.goose()?.turns ?? [];
+  expect(turns).toHaveLength(2);
+  expect(turns[1]?.sessionId).toBe(turns[0]?.sessionId);
+  expect(turns[0]?.text).toContain("One reached 10");
+  // The session's watermark is past it, but it never saw this thread.
+  expect(turns[1]?.text).toContain("Two reached 10");
+});
+
 it("ends a turn's prompt with the notes plugins left for it in its channel", async () => {
   const f = setup();
   const notes = vi.fn((at: string) =>

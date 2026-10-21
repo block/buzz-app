@@ -544,7 +544,9 @@ export class GooseRuntime {
         : `${channelId}/${rootId}`;
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
-    const seen = fresh ? 0 : entry.sessions.seen(key);
+    // A resumed turn's session never saw its thread, its own replies included,
+    // even when another resumed turn already opened it in a channel session.
+    const seen = fresh || resumed ? 0 : entry.sessions.seen(key);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const owner = entry.handle?.owner;
     const reading = topLevel

@@ -637,7 +637,7 @@ export type AgentType<Config = unknown> = {
   /** Its turns run in this page, so closing or reloading the app stops them.
    * With this, a mention turn still working then is kept, and given to `run`
    * again marked `resumed` if the owner chooses to resume it, to carry on in
-   * the conversation's saved session. */
+   * the conversation's saved session, or in a new one shown the conversation. */
   resumes?: boolean;
   /** Makes the type hosted: its provider runs each agent, so it has no `run`,
    * `models` or `timeoutMs`, and its agents have no attention. */

@@ -53,7 +53,7 @@ it("opens the join steps from a pasted invite page link", async () => {
     screen.queryByRole("button", { name: "Create a community" }),
   ).not.toBeInTheDocument();
   await user.type(
-    screen.getByLabelText("Invite or community link"),
+    screen.getByLabelText("Invite link or community URL"),
     "https://relay.example/invite/v2.invite",
   );
   await user.click(screen.getByRole("button", { name: "Join" }));
@@ -66,7 +66,7 @@ it("opens the join steps from a community address", async () => {
   const user = userEvent.setup();
   landing();
   await user.type(
-    screen.getByLabelText("Invite or community link"),
+    screen.getByLabelText("Invite link or community URL"),
     "https://relay.example",
   );
   await user.click(screen.getByRole("button", { name: "Join" }));
@@ -76,16 +76,16 @@ it("opens the join steps from a community address", async () => {
   ).toBeVisible();
 });
 
-it("asks for the invite link when the pasted value is not one", async () => {
+it("asks for an invite link or community URL when the pasted value is neither", async () => {
   const user = userEvent.setup();
   landing();
   await user.type(
-    screen.getByLabelText("Invite or community link"),
+    screen.getByLabelText("Invite link or community URL"),
     "not a link",
   );
   await user.click(screen.getByRole("button", { name: "Join" }));
   expect(
-    await screen.findByText("Paste an invite or community link."),
+    await screen.findByText("Paste an invite link or community URL."),
   ).toBeVisible();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

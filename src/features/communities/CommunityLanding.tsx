@@ -46,10 +46,10 @@ export function CommunityLanding({
               event.preventDefault();
               const parsed = parsePastedInvite(link);
               if (parsed) setJoining(parsed);
-              else setError("Paste an invite or community link.");
+              else setError("Paste an invite link or community URL.");
             }}
           >
-            <Field label="Invite or community link" error={error}>
+            <Field label="Invite link or community URL" error={error}>
               <Input
                 autoFocus
                 value={link}

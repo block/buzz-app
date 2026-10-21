@@ -627,11 +627,12 @@ export function SearchResults({
     ),
     channelRank,
   );
-  // A DM with one of the viewer's own agents gives way to its "New chat"
-  // row, but only when that row shows; the DM stays in the sidebar. Removing
-  // DM-listed people below only lifts the rest, so a row shown here still
-  // shows in the Agents group.
-  const shownSessionAgents = new Set(
+  // One of the viewer's own agents leads with its "New chat" row. Its
+  // existing chats follow that row, and its DM comes after them: chats, not
+  // DMs, are where the viewer works with their agents. Removing DM-listed
+  // people below only lifts the rest, so a row shown here still shows in the
+  // Agents group.
+  const newChats = new Map(
     rankPeople(
       people.filter(({ agent }) => agent),
       peopleNeedle,
@@ -639,26 +640,39 @@ export function SearchResults({
       picked,
     )
       .slice(0, PERSON_ROWS)
-      .map(({ person }) => person.pubkey)
-      .filter((pubkey) => sessionAgents.has(pubkey)),
+      .filter(({ person }) => sessionAgents.has(person.pubkey))
+      .map(({ person, score }) => [
+        person.pubkey,
+        { score, label: person.label },
+      ]),
   );
-  const matchingChannels = matchingAll
-    .filter(
-      (channel) =>
-        !(
-          channel.channelType === "dm" &&
-          channel.participants?.length === 1 &&
-          shownSessionAgents.has(channel.participants[0] ?? "")
-        ),
-    )
-    .slice(0, 8);
-  const directMessageResults = matchingChannels.filter(
-    (channel) => channel.channelType === "dm",
-  );
-  // A person whose DM row already shows needs no second row to the same place.
+  /** The best-placed shown agent among these members, if any. */
+  const newChatAmong = (members: readonly string[] | undefined) =>
+    (members ?? [])
+      .flatMap((pubkey) => newChats.get(pubkey) ?? [])
+      .sort((a, b) => a.score - b.score)[0];
+  const dmAgent = (channel: ChannelSummary) =>
+    channel.participants?.length === 1
+      ? newChats.get(channel.participants[0] ?? "")
+      : undefined;
+  const dmRank = (channel: ChannelSummary) => {
+    const agent = dmAgent(channel);
+    return Math.max(
+      channelRank(channel),
+      agent ? agent.score + 0.5 : -Infinity,
+    );
+  };
+  const directMessageResults = byMatch(
+    matchingAll.filter((channel) => channel.channelType === "dm"),
+    dmRank,
+  ).slice(0, 8);
+  // A person whose DM row already shows needs no second row to the same
+  // place. An agent's "New chat" row goes somewhere else, so it stays.
   const listedDms = new Set(
     directMessageResults.flatMap((channel) =>
-      channel.participants?.length === 1 ? channel.participants : [],
+      channel.participants?.length === 1 && !dmAgent(channel)
+        ? channel.participants
+        : [],
     ),
   );
   const rankedPeople = rankPeople(
@@ -667,8 +681,30 @@ export function SearchResults({
     usage,
     picked,
   );
+  // Solo chats, by name or by a shown agent among their members. A chat with
+  // that agent takes the agent's score, so the Chats group comes right after
+  // the Agents group that ties it. Live chats come before archived ones, and
+  // newer before older.
+  const chatRank = (channel: ChannelSummary) =>
+    newChatAmong(channel.members)?.score ?? channelRank(channel);
+  const chatResults = channels
+    .filter(
+      (channel) =>
+        channel.channelType === "solo" &&
+        (!!newChatAmong(channel.members) || matchingAll.includes(channel)),
+    )
+    .map((channel) => ({ channel, rank: chatRank(channel) }))
+    .sort(
+      (a, b) =>
+        a.rank - b.rank ||
+        Number(!!a.channel.archived) - Number(!!b.channel.archived) ||
+        (b.channel.lastActivityAt ?? b.channel.updatedAt ?? 0) -
+          (a.channel.lastActivityAt ?? a.channel.updatedAt ?? 0),
+    )
+    .slice(0, 8);
+
   const joinedAll = matchingAll.filter(
-    (channel) => channel.channelType !== "dm",
+    (channel) => channel.channelType !== "dm" && channel.channelType !== "solo",
   );
   // Joined and public channels share one ranking before the limit, so the row
   // that gives the group its best rank, such as a remembered public channel,
@@ -682,6 +718,13 @@ export function SearchResults({
     ],
     channelRank,
   ).slice(0, 8);
+  // A chat found by its agent, not its name, says which agent it has.
+  const soloDetail = (channel: ChannelSummary) => {
+    const agent = newChatAmong(channel.members);
+    return agent && !matchingAll.includes(channel)
+      ? `Chat with ${agent.label}`
+      : "Chat";
+  };
   const conversationDestination = (
     channel: ChannelSummary,
   ): SearchDestination => {
@@ -701,7 +744,7 @@ export function SearchResults({
           : channel.channelType === "dm"
             ? "Direct message"
             : channel.channelType === "solo"
-              ? "Chat"
+              ? soloDetail(channel)
               : "Conversation",
       icon: ChatCircleIcon,
       run: choose(key, () => openConversation(channel.id)),
@@ -766,9 +809,9 @@ export function SearchResults({
   };
   const personDestination = ({
     person,
-    order,
+    score,
   }: (typeof rankedPeople)[number]): SearchDestination & {
-    order: number;
+    score: number;
   } => {
     const matches = matchPerson(person.label, peopleNeedle)?.positions;
     const key = personKey(person.pubkey);
@@ -799,7 +842,7 @@ export function SearchResults({
         src: avatarMedia(person.picture, session.media),
         shape: person.agent ? "squircle" : "circle",
       },
-      order,
+      score,
       run: choose(key, () =>
         newSession
           ? openAgentSession(person.pubkey)
@@ -942,28 +985,39 @@ export function SearchResults({
                 // Named destinations lead, so typed text selects one first.
                 // The group with the best match leads them, so Enter opens
                 // the "Work" page before a channel that merely contains it.
+                // Every group scores on one scale, match and usage, not the
+                // relationship band that orders rows inside People and
+                // Agents. Ties keep this order, so an agent's "New chat" row
+                // leads, then its chats; its DM ranks after both.
                 ...[
+                  {
+                    label: "Agents",
+                    destinations: agentResults,
+                    best: Math.min(...agentResults.map(({ score }) => score)),
+                  },
+                  {
+                    label: "Chats",
+                    destinations: chatResults.map(({ channel }) =>
+                      conversationDestination(channel),
+                    ),
+                    best: Math.min(...chatResults.map(({ rank }) => rank)),
+                  },
                   {
                     label: "Channels",
                     destinations: channelResults.map(conversationDestination),
                     best: Math.min(...channelResults.map(channelRank)),
                   },
                   {
+                    label: "People",
+                    destinations: personResults,
+                    best: Math.min(...personResults.map(({ score }) => score)),
+                  },
+                  {
                     label: "Direct messages",
                     destinations: directMessageResults.map(
                       conversationDestination,
                     ),
-                    best: Math.min(...directMessageResults.map(channelRank)),
-                  },
-                  {
-                    label: "People",
-                    destinations: personResults,
-                    best: Math.min(...personResults.map(({ order }) => order)),
-                  },
-                  {
-                    label: "Agents",
-                    destinations: agentResults,
-                    best: Math.min(...agentResults.map(({ order }) => order)),
+                    best: Math.min(...directMessageResults.map(dmRank)),
                   },
                   {
                     label: "Pages",
@@ -990,7 +1044,8 @@ export function SearchResults({
                   rank: Infinity,
                   destinations: messages,
                   empty:
-                    matchingChannels.length ||
+                    directMessageResults.length ||
+                    chatResults.length ||
                     channelResults.length ||
                     rankedPeople.length ||
                     pages.length

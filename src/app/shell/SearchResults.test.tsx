@@ -3420,7 +3420,7 @@ it("tells uncached directory namesakes apart before a DM opens", async () => {
   }
 });
 it.each([true, false])(
-  "sends the viewer's agents to a new chat, not their DMs (Solo=%s)",
+  "leads with a new chat for the viewer's agents, then their chats, then their DMs (Solo=%s)",
   async (solo) => {
     const relay = keypair(),
       viewer = keypair(),
@@ -3435,9 +3435,24 @@ it.each([true, false])(
       ]),
       roster(relay, id, [viewer.pubkey, member]),
     ];
+    const chat = (id: string, name: string, at: number, member: string) => [
+      metadata(relay, id, name, at, [
+        ["t", "stream"],
+        ["private"],
+        ["t", "buzz.solo"],
+      ]),
+      roster(relay, id, [viewer.pubkey, member]),
+    ];
     const discovery = [
       ...dm("mine-dm", mine.pubkey),
       ...dm("theirs-dm", theirs.pubkey),
+      // Scout's chats match by their agent, not their names.
+      ...chat("older-chat", "Fix the build", 1700000001, mine.pubkey),
+      ...chat("newer-chat", "Plan the week", 1700000002, mine.pubkey),
+      ...chat("other-chat", "Unrelated", 1700000003, theirs.pubkey),
+      // A channel that matches as well as the agent does.
+      metadata(relay, "scout-ops", "scout-ops"),
+      roster(relay, "scout-ops", [viewer.pubkey]),
       profile(mine, { name: "Scout", is_agent: true }),
       profile(theirs, { name: "Scooter", is_agent: true }),
       profile(fresh, { name: "Scotia", is_agent: true }),
@@ -3507,12 +3522,36 @@ it.each([true, false])(
         expect(agents.queryByRole("option", { name: /Scout/ })).toBeNull();
         return;
       }
-      expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
       const agents = within(
         await screen.findByRole("group", { name: "Agents" }),
       );
       const choice = agents.getByRole("option", { name: /Scout/ });
       expect(choice).toHaveTextContent("New chat");
+      // The chats with Scout follow, newest first; the DM comes later.
+      const chats = within(await screen.findByRole("group", { name: "Chats" }));
+      await waitFor(() =>
+        expect(
+          chats.getAllByRole("option").map((row) => row.textContent),
+        ).toEqual([
+          expect.stringContaining("Plan the week"),
+          expect.stringContaining("Fix the build"),
+        ]),
+      );
+      expect(chats.getAllByRole("option")[0]).toHaveTextContent(
+        "Chat with Scout",
+      );
+      expect(
+        await direct.findByRole("option", { name: /Scout/ }),
+      ).toBeVisible();
+      await screen.findByRole("group", { name: "Channels" });
+      const options = screen.getAllByRole("option");
+      expect(options[0]).toBe(choice);
+      const at = (name: RegExp) =>
+        options.findIndex((row) => name.test(row.textContent ?? ""));
+      expect(at(/Plan the week/)).toBeLessThan(at(/scout-ops/));
+      expect(at(/Fix the build/)).toBeLessThan(
+        options.indexOf(direct.getByRole("option", { name: /Scout/ })),
+      );
       // An agent with no DM yet starts a chat too, not a DM.
       expect(agents.getByRole("option", { name: /Scotia/ })).toHaveTextContent(
         "New chat",

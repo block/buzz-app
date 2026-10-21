@@ -34,7 +34,7 @@ const models = [
     effort: "low",
     efforts: efforts.slice(1, 4),
   },
-  { id: "plain", label: "Model without thinking levels", efforts: [] },
+  { id: "plain", label: "Standard", efforts: [] },
 ];
 const cases: {
   label: string;

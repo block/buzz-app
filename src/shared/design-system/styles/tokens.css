@@ -850,7 +850,9 @@
     0 0 0 1px rgba(0, 0, 0, 0.06), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
     0 2px 4px rgba(0, 0, 0, 0.04);
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-sm: 0 0 2px rgba(0, 0, 0, 0.1), 0 4px 8px -2px rgba(0, 0, 0, 0.06);
+  /* Floating surfaces use the same crisp contour/contact/ambient recipe as
+     panels, including their quiet white contour in dark mode. */
+  --shadow-sm: var(--shadow-panel);
 
   /* --- Space. Six steps extracted from the Messages frame. --
      The scale is intentionally short: 4/8/12/16/20/24 covers the repeated
@@ -1111,7 +1113,6 @@
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-3);
   --border-message-thread: var(--neutral-4);
-  --border-floating-separator: var(--neutral-5);
   --scrollbar-thumb: var(--neutral-8);
   --scrollbar-thumb-quiet: color-mix(
     in srgb,
@@ -1239,7 +1240,6 @@
   --affordance-link-hover: var(--blue-3);
   --border-standard: var(--neutral-4);
   --border-message-thread: var(--neutral-6);
-  --border-floating-separator: var(--neutral-6);
   --scrollbar-thumb: var(--neutral-9);
   --scrollbar-thumb-quiet: color-mix(
     in srgb,
@@ -1971,7 +1971,6 @@
   --color-surface-categorical-purple: var(--surface-categorical-purple);
   --text-color-accent: var(--text-accent);
   --border-color-standard: var(--border-standard);
-  --border-color-floating-separator: var(--border-floating-separator);
   --border-color-message-thread: var(--border-message-thread);
   --border-color-prominent: var(--border-prominent);
   --border-color-floating-control: var(--border-floating-control);

@@ -562,3 +562,6 @@ export const PhoneIcon = defineIcon("tabler", TablerPhoneIcon);
 
 import TablerFoldIcon from "@tabler/icons-react/dist/esm/icons/IconFold.mjs";
 export const FoldIcon = defineIcon("tabler", TablerFoldIcon);
+
+import TablerCircleDottedIcon from "@tabler/icons-react/dist/esm/icons/IconCircleDotted.mjs";
+export const CircleDottedIcon = defineIcon("tabler", TablerCircleDottedIcon);

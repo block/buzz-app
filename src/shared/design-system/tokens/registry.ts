@@ -731,13 +731,6 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
-        token: "border-floating-separator",
-        variable: "--border-floating-separator",
-        pointsAt: "neutral-5 light / neutral-6 dark",
-        use: "A quiet separator within floating cards.",
-        status: "core",
-      },
-      {
         token: "border-prominent",
         variable: "--border-prominent",
         pointsAt: "neutral-8 light / neutral-8 dark",
@@ -1858,7 +1851,7 @@ export const ELEVATION = [
   {
     token: "shadow-sm",
     variable: "--shadow-sm",
-    use: "A floating surface: menus, dialogs, popovers.",
+    use: "Floating surfaces: shared three-layer contour/contact/ambient lift in light mode; quiet white contour in dark mode.",
   },
 ];
 

@@ -32,7 +32,7 @@ import {
   ArrowCounterClockwiseIcon,
   StopIcon,
   CircleNotchIcon,
-  BrainIcon,
+  CircleDottedIcon,
   GaugeIcon,
 } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -347,13 +347,15 @@ export function AgentChoice({
         ) : (
           <div className={styles.status}>
             <span className={styles.statusIcon}>
-              <BrainIcon size={20} aria-hidden="true" />
+              <CircleDottedIcon size={20} aria-hidden="true" />
             </span>
             <div className={styles.statusCopy}>
               {runs.id && several ? (
                 model()
               ) : (
-                <span>{runs.label || "Model unavailable"}</span>
+                <span>
+                  {runs.id ? "No thinking options" : "Model unavailable"}
+                </span>
               )}
             </div>
           </div>

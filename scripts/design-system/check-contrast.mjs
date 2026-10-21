@@ -456,6 +456,10 @@ const accentFamilies = [
   ),
 ];
 const ACCENT_PAIRS = [
+  ["--text-sidebar-selected", "--surface-sidebar-selected"],
+  ["--text-sidebar-hover", "--affordance-sidebar-hover"],
+  ["--text-message-link", "--surface-message"],
+  ["--text-standard", "--surface-message"],
   ["--text-navigation-selected", "--surface-navigation-selected"],
   ["--text-navigation-selected", "--bg-chrome-selected"],
   ...["", "-hover", "-pressed"].map((state) => [
@@ -549,6 +553,8 @@ const isGray = (hex) => {
 const on = (foregrounds, grounds) =>
   grounds.flatMap((ground) => foregrounds.map((fg) => [fg, ground]));
 const GROUNDED = [
+  ["--text-sidebar-selected", "--surface-sidebar-selected"],
+  ["--text-sidebar-hover", "--affordance-sidebar-hover"],
   ["--text-navigation-selected", "--surface-navigation-selected"],
   ["--text-navigation-selected", "--bg-chrome-selected"],
   ...on(
@@ -627,6 +633,8 @@ const GROUNDED = [
       "--surface-message",
     ],
   ),
+  // Received bubbles keep neutral prose and the theme’s readable link ink.
+  ...on(["--text-standard", "--text-message-link"], ["--surface-message"]),
   ...on(
     ["--text-message-own", "--text-message-link-own"],
     ["--surface-message-own"],

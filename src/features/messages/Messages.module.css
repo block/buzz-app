@@ -2647,7 +2647,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 /* Content hugs short messages while rich content can use the available width. */
 .messageBubble {
   position: relative;
-  --message-link: var(--text-link);
+  --message-link: var(--text-message-link);
   --message-inset: var(--space-2);
   --message-radius: calc(
     var(--text-message) *

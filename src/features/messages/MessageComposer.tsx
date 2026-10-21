@@ -1136,8 +1136,6 @@ function Composer({
       return false;
     if (!input.current.replaceRecipients(unique)) return false;
     completion.invalidate();
-    for (const person of unique)
-      rememberMention(session, channelId, person.pubkey);
     setError(undefined);
     return true;
   }

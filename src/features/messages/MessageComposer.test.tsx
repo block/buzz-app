@@ -3,6 +3,7 @@ import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
 import "@testing-library/jest-dom/vitest";
+import { mentionHistory } from "./mention-history";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../identity-names/testing";
@@ -8471,4 +8472,13 @@ it("rejects replacement while editing a sent message and when the draft would ex
   h.fill("x".repeat(16000));
   act(() => expect(h.commands().replaceRecipients([first])).toBe(false));
   expect(h.input()).toHaveValue("x".repeat(16000));
+});
+
+it("keeps automatic recipient replacements out of recent mention ranking", () => {
+  const h = mount();
+  act(() => h.commands().insertMention(first));
+  const before = [...(mentionHistory(h.session, "channel") ?? [])];
+  expect(before).toEqual([[first.pubkey, 1]]);
+  act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
+  expect([...(mentionHistory(h.session, "channel") ?? [])]).toEqual(before);
 });

@@ -328,6 +328,9 @@ export type AgentHandle = Readonly<{
   /** The owner's thread tabs on this device in the agent's community;
    * undefined while it is not connected. */
   tabs(): ReturnType<typeof channelTabs> | undefined;
+  /** Takes the notes plugins left for its next turn in this channel, oldest
+   * first; see `Agents.note`. */
+  notes?(channelId: string): readonly string[];
   /** The agent's own attention, one object at a time. */
   attention: AgentAttention;
 }>;
@@ -877,6 +880,12 @@ export type Agents = {
     pubkey: string,
     place: Readonly<{ channelId: string; threadRootId: string }>,
   ): Promise<boolean>;
+  /** Leaves private context for the agent's next turn in a channel: text at
+   * the end of that turn's prompt that nobody else sees, such as what the
+   * owner did since its last turn. False unless this copy runs the agent,
+   * so the plugin can say it another way. Notes are not saved: one left
+   * when the app quits is gone. */
+  note(pubkey: string, channelId: string, text: string): boolean;
   /** Unarchives an imported agent whose archive state was not checked, as
    * import does, keeping its key and settings. Resolves with what is left. */
   unarchive(pubkey: string): Promise<string | undefined>;
@@ -1504,6 +1513,9 @@ export class AgentsService extends Service implements Agents {
   handle(pubkey: string) {
     const owner = this.ctx.pluginOwner;
     return owner && this.runners.handle(pubkey, owner.id);
+  }
+  note(pubkey: string, channelId: string, text: string) {
+    return this.runners.note(pubkey, channelId, text);
   }
   relay = (pubkey: string) => {
     const origin = originOf(this.agent(pubkey)?.relay ?? "");

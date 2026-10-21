@@ -1008,6 +1008,23 @@ it.each([
     ).toMatchObject({ model: expected });
   },
 );
+it("ends a turn's input with the notes plugins left for it in its channel", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex go on");
+  const notes = vi.fn((at: string) =>
+    at === "channel" ? ["(I interrupted your reply)"] : [],
+  );
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, notes },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toMatch(
+    /<\/buzz-event>\n\n\(I interrupted your reply\)/,
+  );
+  expect(notes).toHaveBeenCalledOnce();
+});
 it("tells a turn a reload stopped to carry on where it left off", async () => {
   const f = fixture();
   const fresh = f.delivery("@Codex fix the build");

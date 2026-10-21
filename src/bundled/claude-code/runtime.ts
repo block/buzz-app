@@ -463,6 +463,7 @@ export class ClaudeRuntime {
         // the short deadline for handing a message to the harness.
         if (this.agents.get(agent.pubkey) !== entry) return;
         if (!deferred) signal.throwIfAborted();
+        const notes = agent.notes?.(channel) ?? [];
         // `fresh` is for a session that has been shown nothing yet.
         const prompt = async (fresh: boolean) => {
           const text = turnPrompt({
@@ -484,6 +485,7 @@ export class ClaudeRuntime {
             trigger.type === "mention" && trigger.resumed
               ? `${text}\n\n${RESUMED_PROMPT}`
               : text,
+            notes,
           );
         };
         // A turn keeps the posting policy it was admitted with: a request under
@@ -632,10 +634,12 @@ export class ClaudeRuntime {
     return done.finally(() => this.notify());
   }
 
-  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
-  private review(entry: Entry, text: string) {
-    const note = turnNote(entry.handle);
-    return note ? `${text}\n\n${note}` : text;
+  /** `text` with the notes plugins left for the turn and the Buzz tools'
+   * end-of-turn note, when there are any. */
+  private review(entry: Entry, text: string, notes: readonly string[] = []) {
+    return [text, ...notes, turnNote(entry.handle)]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   private watch(

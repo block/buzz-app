@@ -387,6 +387,27 @@ it("tells a turn a reload stopped to carry on where it left off", async () => {
   expect(prompt).toContain(RESUMED_PROMPT);
 });
 
+it("ends a turn's prompt with the notes plugins left for it in its channel", async () => {
+  const mention = message("2", "@Claude go on", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, agent } = setup([mention]);
+  const notes = vi.fn((at: string) =>
+    at === channel ? ["(I interrupted your reply)"] : [],
+  );
+  await deliver({ type: "mention", event: mention }, {
+    agent: { ...agent, notes },
+  } as unknown as Partial<Delivery>);
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toMatch(/\n\n\(I interrupted your reply\)\n\n<attention>/);
+  expect(notes).toHaveBeenCalledOnce();
+});
+
 const EFFORTS = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },

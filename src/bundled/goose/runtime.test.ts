@@ -682,6 +682,21 @@ it("takes a wake with no thread only in a Solo chat", async () => {
   expect(text).not.toContain(WAKE_ID);
 });
 
+it("ends a turn's prompt with the notes plugins left for it in its channel", async () => {
+  const f = setup();
+  const notes = vi.fn((at: string) =>
+    at === channel ? ["(I interrupted your reply)"] : [],
+  );
+  await f.deliver(message("1", "@Gander go on"), {
+    agent: { ...f.agent, notes },
+  } as unknown as Partial<Delivery>);
+  await flush(100);
+  expect(f.goose()?.turns[0]?.text).toMatch(
+    /\n\n\(I interrupted your reply\)$/,
+  );
+  expect(notes).toHaveBeenCalledOnce();
+});
+
 it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
   const solo = setup({ solo: new Set([channel]), canvas: "Use tokens." });
   await solo.deliver(message("1", "@Gander hi"));

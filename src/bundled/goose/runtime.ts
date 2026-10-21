@@ -339,6 +339,7 @@ export class GooseRuntime {
       signal,
     );
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
+    const notes = agent.notes?.(channel) ?? [];
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) => {
       const turn = await this.turn(
@@ -365,6 +366,7 @@ export class GooseRuntime {
             label: "@mention",
             ...(wake ? { wake } : {}),
           }),
+          notes,
         ),
       };
     };
@@ -452,10 +454,12 @@ export class GooseRuntime {
     return done.finally(() => this.notify());
   }
 
-  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
-  private review(entry: Entry, text: string) {
-    const note = turnNote(entry.handle);
-    return note ? `${text}\n\n${note}` : text;
+  /** `text` with the notes plugins left for the turn and the Buzz tools'
+   * end-of-turn note, when there are any. */
+  private review(entry: Entry, text: string, notes: readonly string[] = []) {
+    return [text, ...notes, turnNote(entry.handle)]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   /** Says in the thread that a turn failed, so nobody waits on it. */

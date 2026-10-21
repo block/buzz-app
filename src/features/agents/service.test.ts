@@ -1747,6 +1747,23 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
   expect(plugin.agents.handle(bot)).toBeUndefined();
 });
 
+it("leaves a plugin's note for an agent's next turn in a channel, once, while this copy runs it", async () => {
+  const { service, ctx, run, emit } = await setup();
+  expect(ctx.agents.note(bot, channel, "early")).toBe(false);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() =>
+    expect(ctx.agents.note(bot, channel, "(I interrupted your reply)")).toBe(
+      true,
+    ),
+  );
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const agent = run.mock.calls[0]?.[0].agent;
+  expect(agent?.notes?.("elsewhere")).toEqual([]);
+  expect(agent?.notes?.(channel)).toEqual(["(I interrupted your reply)"]);
+  expect(agent?.notes?.(channel)).toEqual([]);
+});
+
 it("hands out an agent's handle only to its new type's plugin once a change of type ends", async () => {
   const { service, plugin, ctx, native } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

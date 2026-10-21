@@ -1321,6 +1321,94 @@ it("hands a turn to the next host when the host stops before it answers", async 
   expect(host.processes[1]?.requests[0]?.method).toBe("open");
 });
 
+it("ends what the stopped host left before the retried hand-over", async () => {
+  const left = { submission: 41, conversation: 7, request: "chan/one-off" };
+  const { host, deliver, settled } = setup({
+    deliver: (_params, process) => {
+      if (process === host.processes[0]) {
+        queueMicrotask(() => process.exit(1, "Killed\n"));
+        return new Promise(() => {});
+      }
+      return { submission: 1, conversation: CONVERSATION };
+    },
+    // Listed only once the next host opens.
+    unfinished: (_params, process) => ({
+      submissions: process === host.processes[0] ? [] : [left],
+    }),
+    wait: () => ({ status: "done", answer: 5, text: "Done." }),
+  });
+  const turn = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await turn.run;
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  expect(
+    host.processes[1]?.requests.map((request) => request.method).slice(0, 4),
+  ).toEqual(["open", "unfinished", "drop", "deliver"]);
+  expect(host.requests("drop")[0]?.params).toMatchObject({
+    submissions: [{ submission: 41, conversation: 7 }],
+  });
+});
+
+it.each(["mention", "standalone"] as const)(
+  "takes on left runs again after a %s turn gave up on its run",
+  async (kind) => {
+    let waits = 0;
+    const { host, deliver, settled, runOnce } = setup({
+      // The first two hosts stop while it waits, and the turn gives up.
+      wait: (_params, process) => {
+        if (++waits <= 2) {
+          queueMicrotask(() => process.exit(1, "Killed\n"));
+          return new Promise(() => {});
+        }
+        return { status: "done", answer: 5, text: "Done." };
+      },
+    });
+    if (kind === "mention") {
+      const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+      await first.run;
+      await expect(settled(first)).resolves.toMatchObject({ ok: false });
+    } else
+      await expect(runOnce("chan", "check")).resolves.toMatchObject({
+        ok: false,
+      });
+    expect(host.processes).toHaveLength(2);
+    const next = deliver({ type: "mention", event: reply("3", "@Pi again") });
+    await next.run;
+    await expect(settled(next)).resolves.toEqual({ ok: true });
+    const methods =
+      host.processes[2]?.requests.map((item) => item.method) ?? [];
+    expect(methods.indexOf("unfinished")).toBeGreaterThan(-1);
+    expect(methods.indexOf("unfinished")).toBeLessThan(
+      methods.indexOf("deliver"),
+    );
+  },
+);
+
+it("cancels a mention still being handed over when Interrupt is pressed", async () => {
+  const placing = deferred<unknown>();
+  let places = 0;
+  const { host, deliver, settled, published, runtime } = setup({
+    place: () => (++places === 1 ? placing.promise : { seen: 0 }),
+    wait: () => ({ status: "done", answer: 5, text: "Done." }),
+  });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  const thread = { channelId: channel, root: root.id };
+  const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
+  await vi.waitFor(() => expect(host.requests("place")).toHaveLength(1));
+  expect(runtime.sessionState(agent, thread)).toBe("active");
+  const interrupting = runtime.session(agent, thread, "interrupt");
+  placing.resolve({ seen: 0 });
+  await first.run;
+  await interrupting;
+  await expect(settled(first)).resolves.toEqual({ ok: true });
+  expect(host.requests("deliver")).toEqual([]);
+  expect(published).toEqual([]);
+  // A later mention is handed over as usual.
+  const later = deliver({ type: "mention", event: reply("3", "@Pi again") });
+  await later.run;
+  await expect(settled(later)).resolves.toEqual({ ok: true });
+  expect(host.requests("deliver")).toHaveLength(1);
+});
+
 it("hands over no queued mention of an agent removed while it waited", async () => {
   const first = deferred<object>();
   let delivers = 0;

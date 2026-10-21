@@ -133,10 +133,16 @@ type Entry = {
   /** The agent's handle from its latest delivery, for the tools to act with. */
   handle?: AgentHandle;
   /** Each conversation's latest posting policy, as in Claude: when its turns
-   * were handed over, and when all of them settled. */
+   * were handed over, and when all of them settled. Interrupt cancels the
+   * handovers still pending. */
   policies: Map<
     string,
-    { topLevel: boolean; handed: Promise<unknown>; settled: Promise<unknown> }
+    {
+      topLevel: boolean;
+      handed: Promise<unknown>;
+      settled: Promise<unknown>;
+      cancel(): void;
+    }
   >;
   /** Mentions handed to Pi and not settled, by request. */
   receipts: Map<string, Receipt>;
@@ -151,6 +157,9 @@ type Entry = {
   /** The latest taking-on of the runs Pi's storage holds that nothing here
    * waits for; absent until the agent opens here, or after one failed. */
   adopted?: Promise<void>;
+  /** A turn stopped waiting for a run still unfinished in Pi's storage, so
+   * the next one takes on its left runs again. */
+  abandoned?: boolean;
   /** The agent was removed: its turns wait in its storage. */
   closed: boolean;
 };
@@ -370,6 +379,7 @@ export class PiRuntime {
     };
     if (action === "interrupt") {
       this.controls.interrupt(control);
+      this.agents.get(agent.pubkey)?.policies.get(key)?.cancel();
       return act();
     }
     if (this.sessionState(agent, place) !== "idle")
@@ -442,8 +452,10 @@ export class PiRuntime {
     let sends = 0;
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.pubkey}/${key}`;
+    let interrupted = false;
     const handoff = this.controls.deliver(control, async () => {
       await wait;
+      if (interrupted) return;
       this.live(entry, agent.pubkey);
       await this.open(agent.pubkey);
       await this.adopted(entry, agent.pubkey, { current: request });
@@ -484,6 +496,7 @@ export class PiRuntime {
       });
       const picked = await this.turnOf(entry, agent.pubkey, model, effort);
       this.live(entry, agent.pubkey);
+      if (interrupted) return;
       submitted = await this.deliver(entry, agent.pubkey, {
         agent: agent.pubkey,
         key,
@@ -508,6 +521,8 @@ export class PiRuntime {
     const handed = handoff.done;
     const settled = handed
       .then(async (): Promise<TurnResult> => {
+        // Interrupted before Pi had it, it says nothing.
+        if (!submitted) return { ok: true };
         const waited = await this.settle(
           entry,
           agent.pubkey,
@@ -541,6 +556,10 @@ export class PiRuntime {
       });
     const policy = {
       topLevel,
+      cancel() {
+        interrupted = true;
+        prior?.cancel();
+      },
       handed: handed.catch(() => undefined),
       settled: Promise.all([same ? prior?.settled : undefined, settled]).then(
         () => undefined,
@@ -558,6 +577,7 @@ export class PiRuntime {
     // Stop on its activity stops the run the request is in.
     interruptible?.(async () => {
       await handed;
+      if (!submitted) return;
       await this.pi.request("abort", {
         agent: agent.pubkey,
         conversation: submitted.conversation,
@@ -615,6 +635,8 @@ export class PiRuntime {
         ? { ok: false, error: unanswered(waited) }
         : { ok: true };
     } catch (error) {
+      // Pi may hold its run, which nothing waits for now.
+      if (request) entry.abandoned = true;
       return { ok: false, error: errorText(error) };
     } finally {
       if (stop) signal.removeEventListener("abort", stop);
@@ -745,8 +767,14 @@ export class PiRuntime {
       return await this.pi.request("deliver", params);
     } catch (error) {
       if (!(error instanceof PiStopped) || entry.closed) throw error;
-      await this.reopen(entry, pubkey);
-      return this.pi.request("deliver", params);
+      try {
+        await this.reopen(entry, pubkey);
+        return await this.pi.request("deliver", params);
+      } catch (again) {
+        // The stopped host may have taken it, and nothing waits for it now.
+        entry.abandoned = true;
+        throw again;
+      }
     }
   }
 
@@ -759,7 +787,8 @@ export class PiRuntime {
     pubkey: string,
     { current, again }: { current?: string; again?: boolean } = {},
   ) {
-    if (entry.adopted && !again) return entry.adopted;
+    if (entry.adopted && !again && !entry.abandoned) return entry.adopted;
+    entry.abandoned = false;
     const prior = entry.adopted?.catch(() => undefined);
     const adopted = prior
       ? prior.then(() => this.adopt(entry, pubkey, current))
@@ -912,6 +941,11 @@ export class PiRuntime {
     pubkey: string,
     submission: number,
   ): Promise<Waited> {
+    // Given up, the run is still unfinished, and nothing waits for it now.
+    const abandon = (error: unknown) => {
+      entry.abandoned = true;
+      return error;
+    };
     for (let attempt = 0; ; attempt++) {
       let waited: Waited | { status: "reopen" };
       try {
@@ -919,12 +953,12 @@ export class PiRuntime {
         waited = await this.pi.request("wait", { agent: pubkey, submission });
       } catch (error) {
         if (attempt || !(error instanceof PiStopped) || entry.closed)
-          throw error;
+          throw abandon(error);
         continue;
       }
       if (waited.status !== "reopen") return waited;
       if (attempt || entry.closed)
-        throw new Error("Pi's storage for this agent keeps failing");
+        throw abandon(new Error("Pi's storage for this agent keeps failing"));
     }
   }
 

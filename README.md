@@ -349,3 +349,5 @@ controls are included. Keep Buzz running for existing agents to answer selected
 - [Governance](GOVERNANCE.md)
 - [Apache-2.0 license](LICENSE)
 - [Source attribution](NOTICE.md)
+
+<!-- Test edit: verifying the remote-agent draft PR workflow. Safe to close. -->

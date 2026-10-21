@@ -245,7 +245,9 @@ export function createMessages(
       const attachmentSource = find(row.attachmentSourceId ?? row.id);
       if (
         !attachmentSource ||
-        !ownedMessage(attachmentSource) ||
+        (!ownedMessage(attachmentSource) &&
+          attachmentSource.pubkey !==
+            profiles?.owner?.(messageAuthor(original, signingAuthority))) ||
         (attachmentSource.id !== original.id &&
           (attachmentSource.kind !== 40003 ||
             !attachmentSource.tags.some(

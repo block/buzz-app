@@ -4,7 +4,7 @@ import type { ProfileQueries } from "./profile-directory";
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { expect, it, vi } from "vitest";
+import { assert, expect, it, vi } from "vitest";
 import { eventDto, type RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import { createRelaySession } from "./session";
@@ -246,6 +246,58 @@ it("lets the original author preserve attachments from a verified owner edit", (
     content: "Revised",
     tags: [["h", "c"], ["e", original.id], media],
   });
+});
+
+it("lets the original agent forward a reply with verified owner-edited media", () => {
+  const author = keypair(),
+    owner = keypair();
+  const media = ["imeta", "url https://example.test/image.png", "m image/png"];
+  const original = signed(author, {
+    kind: 9,
+    created_at: 10,
+    content: "Original",
+    tags: [["h", "c"], ["e", "f".repeat(64), "", "reply"], media],
+  });
+  const source = signed(owner, {
+    kind: 40003,
+    created_at: 11,
+    content: "Spoken",
+    tags: [["h", "c"], ["e", original.id], media],
+  });
+  const send = vi.fn(() => "forwarded");
+  let verified = true;
+  const messages = createMessages(
+    { supports: () => true, send } as unknown as Outbox,
+    author.pubkey,
+    (id) => [original, source].find((event) => event.id === id),
+    () => [],
+    () => {},
+    () => true,
+    undefined,
+    undefined,
+    undefined,
+    {
+      owner: () => (verified ? owner.pubkey : undefined),
+    } as unknown as ProfileQueries,
+  );
+  const row = foldMessages("c", "", [original, source], {
+    includeReplies: true,
+    agentOwner: () => owner.pubkey,
+  })[0];
+  assert(row);
+  expect(row.attachmentSourceId).toBe(source.id);
+  expect(messages.sendToChannel(row)).toBe("forwarded");
+  expect(send).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: 9,
+      content: "Spoken",
+      tags: expect.arrayContaining([media]),
+    }),
+  );
+  verified = false;
+  expect(() => messages.sendToChannel(row)).toThrow(
+    "Reload the message attachments",
+  );
 });
 
 it.each(["head", "tail"])(

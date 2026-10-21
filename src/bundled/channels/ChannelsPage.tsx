@@ -134,7 +134,7 @@ export function ChannelsPage({
             <h1>Your channels, one conversation.</h1>
             <p>
               {session.status === "disconnected"
-                ? "Use the community picker in the header to choose or add a community. Your profile and settings work without a community."
+                ? "Use Join a community or the community picker in the header. Your profile and settings work without a community."
                 : "Connection details and retry are in the sidebar. Your profile and settings work without a community."}
             </p>
           </div>

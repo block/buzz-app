@@ -60,11 +60,13 @@ export function CommunityPicker({
 }) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const joinRef = useRef<HTMLButtonElement>(null);
   const [joining, setJoining] = useState(false);
   const navigated = useRef(false);
   const wasJoining = useRef(false);
   useEffect(() => {
-    if (wasJoining.current && !joining) triggerRef.current?.focus();
+    if (wasJoining.current && !joining)
+      (joinRef.current ?? triggerRef.current)?.focus();
     wasJoining.current = joining;
   }, [joining]);
   // The confirm dialog belongs to the picker so it outlives the item it removes.
@@ -183,6 +185,18 @@ export function CommunityPicker({
   return (
     <>
       <nav aria-label="Communities" className={styles.picker}>
+        {/* The globe alone doesn't say where communities live; with none
+            joined, offer joining as a labeled action beside it. */}
+        {client.memberships.length === 0 && (
+          <Button
+            ref={joinRef}
+            size="sm"
+            variant="subtle"
+            onClick={() => setJoining(true)}
+          >
+            Join a community
+          </Button>
+        )}
         <PopoverRoot
           open={switcherOpen}
           onOpenChange={(open) => {

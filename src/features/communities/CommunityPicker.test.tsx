@@ -1083,6 +1083,28 @@ it("opens a deep-link invite on Personal space without claiming until the user c
   expect(t.select).not.toHaveBeenCalled();
 });
 
+it("offers a labeled Join a community beside the switcher only while none is joined", async () => {
+  const h = harness();
+  h.update({ selected: null, memberships: [] });
+  rtlRender(<CommunityPicker communities={h.communities} />, {
+    wrapper: ToastProvider,
+  });
+  const user = userEvent.setup();
+  const join = within(
+    screen.getByRole("navigation", { name: "Communities" }),
+  ).getByRole("button", { name: "Join a community" });
+  await user.click(join);
+  expect(
+    screen.getByRole("heading", { name: "Add a community" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(join).toHaveFocus());
+
+  h.update({ memberships: [{ id: primary, name: "Primary" }] });
+  expect(screen.queryByRole("button", { name: "Join a community" })).toBeNull();
+  expect(switcher()).toBeVisible();
+});
+
 it("shows only the active community until opened and routes creation through Hosted communities", async () => {
   const h = harness();
   const onOpenTarget = vi.fn();

@@ -2614,6 +2614,11 @@ it("refreshes unavailable session buttons when runner ownership changes without 
       await act(async () => pending.resolve());
     }
     expect(announcement).toHaveTextContent("New session started");
+    act(() => fresh.focus());
+    await act(async () => fireEvent.keyDown(fresh, { key: "Escape" }));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(fresh).toHaveFocus();
+    expect(announcement).toHaveTextContent("New session started");
     act(() => vi.advanceTimersByTime(2999));
     expect(
       within(screen.getByRole("group", { name: "Honey's session" })).getByRole(
@@ -2621,6 +2626,31 @@ it("refreshes unavailable session buttons when runner ownership changes without 
       ),
     ).toHaveTextContent("New session started");
     act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByText("New session started")).not.toBeInTheDocument();
+    expect(fresh).not.toHaveAttribute("aria-disabled", "true");
+
+    // A failed retry inside the success interval must replace the prior
+    // success feedback rather than show success alongside the error.
+    await act(async () => fireEvent.click(fresh));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "New session started",
+    );
+    const retry = deferred<void>();
+    agents.session.mockImplementationOnce(() => retry.promise);
+    try {
+      await act(async () => fireEvent.click(fresh));
+      expect(agents.session).toHaveBeenCalledTimes(4);
+      expect(announcement).toBeEmptyDOMElement();
+    } finally {
+      await act(async () => retry.reject(new Error("Disk is full")));
+    }
+    expect(screen.getByText("Disk is full")).toBeInTheDocument();
+    expect(announcement).toBeEmptyDOMElement();
+    await act(async () => fireEvent.mouseLeave(fresh));
+    await act(async () => fireEvent.mouseEnter(fresh));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "Start a new session",
+    );
     expect(screen.queryByText("New session started")).not.toBeInTheDocument();
     expect(fresh).not.toHaveAttribute("aria-disabled", "true");
   } finally {

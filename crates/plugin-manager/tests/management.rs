@@ -997,6 +997,7 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
         "buzz.inbox",
         "buzz.repos",
         "buzz.voice-notes",
+        "buzz.file-preview",
         "buzz.links",
     ] {
         assert!(

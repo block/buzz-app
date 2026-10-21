@@ -98,6 +98,7 @@ export const test = base.extend({
   // Rows sharing each history second; above the page size, pages split seconds.
   historyRowsPerSecond: [1, { option: true }],
   channelIds: [channels, { option: true }],
+  mediaFiles: [{}, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   builderlabLogin: [false, { option: true, scope: "worker" }],
   // An FI build with no native host: the Builderlab plugin applies, signed out.
@@ -169,6 +170,7 @@ export const test = base.extend({
       historyCounts,
       historyRowsPerSecond,
       channelIds,
+      mediaFiles,
       pluginFixtures,
       developmentReact,
       compiledApp,
@@ -2181,6 +2183,25 @@ export const test = base.extend({
         if (route === "register") return send(response, {});
         if (!["primary", "secondary"].includes(community))
           throw new Error(`Unexpected community: ${request.url}`);
+        if (request.method === "GET") {
+          const url = new URL(request.url, "http://fixture.local");
+          const file = url.searchParams.get("url");
+          if (
+            url.pathname.endsWith("/media") &&
+            file &&
+            Object.hasOwn(mediaFiles, file)
+          ) {
+            const content = mediaFiles[file];
+            response.writeHead(200, {
+              "Content-Type": "application/octet-stream",
+              "Content-Length": Buffer.byteLength(content),
+              "Content-Disposition": "attachment",
+              "X-Content-Type-Options": "nosniff",
+            });
+            response.end(content);
+            return;
+          }
+        }
         if (route === "gif-info" && request.method === "GET")
           return send(response, {});
         if (

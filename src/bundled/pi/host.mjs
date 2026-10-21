@@ -642,9 +642,13 @@ export function serve({
       if (!found) return { entries: [] };
       const page = await found.entries({}, PAGE, cursor, context);
       return {
-        entries: page.items.map(({ id, kind, model }) => ({
+        entries: page.items.map(({ id, kind, model, data }) => ({
           id,
           kind,
+          // Pi writes this result itself for a call an abort cut off.
+          ...(data?.diagnostics?.some?.((d) => d.code === "aborted") && {
+            aborted: true,
+          }),
           // System entries hold every tool's schema; a transcript shows none.
           ...(model && kind !== "pi.system" ? { model: model.map(slim) } : {}),
         })),

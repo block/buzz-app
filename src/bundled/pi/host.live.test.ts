@@ -136,6 +136,12 @@ const s1 = await pi.rpc("deliver", turn("S", "session"));
 await running.gate;
 await pi.rpc("session", { agent, key: "chan/root", action: "interrupt" });
 out.interrupted = await pi.rpc("wait", { agent, submission: s1.submission });
+// Interrupted in a tool call, the run leaves Pi's aborted result for it.
+faux.setResponses([() => fauxAssistantMessage(fauxToolCall("bash", { command: "sleep 30" }), { stopReason: "toolUse" })]);
+const t1 = await pi.rpc("deliver", turn("T", "tool"));
+await new Promise((resolve) => { const check = () => pi.events.some((event) => event.type === "step" && event.tool === "bash") ? resolve() : setTimeout(check, 5); check(); });
+await pi.rpc("session", { agent, key: "chan/root", action: "interrupt" });
+out.toolStop = { wait: await pi.rpc("wait", { agent, submission: t1.submission }), last: (await pi.rpc("entries", { agent, conversation: t1.conversation })).entries[0] };
 // Past what Pi keeps verbatim, so compacting summarizes the older turn.
 faux.setResponses([() => fauxAssistantMessage("Read it"), () => fauxAssistantMessage("Read it too"), () => fauxAssistantMessage("Summary of the chat")]);
 for (const request of ["S2", "S3"]) {
@@ -372,6 +378,14 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.interrupted).toMatchObject({
       status: "unanswered",
       reason: "aborted",
+    });
+    expect(out.toolStop.wait).toMatchObject({
+      status: "unanswered",
+      reason: "aborted",
+    });
+    expect(out.toolStop.last).toMatchObject({
+      kind: "pi.tool-result",
+      aborted: true,
     });
     // A new session is shown the whole conversation at its next turn.
     expect(out.renewed).toEqual({

@@ -48,6 +48,8 @@ type Message = Readonly<{
 export type PiEntry = Readonly<{
   id: number;
   kind: string;
+  /** A tool result Pi wrote for a call an abort cut off. */
+  aborted?: boolean;
   model?: readonly Message[];
 }>;
 /** The Pi conversation of a Buzz thread or channel. */
@@ -155,10 +157,17 @@ export function piTurns(
             type: "status",
             text: `The message above was not posted: ${text(message.content)}`,
           });
+        // A Stop in the tools phase leaves no aborted answer, only these
+        // results; an answer after them means the run went on.
+        if (entry.aborted) current.stopReason = "stopped";
         const tool = tools.get(message.toolCallId ?? "");
         if (!tool) return;
         tool.output = text(message.content);
-        tool.status = message.isError ? "failed" : "completed";
+        tool.status = entry.aborted
+          ? "terminated"
+          : message.isError
+            ? "failed"
+            : "completed";
         tool.completedAt = at;
         return;
       }

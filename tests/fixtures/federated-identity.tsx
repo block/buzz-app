@@ -1,7 +1,9 @@
 // Public UI state only: no IPC, account credentials, browser handoff or relay.
 import { createRoot } from "react-dom/client";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { Login } from "../../src/features/federated-identity/Login";
 import { CommunitySignIn } from "../../src/features/federated-identity/CommunitySignIn";
+import { createFederatedSession } from "../../src/features/federated-identity/session";
 import type {
   FederatedIdentity,
   SessionSnapshot,
@@ -26,6 +28,7 @@ const publish = (patch: Partial<SessionSnapshot>) => {
   for (const listener of listeners) listener();
 };
 const identity: FederatedIdentity = {
+  apiAvailable: false,
   snapshot: () => state,
   subscribe(listener) {
     listeners.add(listener);
@@ -52,7 +55,11 @@ const identity: FederatedIdentity = {
       failure: null,
     });
   },
+  async request() {
+    throw new Error("Fixture has no API");
+  },
 };
+const session = createFederatedSession(identity);
 function Fixture() {
   const snapshot = useSyncExternalStore(identity.subscribe, identity.snapshot);
   const [theme, setTheme] = useState("light");
@@ -97,13 +104,14 @@ function Fixture() {
       </aside>
       <main className={`${styles.detail} buzz-settings-page`}>
         <div>
+          <Login session={session} available active={() => true} />
+          <p className="text-body-sm text-secondary">
+            Remote agent management is unavailable until the identity API
+            contract is enabled.
+          </p>
           <CommunitySignIn
             identity={identity}
-            error={
-              snapshot.failure === "binding-mismatch"
-                ? snapshot.failure
-                : "Federated sign-in is required"
-            }
+            error={snapshot.failure ?? "Federated sign-in is required"}
             retry={() => {}}
           />
         </div>

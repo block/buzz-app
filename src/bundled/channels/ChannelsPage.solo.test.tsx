@@ -50,9 +50,15 @@ function fixture({
   target,
   behindSettings = false,
   people = [],
+  unloaded = false,
+  departed = false,
 }: {
   /** Other people in the chat besides the viewer and its agent. */
   people?: readonly string[];
+  /** The people's profiles never load, so nothing confirms they are people. */
+  unloaded?: boolean;
+  /** The people have left by the time a send refreshes the roster. */
+  departed?: boolean;
   /** Whether the viewer created the chat, rather than joining it as a guest. */
   placed?: boolean;
   type?: "solo" | "stream";
@@ -139,8 +145,18 @@ function fixture({
       muted: [],
     },
   };
+  // A stable snapshot, as useSyncExternalStore requires.
+  const profiles = new Map(
+    unloaded ? [] : people.map((key) => [key, { name: "Teammate" }] as const),
+  );
   const session = {
     ...owner.session,
+    profiles: {
+      ...owner.session.profiles,
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: () => new Promise<never>(() => {}),
+    },
     agentChoices: {
       ...owner.session.agentChoices,
       retain: () => () => {},
@@ -219,7 +235,9 @@ function fixture({
       delivered: vi.fn(async () => {}),
       refresh: vi.fn(async () => {}),
       addAgents: vi.fn(async () => {}),
-      refreshMembership: vi.fn(async () => channel),
+      refreshMembership: vi.fn(async () =>
+        departed ? { ...channel, members: [viewer.pubkey, agent] } : channel,
+      ),
     },
   };
   const snapshot = {
@@ -553,6 +571,36 @@ it.each([
     expect(screen.queryByText("Tag a person or agent to send")).toBeNull();
   },
 );
+
+it("keeps the tag requirement while a member's profile has not loaded", async () => {
+  const f = fixture({ people: ["c".repeat(64)], unloaded: true });
+  f.mount();
+  const input = await screen.findByRole("textbox", {
+    name: "Message your agents",
+  });
+  const user = userEvent.setup();
+  await user.click(input);
+  await user.keyboard("Hello team{Enter}");
+  expect(
+    await screen.findByText("Tag a person or agent to send", {
+      selector: "[role=alert]",
+    }),
+  ).toBeVisible();
+  expect(f.send).not.toHaveBeenCalled();
+});
+
+it("refuses an untagged send once the fresh roster has no other person", async () => {
+  const f = fixture({ people: ["c".repeat(64)], departed: true });
+  f.mount();
+  const input = await screen.findByRole("textbox", {
+    name: "Message this conversation",
+  });
+  const user = userEvent.setup();
+  await user.click(input);
+  await user.keyboard("Hello team{Enter}");
+  expect(await screen.findByText("Tag an agent to send.")).toBeVisible();
+  expect(f.send).not.toHaveBeenCalled();
+});
 
 it.each([
   ["archive", "Archive", "Archive chat: Planning"],

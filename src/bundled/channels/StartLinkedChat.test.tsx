@@ -28,50 +28,75 @@ const viewer = "a".repeat(64),
   root = "b".repeat(64),
   reply = "c".repeat(64);
 const scope = `https://relay.test:${viewer}`;
-it("opens an isolated Solo draft with the exact source link", async () => {
-  const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
-  const session = {
-    ...owner.session,
-    viewer,
-    scope,
-    channels: {
-      ...owner.session.channels,
-      list: () => ({
-        status: "ready" as const,
-        channels: [
-          {
-            id: "design",
-            name: "Design",
-            channelType: "stream" as const,
-            members: [viewer],
-          },
-        ],
-      }),
-    },
-    channelWrites: { ...owner.session.channelWrites, available: true },
+/** Each open, like the controller's, supersedes the current attempt. */
+function fakeNavigation() {
+  let attempt = 0;
+  const open = vi.fn<Navigation["open"]>(async () => {
+    attempt++;
+    return { status: "opened" };
+  });
+  const navigation = {
+    ...({} as Navigation),
+    open,
+    snapshot: () =>
+      ({ attempt: { id: `attempt-${attempt}` } }) as ReturnType<
+        Navigation["snapshot"]
+      >,
   };
+  return {
+    open,
+    navigation,
+    /** Another destination wins without going through this action. */
+    elsewhere: () => {
+      attempt++;
+    },
+  };
+}
+const session = {
+  ...owner.session,
+  viewer,
+  scope,
+  channels: {
+    ...owner.session.channels,
+    list: () => ({
+      status: "ready" as const,
+      channels: [
+        {
+          id: "design",
+          name: "Design",
+          channelType: "stream" as const,
+          members: [viewer],
+        },
+      ],
+    }),
+  },
+  channelWrites: { ...owner.session.channelWrites, available: true },
+};
+const message = {
+  id: reply,
+  channelId: "design",
+  threadRootId: root,
+  delivery: "seen" as const,
+  authorId: viewer,
+  content: "Please look at this",
+  createdAt: 1,
+  mentions: [],
+  participants: [],
+  attachments: [],
+  reactions: [],
+  replyCount: 0,
+};
+it("opens an isolated Solo draft with the exact source link", async () => {
+  const { open, navigation } = fakeNavigation();
   const view = render(
     <MenuRoot>
       <MenuTrigger>Message actions</MenuTrigger>
       <MenuPopup>
         <StartLinkedChat
           session={session}
-          navigation={{ ...({} as Navigation), open }}
+          navigation={navigation}
           channelId="design"
-          message={{
-            id: reply,
-            channelId: "design",
-            threadRootId: root,
-            delivery: "seen",
-            authorId: viewer,
-            content: "Please look at this",
-            createdAt: 1,
-            mentions: [],
-            participants: [],
-            attachments: [],
-            reactions: [],
-            replyCount: 0,
-          }}
+          message={message}
         />
       </MenuPopup>
     </MenuRoot>,
@@ -109,4 +134,47 @@ it("opens an isolated Solo draft with the exact source link", async () => {
     "Half typed",
   );
   view.unmount();
+});
+
+it("drops a start whose visit was superseded while its draft id was computed", async () => {
+  const { open, navigation, elsewhere } = fakeNavigation();
+  const digest = crypto.subtle.digest.bind(crypto.subtle);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const spy = vi
+    .spyOn(crypto.subtle, "digest")
+    .mockImplementation(async (algorithm, data) => {
+      await held;
+      return digest(algorithm, data);
+    });
+  try {
+    render(
+      <MenuRoot>
+        <MenuTrigger>Message actions</MenuTrigger>
+        <MenuPopup>
+          <StartLinkedChat
+            session={session}
+            navigation={navigation}
+            channelId="design"
+            message={message}
+          />
+        </MenuPopup>
+      </MenuRoot>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Message actions" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Start Solo chat" }),
+    );
+    await waitFor(() => expect(spy).toHaveBeenCalledOnce());
+    elsewhere();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(open).not.toHaveBeenCalled();
+    expect(localStorage.length).toBe(0);
+  } finally {
+    spy.mockRestore();
+  }
 });

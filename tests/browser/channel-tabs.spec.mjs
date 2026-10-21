@@ -1,3 +1,4 @@
+import { getPublicKey } from "nostr-tools";
 import { hoverMessage } from "./message-actions.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -10,8 +11,10 @@ import {
 } from "./navigation.mjs";
 
 // Another person in shared Beta, so it is a conversation, not a chat with agents.
-const teammate =
-  "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+// A fixed key keeps the roster static; its profile confirms it is a person.
+const teammateKey = new Uint8Array(32);
+teammateKey[31] = 1;
+const teammate = getPublicKey(teammateKey);
 
 test.use({
   productionBroker: true,
@@ -20,6 +23,9 @@ test.use({
   soloChannels: ["beta"],
   sessionMembers: { beta: [teammate] },
   historyCounts: { alpha: 2, beta: 1 },
+});
+test.beforeEach(({ app }) => {
+  app.serveProfile(teammateKey, { name: "Teammate" });
 });
 
 // Real content links, two independent editors, browser focus and signed routing

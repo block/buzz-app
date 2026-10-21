@@ -47,6 +47,10 @@ export function StartLinkedChat({
   async function start() {
     if (busy || !canStartLinkedChat(session, channelId)) return;
     setBusy(true);
+    // The digest is async. If another navigation wins meanwhile, this visit is
+    // over: don't save its draft, open it, or report its errors.
+    let owned = navigation.snapshot().attempt.id;
+    const current = () => navigation.snapshot().attempt.id === owned;
     try {
       const link = message
         ? messageCopyLink(message, session.scope)
@@ -55,17 +59,24 @@ export function StartLinkedChat({
         throw new Error("This source is unavailable. Reopen it and try again.");
       const source: LinkedChat = { channelId, link };
       const id = await linkedDraftId(source);
+      if (!current()) {
+        setBusy(false);
+        return;
+      }
       if (!writeView(session.scope, linkedDraftKey(id), source))
         throw new Error(
           "Your new chat draft couldn’t be saved. Nothing was created.",
         );
-      const result = await navigation.open(
+      const opening = navigation.open(
         soloDraftTarget(session.scope, { linked: id }),
       );
+      owned = navigation.snapshot().attempt.id;
+      const result = await opening;
       if (result.status === "failed")
         throw new Error("The Solo chat couldn’t open. Try again.");
     } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), "error");
+      if (current())
+        notify(error instanceof Error ? error.message : String(error), "error");
       setBusy(false);
     }
   }

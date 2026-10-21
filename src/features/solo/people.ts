@@ -4,13 +4,22 @@ import type { ComposerSession } from "../messages/composer-session";
 import type { Profile } from "../relay/contracts";
 
 /** Whether a Solo chat has another person in it. Alone, the viewer addresses
- * agents and must tag one; once shared, people can talk without a tag. */
+ * agents and must tag one; once shared, people can talk without a tag. Only a
+ * loaded, non-agent profile counts: a member still loading (or failing to)
+ * keeps the tag requirement. */
 export function soloHasPeople(
   members: readonly string[] | undefined,
   viewer: string | undefined,
+  profiles: ReadonlyMap<string, Profile>,
   agents: ReadonlySet<string>,
 ): boolean {
-  return !!members?.some((key) => key !== viewer && !agents.has(key));
+  return !!members?.some(
+    (key) =>
+      key !== viewer &&
+      !agents.has(key) &&
+      !!profiles.get(key) &&
+      !profiles.get(key)?.isAgent,
+  );
 }
 
 /** Live soloHasPeople for one chat, from the channel list, profiles and agent
@@ -48,7 +57,12 @@ export function useSoloHasPeople(
   }, [enabled, memberKeys, session]);
   return (
     enabled &&
-    soloHasPeople(members, session.viewer, knownAgentPubkeys(profiles, library))
+    soloHasPeople(
+      members,
+      session.viewer,
+      profiles,
+      knownAgentPubkeys(profiles, library),
+    )
   );
 }
 

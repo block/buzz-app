@@ -33,6 +33,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useNonmemberMentions } from "./useNonmemberMentions";
 import { useKnownAgentPubkeys } from "../agents/use-known";
+import { knownAgentPubkeys } from "../agents/known";
 import { rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
@@ -444,6 +445,13 @@ function Composer({
     return pending;
   });
   const revision = useRef(viewRevision(scope, draftKey));
+  // Whether this mount seeded the shortcut's initial text, rather than
+  // restoring a saved draft that may already have had its tag removed.
+  const [seededKey] = useState(() =>
+    !accepted?.next && !submission?.recoveredDraft && revision.current === null
+      ? draftKey
+      : undefined,
+  );
   const dirty = useRef(false);
   const writing = useRef(false);
   const [conflict, setConflict] = useState(false);
@@ -1209,8 +1217,10 @@ function Composer({
     )
       return;
     // A shortcut may seed an ordinary editable link. Still add the default
-    // agent once while that initial text is untouched; never restore a removed tag.
+    // agent once while that freshly seeded text is untouched; a restored draft
+    // keeps its recipients as saved, so a removed tag never returns.
     const untouchedInitial =
+      seededKey === draftKey &&
       typeof submission?.initialDraft === "string" &&
       draft === submission.initialDraft;
     if (value.recipients.length || (draft.trim() && !untouchedInitial)) {
@@ -1250,6 +1260,7 @@ function Composer({
       soloHasPeople(
         list.channels.find((item) => item.id === channelId)?.members,
         session.viewer,
+        profileSnapshot,
         knownAgents,
       )
     );
@@ -1263,6 +1274,23 @@ function Composer({
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
     const recipients = [...explicit];
+    if (!recipients.length) {
+      // An untagged send relies on a person being present; confirm it against
+      // the fresh roster and agent inventory, not the rendered snapshot.
+      await session.agentChoices.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      const profiles = session.profiles.snapshot();
+      if (
+        !soloHasPeople(
+          channel.members,
+          session.viewer,
+          profiles,
+          knownAgentPubkeys(profiles, session.agentChoices.snapshot()),
+        )
+      )
+        throw new Error("Tag an agent to send.");
+    }
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
       // Classification no longer depends on inventory; refresh before admission.

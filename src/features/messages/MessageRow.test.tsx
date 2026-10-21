@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from "react";
 import { npubEncode } from "nostr-tools/nip19";
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
@@ -3451,3 +3452,60 @@ it.each(["unmatched", "collapsed"] as const)(
     }
   },
 );
+
+it("keeps a failed card's attachments listed under StrictMode", () => {
+  const entry = {
+    id: "card",
+    title: "Card",
+    key: "fixture.card:card",
+    pluginId: "fixture.card",
+    revision: "one",
+    matches: (message: { content: string }) => message.content.includes("card"),
+    ownsAttachment: (_message: unknown, attachment: { url: string }) =>
+      attachment.url.endsWith("shot.png"),
+    component: () => {
+      throw new Error("broken renderer");
+    },
+  };
+  const none: never[] = [];
+  const entries = [entry];
+  const extensions = {
+    tools: { snapshot: () => none, subscribe: () => () => {} },
+    inline: { snapshot: () => none, subscribe: () => () => {} },
+    messages: { snapshot: () => entries, subscribe: () => () => {} },
+  };
+  const message = {
+    ...row,
+    content: "A card",
+    replyCount: 0,
+    attachments: [
+      {
+        kind: "file" as const,
+        url: "https://media.test/shot.png",
+        name: "shot.png",
+      },
+    ],
+  };
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  // StrictMode replays mount effects: unmount, then mount the same failed boundary.
+  const view = renderDom(
+    <StrictMode>
+      <MessageRow
+        row={message}
+        profile={{ name: "author" }}
+        media={(url) => url}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        extensions={extensions}
+      />
+    </StrictMode>,
+  );
+  try {
+    expect(screen.queryByText("Plugin card")).toBeNull();
+    expect(screen.queryAllByText("shot.png")).toHaveLength(1);
+  } finally {
+    view.unmount();
+    error.mockRestore();
+  }
+});

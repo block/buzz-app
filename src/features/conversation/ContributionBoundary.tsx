@@ -27,6 +27,11 @@ export class ContributionBoundary extends Component<
   componentDidCatch() {
     this.props.onFailedChange?.(true);
   }
+  // StrictMode replays unmount and mount on the same failed instance without
+  // replaying componentDidCatch, so a mount reports a retained failure again.
+  componentDidMount() {
+    if (this.state.failed) this.props.onFailedChange?.(true);
+  }
   // A remount starts healthy, so anything keyed to this failure must reset too.
   componentWillUnmount() {
     if (this.state.failed) this.props.onFailedChange?.(false);

@@ -140,7 +140,11 @@ import {
 import type { Expected, SnapshotRead } from "./agent-config-artifacts";
 import type { revertTemplate, SettingsCheck } from "./agent-config-history";
 import type { RevertOutcome } from "./AgentConfigHistory";
-import { type Lifecycle, LifecycleJournal } from "./config-lifecycle";
+import {
+  type Lifecycle,
+  LifecycleJournal,
+  UnsavedLifecycle,
+} from "./config-lifecycle";
 import { MigrationJournal, type Saved } from "./config-writes";
 import {
   TeamJournal,
@@ -208,6 +212,21 @@ export type Agent<Config = unknown> = Readonly<{
 }>;
 /** Whether two views of an agent show the same thing. A synced resolution
  * builds a new config and record each time, so those compare by content. */
+/** A Delete or Recover this device couldn't save, as what to do about it.
+ * The storage error is logged and kept as its cause. */
+const unsaved = (
+  name: string,
+  done: "deleted" | "recovered",
+  error: unknown,
+) => {
+  if (!(error instanceof UnsavedLifecycle)) return error;
+  console.warn(`Could not save ${name}'s lifecycle change`, error.cause);
+  return new Error(
+    `${name} couldn't be ${done} because Buzz couldn't save the change on this device. Make sure your disk has free space, then try again.`,
+    { cause: error.cause },
+  );
+};
+
 const sameView = (a: Agent, b: Agent) => {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const key of keys) {
@@ -2421,7 +2440,9 @@ export class AgentsService extends Service implements Agents {
     // With config channels, Delete is a recoverable archive (§8.1): the row,
     // key and settings stay, and Settings → Deleted agents recovers it.
     if (config) {
-      const settled = await config.archive(pubkey);
+      const settled = await config.archive(pubkey).catch((error: unknown) => {
+        throw unsaved(identity.name, "deleted", error);
+      });
       this.update();
       if (settled === "active")
         throw new Error(`${identity.name} couldn't be deleted. Try again.`);
@@ -2478,7 +2499,9 @@ export class AgentsService extends Service implements Agents {
       identity && this.communityConfigs.get(originOf(identity.relay) ?? "");
     if (!config)
       throw new Error("Its community isn't connected. Try again once it is.");
-    const settled = await config.recover(pubkey);
+    const settled = await config.recover(pubkey).catch((error: unknown) => {
+      throw unsaved(identity.name, "recovered", error);
+    });
     this.update();
     if (settled !== "active")
       throw new Error(

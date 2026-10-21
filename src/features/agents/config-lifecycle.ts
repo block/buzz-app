@@ -16,6 +16,14 @@ type Entry = Readonly<{ state: Exclude<Lifecycle, "active">; channel: string }>;
 
 type Entries = Readonly<Record<string, Entry>>;
 
+/** This device couldn't save a lifecycle change; `cause` is the storage
+ * error. */
+export class UnsavedLifecycle extends Error {
+  constructor(cause: unknown) {
+    super("Couldn't save the change on this device", { cause });
+  }
+}
+
 /** Per `community\nsubject` (agent pubkey or team id); absent is `active`.
  * Each change is seen once it is saved, and a failed one changes nothing
  * (`SavedState`). */
@@ -36,12 +44,16 @@ export class LifecycleJournal {
     } catch {
       /* Start fresh after malformed local data. */
     }
-    this.state = new SavedState(saved, (entries) =>
-      storage.set(
-        LIFECYCLE_STORAGE_KEY,
-        JSON.stringify({ version: 1, entries }),
-      ),
-    );
+    this.state = new SavedState(saved, async (entries) => {
+      try {
+        await storage.set(
+          LIFECYCLE_STORAGE_KEY,
+          JSON.stringify({ version: 1, entries }),
+        );
+      } catch (cause) {
+        throw new UnsavedLifecycle(cause);
+      }
+    });
   }
   get = (community: string, subject: string): Lifecycle =>
     this.entry(community, subject)?.state ?? "active";

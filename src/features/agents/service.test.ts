@@ -1,5 +1,6 @@
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { createHash } from "node:crypto";
+import { UnsavedLifecycle } from "./config-lifecycle";
 import { Context } from "@deepseek-ai/cordis";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { npubEncode } from "nostr-tools/nip19";
@@ -7072,6 +7073,35 @@ describe("Delete as a recoverable archive", () => {
     expect(config.recover).toHaveBeenCalledWith(bot);
     mention(f, "2");
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    await f.ctx.fiber.dispose();
+  });
+
+  it("explains a Delete or Recover this device couldn't save, keeping the storage error", async () => {
+    const config = fakeConfig();
+    communityFake.value = config;
+    const f = await setup();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(config.resume).toHaveBeenCalled());
+    const full = new Error("QuotaExceededError");
+    for (const [action, done] of [
+      ["archive", "deleted"],
+      ["recover", "recovered"],
+    ] as const) {
+      config[action].mockRejectedValueOnce(new UnsavedLifecycle(full));
+      const failed = await (action === "archive"
+        ? f.service.remove(bot)
+        : f.service.recover(bot)
+      ).catch((error: unknown) => error as Error);
+      expect(failed?.message).toBe(
+        `Echo couldn't be ${done} because Buzz couldn't save the change on this device. Make sure your disk has free space, then try again.`,
+      );
+      expect(failed?.cause).toBe(full);
+    }
+    expect(warn).toHaveBeenCalledWith(
+      "Could not save Echo's lifecycle change",
+      full,
+    );
     await f.ctx.fiber.dispose();
   });
 

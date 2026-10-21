@@ -5,6 +5,7 @@ import {
   LifecycleJournal,
   observe,
   resumeAll,
+  UnsavedLifecycle,
 } from "./config-lifecycle";
 import { gatedStore, memoryStorage, sharedFiles } from "./test-fakes";
 
@@ -32,6 +33,18 @@ function setup() {
 }
 
 describe("archive and recover", () => {
+  it("rejects a change it couldn't save as unsaved, keeping the storage error", async () => {
+    const f = setup();
+    const full = new Error("QuotaExceededError");
+    vi.spyOn(f.storage, "set").mockRejectedValueOnce(full);
+    const failed = await begin(f.deps, subject, channel, "archive").catch(
+      (error: unknown) => error,
+    );
+    expect(failed).toBeInstanceOf(UnsavedLifecycle);
+    expect((failed as Error).cause).toBe(full);
+    expect(f.channels.archive).not.toHaveBeenCalled();
+  });
+
   it("archives once strong metadata confirms it", async () => {
     const f = setup();
     expect(await begin(f.deps, subject, channel, "archive")).toBe("archived");
@@ -78,7 +91,7 @@ describe("archive and recover", () => {
     const refusing = new LifecycleJournal(sharedFiles().open(failed));
     await expect(
       begin({ ...f.deps, journal: refusing }, subject, channel, "recover"),
-    ).rejects.toThrow("disk full");
+    ).rejects.toMatchObject({ cause: { message: "disk full" } });
     expect(f.channels.unarchive).not.toHaveBeenCalled();
     expect(refusing.get("c", subject)).toBe("active");
   });
@@ -121,7 +134,9 @@ describe("archive and recover", () => {
     const archiving = begin(deps, subject, channel, "archive");
     await vi.waitFor(() => expect(disk.writes).toHaveLength(2));
     disk.writes[1]?.fail();
-    await expect(recovered).rejects.toThrow("disk full");
+    await expect(recovered).rejects.toMatchObject({
+      cause: { message: "disk full" },
+    });
     await vi.waitFor(() => expect(disk.writes).toHaveLength(3));
     disk.writes[2]?.land();
     await vi.waitFor(() => expect(disk.writes).toHaveLength(4));

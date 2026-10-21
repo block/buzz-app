@@ -1281,7 +1281,7 @@ function ChannelWorkspace({
     () =>
       panels.handleOpenRequests(({ target, channelId, rootId }) =>
         channelId === linkContext.current.channelId
-          ? openLink(target, rootId ? { rootId } : {})
+          ? openLink(target, rootId ? { rootId, fromThread: true } : {})
           : false,
       ),
     [panels, openLink],

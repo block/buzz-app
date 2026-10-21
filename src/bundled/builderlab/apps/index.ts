@@ -35,6 +35,8 @@ const DEPLOY_RECIPE = `Deploy a Builderlab app. Read apps_contract before choosi
 It returns the version/deployment IDs once accepted, even if readiness checking fails. Use apps_status for that exact version; do not redeploy to retry readiness. Redeploy the same app_id after source changes; a validation error names what to fix in the archive.`;
 
 export function applyApps(ctx: Ctx, session: OAuthSession) {
+  // Cordis wraps service functions on access; keep React's component identity.
+  const View = ctx.browser.View;
   ctx.panels.register({
     id: "app",
     title: "App",
@@ -44,7 +46,7 @@ export function applyApps(ctx: Ctx, session: OAuthSession) {
     component: ({ target }: PanelProps) =>
       // One storage for every app keeps the apps sign-in, which covers all
       // of a tenant's app hosts, between opens and restarts.
-      createElement(ctx.browser.View, {
+      createElement(View, {
         url: target,
         storage: "builderlab-apps",
         label: appName(target),

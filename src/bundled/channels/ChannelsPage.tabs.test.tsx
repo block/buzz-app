@@ -11,7 +11,12 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import type {
+  Panels,
+  PanelOpenRequest,
+  RegisteredPanel,
+} from "../../features/panels/service";
+import type { PageNavigation } from "../../features/navigation/service";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { matchesEvent } from "../../features/relay/projection";
@@ -59,6 +64,7 @@ afterEach(() => {
 async function page(
   type: "stream" | "solo" = "stream",
   navigator?: Navigation,
+  routed = false,
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -95,6 +101,14 @@ async function page(
   );
   owners.push(owner);
   const scope = `https://relay.test:${viewer.pubkey}`;
+  const root = routed
+    ? signed(viewer, {
+        kind: 9,
+        tags: [["h", channelId]],
+        content: "Initiating thread",
+      })
+    : undefined;
+  if (root) events.push(root);
   writeView(scope, "selected-channel", channelId);
   owner.session.channels.ensureList();
   await vi.waitFor(() =>
@@ -129,19 +143,65 @@ async function page(
     ),
     component: () => <input aria-label="Notes draft" />,
   };
-  const available = [panel];
+  const app: RegisteredPanel = {
+    id: "app",
+    key: "fixture:app",
+    pluginId: "fixture",
+    revision: "1",
+    title: "App",
+    keepOpen: true,
+    matches: (target) => target === "https://app.example/",
+    component: () => <p>App content</p>,
+  };
+  const available = [panel, app];
+  let handleOpen: ((request: PanelOpenRequest) => boolean) | undefined;
   const panels: Panels = {
     snapshot: () => available,
     subscribe: () => () => {},
-    resolve: () => undefined,
+    resolve: (target) => available.find((entry) => entry.matches(target)),
     register() {},
-    requestOpen: () => false,
-    handleOpenRequests: () => () => {},
+    requestOpen: (request) => handleOpen?.(request) ?? false,
+    handleOpenRequests: (handler) => {
+      handleOpen = handler;
+      return () => {
+        handleOpen = undefined;
+      };
+    },
   };
-  render(<ChannelsPage relay={relay} panels={panels} navigator={navigator} />);
+  const navigation: PageNavigation | undefined = root
+    ? {
+        entryId: "thread-visit",
+        target: {
+          version: 1,
+          kind: "conversation",
+          scope: {
+            viewer: viewer.pubkey,
+            communityOrigin: "https://relay.test",
+          },
+          channelId,
+          messageId: root.id,
+          threadRootId: root.id,
+        },
+        signal: new AbortController().signal,
+        forSession() {
+          return this;
+        },
+        resolve: () => true,
+        complete: () => true,
+      }
+    : undefined;
+  render(
+    <ChannelsPage
+      relay={relay}
+      panels={panels}
+      navigator={navigator}
+      navigation={navigation}
+    />,
+  );
   const user = userEvent.setup();
   const composer = await screen.findByRole("textbox", {
     name: type === "solo" ? "Message your agents" : "Message #Alpha",
+    hidden: routed,
   });
   const open = () =>
     user.click(screen.getByRole("button", { name: "Open notes" }));
@@ -152,8 +212,51 @@ async function page(
     session: owner.session,
     scope,
     viewer: viewer.pubkey,
+    panels,
+    root: root?.id,
   };
 }
+
+it.each(["side", "main"] as const)(
+  "agent-opened apps preserve their routed %s thread",
+  async (pane) => {
+    setThreadPlacementPreference(pane);
+    const open = vi.fn(async () => ({ status: "opened" as const }));
+    const h = await page(
+      "stream",
+      {
+        open,
+        snapshot: () => ({ entry: { id: "thread-visit" }, attempt: {} }),
+      } as unknown as Navigation,
+      true,
+    );
+    const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+    await screen.findByRole("tab", { name: "Initiating thread" });
+    act(() =>
+      expect(
+        h.panels.requestOpen({
+          channelId: "alpha",
+          rootId: h.root,
+          target: "https://app.example/",
+        }),
+      ).toBe(true),
+    );
+    expect(screen.getByRole("tab", { name: "App" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(tabs.result.current.tabs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "thread", messageId: h.root }),
+      ]),
+    );
+    await h.user.click(screen.getByRole("button", { name: "Close App tab" }));
+    const thread = screen.getByRole("tab", { name: "Initiating thread" });
+    expect(thread).toHaveAttribute("aria-selected", "true");
+    expect(open).not.toHaveBeenCalled();
+  },
+);
 
 const closeTabs = (tabEvent = "buzz:close-all-tabs") => {
   let handled = false;

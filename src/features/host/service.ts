@@ -386,7 +386,7 @@ export class HostService extends Service implements Host {
       id: owner.id,
       revision: owner.revision,
       request: input,
-    });
+    }).catch(rethrow);
   }
 
   async upload(input: HostUpload): Promise<HostResponse> {
@@ -397,7 +397,7 @@ export class HostService extends Service implements Host {
       id: owner.id,
       revision: owner.revision,
       upload: input,
-    });
+    }).catch(rethrow);
   }
 }
 

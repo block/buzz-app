@@ -384,6 +384,7 @@ function SessionActions({
   const agents = useContext(AgentsContext);
   const state = useSessionState(agents, [pubkey], place);
   const [started, setStarted] = useState<object>();
+  const [announcement, setAnnouncement] = useState("");
   const [hintDismissed, setHintDismissed] = useState(false);
   useEffect(() => {
     if (!started) return;
@@ -392,11 +393,13 @@ function SessionActions({
   }, [started]);
   const act = async (action: SessionControlAction) => {
     onFeedback("");
+    setAnnouncement("");
     try {
       await agents?.session(pubkey, place, action);
       if (action === "new") {
         setHintDismissed(false);
         setStarted({});
+        setAnnouncement("New session started");
       } else {
         onFeedback(
           action === "compact" ? "Session compacted" : "Interrupt requested",
@@ -411,11 +414,9 @@ function SessionActions({
   };
   return (
     <fieldset className={styles.actions} aria-label={`${name}'s session`}>
-      {started && (
-        <span className="sr-only" role="status">
-          New session started
-        </span>
-      )}
+      <span className="sr-only" role="status">
+        {started ? announcement : ""}
+      </span>
       {(
         [
           ["compact", "Compact session", FoldIcon],

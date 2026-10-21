@@ -2598,8 +2598,22 @@ it("refreshes unavailable session buttons when runner ownership changes without 
         "status",
       ),
     ).toHaveTextContent("New session started");
-    // A second success restarts the full feedback interval.
-    await act(async () => fireEvent.click(fresh));
+    // A repeated attempt clears the live announcement, then announces its
+    // own success and restarts the full feedback interval.
+    const announcement = within(
+      screen.getByRole("group", { name: "Honey's session" }),
+    ).getByRole("status");
+    const pending = deferred<void>();
+    agents.session.mockImplementationOnce(() => pending.promise);
+    try {
+      await act(async () => fireEvent.click(fresh));
+      expect(agents.session).toHaveBeenCalledTimes(2);
+      expect(announcement).toBeInTheDocument();
+      expect(announcement).toBeEmptyDOMElement();
+    } finally {
+      await act(async () => pending.resolve());
+    }
+    expect(announcement).toHaveTextContent("New session started");
     act(() => vi.advanceTimersByTime(2999));
     expect(
       within(screen.getByRole("group", { name: "Honey's session" })).getByRole(

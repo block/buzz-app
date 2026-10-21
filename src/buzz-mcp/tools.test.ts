@@ -704,17 +704,28 @@ function relay(refused: Readonly<Record<string, string>> = {}) {
     if (refused[target]) throw new Error(refused[target]);
     published.push(template);
     const { kind } = template;
-    if (kind === 9007)
+    if (kind === 9007) {
+      // The relay states the channel's type as the first `t` tag of both
+      // state events, and privacy as a bare `private` tag.
+      const value = (key: string) =>
+        template.tags.find((t) => t[0] === key)?.[1];
+      const type = ["t", value("channel_type") ?? "stream"];
       state.push(
-        event({ kind: 39000, tags: [["d", id], ...template.tags.slice(1)] }),
         event({
-          kind: 39002,
+          kind: 39000,
           tags: [
             ["d", id],
-            ["p", me, "", "owner"],
+            ["name", value("name") ?? ""],
+            type,
+            ...(value("visibility") === "private" ? [["private"]] : []),
           ],
         }),
+        event({
+          kind: 39002,
+          tags: [["d", id], type, ["p", me, "", "owner"]],
+        }),
       );
+    }
     if (kind === 9000 || kind === 9021) {
       const key = kind === 9021 ? me : target;
       const role = template.tags.find((t) => t[0] === "role")?.[1] ?? "member";
@@ -743,6 +754,22 @@ function relay(refused: Readonly<Record<string, string>> = {}) {
       );
     return event({ ...template, pubkey: me, id: "e".repeat(64) });
   });
+  // The relay leaves system channels out of a read that neither opts in with
+  // `#t` nor names them by `#d`.
+  const query = client.query;
+  client.query = vi.fn(async (filters: readonly Filter[]) =>
+    (await query(filters)).filter(
+      (item) =>
+        !item.tags.some((t) => t[0] === "t" && t[1] === "system") ||
+        filters.some(
+          (filter) =>
+            (filter["#t"] as string[] | undefined)?.includes("system") ||
+            (filter["#d"] as string[] | undefined)?.includes(
+              item.tags[0]?.[1] ?? "",
+            ),
+        ),
+    ),
+  );
   return { client, published, state };
 }
 
@@ -833,22 +860,6 @@ it("lists system channels only when asked, as the relay serves them", async () =
       ],
     }),
   );
-  // The relay leaves system channels out of a read that neither opts in with
-  // `#t` nor names them by `#d`.
-  const query = client.query;
-  client.query = vi.fn(async (filters: readonly Filter[]) =>
-    (await query(filters)).filter(
-      (item) =>
-        !item.tags.some((t) => t[0] === "t" && t[1] === "system") ||
-        filters.some(
-          (filter) =>
-            (filter["#t"] as string[] | undefined)?.includes("system") ||
-            (filter["#d"] as string[] | undefined)?.includes(
-              item.tags[0]?.[1] ?? "",
-            ),
-        ),
-    ),
-  );
   await expect(callTool(client, {}, "channels", {})).resolves.toBe(
     `${room} plans`,
   );
@@ -887,6 +898,15 @@ it("creates a system channel", async () => {
     },
   ]);
   expect(answer).toBe(`created ${id}`);
+  await expect(
+    callTool(client, {}, "channels", { types: ["system"] }),
+  ).resolves.toBe(`${id} config (system, private)`);
+  await expect(callTool(client, {}, "channels", {})).resolves.toBe(
+    `${room} plans`,
+  );
+  await expect(
+    callTool(client, {}, "channels", { types: ["stream", "system"] }),
+  ).resolves.toBe(`${room} plans\n${id} config (system, private)`);
   await expect(
     callTool(client, {}, "channel", {
       action: "create",

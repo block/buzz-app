@@ -274,10 +274,12 @@ export function SoloWorkspaces({
     setExpanded(next);
     writeView(scope, expandedKey, next);
     if (extra === 0) {
+      // Folding releases retained chats; ones still pinned stay held.
       const rows = new Set(
         projects
           .find((project) => project.id === id)
-          ?.rows.map((item) => item.id),
+          ?.rows.filter((item) => !item.pinned)
+          .map((item) => item.id),
       );
       setHeld(
         (current) => new Set([...current].filter((key) => !rows.has(key))),
@@ -305,6 +307,12 @@ export function SoloWorkspaces({
         listed,
         extra,
         overflow: listed.slice(limit).map((item) => item.id),
+        // Retained chats that are no longer pinned can fold even when unexpanded.
+        foldable:
+          extra > 0 ||
+          listed
+            .slice(limit)
+            .some((item) => !item.pinned && item.id !== renaming),
         hidden: project.rows.length - listed.length,
       };
     });
@@ -535,7 +543,7 @@ export function SoloWorkspaces({
                   </ChatActionsMenu>
                 );
               })}
-              {(project.hidden > 0 || project.extra > 0) && (
+              {(project.hidden > 0 || project.foldable) && (
                 <div
                   className={styles.showMore}
                   data-solo-show-more={project.id}
@@ -559,7 +567,7 @@ export function SoloWorkspaces({
                       }
                     />
                   )}
-                  {project.extra > 0 && (
+                  {project.foldable && (
                     <NavigationItem
                       variant="text"
                       data-solo-show-more-fold=""

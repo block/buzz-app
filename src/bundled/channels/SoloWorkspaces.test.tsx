@@ -728,3 +728,54 @@ it("lists and focuses a chat moved into a full workspace", async () => {
   );
   owner.dispose();
 });
+
+it("keeps a pinned chat past the expanded limit held after a partial fold", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const total = SOLO_CHAT_CAP + SOLO_CHAT_STEP + 3;
+  const last = `Chat ${total - 1}`;
+  const chats = (pinned: boolean) =>
+    Array.from({ length: total }, (_, index) => ({
+      id: `c${index}`,
+      title: `Chat ${index}`,
+      pinned: pinned && index === total - 1,
+    }));
+  const queries = h.store().queries;
+  const mounted = render(h.view(queries, undefined, undefined, chats(true)));
+  await user.click(
+    await screen.findByRole("button", { name: "Show more chats in Chats" }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Show fewer chats in Chats" }),
+  );
+  const kept = screen.getByRole("button", { name: last });
+  kept.focus();
+  // The work finishes: the pin drops, but the row the user is on stays.
+  mounted.rerender(h.view(queries, undefined, undefined, chats(false)));
+  expect(kept).toBeInTheDocument();
+  expect(kept).toHaveFocus();
+});
+
+it("offers Show less for retained chats in a never-expanded workspace", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const chats = (pinned: boolean) =>
+    Array.from({ length: SOLO_CHAT_CAP + 1 }, (_, index) => ({
+      id: `c${index}`,
+      title: `Chat ${index}`,
+      pinned: pinned && index === SOLO_CHAT_CAP,
+    }));
+  const queries = h.store().queries;
+  const mounted = render(h.view(queries, undefined, undefined, chats(true)));
+  await screen.findByRole("button", { name: `Chat ${SOLO_CHAT_CAP}` });
+  mounted.rerender(h.view(queries, undefined, undefined, chats(false)));
+  await user.click(
+    screen.getByRole("button", { name: "Show fewer chats in Chats" }),
+  );
+  expect(
+    screen.queryByRole("button", { name: `Chat ${SOLO_CHAT_CAP}` }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Show more chats in Chats" }),
+  ).toHaveFocus();
+});

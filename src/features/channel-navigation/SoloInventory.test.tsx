@@ -203,8 +203,9 @@ it("keeps the open, unread and working chats listed past a workspace's cap", () 
     id,
     other,
   ]);
+  // Reading it does not pull the row away; it stays until the workspace folds.
   f.clearUnread();
-  expect(listed()).not.toContain(id);
+  expect(listed()).toContain(id);
   f.activity({
     ...f.activitySnapshot,
     status: "listening",

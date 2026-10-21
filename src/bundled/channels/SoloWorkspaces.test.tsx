@@ -635,3 +635,96 @@ it("keeps keyboard focus on the row when Show more or Show less is spent", async
     screen.getByRole("button", { name: "Show more chats in Chats" }),
   ).toHaveFocus();
 });
+
+it("moves focus to the last chat when Show less leaves nothing to fold", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const chats = (pinned: boolean) =>
+    Array.from({ length: SOLO_CHAT_CAP + 1 }, (_, index) => ({
+      id: `c${index}`,
+      title: `Chat ${index}`,
+      pinned: pinned && index === SOLO_CHAT_CAP,
+    }));
+  const queries = h.store().queries;
+  const mounted = render(h.view(queries, undefined, undefined, chats(false)));
+  await user.click(
+    await screen.findByRole("button", { name: "Show more chats in Chats" }),
+  );
+  // Opening the last chat pins it, so folding hides nothing.
+  mounted.rerender(h.view(queries, undefined, undefined, chats(true)));
+  screen.getByRole("button", { name: "Show fewer chats in Chats" }).focus();
+  await user.keyboard("{Enter}");
+  expect(document.querySelector("[data-solo-show-more]")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: `Chat ${SOLO_CHAT_CAP}` }),
+  ).toHaveFocus();
+});
+
+it("keeps a chat listed after it loses its pin until the workspace folds", async () => {
+  const h = fixture();
+  const user = userEvent.setup();
+  const chats = (pinned: boolean) =>
+    Array.from({ length: SOLO_CHAT_CAP + 2 }, (_, index) => ({
+      id: `c${index}`,
+      title: `Chat ${index}`,
+      pinned: pinned && index === SOLO_CHAT_CAP,
+    }));
+  const queries = h.store().queries;
+  const mounted = render(h.view(queries, undefined, undefined, chats(true)));
+  const kept = await screen.findByRole("button", {
+    name: `Chat ${SOLO_CHAT_CAP}`,
+  });
+  kept.focus();
+  // Marking it read drops the pin; the row the user is on stays put.
+  mounted.rerender(h.view(queries, undefined, undefined, chats(false)));
+  expect(kept).toBeInTheDocument();
+  expect(kept).toHaveFocus();
+  await user.click(
+    screen.getByRole("button", { name: "Show more chats in Chats" }),
+  );
+  screen.getByRole("button", { name: "Show fewer chats in Chats" }).focus();
+  await user.keyboard("{Enter}");
+  expect(
+    screen.queryByRole("button", { name: `Chat ${SOLO_CHAT_CAP}` }),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Show more chats in Chats" }),
+  ).toHaveFocus();
+});
+
+it("lists and focuses a chat moved into a full workspace", async () => {
+  const h = fixture();
+  const owner = h.store();
+  const user = userEvent.setup();
+  const chats = [
+    ...Array.from({ length: SOLO_CHAT_CAP }, (_, index) => ({
+      id: `c${index}`,
+      title: `Chat ${index}`,
+    })),
+    { id: "chat", title: "Planning" },
+  ];
+  await owner.queries.ensure();
+  for (const chat of chats.slice(0, SOLO_CHAT_CAP))
+    await owner.queries.assign(chat.id, "work");
+  render(h.view(owner.queries, undefined, undefined, chats));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Actions for Planning" }),
+    ).toBeEnabled(),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Actions for Planning" }),
+  );
+  (await screen.findByRole("menuitem", { name: "Move to" })).focus();
+  await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Work" }));
+  await waitFor(() => expect(h.saved().assignments.chat).toBe("work"));
+  const work = screen.getByRole("button", { name: "Work" }).parentElement
+    ?.parentElement as HTMLElement;
+  await waitFor(() =>
+    expect(
+      within(work).getByRole("button", { name: "Planning" }),
+    ).toHaveFocus(),
+  );
+  owner.dispose();
+});

@@ -12,7 +12,7 @@ Create agents that run Pi on your computer, with any provider Pi supports, and a
 
 # Pi for Agents
 
-Agents run on [Pi durable](https://earendil.com/posts/pi-1-0/) in one Node
+Agents run on [Pi durable](https://github.com/earendil-works/pi/blob/main/packages/durable/README.md) in one Node
 host ([`host.mjs`](host.mjs)). Each agent has its own SQLite storage, and each
 Buzz thread or channel is one durable Pi conversation. Agents owns identity,
 admission and signing; this plugin owns the turn after handover.

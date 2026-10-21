@@ -1238,3 +1238,27 @@ it("keeps keyboard focus through Claude defaults discovery retries", async () =>
     screen.getByRole("button", { name: /^Claude default model:/ }),
   ).toHaveFocus();
 });
+
+it("keeps same-channel recent threads visibly distinguishable", () => {
+  localStorage.setItem(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [agent().pubkey]: Object.fromEntries(
+        ["e", "f"].map((char) => [
+          `channel/${char.repeat(64)}`,
+          { id: char, seen: 0, at: 1 },
+        ]),
+      ),
+    }),
+  );
+  const Activity = tab(installed().type, 1);
+  render(<Activity agent={agent()} save={vi.fn()} />);
+  const rows = screen.getAllByRole("listitem");
+  expect(rows).toHaveLength(2);
+  expect(rows.map((row) => row.textContent)).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("Thread eeeeeeee"),
+      expect.stringContaining("Thread ffffffff"),
+    ]),
+  );
+});

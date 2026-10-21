@@ -834,9 +834,12 @@ export function createTabs(
     const { open, show, back } = useOpenTranscript(conversation, label);
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
+    const unbound = sessions.filter((view) => !saved.has(view.key));
     const detail = (text: string, status?: string) =>
-      status === "Needs attention" ? (
-        <p className="m-0 break-words text-body-sm text-subtle">{text}</p>
+      status !== "Working" ? (
+        <p className="m-0 whitespace-pre-wrap break-words text-body-sm text-subtle">
+          {text}
+        </p>
       ) : (
         <details className={activityStyles.details}>
           <summary className="text-body-sm text-subtle">
@@ -862,19 +865,17 @@ export function createTabs(
         <section className={activityStyles.section}>
           <InlineHeader title="Recent conversations" />
           <SettingsGroup layout="form">
-            {recent.length || sessions.length ? (
+            {recent.length || unbound.length ? (
               <ul className={activityStyles.list}>
                 {/* Work that failed before Codex started a thread has no binding. */}
-                {sessions
-                  .filter((view) => !saved.has(view.key))
-                  .map((view) => (
-                    <li key={view.key} className={activityStyles.entry}>
-                      <p className="m-0 break-words text-body-sm">
-                        <code>{view.key}</code> · {view.status}
-                      </p>
-                      {view.detail && detail(view.detail, view.status)}
-                    </li>
-                  ))}
+                {unbound.map((view) => (
+                  <li key={view.key} className={activityStyles.entry}>
+                    <p className="m-0 break-words text-body-sm">
+                      <code>{view.key}</code> · {view.status}
+                    </p>
+                    {view.detail && detail(view.detail, view.status)}
+                  </li>
+                ))}
                 {recent.map((conversation) => {
                   const view = views.get(conversation.key);
                   return (
@@ -891,7 +892,9 @@ export function createTabs(
                           </p>
                           <p className="m-0 text-body-sm text-subtle">
                             {[
-                              conversation.root ? "Thread" : "Channel",
+                              conversation.root
+                                ? `Thread ${conversation.root.slice(0, 8)}`
+                                : "Channel",
                               view?.status,
                               conversation.at
                                 ? formatItemTimestamp(conversation.at / 1000, {

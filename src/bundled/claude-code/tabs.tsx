@@ -753,7 +753,9 @@ export function createTabs({
                         </span>
                         <span className="block text-body-sm text-subtle">
                           {[
-                            item.root ? "Thread" : "Channel",
+                            item.root
+                              ? `Thread ${item.root.slice(0, 8)}`
+                              : "Channel",
                             activity(item.key),
                             formatItemTimestamp(item.at / 1000, {
                               withTime: true,

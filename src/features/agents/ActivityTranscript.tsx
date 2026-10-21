@@ -1,5 +1,4 @@
 import { useMemo, type ReactNode } from "react";
-import { formatItemTimestamp } from "../../shared/datetime";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {

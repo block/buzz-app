@@ -327,7 +327,7 @@ it("dates the turn heading in the shared format, and omits an unknown start", ()
       .getAllByRole("article")
       .map((article) => article.querySelector("header")?.textContent),
   ).toEqual([
-    `${expected} · Completed · gpt-6`,
+    `${expected} · Completed · 0.0s · gpt-6`,
     "Status unknown · gpt-6",
     "Status unknown · gpt-6",
   ]);

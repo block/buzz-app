@@ -42,7 +42,7 @@ import { CATCH_UP_PREFIX, readCheckpoints } from "./catch-up";
 import { fileStore, type AgentStore } from "./state";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { memoryStorage } from "./test-fakes";
-import { MigrationJournal } from "./config-writes";
+import { MIGRATION_STORAGE_KEY, MigrationJournal } from "./config-writes";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { readTeams, recordKey, TEAMS_KEY, writeTeams } from "./store";
 import { teamSubject } from "./config-channels";
@@ -7378,6 +7378,65 @@ describe("Delete as a recoverable archive", () => {
     );
     expect(again.native.remove).not.toHaveBeenCalled();
     await again.ctx.fiber.dispose();
+  });
+
+  it("with config sync on, keeps a local edit that lands while migration confirms its accepted value", async () => {
+    const relay = configRelay();
+    communityFake.value = relay.opens;
+    const migrated = JSON.stringify({ version: 1, text: "" });
+    let published = false;
+    relay.publishing.mockImplementation(() => {
+      published = true;
+    });
+    // Holds migration's hash of the local value, after the relay took it.
+    let hashing = false;
+    let release!: () => void;
+    const hashed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    const spy = vi
+      .spyOn(crypto.subtle, "digest")
+      .mockImplementation(async (algorithm, data) => {
+        const text = new TextDecoder().decode(data);
+        if (published && !hashing && text === migrated) {
+          hashing = true;
+          await hashed;
+        }
+        return digest(algorithm, data);
+      });
+    try {
+      const f = await setup({ identities: [here(alder)] });
+      await vi.waitFor(() => expect(hashing).toBe(true));
+      // A newer local edit commits while the confirmation hashes.
+      const { change } = f.service as unknown as {
+        change(
+          pubkey: string,
+          update: (saved: object | undefined) => object,
+        ): Promise<unknown>;
+      };
+      await change.call(f.service, alder, (saved) => ({
+        ...(saved as { config?: object }),
+        config: {
+          ...((saved as { config?: object }).config ?? {}),
+          instructions: "EDIT B",
+        },
+      }));
+      release();
+      // Confirmation queues its retirement before it journals `confirmed`.
+      await vi.waitFor(() =>
+        expect(f.storage.get(MIGRATION_STORAGE_KEY)).toContain('"confirmed"'),
+      );
+      const { changes } = f.service as unknown as {
+        changes: Map<string, Promise<void>>;
+      };
+      while (changes.has(alder)) await changes.get(alder);
+      expect(f.storage.get(recordKey(alder))).toContain("EDIT B");
+      await f.ctx.fiber.dispose();
+    } finally {
+      release();
+      spy.mockRestore();
+    }
   });
 
   it("with config sync on, blocks a member's start while its team can't be read, and shows the team safely", async () => {

@@ -334,7 +334,7 @@ export async function migrate(
       const local = entry.seed ?? side.content();
       if (result.problem || artifactOp(head) === "delete")
         return put({ ...entry, status: "blocked", draft: local });
-      if (head.content === side.content()) side.strip();
+      if (head.content === side.content()) side.strip(head);
       const { draft: _, ...rest } = entry;
       return put({
         ...rest,
@@ -423,7 +423,7 @@ async function resolve(
   const unchanged = (await sha256(local)) === entry.stagedHash;
   const { draft: _, error: __, ...rest } = entry;
   if (after.status === "current" && !result.problem) {
-    if (unchanged) side.strip();
+    if (unchanged) side.strip(after.head);
     return put({
       ...rest,
       status: "confirmed",

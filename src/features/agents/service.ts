@@ -3535,8 +3535,8 @@ export class AgentsService extends Service implements Agents {
     };
   }
   /** Retires a side's local field once its exact value is the synced head.
-   * Given `accepted`, this device's save just became the head: runtimes are
-   * told either way, and a newer local edit stays a draft. The value is
+   * Given `accepted`, the head this device's value just matched: runtimes
+   * are told either way, and a newer local edit stays a draft. The value is
    * checked again when the agent's earlier changes have saved, so a newer
    * edit saved meanwhile also stays. */
   private stripLocal(pubkey: string, side: Side, accepted?: RelayEvent) {

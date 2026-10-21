@@ -212,6 +212,10 @@ it("lists active primary pages in their sidebar and header placements", async ()
   services = createServices();
   const current = services;
   render(<App services={current} />);
+  // A viewer with no community starts on the join screen.
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Skip for now" }),
+  );
   const pages = await screen.findByRole("navigation", { name: "Pages" });
   await waitFor(() =>
     expect(

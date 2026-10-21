@@ -2873,11 +2873,22 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .message .messageBubble > .reactions {
   margin: var(--space-2) 0 0;
   margin-inline-start: calc(-1 * var(--space-1));
+  /* Short prose still leaves room for a counted reaction and its add pill. */
+  min-inline-size: calc(3 * var(--size-control-sm));
   max-width: 100%;
   border: 0;
 }
+.message
+  .messageBubble
+  > .reactions:has(> .inlineReactionTool:not(:empty)):has(
+    > .reactionItem:first-child:nth-last-child(2)
+  ) {
+  min-inline-size: max-content;
+  flex-wrap: nowrap;
+}
 .message .messageBubble > .reactions:empty {
   margin: 0;
+  min-inline-size: 0;
 }
 
 /* Outgoing metadata follows the bubble edge, even when media widens its body. */

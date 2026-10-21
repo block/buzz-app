@@ -847,7 +847,7 @@ const pluginWake = (root?: string) => ({
   ...(root ? { root } : {}),
   text: "CI failed: lint",
   id: WAKE_ID,
-  at: 200,
+  at: 200_000,
 });
 
 it("takes a plugin's wake in its thread's session, as the plugin's and not a message", async () => {

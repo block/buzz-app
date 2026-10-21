@@ -1879,7 +1879,7 @@ const pluginWake = (
     ...(threadRoot ? { root: threadRoot } : {}),
     text: "CI failed: lint",
     id: WAKE_ID,
-    at: 20,
+    at: 10_500,
   },
   ...(ignored ? { ignored } : {}),
 });
@@ -1925,6 +1925,38 @@ it("takes a wake with no thread only in a Solo chat", async () => {
   expect(input).toContain("<plugin-wake plugin=");
   expect(input).toContain("top-level");
   expect(input).not.toContain(WAKE_ID);
+});
+it("gives a fresh wake the thread's earlier messages of its same second, and none after", async () => {
+  const f = fixture();
+  // The wake is at 10.500s, the second the thread's messages share.
+  const message = (id: string, content: string, ms: string): EventData => ({
+    id: id.repeat(64),
+    pubkey: owner,
+    kind: 9,
+    content,
+    created_at: 10,
+    tags: [
+      ["h", "channel"],
+      ...(id === "c" ? [] : [["e", root, "", "reply"]]),
+      ["ms", ms],
+    ],
+  });
+  f.read.mockResolvedValueOnce([
+    message("c", "ORIGINAL_REQUEST", "100"),
+    message("1", "EARLIER_REPLY", "499"),
+    message("2", "LATER_REPLY", "501"),
+  ]);
+  await f.runtime.run(pluginWake(f, root));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  const history = params.input[0]?.text.match(
+    /<thread-context>\n([\s\S]*?)\n<\/thread-context>/,
+  )?.[1];
+  expect(
+    JSON.parse(history ?? "{}").messages.map(
+      (message: { content: string }) => message.content,
+    ),
+  ).toEqual(["ORIGINAL_REQUEST", "EARLIER_REPLY"]);
 });
 it("sets no deadline of its own on a turn", async () => {
   // Any deadline Buzz set would already have passed.

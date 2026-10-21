@@ -366,7 +366,7 @@ export type Trigger =
   | Readonly<{ type: "mention"; event: RelayEvent; resumed?: true }>
   /** A plugin woke the agent in a conversation (`Agents.wake`): no relay
    * event, and not the owner's words. It runs like a mention, in the
-   * conversation's session; `id` and `at` (seconds) are this wake's own. */
+   * conversation's session; `id` and `at` (milliseconds) are this wake's own. */
   | Readonly<{
       type: "plugin";
       plugin: string;
@@ -1477,7 +1477,7 @@ export class AgentsService extends Service implements Agents {
       ...(root ? { root: root.toLowerCase() } : {}),
       text,
       id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
-      at: Math.floor(Date.now() / 1000),
+      at: Date.now(),
     });
   }
   snapshot = () => this.state;

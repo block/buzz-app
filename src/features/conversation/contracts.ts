@@ -46,7 +46,7 @@ export type ComposerToolProps = Readonly<{
     recipients: readonly Readonly<{ pubkey: string; name: string }>[],
   ): boolean;
   /** Automatic targeting only: reject when text outside selected mentions is nonempty.
-   * Older hosts may omit this command; callers must not fall back to replacement. */
+   * Older hosts may omit this command. A rejected edit must not trigger unrestricted replacement. */
   replaceRecipientsIfEmpty?(
     recipients: readonly Readonly<{ pubkey: string; name: string }>[],
   ): boolean;

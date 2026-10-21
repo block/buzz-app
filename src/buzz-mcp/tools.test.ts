@@ -2529,3 +2529,22 @@ it("refuses Git where the host holds no key", async () => {
     callTool(client, { channel: "chan" }, "repo", {}),
   ).rejects.toThrow("Git access needs Buzz Desktop.");
 });
+
+it("validates creation inputs and reports hosts without agent creation", async () => {
+  const { client } = fake([]);
+  await expect(
+    callTool(client, {}, "agent_create", {
+      type: "codex/codex",
+      name: "Child",
+    }),
+  ).rejects.toThrow("unavailable");
+  await expect(callTool(client, {}, "agent_types", {})).rejects.toThrow(
+    "unavailable",
+  );
+  client.createAgent = vi.fn();
+  for (const args of [{}, { type: "x", name: " " }, { type: 1, name: "Child" }])
+    await expect(callTool(client, {}, "agent_create", args)).rejects.toThrow(
+      "required",
+    );
+  expect(client.createAgent).not.toHaveBeenCalled();
+});

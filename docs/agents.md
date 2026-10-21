@@ -31,6 +31,16 @@ migration runs. Browser moves write the destination before removing the source
 and resume identical interrupted copies; differing destinations are left intact
 and reported as migration errors.
 
+## Creating agents from a conversation
+
+The shared tools offer `agent_types` to list installed local runtimes and
+`agent_create` to create an agent using a listed type key and a display name.
+Creation uses the runtime's default settings and binds the identity to the calling
+agent's owner and community, even when another community is selected in the app.
+It returns the new public key. Use `members` separately to add it to a conversation.
+Keys stay in native custody. Hosted-provider provisioning and standalone tool
+servers do not support these operations.
+
 ## Agent types and providers
 
 Harness plugins register agent types with the Agents service. An agent type owns

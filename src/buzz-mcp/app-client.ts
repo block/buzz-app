@@ -106,6 +106,24 @@ export function appClient(
       check();
       options.remembered?.();
     },
+    agentTypes: async () => {
+      check();
+      if (!agent.agentTypes)
+        throw new Error("Agent creation is unavailable on this host");
+      return agent.agentTypes();
+    },
+    createAgent: async (input) => {
+      check();
+      if (!agent.createAgent)
+        throw new Error("Agent creation is unavailable on this host");
+      const created = await agent.createAgent(input);
+      return {
+        pubkey: created.pubkey,
+        name: created.name,
+        type: created.type,
+        owner: created.owner,
+      };
+    },
     templates: async () => {
       check();
       return agent.templates();

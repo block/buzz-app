@@ -50,6 +50,17 @@ const tool = (
 export type Tool = ReturnType<typeof tool>;
 export const TOOLS: readonly Tool[] = [
   tool(
+    "agent_types",
+    "List installed local agent types available for agent_create.",
+    {},
+  ),
+  tool(
+    "agent_create",
+    "Create an agent for your owner in your community, with the type's default settings. Use a key from agent_types. Does not add it to a conversation.",
+    { type: str, name: str },
+    ["type", "name"],
+  ),
+  tool(
     "send",
     "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
@@ -298,6 +309,19 @@ export function callTool(
 }
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
+  async agent_types({ client }) {
+    if (!client.agentTypes)
+      throw new Error("Agent creation is unavailable on this host");
+    return JSON.stringify(await client.agentTypes());
+  },
+  async agent_create({ client }, args) {
+    if (!client.createAgent)
+      throw new Error("Agent creation is unavailable on this host");
+    const type = text(args.type)?.trim();
+    const name = text(args.name)?.trim();
+    if (!type || !name) throw new Error("type and name are required");
+    return JSON.stringify(await client.createAgent({ type, name }));
+  },
   async shared_sessions({ client, context }, args) {
     if (!context.channel) throw new Error("A current channel is required.");
     const allowed = new Set([

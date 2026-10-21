@@ -1,3 +1,5 @@
+import { appClient } from "../../buzz-mcp/app-client";
+import { callTool } from "../../buzz-mcp/tools";
 import { createLocalAgentActivity, type WorkOutcome } from "./local-activity";
 import { createHash } from "node:crypto";
 import { Context } from "@deepseek-ai/cordis";
@@ -7109,4 +7111,69 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
   expect(templates()).toEqual([
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
+});
+
+it("creates an agent through the shared tools for the calling owner and community", async () => {
+  const { service, native, plugin, select, second } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  const hosted = cloud();
+  plugin.agents.register(hosted.type);
+  expect(handle.agentTypes?.().some(({ key }) => key === "example/cloud")).toBe(
+    false,
+  );
+  await expect(
+    handle.createAgent?.({ type: "example/cloud", name: "Hosted" }),
+  ).rejects.toThrow("key stays with its provider");
+  expect(hosted.remote.provision).not.toHaveBeenCalled();
+  const client = appClient(handle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+  });
+  expect(
+    JSON.parse((await callTool(client, {}, "agent_types", {})) as string),
+  ).toContainEqual({ key: "example/echo", title: "Echo" });
+  select(second.origin);
+  const created = JSON.parse(
+    (await callTool(client, {}, "agent_create", {
+      type: "example/echo",
+      name: " Child ",
+    })) as string,
+  );
+  expect(created).toEqual({
+    pubkey: sibling,
+    name: "Child",
+    type: "example/echo",
+    owner: viewer,
+  });
+  expect(native.create).toHaveBeenLastCalledWith(
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+    "Child",
+  );
+  select("https://relay.example.test");
+  expect(service.find(sibling)?.config).toEqual({ reply: "ok" });
+  expect(service.find(sibling)?.name).toBe("Child");
+});
+
+it("refuses agent creation through a stale handle or an unavailable type", async () => {
+  const { service, native, plugin, connect } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle) throw new Error("Missing handle");
+  await expect(
+    handle.createAgent?.({ type: "missing", name: "Child" }),
+  ).rejects.toThrow("not available");
+  await expect(
+    handle.createAgent?.({ type: "example/echo", name: " " }),
+  ).rejects.toThrow("Name the agent");
+  connect(false);
+  await expect(
+    handle.createAgent?.({ type: "example/echo", name: "Child" }),
+  ).rejects.toThrow();
+  expect(native.create).toHaveBeenCalledTimes(1);
 });

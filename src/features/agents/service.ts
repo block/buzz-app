@@ -294,6 +294,9 @@ export type AgentHandle = Readonly<{
   pubkey: string;
   name: string;
   owner: string;
+  /** Installed local types and creation for this agent's owner and community. */
+  agentTypes?(): readonly Readonly<{ key: string; title: string }>[];
+  createAgent?(input: Readonly<{ type: string; name: string }>): Promise<Agent>;
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
@@ -1319,6 +1322,29 @@ export class AgentsService extends Service implements Agents {
           this.identities.filter((identity) => !identity.deleted),
           pubkey,
         ),
+      agentTypes: () =>
+        this.types()
+          .filter((type) => !type.remote)
+          .map(({ key, title }) => ({ key, title })),
+      createAgent: (agent, input) => {
+        const binding = this.bindingOf(agent);
+        if (!binding || !this.live(agent.pubkey))
+          throw new Error("The creating agent is no longer available");
+        if (!input.name.trim()) throw new Error("Name the agent");
+        return this.add(
+          input.type,
+          async (native, destination, owner) => ({
+            agent: await native.create(
+              destination,
+              owner,
+              input.type,
+              input.name.trim(),
+            ),
+          }),
+          {},
+          binding,
+        );
+      },
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.

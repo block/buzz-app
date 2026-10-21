@@ -368,6 +368,11 @@ export type RunnerHost = {
   team(pubkey: string): string;
   /** What its next run starts with, from this device's storage only. */
   start(agent: Agent): Start<unknown>;
+  agentTypes(): ReturnType<NonNullable<AgentHandle["agentTypes"]>>;
+  createAgent(
+    agent: Agent,
+    input: Readonly<{ type: string; name: string }>,
+  ): Promise<Agent>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
@@ -2118,6 +2123,11 @@ export class AgentRunners {
         );
         this.host.remembered(agent.pubkey, slug, body);
         return event;
+      },
+      agentTypes: () => this.host.agentTypes(),
+      createAgent: async (input: Readonly<{ type: string; name: string }>) => {
+        signal.throwIfAborted();
+        return this.host.createAgent(agent, input);
       },
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),

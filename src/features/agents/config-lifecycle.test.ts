@@ -50,24 +50,28 @@ describe("archive and recover", () => {
 
   it("requests nothing until the intent is saved, and nothing when saving fails", async () => {
     const f = setup();
-    const files = sharedFiles();
-    let release = () => {};
-    const journal = new LifecycleJournal(
-      files.open(new Promise<void>((resolve) => (release = resolve))),
-    );
+    let landed = false;
+    const disk = gatedStore(() => landed);
+    const saved: string[] = [];
+    f.channels.archive.mockImplementation(async () => {
+      saved.push(new LifecycleJournal(disk.disk).get("c", subject));
+      f.relay.archived = true;
+    });
+    const journal = new LifecycleJournal(disk.store);
     const archiving = begin(
       { ...f.deps, journal },
       subject,
       channel,
       "archive",
     );
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(1));
     expect(f.channels.archive).not.toHaveBeenCalled();
-    release();
+    landed = true;
+    disk.writes[0]?.land();
     expect(await archiving).toBe("archived");
-    expect(new LifecycleJournal(files.open()).get("c", subject)).toBe(
-      "archived",
-    );
+    // The request went out only once the intent was saved.
+    expect(saved).toEqual(["archiving"]);
+    expect(new LifecycleJournal(disk.disk).get("c", subject)).toBe("archived");
 
     const failed = Promise.reject(new Error("disk full"));
     failed.catch(() => {});
@@ -82,12 +86,16 @@ describe("archive and recover", () => {
   it("drives nothing on reconnect until a begun intent is saved", async () => {
     const f = setup();
     const disk = gatedStore();
+    const saved: string[] = [];
+    f.channels.archive.mockImplementation(async () => {
+      saved.push(new LifecycleJournal(disk.disk).get("c", subject));
+      f.relay.archived = true;
+    });
     const deps = { ...f.deps, journal: new LifecycleJournal(disk.store) };
     const archiving = begin(deps, subject, channel, "archive");
     await vi.waitFor(() => expect(disk.writes).toHaveLength(1));
     // A reconnect retries pending intents while that one saves.
     const resumed = resumeAll(deps);
-    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(f.channels.archive).not.toHaveBeenCalled();
     expect(new LifecycleJournal(disk.disk).get("c", subject)).toBe("active");
     disk.writes[0]?.land();
@@ -95,6 +103,9 @@ describe("archive and recover", () => {
     disk.writes[1]?.land();
     expect(await archiving).toBe("archived");
     await resumed;
+    // Every request went out only once the intent was saved.
+    expect(saved.length).toBeGreaterThan(0);
+    expect(saved.every((state) => state === "archiving")).toBe(true);
   });
 
   it("archives when a confirmed recovery's save fails behind a newer archive", async () => {

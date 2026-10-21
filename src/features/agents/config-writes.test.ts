@@ -542,25 +542,26 @@ describe("journal saves before relay writes", () => {
     });
     hold.catch(() => {});
     const journal = new MigrationJournal(files.open(hold));
-    const restarted = () => new MigrationJournal(files.open());
-    return { journal, restarted, release, fail };
+    return { journal, release, fail };
   }
 
   it("sends a save only once its held bytes are saved, so a restart resends them", async () => {
-    const disk = heldJournal();
-    let held: string | undefined;
+    let landed = false;
+    const disk = gatedStore(() => landed);
+    const held: (string | undefined)[] = [];
     const f = await setup(() => {
-      held = disk.restarted().unsaved(subject)?.event.id;
+      held.push(new MigrationJournal(disk.disk).unsaved(subject)?.event.id);
     });
-    const deps = { ...f.deps, journal: disk.journal };
+    const deps = { ...f.deps, journal: new MigrationJournal(disk.store) };
     const saving = save(deps, f.side, body("Held"));
-    await vi.waitFor(() => expect(f.writer.sign).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await vi.waitFor(() => expect(disk.writes).toHaveLength(1));
     expect(f.sent).toHaveLength(0);
-    disk.release();
+    landed = true;
+    disk.writes[0]?.land();
     expect((await saving).status).toBe("saved");
     expect(f.sent).toHaveLength(1);
-    expect(held).toBe(f.sent[0]?.id);
+    // What was sent was already saved where a restart reads it.
+    expect(held).toEqual([f.sent[0]?.id]);
   });
 
   it("sends no save and reports the failure when its held bytes can't be saved", async () => {
@@ -575,14 +576,23 @@ describe("journal saves before relay writes", () => {
   });
 
   it("migrates only once each journal entry is saved, and sends nothing when one fails", async () => {
-    const held = heldJournal();
-    const f = await setup();
-    const migrating = migrate({ ...f.deps, journal: held.journal }, f.side);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    let landed = false;
+    const held = gatedStore(() => landed);
+    const saved: (string | undefined)[] = [];
+    const f = await setup(() => {
+      saved.push(new MigrationJournal(held.disk).get(subject)?.signedEvent?.id);
+    });
+    const migrating = migrate(
+      { ...f.deps, journal: new MigrationJournal(held.store) },
+      f.side,
+    );
+    await vi.waitFor(() => expect(held.writes).toHaveLength(1));
     expect(f.sent).toHaveLength(0);
-    held.release();
+    landed = true;
+    held.writes[0]?.land();
     expect((await migrating).status).toBe("confirmed");
     expect(f.sent).toHaveLength(1);
+    expect(saved).toEqual([f.sent[0]?.id]);
 
     const failing = heldJournal();
     const g = await setup();
@@ -595,8 +605,6 @@ describe("journal saves before relay writes", () => {
 });
 
 describe("journal changes are seen only once saved", () => {
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
-
   it("keeps a saved change of one subject when another's earlier save fails", async () => {
     const f = await setup();
     const disk = gatedStore();
@@ -621,8 +629,11 @@ describe("journal changes are seen only once saved", () => {
   });
 
   it("resends a replaced run's signed bytes only once they are saved", async () => {
-    const f = await setup();
     const disk = gatedStore((value) => !value?.includes('"dispatched"'));
+    const saved: (string | undefined)[] = [];
+    const f = await setup(() => {
+      saved.push(new MigrationJournal(disk.disk).get(subject)?.signedEvent?.id);
+    });
     const journal = new MigrationJournal(disk.store);
     const first = new AbortController();
     void migrate({ ...f.deps, journal, signal: first.signal }, f.side).catch(
@@ -632,14 +643,14 @@ describe("journal changes are seen only once saved", () => {
     // Replaced, as a reconnect replaces the coordinator, while that saves.
     first.abort();
     const replacement = migrate({ ...f.deps, journal }, f.side);
-    await settle();
-    expect(f.sent).toHaveLength(0);
     disk.writes[0]?.land();
     expect((await replacement).status).toBe("confirmed");
     // Only the bytes saved before any send, never a fresh signature.
     const ids = new Set(f.sent.map((event) => event.id));
     expect(ids.size).toBe(1);
     expect(disk.writes[0]?.value).toContain([...ids][0]);
+    // Each send was already saved where a restart reads it.
+    expect(saved).toEqual(f.sent.map((event) => event.id));
   });
 });
 
@@ -805,7 +816,8 @@ describe("saves as revisions", () => {
     };
     const resumed = resume(f.deps, f.side);
     const newer = save(f.deps, f.side, body("Newer"));
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // The resume's resend is held before the newer save is let through.
+    await vi.waitFor(() => expect(resends).toBe(1));
     release();
     await resumed;
     expect(await newer).toMatchObject({ status: "uncertain", retired: false });

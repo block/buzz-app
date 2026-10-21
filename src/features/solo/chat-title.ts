@@ -31,9 +31,10 @@ export function startingChatTitle(value: MentionDraft | string): string {
   return (
     canonicalDetailsName(
       [
-        ...(
+        ...// A link-only prompt falls back to its cards, then "Chat"; the raw
+        // link is never the title.
+        (
           withoutLeadingBuzzLinks(body) ||
-          body ||
           (draft.sessionCards ?? []).join("\n\n")
         ).replace(/\s+/g, " "),
       ]

@@ -12,10 +12,14 @@ it("titles a linked chat from the prompt after its leading source link", () => {
   );
 });
 
-it("keeps a link-only prompt and links later in the prompt", () => {
-  expect(startingChatTitle("buzz://channel/design")).toBe(
-    "buzz://channel/design",
-  );
+it("never titles a link-only prompt with the link, but keeps later links", () => {
+  expect(startingChatTitle("buzz://channel/design")).toBe("Chat");
+  expect(
+    startingChatTitle({
+      text: `@Scout ${link}`,
+      recipients: [{ pubkey: "a".repeat(64), name: "Scout", start: 0, end: 6 }],
+    }),
+  ).toBe("Chat");
   expect(startingChatTitle("Look at buzz://channel/design")).toBe(
     "Look at buzz://channel/design",
   );

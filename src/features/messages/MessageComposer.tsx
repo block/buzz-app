@@ -37,7 +37,7 @@ import { knownAgentPubkeys } from "../agents/known";
 import { rememberedMentions } from "./remembered-mentions";
 import { useAgentChoices } from "../agents/use-choices";
 import { ownSolo } from "../solo/labels";
-import { soloHasPeople } from "../solo/people";
+import { soloHasPeople, soloRoster, useSoloHasPeople } from "../solo/people";
 import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
@@ -300,17 +300,23 @@ function PersonalComposer(props: MessageComposerProps) {
     () =>
       submission
         ? choices.selectable
-        : [
-            ...(members ?? [])
-              .filter((pubkey) => !agentPubkeys.has(pubkey))
-              .map((pubkey) => ({
-                pubkey,
-                name: profiles.get(pubkey)?.name || pubkey.slice(0, 12),
-              })),
-            ...choices.selectable,
-          ],
-    [submission, choices.selectable, members, agentPubkeys, profiles],
+        : soloRoster(
+            members,
+            session.viewer,
+            profiles,
+            agentPubkeys,
+            choices.selectable,
+          ),
+    [
+      submission,
+      choices.selectable,
+      members,
+      agentPubkeys,
+      profiles,
+      session.viewer,
+    ],
   );
+
   return (
     <DraftMentionRoster.Provider value={roster}>
       <Composer {...props} />
@@ -416,13 +422,9 @@ function Composer({
     };
   }, []);
   const mentionRoster = useContext(DraftMentionRoster);
-  const profileSnapshot = useSyncExternalStore(
-    session.profiles.subscribe,
-    session.profiles.snapshot,
-    session.profiles.snapshot,
-  );
-  const knownAgents = useKnownAgentPubkeys(session, profileSnapshot);
   const solo = !!soloConversation || ownSoloConversation;
+  // Only a saved Solo chat subscribes; other composers never read this.
+  const withPeople = useSoloHasPeople(session, channelId, solo && !submission);
   const channel = list.channels.find((channel) => channel.id === channelId);
   const channelType = channel?.channelType;
   // A DM or Solo chat is one conversation; elsewhere a top-level message
@@ -1255,17 +1257,7 @@ function Composer({
     }
   });
   // Alone in a Solo chat, a send addresses agents; with people it is a conversation.
-  const needsRecipient =
-    (requireMention || solo) &&
-    !(
-      !submission &&
-      soloHasPeople(
-        list.channels.find((item) => item.id === channelId)?.members,
-        session.viewer,
-        profileSnapshot,
-        knownAgents,
-      )
-    );
+  const needsRecipient = (requireMention || solo) && !withPeople;
   const recipientHint = submission
     ? "Tag an agent to send"
     : "Tag a person or agent to send";
@@ -1394,11 +1386,20 @@ function Composer({
     const capturedAttachments = attachments.store.snapshot();
     const capturedPicks = picks;
     const capturedRunPicks = { ...picks, ...resolvedPicks.current };
+    // Only a send addressed solely to the owner's agents is an agent follow-up
+    // that queues and waits on their turns. A message to people, or untagged
+    // conversation in a shared chat, goes out now.
     const queueFollowUp =
       !!host &&
       ownSoloConversation &&
       !threadRootId &&
-      followUpBehaviorPreference() === "queue";
+      followUpBehaviorPreference() === "queue" &&
+      captured.recipients.length > 0 &&
+      captured.recipients.every((person) =>
+        session.agentChoices
+          .snapshot()
+          .selectable.some((agent) => agent.pubkey === person.pubkey),
+      );
     try {
       if (captured.recipients.some((p) => archivedMention(session, p.pubkey)))
         throw new Error(

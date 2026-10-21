@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { knownAgentPubkeys } from "../agents/known";
 import type { ComposerSession } from "../messages/composer-session";
 import type { Profile } from "../relay/contracts";
+import type { MentionRecipient } from "../messages/mention-draft";
 
 /** Whether a Solo chat has another person in it. Alone, the viewer addresses
  * agents and must tag one; once shared, people can talk without a tag. Only a
@@ -20,6 +21,26 @@ export function soloHasPeople(
       !!profiles.get(key) &&
       !profiles.get(key)?.isAgent,
   );
+}
+
+/** Who a saved Solo chat's composer may tag: its people (never the viewer,
+ * never an agent it doesn't own) plus the viewer's available agents. */
+export function soloRoster(
+  members: readonly string[] | undefined,
+  viewer: string | undefined,
+  profiles: ReadonlyMap<string, Profile>,
+  agents: ReadonlySet<string>,
+  selectable: readonly MentionRecipient[],
+): readonly MentionRecipient[] {
+  return [
+    ...(members ?? [])
+      .filter((pubkey) => pubkey !== viewer && !agents.has(pubkey))
+      .map((pubkey) => ({
+        pubkey,
+        name: profiles.get(pubkey)?.name || pubkey.slice(0, 12),
+      })),
+    ...selectable,
+  ];
 }
 
 /** Live soloHasPeople for one chat, from the channel list, profiles and agent

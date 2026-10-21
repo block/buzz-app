@@ -572,6 +572,46 @@ it.each([
   },
 );
 
+it.each([
+  ["a person", false],
+  ["a person and an agent", true],
+] as const)(
+  "with queued follow-ups, the owner's send to %s goes out now",
+  async (_, withAgent) => {
+    localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+    try {
+      const person = "c".repeat(64);
+      const f = fixture({ people: [person] });
+      const text = withAgent ? "@Teammate @Scout hi" : "@Teammate hi";
+      writeView(f.scope, `draft:${id}`, {
+        text,
+        recipients: [
+          { pubkey: person, name: "Teammate", start: 0, end: 9 },
+          ...(withAgent
+            ? [{ pubkey: agent, name: "Scout", start: 10, end: 16 }]
+            : []),
+        ],
+      });
+      f.mount();
+      const input = await screen.findByRole("textbox", {
+        name: "Message this conversation",
+      });
+      const user = userEvent.setup();
+      await user.click(input);
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(f.send).toHaveBeenCalledTimes(1));
+      expect(f.send.mock.calls[0]?.[2]).toEqual(
+        withAgent ? [person, agent] : [person],
+      );
+      expect(
+        screen.queryByText(/no longer available/, { selector: "[role=alert]" }),
+      ).toBeNull();
+    } finally {
+      localStorage.removeItem("buzz-follow-up-behavior.v1");
+    }
+  },
+);
+
 it("keeps the tag requirement while a member's profile has not loaded", async () => {
   const f = fixture({ people: ["c".repeat(64)], unloaded: true });
   f.mount();

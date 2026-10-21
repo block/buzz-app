@@ -4,6 +4,7 @@
 // into the running turn at its next tool call. Buzz tools are served over the
 // same pipe, as the SDK serves an in-process MCP server, so the process holds
 // no Buzz key.
+import type { UnsupportedSetting } from "../../features/agents/settings";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -72,6 +73,8 @@ export type Settled = Readonly<{
   ok: boolean;
   /** Why it failed, for the person waiting. */
   error?: string;
+  /** The setting it couldn\'t apply, when that refused it. */
+  failure?: UnsupportedSetting;
 }>;
 
 const STDERR_LIMIT = 4_000;

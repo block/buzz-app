@@ -17,6 +17,17 @@ import {
 } from "./claude";
 import { STANDALONE_DEADLINE_MS } from "../../features/agent-harness/standalone";
 import type { AgentStore } from "../../features/agents/store";
+import {
+  Refused,
+  inputsFit,
+  prompting,
+  refusal,
+  type Applied,
+  type Inputs,
+  type SettingsAttempt,
+} from "../../features/agents/settings";
+
+export { Refused };
 
 /** A conversation's process stops after this long without a message or its
  * own activity, such as background work. */
@@ -46,11 +57,34 @@ export type SessionsOptions = Readonly<{
   spare?: Spare;
   store: SessionStore;
   /** How to start a process with the agent's current settings, for the
-   * conversation `key` when given. */
-  launch(key?: string): Promise<Omit<ClaudeLaunch, "resume" | "sessionId">>;
-  /** Changes when a setting that a running process fixed has changed, for the
-   * conversation `key` when given. */
-  fingerprint(key?: string): string;
+   * conversation `key` when given, in `folders` when its turn named them.
+   * Throws `Refused` when those settings can't run a turn; `skipEffort`
+   * is set for a turn that picked its own model or effort. */
+  launch(
+    key?: string,
+    folders?: Folders,
+    skipEffort?: boolean,
+  ): Promise<Omit<ClaudeLaunch, "resume" | "sessionId">>;
+  /** Changes when a running process must be replaced: a local save,
+   * Restart to apply, or the conversation `key`'s turn naming other
+   * `folders`. A remote edit leaves it, so a conversation keeps the config
+   * it started with. */
+  fingerprint(key?: string, folders?: Folders): string;
+  /** The team text and name a process started now runs on, read with
+   * `fingerprint`; see `Inputs`. */
+  inputs(): string;
+  /** The config a process started now runs on, read with `fingerprint`
+   * before `launch`, which must use the same config. */
+  snapshot(): string;
+  /** The settings and epoch a process started now is pinned to, read with
+   * `snapshot`. */
+  applied(): Applied;
+  /** Why `process` can't run an explicit `pick`, checked before a new turn
+   * hands off: the pick is as asked, not yet checked against any list. */
+  refusedPick?(
+    process: ClaudeProcess,
+    pick: TurnPick,
+  ): Promise<Refused | undefined>;
   now?(): number;
   newId?(): string;
   /** Called when a conversation's process starts, is sent a message, or
@@ -58,11 +92,29 @@ export type SessionsOptions = Readonly<{
   onChange?(): void;
 }>;
 
-type Live = {
+/** The project folders a turn's process works in; undefined keeps the
+ * conversation's own. */
+export type Folders = readonly string[] | undefined;
+
+/** A turn's text and the folders it describes, built again for a new session. */
+export type Fresh = Readonly<{ text: string; folders?: Folders }>;
+
+type Live = Inputs & {
   process: ClaudeProcess;
   fingerprint: string;
+  /** The config it started on; never changes while it runs. */
+  snapshot: string;
+  /** The settings it is pinned to, which a new turn's handoff checks. */
+  applied: Applied;
+  /** The project folders it was started in. */
+  directories: readonly string[];
   used: number;
   timer?: ReturnType<typeof setTimeout>;
+  /** Settles once it is idle again after its latest message. */
+  idle?: Promise<unknown>;
+  /** Settles once the turn checking its pick has sent or been refused; a
+   * later message waits for it rather than overtaking that turn. */
+  claim?: Promise<void>;
 };
 
 export class AgentSessions {
@@ -71,9 +123,13 @@ export class AgentSessions {
   private readonly once = new Map<string, Live | undefined>();
   private onceCount = 0;
   private readonly opening = new Map<string, Promise<Live | Settled>>();
+  /** A turn waiting for its conversation's busy process to move to other
+   * folders: later turns wait until it is placed, so none overtakes it. */
+  private readonly handovers = new Map<string, Promise<void>>();
   private discovery:
     | {
         fingerprint: string;
+        snapshot: string;
         result: Promise<{
           models: readonly ClaudeModel[];
           model: string | undefined;
@@ -117,9 +173,38 @@ export class AgentSessions {
     ];
   }
 
-  /** Read defaults without assigning the shared spare to this agent. */
-  async metadata() {
+  /** The settings `key`'s running process is pinned to once it has sent its
+   * first prompt; undefined while it has none or hasn't prompted. */
+  pinOf(key: string) {
+    const live = this.live.get(key);
+    return live?.process.running && live.inputs === undefined
+      ? live.applied
+      : undefined;
+  }
+  /** Whether the conversation's next turn runs on a process it keeps, started
+   * on config other than `current`, rather than one started now. */
+  pinned(key: string, folders?: Folders) {
+    const live = this.live.get(key);
+    return (
+      !!live &&
+      live.process.running &&
+      this.fits(key, live, folders) &&
+      live.snapshot !== this.options.snapshot()
+    );
+  }
+
+  /** Read defaults without assigning the shared spare to this agent: from
+   * `key`'s own process when it runs on config `at`, else any such one, else
+   * a discovery process started where `at` says. Callers capture `at` from
+   * one config in one synchronous step, so a result is never stored under
+   * settings other than the ones that produced it. */
+  async metadata(
+    key: string | undefined,
+    at: Readonly<{ snapshot: string; where: Where }>,
+  ) {
     const fingerprint = this.options.fingerprint();
+    const current = at.snapshot;
+    const launch = at.where;
     const read = async (process: ClaudeProcess) => {
       const [models, model, effort] = await Promise.all([
         process.models(),
@@ -128,24 +213,38 @@ export class AgentSessions {
       ]);
       return { models, model, effort };
     };
-    for (const live of this.live.values())
-      if (live.fingerprint === fingerprint && live.process.running) {
+    // Discovery started on other config reports that config's model.
+    const fresh = (
+      discovery: AgentSessions["discovery"],
+    ): discovery is NonNullable<AgentSessions["discovery"]> =>
+      discovery?.fingerprint === fingerprint && discovery.snapshot === current;
+    const own = key === undefined ? undefined : this.live.get(key);
+    const candidates = [
+      ...(own ? [own] : []),
+      ...[...this.live.values()].filter((live) => live !== own),
+    ];
+    for (const live of candidates)
+      if (
+        live.fingerprint ===
+          (live === own ? this.options.fingerprint(key) : fingerprint) &&
+        live.process.running &&
+        live.snapshot === current
+      ) {
         const metadata = await read(live.process);
-        const discovered =
-          this.discovery?.fingerprint === fingerprint
-            ? await this.discovery.result
-            : undefined;
+        const discovered = fresh(this.discovery)
+          ? await this.discovery.result
+          : undefined;
         return { ...metadata, model: metadata.model ?? discovered?.model };
       }
     if (this.disposed)
       return { models: [], model: undefined, effort: undefined };
-    if (this.discovery?.fingerprint === fingerprint)
-      return this.discovery.result;
+    if (fresh(this.discovery)) return this.discovery.result;
     this.clearDiscovery();
     const discovery: NonNullable<AgentSessions["discovery"]> = {
       fingerprint,
+      snapshot: current,
       result: Promise.resolve().then(async () => {
-        const launch = await this.options.launch();
+        // Never given a turn, and read by the check `launch` makes.
         if (this.disposed || this.discovery !== discovery)
           throw new Error("Claude was stopped");
         const process = await ClaudeProcess.start(this.options.spawn, {
@@ -179,7 +278,10 @@ export class AgentSessions {
   /** Sends `text` into the conversation `key`, and resolves when the session
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again for a new session when the saved one is lost;
-   * `pick` is the model and effort the turn was asked to run with. */
+   * `pick` is the model and effort the turn was asked to run with; `folders`
+   * are the ones `text` describes; `attempt` the settings the turn was
+   * admitted with, which a new turn hands off through. A process started for
+   * it is refused where `launch` reads the settings it starts with. */
   async deliver(
     key: string,
     text: string,
@@ -188,44 +290,101 @@ export class AgentSessions {
       steer = text,
       fresh,
       pick = {},
+      folders,
+      attempt,
       step,
       acknowledged,
       superseded,
       activityScope,
     }: Readonly<{
       steer?: string;
-      fresh?: () => Promise<string>;
+      fresh?: () => Promise<Fresh>;
       pick?: TurnPick;
+      folders?: Folders;
+      attempt: SettingsAttempt;
     }> &
-      ActivityReceipt = {},
+      ActivityReceipt,
   ): Promise<Settled> {
-    if (this.disposed) return { ok: false, error: "Claude was stopped" };
-    // A message that arrives while its conversation's process starts uses it.
-    // Checked without awaiting first, so the first message opens it at once.
-    const opening = this.opening.get(key);
-    if (opening) await opening;
-    let live = this.live.get(key);
+    let live: Live | undefined;
+    let handover: Promise<void> | undefined;
+    let release = () => {};
+    const placed = () => {
+      if (this.handovers.get(key) === handover) this.handovers.delete(key);
+      release();
+    };
+    for (;;) {
+      if (this.disposed) {
+        placed();
+        return { ok: false, error: "Claude was stopped" };
+      }
+      const waiting = this.handovers.get(key);
+      if (waiting && waiting !== handover) {
+        await waiting;
+        continue;
+      }
+      // A message that arrives while its conversation's process starts uses
+      // it. Checked without awaiting first, so the first message opens it at
+      // once.
+      const opening = this.opening.get(key);
+      if (opening) {
+        await opening;
+        continue;
+      }
+      live = this.live.get(key);
+      if (live?.claim) {
+        await live.claim;
+        continue;
+      }
+      // A busy process started in other folders than `text` describes is
+      // never steered: the turn waits for it, then is placed again.
+      if (
+        live?.process.running &&
+        live.process.busy &&
+        folders &&
+        JSON.stringify(folders) !== JSON.stringify(live.directories)
+      ) {
+        if (!handover) {
+          handover = new Promise<void>((resolve) => (release = resolve));
+          this.handovers.set(key, handover);
+        }
+        await Promise.race([live.idle, live.process.exited]).catch(
+          () => undefined,
+        );
+        continue;
+      }
+      break;
+    }
     if (
       live &&
       (!live.process.running ||
-        (live.fingerprint !== this.options.fingerprint(key) &&
-          !live.process.busy))
+        (!this.fits(key, live, folders) && !live.process.busy))
     ) {
       this.drop(key, live);
       live = undefined;
     }
     if (live) {
+      placed();
       this.touch(key, live, seen);
+      // Steering joins a turn that already started; only a new one hands off.
       return this.answer(key, live, live.process.busy ? steer : text, {
+        ...(live.process.busy ? {} : { attempt }),
         ...pick,
         ...(activityScope ? { activityScope } : {}),
         ...(step ? { step } : {}),
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
-      });
+      }).catch(asRefusal);
     }
     const saved = this.options.store.get(key);
-    const opened = await this.open(key, saved?.id, seen);
+    const opening = this.open(
+      key,
+      saved?.id,
+      seen,
+      folders,
+      pick.model !== undefined || pick.effort !== undefined,
+    );
+    placed();
+    const opened = await opening;
     if (!("process" in opened)) return opened;
     live = opened;
     const activity = {
@@ -235,14 +394,28 @@ export class AgentSessions {
       ...(acknowledged ? { acknowledged } : {}),
       ...(superseded ? { superseded } : {}),
     };
-    const delivered = await this.answer(key, live, text, activity);
+    let delivered: Settled;
+    try {
+      delivered = await this.answer(key, live, text, { ...activity, attempt });
+    } catch (error) {
+      // Refused before sending: the saved session never ran, so it is kept.
+      return asRefusal(error);
+    }
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
     if (!delivered.ok && saved && !live.process.started) {
       await this.options.store.delete(key);
       this.drop(key, live);
-      return this.deliver(key, fresh ? await fresh() : text, seen, {
+      let next: Fresh = { text, folders };
+      try {
+        if (fresh) next = await fresh();
+      } catch (error) {
+        return { ok: false, error: String(error) };
+      }
+      return this.deliver(key, next.text, seen, {
         pick,
+        folders: next.folders,
+        attempt,
         ...activity,
       });
     }
@@ -288,6 +461,7 @@ export class AgentSessions {
   async runOnce(
     label: string,
     prompt: () => string | undefined | Promise<string | undefined>,
+    attempt: SettingsAttempt,
     deadline = ONCE_DEADLINE_MS,
   ): Promise<Settled> {
     if (this.disposed) return { ok: false, error: "Claude was stopped" };
@@ -305,8 +479,15 @@ export class AgentSessions {
       this.once.set(key, live);
       const text = await prompt();
       if (text === undefined || this.disposed) return { ok: true };
+      const pinned = live;
       return await Promise.race([
-        live.process.send(text),
+        // Refused when the inputs it started on changed while `prompt` ran.
+        attempt.handoff(
+          pinned.applied,
+          prompting(pinned, this.options.inputs, () =>
+            pinned.process.send(text),
+          ),
+        ),
         new Promise<Settled>((resolve) => {
           timer = setTimeout(
             () =>
@@ -319,6 +500,7 @@ export class AgentSessions {
         }),
       ]);
     } catch (error) {
+      if (error instanceof Refused) return refusal(error);
       console.warn("Claude could not start a one-off session", error);
       return { ok: false, error: "Claude could not start" };
     } finally {
@@ -333,16 +515,18 @@ export class AgentSessions {
     }
   }
 
+  /** Whether a conversation's process is pinned to settings other than the
+   * ones `current` accepts. */
+  outdated(current: (pin: Applied) => boolean) {
+    return [...this.live.values()].some((live) => !current(live.applied));
+  }
+
   /** Stops idle processes started with old settings; busy ones stop when they
    * next fall idle. */
   reconfigure() {
     this.clearDiscovery();
     for (const [key, live] of this.live)
-      if (
-        live.fingerprint !== this.options.fingerprint(key) &&
-        !live.process.busy
-      )
-        this.drop(key, live);
+      if (!this.fits(key, live) && !live.process.busy) this.drop(key, live);
   }
 
   dispose() {
@@ -359,8 +543,10 @@ export class AgentSessions {
     key: string,
     resume: string | undefined,
     seen: number,
+    folders?: Folders,
+    skipEffort?: boolean,
   ): Promise<Live | Settled> {
-    const opened = this.start(resume, key).then(
+    const opened = this.start(resume, key, folders, skipEffort).then(
       (live): Live | Settled => {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         if (this.disposed) {
@@ -370,8 +556,9 @@ export class AgentSessions {
         this.adopt(key, live, seen);
         return live;
       },
-      (error) => {
+      (error): Settled => {
         if (this.opening.get(key) === opened) this.opening.delete(key);
+        if (error instanceof Refused) return refusal(error);
         console.warn("Claude could not start", error);
         return { ok: false, error: "Claude could not start" };
       },
@@ -379,18 +566,49 @@ export class AgentSessions {
     this.opening.set(key, opened);
     return opened;
   }
-  private async start(resume: string | undefined, key?: string): Promise<Live> {
+
+  /** Whether `key`'s process may take its next turn rather than be
+   * replaced. */
+  private fits(key: string, live: Live, folders?: Folders) {
+    return (
+      live.fingerprint === this.options.fingerprint(key, folders) &&
+      inputsFit(live, this.options.inputs())
+    );
+  }
+
+  private async start(
+    resume: string | undefined,
+    key?: string,
+    folders?: Folders,
+    skipEffort?: boolean,
+  ): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
-    const fingerprint = this.options.fingerprint(key);
-    const launch = await this.options.launch(key);
+    const fingerprint = this.options.fingerprint(key, folders);
+    const inputs = this.options.inputs();
+    const snapshot = this.options.snapshot();
+    const applied = this.options.applied();
+    const launch = await this.options.launch(key, folders, skipEffort);
+    const directories = launch.directories ?? [];
     const process = resume
       ? await ClaudeProcess.start(this.options.spawn, { ...launch, resume })
       : await this.fresh(launch);
-    if (fingerprint === this.options.fingerprint(key) || this.disposed)
-      return { process, fingerprint, used: this.now() };
+    if (
+      (fingerprint === this.options.fingerprint(key, folders) &&
+        inputs === this.options.inputs()) ||
+      this.disposed
+    )
+      return {
+        process,
+        fingerprint,
+        inputs,
+        snapshot,
+        applied,
+        directories,
+        used: this.now(),
+      };
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
-    return this.start(resume, key);
+    return this.start(resume, key, folders, skipEffort);
   }
   /** A process for a new session: the spare when it fits, else a new one. */
   private async fresh(launch: Omit<ClaudeLaunch, "resume" | "sessionId">) {
@@ -421,25 +639,60 @@ export class AgentSessions {
       if (this.live.get(key) === live) this.drop(key, live);
     });
   }
+  /** Sends `text` on `live`, or throws `Refused` having sent nothing. */
   private async answer(
     key: string,
     live: Live,
     text: string,
-    activity: TurnPick & ActivityReceipt,
-  ) {
-    const sent = live.process.send(text, activity);
+    {
+      attempt,
+      ...activity
+    }: TurnPick & ActivityReceipt & { attempt?: SettingsAttempt },
+  ): Promise<Settled> {
+    // A pick is checked against the process the turn runs on, whose list
+    // it reports itself; steering into a running turn picks nothing new.
+    let sent: Promise<Settled>;
+    if (attempt && (activity.model || activity.effort)) {
+      let release!: () => void;
+      const claim = new Promise<void>((resolve) => (release = resolve));
+      live.claim = claim;
+      try {
+        const refused = await this.options.refusedPick?.(
+          live.process,
+          activity,
+        );
+        if (refused) throw refused;
+        sent = this.handoff(live, text, activity, attempt);
+      } finally {
+        if (live.claim === claim) delete live.claim;
+        release();
+      }
+    } else
+      sent = attempt
+        ? this.handoff(live, text, activity, attempt)
+        : live.process.send(text, activity);
+    live.idle = sent;
     // Sending made it busy; a snapshot read when it started is not.
     this.options.onChange?.();
     const settled = await sent;
     if (this.live.get(key) === live) {
       this.touch(key, live);
-      if (
-        live.fingerprint !== this.options.fingerprint(key) &&
-        !live.process.busy
-      )
-        this.drop(key, live);
+      if (!this.fits(key, live) && !live.process.busy) this.drop(key, live);
     }
     return settled;
+  }
+  private handoff(
+    live: Live,
+    text: string,
+    activity: TurnPick & ActivityReceipt,
+    attempt: SettingsAttempt,
+  ) {
+    return attempt.handoff(
+      live.applied,
+      prompting(live, this.options.inputs, () =>
+        live.process.send(text, activity),
+      ),
+    );
   }
   /** Saves the session as used now, when it takes in a message or ends a
    * turn, and restarts its idle countdown. */
@@ -476,7 +729,10 @@ export class AgentSessions {
 
 /** Where a process runs and may work, its model and effort: all a spare is
  * started with. */
-type Where = Pick<ClaudeLaunch, "cwd" | "directories" | "model" | "effort">;
+export type Where = Pick<
+  ClaudeLaunch,
+  "cwd" | "directories" | "model" | "effort"
+>;
 const place = ({ cwd, directories = [], model, effort }: Where) =>
   JSON.stringify([cwd, directories, model ?? "", effort ?? ""]);
 
@@ -639,4 +895,10 @@ export function localSessions(
         delete sessions[conversation];
       }),
   };
+}
+
+/** A turn refused before sending, as its result; other errors propagate. */
+function asRefusal(error: unknown): Settled {
+  if (error instanceof Refused) return refusal(error);
+  throw error;
 }

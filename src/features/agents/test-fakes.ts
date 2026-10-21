@@ -42,3 +42,27 @@ export function sharedFiles(initial: Record<string, string> = {}) {
     );
   return { disk, open };
 }
+
+/** Agent storage whose saves wait until a test lands or fails each one,
+ * unless `auto` lands it at once. Saved values go to `disk`, which a
+ * restart reads. */
+export function gatedStore(
+  auto: (value: string | null) => boolean = () => false,
+) {
+  const disk = memoryStorage();
+  const writes: { value: string | null; land(): void; fail(): void }[] = [];
+  const store: Pick<AgentStore, "get" | "set"> = {
+    get: (key) => disk.get(key),
+    set: (key, value) =>
+      new Promise<void>((resolve, reject) => {
+        const land = () => void disk.set(key, value).then(resolve);
+        if (auto(value)) return land();
+        writes.push({
+          value,
+          land,
+          fail: () => reject(new Error("disk full")),
+        });
+      }),
+  };
+  return { store, disk, writes };
+}

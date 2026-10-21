@@ -15,6 +15,11 @@ import {
   ServerPool,
   SharedProcess,
 } from "./sessions";
+import {
+  SUPERSEDED,
+  type SettingsAttempt,
+} from "../../features/agents/settings";
+import { settingsClock } from "../../features/agents/settings-testing";
 
 const tools: ToolServer = async (_conversation, message) => ({
   jsonrpc: "2.0",
@@ -60,10 +65,11 @@ const setup = (
     let settings: Launch = {
       workspace: "~/.buzz",
       systemPrompt: "prompt",
+      choice: { provider: "", model: "" },
       ...initial,
     };
-    let choice: Choice = { provider: "", model: "" };
-    const sessions = new AgentSessions({
+    const clock = settingsClock();
+    const real = new AgentSessions({
       resolveDirectory: fake.resolveDirectory,
       tools: agentTools,
       process,
@@ -73,25 +79,85 @@ const setup = (
         store: { set: (key: string, saved) => void store.set(key, saved) },
       }),
       launch: async () => settings,
-      choice: () => choice,
+      inputs: () => "",
       fingerprint: () =>
         JSON.stringify([settings.workspace, settings.systemPrompt]),
+      snapshot: () => JSON.stringify(settings),
+      applied: () => clock.applied(settings),
     });
+    const sessions = withAttempt(real, () => clock.attempt(settings));
     return {
       sessions,
+      clock,
       change: (next: Partial<Launch>, reconfigure = true) => {
         settings = { ...settings, ...next };
         if (reconfigure) sessions.reconfigure();
       },
-      /** Picks a provider and model, as saving the agent's settings does. */
+      /** Picks a provider, model and thinking level, as saving the agent's
+       * settings does. */
       choose: (next: Choice) => {
-        choice = next;
+        settings = { ...settings, choice: next };
+        clock.advance();
+        const { workspace, systemPrompt } = settings;
+        sessions.choose(
+          next,
+          (live) => {
+            const opened = JSON.parse(live) as Launch;
+            return (
+              opened.workspace === workspace &&
+              opened.systemPrompt === systemPrompt
+            );
+          },
+          clock.applied(settings),
+        );
         sessions.reconfigure();
       },
     };
   };
   return { fake, pool, process, agent, ...agent(initial, tools, onChange) };
 };
+
+const NO_CHOICE = { provider: "", model: "" };
+
+type Deliver = AgentSessions["deliver"];
+type Options = Omit<NonNullable<Parameters<Deliver>[3]>, "attempt"> & {
+  attempt?: SettingsAttempt;
+};
+/** `sessions`, whose turns are admitted at the agent's epoch now unless a
+ * test passes its own attempt. */
+const withAttempt = (sessions: AgentSessions, attempt: () => SettingsAttempt) =>
+  new Proxy(sessions, {
+    get(target, property) {
+      if (property === "deliver")
+        return (
+          key: string,
+          text: string,
+          seen: number,
+          options: Options = {},
+        ) =>
+          target.deliver(key, text, seen, { attempt: attempt(), ...options });
+      if (property === "runOnce")
+        return (
+          label: string,
+          prompt: Parameters<AgentSessions["runOnce"]>[1],
+          options?: Parameters<AgentSessions["runOnce"]>[3],
+        ) => target.runOnce(label, prompt, attempt(), options);
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as Omit<AgentSessions, "deliver" | "runOnce"> & {
+    deliver(
+      key: string,
+      text: string,
+      seen: number,
+      options?: Options,
+    ): ReturnType<Deliver>;
+    runOnce(
+      label: string,
+      prompt: Parameters<AgentSessions["runOnce"]>[1],
+      options?: Parameters<AgentSessions["runOnce"]>[3],
+    ): ReturnType<AgentSessions["runOnce"]>;
+  };
 
 afterEach(() => {
   vi.useRealTimers();
@@ -199,6 +265,33 @@ describe("AgentSessions", () => {
     await expect(other).resolves.toMatchObject({ ok: true });
   });
 
+  it("runs a message sent after Stop as its own turn when the stopped session is stale", async () => {
+    const { fake, process, sessions, change } = setup({}, true);
+    const one = sessions.deliver("a", "one", 1);
+    await flush(20);
+    const goose = await process.get();
+    const notify = goose.notify.bind(goose);
+    let cancel = () => {};
+    // Goose takes its time to end the stopped turn.
+    goose.notify = (method, params) => {
+      if (method === "session/cancel") cancel = () => notify(method, params);
+      else notify(method, params);
+    };
+    change({ systemPrompt: "newer" }, false);
+    await sessions.interrupt("a");
+    const two = sessions.deliver("a", "two", 2);
+    await flush(30);
+    const turns = () => fake.geese[0]?.turns ?? [];
+    expect(turns()[0]?.steered).toEqual([]);
+    cancel();
+    await expect(one).resolves.toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(turns()).toHaveLength(2));
+    expect(turns()[1]?.text).toContain("two");
+    expect(turns()[1]?.sessionId).not.toBe(turns()[0]?.sessionId);
+    turns()[1]?.finish();
+    await expect(two).resolves.toMatchObject({ ok: true });
+  });
+
   it("interrupts a conversation once the session opening for it has its message", async () => {
     const { fake, sessions } = setup({}, true);
     const delivered = sessions.deliver("a", "one", 1);
@@ -267,6 +360,20 @@ describe("AgentSessions", () => {
       "session-1 model=gpt-4.1",
       "session-1 model=gpt-default",
       "session-1 provider=goose",
+    ]);
+  });
+
+  it("runs a session still opening on a provider saved meanwhile", async () => {
+    const { fake, sessions, choose } = setup();
+    const first = sessions.deliver("a", "one", 1);
+    choose({ provider: "openai", model: "gpt-4.1" });
+    await first;
+    await sessions.deliver("a", "two", 2);
+    const [goose] = fake.geese;
+    expect(goose?.closed).toEqual([]);
+    expect(goose?.configured).toEqual([
+      "session-1 provider=openai",
+      "session-1 model=gpt-4.1",
     ]);
   });
 
@@ -367,6 +474,61 @@ describe("AgentSessions", () => {
     expect(goose?.configured).toEqual(["session-1 provider=nope"]);
     expect(goose?.turns.map((turn) => turn.text)).toEqual(["one", "three"]);
   });
+
+  it("fails a turn goose rejects the setting of with what it could not apply", async () => {
+    const { fake, sessions, choose } = setup();
+    choose({ provider: "openai", model: "gpt" });
+    await sessions.deliver("a", "one", 1);
+    const [goose] = fake.geese;
+    if (goose) {
+      goose.configError = "Invalid params: Invalid model config";
+      goose.configCode = -32602;
+    }
+    choose({ provider: "openai", model: "nope" });
+    const reason =
+      "goose could not switch its model to nope: Invalid params: Invalid model config";
+    await expect(sessions.deliver("a", "two", 2)).resolves.toEqual({
+      ok: false,
+      error: reason,
+      failure: {
+        kind: "unsupported-setting",
+        setting: "model",
+        value: "nope",
+        reason,
+      },
+    });
+    expect(goose?.turns).toHaveLength(1);
+  });
+
+  it.each([
+    [-32602, true],
+    [-32603, false],
+  ])(
+    "types a standalone turn's failure only when goose rejects the setting (code %i)",
+    async (code, typed) => {
+      const { fake, sessions, choose } = setup();
+      await sessions.deliver("a", "one", 1);
+      const [goose] = fake.geese;
+      if (goose) {
+        goose.configError = "no such model";
+        goose.configCode = code;
+      }
+      choose({ provider: "openai", model: "nope" });
+      const reason = "goose could not switch its model to nope: no such model";
+      await expect(sessions.runOnce("watch/x", () => "look")).resolves.toEqual({
+        ok: false,
+        error: reason,
+        ...(typed && {
+          failure: {
+            kind: "unsupported-setting",
+            setting: "model",
+            value: "nope",
+            reason,
+          },
+        }),
+      });
+    },
+  );
 
   it("reopens an idle session in a new workspace, in the same goose", async () => {
     const { fake, sessions, change } = setup();
@@ -489,19 +651,29 @@ describe("AgentSessions", () => {
       release = resolve;
     });
     const store = new Map<string, SavedConversation>();
-    const sessions = new AgentSessions({
-      resolveDirectory: fake.resolveDirectory,
-      tools,
-      process: new SharedProcess(fake, fake.serve),
-      pool: new ServerPool(),
-      store: { set: (key, saved) => void store.set(key, saved) },
-      launch: async () => {
-        await held;
-        return { workspace: "/w", systemPrompt: "" };
-      },
-      choice: () => ({ provider: "", model: "" }),
-      fingerprint: () => "",
-    });
+    const clock = settingsClock();
+    const sessions = withAttempt(
+      new AgentSessions({
+        resolveDirectory: fake.resolveDirectory,
+        tools,
+        process: new SharedProcess(fake, fake.serve),
+        pool: new ServerPool(),
+        store: { set: (key, saved) => void store.set(key, saved) },
+        launch: async () => {
+          await held;
+          return {
+            workspace: "/w",
+            systemPrompt: "",
+            choice: { provider: "", model: "" },
+          };
+        },
+        inputs: () => "",
+        fingerprint: () => "",
+        snapshot: () => "",
+        applied: () => clock.applied({}),
+      }),
+      () => clock.attempt({}),
+    );
     const abort = new AbortController();
     const late = sessions.deliver("a", "one", 1, { signal: abort.signal });
     await flush(30);
@@ -518,15 +690,25 @@ describe("AgentSessions", () => {
 
   it("reports why goose could not start", async () => {
     const fake = fakeSpawn({ http: false });
-    const sessions = new AgentSessions({
-      resolveDirectory: fake.resolveDirectory,
-      tools,
-      process: new SharedProcess(fake, fake.serve),
-      pool: new ServerPool(),
-      launch: async () => ({ workspace: "/w", systemPrompt: "" }),
-      choice: () => ({ provider: "", model: "" }),
-      fingerprint: () => "",
-    });
+    const clock = settingsClock();
+    const sessions = withAttempt(
+      new AgentSessions({
+        resolveDirectory: fake.resolveDirectory,
+        tools,
+        process: new SharedProcess(fake, fake.serve),
+        pool: new ServerPool(),
+        launch: async () => ({
+          workspace: "/w",
+          systemPrompt: "",
+          choice: NO_CHOICE,
+        }),
+        inputs: () => "",
+        fingerprint: () => "",
+        snapshot: () => "",
+        applied: () => clock.applied({}),
+      }),
+      () => clock.attempt({}),
+    );
     await expect(sessions.deliver("a", "one", 1)).resolves.toMatchObject({
       ok: false,
       error: expect.stringMatching(/HTTP MCP/),
@@ -541,17 +723,23 @@ describe("AgentSessions", () => {
     });
     const launch = vi.fn(async () => {
       await held;
-      return { workspace: "/w", systemPrompt: "" };
+      return { workspace: "/w", systemPrompt: "", choice: NO_CHOICE };
     });
-    const sessions = new AgentSessions({
-      resolveDirectory: fake.resolveDirectory,
-      tools,
-      process: new SharedProcess(fake, fake.serve),
-      pool: new ServerPool(),
-      launch,
-      choice: () => ({ provider: "", model: "" }),
-      fingerprint: () => "",
-    });
+    const clock = settingsClock();
+    const sessions = withAttempt(
+      new AgentSessions({
+        resolveDirectory: fake.resolveDirectory,
+        tools,
+        process: new SharedProcess(fake, fake.serve),
+        pool: new ServerPool(),
+        launch,
+        inputs: () => "",
+        fingerprint: () => "",
+        snapshot: () => "",
+        applied: () => clock.applied({}),
+      }),
+      () => clock.attempt({}),
+    );
     const delivering = sessions.deliver("a", "one", 1);
     const once = sessions.runOnce("watch/x", () => "look");
     await flush(30);
@@ -859,4 +1047,264 @@ it("keeps saved conversations per agent in storage, most recent first", () => {
   expect(localSessions(storage, "two").list()).toEqual([["c/root", { at: 2 }]]);
   data.set("buzz.goose.sessions.v1", "not json");
   expect(one.list()).toEqual([]);
+});
+
+it("a remote Goose thinking edit stays pinned until Restart to apply", async () => {
+  const { sessions, change, fake } = setup({
+    choice: { provider: "", model: "", effort: "high" },
+  });
+  try {
+    await sessions.deliver("a", "before", 1);
+    change({ choice: { provider: "", model: "" } }, false);
+    await sessions.deliver("a", "still before", 2);
+    expect(fake.geese[0]?.closed).toEqual([]);
+    expect(fake.geese[0]?.configured).toEqual([
+      "session-1 thinking_effort=high",
+    ]);
+    expect(fake.geese[0]?.turns.map((t) => t.sessionId)).toEqual([
+      "session-1",
+      "session-1",
+    ]);
+    change({ systemPrompt: "Restart applied" });
+    await sessions.deliver("a", "after restart", 3);
+    expect(fake.geese[0]?.closed).toEqual(["session-1"]);
+    expect(fake.geese[0]?.turns.at(-1)?.sessionId).toBe("session-2");
+  } finally {
+    sessions.dispose();
+  }
+});
+
+it("marks an opening session current after two local choice saves", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = false;
+  const { sessions, fake, choose } = setup({}, false, {
+    serve: (serve) => async (handler) => {
+      entered = true;
+      await held;
+      return serve(handler);
+    },
+  });
+  try {
+    const opening = sessions.deliver("a", "first", 1);
+    await vi.waitFor(() => expect(entered).toBe(true));
+    choose({ provider: "openai", model: "gpt-4.1" });
+    choose({ provider: "openai", model: "gpt-default" });
+    release();
+    await opening;
+    expect(fake.geese[0]?.closed).toEqual([]);
+    expect(fake.geese[0]?.configured).toContain("session-1 model=gpt-default");
+    expect(
+      sessions.outdated(
+        (pin) =>
+          JSON.stringify(pin.settings.config) ===
+          JSON.stringify({
+            workspace: "~/.buzz",
+            systemPrompt: "prompt",
+            choice: { provider: "openai", model: "gpt-default" },
+          }),
+      ),
+    ).toBe(false);
+  } finally {
+    release();
+    sessions.dispose();
+  }
+});
+
+it("applies the last local effort Save to a deferred opening before its next turn", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = false;
+  const { sessions, fake, choose } = setup({}, false, {
+    serve: (serve) => async (handler) => {
+      entered = true;
+      await held;
+      return serve(handler);
+    },
+  });
+  try {
+    const first = sessions.deliver("a", "first", 1);
+    await vi.waitFor(() => expect(entered).toBe(true));
+    choose({ provider: "openai", model: "gpt-4.1", effort: "high" });
+    release();
+    await first;
+    await sessions.deliver("a", "next", 2);
+    expect(fake.geese[0]?.configured).toContain(
+      "session-1 thinking_effort=high",
+    );
+    expect(fake.geese[0]?.closed).toEqual([]);
+  } finally {
+    release();
+    sessions.dispose();
+  }
+});
+
+it("brings a session on an older remote choice up to date with local choice Saves", async () => {
+  const { sessions, change, choose, fake } = setup({
+    choice: { provider: "openai", model: "gpt-4.1" },
+  });
+  try {
+    await sessions.deliver("a", "old remote config A", 1);
+    // The host delivers newer remote B, but an existing session keeps A.
+    change({ choice: { provider: "openai", model: "gpt-default" } }, false);
+    choose({ provider: "openai", model: "gpt-4.1", effort: "high" });
+    choose({ provider: "openai", model: "gpt-default", effort: "high" });
+    await sessions.deliver("a", "after two local Saves", 2);
+    // Opened as saved but for the choice, it switches in place and so runs
+    // the saved settings at their epoch.
+    expect(fake.geese[0]?.closed).toEqual([]);
+    expect(fake.geese[0]?.configured).toContain(
+      "session-1 thinking_effort=high",
+    );
+    expect(
+      sessions.outdated(
+        (pin) =>
+          JSON.stringify(pin.settings.config) ===
+          JSON.stringify({
+            workspace: "~/.buzz",
+            systemPrompt: "prompt",
+            choice: {
+              provider: "openai",
+              model: "gpt-default",
+              effort: "high",
+            },
+          }),
+      ),
+    ).toBe(false);
+  } finally {
+    sessions.dispose();
+  }
+});
+
+it("reopens a session on older remote instructions after a local choice Save", async () => {
+  const { sessions, change, choose, fake } = setup();
+  try {
+    await sessions.deliver("a", "on remote A", 1);
+    // A remote edit of the instructions: the open session keeps A.
+    change({ systemPrompt: "remote B" }, false);
+    choose({ provider: "openai", model: "gpt-4.1" });
+    await sessions.deliver("a", "after a local Save", 2);
+    // Its instructions are older than the Save's epoch: never prompted again.
+    expect(fake.geese[0]?.closed).toEqual(["session-1"]);
+    expect(fake.geese[0]?.turns.at(-1)).toMatchObject({
+      sessionId: "session-2",
+      text: "after a local Save",
+    });
+  } finally {
+    sessions.dispose();
+  }
+});
+
+describe("a standalone turn writes its prompt only through the handoff", () => {
+  const MODEL = { provider: "openai", model: "gpt-4.1" };
+  /** Holds goose's answers to `session/set_config_option` until `held`. */
+  const holdConfig = (
+    goose: NonNullable<ReturnType<typeof fakeSpawn>["geese"][number]>,
+    held: Promise<void>,
+  ) => {
+    // The fake answers through the options it was spawned with.
+    const options = goose.options as { onStdout?: (chunk: string) => void };
+    const answer = options.onStdout;
+    options.onStdout = (chunk: string) => {
+      const { id, method } = JSON.parse(chunk) as {
+        id?: number;
+        method?: string;
+      };
+      const asked = goose.received.find((message) => message.id === id);
+      if (!method && asked?.method === "session/set_config_option")
+        void held.then(() => answer?.(chunk));
+      else answer?.(chunk);
+    };
+  };
+  const gate = () => {
+    let open!: () => void;
+    const held = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return { held, open };
+  };
+
+  it("refuses one whose prompt was still being built when a Save landed", async () => {
+    const { fake, sessions, clock } = setup({ choice: MODEL });
+    const built = gate();
+    const once = sessions.runOnce("timer/x", async () => {
+      await built.held;
+      return "look";
+    });
+    await flush(30);
+    clock.advance();
+    built.open();
+    await expect(once).resolves.toMatchObject({
+      ok: false,
+      error: SUPERSEDED,
+    });
+    expect(fake.geese[0]?.turns).toEqual([]);
+  });
+  it("refuses one whose model switch was pending when a Save landed", async () => {
+    const { fake, sessions, clock } = setup({ choice: MODEL });
+    await sessions.runOnce("timer/warm", () => "warm");
+    const [goose] = fake.geese;
+    if (!goose) throw new Error("goose did not start");
+    const switched = gate();
+    holdConfig(goose, switched.held);
+    const once = sessions.runOnce("timer/x", () => "look");
+    await vi.waitFor(() =>
+      expect(
+        goose.configured.filter((line) => line.startsWith("session-2")),
+      ).not.toEqual([]),
+    );
+    clock.advance();
+    switched.open();
+    await expect(once).resolves.toMatchObject({
+      ok: false,
+      error: SUPERSEDED,
+    });
+    expect(goose.turns.map((turn) => turn.text)).toEqual(["warm"]);
+  });
+  it("prompts one nothing overtook, after its model switch", async () => {
+    const { fake, sessions } = setup({ choice: MODEL });
+    await sessions.runOnce("timer/warm", () => "warm");
+    const [goose] = fake.geese;
+    if (!goose) throw new Error("goose did not start");
+    const switched = gate();
+    holdConfig(goose, switched.held);
+    const once = sessions.runOnce("timer/x", async () => "look");
+    await flush(30);
+    switched.open();
+    await expect(once).resolves.toEqual({ ok: true });
+    expect(goose.turns.map((turn) => turn.text)).toEqual(["warm", "look"]);
+    expect(goose.configured).toContain("session-2 model=gpt-4.1");
+  });
+});
+
+describe("a turn delayed at a wait before its handoff", () => {
+  it("refuses a turn queued behind a running one when a Save lands, and prompts it when none does", async () => {
+    for (const save of [true, false]) {
+      const { fake, sessions, clock } = setup(
+        { choice: { provider: "openai", model: "gpt-4.1" } },
+        true,
+      );
+      const first = sessions.deliver("a", "one", 1);
+      await flush(30);
+      // A different model can't steer, so it waits for the turn to end.
+      const queued = sessions.deliver("a", "two", 2, { model: "o3" });
+      await flush(30);
+      if (save) clock.advance();
+      const [goose] = fake.geese;
+      goose?.turns[0]?.finish();
+      await flush(30);
+      goose?.turns[1]?.finish();
+      await first;
+      expect(await queued).toMatchObject(
+        save ? { ok: false, error: SUPERSEDED } : { ok: true },
+      );
+      expect(goose?.turns.map((turn) => turn.text)).toEqual(
+        save ? ["one"] : ["one", "two"],
+      );
+    }
+  });
 });

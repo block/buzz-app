@@ -12,6 +12,8 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { CONFIG_STORAGE_KEY } from "./agent-config";
 import { CATCH_UP_KEY, CATCH_UP_PREFIX } from "./catch-up";
 import { INTERRUPTED_PREFIX } from "./interrupted";
+import { LIFECYCLE_STORAGE_KEY } from "./config-lifecycle";
+import { MIGRATION_STORAGE_KEY } from "./config-writes";
 import {
   localStore,
   type AgentStore,
@@ -21,6 +23,7 @@ import {
   TEAMS_KEY,
   UNFINISHED_KEY,
 } from "./store";
+import { TEAMS_MIGRATION_KEY } from "./team-config";
 
 export { localStore, type AgentStore } from "./store";
 
@@ -40,6 +43,10 @@ export function isAgentKey(key: string) {
     key.startsWith("buzz.codex.sessions.") ||
     // The relay-synced copies of agent settings that starts use.
     key === CONFIG_STORAGE_KEY ||
+    // What config sync journals: migrations, archives and synced teams.
+    key === MIGRATION_STORAGE_KEY ||
+    key === LIFECYCLE_STORAGE_KEY ||
+    key === TEAMS_MIGRATION_KEY ||
     // The device-wide defaults that blank agent settings inherit.
     key === "buzz.claude-code.provider-defaults.v1" ||
     key === "buzz.codex.provider-defaults.v1" ||

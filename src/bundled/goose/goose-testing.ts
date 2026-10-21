@@ -43,6 +43,9 @@ export type FakeGoose = {
   configured: string[];
   /** When set, `session/set_config_option` fails with it. */
   configError?: string;
+  /** The JSON-RPC code `configError` comes with: goose's internal error
+   * unless set. */
+  configCode?: number;
   /** The environment it started with. */
   env: Readonly<Record<string, string | null>>;
   /** When set, a turn stays open until it is finished. */
@@ -324,7 +327,10 @@ export function fakeSpawn(
             return send({
               jsonrpc: "2.0",
               ...(id !== undefined && { id }),
-              error: { code: -32603, message: fake.configError },
+              error: {
+                code: fake.configCode ?? -32603,
+                message: fake.configError,
+              },
             });
           fake.configured.push(
             `${sessionId} ${String(params.configId)}=${String(params.value)}`,

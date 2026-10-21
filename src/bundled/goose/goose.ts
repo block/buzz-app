@@ -3,6 +3,12 @@
 // workspace. Each session gets its own loopback HTTP MCP server for its agent's
 // Buzz tools, which the app serves and answers: goose is given its address and
 // token in `session/new`, never a Buzz key.
+import {
+  Refused,
+  type UnsupportedSetting,
+  unsupportedSetting,
+} from "../../features/agents/settings";
+import type { Models } from "../../features/agents/service";
 import type {
   HostMcpServer,
   HostProcess,
@@ -26,6 +32,18 @@ const WRITTEN_LIMIT = 20_000;
 /** The Buzz tools that answer where people see it. A read, or a send that
  * failed, still leaves goose's text to post. */
 const ANSWERS = new Set(["send", "edit", "react"]);
+/** JSON-RPC's code for a request whose parameters the server rejected: how
+ * goose refuses a config value it can't apply, unlike its failures. */
+const INVALID_PARAMS = -32602;
+/** goose's answer to a request was an error, with its JSON-RPC code. */
+class GooseError extends Error {
+  constructor(
+    message: string,
+    readonly code: number | undefined,
+  ) {
+    super(message);
+  }
+}
 const STOPPED =
   "Buzz stopped this session's tools: another program used their token";
 
@@ -39,6 +57,8 @@ export const REQUEST_TIMEOUT_MS = 60_000;
 export type Settled = Readonly<{
   ok: boolean;
   error?: string;
+  /** The setting it couldn\'t apply, when that refused it. */
+  failure?: UnsupportedSetting;
   /** What goose wrote, when it answered nowhere in Buzz. Nobody saw it. */
   text?: string;
 }>;
@@ -207,6 +227,7 @@ export class GooseProcess {
       title?: string;
       tools?: ToolServer;
       choice?: () => Choice;
+      models?: (choice: Choice) => Promise<Models>;
     }>,
   ): Promise<GooseSession> {
     const provider = launch.choice?.().provider ?? "";
@@ -263,10 +284,14 @@ export class GooseProcess {
       void server?.close();
       throw error;
     }
-    session = new GooseSession(this, sessionId, server, launch.choice, {
-      provider,
-      model: "",
-    });
+    session = new GooseSession(
+      this,
+      sessionId,
+      server,
+      launch.choice,
+      { provider, model: "" },
+      launch.models,
+    );
     this.sessions.set(sessionId, session);
     if (stopped) {
       void this.close(session);
@@ -372,7 +397,10 @@ export class GooseProcess {
       if (typeof id !== "number") return;
       const call = this.calls.get(id);
       this.calls.delete(id);
-      if (message.error) call?.reject(new Error(errorMessage(message.error)));
+      if (message.error)
+        call?.reject(
+          new GooseError(errorMessage(message.error), message.error.code),
+        );
       else call?.resolve(message.result);
       return;
     }
@@ -435,6 +463,20 @@ export class GooseProcess {
   }
 }
 
+/** Calls `send`, which writes a new turn's prompt synchronously, if the
+ * settings it selected may still run; otherwise throws and writes nothing. */
+export type Handoff = <T>(send: () => T) => T;
+type Turn = {
+  text: string;
+  model?: string;
+  handoff?: Handoff;
+  signal?: AbortSignal;
+  /** Its message's answer, and the activity it showed: a turn that never
+   * prompts settles them alone. */
+  waiter?: Waiter;
+  activity?: ActivityReceipt;
+};
+
 /** One conversation's ACP session. Messages sent while a turn runs are
  * steered into it; one that arrives as the turn ends, or asks for another
  * model, runs as the next turn. */
@@ -450,7 +492,9 @@ export class GooseSession {
   private prompting = false;
   private steering = 0;
   /** Turns to run, each with the model it was asked for, if any. */
-  private readonly queue: { text: string; model?: string }[] = [];
+  private readonly queue: Turn[] = [];
+  /** The dequeued turn that has not prompted yet. */
+  private unprompted: Turn | undefined;
   /** The model the running turn runs on; empty is its provider's default. */
   private model = "";
   /** Messages sent and not yet answered. */
@@ -460,8 +504,21 @@ export class GooseSession {
    * acknowledged, else the latest sent. */
   private owner: Waiter | undefined;
   private readonly active = new Map<string, ActivityReceipt>();
+  /** What each acknowledged receipt displaced: the scope's earlier receipt
+   * and the result owner, given back if it leaves before it prompts. */
+  private readonly displaced = new Map<
+    ActivityReceipt,
+    Readonly<{
+      receipt: ActivityReceipt | undefined;
+      owner: Waiter | undefined;
+    }>
+  >();
+  /** The message each acknowledged receipt belongs to: a receipt is handed
+   * back only while its message is still waiting. */
+  private readonly receiptWaiters = new WeakMap<ActivityReceipt, Waiter>();
   private lastStep = "";
   private lastError: string | undefined;
+  private lastFailure: UnsupportedSetting | undefined;
   /** Whether this work answered in Buzz, and what goose wrote meanwhile: a
    * provider failure comes back as text, and text is never posted. */
   private acted = false;
@@ -483,6 +540,11 @@ export class GooseSession {
     private readonly choice?: () => Choice,
     /** The provider and model it runs on, as chosen here. */
     private chosen: Choice = { provider: "", model: "" },
+    /** The models a provider and model can be asked to run a turn on, as
+     * the composer lists them (`GooseSetup.picks`). goose takes any model
+     * name and only its provider fails it, so a pick its list lacks is
+     * refused before goose is switched. */
+    private readonly models?: (choice: Choice) => Promise<Models>,
   ) {}
 
   get busy() {
@@ -508,11 +570,15 @@ export class GooseSession {
 
   /** Sends one user message, whose turn runs on `model` of the provider when
    * given. Resolves when it, and anything sent after it, has been answered,
-   * or a final `send` ended the work. */
+   * or a final `send` ended the work. A new turn it runs as prompts through
+   * `handoff`; one steered into the running turn doesn't. A new turn whose
+   * `signal` has aborted by then is skipped. */
   send(
     text: string,
     activity: ActivityReceipt = {},
     model?: string,
+    handoff?: Handoff,
+    signal?: AbortSignal,
   ): Promise<Settled> {
     if (this.closed)
       return Promise.resolve({ ok: false, error: "The session was closed" });
@@ -529,9 +595,14 @@ export class GooseSession {
       !this.queue.length &&
       (!model || model === this.model)
     )
-      void this.steer(text, activity, waiter, model);
+      void this.steer(
+        text,
+        activity,
+        waiter,
+        turn(text, model, handoff, signal, waiter, activity),
+      );
     else {
-      this.queue.push({ text, ...(model ? { model } : {}) });
+      this.enqueue(turn(text, model, handoff, signal, waiter, activity));
       this.acknowledge(activity, waiter);
       void this.pump();
     }
@@ -599,45 +670,88 @@ export class GooseSession {
     this.settle({ ok: false, error });
   }
 
+  /** Steers `text` into the running turn when it can, as `send` would, and
+   * returns its answer; otherwise sends nothing, not even as the next turn,
+   * and returns undefined. */
+  async steerOnly(
+    text: string,
+    activity: ActivityReceipt = {},
+    model?: string,
+    signal?: AbortSignal,
+  ): Promise<{ settled: Promise<Settled> } | undefined> {
+    if (
+      this.closed ||
+      this.stopped ||
+      !this.prompting ||
+      this.queue.length ||
+      (model && model !== this.model)
+    )
+      return undefined;
+    this.steering++;
+    try {
+      // Stopped work takes nothing more, even once goose took it: the
+      // caller sends it again, as new work.
+      if (!(await this.steered(text, signal)) || this.stopped) return undefined;
+      this.pending++;
+      let waiter!: Waiter;
+      const settled = new Promise<Settled>((resolve) => {
+        waiter = resolve;
+        this.waiters.push(resolve);
+      });
+      this.acknowledge(activity, waiter);
+      return { settled };
+    } finally {
+      this.steering--;
+      void this.pump();
+    }
+  }
+
   private async steer(
     text: string,
     activity: ActivityReceipt,
     waiter: Waiter,
-    model?: string,
+    next: Turn,
   ) {
     this.steering++;
     // Work the owner stopped, or that ended meanwhile, takes no more.
     const live = () =>
       this.waiters.includes(waiter) && !this.stopped?.waiters.includes(waiter);
     try {
-      const runId =
-        this.runId ??
-        (this.prompting
-          ? await new Promise<string | undefined>((resolve) =>
-              this.runWaiters.push(resolve),
-            )
-          : undefined);
-      if (runId) {
-        try {
-          await this.goose.request("_goose/unstable/session/steer", {
-            sessionId: this.id,
-            prompt: [{ type: "text", text }],
-            expectedRunId: runId,
-          });
-          if (live()) this.acknowledge(activity, waiter);
-          return;
-        } catch {
-          // The turn ended, or another took its place: run it as the next.
-        }
-      }
-      if (live()) {
-        this.queue.push({ text, ...(model ? { model } : {}) });
+      // The turn ended, or another took its place: run it as the next. One
+      // given up on meanwhile is dropped.
+      if (await this.steered(text, next.signal)) {
+        if (live()) this.acknowledge(activity, waiter);
+      } else if (next.signal?.aborted) this.alone(next, { ok: true });
+      else if (live()) {
+        this.enqueue(next);
         this.acknowledge(activity, waiter);
       }
     } finally {
       this.steering--;
       // Runs the next turn, or ends work whose turn ended during the steer.
       void this.pump();
+    }
+  }
+  /** Whether goose took `text` into the running turn; not once `signal`
+   * aborts. */
+  private async steered(text: string, signal?: AbortSignal) {
+    const runId =
+      this.runId ??
+      (this.prompting
+        ? await new Promise<string | undefined>((resolve) =>
+            this.runWaiters.push(resolve),
+          )
+        : undefined);
+    if (!runId || signal?.aborted || this.stopped) return false;
+    try {
+      await this.goose.request("_goose/unstable/session/steer", {
+        sessionId: this.id,
+        prompt: [{ type: "text", text }],
+        expectedRunId: runId,
+      });
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -648,19 +762,53 @@ export class GooseSession {
       while (this.queue.length && !this.closed) {
         // Stopped work has ended, and messages sent since run as new work.
         if (this.stopped) this.endStopped();
-        const { text, model } = this.queue.shift() ?? { text: "" };
+        const next = this.queue.shift() ?? { text: "" };
+        const { text, model, handoff, signal } = next;
+        let prompted = false;
+        this.unprompted = next;
         try {
-          await this.select(model);
+          // A message given up on while its turn waited switches and sends
+          // nothing, and is answered alone.
+          if (
+            signal?.aborted ||
+            !(await this.select(model, signal)) ||
+            signal?.aborted
+          ) {
+            this.alone(next, { ok: true });
+            continue;
+          }
           // The owner stopped it while its provider switch was going.
           if (this.stopped) continue;
-          const { stopReason } = (await this.goose.request("session/prompt", {
-            sessionId: this.id,
-            prompt: [{ type: "text", text }],
-          })) as { stopReason?: string };
+          const prompt = () => {
+            if (signal?.aborted) throw new Error("The message was given up on");
+            prompted = true;
+            this.unprompted = undefined;
+            return this.goose.request("session/prompt", {
+              sessionId: this.id,
+              prompt: [{ type: "text", text }],
+            });
+          };
+          const { stopReason } = (await (handoff
+            ? handoff(prompt)
+            : prompt())) as { stopReason?: string };
           if (stopReason === "refusal")
             this.lastError = "goose refused the request";
         } catch (error) {
+          const failure = error instanceof Refused ? error.failure : undefined;
+          // Failing before it prompted, as a refused pick does, is its own
+          // message's answer, not the burst's.
+          if (!prompted && next.waiter) {
+            this.alone(next, {
+              ok: false,
+              error: errorMessage(error),
+              ...(failure ? { failure } : {}),
+            });
+            continue;
+          }
           this.lastError = errorMessage(error);
+          this.lastFailure = failure;
+        } finally {
+          this.unprompted = undefined;
         }
       }
     } finally {
@@ -674,11 +822,28 @@ export class GooseSession {
 
   /** Puts the session on the provider, model and thinking level chosen now,
    * or `model` of that provider. A steer joins the running turn, so a change
-   * waits for the next. */
-  private async select(model?: string) {
+   * waits for the next. False, having switched nothing, once `signal`
+   * aborts while the pick is checked. */
+  private async select(model?: string, signal?: AbortSignal) {
     const chosen = this.choice?.();
-    if (!chosen) return;
+    if (!chosen) return true;
     const want = model ? { ...chosen, model } : chosen;
+    // Checked against the provider this turn runs on, read once here. A
+    // list that can't be read, or is empty, lets the pick through. Read
+    // without the pick, which the list would otherwise always include.
+    if (model && this.models) {
+      const { models } = await this.models(chosen).catch(() => ({
+        models: [],
+      }));
+      if (this.closed) throw new Error("The session was closed");
+      if (signal?.aborted) return false;
+      if (models.length && !models.some((item) => item.id === model))
+        throw unsupportedSetting(
+          "model",
+          model,
+          `goose can't run the picked model "${model}" here. Pick an available model.`,
+        );
+    }
     this.model = want.model;
     if (
       want.provider !== this.chosen.provider ||
@@ -700,6 +865,7 @@ export class GooseSession {
       await this.configure("thinking_effort", want.effort);
       this.chosen = { ...this.chosen, effort: want.effort };
     }
+    return true;
   }
   private async configure(configId: string, value: string) {
     try {
@@ -709,9 +875,12 @@ export class GooseSession {
         value,
       });
     } catch (error) {
-      throw new Error(
-        `goose could not switch its ${configId} to ${value}: ${errorMessage(error)}`,
-      );
+      const reason = `goose could not switch its ${configId} to ${value}: ${errorMessage(error)}`;
+      // Only goose refusing the value is the setting's fault; anything else
+      // (a dead process, a timeout, a failed switch) is an ordinary failure.
+      if (error instanceof GooseError && error.code === INVALID_PARAMS)
+        throw unsupportedSetting(configId, value, reason);
+      throw new Error(reason);
     }
   }
   private async defaultModel(provider: string) {
@@ -726,26 +895,79 @@ export class GooseSession {
     return model;
   }
 
+  /** Queues `next`. Given up on before it prompts, queued or dequeued, it
+   * leaves the queue and is answered alone, so no other turn's failure, text
+   * or steps reach it. */
+  private enqueue(next: Turn) {
+    this.queue.push(next);
+    next.signal?.addEventListener(
+      "abort",
+      () => {
+        const index = this.queue.indexOf(next);
+        if (index >= 0) this.queue.splice(index, 1);
+        else if (this.unprompted !== next) return;
+        this.alone(next, { ok: true });
+      },
+      { once: true },
+    );
+  }
   private ranAs(runId: string | undefined) {
     for (const resolve of this.runWaiters.splice(0)) resolve(runId);
   }
   private acknowledge(activity: ActivityReceipt, waiter: Waiter) {
+    const owner = this.owner;
     if (this.waiters.includes(waiter)) this.owner = waiter;
     // Watches and timers have no message activity: they must not hide a mention.
     if (!activity.step) return;
     const scope = activity.activityScope ?? "conversation";
-    this.active.get(scope)?.superseded?.();
+    const receipt = this.active.get(scope);
+    receipt?.superseded?.();
+    this.displaced.set(activity, { receipt, owner });
+    this.receiptWaiters.set(activity, waiter);
     this.active.set(scope, activity);
     this.lastStep = "";
     activity.acknowledged?.();
+  }
+  /** Answers a turn that never prompted with `settled`, apart from the
+   * burst: it owns nothing the burst does, and is shown no more steps. */
+  private alone({ waiter, activity }: Turn, settled: Settled) {
+    const index = waiter ? this.waiters.indexOf(waiter) : -1;
+    if (!waiter || index < 0) return;
+    this.waiters.splice(index, 1);
+    this.pending--;
+    const displaced = activity && this.displaced.get(activity);
+    if (activity) this.displaced.delete(activity);
+    // Hand back only what this turn took: a newer owner or receipt stays.
+    if (this.owner === waiter)
+      this.owner =
+        displaced?.owner && this.waiters.includes(displaced.owner)
+          ? displaced.owner
+          : undefined;
+    for (const [later, earlier] of this.displaced)
+      if (earlier.receipt === activity)
+        this.displaced.set(later, { ...earlier, receipt: displaced?.receipt });
+    for (const [scope, receipt] of this.active)
+      if (receipt === activity) {
+        // Work that already ended, such as a stopped turn, is never resumed.
+        const earlier = displaced?.receipt;
+        const earlierWaiter = earlier && this.receiptWaiters.get(earlier);
+        if (earlier && earlierWaiter && this.waiters.includes(earlierWaiter)) {
+          this.active.set(scope, earlier);
+          this.lastStep = "";
+          earlier.acknowledged?.();
+        } else this.active.delete(scope);
+      }
+    waiter(settled);
   }
   private done() {
     // Work that wrote text and never answered in Buzz answered only goose: a
     // model that forgot `send`, or goose saying it cannot reach its provider.
     const text = this.acted || this.stopped ? "" : this.written.trim();
     const error = this.lastError;
+    const failure = this.lastFailure;
     this.settle({
       ...(error ? { ok: false, error } : { ok: true }),
+      ...(error && failure ? { failure } : {}),
       ...(text ? { text } : {}),
     });
   }
@@ -777,7 +999,9 @@ export class GooseSession {
   private settle(settled: Settled) {
     this.pending = 0;
     this.active.clear();
+    this.displaced.clear();
     this.lastError = undefined;
+    this.lastFailure = undefined;
     this.acted = false;
     this.written = "";
     this.stopped = undefined;
@@ -823,6 +1047,22 @@ export function stepLabel(
       return undefined;
   }
 }
+
+const turn = (
+  text: string,
+  model?: string,
+  handoff?: Handoff,
+  signal?: AbortSignal,
+  waiter?: Waiter,
+  activity?: ActivityReceipt,
+): Turn => ({
+  text,
+  ...(model ? { model } : {}),
+  ...(handoff ? { handoff } : {}),
+  ...(signal ? { signal } : {}),
+  ...(waiter ? { waiter } : {}),
+  ...(activity ? { activity } : {}),
+});
 
 /** The option that allows the call, preferring one that keeps allowing. */
 function allow(params: Record<string, unknown>) {

@@ -52,8 +52,9 @@ const resolved = (model: string) =>
   MODELS.find((item) => item.value === model)?.resolvedModel ?? model;
 
 /** A spawn whose `claude` processes answer like Claude. Sessions named in
- * `known` (or created by a process) can be resumed; others fail to load. */
-export function fakeSpawn(known = new Set<string>()) {
+ * `known` (or created by a process) can be resumed; others fail to load.
+ * `native` is the model one started without `--model` runs. */
+export function fakeSpawn(known = new Set<string>(), native = "default") {
   const processes: FakeClaude[] = [];
   const spawn = async (id: string, options: HostProcessOptions = {}) => {
     let resolveExit!: (code: number | null) => void;
@@ -77,7 +78,7 @@ export function fakeSpawn(known = new Set<string>()) {
       prompts: [],
       effort: "high",
       efforts: [],
-      model: flag("--model") ?? "default",
+      model: flag("--model") ?? native,
       models: [],
       hold: false,
       killed: false,
@@ -124,7 +125,7 @@ export function fakeSpawn(known = new Set<string>()) {
         )
           fake.effort = level;
         if (request.subtype === "set_model")
-          fake.model = flag("--model") ?? "default";
+          fake.model = flag("--model") ?? native;
         if (
           request.subtype === "set_model" &&
           typeof request.model === "string"

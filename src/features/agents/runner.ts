@@ -10,6 +10,7 @@ import type {
   RegisteredAgentType,
   Trigger,
 } from "./service";
+import { Refused, SUPERSEDED, type SettingsAttempt } from "./settings";
 import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
 import { threadReference } from "../relay/thread-reference";
 import {
@@ -55,7 +56,6 @@ import {
 import type { EventWatch } from "./attention";
 import type { AgentEventTemplate, AgentIdentity, AgentsNative } from "./native";
 import type { AgentRecord, TimerProgress } from "./store";
-import { Runs, type Start } from "./agent-start";
 import { type Pulses, pulseTyping } from "./typing";
 import {
   CATCH_UP_PAGES,
@@ -123,7 +123,10 @@ const bounded = (set: Set<string>, id: string, limit = SEEN_LIMIT) => {
 
 /** The model and effort the triggering message asks of this agent. Only the
  * owner picks them, so nobody else in a channel can run the agent at their
- * level, and only ones the type lists: effort from the model the run uses. */
+ * level. A type with synced settings gets them as asked and checks them
+ * against the settings its conversation runs on, which may be pinned to
+ * older ones; any other type gets only ones it lists now: effort from the
+ * model the run uses. */
 async function pickFor(
   trigger: Trigger,
   agent: Agent,
@@ -141,6 +144,8 @@ async function pickFor(
   const model = asked(MODEL_TAG);
   const effort = asked(EFFORT_TAG);
   if (!model && !effort) return {};
+  if (type.syncedSettings)
+    return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
   try {
     const offered = await type.models?.(agent);
     const picked = offered?.models.find((item) => item.id === model);
@@ -355,10 +360,11 @@ export type RunnerHost = {
   /** Saves a timer pass's progress. Its timers see it at once, and it stays
    * in memory even if the save fails, so a timer does not run again at once. */
   progress(pubkey: string, progress: TimerProgress): void;
-  /** The team sections of its prompt; empty without a team. */
-  team(pubkey: string): string;
-  /** What its next run starts with, from this device's storage only. */
-  start(agent: Agent): Start<unknown>;
+  /** What its next run captures now, from this device's storage only: its
+   * settings and epoch, or why it can't start. */
+  attempt(pubkey: string): SettingsAttempt | { refused: string };
+  /** Its epoch now. */
+  epoch(pubkey: string): number;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
@@ -416,8 +422,6 @@ export type RunnerHost = {
 
 export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
-  /** The synced revisions each agent's current run started from. */
-  readonly started = new Runs();
   /** Agents whose community was live at the last resume. */
   private connected = new Set<string>();
   /** Catch-up progress of each kind 9 watch stream, as saved. */
@@ -1952,20 +1956,32 @@ export class AgentRunners {
         ? (title: string) => this.host.named(agent, trigger.event, title)
         : undefined;
     const completion = Promise.resolve().then(async () => {
-      const pick = await pickFor(job.trigger, agent, type);
-      const start = this.host.start(agent);
-      if (!start.ok) throw new Error(start.reason);
-      const team = this.host.team(agent.pubkey);
+      // Captured before discovery waits, so a Save, defaults change or
+      // Restart meanwhile refuses this run rather than give it old settings.
+      const attempt = this.host.attempt(agent.pubkey);
+      if ("refused" in attempt) throw new Refused(attempt.refused);
+      // A type that syncs settings pins conversations and refuses blocked
+      // settings in `handoff`, only where they are selected; others can't.
+      if (attempt.settings.blocked && !type.syncedSettings)
+        throw new Refused(attempt.settings.blocked);
+      const pick = await pickFor(
+        job.trigger,
+        {
+          ...agent,
+          config: attempt.settings.config,
+          settings: attempt.settings,
+        },
+        type,
+      );
+      if (this.host.epoch(agent.pubkey) !== attempt.epoch)
+        throw new Refused(SUPERSEDED);
       signal.throwIfAborted();
-      this.started.start(agent.pubkey, start.revisions);
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
         agent: handle,
-        config: start.config,
-        revisions: start.revisions,
+        attempt,
         ...pick,
-        ...(team ? { team } : {}),
         signal,
         workingUntil: working.hold,
         ignored: () => job.work?.remove(),

@@ -1,22 +1,32 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BuzzClient } from "../../buzz-mcp/client";
 import { callTool } from "../../buzz-mcp/tools";
 import { createAgentMemories } from "../../features/agents/memory";
-import { ownerReads } from "../../features/agents/reads";
+import { type AgentReads, ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
 import type { Agent, Delivery } from "../../features/agents/service";
+import {
+  settingsClock,
+  settingsOf,
+} from "../../features/agents/settings-testing";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { MemoryEntry } from "../../features/agents/memory";
-import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
+import { type FakeClaude, fakeSpawn, flush, MODELS } from "./claude-testing";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
+import {
+  ClaudeRuntime,
+  config,
+  DEFAULT_CONFIG,
+  modelName,
+  refusedPick,
+} from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { localSessions } from "./sessions";
 import { wake } from "../../features/agent-harness/wakes";
@@ -45,6 +55,22 @@ const message = (
     ...extra,
   }) as RelayEvent;
 
+/** A test delivery: its settings as plain fields, from which the fixture
+ * builds the attempt, unless it carries one. */
+type Carrying = Omit<Delivery, "attempt"> & {
+  attempt?: Delivery["attempt"];
+  config?: object;
+  synced?: Record<string, string>;
+  team?: string;
+};
+/** A test agent row: the host's package derived from `config` unless set. */
+type Row = Partial<Agent> & {
+  pubkey: string;
+  config?: unknown;
+  synced?: Record<string, string>;
+  saves?: number;
+};
+
 function setup(
   thread: readonly EventData[] = [],
   options: Readonly<{
@@ -61,9 +87,15 @@ function setup(
     /** The channel's Canvas, as it reads now. */
     canvas?: { content: string; pubkey?: string };
     repositories?: (scope: string | undefined) => string;
+    /** Holds each message to a resumed session until it settles. */
+    resuming?: Promise<void>;
+    /** The model Claude runs when none is configured. */
+    native?: string;
+    /** Holds each process's answer to `initialize`, its list of models. */
+    listing?: Promise<void>;
   }> = {},
 ) {
-  const fake = fakeSpawn();
+  const fake = fakeSpawn(undefined, options.native);
   const spawn: typeof fake.spawn = async (id, spawnOptions) => {
     await options.starting;
     if (options.title && (id === "workspace" || id === "read")) {
@@ -80,9 +112,31 @@ function setup(
         kill: async () => {},
       } as unknown as Awaited<ReturnType<typeof fake.spawn>>;
     }
-    const process = fake.spawn(id, spawnOptions);
+    const { listing } = options;
+    const onStdout = spawnOptions?.onStdout;
+    const process = await fake.spawn(
+      id,
+      listing && onStdout
+        ? {
+            ...spawnOptions,
+            onStdout: (line: string) =>
+              line.includes('"models":[')
+                ? void listing.then(() => onStdout(line))
+                : onStdout(line),
+          }
+        : spawnOptions,
+    );
     const started = fake.processes.at(-1);
     if (options.hold && started) started.hold = true;
+    const { resuming } = options;
+    if (resuming && spawnOptions?.args?.includes("--resume"))
+      return {
+        ...process,
+        write: async (data: string) => {
+          if (data.includes('"type":"user"')) await resuming;
+          return process.write(data);
+        },
+      };
     return process;
   };
   const host = { spawn, request: vi.fn() } as unknown as Host;
@@ -154,7 +208,7 @@ function setup(
   );
   /** The tools plugins add, as the runtime reads them at each use. */
   const added: AddedTool[] = [];
-  const runtime = new ClaudeRuntime(
+  const real = new ClaudeRuntime(
     host,
     (pubkey) => ownerReads(relay, pubkey),
     core,
@@ -163,6 +217,75 @@ function setup(
     () => added,
     options.repositories,
   );
+  /** The agent's epoch, which a Save or Restart moves as the host would. */
+  const clock = settingsClock();
+  /** A delivery carrying its settings as plain fields, turned into the
+   * attempt the host would capture now. */
+  const admit = (delivery: Carrying): Delivery => {
+    if (delivery.attempt) return delivery as Delivery;
+    const { config, synced, team, ...rest } = delivery;
+    return {
+      ...rest,
+      attempt: clock.attempt(config ?? DEFAULT_CONFIG, {
+        synced: synced ?? {},
+        team: team ?? "",
+        name: rest.agent.name,
+      }),
+    } as Delivery;
+  };
+  /** Rows as the host gives them: a settings package and an epoch, which a
+   * row's `saves` (a local Save) advances. */
+  const rows = (agents: readonly Row[]) =>
+    agents.map((agent) => ({
+      ...agent,
+      settings:
+        agent.settings ??
+        settingsOf(agent.config ?? {}, {
+          synced: agent.synced ?? {},
+          name: agent.name ?? "Claude",
+        }),
+      epoch:
+        agent.epoch ??
+        (agent.saves === undefined ? clock.epoch : clock.advance()),
+    })) as unknown as Agent[];
+  const runtime = new Proxy(real, {
+    get(target, prop) {
+      if (prop === "run")
+        return (delivery: Carrying) => target.run(admit(delivery));
+      if (prop === "runOnce")
+        return (turn: Parameters<ClaudeRuntime["runOnce"]>[0]) =>
+          target.runOnce({
+            ...turn,
+            delivery: admit(turn.delivery as Carrying),
+          });
+      if (prop === "sync")
+        return (agents: readonly Row[]) => target.sync(rows(agents));
+      if (prop === "restart")
+        return (key: string, settings: object = DEFAULT_CONFIG) => {
+          clock.advance();
+          target.restart(key, clock.applied(settings, { name: "Claude" }));
+        };
+      if (prop === "outdated")
+        return (key: string, settings: object) =>
+          target.outdated(key, settingsOf(settings, { name: "Claude" }));
+      const value = Reflect.get(target, prop);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as Omit<
+    ClaudeRuntime,
+    "run" | "runOnce" | "sync" | "restart" | "outdated"
+  > & {
+    run(delivery: Carrying): Promise<void>;
+    runOnce(
+      turn: Omit<Parameters<ClaudeRuntime["runOnce"]>[0], "delivery"> & {
+        delivery: unknown;
+      },
+    ): ReturnType<ClaudeRuntime["runOnce"]>;
+    sync(agents: readonly Row[]): void;
+    /** Restart to apply `settings`, which the host resolved. */
+    restart(key: string, settings?: object): void;
+    outdated(key: string, settings: object): boolean;
+  };
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const publish = vi.fn(async (template: (typeof published)[number]) => {
     published.push(template);
@@ -206,6 +329,8 @@ function setup(
   const objects = new Map<string, Record<string, unknown>>();
   const deliver = (
     trigger: Delivery["trigger"],
+    config: typeof DEFAULT_CONFIG = DEFAULT_CONFIG,
+    synced?: Record<string, string>,
     picks: Partial<Delivery> = {},
   ) => {
     if (trigger.type !== "mention") {
@@ -223,7 +348,8 @@ function setup(
       trigger,
       channelId: channel,
       agent,
-      config: DEFAULT_CONFIG,
+      config,
+      ...(synced ? { synced } : {}),
       signal,
       workingUntil,
       interruptible,
@@ -235,7 +361,7 @@ function setup(
         (attention.on &&
           objects.get(trigger.slug)?.enabled === true &&
           !stale.has(trigger.slug)),
-    } as unknown as Delivery;
+    } as unknown as Carrying;
     if (trigger.type === "mention") return runtime.run(delivery);
     // A watch or timer, as the agent runner hands it over: a standalone turn
     // in its Interest's lane, which the runner holds.
@@ -253,6 +379,9 @@ function setup(
     fake.processes.filter((process) => process.id === "claude");
   return {
     runtime,
+    real,
+    clock,
+    admit,
     added,
     deliver,
     published,
@@ -400,19 +529,25 @@ it("knows the agent's own model once one of its sessions has begun", async () =>
   });
   const { runtime, deliver } = setup([mention]);
   // Before then nothing says which model it runs, nor what else it could.
-  expect(await runtime.models(self)).toEqual({
+  expect(
+    await runtime.models({ pubkey: self, config: DEFAULT_CONFIG }),
+  ).toEqual({
     current: "",
     models: [{ id: "", label: "Claude", efforts: [] }],
   });
   await deliver({ type: "mention", event: mention });
   await flush(10);
-  expect((await runtime.models(self)).current).toBe("opus");
+  expect(
+    (await runtime.models({ pubkey: self, config: DEFAULT_CONFIG })).current,
+  ).toBe("opus");
 });
 it("discovers models and effort without a turn or retaining a per-agent spare", async () => {
   const { runtime, claudes } = setup();
   runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
   try {
-    expect(await runtime.models(self)).toEqual({
+    expect(
+      await runtime.models({ pubkey: self, config: DEFAULT_CONFIG }),
+    ).toEqual({
       current: "opus",
       models: [
         { id: "opus", label: "Opus 5.5", efforts: EFFORTS, effort: "high" },
@@ -438,7 +573,7 @@ it("still offers a configured model Claude does not list", async () => {
   const config = { ...DEFAULT_CONFIG, model: "claude-sonnet-9-9" };
   runtime.sync([{ pubkey: self, config } as Agent]);
   try {
-    const { current, models } = await runtime.models(self);
+    const { current, models } = await runtime.models({ pubkey: self, config });
     expect(current).toBe("claude-sonnet-9-9");
     expect(models.map((model) => model.label)).toEqual([
       "Sonnet 9.9",
@@ -461,7 +596,9 @@ it("runs a mention on the model and effort its delivery picked", async () => {
   });
   const { runtime, claudes, agent } = setup([mention]);
   runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
-  expect((await runtime.models(self)).current).toBe("opus");
+  expect(
+    (await runtime.models({ pubkey: self, config: DEFAULT_CONFIG })).current,
+  ).toBe("opus");
   await runtime.run({
     trigger: { type: "mention", event: mention },
     channelId: channel,
@@ -476,10 +613,12 @@ it("runs a mention on the model and effort its delivery picked", async () => {
   const claude = claudes().find((process) => process.prompts.length);
   expect(claude?.models).toEqual(["haiku"]);
   expect(claude?.efforts).toEqual(["low"]);
-  expect((await runtime.models(self)).current).toBe("opus");
+  expect(
+    (await runtime.models({ pubkey: self, config: DEFAULT_CONFIG })).current,
+  ).toBe("opus");
   runtime.dispose();
 });
-it("puts the agent's teams in its system prompt, resuming idle sessions when they change", async () => {
+it("puts the agent's teams in its system prompt, resuming idle sessions when a local Save changes them", async () => {
   const root = message("2", "@Claude hi", {
     tags: [
       ["h", channel],
@@ -495,7 +634,7 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
     ],
   });
   const mention = (id: string) => (id === "2" ? root : reply);
-  const { runtime, claudes, agent } = setup([root, reply]);
+  const { runtime, claudes, agent, clock } = setup([root, reply]);
   const run = (id: string, team?: string) =>
     runtime.run({
       trigger: { type: "mention", event: mention(id) },
@@ -520,12 +659,50 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
   await flush(10);
   const first = claudes().find((process) => process.prompts.length);
   expect(system(first)).toContain("<team>\nCrew roster\n</team>");
+  // A local team write moves the epoch, as the host does.
+  clock.advance();
   await run("3");
   await flush(10);
   const second = claudes().filter((process) => process.prompts.length)[1];
   expect(first?.killed).toBe(true);
   expect(second?.options.args).toContain("--resume");
   expect(system(second)).not.toContain("<team>");
+  runtime.dispose();
+});
+
+it("keeps a prompted session on its team text and name across a remote edit", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([root, reply]);
+  const run = (event: RelayEvent, team: string, name: string) =>
+    runtime.run({
+      trigger: { type: "mention", event },
+      channelId: channel,
+      agent: { ...agent, name },
+      config: DEFAULT_CONFIG,
+      team,
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as unknown as Delivery);
+  await run(root, "<team>\nA\n</team>", "Claude");
+  await flush(10);
+  await run(reply, "<team>\nB\n</team>", "Pollen");
+  await flush(10);
+  const prompted = claudes().filter((process) => process.prompts.length);
+  expect(prompted).toHaveLength(1);
+  expect(prompted[0]?.killed).toBe(false);
+  expect(prompted[0]?.prompts).toHaveLength(2);
   runtime.dispose();
 });
 
@@ -561,7 +738,7 @@ it("starts each session from the host's core memory, reading none from the relay
   expect(asked("2")).not.toContain("<core-memory>");
 });
 
-it("names the agent in its system prompt, resuming idle sessions when it is renamed", async () => {
+it("names the agent in its system prompt, resuming idle sessions when it is renamed locally", async () => {
   const root = message("2", "@Claude hi", {
     tags: [
       ["h", channel],
@@ -576,7 +753,7 @@ it("names the agent in its system prompt, resuming idle sessions when it is rena
     ],
   });
   const mention = (id: string) => (id === "2" ? root : reply);
-  const { runtime, claudes, agent } = setup([root, reply]);
+  const { runtime, claudes, agent, clock } = setup([root, reply]);
   const run = (id: string, name: string) => {
     // A rename reaches the runtime as a changed agent list.
     runtime.sync([{ pubkey: self, name, config: DEFAULT_CONFIG } as Agent]);
@@ -603,12 +780,55 @@ it("names the agent in its system prompt, resuming idle sessions when it is rena
   await flush(10);
   const first = claudes().find((process) => process.prompts.length);
   expect(system(first)).toContain(`You are Claude (pubkey ${self}).`);
+  // A local rename moves the epoch, as the host does.
+  clock.advance();
   await run("3", "Pollen");
   await flush(10);
   const second = claudes().filter((process) => process.prompts.length)[1];
   expect(first?.killed).toBe(true);
   expect(second?.options.args).toContain("--resume");
   expect(system(second)).toContain(`You are Pollen (pubkey ${self}).`);
+  runtime.dispose();
+});
+
+it("keeps an idle session when only a synced edit changes the agent's config", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { runtime, claudes, agent } = setup([root]);
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await runtime.run({
+    trigger: { type: "mention", event: root },
+    channelId: channel,
+    agent,
+    config: DEFAULT_CONFIG,
+    signal: new AbortController().signal,
+    workingUntil: () => undefined,
+  } as unknown as Delivery);
+  await flush(10);
+  const first = claudes().find((process) => process.prompts.length);
+  // Another device's edit: the agent's config changes, its saves do not.
+  runtime.sync([
+    {
+      pubkey: self,
+      config: { ...DEFAULT_CONFIG, effort: "low" },
+    } as unknown as Agent,
+  ]);
+  await flush(10);
+  expect(first?.killed).toBe(false);
+  // A save on this device restarts it.
+  runtime.sync([
+    {
+      pubkey: self,
+      config: { ...DEFAULT_CONFIG, effort: "low" },
+      saves: 1,
+    } as unknown as Agent,
+  ]);
+  await flush(10);
+  expect(first?.killed).toBe(true);
   runtime.dispose();
 });
 
@@ -627,9 +847,10 @@ it("resumes an idle session at a newly saved effort", async () => {
     ],
   });
   const { runtime, claudes, agent } = setup([root, reply]);
+  let saves = 0;
   const run = (event: typeof root, effort: string) => {
     const config = { ...DEFAULT_CONFIG, effort };
-    runtime.sync([{ pubkey: self, config } as Agent]);
+    runtime.sync([{ pubkey: self, config, saves: ++saves }]);
     return runtime.run({
       trigger: { type: "mention", event },
       channelId: channel,
@@ -730,7 +951,10 @@ it("reads a busy turn's files from the workspace it started in", async () => {
   await flush(10);
   // Saved mid-turn: the busy process keeps working where it started.
   runtime.sync([
-    { pubkey: self, config: { ...DEFAULT_CONFIG, workspace: "/new" } } as Agent,
+    {
+      pubkey: self,
+      config: { ...DEFAULT_CONFIG, workspace: "/new" },
+    } as unknown as Agent,
   ]);
   await flush(10);
   expect(spare.killed).toBe(false);
@@ -1301,7 +1525,10 @@ it("replaces the spare when no agent runs where it was started", async () => {
   runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
   await flush(10);
   runtime.sync([
-    { pubkey: self, config: { ...DEFAULT_CONFIG, model: "sonnet" } } as Agent,
+    {
+      pubkey: self,
+      config: { ...DEFAULT_CONFIG, model: "sonnet" },
+    } as unknown as Agent,
   ]);
   await flush(10);
   const [old, next] = claudes();
@@ -1314,7 +1541,7 @@ it("replaces the spare when no agent runs where it was started", async () => {
     {
       pubkey: self,
       config: { ...DEFAULT_CONFIG, model: "sonnet", effort: "low" },
-    } as Agent,
+    } as unknown as Agent,
   ]);
   await flush(10);
   const [, sonnet, low] = claudes();
@@ -1782,11 +2009,60 @@ it("hands no Canvas to a shared channel's turns", async () => {
   runtime.dispose();
 });
 
+it.each([
+  ["thread", "channel"],
+  ["channel", "thread"],
+] as const)(
+  "aims session controls at a %s-scoped conversation after a remote change to %s scope",
+  async (pinned, remote) => {
+    const f = setup([], { hold: true });
+    const root = message("1", "hello");
+    const place = { channelId: channel, root: root.id };
+    const config = { ...DEFAULT_CONFIG, scope: remote };
+    const agent = {
+      ...f.agent,
+      config,
+      settings: settingsOf(config, { name: "Claude" }),
+      epoch: 0,
+    } as unknown as Agent;
+    try {
+      await f.deliver(
+        { type: "mention", event: root },
+        { ...DEFAULT_CONFIG, scope: pinned },
+      );
+      const process = f.claudes()[0];
+      if (!process) throw new Error("Expected Claude process");
+      await vi.waitFor(() => expect(process.prompts).toHaveLength(1));
+      expect(f.runtime.sessionState(agent, place)).toBe("active");
+      // Another thread goes where its own turn would: to a pinned channel
+      // conversation, otherwise to a conversation of its own.
+      expect(
+        f.runtime.sessionState(agent, { ...place, root: "another-thread" }),
+      ).toBe(pinned === "channel" ? "active" : "idle");
+      // A top-level message joins a pinned channel conversation; with only a
+      // thread pinned, the remote channel scope picks the channel too.
+      expect(f.runtime.scopeAt(agent, place.channelId)).toBe("channel");
+      process.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
 it("controls an idle Claude session without sending a message, and rejects reset while active", async () => {
   const f = setup([], { hold: true });
   const root = message("1", "hello");
   const place = { channelId: channel, root: root.id };
-  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  // As the host gives it: settings and an epoch with the config.
+  const agent = {
+    ...f.agent,
+    config: DEFAULT_CONFIG,
+    settings: settingsOf(DEFAULT_CONFIG, { name: "Claude" }),
+    epoch: 0,
+  } as unknown as Agent;
   try {
     await f.deliver({ type: "mention", event: root });
     const process = f.claudes()[0];
@@ -1835,7 +2111,13 @@ it("interrupts a turn still loading its prompt before Claude receives it", async
   f.read.mockImplementationOnce(async () => history);
   const root = message("1", "hello");
   const place = { channelId: channel, root: root.id };
-  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  // As the host gives it: settings and an epoch with the config.
+  const agent = {
+    ...f.agent,
+    config: DEFAULT_CONFIG,
+    settings: settingsOf(DEFAULT_CONFIG, { name: "Claude" }),
+    epoch: 0,
+  } as unknown as Agent;
   const delivered = f.deliver({
     type: "mention",
     event: message("2", "followup", {
@@ -1882,7 +2164,13 @@ it("keeps an accepted Claude handoff past its deadline while compaction runs", a
   const f = setup([], { hold: true });
   const root = message("1", "hello");
   const place = { channelId: channel, root: root.id };
-  const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
+  // As the host gives it: settings and an epoch with the config.
+  const agent = {
+    ...f.agent,
+    config: DEFAULT_CONFIG,
+    settings: settingsOf(DEFAULT_CONFIG, { name: "Claude" }),
+    epoch: 0,
+  } as unknown as Agent;
   const handover = new AbortController();
   let finishCompaction: (() => void) | undefined;
   try {
@@ -1905,7 +2193,9 @@ it("keeps an accepted Claude handoff past its deadline while compaction runs", a
     });
     let returned = false;
     const admitted = Promise.resolve(
-      f.deliver({ type: "mention", event: reply }, { signal: handover.signal }),
+      f.deliver({ type: "mention", event: reply }, DEFAULT_CONFIG, undefined, {
+        signal: handover.signal,
+      }),
     ).then(() => {
       returned = true;
     });
@@ -1926,4 +2216,1086 @@ it("keeps an accepted Claude handoff past its deadline while compaction runs", a
     finishCompaction?.();
     f.runtime.dispose();
   }
+});
+
+it("starts each new session from the config its delivery carries, never the local row", async () => {
+  const f = setup();
+  const row = (instructions: string) =>
+    [
+      {
+        pubkey: self,
+        name: "Claude",
+        type: "claude-code",
+        config: { ...DEFAULT_CONFIG, instructions },
+      },
+    ] as unknown as Agent[];
+  const mention = (id: string) =>
+    ({
+      type: "mention",
+      event: message(id, `@Claude ${id}`, {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    }) as Delivery["trigger"];
+  // Processes a session was launched in (a spare has no prompt yet).
+  const launched = () =>
+    f.claudes().filter((claude) => /SYNCED|LOCAL/.test(systemPromptOf(claude)));
+  // The runtime already knows the agent from its local row.
+  f.runtime.sync(row("LOCAL"));
+  await f.deliver(mention("1"), {
+    ...DEFAULT_CONFIG,
+    instructions: "SYNCED A",
+  });
+  await flush(10);
+  const [first] = launched();
+  expect(launched()).toHaveLength(1);
+  expect(systemPromptOf(first)).toContain("SYNCED A");
+  expect(systemPromptOf(first)).not.toContain("LOCAL");
+  // An unchanged local row neither replaces the delivered config nor ends
+  // the session started from it.
+  f.runtime.sync(row("LOCAL"));
+  await flush(10);
+  expect(first?.killed).toBe(false);
+  // The next delivery carries a newer synced copy: the new session uses it.
+  await f.deliver(mention("2"), {
+    ...DEFAULT_CONFIG,
+    instructions: "SYNCED B",
+  });
+  await flush(10);
+  const later = launched().slice(1);
+  expect(later).toHaveLength(1);
+  expect(systemPromptOf(later[0])).toContain("SYNCED B");
+  expect(systemPromptOf(later[0])).not.toContain("LOCAL");
+});
+
+it("keeps each running conversation on the config it started with until Restart to apply", async () => {
+  const f = setup();
+  const root = message("1", "@Claude one", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const event = (id: string, text: string, thread?: string) =>
+    message(id, text, {
+      tags: [
+        ["h", channel],
+        ...(thread ? [["e", thread, "", "reply"]] : []),
+        ["p", self],
+      ],
+    });
+  const mention = (e: ReturnType<typeof message>) =>
+    ({ type: "mention", event: e }) as Delivery["trigger"];
+  const config = (instructions: string) => ({
+    ...DEFAULT_CONFIG,
+    instructions,
+  });
+  const launched = () =>
+    f.claudes().filter((claude) => /SYNCED/.test(systemPromptOf(claude)));
+  await f.deliver(mention(root), config("SYNCED A"));
+  await flush(10);
+  const [first] = launched();
+  expect(systemPromptOf(first)).toContain("SYNCED A");
+  expect(f.runtime.outdated(self, config("SYNCED A"))).toBe(false);
+  // An edit from another device: the next message in the running
+  // conversation carries it, but the conversation keeps its own copy.
+  await f.deliver(
+    mention(event("2", "@Claude again", root.id)),
+    config("SYNCED B"),
+  );
+  await flush(10);
+  expect(first?.killed).toBe(false);
+  expect(launched()).toHaveLength(1);
+  expect(first?.prompts).toHaveLength(2);
+  expect(f.runtime.outdated(self, config("SYNCED B"))).toBe(true);
+  // A new conversation starts on the current copy.
+  await f.deliver(mention(event("3", "@Claude new")), config("SYNCED B"));
+  await flush(10);
+  const second = launched()[1];
+  expect(systemPromptOf(second)).toContain("SYNCED B");
+  expect(f.runtime.outdated(self, config("SYNCED B"))).toBe(true);
+  // Restart to apply replaces the idle conversation on the old copy; its
+  // next message runs on the current one.
+  f.runtime.restart(self);
+  await flush(10);
+  expect(first?.killed).toBe(true);
+  expect(f.runtime.outdated(self, config("SYNCED B"))).toBe(false);
+  await f.deliver(
+    mention(event("4", "@Claude after", root.id)),
+    config("SYNCED B"),
+  );
+  await flush(10);
+  const resumed = launched()
+    .filter((claude) => claude !== second)
+    .at(-1);
+  expect(resumed).not.toBe(first);
+  expect(systemPromptOf(resumed)).toContain("SYNCED B");
+});
+
+it("checks a synced effort only for a conversation that will run on it", async () => {
+  const f = setup();
+  const event = (id: string, thread?: string) =>
+    message(id, `@Claude ${id}`, {
+      tags: [
+        ["h", channel],
+        ...(thread ? [["e", thread, "", "reply"]] : []),
+        ["p", self],
+      ],
+    });
+  const mention = (e: ReturnType<typeof message>) =>
+    ({ type: "mention", event: e }) as Delivery["trigger"];
+  const synced = (model: string) => ({
+    config: { ...DEFAULT_CONFIG, model, effort: "xhigh" },
+    synced: { model, effort: "xhigh" },
+  });
+  const root = event("1");
+  const opus = synced("opus");
+  await f.deliver(mention(root), opus.config, opus.synced);
+  await flush(10);
+  const first = f.claudes().find((claude) => claude.prompts.length > 0);
+  // An edit from another device to a model without that effort: the running
+  // conversation keeps opus, so its next message runs.
+  const haiku = synced("haiku");
+  await f.deliver(mention(event("2", root.id)), haiku.config, haiku.synced);
+  await flush(10);
+  expect(first?.prompts).toHaveLength(2);
+  expect(first?.killed).toBe(false);
+  // A new conversation would start on haiku, so it is refused.
+  await expect(
+    f.deliver(mention(event("3")), haiku.config, haiku.synced),
+  ).rejects.toThrow(/isn't available for/);
+});
+
+it("checks a synced effort when changed Solo chat folders restart the conversation", async () => {
+  const mention = (id: string) =>
+    ({
+      type: "mention",
+      event: message(id, `@Claude ${id}`, {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    }) as Delivery["trigger"];
+  const canvas = { content: workspaceCanvas({ folders: ["~/a"], canvas: "" }) };
+  const f = setup([], { solo: new Set([channel]), canvas });
+  const opus = { ...DEFAULT_CONFIG, model: "opus", effort: "xhigh" as const };
+  await f.deliver(mention("1"), opus, { model: "opus", effort: "xhigh" });
+  await flush(10);
+  const first = f.claudes().find((claude) => claude.prompts.length > 0);
+  // A remote edit to a model without that effort, while the folders move:
+  // the idle process can't be kept, so the new one would run unchecked.
+  canvas.content = workspaceCanvas({ folders: ["~/b"], canvas: "" });
+  const haiku = { ...opus, model: "haiku" };
+  await expect(
+    f.deliver(mention("2"), haiku, { model: "haiku", effort: "xhigh" }),
+  ).rejects.toThrow(/isn't available for/);
+  expect(first?.prompts).toHaveLength(1);
+});
+
+/** A Solo chat whose first turn is held, and whose second mention's history
+ * read waits on `release`, so a third mention arrives while it is queued. */
+async function queuedSoloMentions(
+  config: (id: string) => typeof DEFAULT_CONFIG,
+) {
+  const canvas = { content: workspaceCanvas({ folders: ["~/a"], canvas: "" }) };
+  const f = setup([], { hold: true, solo: new Set([channel]), canvas });
+  const folders = (folder: string) => {
+    canvas.content = workspaceCanvas({ folders: [folder], canvas: "" });
+  };
+  const deliver = (id: string) => {
+    const settings = config(id);
+    return f.deliver(
+      {
+        type: "mention",
+        event: message(id, `@Claude ${id}`, {
+          tags: [
+            ["h", channel],
+            ["p", self],
+          ],
+        }),
+      },
+      settings,
+      { model: settings.model, effort: settings.effort },
+    );
+  };
+  await deliver("1");
+  await flush(10);
+  const first = f.claudes().find((claude) => claude.prompts.length > 0);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.session.read.mockImplementationOnce(async () => {
+    await gate;
+    return [];
+  });
+  return { ...f, first, folders, deliver, release };
+}
+
+it("keeps a queued mention's process when a later mention is refused", async () => {
+  const f = await queuedSoloMentions((id) => ({
+    ...DEFAULT_CONFIG,
+    model: id === "1" ? "opus" : "haiku",
+    effort: "xhigh",
+  }));
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  // Still in ~/a: it keeps the Opus process, so Haiku/xhigh isn't checked.
+  await f.deliver("2");
+  await flush(10);
+  // New folders would restart it on Haiku/xhigh, so this one is refused.
+  f.folders("~/c");
+  await expect(f.deliver("3")).rejects.toThrow(/isn't available for/);
+  await flush(10);
+  f.first?.finish();
+  f.release();
+  await flush(10);
+  const launched = f.claudes().filter((claude) => claude.prompts.length);
+  expect(launched).toEqual([f.first]);
+  expect(f.first?.prompts).toHaveLength(2);
+  expect(f.first?.killed).toBe(false);
+});
+
+it("starts a queued mention in the folders its prompt describes", async () => {
+  const f = await queuedSoloMentions(() => DEFAULT_CONFIG);
+  f.folders("~/b");
+  await f.deliver("2");
+  await flush(10);
+  f.folders("~/c");
+  await f.deliver("3");
+  await flush(10);
+  f.first?.finish();
+  f.release();
+  await flush(10);
+  const second = f
+    .claudes()
+    .find((claude) => claude.prompts[0]?.includes("~/b"));
+  expect(second?.options.args).toContain("~/b");
+  expect(second?.options.args).not.toContain("~/c");
+});
+
+it("waits for a busy process in other folders, then starts in the prompt's", async () => {
+  const canvas = { content: workspaceCanvas({ folders: ["~/a"], canvas: "" }) };
+  const f = setup([], { hold: true, solo: new Set([channel]), canvas });
+  const mention = (id: string) =>
+    ({
+      type: "mention",
+      event: message(id, `@Claude ${id}`, {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    }) as Delivery["trigger"];
+  await f.deliver(mention("1"));
+  await flush(10);
+  const first = f.claudes().find((claude) => claude.prompts.length > 0);
+  canvas.content = workspaceCanvas({ folders: ["~/b"], canvas: "" });
+  await f.deliver(mention("2"));
+  await flush(10);
+  // Not steered into the ~/a process while it runs.
+  expect(first?.prompts).toHaveLength(1);
+  first?.finish();
+  await flush(20);
+  expect(first?.prompts).toHaveLength(1);
+  const second = f
+    .claudes()
+    .find((claude) => claude.prompts.some((prompt) => prompt.includes("~/b")));
+  expect(second).not.toBe(first);
+  expect(second?.options.args).toContain("~/b");
+  expect(second?.options.args).not.toContain("~/a");
+});
+
+it("refuses a turn that waited for a busy process in other folders when a Save landed meanwhile", async () => {
+  const canvas = { content: workspaceCanvas({ folders: ["~/a"], canvas: "" }) };
+  const f = setup([], { hold: true, solo: new Set([channel]), canvas });
+  const mention = (id: string) =>
+    ({
+      type: "mention",
+      event: message(id, `@Claude ${id}`, {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    }) as Delivery["trigger"];
+  await f.deliver(mention("1"));
+  await flush(10);
+  const first = f.claudes().find((claude) => claude.prompts.length > 0);
+  canvas.content = workspaceCanvas({ folders: ["~/b"], canvas: "" });
+  const waiting = f.deliver(mention("2"));
+  await flush(10);
+  f.clock.advance();
+  first?.finish();
+  await waiting;
+  await flush(20);
+  expect(f.claudes().flatMap((claude) => claude.prompts)).toHaveLength(1);
+  expect(JSON.stringify(f.published)).toContain("send again");
+});
+
+it("refuses a turn whose prompt was still being built when a Save landed", async () => {
+  const root = message("1", "@Claude 1", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const f = setup([root]);
+  await f.deliver({ type: "mention", event: root });
+  await flush(10);
+  let built!: () => void;
+  f.read.mockImplementationOnce(async () => {
+    await new Promise<void>((resolve) => {
+      built = resolve;
+    });
+    return [root];
+  });
+  const sent = f.deliver({
+    type: "mention",
+    event: message("2", "@Claude 2", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    }),
+  });
+  await vi.waitFor(() => expect(built).toBeTypeOf("function"));
+  f.clock.advance();
+  built();
+  await sent;
+  await flush(20);
+  expect(f.claudes().flatMap((claude) => claude.prompts)).toHaveLength(1);
+  expect(JSON.stringify(f.published)).toContain("send again");
+});
+
+it("refuses a synced effort when a lost session starts over on it", async () => {
+  let release!: () => void;
+  const resuming = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = setup([], { solo: new Set([channel]), resuming });
+  f.data.set(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({ [self]: { [channel]: { id: "lost", seen: 0, at: 1 } } }),
+  );
+  const mention = (id: string) =>
+    ({
+      type: "mention",
+      event: message(id, `@Claude ${id}`, {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    }) as Delivery["trigger"];
+  const synced = (model: string) => ({
+    config: { ...DEFAULT_CONFIG, model, effort: "xhigh" as const },
+    synced: { model, effort: "xhigh" },
+  });
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  // The saved session starts on Opus/xhigh; its first message is held.
+  const opus = synced("opus");
+  await f.deliver(mention("1"), opus.config, opus.synced);
+  await flush(20);
+  const resumed = f
+    .claudes()
+    .find(({ options }) => options.args?.includes("--resume"));
+  expect(resumed?.options.args).toContain("opus");
+  // A remote edit to Haiku/xhigh, admitted while that process is kept.
+  const haiku = synced("haiku");
+  await f.deliver(mention("2"), haiku.config, haiku.synced);
+  await flush(20);
+  // The saved session no longer loads: a new one would start on Haiku/xhigh.
+  release();
+  await flush(30);
+  expect(resumed?.prompts).toEqual([]);
+  const sessions = f
+    .claudes()
+    .filter(({ options: { args = [] } }) => args.includes("--session-id"));
+  expect(
+    sessions.filter(({ options }) => options.args?.includes("haiku")),
+  ).toEqual([]);
+  expect(f.published.map((event) => event.content).join()).toMatch(
+    /isn't available for/,
+  );
+});
+
+/** A Solo chat whose saved session is lost: its Opus/xhigh resume is held
+ * until `fail`, after which the turn starts over in a new session. */
+async function lostOpusSession() {
+  let fail!: () => void;
+  const resuming = new Promise<void>((resolve) => {
+    fail = resolve;
+  });
+  const f = setup([], { solo: new Set([channel]), resuming });
+  f.data.set(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({ [self]: { [channel]: { id: "lost", seen: 0, at: 1 } } }),
+  );
+  const mention = (id: string) =>
+    ({
+      type: "mention",
+      event: message(id, `@Claude ${id}`, {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    }) as Delivery["trigger"];
+  const synced = (model: string, workspace = DEFAULT_CONFIG.workspace) => ({
+    config: { ...DEFAULT_CONFIG, model, effort: "xhigh" as const, workspace },
+    synced: { model, effort: "xhigh" },
+  });
+  const opus = synced("opus");
+  const haiku = synced("haiku");
+  f.runtime.sync([
+    {
+      pubkey: self,
+      config: opus.config,
+      synced: opus.synced,
+    } as unknown as Agent,
+  ]);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  await f.deliver(mention("1"), opus.config, opus.synced);
+  await flush(20);
+  // A turn sent to a process on Haiku/xhigh, which Claude doesn't offer. A
+  // spare warmed on those settings is only handed out by a checked launch.
+  const haikuSessions = () =>
+    f
+      .claudes()
+      .filter(
+        ({ options: { args = [] }, prompts }) =>
+          args.includes("haiku") && prompts.length > 0,
+      );
+  const refusal = () => f.published.map((event) => event.content).join();
+  return { ...f, fail, mention, synced, opus, haiku, haikuSessions, refusal };
+}
+
+it("checks a synced effort again when settings change while a recovery starts", async () => {
+  const f = await lostOpusSession();
+  // Recovery's launch has read Opus/xhigh, and waits on core memory.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.core.mockImplementation(async () => {
+    await gate;
+    return null;
+  });
+  f.fail();
+  await flush(20);
+  // Haiku/xhigh is synced, then Restart to apply moves the epoch under that
+  // launch: the recovery never prompts on the settings it captured.
+  void f
+    .deliver(f.mention("2"), f.haiku.config, f.haiku.synced)
+    ?.catch(() => undefined);
+  await flush(10);
+  f.runtime.restart(self, f.haiku.config);
+  release();
+  await flush(40);
+  expect(f.haikuSessions()).toEqual([]);
+  expect(f.refusal()).toMatch(/settings changed before it started/);
+});
+
+it("still refuses a synced effort after a save on this device changes the workspace", async () => {
+  const f = await lostOpusSession();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // Recovery's new prompt waits on its history read.
+  f.session.read.mockImplementationOnce(async () => {
+    await gate;
+    return [];
+  });
+  f.fail();
+  await flush(20);
+  await expect(
+    f.deliver(f.mention("2"), f.haiku.config, f.haiku.synced),
+  ).rejects.toThrow(/isn't available for/);
+  // The host's resolved config keeps the synced Haiku/xhigh.
+  const saved = f.synced("haiku", "/elsewhere");
+  f.runtime.sync([
+    {
+      pubkey: self,
+      saves: 1,
+      config: saved.config,
+      synced: saved.synced,
+    } as unknown as Agent,
+  ]);
+  release();
+  await flush(40);
+  expect(f.haikuSessions()).toEqual([]);
+  expect(f.refusal()).toMatch(/isn't available for/);
+});
+
+it("refuses a synced effort saved on this device when a recovery starts", async () => {
+  const f = await lostOpusSession();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.session.read.mockImplementationOnce(async () => {
+    await gate;
+    return [];
+  });
+  f.fail();
+  await flush(20);
+  f.runtime.sync([
+    {
+      pubkey: self,
+      saves: 1,
+      config: f.haiku.config,
+      synced: f.haiku.synced,
+    } as unknown as Agent,
+  ]);
+  release();
+  await flush(40);
+  expect(f.haikuSessions()).toEqual([]);
+  expect(f.refusal()).toMatch(/isn't available for/);
+});
+
+it("refuses a one-off turn on a synced effort Claude doesn't offer", async () => {
+  const f = setup();
+  const config = {
+    ...DEFAULT_CONFIG,
+    model: "haiku",
+    effort: "xhigh" as const,
+  };
+  const result = await f.runtime.runOnce({
+    delivery: {
+      agent: f.agent,
+      config,
+      synced: { model: "haiku", effort: "xhigh" },
+    } as unknown as Delivery,
+    key: "timer",
+    signal: new AbortController().signal,
+    prompt: async () => "hi",
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/isn't available for/),
+    failure: {
+      kind: "unsupported-setting",
+      setting: "effort",
+      value: "xhigh",
+      reason: expect.stringMatching(/isn't available for/),
+    },
+  });
+  expect(f.claudes().filter((claude) => claude.prompts.length)).toEqual([]);
+});
+
+it("checks a synced effort on the model its own launch reports, not newer settings", async () => {
+  // Claude runs Haiku, which doesn't offer xhigh, when no model is set.
+  const f = setup([], { native: "haiku" });
+  const turn = (
+    config: typeof DEFAULT_CONFIG,
+    synced?: Record<string, string>,
+  ) =>
+    f.runtime.runOnce({
+      delivery: { agent: f.agent, config, synced } as unknown as Delivery,
+      key: "timer",
+      signal: new AbortController().signal,
+      prompt: async () => "hi",
+    });
+  const blank = turn(
+    { ...DEFAULT_CONFIG, model: "", effort: "xhigh" },
+    { effort: "xhigh" },
+  );
+  // Before that turn's discovery starts, another installs Opus, which does.
+  const opus = turn({ ...DEFAULT_CONFIG, model: "opus", effort: "xhigh" });
+  await expect(blank).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/isn't available for Haiku/),
+  });
+  await opus;
+  expect(
+    f
+      .claudes()
+      .filter(
+        ({ options: { args = [] }, prompts }) =>
+          !args.includes("--model") && prompts.length > 0,
+      ),
+  ).toEqual([]);
+});
+
+it("never stores a model-menu lookup under settings other than the ones it read", async () => {
+  // Claude runs Haiku, which doesn't offer xhigh, when no model is set.
+  const f = setup([], { native: "haiku" });
+  const blank = { ...DEFAULT_CONFIG, model: "", effort: "xhigh" };
+  f.runtime.sync([
+    {
+      pubkey: self,
+      name: "Claude",
+      config: blank,
+      synced: { effort: "xhigh" },
+    },
+  ] as unknown as Agent[]);
+  const turn = (
+    config: typeof DEFAULT_CONFIG,
+    synced?: Record<string, string>,
+  ) =>
+    f.runtime.runOnce({
+      delivery: { agent: f.agent, config, synced } as unknown as Delivery,
+      key: "timer",
+      signal: new AbortController().signal,
+      prompt: async () => "hi",
+    });
+  // The menu reads the blank settings; before its discovery starts, a turn
+  // installs explicit Opus, which offers xhigh.
+  const menu = f.runtime.models({ pubkey: self, config: blank });
+  const opus = turn({ ...DEFAULT_CONFIG, model: "opus", effort: "xhigh" });
+  await menu;
+  await opus;
+  // A checked turn on the blank settings trusts what the menu found.
+  await expect(turn(blank, { effort: "xhigh" })).resolves.toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/isn't available for Haiku/),
+  });
+  expect(
+    f
+      .claudes()
+      .filter(
+        ({ options: { args = [] }, prompts }) =>
+          !args.includes("--model") && prompts.length > 0,
+      ),
+  ).toEqual([]);
+  f.runtime.dispose();
+});
+
+it("describes the host's settings in the model menu without moving a pinned conversation", async () => {
+  const mention = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const f = setup([mention]);
+  const a = { ...DEFAULT_CONFIG, model: "haiku" };
+  const b = { ...DEFAULT_CONFIG, model: "opus" };
+  const view = (config: typeof DEFAULT_CONFIG) =>
+    ({ pubkey: self, name: "Claude", config }) as unknown as Agent;
+  f.runtime.sync([view(a)]);
+  await f.deliver({ type: "mention", event: mention }, a);
+  await flush(10);
+  const pinned = f.claudes().find((claude) => claude.prompts.length);
+  expect(pinned?.options.args).toContain("haiku");
+  // Another device's edit: the host now shows B, which waits for Restart.
+  f.runtime.sync([view(b)]);
+  const menu = f.runtime.models(view(b));
+  // Before its discovery starts, a turn replaces the runtime's own copy.
+  const other = f.runtime.runOnce({
+    delivery: {
+      agent: f.agent,
+      config: { ...DEFAULT_CONFIG, model: "legacy" },
+    } as unknown as Delivery,
+    key: "timer",
+    signal: new AbortController().signal,
+    prompt: async () => "hi",
+  });
+  expect((await menu).current).toBe("opus");
+  await other;
+  // Nothing read the menu from the replaced copy's Legacy.
+  expect(
+    f
+      .claudes()
+      .filter(
+        ({ options: { args = [] }, prompts }) =>
+          args.includes("legacy") && !prompts.length,
+      ),
+  ).toEqual([]);
+  // The conversation keeps its Haiku process.
+  expect(pinned?.killed).toBe(false);
+  f.runtime.dispose();
+});
+
+for (const [held, from, to] of [
+  ["soloChat", "thread", "channel"],
+  ["channel", "thread", "channel"],
+  ["soloChat", "channel", "thread"],
+  ["channel", "channel", "thread"],
+] as const)
+  it(`keeps an admitted ${from}-scope turn's conversation when scope changes during its ${held} lookup`, async () => {
+    const root = message("r", "@Claude hi", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    });
+    const f = setup([root]);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let waiting = false;
+    const internals = f.runtime as unknown as {
+      reads: (pubkey: string) => AgentReads | undefined;
+    };
+    const reads = internals.reads;
+    internals.reads = (pubkey) => {
+      const real = reads(pubkey);
+      if (!real) return real;
+      return {
+        ...real,
+        [held]: async (...args: never[]) => {
+          waiting = true;
+          await gate;
+          return (real[held] as (...a: never[]) => unknown)(...args);
+        },
+      } as AgentReads;
+    };
+    const run = f.deliver(
+      { type: "mention", event: root },
+      { ...DEFAULT_CONFIG, scope: from },
+    );
+    await vi.waitFor(() => expect(waiting).toBe(true));
+    // Another delivery installs the other scope while this one waits.
+    void f.runtime.runOnce({
+      delivery: {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: to },
+      } as unknown as Delivery,
+      key: "timer",
+      signal: new AbortController().signal,
+      prompt: async () => "hi",
+    });
+    release();
+    await run;
+    await flush(10);
+    const keys = f.runtime.sessions(self).map((session) => session.key);
+    const thread = `${channel}/${root.id}`;
+    expect(keys).toContain(from === "channel" ? channel : thread);
+    expect(keys).not.toContain(from === "channel" ? thread : channel);
+    f.runtime.dispose();
+  });
+
+it("builds an unprompted process's system prompt from the team installed while it started", async () => {
+  const f = setup([]);
+  let remembered!: () => void;
+  const memory = new Promise<void>((resolve) => {
+    remembered = resolve;
+  });
+  let reading = false;
+  f.core.mockImplementationOnce(async () => {
+    reading = true;
+    await memory;
+    return null;
+  });
+  const turn = (team: string, prompt: () => Promise<string | undefined>) =>
+    f.runtime.runOnce({
+      delivery: { agent: f.agent, config: DEFAULT_CONFIG, team },
+      key: "timer",
+      signal: new AbortController().signal,
+      prompt,
+    } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+  const first = turn("TEAM A", async () => "hi");
+  await vi.waitFor(() => expect(reading).toBe(true));
+  // A remote team change lands, by delivery at the same epoch, while the
+  // first process's launch reads memory with team A already built in.
+  await turn("TEAM B", async () => undefined);
+  remembered();
+  await first;
+  const prompted = f.claudes().filter((claude) => claude.prompts.length);
+  expect(prompted).toHaveLength(1);
+  const sent = JSON.stringify([
+    prompted[0]?.options.args,
+    prompted[0]?.received,
+  ]);
+  expect(sent).toContain("TEAM B");
+  expect(sent).not.toContain("TEAM A");
+  f.runtime.dispose();
+});
+
+it.each([
+  ["refuses", true],
+  ["runs", false],
+])(
+  "%s a picked first prompt whose team changes by delivery while Claude lists its models",
+  async (_, change) => {
+    const mention = message("2", "@Claude hi", {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    });
+    let list!: () => void;
+    const listing = new Promise<void>((resolve) => (list = resolve));
+    const f = setup([mention], { listing });
+    const first = f.runtime.run({
+      trigger: { type: "mention", event: mention },
+      channelId: channel,
+      agent: f.agent,
+      config: DEFAULT_CONFIG,
+      team: "TEAM A",
+      model: "haiku",
+      signal: new AbortController().signal,
+      workingUntil: () => undefined,
+    } as unknown as Delivery);
+    await vi.waitFor(() =>
+      expect(
+        f
+          .claudes()
+          .some((claude) => JSON.stringify(claude.received).includes("TEAM A")),
+      ).toBe(true),
+    );
+    // A remote team change lands by delivery, at the same epoch, while the
+    // first prompt waits on the model list to check its pick.
+    if (change)
+      await f.runtime.runOnce({
+        delivery: { agent: f.agent, config: DEFAULT_CONFIG, team: "TEAM B" },
+        key: "timer",
+        signal: new AbortController().signal,
+        prompt: async () => undefined,
+      } as unknown as Parameters<typeof f.runtime.runOnce>[0]);
+    list();
+    await first;
+    await flush(20);
+    const prompts = f.claudes().flatMap((claude) => claude.prompts);
+    if (change) {
+      expect(JSON.stringify(f.published)).toContain("send again");
+      expect(prompts).toEqual([]);
+    } else {
+      expect(prompts).toHaveLength(1);
+      expect(JSON.stringify(f.published)).not.toContain("send again");
+    }
+    f.runtime.dispose();
+  },
+);
+
+it("starts a lost session over in the folders its prompt describes", async () => {
+  const canvas = { content: workspaceCanvas({ folders: ["~/b"], canvas: "" }) };
+  const f = setup([], { hold: true, solo: new Set([channel]), canvas });
+  f.data.set(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({ [self]: { [channel]: { id: "lost", seen: 0, at: 1 } } }),
+  );
+  const mention = (id: string) =>
+    ({
+      type: "mention",
+      event: message(id, `@Claude ${id}`, {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    }) as Delivery["trigger"];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // The first prompt reads at once; the one rebuilt for a new session waits.
+  f.session.read
+    .mockImplementationOnce(async () => [])
+    .mockImplementationOnce(async () => {
+      await gate;
+      return [];
+    });
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  await f.deliver(mention("1"));
+  await flush(20);
+  // While its new prompt is built, the Canvas moves and another turn runs,
+  // still running when that prompt is ready.
+  canvas.content = workspaceCanvas({ folders: ["~/c"], canvas: "" });
+  await f.deliver(mention("2"));
+  await flush(20);
+  release();
+  await flush(20);
+  for (const claude of f.claudes()) claude.finish();
+  await flush(20);
+  const sent = f.claudes().filter((claude) => claude.prompts.length);
+  for (const claude of sent)
+    for (const prompt of claude.prompts)
+      expect(claude.options.args).toContain(
+        prompt.includes("~/b") ? "~/b" : "~/c",
+      );
+  expect(
+    sent.some((claude) => claude.prompts.some((p) => p.includes("~/b"))),
+  ).toBe(true);
+});
+
+it("checks default-model effort against fresh discovery after a remote edit", async () => {
+  const f = setup();
+  try {
+    f.runtime.sync([
+      {
+        pubkey: self,
+        name: "Claude",
+        config: { ...DEFAULT_CONFIG, model: "haiku" },
+      },
+    ] as unknown as Agent[]);
+    // Opening the model chooser before any conversation caches haiku discovery.
+    await f.runtime.models({
+      pubkey: self,
+      config: { ...DEFAULT_CONFIG, model: "haiku" },
+    });
+    const next = { ...DEFAULT_CONFIG, model: "", effort: "xhigh" };
+    const trigger = {
+      type: "mention",
+      event: message("a", "@Claude fresh"),
+    } as Delivery["trigger"];
+    // Remote config clears the explicit model. The fake's default is opus,
+    // which supports xhigh, unlike the previously discovered haiku.
+    await expect(
+      f.deliver(trigger, next, { model: "", effort: "xhigh" }),
+    ).resolves.toBeUndefined();
+    await flush(10);
+    expect(f.claudes().some((c) => c.prompts.length > 0)).toBe(true);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+describe("Claude keeps a pinned conversation's key across a remote scope change", () => {
+  const top = (id: string) =>
+    message(id, `@Claude ${id}`, {
+      tags: [
+        ["h", channel],
+        ["p", self],
+      ],
+    });
+  const inThread = (id: string, root: RelayEvent) =>
+    message(id, `@Claude ${id}`, {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    });
+  const scoped = (scope: "thread" | "channel") => ({
+    ...DEFAULT_CONFIG,
+    scope,
+  });
+  /** Which started process each prompt went to, in order. */
+  const routes = (claudes: () => { prompts: string[] }[]) =>
+    claudes()
+      .filter((process) => process.prompts.length)
+      .map((process) => process.prompts.length);
+
+  it("continues a channel conversation after a remote change to thread scope, until a local Save", async () => {
+    const root = top("1");
+    const { deliver, claudes, clock } = setup([root]);
+    await deliver({ type: "mention", event: root }, scoped("channel"));
+    await flush(10);
+    await deliver({ type: "mention", event: top("2") }, scoped("thread"));
+    await flush(10);
+    await deliver(
+      { type: "mention", event: inThread("3", root) },
+      scoped("thread"),
+    );
+    await flush(10);
+    expect(routes(claudes)).toEqual([3]);
+    clock.advance();
+    await deliver({ type: "mention", event: top("4") }, scoped("thread"));
+    await flush(10);
+    expect(routes(claudes)).toEqual([3, 1]);
+  });
+
+  it("continues a channel conversation when a remote delete falls back to thread-scoped local settings", async () => {
+    const root = top("1");
+    const { deliver, claudes, clock, admit, runtime, agent } = setup([root]);
+    await deliver({ type: "mention", event: root }, scoped("channel"));
+    await flush(10);
+    await runtime.run(
+      admit({
+        trigger: { type: "mention", event: inThread("2", root) },
+        channelId: channel,
+        agent,
+        signal: new AbortController().signal,
+        workingUntil: () => undefined,
+        attempt: clock.attempt(scoped("thread"), {
+          name: agent.name,
+          blocked: "The synced settings were deleted",
+        }),
+      } as unknown as Parameters<typeof admit>[0]),
+    );
+    await flush(10);
+    expect(routes(claudes)).toEqual([2]);
+  });
+
+  it("keeps a thread's conversation after a remote change to channel scope; the thread wins over the channel's", async () => {
+    const root = top("1");
+    const { deliver, claudes, clock } = setup([root]);
+    await deliver({ type: "mention", event: root }, scoped("thread"));
+    await flush(10);
+    // A new top-level message opens the channel conversation.
+    await deliver({ type: "mention", event: top("2") }, scoped("channel"));
+    await flush(10);
+    expect(routes(claudes)).toEqual([1, 1]);
+    // A reply in the thread matches both; the thread's conversation takes it.
+    await deliver(
+      { type: "mention", event: inThread("3", root) },
+      scoped("channel"),
+    );
+    await flush(10);
+    expect(routes(claudes)).toEqual([2, 1]);
+    await deliver({ type: "mention", event: top("4") }, scoped("channel"));
+    await flush(10);
+    expect(routes(claudes)).toEqual([2, 2]);
+    // After a local Save, the thread's reply uses the latest scope's key.
+    clock.advance();
+    await deliver(
+      { type: "mention", event: inThread("5", root) },
+      scoped("channel"),
+    );
+    await flush(10);
+    expect(routes(claudes).reduce((a, b) => a + b)).toBe(5);
+    expect(routes(claudes).at(-1)).toBe(1);
+  });
+});
+
+describe("an explicit pick, checked against the process's own model list", () => {
+  const process = (listed: Promise<readonly unknown[]>, own = "opus") =>
+    ({
+      models: () => listed,
+      readModel: async () => own,
+    }) as unknown as Parameters<typeof refusedPick>[0];
+
+  it("waits for the list the process is still loading, then checks against it", async () => {
+    let load!: (models: readonly unknown[]) => void;
+    const loading = new Promise<readonly unknown[]>((resolve) => {
+      load = resolve;
+    });
+    let settled = false;
+    const checked = refusedPick(process(loading), { model: "unoffered" }).then(
+      (refused) => {
+        settled = true;
+        return refused;
+      },
+    );
+    await flush(5);
+    expect(settled).toBe(false);
+    load(MODELS);
+    expect((await checked)?.failure).toMatchObject({
+      kind: "unsupported-setting",
+      setting: "model",
+      value: "unoffered",
+    });
+  });
+
+  it("passes the pick on as asked when the process lists no models", async () => {
+    expect(
+      await refusedPick(process(Promise.resolve([])), {
+        model: "unoffered",
+        effort: "high",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("refuses an effort the picked or own model lacks, and allows one it has", async () => {
+    const listed = Promise.resolve(MODELS);
+    expect(
+      (await refusedPick(process(listed), { model: "haiku", effort: "medium" }))
+        ?.failure,
+    ).toMatchObject({ setting: "effort", value: "medium" });
+    expect(
+      await refusedPick(process(listed), { model: "haiku", effort: "high" }),
+    ).toBeUndefined();
+    expect(
+      (await refusedPick(process(listed, "legacy"), { effort: "low" }))
+        ?.failure,
+    ).toMatchObject({ setting: "effort", value: "low" });
+  });
 });

@@ -97,6 +97,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
   } = createTabs(providerController, runtime, start, setup);
   ctx.agents.register<Config>({
     id: TYPE_ID,
+    // Its effective defaults also follow the model catalog.
+    defaultsChanged: (listener) => {
+      const effective = () => JSON.stringify(providerController.resolve({}));
+      let last = effective();
+      return providerController.subscribe(() => {
+        const next = effective();
+        if (next === last) return;
+        last = next;
+        listener();
+      });
+    },
     title: "Codex",
     icon: CodexLogoIcon,
     description:

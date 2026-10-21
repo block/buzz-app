@@ -130,14 +130,28 @@ export function createLocalAgentActivity() {
         Object.freeze({ ...input, state: "waiting", startedAt: Date.now() }),
       );
       publish();
+      /** The Stop of a superseded request, until it resumes or ends. */
+      let parked: (() => Promise<void>) | undefined;
       const update = (
         state: LocalWorkState,
         error?: string,
         step?: WorkStep,
       ) => {
         const current = entries.get(id);
-        if (!current || settled(current.state)) return;
+        // Any outcome but supersession ends the request and its Stop.
+        if (settled(state) && state !== "superseded") parked = undefined;
+        // Only `started` resumes work a newer message displaced: the harness
+        // handed its activity back when that message left.
+        const resumed =
+          current?.state === "superseded" && state === "working" && !step;
+        if (!current || (settled(current.state) && !resumed)) return;
+        // Superseded work keeps its Stop unusable until it resumes.
+        if (state === "superseded") parked = stops.get(id);
         if (settled(state)) stops.delete(id);
+        if (resumed && parked) {
+          stops.set(id, parked);
+          parked = undefined;
+        }
         const next = step ?? (state === "working" ? current.step : undefined);
         if (
           current.state === state &&
@@ -151,7 +165,9 @@ export function createLocalAgentActivity() {
           id,
           Object.freeze({
             ...rest,
-            ...(stoppable && !settled(state) ? { stoppable } : {}),
+            ...((resumed ? stops.has(id) : stoppable && !settled(state))
+              ? { stoppable: true as const }
+              : {}),
             state,
             ...(error ? { error: error.slice(0, 500) } : {}),
             ...(next ? { step: next } : {}),
@@ -191,6 +207,7 @@ export function createLocalAgentActivity() {
           publish();
         },
         remove: () => {
+          parked = undefined;
           stops.delete(id);
           if (entries.delete(id)) publish();
         },

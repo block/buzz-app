@@ -45,6 +45,9 @@ import type { Outbox, OutgoingEvent } from "../relay/outbox";
 import { createMessages } from "../relay/messages";
 import { ClaudeProcess } from "../../bundled/claude-code/claude";
 import { fakeSpawn } from "../../bundled/claude-code/claude-testing";
+import { fakeSpawn as fakeGooseSpawn } from "../../bundled/goose/goose-testing";
+import { GooseSetup } from "../../bundled/goose/setup";
+import { config as gooseConfig } from "../../bundled/goose/runtime";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { AgentsContext } from "../agents/react";
 import type { Agents } from "../agents/service";
@@ -1434,6 +1437,7 @@ it.each(["never", "before the failure", "after the failure"])(
     const types = [{ key: "test/agent", models: () => models }];
     const agents = {
       sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
       subscribe: () => () => {},
       snapshot: () => snapshot,
       types: () => types,
@@ -2446,6 +2450,7 @@ it("opens the model picker while discovery is pending, then fills its controls",
   const types = [{ key: "test/agent", models: () => pending.promise }];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -2473,10 +2478,12 @@ const sessionAgents = (
   scope: "thread" | "channel",
   models = [{ id: "fast", label: "Fast", efforts: [] }],
 ) => {
-  const snapshot = {
+  let snapshot = {
     status: "ready",
     agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
   };
+  /** The scope of a channel conversation the runtime has pinned, if any. */
+  let pinned: "thread" | "channel" | undefined;
   let state: "idle" | "active" | "compacting" | "unavailable" = "idle";
   const listeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
@@ -2511,7 +2518,18 @@ const sessionAgents = (
     find: (pubkey: string) =>
       snapshot.agents.find((agent) => agent.pubkey === pubkey),
     sessionState: () => state,
+    sessionScope: () => pinned ?? scope,
     session,
+    /** A remote edit of the agent's scope, with no local Save or Restart. */
+    editScope(next: typeof scope) {
+      scope = next;
+      snapshot = { ...snapshot, agents: [...snapshot.agents] };
+      for (const listener of serviceListeners) listener();
+    },
+    pin(next: typeof pinned) {
+      pinned = next;
+      for (const listener of listeners) listener();
+    },
     setSessionState(
       next: typeof state,
       source: "harness" | "agents" = "harness",
@@ -2522,9 +2540,109 @@ const sessionAgents = (
     },
   } as unknown as Agents & {
     session: typeof session;
+    editScope(next: "thread" | "channel"): void;
+    pin(next: "thread" | "channel" | undefined): void;
     setSessionState(next: typeof state, source?: "harness" | "agents"): void;
   };
 };
+
+/** A result announced by the composer's lasting status region. */
+const announced = (text: string) =>
+  waitFor(() =>
+    expect(
+      screen.getAllByRole("status").map((status) => status.textContent),
+    ).toContain(text),
+  );
+
+const openSessionPopover = async (h: ReturnType<typeof mount>) => {
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(
+    await screen.findByRole("button", { name: /Model.*effort/ }),
+  );
+};
+
+it("keeps a pinned channel conversation's controls in the channel composer after a remote edit to thread scope", async () => {
+  const agents = sessionAgents("channel");
+  agents.pin("channel");
+  agents.editScope("thread");
+  const h = mount({}, undefined, undefined, agents);
+  await openSessionPopover(h);
+  await h.user.click(
+    await screen.findByRole("button", { name: "Compact session" }),
+  );
+  expect(agents.session).toHaveBeenLastCalledWith(
+    first.pubkey,
+    { channelId: "channel" },
+    "compact",
+  );
+  // Once that conversation ends, a top-level message starts a thread.
+  act(() => agents.pin(undefined));
+  expect(screen.queryByRole("button", { name: "Compact session" })).toBeNull();
+});
+
+it("keeps New's confirmation and returns focus to the composer when New ends the pinned conversation holding the controls", async () => {
+  const agents = sessionAgents("channel");
+  agents.pin("channel");
+  agents.editScope("thread");
+  agents.session.mockImplementation(async (_pubkey, _place, action) => {
+    if (action === "new") agents.pin(undefined);
+  });
+  const h = mount({}, undefined, undefined, agents);
+  await openSessionPopover(h);
+  const fresh = await screen.findByRole("button", {
+    name: "Start a new session",
+  });
+  await h.user.click(fresh);
+  await announced("New session started");
+  expect(fresh).not.toBeInTheDocument();
+  await waitFor(() => expect(h.input()).toHaveFocus());
+});
+
+it("leaves focus where the person moved it when New ends the pinned conversation", async () => {
+  const agents = sessionAgents("channel");
+  agents.pin("channel");
+  agents.editScope("thread");
+  const ended = deferred<void>();
+  agents.session.mockImplementation(async () => ended.promise);
+  const h = mount({}, undefined, undefined, agents);
+  await openSessionPopover(h);
+  await h.user.click(
+    await screen.findByRole("button", { name: "Start a new session" }),
+  );
+  const elsewhere = document.createElement("button");
+  document.body.append(elsewhere);
+  try {
+    elsewhere.focus();
+    await act(async () => {
+      agents.pin(undefined);
+      ended.resolve();
+    });
+    expect(elsewhere).toHaveFocus();
+  } finally {
+    elsewhere.remove();
+  }
+});
+
+it("shows channel controls once a remote edit moves an unpinned agent to channel scope", async () => {
+  const agents = sessionAgents("thread");
+  const h = mount({}, undefined, undefined, agents);
+  act(() => agents.editScope("channel"));
+  await openSessionPopover(h);
+  expect(
+    await screen.findByRole("button", { name: "Compact session" }),
+  ).toBeInTheDocument();
+});
+
+it("hides session controls for a fresh top-level message to an unpinned thread-scoped agent", async () => {
+  const agents = sessionAgents("thread", [
+    { id: "fast", label: "Fast", efforts: [] },
+    { id: "deep", label: "Deep", efforts: [] },
+  ]);
+  const h = mount({}, undefined, undefined, agents);
+  await openSessionPopover(h);
+  await screen.findByRole("button", { name: "Model for Honey's next run" });
+  expect(screen.queryByRole("button", { name: "Compact session" })).toBeNull();
+});
 
 it("restores an attachment draft instead of publishing when compaction starts during upload", async () => {
   const agents = sessionAgents("channel");
@@ -2824,15 +2942,11 @@ it("shows action failures and lets an idle session retry", async () => {
   await h.user.click(
     await screen.findByRole("button", { name: "Start a new session" }),
   );
-  expect(await screen.findByText("Disk is full")).toHaveTextContent(
-    "Disk is full",
-  );
+  await announced("Disk is full");
   await h.user.click(
     screen.getByRole("button", { name: "Start a new session" }),
   );
-  expect(await screen.findByText("New session started")).toHaveTextContent(
-    "New session started",
-  );
+  await announced("New session started");
 });
 
 it("offers a thread-scoped agent session actions in a thread, not on a message that starts one", async () => {
@@ -2888,6 +3002,7 @@ it.each([
     ];
     const agents = {
       sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
       subscribe: () => () => {},
       snapshot: () => snapshot,
       types: () => types,
@@ -2956,6 +3071,7 @@ it("keeps an active Claude model when a follow-up composer picker is untouched",
   ];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -3022,6 +3138,7 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -3054,6 +3171,323 @@ it("sends the model and effort shown by an untouched agent picker", async () => 
     { [first.pubkey]: { model: "gpt-6.1-sol", effort: "high" } },
   );
 });
+
+it("drops an effort a retyped agent no longer offers before sending", async () => {
+  let snapshot = {
+    status: "ready",
+    agents: [
+      {
+        pubkey: first.pubkey,
+        name: "Honey",
+        type: "test/agent",
+        config: {},
+      },
+    ],
+  };
+  // goose's own registration: its models offer no efforts.
+  const goose = new GooseSetup(
+    fakeGooseSpawn({
+      providers: [
+        {
+          providerId: "ollama",
+          providerName: "Ollama",
+          configured: true,
+          visibleInSetup: true,
+          configKeys: [],
+        },
+      ],
+      defaults: { providerId: "ollama", modelId: "qwen3" },
+      supported: ["qwen3", "llama4"],
+    }),
+  );
+  const listeners = new Set<() => void>();
+  const types = [
+    {
+      key: "test/agent",
+      models: () => ({
+        current: "fast",
+        models: [
+          {
+            id: "fast",
+            label: "Fast",
+            efforts: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+        ],
+      }),
+    },
+    {
+      key: "goose",
+      models: (agent: { config: unknown }) =>
+        goose.picks(gooseConfig(agent.config)),
+    },
+  ];
+  const agents = {
+    sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const h = mount({}, undefined, undefined, agents);
+  await h.user.type(h.input(), "after the retype");
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    }),
+  );
+  const slider = await screen.findByLabelText("Effort for Honey's next run");
+  slider.focus();
+  await h.user.keyboard("{ArrowRight}");
+  expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await h.user.keyboard("{Escape}");
+  await act(async () => {
+    snapshot = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) => ({ ...agent, type: "goose" })),
+    };
+    for (const listener of listeners) listener();
+  });
+  await h.user.click(
+    await screen.findByRole("button", {
+      name: "Model and effort for the next run",
+    }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Model for Honey's next run" }),
+  ).toHaveTextContent("qwen3");
+  await h.user.keyboard("{Escape}");
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(h.messages.send.mock.lastCall)).not.toContain("high");
+});
+
+it.each([
+  ["while its models load", () => new Promise<never>(() => {})],
+  ["after its discovery fails", () => Promise.reject(new Error("no models"))],
+] as const)(
+  "sends no effort from a retyped agent's previous type %s",
+  async (_, discover) => {
+    let snapshot = {
+      status: "ready",
+      agents: [
+        { pubkey: first.pubkey, name: "Honey", type: "test/agent", config: {} },
+      ],
+    };
+    const listeners = new Set<() => void>();
+    const types = [
+      {
+        key: "test/agent",
+        models: () => ({
+          current: "fast",
+          models: [
+            {
+              id: "fast",
+              label: "Fast",
+              efforts: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+        }),
+      },
+      { key: "goose", models: discover },
+    ];
+    const agents = {
+      sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.type(h.input(), "during discovery");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    const slider = await screen.findByLabelText("Effort for Honey's next run");
+    slider.focus();
+    await h.user.keyboard("{ArrowRight}");
+    expect(slider).toHaveAttribute("aria-valuetext", "High");
+    await h.user.keyboard("{Escape}");
+    await act(async () => {
+      snapshot = {
+        ...snapshot,
+        agents: snapshot.agents.map((agent) => ({ ...agent, type: "goose" })),
+      };
+      for (const listener of listeners) listener();
+    });
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(h.messages.send.mock.lastCall)).not.toContain("high");
+  },
+);
+
+it.each([
+  ["keeps", "its type is not registered", "unregistered"],
+  ["keeps", "it is missing from the agent list", "missing"],
+  ["clears", "its type is registered without models", "modelless"],
+] as const)(
+  "%s an explicit model pick when, before sending, %s",
+  async (outcome, _, state) => {
+    let snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    };
+    const tunable = {
+      key: "test/agent",
+      models: () => ({
+        current: "fast",
+        models: [
+          { id: "fast", label: "Fast", efforts: [] },
+          { id: "solo", label: "Solo", efforts: [] },
+        ],
+      }),
+    };
+    let types: readonly object[] = [tunable];
+    const listeners = new Set<() => void>();
+    const agents = {
+      sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.type(h.input(), "pinned model");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    await h.user.click(
+      await screen.findByRole("button", { name: "Model for Honey's next run" }),
+    );
+    await h.user.click(
+      await screen.findByRole("menuitemradio", { name: "Solo" }),
+    );
+    await h.user.keyboard("{Escape}");
+    await act(async () => {
+      // A plugin swap unregisters the type; a reload drops the agent.
+      if (state === "unregistered") types = [];
+      if (state === "modelless") types = [{ key: "test/agent" }];
+      snapshot =
+        state === "missing"
+          ? { ...snapshot, agents: [] }
+          : { ...snapshot, agents: [...snapshot.agents] };
+      for (const listener of listeners) listener();
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", {
+          name: "Model and effort for the next run",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledTimes(1);
+    if (outcome === "keeps")
+      expect(h.messages.send.mock.lastCall?.at(-1)).toEqual({
+        [first.pubkey]: { model: "solo" },
+      });
+    else
+      expect(JSON.stringify(h.messages.send.mock.lastCall)).not.toContain(
+        "solo",
+      );
+  },
+);
+
+it.each([
+  ["a model lookup that fails", () => Promise.reject(new Error("offline"))],
+  [
+    "a one-model menu",
+    () => ({
+      current: "solo",
+      models: [{ id: "solo", label: "Solo", efforts: [] }],
+    }),
+  ],
+])(
+  "keeps an explicit model pick after a same-type refresh to %s",
+  async (_, refreshed) => {
+    let snapshot = {
+      status: "ready",
+      agents: [{ pubkey: first.pubkey, name: "Honey", type: "test/agent" }],
+    };
+    let listing: () => unknown = () => ({
+      current: "fast",
+      models: [
+        {
+          id: "fast",
+          label: "Fast",
+          efforts: [{ id: "high", label: "High" }],
+        },
+        { id: "solo", label: "Solo", efforts: [] },
+      ],
+    });
+    const listeners = new Set<() => void>();
+    const types = [{ key: "test/agent", models: () => listing() }];
+    const agents = {
+      sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents;
+    const h = mount({}, undefined, undefined, agents);
+    await h.user.type(h.input(), "pinned model");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(
+      await screen.findByRole("button", {
+        name: "Model and effort for the next run",
+      }),
+    );
+    await h.user.click(
+      await screen.findByRole("button", { name: "Model for Honey's next run" }),
+    );
+    await h.user.click(
+      await screen.findByRole("menuitemradio", { name: "Solo" }),
+    );
+    await h.user.keyboard("{Escape}");
+    await act(async () => {
+      listing = refreshed;
+      snapshot = { ...snapshot, agents: [...snapshot.agents] };
+      for (const listener of listeners) listener();
+    });
+    // The picker hides once the refreshed lookup settles.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", {
+          name: "Model and effort for the next run",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send).toHaveBeenCalledTimes(1);
+    expect(h.messages.send.mock.lastCall?.at(-1)).toEqual({
+      [first.pubkey]: { model: "solo" },
+    });
+  },
+);
 
 it.each(["settings refresh", "model pick"])(
   "follows the new model's effort after %s without inheriting an untouched effort",
@@ -3092,6 +3526,7 @@ it.each(["settings refresh", "model pick"])(
     ];
     const agents = {
       sessionState: () => "unavailable" as const,
+      sessionScope: () => undefined,
       subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -3180,6 +3615,7 @@ it("asks a mentioned agent of the viewer's for a model and effort on the next ru
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,
@@ -3300,6 +3736,7 @@ it("opens the effort picker at the effort the agent's next run uses", async () =
   const types = [{ key: "test/agent", models: () => models }];
   const agents = {
     sessionState: () => "unavailable" as const,
+    sessionScope: () => undefined,
     subscribe: () => () => {},
     snapshot: () => snapshot,
     types: () => types,

@@ -11,10 +11,21 @@ export const gooseRun = (
   runtime: GooseRuntime,
 ): Pick<
   AgentType<Config>,
-  "sessionControls" | "run" | "runOnce" | "timeoutMs" | "syncedSettings"
+  | "restart"
+  | "sessionControls"
+  | "run"
+  | "runOnce"
+  | "timeoutMs"
+  | "syncedSettings"
 > => ({
+  restart: {
+    outdated: (pubkey, settings) => runtime.outdated(pubkey, settings),
+    apply: (pubkey, applied) => runtime.restart(pubkey, applied),
+    subscribe: (listener) => runtime.subscribe(listener),
+  },
   sessionControls: {
     scope: (agent) => config(agent.config).scope,
+    scopeAt: (agent, channelId) => runtime.scopeAt(agent, channelId),
     state: (agent, place) => runtime.sessionState(agent, place),
     run: (agent, place, action) => runtime.session(agent, place, action),
     subscribe: (listener) => runtime.subscribe(listener),

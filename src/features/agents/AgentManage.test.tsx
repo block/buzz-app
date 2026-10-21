@@ -16,6 +16,8 @@ const agent = {
   relay: "wss://relay.example",
   place: "here",
   config: {},
+  settings: { config: {}, synced: {}, revisions: [], name: "", team: "" },
+  epoch: 0,
   attention: {},
   skipped: {},
   timers: {},

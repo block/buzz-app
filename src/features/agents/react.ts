@@ -62,19 +62,14 @@ export function useAgent(agents: Agents | undefined, pubkey: string) {
 const EMPTY_TYPES = [] as const;
 const noTypes = () => EMPTY_TYPES;
 
-/** The state of the targeted harness sessions. Any compaction blocks a send
- * to those targets; ordinary active turns keep accepting steering. */
-export function useSessionState(
-  agents: Agents | undefined,
-  pubkeys: readonly string[],
-  place: SessionPlace,
-): SessionState {
+/** Subscribes to the agents and to every type's session controls. */
+function useSessionSubscribe(agents: Agents | undefined) {
   const types = useSyncExternalStore(
     agents?.subscribe ?? noSubscribe,
     agents?.types ?? noTypes,
     noTypes,
   );
-  const subscribe = useCallback(
+  return useCallback(
     (listener: () => void) => {
       const stops = [
         agents?.subscribe(listener),
@@ -86,8 +81,36 @@ export function useSessionState(
     },
     [agents, types],
   );
+}
+
+/** The mentioned agents a channel's top-level message would reach in a
+ * channel conversation, as their runtimes resolve it now, joined by ":". */
+export function useChannelScoped(
+  agents: Agents | undefined,
+  pubkeys: readonly string[],
+  channelId: string,
+): string {
   return useSyncExternalStore(
-    subscribe,
+    useSessionSubscribe(agents),
+    () =>
+      pubkeys
+        .filter(
+          (pubkey) => agents?.sessionScope(pubkey, channelId) === "channel",
+        )
+        .join(":"),
+    () => "",
+  );
+}
+
+/** The state of the targeted harness sessions. Any compaction blocks a send
+ * to those targets; ordinary active turns keep accepting steering. */
+export function useSessionState(
+  agents: Agents | undefined,
+  pubkeys: readonly string[],
+  place: SessionPlace,
+): SessionState {
+  return useSyncExternalStore(
+    useSessionSubscribe(agents),
     () => {
       const states = pubkeys.map(
         (pubkey) => agents?.sessionState(pubkey, place) ?? "unavailable",
@@ -114,12 +137,32 @@ export type MentionModelChoice = Models &
   Readonly<{
     pubkey: string;
     name: string;
+    /** The agent's type key, which its choices belong to. */
+    type: string;
     loading?: boolean;
     /** Its type offers immediate controls for sessions of this scope. */
     session?: "thread" | "channel";
+    /** The lookup threw: `models` says nothing about what the agent offers. */
+    failed?: boolean;
+    /** Listed, but with no choice to offer: a single model with no efforts. */
+    hidden?: boolean;
   }>;
-/** The mentioned agents, of the viewer's own, whose type offers a choice of
- * model or effort, or session actions. */
+/** A registered type that lists no models: proof it offers none. */
+const listsNone = (
+  pubkey: string,
+  name: string,
+  type: string,
+): MentionModelChoice => ({
+  pubkey,
+  name,
+  type,
+  current: "",
+  models: [],
+  hidden: true,
+});
+/** The mentioned agents, of the viewer's own, whose type is registered.
+ * An agent or type not known yet has no entry. Those with a choice of model
+ * or effort, or session actions, to offer are the ones not `hidden`. */
 export function useMentionModels(
   pubkeys: readonly string[],
 ): readonly MentionModelChoice[] {
@@ -161,6 +204,7 @@ export function useMentionModels(
                 if (!agent || !type) return [];
                 const session = type.sessionControls?.scope(agent);
                 let found: Models = { current: "", models: [] };
+                let failed = false;
                 try {
                   if (type.models) found = await type.models(agent);
                 } catch (error) {
@@ -168,19 +212,22 @@ export function useMentionModels(
                     `Agent type ${type.key} could not list its models`,
                     error,
                   );
+                  failed = true;
                 }
-                return found.models.length > 1 ||
-                  found.models.some((m) => m.efforts.length) ||
-                  session
-                  ? [
-                      {
-                        pubkey,
-                        name: agent.name,
-                        ...found,
-                        ...(session ? { session } : {}),
-                      },
-                    ]
-                  : [];
+                const choice =
+                  found.models.length > 1 ||
+                  found.models.some((m) => m.efforts.length);
+                return [
+                  {
+                    pubkey,
+                    name: agent.name,
+                    type: type.key,
+                    ...found,
+                    ...(session ? { session } : {}),
+                    ...(failed ? { failed: true } : {}),
+                    ...(choice || session ? {} : { hidden: true }),
+                  },
+                ];
               }),
           ).then((choices) => choices.flat())
     ).then((choices) => {
@@ -199,19 +246,21 @@ export function useMentionModels(
     : key.split(":").flatMap((pubkey) => {
         const agent = snapshot?.agents.find((item) => item.pubkey === pubkey);
         const type = agent && types?.find((item) => item.key === agent.type);
-        const session = agent && type?.sessionControls?.scope(agent);
-        return agent && (type?.models || session)
+        if (!agent || !type) return [];
+        const session = type.sessionControls?.scope(agent);
+        return type.models || session
           ? [
               {
                 pubkey,
                 name: agent.name,
+                type: type.key,
                 current: "",
                 models: [],
                 loading: true,
                 ...(session ? { session } : {}),
               },
             ]
-          : [];
+          : [listsNone(pubkey, agent.name, type.key)];
       });
 }
 

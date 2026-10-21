@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Spawn } from "./goose";
 import { fakeSpawn } from "./goose-testing";
-import { GooseSetup, keyLabel } from "./setup";
+import { GooseSetup, keyLabel, LIST_TIMEOUT_MS } from "./setup";
 
 const ANTHROPIC = {
   providerId: "anthropic",
@@ -76,6 +76,29 @@ const setup = (options: Parameters<typeof fakeSpawn>[0] = {}) => {
 };
 
 describe("GooseSetup", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("gives up on a list read goose never answers, stops it, and reads again next time", async () => {
+    vi.useFakeTimers();
+    const { fake, setup: goose } = setup({
+      silent: ["_goose/unstable/providers/list"],
+    });
+    const first = goose.picks({ provider: "anthropic", model: "" });
+    const failed = expect(first).rejects.toThrow(/did not answer/);
+    await vi.advanceTimersByTimeAsync(LIST_TIMEOUT_MS);
+    await failed;
+    expect(fake.geese).toHaveLength(1);
+    expect(fake.geese[0]?.killed).toBe(true);
+    // Not kept: the next pick starts a fresh read.
+    const second = goose.picks({ provider: "anthropic", model: "" });
+    const again = expect(second).rejects.toThrow(/did not answer/);
+    await vi.advanceTimersByTimeAsync(LIST_TIMEOUT_MS);
+    await again;
+    expect(fake.geese).toHaveLength(2);
+  });
+
   it("lists the providers set up here, by name, with goose's defaults", async () => {
     const { fake, setup: goose } = setup();
     const listed = await goose.providers();

@@ -1,5 +1,9 @@
 import { expect, it, vi } from "vitest";
+import type { Subject } from "./agent-config";
+import { LifecycleJournal } from "./config-lifecycle";
+import { MigrationJournal } from "./config-writes";
 import { fileStore, loadAgentStorage, MOVED_KEY } from "./state";
+import { TeamJournal } from "./team-config";
 import { memoryStorage } from "./test-fakes";
 
 const files = (items: Record<string, string> = {}) => {
@@ -48,6 +52,52 @@ it("moves agent state from localStorage, which replaces what agent storage has",
   // Moved keys leave localStorage; other keys stay.
   expect(local.length).toBe(1);
   expect(local.getItem("buzz.theme")).toBe("dark");
+});
+
+it("moves config sync journals a start without agent storage kept, so a restart reads them", async () => {
+  const local = memoryStorage();
+  const subject: Subject = {
+    owner: "o",
+    community: "c",
+    subject: "a",
+    channel: "ch",
+    type: "buzz.agent.instructions",
+  };
+  const team = {
+    id: "t",
+    channel: "tc",
+    archived: false,
+    unreadable: true,
+    members: [],
+  };
+  // A start that fell back to localStorage journals there.
+  await new MigrationJournal(local).put(subject, {
+    status: "confirmed",
+    channelId: "ch",
+    d: "d",
+    attempts: 0,
+  });
+  await new LifecycleJournal(local).put("c", "a", {
+    state: "recovering",
+    channel: "ch",
+  });
+  new TeamJournal(local).remember("o", "c", [
+    { ...team, subject: { ...subject, subject: "t", type: "buzz.team" } },
+  ]);
+  const native = files();
+  await loadAgentStorage(local, native);
+  expect(local.length).toBe(0);
+  const restarted = await loadAgentStorage(memoryStorage(), native);
+  expect(new MigrationJournal(restarted).get(subject)?.status).toBe(
+    "confirmed",
+  );
+  expect(new LifecycleJournal(restarted).pending("c")).toEqual([
+    { subject: "a", state: "recovering", channel: "ch" },
+  ]);
+  expect(new TeamJournal(restarted).known("o", "c")?.[0]).toMatchObject({
+    id: "t",
+    unreadable: true,
+  });
 });
 
 it("uses localStorage for a start where a copy fails, and keeps its state through a later move", async () => {

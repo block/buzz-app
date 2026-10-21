@@ -23,6 +23,8 @@ const agent = (pubkey = first): Agent => ({
   relay: "wss://community.example",
   place: "hosted",
   config: {},
+  settings: { config: {}, synced: {}, revisions: [], name: "", team: "" },
+  epoch: 0,
   attention: {},
   skipped: {},
   attentionEnabled: true,

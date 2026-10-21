@@ -11,6 +11,14 @@ import type {
   StandaloneTurn,
   TurnResult,
 } from "../../features/agents/service";
+import {
+  Refused,
+  refusal,
+  unsupportedSetting,
+  type AgentSettings,
+  type Applied,
+  type SettingsAttempt,
+} from "../../features/agents/settings";
 import type { EventData } from "../../features/relay/events";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
 import { readProject } from "../../features/agent-harness/project";
@@ -63,12 +71,13 @@ type Request = {
   scope: string;
   event: EventData;
   agent: AgentHandle;
+  /** The settings it was admitted with, which a new turn hands off through. */
+  attempt: SettingsAttempt;
+  /** `attempt`'s config, resolved. */
   settings: Config;
   conversation: Conversation;
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
-  /** The agent's team sections, if it is on a team. */
-  team: string;
   /** The Solo chat's workspace Canvas section, if it has one. */
   project?: string;
   /** The model and effort the owner picked for this turn. */
@@ -92,6 +101,9 @@ type Saved = {
   workspace: string;
   at?: number;
   tools?: string;
+  /** The settings the thread runs on, kept until its agent's epoch moves;
+   * absent until its first turn after that. */
+  pin?: AgentSettings;
 };
 type Active = {
   /** The server this turn runs on; steering must reach the same process. */
@@ -191,6 +203,9 @@ function textOf(event: EventData, name: string) {
  * calls find their agent by thread and turn. */
 export class CodexRuntime {
   private entries = new Map<string, Entry>();
+  /** Each agent's epoch as last applied here: the pins are of that epoch,
+   * and a newer one clears them. */
+  private epochs = new Map<string, number>();
   private server: Server | undefined;
   private stopping = new Map<string, Promise<void>>();
   private views = new Map<string, readonly SessionView[]>();
@@ -223,13 +238,50 @@ export class CodexRuntime {
   private readonly controls = new SessionControls(() => {
     for (const listener of this.listeners) listener();
   });
+  /** The conversation a control acts on: the one a turn in `place` goes to. */
   private controlKey(agent: Agent, place: SessionPlace) {
     return JSON.stringify([
       place.channelId,
-      this.resolveConfig(agent.config).scope === "channel"
-        ? "channel"
-        : (place.root ?? "channel"),
+      this.pinnedRoot(
+        agent.pubkey,
+        place.channelId,
+        place.root,
+        this.resolveConfig(agent.config).scope,
+      ) ?? "channel",
     ]);
+  }
+  /** The thread root a turn under `toolRoot` goes to, or none for the
+   * channel's conversation. A thread pinned since the last local Save keeps
+   * the key its own scope gave it, so a remote scope change never moves it;
+   * the thread's wins. Otherwise `scope` picks. */
+  private pinnedRoot(
+    pubkey: string,
+    channelId: string,
+    toolRoot: string | undefined,
+    scope: string,
+  ) {
+    const saved = this.bindings(pubkey)?.saved ?? {};
+    const pinnedAs = (root: string, as: string) => {
+      const pin = saved[JSON.stringify([channelId, root])]?.pin;
+      return !!pin && this.resolveConfig(pin.config).scope === as;
+    };
+    return toolRoot &&
+      (pinnedAs(toolRoot, "thread") ||
+        (!pinnedAs("channel", "channel") && scope !== "channel"))
+      ? toolRoot
+      : undefined;
+  }
+  /** The scope a top-level message in `channelId` resolves to; its thread is
+   * not sent yet, so only a channel pin can decide it. */
+  scopeAt(agent: Agent, channelId: string) {
+    return this.pinnedRoot(
+      agent.pubkey,
+      channelId,
+      "unsent",
+      this.resolveConfig(agent.config).scope,
+    )
+      ? "thread"
+      : "channel";
   }
   sessionState(agent: Agent, place: SessionPlace): SessionState {
     const key = this.controlKey(agent, place);
@@ -275,18 +327,23 @@ export class CodexRuntime {
       if (!saved) throw new Error("There is no session here to compact yet.");
       const server = this.open();
       const rpc = await server.opening;
-      const settings = this.resolveConfig(agent.config);
-      const workspace = await this.workspace(settings.workspace);
+      // Like a turn, a pinned conversation compacts on its pin, not on a
+      // remote edit it hasn't applied. The workspace is this device's own.
+      const workspace = await this.workspace(
+        this.resolveConfig(agent.config).workspace,
+      );
       if (workspace !== saved.workspace)
         throw new Error(
           "The workspace changed. Send a message to start its session first.",
         );
+      const pinned = saved.pin ?? agent.settings;
       const { params } = await this.prepare(
         rpc,
         agent,
-        settings,
+        this.resolveConfig(pinned.config),
         workspace,
         {},
+        pinned.synced.effort,
       );
       signal.throwIfAborted();
       try {
@@ -400,6 +457,9 @@ export class CodexRuntime {
   }
   sync(agents: readonly Agent[]) {
     const present = new Set(agents.map((agent) => agent.pubkey));
+    // A stopped agent keeps its epoch, so a Save made meanwhile clears its
+    // pins when it next runs.
+    for (const agent of agents) this.advance(agent.pubkey, agent.epoch);
     for (const pubkey of this.previews.keys())
       if (!present.has(pubkey)) {
         this.previews.delete(pubkey);
@@ -413,6 +473,62 @@ export class CodexRuntime {
       }
     if (!present.size) this.close();
     for (const listener of this.listeners) listener();
+  }
+  /** Whether a thread is pinned to settings other than `settings`, what the
+   * host now resolves for the agent: it shows Restart to apply. */
+  outdated(pubkey: string, settings: AgentSettings) {
+    const current = this.pinKey(settings);
+    return Object.values(this.bindings(pubkey)?.saved ?? {}).some(
+      ({ pin }) => pin !== undefined && this.pinKey(pin) !== current,
+    );
+  }
+  private pinKey(settings: AgentSettings) {
+    return JSON.stringify([
+      this.resolveConfig(settings.config),
+      settings.synced,
+      settings.blocked ?? null,
+      settings.name,
+      settings.team,
+    ]);
+  }
+  /** Restart to apply: each thread runs its next turn on `applied`, which the
+   * host just applied, and keeps that until the epoch moves again. */
+  restart(pubkey: string, applied: Applied) {
+    this.advance(pubkey, applied.epoch);
+  }
+  /** Takes the agent's epoch from the host. The host's epochs start at 0
+   * each app session, so saved pins are of epoch 0 until one is seen: a
+   * newer one clears them, saved bindings without a live entry included.
+   * While they can't be read, the epoch is not taken, so a later one retries. */
+  private advance(pubkey: string, epoch: number) {
+    if (epoch <= (this.epochs.get(pubkey) ?? 0)) return;
+    const bindings = this.bindings(pubkey);
+    if (!bindings) return;
+    this.epochs.set(pubkey, epoch);
+    if (!Object.values(bindings.saved).some(({ pin }) => pin)) return;
+    const saved = Object.fromEntries(
+      Object.entries(bindings.saved).map(([key, { pin: _, ...rest }]) => [
+        key,
+        rest,
+      ]),
+    );
+    const entry = this.entries.get(pubkey);
+    if (entry) entry.saved = saved;
+    void this.storage
+      .set(bindings.storageKey, JSON.stringify(saved))
+      .catch((error: unknown) =>
+        console.warn("Codex could not save its sessions", error),
+      );
+    for (const listener of this.listeners) listener();
+  }
+  /** The agent's saved bindings in its community, loaded or read. */
+  private bindings(pubkey: string) {
+    const entry = this.entries.get(pubkey);
+    if (entry) return entry;
+    const reads = this.reads(pubkey);
+    if (!reads) return undefined;
+    const storageKey = this.storageKey(reads.scope, pubkey);
+    return { storageKey, saved: this.load(storageKey) };
   }
   /** Other agents share the server, so a stopped agent's turns interrupt
    * themselves. Then the shells its finished turns left are ended, which its
@@ -503,12 +619,19 @@ export class CodexRuntime {
       const stored: unknown = JSON.parse(this.storage.get(storageKey) ?? "{}");
       if (stored && typeof stored === "object" && !Array.isArray(stored))
         return Object.fromEntries(
-          Object.entries(stored).filter(
-            ([, value]) =>
-              value &&
-              typeof value.threadId === "string" &&
-              typeof value.workspace === "string",
-          ),
+          Object.entries(stored)
+            .filter(
+              ([, value]) =>
+                value &&
+                typeof value.threadId === "string" &&
+                typeof value.workspace === "string",
+            )
+            .map(([key, { pin, synced: _, ...rest }]) => [
+              key,
+              // A pin saved before it carried its whole settings is dropped: its
+              // thread runs its next turn on the current ones.
+              Array.isArray(pin?.revisions) ? { ...rest, pin } : rest,
+            ]),
         ) as Record<string, Saved>;
     } catch {
       /* Start fresh after malformed local data. */
@@ -604,7 +727,12 @@ export class CodexRuntime {
   }
   async run(delivery: Delivery) {
     delivery.signal.throwIfAborted();
-    const { trigger, agent } = delivery;
+    const { trigger, agent, attempt } = delivery;
+    // An older delivery never clears pins a newer epoch made.
+    this.advance(agent.pubkey, attempt.epoch);
+    // Read before anything waits: the scope it was admitted with picks its
+    // conversation.
+    const settings = this.resolveConfig(attempt.settings.config);
     // Watches and timers come as standalone turns (`runOnce`).
     if (trigger.type !== "mention") return delivery.ignored?.();
     const reads = this.reads(agent.pubkey);
@@ -622,7 +750,6 @@ export class CodexRuntime {
     if (!reads) throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
-    const settings = this.resolveConfig(delivery.config);
     const channel = await reads.channel(channelId);
     const topLevel = await reads.soloChat(
       agent.owner,
@@ -640,7 +767,12 @@ export class CodexRuntime {
     delivery.signal.throwIfAborted();
     const toolRoot =
       channel?.dm || topLevel ? undefined : rootOf(trigger.event);
-    const root = settings.scope === "channel" ? undefined : toolRoot;
+    const root = this.pinnedRoot(
+      agent.pubkey,
+      channelId,
+      toolRoot,
+      settings.scope,
+    );
     delivery.signal.throwIfAborted();
     let finishActivity!: (result: WorkOutcome) => void;
     const replied = new Promise<WorkOutcome>((resolve) => {
@@ -656,6 +788,7 @@ export class CodexRuntime {
       scope: reads.scope,
       event: trigger.event,
       agent,
+      attempt,
       settings,
       ...(toolRoot ? { toolRoot } : {}),
       ...(delivery.model ? { model: delivery.model } : {}),
@@ -666,7 +799,6 @@ export class CodexRuntime {
         ...(root ? { root } : {}),
         ...(topLevel ? { topLevel } : {}),
       },
-      team: delivery.team ?? "",
       ...(project ? { project: `${project}\n` } : {}),
       answered,
       failActivity,
@@ -818,8 +950,8 @@ export class CodexRuntime {
       return { ok: false, error: "Connect to the agent's community first" };
     const { scope } = reads;
     const entry = this.entry(agent.pubkey, scope);
-    const settings = this.resolveConfig(delivery.config);
-    const team = delivery.team ?? "";
+    const { attempt } = delivery;
+    const settings = this.resolveConfig(attempt.settings.config);
     if (entry.abort.signal.aborted)
       return { ok: false, error: "Codex was stopped" };
     if (!validWorkspace(settings.workspace))
@@ -856,6 +988,7 @@ export class CodexRuntime {
         settings,
         workspace,
         {},
+        attempt.settings.synced.effort,
       );
       const text = await prompt();
       if (text === undefined) return { ok: true };
@@ -872,10 +1005,10 @@ export class CodexRuntime {
       once.threadId = started.thread.id;
       server.threads.set(once.threadId, agent.pubkey);
       signal.throwIfAborted();
-      const turnStarted = await rpc.request<{ turn: { id: string } }>(
-        "turn/start",
-        {
-          threadId: once.threadId,
+      const threadId = once.threadId;
+      const turnStarted = await attempt.handoff(attempt, () =>
+        rpc.request<{ turn: { id: string } }>("turn/start", {
+          threadId,
           input: input(text),
           model,
           effort,
@@ -883,11 +1016,11 @@ export class CodexRuntime {
           additionalContext: turnContext(
             agent,
             settings,
-            team,
+            attempt.settings.team,
             memory,
             this.repositories(scope),
           ),
-        },
+        }),
       );
       once.turnId ??= turnStarted.turn.id;
       this.status(agent.pubkey, key, "Working");
@@ -908,7 +1041,9 @@ export class CodexRuntime {
           })
           .catch(() => server.rpc.close());
       this.status(agent.pubkey, key, "Needs attention", message(error));
-      return { ok: false, error: message(error) };
+      return error instanceof Refused
+        ? refusal(error)
+        : { ok: false, error: message(error) };
     } finally {
       once.finished = true;
       followed.stop();
@@ -1231,13 +1366,16 @@ export class CodexRuntime {
     }
   }
   /** What a thread for `agent` starts or resumes with in `workspace`, and the
-   * model and effort its turn runs on: `pick`'s when available. */
+   * model and effort its turn runs on: `pick`'s when available. A synced
+   * effort the model lacks refuses the turn rather than run at the default
+   * (NIP-AP "Settings"). */
   private async prepare(
     rpc: AppServer,
     agent: Pick<AgentHandle, "name" | "pubkey">,
     settings: Config,
     workspace: string,
     pick: Readonly<{ model?: string; effort?: string }>,
+    syncedEffort?: string,
   ) {
     const normalized = await rpc.request<{
       config: {
@@ -1249,15 +1387,40 @@ export class CodexRuntime {
     const own = resolveModel(settings.model, models);
     // Model and effort are per turn, so a pick changes nothing after it.
     const picked = models.find((row) => row.model === pick.model);
+    if (pick.model && !picked)
+      throw unsupportedSetting(
+        "model",
+        pick.model,
+        `Codex can't run the picked model "${pick.model}" here. Pick an available model.`,
+      );
     const selected = picked ?? models.find((row) => row.model === own);
     if (!selected)
-      throw new Error(
+      throw unsupportedSetting(
+        "model",
+        settings.model,
         "The selected Codex model is unavailable. Choose an available model in Settings.",
       );
     const model = selected.model;
     const supported = selected.supportedReasoningEfforts.map(
       (level) => level.reasoningEffort,
     );
+    if (pick.effort && !supported.includes(pick.effort))
+      throw unsupportedSetting(
+        "effort",
+        pick.effort,
+        `The picked effort "${pick.effort}" isn't available for ${model}. Pick a supported effort.`,
+      );
+    if (
+      syncedEffort &&
+      !picked &&
+      !pick.effort &&
+      !supported.includes(syncedEffort)
+    )
+      throw unsupportedSetting(
+        "effort",
+        syncedEffort,
+        `The synced effort "${syncedEffort}" isn't available for ${model}. Choose a supported effort in Settings.`,
+      );
     // A picked model may not support the configured effort.
     const effort =
       [pick.effort, settings.effort].find(
@@ -1305,6 +1468,15 @@ export class CodexRuntime {
     lane: Lane,
     entry: Entry,
   ) {
+    // A thread keeps the settings it was pinned to, of the epoch its pins
+    // are; the delivery's reach it only once that epoch moves.
+    const { attempt } = request;
+    const { pin } = entry.saved[key] ?? {};
+    const selected: Applied = pin
+      ? { settings: pin, epoch: this.epochs.get(request.agent.pubkey) ?? 0 }
+      : attempt;
+    const syncedEffort = selected.settings.synced.effort;
+    const settings = pin ? this.resolveConfig(pin.config) : request.settings;
     let ready!: () => void;
     let notReady!: (error: unknown) => void;
     const turnAbort = new AbortController();
@@ -1320,14 +1492,14 @@ export class CodexRuntime {
       steering: Promise.resolve(),
       reply: request,
       finished: false,
-      workspace: request.settings.workspace,
+      workspace: settings.workspace,
       signal,
       requests: [request],
       activity: new Map(),
     };
     void active.ready.catch(() => undefined);
     lane.active = active;
-    const { settings, agent } = request;
+    const { agent } = request;
     const followed = follow(server.rpc, signal, active, (method, item) => {
       const step = method === "item/started" ? codexStep(item) : undefined;
       if (step)
@@ -1358,6 +1530,8 @@ export class CodexRuntime {
         settings,
         workspace,
         request,
+        // A pinned thread runs on its pin, not the synced copy's effort.
+        syncedEffort,
       );
       active.model = model;
       active.effort = effort;
@@ -1411,23 +1585,27 @@ export class CodexRuntime {
         this.core(request.agent.pubkey, signal),
       ]);
       signal.throwIfAborted();
-      const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
-        threadId: active.threadId,
-        input: input(
-          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, noteOf(request))}`,
-        ),
-        model,
-        effort,
-        ...summary,
-        // Application context is a developer message that updates on each turn.
-        additionalContext: turnContext(
-          agent,
-          settings,
-          request.team,
-          memory,
-          this.repositories(request.scope),
-        ),
-      });
+      const threadId = active.threadId;
+      const turn = await attempt.handoff(selected, () =>
+        rpc.request<{ turn: { id: string } }>("turn/start", {
+          threadId,
+          input: input(
+            `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, noteOf(request))}`,
+          ),
+          model,
+          effort,
+          ...summary,
+          // Application context is a developer message that updates on each
+          // turn.
+          additionalContext: turnContext(
+            agent,
+            settings,
+            selected.settings.team,
+            memory,
+            this.repositories(request.scope),
+          ),
+        }),
+      );
       active.turnId = turn.turn.id;
       this.acknowledgeActivity(active, request);
       // Empty threads have no resumable rollout until a user turn is accepted.
@@ -1436,6 +1614,11 @@ export class CodexRuntime {
         workspace,
         at: Date.now(),
         ...(tools ? { tools } : {}),
+        // An epoch that moved since the handoff cleared the pins; this
+        // thread runs its next turn on the newer settings.
+        ...((this.epochs.get(agent.pubkey) ?? 0) === selected.epoch
+          ? { pin: selected.settings }
+          : {}),
       });
       ready();
       this.status(agent.pubkey, key, "Working");

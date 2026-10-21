@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   AgentsContext,
+  useChannelScoped,
   useSessionState,
   useMentionModels,
 } from "../agents/react";
@@ -50,6 +51,7 @@ export function ComposerModels({
   onResolved,
   startsThread,
   place,
+  focusComposer,
 }: {
   pubkeys: readonly string[];
   value: MentionPicks;
@@ -60,35 +62,81 @@ export function ComposerModels({
    * does, so a thread-scoped agent has no session to act on. */
   startsThread: boolean;
   place: SessionPlace;
+  /** Takes focus back when a session control holding it goes away, as New
+   * does when it ends the pinned conversation that kept the controls here. */
+  focusComposer(): void;
 }) {
   const [open, setOpen] = useState(false);
-  const mentioned = useMentionModels(pubkeys);
-  const choices = useMemo<readonly MentionModelChoice[]>(
-    () =>
-      startsThread
-        ? mentioned.flatMap((choice) => {
-            if (choice.session !== "thread") return [choice];
-            const { session: _, ...rest } = choice;
-            return rest.loading ||
-              rest.models.length > 1 ||
-              rest.models.some((model) => model.efforts.length)
-              ? [rest]
-              : [];
-          })
-        : mentioned,
-    [mentioned, startsThread],
+  // Outlives the controls, so a result is still announced after they go.
+  const [notice, setNotice] = useState("");
+  const listed = useMentionModels(pubkeys);
+  // A pinned channel conversation keeps taking top-level messages after a
+  // remote edit to thread scope, so its controls stay with it.
+  const channelScoped = useChannelScoped(
+    useContext(AgentsContext),
+    pubkeys,
+    place.channelId,
   );
+  const choices = useMemo<readonly MentionModelChoice[]>(() => {
+    const visible = listed.filter((choice) => !choice.hidden);
+    return startsThread
+      ? visible.flatMap((choice) => {
+          if (
+            choice.session !== "thread" ||
+            channelScoped.split(":").includes(choice.pubkey)
+          )
+            return [choice];
+          const { session: _, ...rest } = choice;
+          return rest.loading ||
+            rest.models.length > 1 ||
+            rest.models.some((model) => model.efforts.length)
+            ? [rest]
+            : [];
+        })
+      : visible;
+  }, [listed, startsThread, channelScoped]);
+  /** The type each agent's picks were last checked against. */
+  const checked = useRef(new Map<string, string>());
   const thumb = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   // Publish the displayed defaults separately from the user's draft picks.
   // A settings refresh or model-only pick must still follow the new default.
   useLayoutEffect(() => {
-    const resolved: Record<string, RunPick> = Object.fromEntries(
-      Object.entries(value).map(([pubkey, { model, effort }]) => [
-        pubkey,
-        { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
-      ]),
-    );
+    // A pick the agent no longer offers, as after a change of its type, is
+    // never sent: it keeps only what a successful listing includes. Without
+    // one (an unknown agent or type, loading, failed) the pick is sent for the
+    // agent to check, unless it was checked against another type.
+    const resolved: Record<string, RunPick> = {};
+    for (const [pubkey, saved] of Object.entries(value)) {
+      const choice = listed.find((item) => item.pubkey === pubkey);
+      const was = checked.current.get(pubkey);
+      if (
+        (choice?.loading || choice?.failed) &&
+        was !== undefined &&
+        was !== choice.type
+      )
+        resolved[pubkey] = {};
+      else if (!choice || choice.loading || choice.failed)
+        resolved[pubkey] = {
+          ...(saved.model ? { model: saved.model } : {}),
+          ...(saved.effort ? { effort: saved.effort } : {}),
+        };
+      else {
+        checked.current.set(pubkey, choice.type);
+        const model = choice.models.some((item) => item.id === saved.model)
+          ? saved.model
+          : undefined;
+        const effort = runModel(choice, model).efforts.some(
+          (item) => item.id === saved.effort,
+        )
+          ? saved.effort
+          : undefined;
+        resolved[pubkey] = {
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+        };
+      }
+    }
     for (const choice of choices) {
       if (choice.loading || !choice.sendDefaults) continue;
       const saved = value[choice.pubkey] ?? {};
@@ -106,8 +154,13 @@ export function ComposerModels({
     }
     onResolved(resolved);
     return () => onResolved({});
-  }, [choices, value, onResolved]);
-  if (!choices.length) return null;
+  }, [listed, choices, value, onResolved]);
+  const status = (
+    <span className="sr-only" role="status">
+      {notice}
+    </span>
+  );
+  if (!choices.length) return status;
   const picked = choices.flatMap((choice) => {
     const { model, effort } = value[choice.pubkey] ?? {};
     const runs = runModel(choice, model);
@@ -127,55 +180,62 @@ export function ComposerModels({
     ? "Model, effort, and session controls"
     : "Model and effort for the next run";
   return (
-    <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
-      <Popover.Trigger
-        disabled={disabled}
-        render={
-          <IconButton
-            ref={trigger}
-            size="toolbar"
-            type="button"
-            disabled={disabled}
-            data-selected={picked.length ? "" : undefined}
-            aria-label={label}
-            title={
-              picked.length ? `${label}. Next run: ${picked.join(", ")}` : label
-            }
-            icon={<GaugeIcon size={18} aria-hidden="true" />}
-          />
-        }
-      />
-      <Popover.Portal>
-        {/* The controls are the whole popup: it has no surface of its own. */}
-        <Popover.Positioner
-          className="buzz-popover-positioner"
-          side="top"
-          align="end"
-          sideOffset={8}
-          anchor={() => trigger.current?.closest("form") ?? trigger.current}
-          collisionPadding={8}
-        >
-          <Popover.Popup
-            className={styles.popup}
-            aria-label={label}
-            initialFocus={thumb}
+    <>
+      {status}
+      <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
+        <Popover.Trigger
+          disabled={disabled}
+          render={
+            <IconButton
+              ref={trigger}
+              size="toolbar"
+              type="button"
+              disabled={disabled}
+              data-selected={picked.length ? "" : undefined}
+              aria-label={label}
+              title={
+                picked.length
+                  ? `${label}. Next run: ${picked.join(", ")}`
+                  : label
+              }
+              icon={<GaugeIcon size={18} aria-hidden="true" />}
+            />
+          }
+        />
+        <Popover.Portal>
+          {/* The controls are the whole popup: it has no surface of its own. */}
+          <Popover.Positioner
+            className="buzz-popover-positioner"
+            side="top"
+            align="end"
+            sideOffset={8}
+            anchor={() => trigger.current?.closest("form") ?? trigger.current}
+            collisionPadding={8}
           >
-            {choices.map((choice, index) => (
-              <AgentChoice
-                key={choice.pubkey}
-                choice={choice}
-                place={place}
-                named={choices.length > 1}
-                value={value[choice.pubkey] ?? {}}
-                disabled={disabled}
-                pick={(next) => pick(choice.pubkey, next)}
-                {...(index === 0 ? { thumb } : {})}
-              />
-            ))}
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+            <Popover.Popup
+              className={styles.popup}
+              aria-label={label}
+              initialFocus={thumb}
+            >
+              {choices.map((choice, index) => (
+                <AgentChoice
+                  key={choice.pubkey}
+                  choice={choice}
+                  place={place}
+                  named={choices.length > 1}
+                  value={value[choice.pubkey] ?? {}}
+                  disabled={disabled}
+                  pick={(next) => pick(choice.pubkey, next)}
+                  announce={setNotice}
+                  focusComposer={focusComposer}
+                  {...(index === 0 ? { thumb } : {})}
+                />
+              ))}
+            </Popover.Popup>
+          </Popover.Positioner>
+        </Popover.Portal>
+      </Popover.Root>
+    </>
   );
 }
 
@@ -192,6 +252,8 @@ function AgentChoice({
   value,
   disabled,
   pick,
+  announce,
+  focusComposer,
   thumb,
 }: {
   choice: MentionModelChoice;
@@ -200,6 +262,8 @@ function AgentChoice({
   value: RunPick;
   disabled: boolean;
   pick(next: RunPick): void;
+  announce(message: string): void;
+  focusComposer(): void;
   thumb?: Ref<HTMLInputElement>;
 }) {
   const [feedback, setFeedback] = useState("");
@@ -280,12 +344,17 @@ function AgentChoice({
             pubkey={choice.pubkey}
             name={choice.name}
             place={place}
-            onFeedback={setFeedback}
+            onFeedback={(message) => {
+              setFeedback(message);
+              announce(message);
+            }}
+            focusComposer={focusComposer}
           />
         )}
       </div>
+      {/* Announced once, by the composer's lasting status. */}
       {feedback && (
-        <span className={styles.about} role="status">
+        <span className={styles.about} aria-hidden="true">
           {feedback}
         </span>
       )}
@@ -371,13 +440,32 @@ function SessionRail({
   name,
   place,
   onFeedback,
+  focusComposer,
 }: {
   pubkey: string;
   name: string;
   place: SessionPlace;
   onFeedback(message: string): void;
+  focusComposer(): void;
 }) {
   const agents = useContext(AgentsContext);
+  // Whether focus is in the rail: set on entry, cleared only when it moves
+  // to another element, so the rail's removal, which drops focus to the page,
+  // leaves it set.
+  const held = useRef(false);
+  const refocus = useRef(focusComposer);
+  refocus.current = focusComposer;
+  useLayoutEffect(
+    () => () => {
+      if (!held.current) return;
+      // Once the rail is gone, the composer takes focus unless the person
+      // has moved it elsewhere.
+      queueMicrotask(() => {
+        if (document.activeElement === document.body) refocus.current();
+      });
+    },
+    [],
+  );
   const state = useSessionState(agents, [pubkey], place);
   const act = async (action: SessionControlAction) => {
     onFeedback("");
@@ -397,7 +485,16 @@ function SessionRail({
     }
   };
   return (
-    <fieldset className={styles.rail} aria-label={`${name}'s session`}>
+    <fieldset
+      onFocus={() => {
+        held.current = true;
+      }}
+      onBlur={(event) => {
+        if (event.relatedTarget) held.current = false;
+      }}
+      className={styles.rail}
+      aria-label={`${name}'s session`}
+    >
       {(
         [
           ["compact", "Compact session", ArrowsInIcon],

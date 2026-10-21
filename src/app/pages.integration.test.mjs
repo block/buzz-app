@@ -270,12 +270,12 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .snapshot()
         .map((item) => item.pluginId)
         .sort(),
-      ["buzz.agents", "buzz.voice-notes"],
+      ["buzz.agents", "buzz.file-preview", "buzz.voice-notes"],
     );
     await services.plugins.change("disable", "buzz.voice-notes");
     assert.deepEqual(
       services.conversation.attachments.snapshot().map((item) => item.pluginId),
-      ["buzz.agents"],
+      ["buzz.agents", "buzz.file-preview"],
     );
     assert.equal(services.conversation.inline.snapshot().length, 1);
     const linkPlugins = () =>

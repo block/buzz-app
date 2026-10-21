@@ -46,5 +46,8 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
 - Runs left unfinished when the app quit continue at the next turn. A
   mention's run posts its answer or failure but shows no steps; its thread's
   session controls interrupt it. A watch's or timer's run is ended.
+- Pi durable records compaction's usage only in each conversation's totals,
+  not per compaction. Usage dates all of it at the newest compaction, so each
+  compaction moves the conversation's earlier compaction spend to its day.
 - On Windows, Pi's `bash` tool needs Git Bash. Linux and Windows are not yet
   validated.

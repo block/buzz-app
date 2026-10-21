@@ -792,9 +792,9 @@ pub(crate) async fn relay_agent_library<R: tauri::Runtime>(
 ) -> Result<Value> {
     let parent = app
         .path()
-        .data_dir()
+        .app_data_dir()
         .map_err(|_| "Current Buzz library unavailable")?;
-    let path = parent.join("xyz.block.buzz.app/agents/managed-agents.json");
+    let path = parent.join("agents/identities.json");
     tauri::async_runtime::spawn_blocking(move || read_agent_library(path))
         .await
         .map_err(|_| "Current Buzz library unavailable".to_owned())?
@@ -809,9 +809,13 @@ fn read_agent_library(path: PathBuf) -> Result<Value> {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
-    let file = options
-        .open(path)
-        .map_err(|_| "Current Buzz library unavailable")?;
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(json!({"definitions": [], "identities": []}));
+        }
+        Err(_) => return Err("Current Buzz library unavailable".into()),
+    };
     let meta = file
         .metadata()
         .map_err(|_| "Current Buzz library unavailable")?;
@@ -830,15 +834,23 @@ fn read_agent_library(path: PathBuf) -> Result<Value> {
     if rows.len() > 2000 {
         return Err("Current Buzz library unavailable".into());
     }
-    let mut definitions = Vec::new();
     let mut identities = Vec::new();
-    let mut slugs = HashSet::new();
     let mut keys = HashSet::new();
     for row in rows {
+        if row.get("deleted").is_some_and(|v| !v.is_boolean()) {
+            return Err("Current Buzz library unavailable".into());
+        }
+        if row.get("deleted") == Some(&Value::Bool(true)) {
+            continue;
+        }
         let pubkey = library_field(&row, "pubkey", 64)?;
-        let name = library_field(&row, "name", 256)?;
+        let name = if row.get("name").is_none() {
+            String::new()
+        } else {
+            library_field(&row, "name", 256)?
+        };
         let avatar = row
-            .get("avatar_url")
+            .get("picture")
             .and_then(Value::as_str)
             .and_then(|source| {
                 let source = source.trim();
@@ -867,56 +879,50 @@ fn read_agent_library(path: PathBuf) -> Result<Value> {
                     None
                 }
             });
-        if pubkey.is_empty() {
-            if row.get("slug").is_none_or(Value::is_null) {
-                continue;
-            }
-            let id = library_field(&row, "slug", 256)?;
-            if id.is_empty() || !slugs.insert(id.clone()) {
-                return Err("Current Buzz library unavailable".into());
-            }
-            if row.get("is_active") == Some(&Value::Bool(false)) {
-                continue;
-            }
-            if row.get("is_active").is_some_and(|v| !v.is_boolean()) {
-                return Err("Current Buzz library unavailable".into());
-            }
-            let display = row
-                .get("display_name")
-                .filter(|v| !v.is_null())
-                .map(|_| library_field(&row, "display_name", 256))
-                .transpose()?
-                .unwrap_or(name);
-            let mut item = json!({"id":id,"name":display});
-            if let Some(avatar) = avatar {
-                item["avatar"] = json!(avatar);
-            }
-            definitions.push(item);
-        } else {
-            if !key(&pubkey) || !keys.insert(pubkey.clone()) {
-                return Err("Current Buzz library unavailable".into());
-            }
-            let definition_id = row
-                .get("persona_id")
-                .filter(|v| !v.is_null())
-                .map(|_| library_field(&row, "persona_id", 256))
-                .transpose()?;
-            let mut item = json!({"pubkey":pubkey,"name":name});
-            if let Some(avatar) = avatar {
-                item["avatar"] = json!(avatar);
-            }
-            if let Some(id) = definition_id.filter(|s| !s.is_empty()) {
-                item["definitionId"] = json!(id);
-            }
-            identities.push(item);
+        if !key(&pubkey) {
+            return Err("Current Buzz library unavailable".into());
         }
+        // One identity may be configured in several communities.
+        if !keys.insert(pubkey.clone()) {
+            continue;
+        }
+        let mut item = json!({"pubkey":pubkey,"name":name});
+        if let Some(avatar) = avatar {
+            item["avatar"] = json!(avatar);
+        }
+        identities.push(item);
     }
-    Ok(json!({"definitions":definitions,"identities":identities}))
+    Ok(json!({"definitions":[],"identities":identities}))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_identity_library_contract() {
+        let cases: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/agent-identity-library.json"
+        ))
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        assert_eq!(
+            read_agent_library(path.clone()).unwrap(),
+            json!({"definitions": [], "identities": []})
+        );
+        for case in cases {
+            let bytes = serde_json::to_vec(&case["rows"]).unwrap();
+            std::fs::write(&path, &bytes).unwrap();
+            let result = read_agent_library(path.clone());
+            if let Some(expected) = case.get("expected") {
+                assert_eq!(&result.unwrap(), expected, "{}", case["name"]);
+            } else {
+                assert!(result.is_err(), "{}", case["name"]);
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+    }
 
     fn fixture() -> ([u8; 32], String) {
         let secret = [1; 32];

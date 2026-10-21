@@ -726,9 +726,30 @@ fn isolated_agent_ipc_probe() {
             library,
             serde_json::json!({"definitions": [], "identities": []})
         );
+        let path = app
+            .path()
+            .app_data_dir()
+            .unwrap()
+            .join("agents/identities.json");
+        assert!(path.starts_with(std::env::var("HOME").unwrap()));
+        let saved = serde_json::json!([{
+            "pubkey": "a".repeat(64), "name": "Current agent",
+            "auth": "private attestation", "picture": "https://images.example/current.png"
+        }])
+        .to_string();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &saved).unwrap();
+        assert_eq!(
+            invoke("relay_agent_library", serde_json::json!({})).unwrap(),
+            serde_json::json!({"definitions": [], "identities": [{
+                "pubkey": "a".repeat(64), "name": "Current agent", "avatar": "https://images.example/current.png"
+            }]})
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+        std::fs::remove_file(&path).unwrap();
         assert!(app
             .path()
-            .data_dir()
+            .app_data_dir()
             .unwrap()
             .starts_with(std::env::var("HOME").unwrap()));
     }

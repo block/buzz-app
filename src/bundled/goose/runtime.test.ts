@@ -8,6 +8,7 @@ import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush } from "./goose-testing";
+import { AgentSessions } from "./sessions";
 import {
   DEFAULT_CONFIG,
   GooseRuntime,
@@ -749,6 +750,99 @@ it("takes a wake with no thread only in a Solo chat", async () => {
   const text = solo.goose()?.turns[0]?.text ?? "";
   expect(text).toContain('<plugin-wake plugin="github">');
   expect(text).not.toContain(WAKE_ID);
+});
+
+it("ends a turn's prompt with the notes plugins left for it in its channel", async () => {
+  const f = setup();
+  const notes = vi.fn((at: string) =>
+    at === channel ? ["(I interrupted your reply)"] : [],
+  );
+  await f.deliver(message("1", "@Gander go on"), {
+    agent: { ...f.agent, notes },
+  } as unknown as Partial<Delivery>);
+  await flush(100);
+  expect(f.goose()?.turns[0]?.text).toMatch(
+    /\n\n\(I interrupted your reply\)$/,
+  );
+  expect(notes).toHaveBeenCalledOnce();
+  expect(notes).toHaveBeenCalledWith(channel, "1".repeat(64));
+});
+
+it.each([false, true])(
+  "hands a turn the notes plugins left while it was being prepared, and keeps them for the next when it is cancelled first (cancelled: %s)",
+  async (cancelled) => {
+    const f = setup();
+    const pending: Record<string, string[]> = {};
+    const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+    const note = () => {
+      pending[channel] = ["(I interrupted your reply)"];
+    };
+    // One left before a cancelled turn stays for the next.
+    if (cancelled) note();
+    let release!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.read.mockImplementationOnce(async () => {
+      await reading;
+      return [];
+    });
+    const controller = new AbortController();
+    const done = f.deliver(
+      message("1", "@Gander go on", {
+        tags: [
+          ["h", channel],
+          ["p", self],
+          ["e", "d".repeat(64), "", "reply"],
+        ],
+      }),
+      {
+        agent: { ...f.agent, notes },
+        signal: controller.signal,
+      } as unknown as Partial<Delivery>,
+    );
+    await vi.waitFor(() => expect(f.read).toHaveBeenCalled());
+    if (cancelled) controller.abort();
+    else note();
+    release();
+    if (cancelled) {
+      await expect(done).rejects.toMatchObject({ name: "AbortError" });
+      expect(pending[channel]).toEqual(["(I interrupted your reply)"]);
+      return;
+    }
+    await done;
+    await flush(100);
+    expect(f.goose()?.turns[0]?.text).toMatch(
+      /\n\n\(I interrupted your reply\)$/,
+    );
+    expect(pending[channel]).toEqual([]);
+  },
+);
+
+it("keeps the notes of a turn goose never started for the next, ahead of newer ones", async () => {
+  const f = setup();
+  const pending: Record<string, string[]> = {
+    [channel]: ["(I interrupted your reply)"],
+  };
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
+    pending[at] = [...kept, ...(pending[at] ?? [])];
+  });
+  vi.spyOn(AgentSessions.prototype, "deliver").mockImplementationOnce(
+    async () => {
+      pending[channel] = ["(newer)"];
+      return {
+        ok: false,
+        error: "goose did not start in time",
+        undelivered: true,
+      };
+    },
+  );
+  await f.deliver(message("1", "@Gander go on"), {
+    agent: { ...f.agent, notes, restoreNotes },
+  } as unknown as Partial<Delivery>);
+  await flush(100);
+  expect(pending[channel]).toEqual(["(I interrupted your reply)", "(newer)"]);
 });
 
 it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {

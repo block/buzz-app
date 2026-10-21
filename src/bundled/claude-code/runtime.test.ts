@@ -18,7 +18,7 @@ import { type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
-import { localSessions } from "./sessions";
+import { AgentSessions, localSessions } from "./sessions";
 import { wake } from "../../features/agent-harness/wakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
 
@@ -385,6 +385,93 @@ it("tells a turn a reload stopped to carry on where it left off", async () => {
     claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
   expect(prompt).toContain("Content: @Claude fix the build");
   expect(prompt).toContain(RESUMED_PROMPT);
+});
+
+it("ends a turn's prompt with the notes plugins left for it in its channel", async () => {
+  const mention = message("2", "@Claude go on", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, agent } = setup([mention]);
+  const notes = vi.fn((at: string) =>
+    at === channel ? ["(I interrupted your reply)"] : [],
+  );
+  await deliver({ type: "mention", event: mention }, {
+    agent: { ...agent, notes },
+  } as unknown as Partial<Delivery>);
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toMatch(/\n\n\(I interrupted your reply\)\n\n<attention>/);
+  expect(notes).toHaveBeenCalledOnce();
+  expect(notes).toHaveBeenCalledWith(channel, mention.id);
+});
+
+it("keeps the notes of a turn Claude never started for the next, ahead of newer ones", async () => {
+  const mention = message("2", "@Claude go on", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, agent } = setup([mention]);
+  const pending: Record<string, string[]> = {
+    [channel]: ["(I interrupted your reply)"],
+  };
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
+    pending[at] = [...kept, ...(pending[at] ?? [])];
+  });
+  vi.spyOn(AgentSessions.prototype, "deliver").mockImplementationOnce(
+    async () => {
+      pending[channel] = ["(newer)"];
+      return { ok: false, error: "Claude could not start", undelivered: true };
+    },
+  );
+  await deliver({ type: "mention", event: mention }, {
+    agent: { ...agent, notes, restoreNotes },
+  } as unknown as Partial<Delivery>);
+  await flush(10);
+  expect(pending[channel]).toEqual(["(I interrupted your reply)", "(newer)"]);
+});
+
+it("hands a turn the notes plugins left while it was being prepared", async () => {
+  const mention = message("2", "@Claude go on", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+      ["e", "d".repeat(64), "", "reply"],
+    ],
+  });
+  const { deliver, claudes, agent, read } = setup([mention]);
+  const pending: Record<string, string[]> = {};
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  let release!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  read.mockImplementationOnce(async () => {
+    await reading;
+    return [mention];
+  });
+  const done = deliver({ type: "mention", event: mention }, {
+    agent: { ...agent, notes },
+  } as unknown as Partial<Delivery>);
+  await vi.waitFor(() => expect(read).toHaveBeenCalled());
+  pending[channel] = ["(I interrupted your reply)"];
+  pending.elsewhere = ["(not for this turn)"];
+  release();
+  await done;
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toMatch(/\n\n\(I interrupted your reply\)\n\n<attention>/);
+  expect(pending).toEqual({
+    [channel]: [],
+    elsewhere: ["(not for this turn)"],
+  });
 });
 
 const EFFORTS = [
@@ -937,6 +1024,60 @@ it("shows the whole thread to a session started over from a lost one", async () 
   expect(lost?.options.args).toContain("lost");
   expect(lost?.prompts).toEqual([]);
   expect(fresh?.prompts[0]).toContain('<thread-context included="1" total="2"');
+});
+
+it("keeps a turn's notes for the next when starting over from a lost session fails", async () => {
+  const root = message("1", "Build is red");
+  const reply = (id: string) =>
+    message(id, "@Claude again?", {
+      created_at: 300 + Number(id),
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  const { deliver, claudes, data, agent } = setup([root, reply("2")]);
+  data.set(
+    "buzz.claude-code.sessions.v1",
+    JSON.stringify({
+      [self]: { [`${channel}/${root.id}`]: { id: "lost", seen: 200, at: 1 } },
+    }),
+  );
+  const pending: Record<string, string[]> = {
+    [channel]: ["(I interrupted your reply)"],
+  };
+  const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
+  const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
+    pending[at] = [...kept, ...(pending[at] ?? [])];
+  });
+  // The first write forgetting the lost session fails.
+  const set = data.set.bind(data);
+  let failed = false;
+  vi.spyOn(data, "set").mockImplementation((key, value) => {
+    if (
+      !failed &&
+      key.startsWith("buzz.claude-code.sessions") &&
+      !value.includes('"lost"')
+    ) {
+      failed = true;
+      throw new Error("Disk full");
+    }
+    return set(key, value);
+  });
+  const handle = { ...agent, notes, restoreNotes };
+  await deliver({ type: "mention", event: reply("2") }, {
+    agent: handle,
+  } as unknown as Partial<Delivery>);
+  await flush(20);
+  expect(failed).toBe(true);
+  expect(pending[channel]).toEqual(["(I interrupted your reply)"]);
+  await deliver({ type: "mention", event: reply("3") }, {
+    agent: handle,
+  } as unknown as Partial<Delivery>);
+  await flush(20);
+  const fresh = claudes().find((process) => process.prompts.length);
+  expect(fresh?.prompts[0]).toContain("(I interrupted your reply)");
+  expect(pending[channel]).toEqual([]);
 });
 
 it("acts only on messages from its owner and the owner's agents", async () => {

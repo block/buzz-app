@@ -358,18 +358,15 @@ export class GooseRuntime {
           : where.dm
             ? "DM"
             : where.id.slice(0, 8),
-        text: this.review(
-          entry,
-          turnPrompt({
-            ...turn,
-            agent: agent.pubkey,
-            label: "@mention",
-            ...(wake ? { wake } : {}),
-          }),
-        ),
+        text: turnPrompt({
+          ...turn,
+          agent: agent.pubkey,
+          label: "@mention",
+          ...(wake ? { wake } : {}),
+        }),
       };
     };
-    const { key, text, place } = await prompt(false);
+    const { key, text: prepared, place } = await prompt(false);
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.pubkey}/${key}`,
@@ -378,6 +375,14 @@ export class GooseRuntime {
         // the short deadline for handing a message to the harness.
         if (this.agents.get(agent.pubkey) !== entry) return;
         if (!deferred) signal.throwIfAborted();
+        // Plugins' notes wait until the turn is handed over, so one that
+        // fails or is cancelled before then leaves them for the next.
+        const noteRoot =
+          key === channel
+            ? undefined
+            : (threadReference(event)?.rootId ?? event.id);
+        const notes = agent.notes?.(channel, noteRoot) ?? [];
+        const text = this.review(entry, prepared, notes);
         entry.contexts.set(
           key,
           topLevel
@@ -388,7 +393,8 @@ export class GooseRuntime {
         );
         const done = entry.sessions.deliver(key, text, event.created_at, {
           steer: steerPrompt(text),
-          fresh: async () => (await prompt(true)).text,
+          fresh: async () =>
+            this.review(entry, (await prompt(true)).text, notes),
           title: sessionTitle(entry.name, place, key.split("/")[1]),
           // A Solo chat takes the name goose gives its first session.
           ...(topLevel && named ? { named } : {}),
@@ -406,6 +412,8 @@ export class GooseRuntime {
         this.notify();
         void done
           .then((result) => {
+            if (result.undelivered)
+              agent.restoreNotes?.(channel, notes, noteRoot);
             // Of the messages one turn answered, only one has its error or text.
             if (result.error !== undefined)
               return this.report(agent, channel, event, result.error, topLevel);
@@ -453,10 +461,12 @@ export class GooseRuntime {
     return done.finally(() => this.notify());
   }
 
-  /** `text` with the Buzz tools' end-of-turn note, when they have one. */
-  private review(entry: Entry, text: string) {
-    const note = turnNote(entry.handle);
-    return note ? `${text}\n\n${note}` : text;
+  /** `text` with the notes plugins left for the turn and the Buzz tools'
+   * end-of-turn note, when there are any. */
+  private review(entry: Entry, text: string, notes: readonly string[] = []) {
+    return [text, ...notes, turnNote(entry.handle)]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   /** Says in the thread that a turn failed, so nobody waits on it. */

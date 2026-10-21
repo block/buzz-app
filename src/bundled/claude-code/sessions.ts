@@ -195,7 +195,8 @@ export class AgentSessions {
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
-    if (this.disposed) return { ok: false, error: "Claude was stopped" };
+    if (this.disposed)
+      return { ok: false, error: "Claude was stopped", undelivered: true };
     // A message that arrives while its conversation's process starts uses it.
     // Checked without awaiting first, so the first message opens it at once.
     const opening = this.opening.get(key);
@@ -235,12 +236,21 @@ export class AgentSessions {
     // A saved session that no longer loads starts over rather than failing
     // every message in the conversation, shown the conversation so far.
     if (!delivered.ok && saved && !live.process.started) {
-      await this.options.store.delete(key);
-      this.drop(key, live);
-      return this.deliver(key, fresh ? await fresh() : text, seen, {
-        pick,
-        ...activity,
-      });
+      // Nothing has taken the message in yet.
+      let retry: string;
+      try {
+        await this.options.store.delete(key);
+        this.drop(key, live);
+        retry = fresh ? await fresh() : text;
+      } catch (error) {
+        console.warn("Claude could not start over", error);
+        return {
+          ok: false,
+          error: `Claude could not start over: ${error instanceof Error ? error.message : String(error)}`,
+          undelivered: true,
+        };
+      }
+      return this.deliver(key, retry, seen, { pick, ...activity });
     }
     return delivered;
   }
@@ -359,15 +369,19 @@ export class AgentSessions {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         if (this.disposed) {
           void live.process.kill();
-          return { ok: false, error: "Claude was stopped" };
+          return { ok: false, error: "Claude was stopped", undelivered: true };
         }
         this.adopt(key, live, seen);
         return live;
       },
-      (error) => {
+      (error): Settled => {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         console.warn("Claude could not start", error);
-        return { ok: false, error: "Claude could not start" };
+        return {
+          ok: false,
+          error: "Claude could not start",
+          undelivered: true,
+        };
       },
     );
     this.opening.set(key, opened);

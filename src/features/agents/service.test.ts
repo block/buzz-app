@@ -7212,9 +7212,12 @@ it("keeps a failed review for retry and rejects concurrent approvals", async () 
   expect(service.creationRequests()).toHaveLength(1);
   const create = native.create;
   if (!create) throw new Error("Missing native creation");
-  const gate = Promise.withResolvers<void>();
+  let release = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   native.create = vi.fn(async (...args: Parameters<typeof create>) => {
-    await gate.promise;
+    await waiting;
     return create(...args);
   });
   const saving = service.approveCreation(requestId, {
@@ -7227,7 +7230,7 @@ it("keeps a failed review for retry and rejects concurrent approvals", async () 
       name: "Duplicate",
     }),
   ).rejects.toThrow("pending");
-  gate.resolve();
+  release();
   await saving;
   expect(service.creationRequests()).toEqual([]);
 });

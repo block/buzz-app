@@ -513,6 +513,9 @@ export class GooseSession {
       owner: Waiter | undefined;
     }>
   >();
+  /** The message each acknowledged receipt belongs to: a receipt is handed
+   * back only while its message is still waiting. */
+  private readonly receiptWaiters = new WeakMap<ActivityReceipt, Waiter>();
   private lastStep = "";
   private lastError: string | undefined;
   private lastFailure: UnsupportedSetting | undefined;
@@ -920,6 +923,7 @@ export class GooseSession {
     const receipt = this.active.get(scope);
     receipt?.superseded?.();
     this.displaced.set(activity, { receipt, owner });
+    this.receiptWaiters.set(activity, waiter);
     this.active.set(scope, activity);
     this.lastStep = "";
     activity.acknowledged?.();
@@ -944,9 +948,12 @@ export class GooseSession {
         this.displaced.set(later, { ...earlier, receipt: displaced?.receipt });
     for (const [scope, receipt] of this.active)
       if (receipt === activity) {
-        if (displaced?.receipt) {
-          this.active.set(scope, displaced.receipt);
-          displaced.receipt.acknowledged?.();
+        // Work that already ended, such as a stopped turn, is never resumed.
+        const earlier = displaced?.receipt;
+        const earlierWaiter = earlier && this.receiptWaiters.get(earlier);
+        if (earlier && earlierWaiter && this.waiters.includes(earlierWaiter)) {
+          this.active.set(scope, earlier);
+          earlier.acknowledged?.();
         } else this.active.delete(scope);
       }
     waiter(settled);
@@ -974,11 +981,6 @@ export class GooseSession {
     this.written = "";
     for (const [scope, receipt] of this.active)
       if (stopped.receipts.has(receipt)) this.active.delete(scope);
-    for (const receipt of stopped.receipts) this.displaced.delete(receipt);
-    // Stopped work has ended: no later message may hand its activity back.
-    for (const [later, earlier] of this.displaced)
-      if (earlier.receipt && stopped.receipts.has(earlier.receipt))
-        this.displaced.set(later, { ...earlier, receipt: undefined });
     const owner =
       this.owner && stopped.waiters.includes(this.owner)
         ? this.owner

@@ -741,6 +741,73 @@ describe("GooseProcess", () => {
     ).toBe("superseded");
   });
 
+  it("never hands activity back to a stopped turn through a longer displacement chain", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let looked = false;
+    const session = await open({
+      choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+      models: async () => {
+        looked = true;
+        await held;
+        return {
+          current: "",
+          models: [{ id: "o3", label: "o3", efforts: [] }],
+        };
+      },
+    });
+    const local = createLocalAgentActivity();
+    const receipt = (messageId: string) => {
+      const work = local.begin({
+        scope: "conversation",
+        agent: "goose",
+        channelId: "channel",
+        messageId,
+        threadRootId: messageId,
+      });
+      const activity = {
+        step: work.step,
+        acknowledged: work.started,
+        superseded: work.supersede,
+      };
+      return { work, activity };
+    };
+    const A = receipt("A");
+    const a = session.send("A", A.activity);
+    await flush();
+    const stopB = new AbortController();
+    const B = receipt("B");
+    const b = session.send("B", B.activity, "o3", undefined, stopB.signal);
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(looked).toBe(true));
+    // The stopped work is A and B; only B's receipt is showing.
+    session.interrupt();
+    await flush();
+    let handed = false;
+    const hold = (<T>(send: () => T): T => {
+      handed = true;
+      return new Promise<void>(() => {}).then(send) as T;
+    }) as Handoff;
+    const stopC = new AbortController();
+    const C = receipt("C");
+    const c = session.send("C", C.activity, undefined, hold, stopC.signal);
+    await flush();
+    // B leaves while its lookup is held, so C now displaces A.
+    stopB.abort();
+    await flush();
+    release();
+    A.work.finish(await a);
+    B.work.finish(await b);
+    await vi.waitFor(() => expect(handed).toBe(true));
+    stopC.abort();
+    C.work.finish(await c);
+    expect(
+      local.reader.work().find((row) => row.messageId === "A")?.state,
+    ).not.toBe("working");
+  });
+
   it("keeps a newer result owner in another thread when a cancelled message leaves", async () => {
     const { open, process } = await start();
     process.hold = true;

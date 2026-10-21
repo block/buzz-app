@@ -1420,6 +1420,41 @@ it("shows an editable ordinary source link and sends it with the default agent",
     ["a".repeat(64)],
   );
 });
+it("starting again from a sent source seeds its link and default agent again", async () => {
+  const t = setup();
+  const linkedId = "22222222-2222-4222-8222-222222222222";
+  const source: LinkedChat = {
+    channelId: "design",
+    link: "buzz://channel/design",
+  };
+  const start = () => {
+    writeView("test", linkedDraftKey(linkedId), source);
+    return render(
+      <SoloDraft
+        session={t.session}
+        scope="test"
+        linkedId={linkedId}
+        source={source}
+        onStarted={started}
+      />,
+    );
+  };
+  const started = vi.fn();
+  const first = start();
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  first.unmount();
+  start();
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveTextContent("@Member agent"),
+  );
+  expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain(
+    source.link,
+  );
+});
 it("keeps a removed default tag when the linked draft is reopened", async () => {
   const t = setup();
   const linkedId = "22222222-2222-4222-8222-222222222222";

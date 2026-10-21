@@ -116,8 +116,8 @@ behavior on the label, so a rename touches copy only.
   while an already-sent membership request may still complete; reopening reads the
   roster, and retry uses the existing membership receipt.
 - Solo chats use the ordinary composer with explicit
-  recipient tags for both owners and guests. Saved chats accept existing human
-  members and agents; an untagged message never infers an agent recipient.
+  recipient tags for both owners and guests. Saved chats offer the chat's people
+  and your available agents; an untagged message never infers an agent recipient.
   Only available agents can be enrolled through tagging—outside humans must
   already have been shared into the chat. Empty new-chat drafts start tagged with the device's default
   agent for this account/community. **Agents → right-click → Make default agent**
@@ -128,9 +128,12 @@ behavior on the label, so a rename touches copy only.
   Follow-ups keep all exact agents notified by the previous send, just like
   Team threads, including the shared Remember mentioned agents preference.
   The account default never replaces recipients in an existing chat.
-  Removing or replacing a tag is respected for that draft. Both Send and Enter
-  require a tagged person or agent in saved chats; new-chat drafts still require
-  an agent. Existing signed-send recovery preserves its recipients. Human-only
+  Removing or replacing a tag is respected for that draft, including after
+  leaving and reopening a linked draft. Alone with agents, Send and Enter require
+  a tagged person or agent in saved chats; new-chat drafts still require an
+  agent. Once another member has a loaded, non-agent profile, an untagged message
+  sends as conversation; a member whose profile is missing or still loading keeps
+  the requirement, and the send rechecks the fresh roster first. Existing signed-send recovery preserves its recipients. Human-only
   messages notify only the selected humans and do not carry human tags into the
   next draft. A blocked Enter shows “Tag a person or agent to send” in saved chats
   and “Tag an agent to send” in new drafts. The workspace control follows the editor tools on the same rail;

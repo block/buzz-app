@@ -316,7 +316,9 @@ export function SoloDraft({
       }
       if (source) writeView(scope, draftKey, null);
       writeView(scope, `${draftKey}:settings`, null);
-      writeView(scope, `${draftKey}:new-draft`, "");
+      // A linked draft is reused for its source: clear it to absent so the
+      // next start from that source seeds its link again.
+      writeView(scope, `${draftKey}:new-draft`, source ? null : "");
       writeView(scope, `${draftKey}:new-project`, null);
       onStarted(channelId);
       // Only a start that made no chat ends here; the chat and its messages

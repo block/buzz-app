@@ -448,7 +448,9 @@ function Composer({
   // Whether this mount seeded the shortcut's initial text, rather than
   // restoring a saved draft that may already have had its tag removed.
   const [seededKey] = useState(() =>
-    !accepted?.next && !submission?.recoveredDraft && revision.current === null
+    !accepted?.next &&
+    !submission?.recoveredDraft &&
+    (revision.current === null || revision.current === "null")
       ? draftKey
       : undefined,
   );

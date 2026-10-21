@@ -99,7 +99,9 @@ export function ModelFamilyMenu({
             aria-label={`${label}: ${selectedLabel}${effortLabel ? `, ${effortLabel}` : ""}`}
             title={selectedLabel}
           >
-            {leading ?? <ModelIcon model={selected.id || selected.label} />}
+            <span className="buzz-select-leading" aria-hidden="true">
+              {leading ?? <ModelIcon model={selected.id || selected.label} />}
+            </span>
             {/* Keep Default together while model and effort names yield space. */}
             <span className={styles.value}>
               <span className={`buzz-select-value ${styles.model}`}>

@@ -93,7 +93,7 @@ test("short narrow Settings keeps plugin copy and controls reachable at 200% int
   });
   const title = row.getByText("GitHub", { exact: true });
   const description = row.getByText(
-    "View GitHub repositories, pull requests, issues, and commits.",
+    "View GitHub repositories, issues, and commits, and merge pull requests.",
     { exact: true },
   );
   await expect(toggle).toHaveAccessibleName("Disable GitHub");
@@ -542,7 +542,13 @@ confirmedPresence(
         const content = await pluginContent.boundingBox();
         expect(content).not.toBeNull();
         expect(navigation.x + navigation.width).toBeLessThan(content.x);
-        expect(content.y - scrollport.y).toBe(32);
+        // Keyboard traversal may scroll the detail pane. Measure its
+        // content inset in scroll coordinates, not viewport coordinates.
+        expect(
+          content.y -
+            scrollport.y +
+            (await detail.evaluate((node) => node.scrollTop)),
+        ).toBe(32);
       } else {
         // Narrow Settings stacks its navigation above the detail.
         expect(navigation.y + navigation.height).toBeLessThanOrEqual(

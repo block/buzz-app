@@ -208,7 +208,7 @@ function setup(
     trigger: Delivery["trigger"],
     picks: Partial<Delivery> = {},
   ) => {
-    if (trigger.type !== "mention") {
+    if (trigger.type !== "mention" && trigger.type !== "plugin") {
       const value = trigger.type === "timer" ? trigger.timer : trigger.watch;
       objects.set(trigger.slug, {
         ...value,
@@ -232,11 +232,13 @@ function setup(
       // The host's answer, as it is when asked.
       current: () =>
         trigger.type === "mention" ||
+        trigger.type === "plugin" ||
         (attention.on &&
           objects.get(trigger.slug)?.enabled === true &&
           !stale.has(trigger.slug)),
     } as unknown as Delivery;
-    if (trigger.type === "mention") return runtime.run(delivery);
+    if (trigger.type === "mention" || trigger.type === "plugin")
+      return runtime.run(delivery);
     // A watch or timer, as the agent runner hands it over: a standalone turn
     // in its Interest's lane, which the runner holds.
     workingUntil(
@@ -834,6 +836,82 @@ it("says so in the thread when a turn fails", async () => {
     ["e", mention.id, "", "reply"],
     ["p", alice],
   ]);
+});
+
+/** A plugin's wake; its id is its own, which nothing may publish. */
+const WAKE_ID = "9".repeat(64);
+const pluginWake = (root?: string) => ({
+  type: "plugin" as const,
+  plugin: "github",
+  channel,
+  ...(root ? { root } : {}),
+  text: "CI failed: lint",
+  id: WAKE_ID,
+  at: 200_000,
+});
+
+it("takes a plugin's wake in its thread's session, as the plugin's and not a message", async () => {
+  const root = message("1", "@Claude watch my PR", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, read } = setup();
+  await deliver({ type: "mention", event: root });
+  await flush(10);
+  read.mockResolvedValue([root]);
+  await deliver(pluginWake(root.id));
+  await flush(10);
+  const used = claudes().filter((process) => process.prompts.length);
+  expect(used).toHaveLength(1);
+  const prompt = used[0]?.prompts[1] ?? "";
+  expect(prompt).toContain('<plugin-wake plugin="github">');
+  expect(prompt).toContain("neither your owner nor anyone in the channel");
+  expect(prompt).toContain("CI failed: lint");
+  expect(prompt).toContain(`Thread root: ${root.id}`);
+  expect(prompt).not.toContain("<buzz-event");
+  expect(prompt).not.toContain(WAKE_ID);
+});
+
+it("reports a failed wake at its thread's root, never at the wake's own id", async () => {
+  const root = "1".repeat(64);
+  const { runtime, deliver, published, claudes } = setup();
+  runtime.sync([{ pubkey: self, config: DEFAULT_CONFIG } as Agent]);
+  await flush(10);
+  const [spare] = claudes();
+  if (!spare) throw new Error("no spare");
+  spare.hold = true;
+  await deliver(pluginWake(root));
+  await flush(10);
+  expect(spare.prompts).toHaveLength(1);
+  spare.exit(1, "Error: Invalid API key\n");
+  await flush(10);
+  expect(published.find((event) => event.kind === 9)?.tags).toEqual([
+    ["h", channel],
+    ["e", root, "", "reply"],
+    ["p", alice],
+  ]);
+  expect(JSON.stringify(published)).not.toContain(WAKE_ID);
+});
+
+it("takes a wake with no thread only in a Solo chat", async () => {
+  const ignored = vi.fn();
+  const stream = setup();
+  await stream.deliver(pluginWake(), { ignored });
+  await flush(10);
+  expect(ignored).toHaveBeenCalled();
+  expect(stream.claudes().some((process) => process.prompts.length)).toBe(
+    false,
+  );
+  const solo = setup([], { solo: new Set([channel]) });
+  await solo.deliver(pluginWake());
+  await flush(10);
+  const prompt =
+    solo.claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toContain('<plugin-wake plugin="github">');
+  expect(prompt).toContain(TOP_LEVEL_PROMPT);
+  expect(prompt).not.toContain(WAKE_ID);
 });
 
 it("shows the whole thread to a session started over from a lost one", async () => {

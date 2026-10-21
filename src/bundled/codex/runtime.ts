@@ -1,5 +1,10 @@
 import type { WorkOutcome } from "../../features/agents/local-activity";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
+import {
+  type PluginTrigger,
+  wakeAnchor,
+  wakeLands,
+} from "../../features/agent-harness/plugin-wake";
 import type { AgentReads } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
@@ -65,6 +70,8 @@ type Request = {
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
+  /** A plugin's wake, for which `event` is its local anchor. */
+  wake?: PluginTrigger;
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
   /** The agent's team sections, if it is on a team. */
@@ -618,9 +625,15 @@ export class CodexRuntime {
     delivery.signal.throwIfAborted();
     const { trigger, agent } = delivery;
     // Watches and timers come as standalone turns (`runOnce`).
-    if (trigger.type !== "mention") return delivery.ignored?.();
+    if (trigger.type !== "mention" && trigger.type !== "plugin")
+      return delivery.ignored?.();
+    // A plugin's wake is the owner's installed code, not a message to check.
+    const wake = trigger.type === "plugin" ? trigger : undefined;
+    const event =
+      trigger.type === "plugin" ? wakeAnchor(trigger) : trigger.event;
     const reads = this.reads(agent.pubkey);
     if (
+      trigger.type === "mention" &&
       !(await fromOwner(
         trigger.event,
         agent.owner,
@@ -641,6 +654,7 @@ export class CodexRuntime {
       channelId,
       delivery.signal,
     );
+    if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
     const project = topLevel
@@ -650,8 +664,7 @@ export class CodexRuntime {
     // A stop during the reads deleted this agent's entry; recreating it would
     // reopen the agent.
     delivery.signal.throwIfAborted();
-    const toolRoot =
-      channel?.dm || topLevel ? undefined : rootOf(trigger.event);
+    const toolRoot = channel?.dm || topLevel ? undefined : rootOf(event);
     const root = settings.scope === "channel" ? undefined : toolRoot;
     delivery.signal.throwIfAborted();
     let finishActivity!: (result: WorkOutcome) => void;
@@ -666,7 +679,8 @@ export class CodexRuntime {
     // ends; the agent is done working on this request once it has replied.
     const request: Request = {
       scope: reads.scope,
-      event: trigger.event,
+      event,
+      ...(wake ? { wake } : {}),
       agent,
       settings,
       ...(toolRoot ? { toolRoot } : {}),
@@ -685,7 +699,9 @@ export class CodexRuntime {
       ...(delivery.step ? { step: delivery.step } : {}),
       ...(delivery.acknowledged ? { acknowledged: delivery.acknowledged } : {}),
       ...(delivery.superseded ? { superseded: delivery.superseded } : {}),
-      ...(trigger.resumed ? { resumed: true } : {}),
+      ...(trigger.type === "mention" && trigger.resumed
+        ? { resumed: true }
+        : {}),
       ...(topLevel && delivery.named ? { named: delivery.named } : {}),
     };
     if (!validWorkspace(settings.workspace)) {
@@ -759,7 +775,7 @@ export class CodexRuntime {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
                 input: input(
-                  `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, noteOf(request))}`,
+                  `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, noteOf(request), request.wake)}`,
                 ),
               });
               active.reply = request;
@@ -1496,7 +1512,7 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, noteOf(request))}`,
+          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, noteOf(request), request.wake)}`,
         ),
         model,
         effort,

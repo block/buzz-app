@@ -364,6 +364,19 @@ export type Trigger =
    * when its turn was working as the app closed or reloaded, which stopped it
    * partway, and the owner chose to resume it (see `AgentType.resumes`). */
   | Readonly<{ type: "mention"; event: RelayEvent; resumed?: true }>
+  /** A plugin woke the agent in a conversation (`Agents.wake`): no relay
+   * event, and not the owner's words. It runs like a mention, in the
+   * conversation's session; `id` and `at` (milliseconds) are this wake's own. */
+  | Readonly<{
+      type: "plugin";
+      plugin: string;
+      channel: string;
+      /** The thread, absent for a channel-level conversation (a Solo chat). */
+      root?: string;
+      text: string;
+      id: string;
+      at: number;
+    }>
   /** One matching watch; an event that matches several runs once for each. */
   | Readonly<{
       type: "watch";
@@ -766,6 +779,15 @@ export type Agents = {
   addTool(tool: AddedTool): void;
   /** The tools active plugins add now. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
+  /** Wakes an agent this copy of the app runs in one of its conversations,
+   * as a mention there would, but with no message: the agent is told `text`
+   * comes from this plugin, not its owner, and is data. `root` is the
+   * thread's root event id; leave it out for a Solo chat. Throws when this copy does not run the agent or its queue is full;
+   * like a mention, a queued wake is dropped if the agent stops running here. */
+  wake(
+    pubkey: string,
+    wake: Readonly<{ channel: string; root?: string; text: string }>,
+  ): void;
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** Gives each `interrupted` agent again the turns it was working on, each
@@ -1432,6 +1454,32 @@ export class AgentsService extends Service implements Agents {
     });
   }
   tools = () => this.addedTools.snapshot();
+  wake(
+    pubkey: string,
+    {
+      channel,
+      root,
+      text,
+    }: Readonly<{ channel: string; root?: string; text: string }>,
+  ) {
+    const plugin = this.ctx.pluginOwner?.id;
+    if (!plugin) throw new Error("Only a plugin wakes an agent");
+    if (!channel || !text.trim())
+      throw new Error("A wake needs a channel and text");
+    // Harnesses find the thread from a well-formed id; any other would leave
+    // them answering at the wake's own id.
+    if (root !== undefined && !/^[0-9a-f]{64}$/i.test(root))
+      throw new Error("A wake's root must be the thread's 64-hex event id");
+    this.runners.wakeIn(pubkey, {
+      type: "plugin",
+      plugin,
+      channel,
+      ...(root ? { root: root.toLowerCase() } : {}),
+      text,
+      id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+      at: Date.now(),
+    });
+  }
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);

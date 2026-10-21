@@ -1155,6 +1155,18 @@ test("member helper aligns with content and Owner stays beside a person's name",
       });
       const heading = dialog.getByRole("heading", { name: /^People ·/ });
       await expect(heading).toBeVisible();
+      // Measure resting layout, not separate frames of the dialog entrance.
+      await dialog.evaluate(async (element) => {
+        await Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().iterations !== Infinity,
+            )
+            .map((animation) => animation.finished),
+        );
+      });
       if (visitor) {
         const helper = dialog.getByText(
           "Join this channel to add people and agents.",

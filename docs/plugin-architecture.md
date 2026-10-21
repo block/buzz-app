@@ -129,6 +129,14 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+`ctx.agents.wake(pubkey, { channel, root?, text })` wakes an agent this copy of
+the app runs in one of its conversations, as a mention there would, with no
+message. `root` is the thread's root event id (64 hex); leave it out for a Solo
+chat. The agent is told
+the text comes from the plugin, not its owner, and is data, so quote what others
+wrote (comments, check output) rather than phrasing it as instructions. It
+throws when this copy does not run the agent or its queue is full.
+
 An agent type's `run` gets the agent's handle, which publishes, reads and
 uploads as the agent. For agents that act on something other than a message,
 such as a call, `ctx.agents.handle(pubkey)` returns the same handle outside any
@@ -255,7 +263,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Bestie,
-Todos and Usage & costs are off by default. Feedback, Diff viewer, Identity
+Todos and Usage are off by default. Feedback, Diff viewer, Identity
 Naming, Agent Activity, Terminal, Links, Mentions, Emoji, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Workflows, Builderlab, Hosted communities,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -290,9 +298,13 @@ after destination content is presented. Git browsing uses a narrow host-owned,
 authenticated Git capability in the native host and development broker; plugins cannot choose a signer or
 remote URL. See [entity links and limits](deep-links.md).
 GitHub recognizes repository,
-pull request, issue, and commit URLs and loads public object details on demand.
-Unsupported URLs retain ordinary link behavior. Private GitHub connections and
-agent execution remain future shared capabilities.
+pull request, issue, and commit URLs and loads object details on demand. Its
+manifest declares `gh api graphql --hostname github.com --input -` as a host
+process, so on desktop it reads and changes pull requests as the user's
+signed-in `gh` account. That allows any query or mutation the account may make;
+the token stays inside `gh`. Without `gh` it reads public data only. Unsupported
+URLs retain ordinary link behavior. A host-owned GitHub connection with narrower scopes, and agent
+execution, remain future shared capabilities.
 
 ### Optional channel menu panels
 

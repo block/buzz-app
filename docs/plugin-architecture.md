@@ -1227,7 +1227,7 @@ selected recipient metadata. Token renderers are display-only while editing.
 Names pasted as text never create notification intent.
 
 Tools receive `insertText`, `insertMention({ pubkey, name })`,
-`insertMentions([{ pubkey, name }, …])`, `insertResource` and `focus` commands,
+`insertMentions([{ pubkey, name }, …])`, `replaceRecipients`, `insertResource` and `focus` commands,
 and read-only `recipients`: the draft's selected mentions as `{ pubkey, name }` in
 draft order, so a tool can act for whoever the draft addresses. There is one entry
 per mention, so a person mentioned twice appears twice. Recipients the host adds
@@ -1245,6 +1245,8 @@ individual recipients in one undoable edit. It deduplicates batch keys and rejec
 ineligible, or the resulting draft exceeds its text or 32-mention limit. While
 editing an existing message, both mention commands insert identity references
 without changing the original notification recipients.
+
+`replaceRecipients([{ pubkey, name }, …])` replaces selected mention spans with a leading selection in one undoable transaction, preserving prose, formatting, focus and the mapped selection. An empty array clears the selection. It uses the same admission and lifetime checks as insertion and rejects the entire edit for invalid or unavailable recipients or length limits. It returns false while editing a sent message. Plain-text names do not become recipients.
 
 `insertResource({ uri, label })` inserts a host-owned inline reference to plugin
 content, such as a repository issue or pull request. The host normalizes the label

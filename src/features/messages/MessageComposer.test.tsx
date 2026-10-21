@@ -8397,3 +8397,75 @@ it("recovers an uploaded follow-up instead of queuing it after its chat disappea
     ).toBeVisible(),
   );
 });
+
+it("replaces recipients atomically while preserving prose, selection and undo", async () => {
+  const h = mount();
+  h.fill("Before prose after");
+  act(() => {
+    h.input().setSelectionRange(7, 7);
+    h.commands().insertMention(first);
+  });
+  expect(h.input()).toHaveValue("Before @Honey prose after");
+  act(() => {
+    h.input().setSelectionRange(16, 21);
+    expect(h.commands().replaceRecipients([second, second])).toBe(true);
+  });
+  expect(h.input()).toHaveValue("@Honey Before prose after");
+  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    second.pubkey,
+  ]);
+  const selected = h
+    .input()
+    .value.slice(h.input().selectionStart, h.input().selectionEnd);
+  expect(selected).toBe("ose a");
+  act(() => h.input().undo(false));
+  expect(h.input()).toHaveValue("Before @Honey prose after");
+  expect(h.commands().recipients.map((person) => person.pubkey)).toEqual([
+    first.pubkey,
+  ]);
+  act(() => expect(h.commands().replaceRecipients([])).toBe(true));
+  expect(h.input()).toHaveValue("Before prose after");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+});
+
+it("rejects recipient replacement atomically for invalid and unavailable identities", () => {
+  const h = mount({ inviteAgents: true });
+  h.fill("Keep prose");
+  act(() => h.commands().insertMention(first));
+  const before = h.input().value;
+  for (const recipients of [
+    [second, { pubkey: "c".repeat(64), name: "Missing" }],
+    [{ pubkey: "bad", name: "Invalid" }],
+    [{ ...second, name: "" }],
+  ]) {
+    act(() => expect(h.commands().replaceRecipients(recipients)).toBe(false));
+    expect(h.input()).toHaveValue(before);
+  }
+});
+
+it.each(["disabled", "retarget", "unmount"])(
+  "revokes replacement commands after %s",
+  (transition) => {
+    const h = mount();
+    const replace = h.commands().replaceRecipients;
+    if (transition === "disabled") h.retarget({ disabled: true });
+    else if (transition === "retarget") h.retarget({ channelId: "other" });
+    else h.unmount();
+    act(() => expect(replace([second])).toBe(false));
+  },
+);
+
+it("rejects replacement while editing a sent message and when the draft would exceed its length limit", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const edit = h.input().value;
+  act(() => expect(h.commands().replaceRecipients([second])).toBe(false));
+  expect(h.input()).toHaveValue(edit);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel edit" }));
+  h.fill("x".repeat(16000));
+  act(() => expect(h.commands().replaceRecipients([first])).toBe(false));
+  expect(h.input()).toHaveValue("x".repeat(16000));
+});

@@ -584,6 +584,55 @@ export function EditableInput({
       if (focus) editor.focus();
       return true;
     };
+    const replaceRecipients = (recipients: readonly MentionRecipient[]) => {
+      if (!editable() || composing.current || editor.composing) return false;
+      const source = projection();
+      if (
+        source.draft.recipients.length === recipients.length &&
+        source.draft.recipients.every(
+          (person, i) =>
+            person.pubkey === recipients[i]?.pubkey &&
+            person.name === recipients[i]?.name,
+        )
+      )
+        return true;
+      const tr = closeHistory(editor.state.tr);
+      for (const person of [...source.draft.recipients].reverse()) {
+        const end =
+          person.end + (source.draft.text[person.end] === " " ? 1 : 0);
+        tr.delete(source.position(person.start), source.position(end, -1));
+      }
+      if (recipients.length) {
+        const at = Selection.atStart(tr.doc).from;
+        const code = tr.doc.resolve(at).parent.type.spec.code;
+        tr.insert(
+          at,
+          Fragment.fromArray(
+            recipients.flatMap((person) => [
+              code
+                ? composerSchema.text(`@${person.name}`, [
+                    composerSchema.marks.recipient.create(person),
+                  ])
+                : composerSchema.nodes.token.create({
+                    source: `@${person.name}`,
+                    recipient: person,
+                    editAsText: false,
+                  }),
+              composerSchema.text(" "),
+            ]),
+          ),
+        );
+      }
+      if (
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+        current.current.maxLength
+      )
+        return false;
+      tr.setSelection(editor.state.selection.map(tr.doc, tr.mapping));
+      const before = editor.state;
+      editor.dispatch(tr);
+      return editor.state !== before;
+    };
     /** True, or the reason shown by the host. The link must survive its context. */
     const insertResource = (value: ComposerResource): true | string => {
       if (!editable() || composing.current || editor.composing)
@@ -1623,6 +1672,7 @@ export function EditableInput({
       },
       setSelectionRange: { configurable: true, value: setRange },
       insertText: { configurable: true, value: insert },
+      replaceRecipients: { configurable: true, value: replaceRecipients },
       insertResource: { configurable: true, value: insertResource },
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {

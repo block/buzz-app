@@ -7391,6 +7391,25 @@ it("changes instructions in place and discards a dismissed change draft", async 
   expect(native.setType).not.toHaveBeenCalled();
 });
 
+it("releases a deleted agent's pending change requests", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await service.create({ type: "example/echo", name: "Child" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.updateAgent) throw new Error("Missing change handle");
+  for (let i = 0; i < 16; i++)
+    await handle.updateAgent({ agent: sibling, name: `Kid ${i}` });
+  await expect(
+    handle.updateAgent({ agent: sibling, name: "Kid" }),
+  ).rejects.toThrow("pending agent requests");
+  await service.remove(sibling);
+  expect(service.updateRequests()).toEqual([]);
+  await expect(
+    handle.createAgent?.({ type: "example/echo", name: "Kid" }),
+  ).resolves.toMatchObject({ requestId: expect.any(String) });
+});
+
 it("refuses change drafts it cannot apply", async () => {
   const { service, plugin } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });

@@ -3144,6 +3144,8 @@ export class AgentsService extends Service implements Agents {
         void this.change(pubkey, () => null).catch((error) =>
           console.warn(`Agent ${pubkey} settings were not removed`, error),
         );
+      // Nor do change requests, which would hold review slots unseen.
+      this.updates = this.updates.filter((request) => live.has(request.agent));
       // A deleted agent leaves its teams; the teams stay.
       if (
         this.teamList.some((team) =>

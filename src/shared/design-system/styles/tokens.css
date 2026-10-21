@@ -1971,6 +1971,7 @@
   --color-surface-categorical-purple: var(--surface-categorical-purple);
   --text-color-accent: var(--text-accent);
   --border-color-standard: var(--border-standard);
+  --border-color-floating-separator: var(--border-floating-separator);
   --border-color-message-thread: var(--border-message-thread);
   --border-color-prominent: var(--border-prominent);
   --border-color-floating-control: var(--border-floating-control);

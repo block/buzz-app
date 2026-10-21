@@ -11,6 +11,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { KnownCommunities } from "../../features/communities/service";
 import { HostService, type HostResponse } from "../../features/host/service";
 import { SettingsCardsService } from "../../features/settings/service";
 import {
@@ -31,6 +32,24 @@ import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 const native = vi.hoisted(() => ({ isTauri: () => true, invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => native);
 stubAvatarBrowserApis();
+function provideKnownCommunities(root: Context, viewer: string) {
+  const knownCommunities: KnownCommunities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "", picture: "" },
+      sync: { known: [], outbox: [] },
+      viewer,
+      selected: null,
+      memberships: [],
+    }),
+    subscribe: vi.fn(() => vi.fn()),
+    pending: () => [],
+    apply: vi.fn(async () => {}),
+  };
+  root.provide("knownCommunities", knownCommunities);
+  return knownCommunities;
+}
 beforeEach(() => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
   vi.stubGlobal("navigator", {
@@ -94,6 +113,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    const knownCommunities = provideKnownCommunities(root, community.viewer);
     const agents = provideAgents(root, community);
     try {
       runtime.reconcile([
@@ -123,6 +143,8 @@ it.each([undefined, "", "http://builderlab.example"])(
         ),
       ).toEqual([]);
       expect(agents.types()).toHaveLength(0);
+      // No sign-in is possible, so no sync owner runs.
+      expect(knownCommunities.subscribe).not.toHaveBeenCalled();
       cleanup();
       render(<AgentsPage agents={agents} relay={community.relay} />);
       // With no agent type to create, the empty page's Create tile is off.
@@ -174,6 +196,7 @@ it.each([undefined, false, true])(
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    provideKnownCommunities(root, community.viewer);
     const agents = provideAgents(root, community);
     try {
       runtime.reconcile([
@@ -223,11 +246,13 @@ it.each([undefined, false, true])(
             signal: new AbortController().signal,
           }),
         ).rejects.toThrow("coming soon");
+        // The known-communities sync follows sign-in, not the remote agents gate.
         expect(
           native.invoke.mock.calls.filter(
             ([command, input]) =>
               command === "plugin_host_request" &&
-              !/\/(exchange|me)$/.test(input.request.url),
+              !/\/(exchange|me)$/.test(input.request.url) &&
+              !input.request.url.includes("/known-communities/"),
           ),
         ).toHaveLength(0);
         expect(localStorage.length).toBe(0);
@@ -312,6 +337,7 @@ it.each([
     const cards = new SettingsCardsService(root);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
+    provideKnownCommunities(root, community.viewer);
     provideAgents(root, community);
     const backupCalls = () =>
       native.invoke.mock.calls.filter(([command]) =>
@@ -384,7 +410,7 @@ it.each([
   },
 );
 
-it("shares plugin login with Settings and hosted Agents, replays failed setup writes, and clears login on re-enable", async () => {
+it("shares plugin login with Settings, hosted Agents and community sync, replays failed setup writes, and clears login on re-enable", async () => {
   const user = userEvent.setup();
   const hostedKey = "de".repeat(32);
   const browserKey = "09".repeat(32);
@@ -465,6 +491,8 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       result = { status: 1 };
     } else if (url.endsWith("/delete-agent")) {
       result = { status: 1 };
+    } else if (url.endsWith("/known-communities/list")) {
+      result = { communities: [] };
     } else {
       throw new Error(`Unexpected Builderlab request ${url}`);
     }
@@ -476,6 +504,7 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
   const cards = new SettingsCardsService(root);
   const community = communityFixture();
   root.provide("relay", community.relay as never);
+  const knownCommunities = provideKnownCommunities(root, community.viewer);
   const agents = provideAgents(root, community);
   const plugin: PluginInfo = {
     manifest: { ...manifest, apiVersion: 1 },
@@ -535,15 +564,25 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(native.invoke).toHaveBeenCalledWith("oauth_callback_wait", {
       id: "native-attempt-id",
     });
-    // Sign-in also checks the account's linked Buzz identity.
+    // Sign-in also checks the account's linked Buzz identity, and the
+    // account's community list follows through the same wiring: the complete
+    // list is read under the session credential.
+    await waitFor(() => expect(knownCommunities.apply).toHaveBeenCalled());
     await waitFor(() =>
       expect(
         hostRequests()
           .map((input) => input.request.url.split("/").at(-1))
           .sort(),
-      ).toEqual(["current", "exchange", "list-agents", "me"]),
+      ).toEqual(["current", "exchange", "list", "list-agents", "me"]),
     );
     const requests = hostRequests();
+    const [account, sync] = [
+      requests.filter((input) => !input.request.url.includes("/v1/buzz/")),
+      requests.filter((input) =>
+        input.request.url.includes("/v1/buzz/known-communities/"),
+      ),
+    ];
+    expect(account).toHaveLength(3);
     expect(
       requests.every(
         (input) =>
@@ -551,9 +590,16 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
       ),
     ).toBe(true);
     // Prove the account login supplies this consumer's credential through the real plugin wiring.
-    expect(requests.at(-1).request.headers["X-BB-Session-Credential"]).toBe(
+    expect(account.at(-1).request.headers["X-BB-Session-Credential"]).toBe(
       "private-token",
     );
+    expect(sync.map((input) => input.request.url)).toEqual([
+      "https://builderlab.example/api/goose/v1/buzz/known-communities/list",
+    ]);
+    expect(sync[0].request.headers["X-BB-Session-Credential"]).toBe(
+      "private-token",
+    );
+    expect(sync[0].request.body).toBe("{}");
     // Both writes happen after Beekeeper has returned the identity. Neither
     // failure may turn a retry into a second backend creation.
     for (const failedKey of [
@@ -641,6 +687,10 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
     expect(
       screen.getByRole("button", { name: "Sign in with Builderlab" }),
     ).toBeEnabled();
+    // The disabled plugin's sync owner stops listening with it.
+    expect(
+      vi.mocked(knownCommunities.subscribe).mock.results.at(-1)?.value,
+    ).toHaveBeenCalled();
     mounted.unmount();
     runtime.reconcile([plugin]);
     await waitFor(() => expect(cards.snapshot()).toHaveLength(1));

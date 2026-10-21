@@ -1,3 +1,4 @@
+import { conversationHistory } from "../../bundled/codex/history";
 import { createMessages } from "./messages";
 import type { Outbox } from "./outbox";
 import type { ProfileQueries } from "./profile-directory";
@@ -18,6 +19,7 @@ import {
   flush,
   keypair,
   message,
+  metadata,
   roster,
   scriptedTransport,
   signed,
@@ -381,3 +383,106 @@ it.each(["head", "tail"])(
     }
   },
 );
+
+it("uses the same verified owner edit in the conversation, prompt history and unread previews", async () => {
+  const owner = keypair(),
+    agent = keypair(),
+    relay = keypair();
+  const wire = scriptedTransport(owner.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const connection = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  const root = message(owner, "c", "Question", 10);
+  const original = signed(agent, {
+    kind: 9,
+    created_at: 11,
+    content: "Whole answer",
+    tags: [
+      ["h", "c"],
+      ["e", root.id, "", "reply"],
+      ["p", owner.pubkey],
+    ],
+  });
+  const edit = signed(owner, {
+    kind: 40003,
+    created_at: 12,
+    content: "Spoken",
+    tags: [
+      ["h", "c"],
+      ["e", original.id],
+    ],
+  });
+  let profile = eventDto(
+    signed(agent, {
+      kind: 0,
+      created_at: 10,
+      content: "{}",
+      tags: [
+        [
+          "auth",
+          owner.pubkey,
+          "",
+          bytesToHex(
+            schnorr.sign(
+              createHash("sha256")
+                .update(`nostr:agent-auth:${agent.pubkey}:`)
+                .digest(),
+              owner.secret,
+            ),
+          ),
+        ],
+      ],
+    }),
+  );
+  const history = () =>
+    conversationHistory(
+      message(owner, "c", "Next question", 20),
+      { channelId: "c", name: "c", root: root.id },
+      async (filters) =>
+        filters[0]?.kinds?.includes(40003) ? [edit] : [root, original],
+      { profiles: async () => {}, profile: () => profile },
+    );
+  const { unread, channels } = connection.session;
+  const changed = vi.fn();
+  try {
+    channels.ensure("c");
+    live.receive([
+      roster(relay, "c", [owner.pubkey, agent.pubkey], 1),
+      metadata(relay, "c", "c", 1),
+      root,
+      original,
+      edit,
+    ]);
+    const view = connection.session.thread("c", root.id);
+    expect(unread.activity("c").items?.[0]?.preview).toBe("Whole answer");
+    expect(unread.inbox().items?.[0]?.preview).toBe("Whole answer");
+    unread.subscribeActivity("c", changed);
+    unread.subscribeInbox(changed);
+    live.receive([profile]);
+    await vi.waitFor(() =>
+      expect(
+        view.snapshot().replies.find((row) => row.id === original.id)?.content,
+      ).toBe("Spoken"),
+    );
+    expect(await history()).toContain('"content":"Spoken"');
+    expect(unread.activity("c").items?.[0]?.preview).toBe("Spoken");
+    expect(unread.inbox().items?.[0]?.preview).toBe("Spoken");
+    expect(changed).toHaveBeenCalled();
+    profile = eventDto(
+      signed(agent, { kind: 0, created_at: 13, content: "{}", tags: [] }),
+    );
+    live.receive([profile]);
+    await vi.waitFor(() =>
+      expect(unread.activity("c").items?.[0]?.preview).toBe("Whole answer"),
+    );
+    expect(unread.inbox().items?.[0]?.preview).toBe("Whole answer");
+    expect(await history()).toContain('"content":"Whole answer"');
+  } finally {
+    connection.dispose();
+  }
+});

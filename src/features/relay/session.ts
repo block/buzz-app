@@ -1010,6 +1010,7 @@ export function createRelaySession(
       : undefined,
   });
   const unread = createUnread({
+    profiles: profiles.queries,
     reads,
     channels: channels.queries,
     // Repair owns evidence only, not timeline/history ingestion. The shared

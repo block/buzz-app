@@ -144,6 +144,7 @@ export function createChannelStore(
     const started = performance.now();
     const rows = foldMessages(channelId, author, events, {
       signingAuthority: transport?.archiveAuthority,
+      agentOwner: directory.queries.owner,
     });
     clientMetrics.cpu("fold", performance.now() - started, events.length);
     return rows;
@@ -432,6 +433,7 @@ export function createChannelStore(
         profiling,
         clock,
         transport?.archiveAuthority,
+        directory.queries.owner,
       ),
       channelId,
       snapshot: idleWindow(channelId),
@@ -2494,6 +2496,7 @@ export function createChannelStore(
     (local?.snapshot() ?? []).map((item) => [item.event.id, item]),
   );
   const unsubscribeProfiles = directory.queries.subscribe(() => {
+    for (const state of windows.values()) setWindow(state, {});
     if (discoveryObserved) saveDiscovery();
   });
   const unsubscribeLocal = local?.subscribe(() => {

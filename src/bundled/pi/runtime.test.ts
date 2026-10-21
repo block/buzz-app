@@ -4,6 +4,7 @@ import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
   Agent,
+  AgentHandle,
   Delivery,
   StandaloneTurn,
 } from "../../features/agents/service";
@@ -116,12 +117,18 @@ function setup(
     }),
   } as unknown as RelayData;
   const core = vi.fn(async () => null as string | null | undefined);
+  /** Whether `Agents.handle` gives the agent outside a run. */
+  const connection = { live: true };
   const runtime = new PiRuntime(
     { spawn: host.spawn },
     (pubkey) => ownerReads(relay, pubkey),
     core,
     () => added,
     repositories,
+    (pubkey) =>
+      connection.live && pubkey === self
+        ? (agent as unknown as AgentHandle)
+        : undefined,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -196,6 +203,7 @@ function setup(
     agent,
     session,
     solo,
+    connection,
   };
 }
 
@@ -708,16 +716,21 @@ it("interrupts a run an earlier app left from its thread's session controls", as
 
 it("compacts or starts a new session only while idle, and hands a mention over once compaction ends", async () => {
   const compacted = deferred();
-  const { host, deliver, settled, runtime } = setup({
+  const { host, deliver, settled, runtime, connection } = setup({
     wait: () => ({ status: "done", answer: 5, text: "" }),
     session: ({ action }) => (action === "compact" ? compacted.promise : {}),
   });
   const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
   const thread = { channelId: channel, root: root.id };
-  // Its left runs need a delivery's handle to be taken on first.
+  // Without the agent's handle, its left runs could not be taken on first.
+  connection.live = false;
   await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
-    "Mention the agent once",
+    "isn't connected",
   );
+  expect(host.requests("session")).toEqual([]);
+  connection.live = true;
+  // No mention is needed first.
+  await runtime.session(agent, thread, "new");
   const first = deliver({ type: "mention", event: reply("2", "@Pi look") });
   await first.run;
   await settled(first);
@@ -743,9 +756,39 @@ it("compacts or starts a new session only while idle, and hands a mention over o
   );
   await runtime.session(agent, thread, "new");
   expect(host.requests("session").map((item) => item.params)).toEqual([
+    { agent: self, key: `${channel}/${root.id}`, action: "new" },
     { agent: self, key: `${channel}/${root.id}`, action: "compact" },
     { agent: self, key: `${channel}/${root.id}`, action: "new" },
   ]);
+});
+
+it("takes on a run an earlier app left before compacting, with no mention since", async () => {
+  const left = { submission: 41, conversation: 5, request: "d".repeat(64) };
+  const order: string[] = [];
+  const { published, runtime } = setup({
+    unfinished: () => {
+      order.push("unfinished");
+      return {
+        submissions: [{ ...left, context: { channel, root: "other-root" } }],
+      };
+    },
+    wait: () => ({ status: "done", answer: 6, text: "Left answer" }),
+    session: () => {
+      order.push("session");
+    },
+  });
+  const agent = { pubkey: self, config: DEFAULT_CONFIG } as unknown as Agent;
+  await runtime.session(
+    agent,
+    { channelId: channel, root: root.id },
+    "compact",
+  );
+  // Taken on before Pi is asked anything that continues it.
+  expect(order).toEqual(["unfinished", "session"]);
+  await vi.waitFor(() =>
+    expect(published.map((event) => event.content)).toEqual(["Left answer"]),
+  );
+  expect(published[0]?.tags).toContainEqual(["e", "other-root", "", "reply"]);
 });
 
 it("lists the agent's sessions from Pi's storage, and whether each works", async () => {

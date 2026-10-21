@@ -27,6 +27,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (pubkey, signal) => agents.core(pubkey, signal),
     () => agents.tools(),
     repositoriesContext,
+    (pubkey) => agents.handle(pubkey),
   );
   const { ActivityTab, Create, CreateModel, SettingsTab } = createTabs({
     setup: runtime.setup,

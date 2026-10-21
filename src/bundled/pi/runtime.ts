@@ -186,6 +186,9 @@ export class PiRuntime {
     /** Desktop-local repository instructions; standalone hosts keep their own layout. */
     private readonly repositories: (scope: string | undefined) => string = () =>
       "",
+    /** The agent as a run holds it, outside any run (`Agents.handle`). */
+    private readonly handle: (pubkey: string) => AgentHandle | undefined = () =>
+      undefined,
   ) {
     this.pi = new Pi(() => this.spawn, {
       tool: (call) => this.tool(call),
@@ -345,14 +348,15 @@ export class PiRuntime {
   ) {
     const key = controlKey(agent, place);
     const control = `${agent.pubkey}/${key}`;
-    const entry = this.agents.get(agent.pubkey);
     // Pi continues every run once asked anything: its left runs are taken on
-    // first, which posting their answers needs a delivery's handle for.
+    // first, and posting their answers needs the agent's handle.
     const act = async () => {
-      if (!entry?.handle)
-        throw new Error(
-          "Mention the agent once after Buzz starts, then try again.",
-        );
+      const handle =
+        this.agents.get(agent.pubkey)?.handle ?? this.handle(agent.pubkey);
+      if (!handle)
+        throw new Error("The agent isn't connected yet. Try again shortly.");
+      const entry = this.entry(handle, config(agent.config));
+      entry.handle ??= handle;
       await this.open(agent.pubkey);
       await this.adopted(entry, agent.pubkey);
       await this.pi.request("session", { agent: agent.pubkey, key, action });

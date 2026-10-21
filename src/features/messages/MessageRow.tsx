@@ -1069,8 +1069,8 @@ function MessageRowContent({
                       const url = safeMessageUrl(attachment.url);
                       if (!url) return null;
                       const source = media(url);
-                      if (attachment.kind === "file")
-                        return (
+                      if (attachment.kind === "file") {
+                        const fallback = (
                           <FileAttachment
                             key={url}
                             attachment={{ ...attachment, url }}
@@ -1078,6 +1078,19 @@ function MessageRowContent({
                             onOpenLink={openLink}
                           />
                         );
+                        return source && extensions?.attachments ? (
+                          <AttachmentView
+                            key={url}
+                            registry={extensions.attachments}
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                            placement="message"
+                            fallback={fallback}
+                          />
+                        ) : (
+                          fallback
+                        );
+                      }
                       if (attachment.kind === "audio") {
                         if (
                           source &&
@@ -1089,10 +1102,12 @@ function MessageRowContent({
                                 registry={extensions.attachments}
                                 attachment={{ ...attachment, url }}
                                 source={source}
+                                placement="message"
                                 fallback={
                                   <AudioAttachment
                                     attachment={{ ...attachment, url }}
                                     source={source}
+                                placement="message"
                                   />
                                 }
                               />

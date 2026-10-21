@@ -3586,6 +3586,113 @@ it.each([true, false])(
   },
 );
 
+it("keeps an agent's new chat and chats ahead of better matches", async () => {
+  localStorage.clear();
+  // The viewer last chose this channel for the same text.
+  recordChoice(usage, "sco", "channel:scout-ops");
+  const relay = keypair(),
+    viewer = keypair(),
+    mine = keypair(),
+    human = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const dm = (id: string, member: string) => [
+    metadata(relay, id, "opaque", 1700000000, [
+      ["t", "dm"],
+      ["private", ""],
+    ]),
+    roster(relay, id, [viewer.pubkey, member]),
+  ];
+  const chat = (id: string, name: string, at: number) => [
+    metadata(relay, id, name, at, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+    ]),
+    roster(relay, id, [viewer.pubkey, mine.pubkey]),
+  ];
+  const discovery = [
+    ...dm("mine-dm", mine.pubkey),
+    // A person whose name is the exact text, a better match than Scout.
+    ...dm("human-dm", human.pubkey),
+    ...chat("agent-chat", "Plan the week", 1700000002),
+    // A chat whose name is the exact text, found by name.
+    metadata(relay, "named-chat", "sco", 1700000003, [
+      ["t", "stream"],
+      ["private"],
+      ["t", "buzz.solo"],
+    ]),
+    roster(relay, "named-chat", [viewer.pubkey]),
+    metadata(relay, "scout-ops", "scout-ops"),
+    roster(relay, "scout-ops", [viewer.pubkey]),
+    profile(mine, { name: "Scout", is_agent: true }),
+    profile(human, { name: "Sco" }),
+  ];
+  const owner = createRelaySession({
+    ...wire.transport,
+    async query(filters) {
+      if (filters.some((filter) => filter.search !== undefined)) return [];
+      return discovery.filter((event) =>
+        filters.some((filter) => matchFilter(filter as Filter, event)),
+      );
+    },
+  });
+  const source = owner.session.agentChoices;
+  const choices = {
+    ...source.snapshot(),
+    identities: [{ pubkey: mine.pubkey, name: "Scout", managed: true }],
+    selectable: [{ pubkey: mine.pubkey, name: "Scout", managed: true }],
+  };
+  const session = {
+    ...owner.session,
+    agentChoices: {
+      ...source,
+      snapshot: () => choices,
+      subscribe: () => () => {},
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as typeof owner.session;
+  try {
+    render(
+      <SearchResults
+        session={session}
+        query="sco"
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        usageScope={usage}
+        openConversation={vi.fn()}
+        openAgentSession={vi.fn()}
+      />,
+    );
+    const direct = within(
+      await screen.findByRole("group", { name: "Direct messages" }),
+    );
+    await direct.findByRole("option", { name: /^Sco(?!ut)/ });
+    await direct.findByRole("option", { name: /Scout/ });
+    await screen.findByRole("group", { name: "Channels" });
+    const chats = within(await screen.findByRole("group", { name: "Chats" }));
+    await waitFor(() =>
+      expect(
+        chats.getAllByRole("option").map((row) => row.textContent),
+      ).toEqual([
+        expect.stringContaining("Plan the week"),
+        expect.stringContaining("sco"),
+      ]),
+    );
+    const labels = screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+    expect(labels.slice(0, 2)).toEqual(["Agents", "Chats"]);
+    const options = screen.getAllByRole("option");
+    expect(options[0]).toHaveTextContent("Scout");
+    expect(options[0]).toHaveTextContent("New chat");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
 it("preserves remembered page ranking when inline settings match", async () => {
   localStorage.clear();
   recordChoice(usage, "sound", "Ultrasound");

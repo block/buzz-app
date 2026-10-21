@@ -681,10 +681,10 @@ export function SearchResults({
     usage,
     picked,
   );
-  // Solo chats, by name or by a shown agent among their members. A chat with
-  // that agent takes the agent's score, so the Chats group comes right after
-  // the Agents group that ties it. Live chats come before archived ones, and
-  // newer before older.
+  // Solo chats, by name or by a shown agent among their members. Chats with
+  // that agent come first, in the agent's order, so they follow its "New
+  // chat" row; chats found only by name come after them. Live chats come
+  // before archived ones, and newer before older.
   const chatRank = (channel: ChannelSummary) =>
     newChatAmong(channel.members)?.score ?? channelRank(channel);
   const chatResults = channels
@@ -693,9 +693,14 @@ export function SearchResults({
         channel.channelType === "solo" &&
         (!!newChatAmong(channel.members) || matchingAll.includes(channel)),
     )
-    .map((channel) => ({ channel, rank: chatRank(channel) }))
+    .map((channel) => ({
+      channel,
+      agent: !!newChatAmong(channel.members),
+      rank: chatRank(channel),
+    }))
     .sort(
       (a, b) =>
+        Number(b.agent) - Number(a.agent) ||
         a.rank - b.rank ||
         Number(!!a.channel.archived) - Number(!!b.channel.archived) ||
         (b.channel.lastActivityAt ?? b.channel.updatedAt ?? 0) -
@@ -987,8 +992,10 @@ export function SearchResults({
                 // the "Work" page before a channel that merely contains it.
                 // Every group scores on one scale, match and usage, not the
                 // relationship band that orders rows inside People and
-                // Agents. Ties keep this order, so an agent's "New chat" row
-                // leads, then its chats; its DM ranks after both.
+                // Agents. When the text finds one of the viewer's agents,
+                // though, its "New chat" row leads and its chats follow,
+                // whatever else matches better or was picked before; its DM,
+                // and every other group, comes after them.
                 ...[
                   {
                     label: "Agents",
@@ -1034,8 +1041,22 @@ export function SearchResults({
                     ),
                   },
                 ]
-                  .sort((a, b) => a.best - b.best)
-                  .map(({ best, ...group }) => ({ ...group, rank: best })),
+                  .map((group) => ({
+                    ...group,
+                    lead:
+                      newChats.size > 0 &&
+                      (group.label === "Agents" || group.label === "Chats"),
+                  }))
+                  .sort(
+                    (a, b) =>
+                      Number(b.lead) - Number(a.lead) ||
+                      (a.lead ? 0 : a.best - b.best),
+                  )
+                  // Inline settings slot in by rank, so they follow too.
+                  .map(({ best, lead, ...group }) => ({
+                    ...group,
+                    rank: lead ? -Infinity : best,
+                  })),
                 ...(scopeAction.length
                   ? [{ label: "This conversation", destinations: scopeAction }]
                   : []),

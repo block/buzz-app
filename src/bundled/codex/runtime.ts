@@ -315,18 +315,23 @@ export class CodexRuntime {
       if (!saved) throw new Error("There is no session here to compact yet.");
       const server = this.open();
       const rpc = await server.opening;
-      const settings = this.resolveConfig(agent.config);
-      const workspace = await this.workspace(settings.workspace);
+      // Like a turn, a pinned conversation compacts on its pin, not on a
+      // remote edit it hasn't applied. The workspace is this device's own.
+      const workspace = await this.workspace(
+        this.resolveConfig(agent.config).workspace,
+      );
       if (workspace !== saved.workspace)
         throw new Error(
           "The workspace changed. Send a message to start its session first.",
         );
+      const pinned = saved.pin ?? agent.settings;
       const { params } = await this.prepare(
         rpc,
         agent,
-        settings,
+        this.resolveConfig(pinned.config),
         workspace,
         {},
+        pinned.synced.effort,
       );
       signal.throwIfAborted();
       try {

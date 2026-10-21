@@ -4587,3 +4587,80 @@ describe("Codex refuses a model it can't run with the typed failure", () => {
     expect(f.starts()).toHaveLength(0);
   });
 });
+
+it("compacts a pinned conversation on its pinned model after a remote model edit", async () => {
+  const f = fixture();
+  const before = { ...TEST_CONFIG, scope: "thread" };
+  const delivery = { ...f.delivery("first"), config: before };
+  await f.runtime.run(delivery);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  const agent = {
+    ...delivery.agent,
+    config: { ...before, model: "deep-model", effort: "xhigh" },
+  } as unknown as Agent;
+  const place = { channelId: "channel", root };
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+  );
+  const action = f.runtime
+    .session(agent, place, "compact")
+    .catch((error) => error);
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "thread/compact/start")).toBe(
+      true,
+    ),
+  );
+  f.emit({
+    method: "turn/started",
+    params: { threadId: "thread-1", turn: { id: "compact" } },
+  });
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: { id: "compact", status: "completed" },
+    },
+  });
+  expect(await action).toBeUndefined();
+  expect(
+    f.sent.find((wire) => wire.method === "thread/resume")?.params,
+  ).toMatchObject({ model: "test-model", cwd: before.workspace });
+});
+
+it("refuses to compact on a pinned synced effort its configured model does not support", async () => {
+  const f = fixture();
+  const before = { ...TEST_CONFIG, scope: "thread", effort: "xhigh" };
+  const delivery = {
+    ...f.delivery("first"),
+    config: before,
+    synced: { effort: "xhigh" },
+    model: "deep-model",
+  };
+  await f.runtime.run(delivery);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  const agent = {
+    ...delivery.agent,
+    config: before,
+    settings: settingsOf(before, {
+      name: "Codex",
+      synced: { effort: "xhigh" },
+    }),
+  } as unknown as Agent;
+  const place = { channelId: "channel", root };
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+  );
+  let result: unknown;
+  void f.runtime.session(agent, place, "compact").then(
+    () => (result = "compacted"),
+    (error) => (result = error),
+  );
+  const compacting = () =>
+    f.sent.some((wire) => wire.method === "thread/compact/start");
+  await vi.waitFor(() => expect(result ?? compacting()).toBeTruthy());
+  expect(compacting()).toBe(false);
+  expect(result).toBeInstanceOf(Error);
+  expect(String(result)).toContain("synced effort");
+});

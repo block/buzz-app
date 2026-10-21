@@ -280,7 +280,7 @@ export function ProfileSettings({
               aria-hidden={!previewReady || undefined}
             >
               <section aria-label="Profile preview" className={hero.hero}>
-                <ProfileBackdrop src={backdrop} kind="human" />
+                <ProfileBackdrop src={backdrop} />
                 <div>
                   <AvatarEditor
                     size="compact"

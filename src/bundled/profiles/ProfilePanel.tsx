@@ -342,10 +342,7 @@ function ProfileDetails({
     >
       <div className={styles.profileContents}>
         <div className={`${hero.hero} ${hero.panelHero}`}>
-          <ProfileBackdrop
-            src={picture}
-            kind={displayAgent ? "agent" : "human"}
-          />
+          <ProfileBackdrop src={picture} />
           <div className={styles.portrait}>
             <AgentAvatar
               session={session}

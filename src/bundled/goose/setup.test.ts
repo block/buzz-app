@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Spawn } from "./goose";
 import { fakeSpawn } from "./goose-testing";
-import { GooseSetup, keyLabel } from "./setup";
+import { GooseSetup, keyLabel, modelFilter } from "./setup";
 
 const ANTHROPIC = {
   providerId: "anthropic",
@@ -148,6 +148,82 @@ describe("GooseSetup", () => {
       { id: "databricks-gpt-6-luna", label: "databricks-gpt-6-luna" },
       { id: "goose-gpt-5-5", label: "goose-gpt-5-5" },
     ]);
+  });
+
+  it("lists only the Databricks models goose's model filter allows", async () => {
+    const v2 = {
+      providerId: "databricks_v2",
+      providerName: "Databricks AI Gateway",
+      configured: true,
+      visibleInSetup: true,
+    };
+    const supported = [
+      "databricks-gpt-5-5",
+      "goose-gpt-5-5",
+      "system.ai.gpt-6-1-sol",
+      "data_workflow_tools.goose.goose-gpt-6-1-sol",
+    ];
+    const { fake, setup: goose } = setup({
+      providers: [
+        v2,
+        {
+          providerId: "ollama",
+          providerName: "Ollama",
+          configured: true,
+          visibleInSetup: true,
+        },
+      ],
+      supported,
+      modelFilter: "goose-*, data_workflow_tools.goose.*",
+    });
+    expect((await goose.models("databricks_v2")).map(({ id }) => id)).toEqual([
+      "goose-gpt-5-5",
+      "data_workflow_tools.goose.goose-gpt-6-1-sol",
+    ]);
+    // A filtered-out model an agent runs on stays its model.
+    await expect(
+      goose.picks({
+        provider: "databricks_v2",
+        model: "system.ai.gpt-6-1-sol",
+      }),
+    ).resolves.toMatchObject({
+      current: "system.ai.gpt-6-1-sol",
+      models: [
+        { id: "system.ai.gpt-6-1-sol" },
+        { id: "goose-gpt-5-5" },
+        { id: "data_workflow_tools.goose.goose-gpt-6-1-sol" },
+      ],
+    });
+    expect((await goose.models("ollama")).map(({ id }) => id)).toEqual(
+      supported,
+    );
+    const reads = fake.geese
+      .flatMap((process) => process.received)
+      .filter((request) => request.method === "_goose/unstable/config/read");
+    expect(reads.map((request) => request.params)).toEqual([
+      { key: "DATABRICKS_MODEL_FILTER", isSecret: false },
+    ]);
+
+    const empty = setup({ providers: [v2], supported, modelFilter: "none-*" });
+    expect(await empty.setup.models("databricks_v2")).toEqual([]);
+  });
+
+  it("reports a Databricks model filter without patterns as a listing error", async () => {
+    const { setup: goose } = setup({
+      providers: [
+        {
+          providerId: "databricks_v2",
+          providerName: "Databricks AI Gateway",
+          configured: true,
+          visibleInSetup: true,
+        },
+      ],
+      supported: ["goose-gpt-5-5"],
+      modelFilter: " , ",
+    });
+    await expect(goose.models("databricks_v2")).rejects.toThrow(
+      "DATABRICKS_MODEL_FILTER must contain at least one nonblank pattern",
+    );
   });
 
   it("discovers Databricks V2 models despite a populated catalog and refreshes on check", async () => {
@@ -337,6 +413,38 @@ describe("GooseSetup", () => {
       ok: false,
       message: expect.stringContaining("goose-acp is missing"),
     });
+  });
+});
+
+describe("modelFilter", () => {
+  it("lists every model when unset or blank", () => {
+    for (const value of [null, undefined, "", "  "])
+      expect(modelFilter(value)("anything")).toBe(true);
+  });
+
+  it("matches whole IDs case-sensitively with * and ?", () => {
+    const listed = modelFilter("goose-gpt-?-5,system.ai.*");
+    expect(listed("goose-gpt-5-5")).toBe(true);
+    expect(listed("goose-gpt-55-5")).toBe(false);
+    expect(listed("system.ai.claude-opus")).toBe(true);
+    expect(listed("System.ai.claude-opus")).toBe(false);
+    expect(listed("x-goose-gpt-5-5")).toBe(false);
+    expect(listed("goose-gpt-5-5-x")).toBe(false);
+  });
+
+  it("treats every other character literally", () => {
+    const listed = modelFilter("a.b(c)+[d]|e");
+    expect(listed("a.b(c)+[d]|e")).toBe(true);
+    expect(listed("aXb(c)+[d]|e")).toBe(false);
+    expect(listed("e")).toBe(false);
+  });
+
+  it("rejects a value with no patterns or of another shape", () => {
+    expect(() => modelFilter(",")).toThrow("at least one nonblank pattern");
+    expect(() => modelFilter(["goose-*"])).toThrow(
+      "must be comma-separated patterns",
+    );
+    expect(modelFilter(5)("5")).toBe(true);
   });
 });
 

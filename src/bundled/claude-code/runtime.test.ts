@@ -1138,19 +1138,23 @@ it("asks again whether a wake should run once it has a process", async () => {
   ).toBe(false);
 });
 
-it("gives up a one-off turn that runs past its deadline", async () => {
-  vi.useFakeTimers();
-  try {
-    const { deliver, claudes } = setup([], { hold: true });
-    await deliver(timer("slow", "ops"));
-    await vi.advanceTimersByTimeAsync(10);
-    const claude = claudes().find((process) => process.prompts.length);
-    expect(claude?.killed).toBe(false);
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(claude?.killed).toBe(true);
-  } finally {
-    vi.useRealTimers();
-  }
+it("stops a one-off turn when its turn signal aborts", async () => {
+  const turn = new AbortController();
+  const { deliver, claudes, workingUntil } = setup([], {
+    hold: true,
+    signal: turn.signal,
+  });
+  await deliver(timer("slow", "ops"));
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  expect(claude?.killed).toBe(false);
+  // The runner's deadline, as `standalone()` aborts it.
+  turn.abort(new Error("The turn ran past its deadline"));
+  await expect(workingUntil.mock.calls[0]?.[0]).resolves.toEqual({
+    ok: false,
+    error: "The turn ran past its deadline",
+  });
+  expect(claude?.killed).toBe(true);
 });
 
 it("always offers attention tools, on search, and says in each turn whether attention is on", async () => {

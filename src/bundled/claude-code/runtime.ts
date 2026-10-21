@@ -608,13 +608,14 @@ export class ClaudeRuntime {
   async runOnce({
     delivery,
     key,
+    signal,
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
     const entry = this.entry(agent.pubkey, this.resolveConfig(delivery.config));
     entry.handle = agent;
     entry.team = team ?? "";
-    const done = entry.sessions.runOnce(key, prompt);
+    const done = entry.sessions.runOnce(key, prompt, signal);
     this.notify();
     return done.finally(() => this.notify());
   }

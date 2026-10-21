@@ -564,31 +564,75 @@ it("asks a one-off turn for its prompt only once its process is ready", async ()
 });
 
 it("keeps a one-off turn's entry until its process has exited", async () => {
-  vi.useFakeTimers();
   const { pool, claudes } = sessions({ hold: true });
+  const stop = new AbortController();
   let settled = false;
   const done = pool
-    .runOnce("timer/slow", () => "work", 1_000)
+    .runOnce("timer/slow", () => "work", stop.signal)
     .then((result) => {
       settled = true;
       return result;
     });
-  await vi.advanceTimersByTimeAsync(10);
+  await flush();
   const claude = claudes().find((process) => process.prompts.includes("work"));
   // The host only signals it; it exits later, as after a grace period.
   if (claude) claude.exitOnKill = false;
-  await vi.advanceTimersByTimeAsync(1_000);
+  stop.abort(new Error("The turn ran past its deadline"));
+  await flush();
   expect(claude?.killed).toBe(true);
   expect(settled).toBe(false);
   expect(pool.snapshot().map((session) => session.key)).toContain(
     "timer/slow #1",
   );
   claude?.exit(null);
-  await vi.advanceTimersByTimeAsync(10);
-  await expect(done).resolves.toMatchObject({ ok: false });
+  await expect(done).resolves.toEqual({
+    ok: false,
+    error: "The turn ran past its deadline",
+  });
   expect(pool.snapshot().map((session) => session.key)).not.toContain(
     "timer/slow #1",
   );
+});
+
+it("gives up a one-off turn whose process is still starting", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ launched });
+  const stop = new AbortController();
+  const prompt = vi.fn(() => "wake");
+  const done = pool.runOnce("watch/a", prompt, stop.signal);
+  await flush();
+  expect(claudes()).toEqual([]);
+  stop.abort(new Error("The agent was removed"));
+  await expect(done).resolves.toEqual({
+    ok: false,
+    error: "The agent was removed",
+  });
+  expect(pool.snapshot()).toEqual([]);
+  // The process that starts afterwards is stopped, never asked to work.
+  release();
+  await flush();
+  expect(claudes()).toHaveLength(1);
+  expect(claudes()[0]?.killed).toBe(true);
+  expect(prompt).not.toHaveBeenCalled();
+});
+
+it("starts nothing for a one-off turn given up before it runs", async () => {
+  const { pool, claudes } = sessions();
+  const prompt = vi.fn(() => "wake");
+  await expect(
+    pool.runOnce(
+      "timer/a",
+      prompt,
+      AbortSignal.abort(new Error("The agent was removed")),
+    ),
+  ).resolves.toEqual({ ok: false, error: "The agent was removed" });
+  await flush();
+  expect(claudes()).toEqual([]);
+  expect(prompt).not.toHaveBeenCalled();
+  expect(pool.snapshot()).toEqual([]);
 });
 
 it("starts again with settings saved while a conversation's process started", async () => {

@@ -1,29 +1,36 @@
 // Pull request watches for agents: what one GitHub read says about a pull
 // request, and whether that is worth waking the agent that asked. Code decides,
-// not a model: CI finishing on the head commit, or new feedback from someone
-// other than the signed-in account, which is also the account agents use.
+// not a model: CI finishing on the head commit, or new feedback.
 //
-// The wake is sent as the owner, whom agents trust, so it carries no text
-// anyone else wrote: no check names, comment bodies, authors or file paths,
-// only fixed wording, counts, the head commit and GitHub links. The agent reads
-// the rest itself, as data.
+// The wake is the plugin's (`ctx.agents.wake`), not a message: the agent is
+// told it is data. So it quotes what GitHub says, check names and comments,
+// each line marked as quoted, and the agent need not read them itself.
+//
+// Agents use the signed-in gh account, as their owner does, so GitHub cannot
+// tell the two apart. A comment of that account that starts with 🤖, as an
+// agent's do, wakes nobody; the owner's own comments wake the agent.
 
 /** What a watched pull request looked like at one read. */
 export type PullSnapshot = Readonly<{
   state: "OPEN" | "MERGED" | "CLOSED";
-  /** The signed-in GitHub account, whose own comments wake nobody. */
+  /** The signed-in GitHub account, which agents use too. */
   viewer: string;
   head: string;
   /** Whether every check on the head is done, and none is still expected. */
   settled: boolean;
-  /** How many of the head's checks failed. */
-  failed: number;
+  /** The names of the head's checks that failed. */
+  failed: readonly string[];
   feedback: readonly Feedback[];
 }>;
 export type Feedback = Readonly<{
   id: string;
   author: string;
   url: string;
+  body: string;
+  /** A review's verdict, such as `CHANGES_REQUESTED`. */
+  state?: string | undefined;
+  /** The file an inline comment is on. */
+  path?: string | undefined;
 }>;
 
 export type Watch = Readonly<{
@@ -51,7 +58,16 @@ export const QUIET_MS = 90_000;
 export const WAKE_LIMIT = 20;
 /** Feedback ids kept beyond those a read returns. */
 const SEEN_SPARE = 200;
+/** What a wake quotes at most: comments, characters of each, failed checks
+ * and characters of each name. */
 const LISTED = 10;
+const BODY_CHARS = 1_000;
+const CHECKS = 20;
+const NAME_CHARS = 100;
+
+/** An agent's own comment: it starts with 🤖, as agents' do. */
+const agents = (item: Feedback, viewer: string) =>
+  item.author === viewer && /^\s*🤖/u.test(item.body);
 
 export type Step = Readonly<{
   watch: Watch;
@@ -72,7 +88,7 @@ export function step(watch: Watch, snapshot: PullSnapshot, now: number): Step {
   // The first read only learns what was already there.
   const seen = new Set(watch.seen ?? ids);
   const arrived = snapshot.feedback.filter(
-    (item) => !seen.has(item.id) && item.author !== snapshot.viewer,
+    (item) => !seen.has(item.id) && !agents(item, snapshot.viewer),
   );
   const pending = [...(watch.pending ?? []), ...arrived];
   const next: Watch = {
@@ -86,7 +102,7 @@ export function step(watch: Watch, snapshot: PullSnapshot, now: number): Step {
     arrived: arrived.length ? now : watch.arrived,
   };
   // A failed head that turns green after a rerun is news too.
-  const result = `${snapshot.head}:${snapshot.failed ? "failed" : "passed"}`;
+  const result = `${snapshot.head}:${snapshot.failed.length ? "failed" : "passed"}`;
   const ci = snapshot.settled && result !== watch.reported;
   const quiet = pending.length > 0 && now - (next.arrived ?? now) >= QUIET_MS;
   if (!ci && !quiet) return { watch: next };
@@ -104,10 +120,19 @@ export function step(watch: Watch, snapshot: PullSnapshot, now: number): Step {
   };
 }
 
-// Only GitHub's own links pass into a wake; anything else stays out.
+// Only GitHub's own links pass into a wake as links; anything else stays out.
 const LINK = /^https:\/\/github\.com\/[A-Za-z0-9_.\-/]+(?:#[A-Za-z0-9_-]+)?$/;
 const plural = (count: number, one: string, many: string) =>
   `${count} ${count === 1 ? one : many}`;
+const clip = (text: string, chars: number) =>
+  text.length > chars ? `${text.slice(0, chars)}…` : text;
+/** `text` as quoted lines, so nothing in it reads as the wake's own. */
+const quote = (text: string, indent = "") =>
+  text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => `${indent}> ${line}`)
+    .join("\n");
 
 function wakeText(
   url: string,
@@ -120,23 +145,39 @@ function wakeText(
     const sha = /^[0-9a-f]+$/i.test(snapshot.head)
       ? `on ${snapshot.head.slice(0, 9)} `
       : "";
-    lines.push(
-      snapshot.failed
-        ? `CI failed ${sha}for ${url}: ${plural(snapshot.failed, "check", "checks")} failed, to read with gh.`
-        : `CI passed ${sha}for ${url}.`,
-    );
+    const { failed } = snapshot;
+    if (failed.length) {
+      lines.push(
+        `CI failed ${sha}for ${url}: ${plural(failed.length, "check", "checks")} failed, as GitHub names them:`,
+      );
+      for (const name of failed.slice(0, CHECKS))
+        lines.push(quote(clip(name.replace(/\s+/g, " "), NAME_CHARS)));
+      if (failed.length > CHECKS)
+        lines.push(`and ${failed.length - CHECKS} more`);
+    } else lines.push(`CI passed ${sha}for ${url}.`);
   }
   if (feedback.length) {
     if (lines.length) lines.push("");
     lines.push(
-      `${feedback.length === 1 ? "New feedback" : `${feedback.length} new comments`} on ${url}, to read with gh:`,
+      `${feedback.length === 1 ? "New feedback" : `${feedback.length} new comments`} on ${url}, quoted from GitHub:`,
     );
-    const links = feedback
-      .map((item) => item.url)
-      .filter((link) => LINK.test(link));
-    for (const link of links.slice(0, LISTED)) lines.push(`- ${link}`);
-    if (links.length > LISTED)
-      lines.push(`- and ${links.length - LISTED} more`);
+    for (const item of feedback.slice(0, LISTED)) {
+      const what = [
+        item.id.startsWith("review/")
+          ? `review${item.state && item.state !== "COMMENTED" ? ` (${item.state.toLowerCase().replaceAll("_", " ")})` : ""}`
+          : item.id.startsWith("inline/")
+            ? "inline comment"
+            : "comment",
+        `by ${item.author}`,
+        ...(LINK.test(item.url) ? [item.url] : []),
+      ].join(" ");
+      lines.push(`- ${what}${item.path ? ", on:" : ":"}`);
+      if (item.path) lines.push(quote(clip(item.path, NAME_CHARS), "  "));
+      if (item.body.trim())
+        lines.push(quote(clip(item.body, BODY_CHARS), "  "));
+    }
+    if (feedback.length > LISTED)
+      lines.push(`- and ${feedback.length - LISTED} more, to read with gh`);
   }
   return lines.join("\n");
 }
@@ -159,17 +200,19 @@ export function pullOf(url: string) {
   };
 }
 
+// Bodies make the answer large; these counts keep a busy pull request's under
+// the 1 MiB a host command may return.
 const QUERY = `query($owner:String!,$name:String!,$number:Int!){
 viewer{login}
 repository(owner:$owner,name:$name){pullRequest(number:$number){
 state headRefOid
 commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
 __typename
-... on CheckRun{status conclusion}
-... on StatusContext{state}}}}}}}
+... on CheckRun{name status conclusion}
+... on StatusContext{context state}}}}}}}
 reviews(last:50){nodes{databaseId author{login} state body url}}
-comments(last:50){nodes{databaseId author{login} url}}
-reviewThreads(last:50){nodes{comments(last:20){nodes{databaseId author{login} url}}}}
+comments(last:50){nodes{databaseId author{login} body url}}
+reviewThreads(last:30){nodes{comments(last:10){nodes{databaseId author{login} body path url}}}}
 }}}`;
 
 /** The `gh api graphql --input -` request body that reads `pull`. */
@@ -222,10 +265,12 @@ export function parsePull(output: string): PullSnapshot | undefined {
   const checks = contexts.map((node) =>
     node.__typename === "StatusContext"
       ? {
+          name: str(node.context),
           done: !["PENDING", "EXPECTED"].includes(str(node.state)),
           failed: FAILED.has(str(node.state)),
         }
       : {
+          name: str(node.name),
           done: node.status === "COMPLETED",
           failed: FAILED.has(str(node.conclusion)),
         },
@@ -246,17 +291,22 @@ export function parsePull(output: string): PullSnapshot | undefined {
         id: `review/${String(node.databaseId)}`,
         author: login(node),
         url: str(node.url),
+        body: str(node.body),
+        state: str(node.state),
       })),
     ...nodes(pull.comments).map((node) => ({
       id: `comment/${String(node.databaseId)}`,
       author: login(node),
       url: str(node.url),
+      body: str(node.body),
     })),
     ...nodes(pull.reviewThreads).flatMap((thread) =>
       nodes(thread.comments).map((node) => ({
         id: `inline/${String(node.databaseId)}`,
         author: login(node),
         url: str(node.url),
+        body: str(node.body),
+        path: str(node.path),
       })),
     ),
   ];
@@ -265,7 +315,9 @@ export function parsePull(output: string): PullSnapshot | undefined {
     viewer: str((data.viewer as Node | null)?.login),
     head,
     settled,
-    failed: checks.filter((check) => check.failed).length,
+    failed: checks
+      .filter((check) => check.failed)
+      .map((check) => check.name || "unnamed check"),
     feedback,
   };
 }

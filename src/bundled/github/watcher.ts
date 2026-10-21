@@ -1,8 +1,8 @@
 // The `watch_pr` agent tool and the loop that serves it. While the app is open
 // it reads each watched pull request through `gh` once a minute and, when
-// `step` finds something, wakes the agent the way a person would: a message
-// from its owner, in the conversation where it asked, that mentions it. Every
-// agent type already answers that with the conversation's session and context.
+// `step` finds something, wakes the agent in the conversation where it asked
+// (`ctx.agents.wake`): no message is sent, and the agent is told the wake is
+// the plugin's, its text data.
 import type { Context } from "@deepseek-ai/cordis";
 import {
   parsePull,
@@ -18,7 +18,6 @@ export const POLL_MS = 60_000;
 const STORAGE_KEY = "buzz.github.pull-watches.v1";
 /** Failed polls in a row, a minute apart, that end a watch. */
 const FAILURE_LIMIT = 30;
-const FOOTER = "_Sent by the GitHub plugin for a pull request watch._";
 
 const keyOf = (watch: Pick<Watch, "agent" | "url">) =>
   `${watch.agent} ${watch.url}`;
@@ -62,19 +61,15 @@ export function watchPulls(ctx: Context) {
     const output = await ctx.host.runCommand("pull", pullRequest(pull));
     return output === null ? undefined : parsePull(output);
   };
-  /** Posts `text` to the watch's conversation as the owner, mentioning the
-   * agent. Throws when the agent's community cannot take it now. */
+  /** Wakes the agent in the watch's conversation. Throws when this copy of
+   * the app cannot run it now. */
   const wake = (watch: Watch, text: string) => {
     if (disposed) throw new Error("The GitHub plugin has stopped");
-    const relay = ctx.agents.relay(watch.agent)?.snapshot();
-    if (relay?.status !== "ready")
-      throw new Error("The agent's community is not connected");
-    const name = ctx.agents.find(watch.agent)?.name;
-    const content = `${name ? `@${name} ` : ""}${text}\n\n${FOOTER}`;
-    const { messages } = relay.session;
-    if (watch.root)
-      messages.reply(watch.channel, watch.root, content, [watch.agent]);
-    else messages.send(watch.channel, content, [watch.agent]);
+    ctx.agents.wake(watch.agent, {
+      channel: watch.channel,
+      ...(watch.root ? { root: watch.root } : {}),
+      text,
+    });
   };
   const settle = (key: string, { watch, ended }: Step) => {
     if (ended) watches.delete(key);
@@ -139,7 +134,7 @@ export function watchPulls(ctx: Context) {
   ctx.agents.addTool({
     name: "watch_pr",
     description:
-      "Wakes you in this conversation when CI finishes on a GitHub pull request's latest commit, or when someone other than the signed-in GitHub account reviews or comments on it. One call covers later pushes. The watch ends when the pull request merges or closes, after " +
+      "Wakes you in this conversation when CI finishes on a GitHub pull request's latest commit, or when someone reviews or comments on it. Comments of the signed-in GitHub account that start with 🤖 are taken as yours and wake nobody, so start your own with 🤖. One call covers later pushes. The watch ends when the pull request merges or closes, after " +
       `${WAKE_LIMIT} wakes, or when you call it with stop: true. Needs the gh CLI signed in.`,
     inputSchema: {
       type: "object",
@@ -164,8 +159,11 @@ export function watchPulls(ctx: Context) {
           ? `Stopped watching ${pull.url}.`
           : `${pull.url} was not watched.`;
       }
-      if (!context.channel)
-        throw new Error("watch_pr needs a conversation to wake you in");
+      // A wake answers in a thread, or at the top of a Solo chat.
+      if (!context.channel || !(context.root || context.topLevel))
+        throw new Error(
+          "watch_pr needs a thread or a Solo chat to wake you in",
+        );
       const snapshot = await read(pull.url);
       if (disposed) throw new Error("The GitHub plugin has stopped");
       if (!snapshot)

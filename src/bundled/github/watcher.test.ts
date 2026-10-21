@@ -64,19 +64,18 @@ const answer = ({
 function setup(initial: string | null = answer()) {
   let gh = initial;
   const runCommand = vi.fn(async () => gh);
-  const reply = vi.fn();
-  const send = vi.fn();
-  let status = "ready";
+  const woke = vi.fn();
+  let runs = true;
   const tools: AddedTool[] = [];
   const disposers: (() => void)[] = [];
   const ctx = {
     host: { runCommand },
     agents: {
       addTool: (tool: AddedTool) => tools.push(tool),
-      find: () => ({ name: "mbot" }),
-      relay: () => ({
-        snapshot: () => ({ status, session: { messages: { reply, send } } }),
-      }),
+      wake: (pubkey: string, wake: unknown) => {
+        if (!runs) throw new Error("This copy of Buzz does not run that agent");
+        woke(pubkey, wake);
+      },
     },
     effect: (fn: () => () => void) => disposers.push(fn()),
   } as unknown as Context;
@@ -85,19 +84,22 @@ function setup(initial: string | null = answer()) {
   const call = (args: Record<string, unknown>, topLevel = false) =>
     tool.call(
       { pubkey: agent } as BuzzClient,
-      { channel: "c", root, topLevel },
+      topLevel ? { channel: "c", topLevel } : { channel: "c", root },
       args,
     );
   return {
     call,
-    reply,
-    send,
+    tool,
+    woke,
+    /** The text of each wake, in order. */
+    texts: () =>
+      woke.mock.calls.map(([, wake]) => (wake as { text: string }).text),
     runCommand,
     gh: (value: string | null) => {
       gh = value;
     },
-    status: (value: string) => {
-      status = value;
+    runs: (value: boolean) => {
+      runs = value;
     },
     dispose: () => {
       for (const dispose of disposers) dispose();
@@ -112,25 +114,29 @@ describe("watch_pr", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("wakes the agent in its thread when CI finishes, as the owner mentioning it", async () => {
+  it("wakes the agent in its thread when CI finishes, naming the failed checks", async () => {
     const app = setup();
     app.gh(answer({ checks: [{ name: "unit", conclusion: null }] }));
     expect(await app.call({ url })).toMatch(/^Watching https:/);
     app.gh(answer({ checks: [{ name: "unit", conclusion: "FAILURE" }] }));
     await vi.advanceTimersByTimeAsync(POLL_MS);
-    expect(app.reply).toHaveBeenCalledTimes(1);
-    const [channel, thread, content, mentions] = app.reply.mock.calls[0] ?? [];
-    expect([channel, thread, mentions]).toEqual(["c", root, [agent]]);
-    expect(content).toMatch(
-      /^@mbot CI failed on 111111111 for https:\/\/github\.com\/block\/buzz-app\/pull\/7: 1 check failed, to read with gh\.\n\n_Sent by the GitHub plugin/,
-    );
+    expect(app.woke.mock.calls).toEqual([
+      [
+        agent,
+        {
+          channel: "c",
+          root,
+          text: `CI failed on 111111111 for ${url}: 1 check failed, as GitHub names them:\n> unit`,
+        },
+      ],
+    ]);
     // Reported once per head commit.
     await vi.advanceTimersByTimeAsync(POLL_MS);
-    expect(app.reply).toHaveBeenCalledTimes(1);
+    expect(app.woke).toHaveBeenCalledTimes(1);
     app.dispose();
   });
 
-  it("answers what is already there instead of waking, and posts top-level in a Solo chat", async () => {
+  it("answers what is already there instead of waking, and wakes a Solo chat with what is new", async () => {
     const app = setup();
     app.gh(
       answer({
@@ -151,30 +157,34 @@ describe("watch_pr", () => {
       }),
     );
     await vi.advanceTimersByTimeAsync(POLL_MS);
-    expect(app.send).not.toHaveBeenCalled();
+    expect(app.woke).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(QUIET_MS + POLL_MS);
-    expect(app.send).toHaveBeenCalledTimes(1);
-    expect(app.send.mock.calls[0]?.[1]).toContain(`- ${url}#2`);
-    expect(app.send.mock.calls[0]?.[1]).not.toContain(`${url}#1`);
-    // Nobody else's words are sent as the owner.
-    expect(app.send.mock.calls[0]?.[1]).not.toContain("body-");
+    expect(app.woke.mock.calls).toEqual([
+      [
+        agent,
+        {
+          channel: "c",
+          text: `New feedback on ${url}, quoted from GitHub:\n- comment by wes ${url}#2:\n  > body-new`,
+        },
+      ],
+    ]);
     app.dispose();
   });
 
   it("keeps news it could not send, and survives a restart", async () => {
     const app = setup();
     await app.call({ url });
-    app.status("connecting");
+    app.runs(false);
     app.gh(answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }));
     await vi.advanceTimersByTimeAsync(POLL_MS);
-    expect(app.reply).not.toHaveBeenCalled();
+    expect(app.woke).not.toHaveBeenCalled();
     app.dispose();
     // The restarted app reads at once.
     const next = setup(
       answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }),
     );
     await vi.advanceTimersByTimeAsync(0);
-    expect(next.reply).toHaveBeenCalledTimes(1);
+    expect(next.woke).toHaveBeenCalledTimes(1);
     next.dispose();
   });
 
@@ -196,7 +206,7 @@ describe("watch_pr", () => {
     expect(
       JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? ""),
     ).toEqual([]);
-    expect(app.reply).not.toHaveBeenCalled();
+    expect(app.woke).not.toHaveBeenCalled();
     app.dispose();
   });
 
@@ -205,16 +215,17 @@ describe("watch_pr", () => {
     await app.call({ url });
     app.gh(null);
     await vi.advanceTimersByTimeAsync(29 * POLL_MS);
-    expect(app.reply).not.toHaveBeenCalled();
+    expect(app.woke).not.toHaveBeenCalled();
     // A good read in between starts the count again.
     app.gh(answer());
     await vi.advanceTimersByTimeAsync(POLL_MS);
     app.gh(null);
     await vi.advanceTimersByTimeAsync(29 * POLL_MS);
-    expect(app.reply).not.toHaveBeenCalled();
+    expect(app.woke).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(POLL_MS);
-    expect(app.reply).toHaveBeenCalledTimes(1);
-    expect(app.reply.mock.calls[0]?.[2]).toContain(`Stopped watching ${url}`);
+    expect(app.texts()).toEqual([
+      expect.stringContaining(`Stopped watching ${url}`),
+    ]);
     expect(
       JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? ""),
     ).toEqual([]);
@@ -236,11 +247,19 @@ describe("watch_pr", () => {
     await next.call({ url, stop: true });
     finish(answer({ checks: [{ name: "unit", conclusion: "SUCCESS" }] }));
     await vi.advanceTimersByTimeAsync(0);
-    expect(old.reply).not.toHaveBeenCalled();
+    expect(old.woke).not.toHaveBeenCalled();
     expect(
       JSON.parse(localStorage.getItem("buzz.github.pull-watches.v1") ?? ""),
     ).toEqual([]);
     next.dispose();
+  });
+
+  it("needs a thread or a Solo chat to wake in", async () => {
+    const app = setup();
+    await expect(
+      app.tool.call({ pubkey: agent } as BuzzClient, { channel: "c" }, { url }),
+    ).rejects.toThrow(/thread or a Solo chat/);
+    app.dispose();
   });
 
   it("says when a watch moves to another conversation", async () => {

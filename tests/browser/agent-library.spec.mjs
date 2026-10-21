@@ -36,7 +36,7 @@ test("card model defaults and effort labels do not overlap", async ({
             const source = button.querySelector(".buzz-select-value-suffix");
             const effort = button.querySelector(".text-body-sm");
             const content = source.parentElement;
-            const caret = button.querySelector("svg:last-child");
+            const caret = [...button.querySelectorAll("svg")].at(-1);
             return {
               sourceAfterModel:
                 source.getBoundingClientRect().left >=

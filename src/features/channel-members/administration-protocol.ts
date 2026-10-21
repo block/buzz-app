@@ -91,7 +91,7 @@ export function memberAuthority(
       "Member roles are inconsistent. Refresh members and roles.",
     );
   const activeChannel = type !== "dm" && archived !== "true";
-  // Solo chats let only their owner remove people, and never change roles.
+  // In Solo chats only owners and admins remove people; nobody changes roles.
   const solo = !!soloLabels(channelIdentity(metadata).labels);
   return Object.freeze({
     roles: Object.freeze(roles),

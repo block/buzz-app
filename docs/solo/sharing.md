@@ -5,8 +5,8 @@ client-side organization, independent of access; see [Solo](README.md).
 
 ## Current sharing behavior
 
-The Solo chat header's people icon, the conversation-row **Share…** action and the
-Shared indicator open the one access dialog every conversation uses
+The Solo chat header's **Access** button and the conversation-row **Share…** action
+open the one access dialog every conversation uses
 (`ChannelMembersDialog`). In a Solo chat it is titled **Chat access**, with the chat name as its description. Share stays in the
 same conversation: no metadata change, promotion to a channel, Solo removal or automatic
 navigation to Messages. Name, visibility and lifetime are not recipient-sharing
@@ -41,7 +41,7 @@ rows. The shared naming policy receives current members and
 transient search facts. If resolved names still collide (including when the naming
 plugin is disabled), only those names receive a `publicKeyLabels` qualifier. The
 unnamed-key fallback remains; keys still own
-selection and writes. The Shared indicator describes current human access, not
+selection and writes. The sidebar's Shared mark describes current human access, not
 share history.
 
 People gain access to the full existing history and new messages. Selecting a
@@ -71,7 +71,7 @@ a new thread. Reopen Share to post that same chat in another channel, one
 channel per submission. With no channel selected, **Done**
 closes without writes. An empty channel audience cannot post a zero-recipient share.
 
-The Shared indicator uses a non-cached verified current roster and positively
+The sidebar's Shared mark is status only, not an action. It uses a non-cached verified current roster and positively
 cached non-agent profile/agent-choice evidence for an additional human, including
 another human owner. Known bot roles may exclude a member, but administration
 readiness is not required: cold rendering does not refresh roles or profiles.

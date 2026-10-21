@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { UsersIcon } from "../../shared/design-system/icons";
 
 /** Unknown classification is not evidence of a private conversation. Only a
@@ -37,26 +36,6 @@ export function useSharedWithPeople(
       );
     });
   return !!human;
-}
-
-export function ChatAccessIndicator({
-  session,
-  channel,
-  onClick,
-}: {
-  session: RelaySession;
-  channel: ChannelSummary | undefined;
-  onClick(): void;
-}) {
-  if (!useSharedWithPeople(session, channel)) return null;
-  return (
-    <IconButton
-      aria-label="Shared · Manage access"
-      title="Shared · Manage access"
-      icon={<UsersIcon size={16} />}
-      onClick={onClick}
-    />
-  );
 }
 
 /** Status only: the chat's actions menu owns access management. The row's

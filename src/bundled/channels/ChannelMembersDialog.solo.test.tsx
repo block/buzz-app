@@ -34,11 +34,7 @@ import {
   saveShareHistory,
   shareHistoryKey,
 } from "../../features/solo/share-history";
-import {
-  ChatAccessIndicator,
-  ChatSharedMark,
-  soloSharedMarkId,
-} from "./ChatAccessIndicator";
+import { ChatSharedMark, soloSharedMarkId } from "./ChatSharedMark";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { useRef, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
@@ -71,10 +67,9 @@ function SoloShare({
       <button ref={trigger} type="button" onClick={() => setOpen(true)}>
         Access
       </button>
-      <ChatAccessIndicator
+      <ChatSharedMark
         session={session}
         channel={list.channels.find((item) => item.id === channel.id)}
-        onClick={() => setOpen(true)}
       />
       {open && (
         <ChannelMembersDialog
@@ -1199,9 +1194,7 @@ it("leaves agents to mentions but includes channel bots without waking them", as
   expect(t.published.map((event) => event.kind)).toEqual([9000, 9]);
   expect(t.published[0]?.tags).toContainEqual(["role", "bot"]);
   expect(t.published[1]?.tags.some(([name]) => name === "p")).toBe(false);
-  expect(
-    screen.queryByRole("button", { name: "Shared · Manage access" }),
-  ).toBeNull();
+  expect(document.querySelector("[data-solo-shared]")).toBeNull();
 });
 
 it("shows loading and failed current access with refresh, never an empty roster", async () => {
@@ -1333,15 +1326,13 @@ it("groups agents and people by role while only verified additional humans mark 
   );
   expect(within(dialog).getAllByText("Helper Bot")).toHaveLength(1);
   await user.click(within(dialog).getByRole("button", { name: "Done" }));
-  expect(
-    screen.queryByRole("button", { name: "Shared · Manage access" }),
-  ).toBeNull();
+  expect(document.querySelector("[data-solo-shared]")).toBeNull();
   t.addProfile(unknown, "Guest Human");
   await t.session.profiles.ensure([unknown.pubkey], "foreground");
-  const indicator = await screen.findByRole("button", {
-    name: "Shared · Manage access",
-  });
-  await user.click(indicator);
+  await waitFor(() =>
+    expect(document.querySelector("[data-solo-shared]")).not.toBeNull(),
+  );
+  await user.click(screen.getByRole("button", { name: "Access" }));
   dialog = screen.getByRole("dialog", { name: "Chat access" });
   expect(
     await within(dialog).findByRole("region", { name: "People" }),
@@ -1354,7 +1345,7 @@ it("groups agents and people by role while only verified additional humans mark 
     name: "Planning",
     members: [t.viewer.pubkey, bot.pubkey],
   });
-  await user.click(indicator);
+  await user.click(screen.getByRole("button", { name: "Access" }));
   dialog = screen.getByRole("dialog", { name: "Chat access" });
   const shared = await within(dialog).findByRole("region", {
     name: "Shared with channels",
@@ -1400,18 +1391,7 @@ it("shows Shared on cold render from verified members and cached human evidence 
     "ready",
   );
   expect(channel?.cached).not.toBe(true);
-  render(
-    <ChatAccessIndicator
-      session={t.session}
-      channel={channel}
-      onClick={() => {}}
-    />,
-  );
-  expect(
-    screen.getByRole("button", { name: "Shared · Manage access" }),
-  ).toBeEnabled();
-  cleanup();
-  // The sidebar's status mark reads the same evidence but is not an action.
+  // The sidebar's status mark is not an action; Access manages sharing.
   render(
     <>
       <button type="button" aria-describedby={soloSharedMarkId(source)}>

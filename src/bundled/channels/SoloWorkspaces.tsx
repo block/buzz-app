@@ -1,6 +1,6 @@
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
-import { ChatSharedMark } from "./ChatAccessIndicator";
+import { ChatSharedMark } from "./ChatSharedMark";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { SoloChatName } from "./SoloChatName";
 import { canEditLifetime } from "../../features/solo/Lifetime";

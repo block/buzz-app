@@ -1,18 +1,20 @@
 // A Buzz conversation's Pi conversation, read from the agent's Pi durable
 // storage through the host and shown in the host's turn-transcript model. Pi
 // owns the entries; nothing here writes or keeps them.
-import type {
-  ToolItem,
-  Transcript,
-  TranscriptItem,
-  TranscriptTurn,
+import {
+  promptMessage,
+  promptSections,
+  type ToolItem,
+  type Transcript,
+  type TranscriptItem,
+  type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
-import { prompt } from "../claude-code/transcript";
 import type { Pi } from "./pi";
 
 /** The latest turns shown; Pi's storage keeps the rest. */
 export const TURN_LIMIT = 50;
 const PREFIX = "buzz_";
+const STEER = "new-message-arrived-while-you-were-working";
 const KINDS: Record<string, string> = {
   read: "read",
   write: "edit",
@@ -70,6 +72,22 @@ const text = (content: Message["content"]) =>
         .filter(Boolean)
         .join("\n");
 const str = (value: unknown) => (typeof value === "string" ? value : "");
+/** A Buzz prompt, or a steer wrapping one, as the turn's opening item. */
+function prompt(id: string, at: number, raw: string): TranscriptItem {
+  let sections = promptSections(raw);
+  const steer = sections.find((section) => section.tag === STEER);
+  if (steer) sections = promptSections(steer.body);
+  const { text, author } = promptMessage(sections);
+  return {
+    id,
+    at,
+    type: "prompt",
+    text: text || raw,
+    ...(author ? { author } : {}),
+    sections,
+    steer: !!steer,
+  };
+}
 /** Whether an entry is a prompt that opens a turn, not a steer into one. */
 const opens = ({ id, kind, model }: PiEntry) => {
   if (kind !== "pi.user") return false;

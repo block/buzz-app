@@ -346,7 +346,11 @@ export function AgentChoice({
               <BrainIcon size={20} aria-hidden="true" />
             </span>
             <div className={styles.statusCopy}>
-              {runs.id ? model() : <span>Model unavailable</span>}
+              {runs.id && several ? (
+                model()
+              ) : (
+                <span>{runs.label || "Model unavailable"}</span>
+              )}
             </div>
           </div>
         )}

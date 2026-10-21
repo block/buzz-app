@@ -229,10 +229,8 @@ html[data-keyboard-input] .slider * {
 .statusIcon {
   display: grid;
   place-items: center;
-  flex: 0 0 var(--space-8);
-  height: var(--space-8);
-  border-radius: var(--radius-pill);
-  background: var(--affordance-subtle);
+  flex: 0 0 var(--space-5);
+  height: var(--space-5);
   color: var(--text-subtle);
 }
 .statusCopy {

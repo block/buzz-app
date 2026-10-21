@@ -3451,7 +3451,7 @@ it.each([true, false])(
       screen.getByRole("button", { name: "Open Alice in #Design" }),
     );
     const editor = await screen.findByRole("textbox", {
-      name: soloChannel ? "Message your agents" : "Reply to thread",
+      name: soloChannel ? "Message this conversation" : "Reply to thread",
     });
     if (!soloChannel)
       fireEvent.change(editor, { target: { value: "Respond to this" } });
@@ -3501,7 +3501,7 @@ it("Inbox Solo chat activity shared with a person sends without a tag", async ()
     screen.getByRole("button", { name: "Open Alice in #Design" }),
   );
   const editor = await screen.findByRole("textbox", {
-    name: "Message your agents",
+    name: "Message this conversation",
   });
   expect(editor).toHaveValue("No tag needed");
   // Alice is a member, so the viewer isn't alone with agents.
@@ -3538,7 +3538,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
     screen.getByRole("button", { name: "Open Alice in #Design" }),
   );
   const editor = await screen.findByRole("textbox", {
-    name: "Message your agents",
+    name: "Message this conversation",
   });
   fireEvent.change(editor, { target: { value: "Draft in progress" } });
   act(() =>
@@ -3558,7 +3558,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
   );
   await act(async () => {});
   expect(
-    screen.getByRole("textbox", { name: "Message your agents" }),
+    screen.getByRole("textbox", { name: "Message this conversation" }),
   ).toHaveValue("Draft in progress");
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),
@@ -3569,7 +3569,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
   fireEvent.click(within(row).getByRole("button", { name: /^Open / }));
   await act(async () => {});
   expect(
-    screen.getByRole("textbox", { name: "Message your agents" }),
+    screen.getByRole("textbox", { name: "Message this conversation" }),
   ).toHaveValue("Draft in progress");
   expect(
     screen.queryByRole("textbox", { name: "Reply to thread" }),

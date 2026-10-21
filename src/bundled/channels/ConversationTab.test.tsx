@@ -589,8 +589,12 @@ it("lets the tab supply Solo chat identity without repeating a visible heading",
     channelType: "solo" as const,
   };
   const snapshot = { status: "ready", channels: [channel] };
+  const idle = () => () => {};
+  const profiles = new Map();
   const session = {
-    channels: { list: () => snapshot, subscribeList: () => () => {} },
+    channels: { list: () => snapshot, subscribeList: idle },
+    profiles: { snapshot: () => profiles, subscribe: idle },
+    agentChoices: { snapshot: () => undefined, subscribe: idle },
   } as unknown as RelaySession;
   render(
     <ConversationTab

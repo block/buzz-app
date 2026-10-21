@@ -9,7 +9,8 @@ import {
   settlePanelMotion,
 } from "./navigation.mjs";
 
-const agent =
+// Another person in shared Beta, so it is a conversation, not a chat with agents.
+const teammate =
   "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
 test.use({
@@ -17,7 +18,7 @@ test.use({
   companionFixture: true,
   readState: true,
   soloChannels: ["beta"],
-  sessionMembers: { beta: [agent] },
+  sessionMembers: { beta: [teammate] },
   historyCounts: { alpha: 2, beta: 1 },
 });
 
@@ -101,7 +102,10 @@ test("Open in channel takes a content tab to its conversation with its composer 
   ).resolves.toMatchObject({ kind: "conversation", channelId: "beta" });
   // The menu hands focus back before navigating, so the destination takes it.
   await expect(
-    main.getByRole("textbox", { name: "Message your agents", exact: true }),
+    main.getByRole("textbox", {
+      name: "Message this conversation",
+      exact: true,
+    }),
   ).toBeFocused();
 });
 
@@ -138,7 +142,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     exact: true,
   });
   const composer = beta.getByRole("textbox", {
-    name: "Message your agents",
+    name: "Message this conversation",
     exact: true,
   });
   await expect(composer).toBeVisible();
@@ -210,22 +214,13 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
     workspace.getByRole("tab", { name: "Beta", exact: true }),
   ).toHaveCount(1);
   await expect(composer).toHaveText("Beta draft");
-  // A Solo chat sends only to an explicit recipient.
-  await beta
-    .getByRole("button", { name: "Mention a member", exact: true })
-    .click();
-  await page
-    .getByRole("dialog", { name: "Mention a member or agent" })
-    .getByRole("button", { name: new RegExp(agent) })
-    .click();
   await composer.press("Enter");
   await expect
     .poll(() =>
       app.report.publications.some(
         ({ event }) =>
           event.kind === 9 &&
-          event.content.includes("Beta draft") &&
-          event.tags.some(([key, value]) => key === "p" && value === agent) &&
+          event.content === "Beta draft" &&
           event.tags.some(([key, value]) => key === "h" && value === "beta"),
       ),
     )
@@ -233,7 +228,7 @@ test("content-opened tabs restore drafts without offering blank-tab creation", a
   // Solo agents answer at top level, so a Solo row starts no thread.
   const sent = beta
     .locator("[data-message-id]")
-    .filter({ hasText: "Beta draft" });
+    .filter({ has: page.getByText("Beta draft", { exact: true }) });
   await hoverMessage(sent);
   await expect(
     sent.getByRole("button", { name: "Reply", exact: true }),

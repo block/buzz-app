@@ -544,7 +544,7 @@ it.each([
     const f = fixture({ placed, people: ["c".repeat(64)] });
     f.mount();
     const input = await screen.findByRole("textbox", {
-      name: "Message your agents",
+      name: "Message this conversation",
     });
     const user = userEvent.setup();
     await user.click(input);

@@ -26,7 +26,8 @@ channel membership remains access authority.
   nothing to the sidebar.
 - **Tags follow company.** Alone with agents, a send must tag one. Once another
   person is a member, people can talk without a tag; agents still answer only
-  when tagged. The sidebar's All / Solo / Team filter lists Solo workspaces and chats above
+  when tagged. The composer reads "Message your agents" alone and "Message this
+  conversation" once shared. The sidebar's All / Solo / Team filter lists Solo workspaces and chats above
   Team's channel sections; it never changes the open conversation. Opening a
   destination reveals its inventory unless the filter is All; an unlisted
   conversation waits for the channel list rather than guess. Solo is always on.

@@ -850,9 +850,7 @@
     0 0 0 1px rgba(0, 0, 0, 0.06), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
     0 2px 4px rgba(0, 0, 0, 0.04);
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
-  /* Floating surfaces use the same crisp contour/contact/ambient recipe as
-     panels, including their quiet white contour in dark mode. */
-  --shadow-sm: var(--shadow-panel);
+  --shadow-sm: 0 0 2px rgba(0, 0, 0, 0.1), 0 4px 8px -2px rgba(0, 0, 0, 0.06);
 
   /* --- Space. Six steps extracted from the Messages frame. --
      The scale is intentionally short: 4/8/12/16/20/24 covers the repeated
@@ -1203,7 +1201,6 @@
   --affordance-mention-own-hover: var(--affordance-mention-hover);
   --text-mention-own: var(--text-mention);
   --shadow-panel: 0 0 0 1px rgba(255, 255, 255, 0.08);
-  --shadow-sm: var(--shadow-panel);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
   --surface-popover: var(--neutral-raised);

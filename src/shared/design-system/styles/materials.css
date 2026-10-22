@@ -76,7 +76,7 @@
   border: 1px solid transparent;
   border-radius: var(--floating-radius);
   @apply elevated-material;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-panel);
 
   @media (forced-colors: active) {
     border-color: CanvasText;

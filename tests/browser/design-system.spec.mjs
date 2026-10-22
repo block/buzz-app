@@ -125,6 +125,7 @@ test("shared tokens reach app controls without history or chip overrides", async
         --surface-elevated-glass: rgba(23, 45, 67, 0.92);
         --border-standard: rgb(45, 67, 89);
         --shadow-panel: 0 0 0 3px rgb(67, 89, 101);
+        --shadow-sm: 0 4px 8px rgb(89, 67, 101);
         --radius-control: 13px;
         --radius-panel: 19px;
         --radius-container: 17px;
@@ -157,6 +158,12 @@ test("shared tokens reach app controls without history or chip overrides", async
       await expect(page.locator("#probe-chip")).toHaveCSS(
         "background-color",
         "rgb(12, 34, 56)",
+      );
+      // Bordered dialogs retain ordinary elevation; floating surfaces use
+      // their own contour recipe, independent of this token.
+      await expect(page.getByRole("dialog")).toHaveCSS(
+        "box-shadow",
+        "rgb(89, 67, 101) 0px 4px 8px 0px",
       );
       for (const name of [
         "buzz-menu-popup",

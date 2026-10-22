@@ -215,7 +215,7 @@ const runModel = (choice: MentionModelChoice, picked: string | undefined) =>
   choice.models.find((item) => item.id === choice.current) ??
   choice.models[0] ?? { id: "", label: "", efforts: [] };
 
-export function AgentChoice({
+function AgentChoice({
   choice,
   avatarSrc,
   place,

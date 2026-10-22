@@ -302,20 +302,33 @@ function WatchRow({
   const detail =
     value.type === "timer"
       ? [`“${value.prompt}”`, status?.text]
-      : [
-          value.name && describeWatch(unnamed(value), channels),
-          value.authors &&
-            `from ${plural(value.authors.length, "author")} only`,
-          value.exclude_authors &&
-            `not from ${plural(value.exclude_authors.length, "author")}`,
-          value.is_reply !== undefined &&
-            (value.is_reply ? "replies only" : "top-level messages only"),
-          value.classifier &&
-            (classifier === "available"
-              ? "has a classifier"
-              : "has a classifier, which cannot run on this device, so every match passes"),
-        ];
-  const state = status?.spent ? "Spent" : value.enabled ? "On" : "Paused";
+      : value.type === "source"
+        ? [
+            `Provided by ${value.provider}`,
+            "Returns to its registered conversation",
+          ]
+        : [
+            value.name && describeWatch(unnamed(value), channels),
+            value.authors &&
+              `from ${plural(value.authors.length, "author")} only`,
+            value.exclude_authors &&
+              `not from ${plural(value.exclude_authors.length, "author")}`,
+            value.is_reply !== undefined &&
+              (value.is_reply ? "replies only" : "top-level messages only"),
+            value.classifier &&
+              (classifier === "available"
+                ? "has a classifier"
+                : "has a classifier, which cannot run on this device, so every match passes"),
+          ];
+  const state =
+    value.type === "source" &&
+    agent.sourceRuns?.[slug] === JSON.stringify(object)
+      ? "Completed"
+      : status?.spent
+        ? "Spent"
+        : value.enabled
+          ? "On"
+          : "Paused";
   return (
     <PreferenceRow
       icon={

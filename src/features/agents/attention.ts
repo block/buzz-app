@@ -48,7 +48,18 @@ export type TimerWatch = Readonly<{
   max_occurrences: number | null;
   expires_at: number | null;
 }>;
-export type AttentionValue = Interest | EventWatch | TimerWatch;
+/** A plugin-owned deterministic producer. Attention owns its registration and destination. */
+export type SourceWatch = Readonly<{
+  type: "source";
+  interest_id: string;
+  enabled: boolean;
+  name?: string;
+  provider: string;
+  config: Readonly<Record<string, unknown>>;
+  channel: string;
+  root?: string;
+}>;
+export type AttentionValue = Interest | EventWatch | TimerWatch | SourceWatch;
 export type AttentionObject = Readonly<{
   slug: string;
   value: AttentionValue;
@@ -257,7 +268,30 @@ export function validateObject(
       filled(object.instructions, "instructions", TEXT_LIMIT);
     } else if (object.type === "event") eventWatch(object);
     else if (object.type === "timer") timer(object);
-    else fail('A watch/ value has type "event" or "timer"');
+    else if (object.type === "source") {
+      fields(
+        object,
+        ["type", "interest_id", "enabled", "provider", "config", "channel"],
+        ["name", "root"],
+      );
+      interestId(object.interest_id);
+      if (typeof object.enabled !== "boolean")
+        fail("enabled must be true or false");
+      if (object.name !== undefined) label(object.name, "name");
+      if (
+        typeof object.provider !== "string" ||
+        !/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(object.provider)
+      )
+        fail("provider must be plugin/source");
+      if (!isObject(object.config)) fail("config must be an object");
+      if (typeof object.channel !== "string" || !CHANNEL.test(object.channel))
+        fail("channel must be a channel id");
+      if (
+        object.root !== undefined &&
+        (typeof object.root !== "string" || !PUBKEY.test(object.root))
+      )
+        fail("root must be a 64-hex thread id");
+    } else fail('A watch/ value has type "event", "timer" or "source"');
     const body = JSON.stringify({ schema: ATTENTION_SCHEMA, slug, value });
     if (bytes(body) > BODY_LIMIT)
       fail("The object is larger than 65,535 bytes");
@@ -354,7 +388,7 @@ export function timerSpent(timer: TimerWatch, state: TimerState, now: number) {
 // Reading the format for people: one line per watch, objects grouped by role.
 
 export type ChannelChoice = Readonly<{ id: string; name: string }>;
-export type Watch = EventWatch | TimerWatch;
+export type Watch = EventWatch | TimerWatch | SourceWatch;
 export type WatchObject = AttentionObject & { value: Watch };
 
 export const UNITS = [
@@ -387,6 +421,7 @@ export function describeWatch(
   channels: readonly ChannelChoice[] = [],
 ) {
   if (watch.type === "timer") return every(watch.interval_secs);
+  if (watch.type === "source") return watch.name || watch.provider;
   if (watch.name) return watch.name;
   const what =
     watch.kinds.length === 1 && watch.kinds[0] === 9

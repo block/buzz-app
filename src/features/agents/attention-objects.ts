@@ -15,6 +15,7 @@ import {
   type EventWatch,
   type Interest,
   type TimerWatch,
+  type SourceWatch,
 } from "./attention";
 import { setAttention, type AgentRecord } from "./store";
 
@@ -41,7 +42,8 @@ export type WatchStatus =
   | "disabled"
   | "armed"
   | "inactive"
-  | "spent";
+  | "spent"
+  | "completed";
 export type AttentionErrorCode =
   | "conflict"
   | "wrong-scope"
@@ -69,7 +71,12 @@ export type TimerObject = TimerWatch &
     used: number;
     next_due: number;
   }>;
-export type ShownObject = InterestObject | EventWatchObject | TimerObject;
+export type ShownObject =
+  | InterestObject
+  | EventWatchObject
+  | TimerObject
+  | (SourceWatch &
+      Readonly<{ id: string; status: "enabled" | "disabled" | "completed" }>);
 export type Shown = Readonly<{
   result: "found" | "not-found";
   object: ShownObject | null;
@@ -79,14 +86,14 @@ export type WatchSummary = Readonly<{
   id: string;
   interest_id: string;
   name?: string;
-  type: "event" | "timer";
+  type: "event" | "timer" | "source";
   status: WatchStatus;
   /** Whether the watch has a classifier. */
   classified?: true;
 }>;
 export type WatchFilter = Readonly<{
   interest?: string;
-  type?: "event" | "timer";
+  type?: "event" | "timer" | "source";
   status?: WatchStatus;
   /** Case-sensitive, over ids and names. */
   search?: string;
@@ -122,6 +129,17 @@ export function objectAt(
   const value = record.attention[slug]?.value;
   if (!parsed || !value) return null;
   if (value.type === "interest") return { id: parsed.id, ...value };
+  if (value.type === "source")
+    return {
+      id: parsed.id,
+      ...value,
+      status:
+        record.sourceRuns?.[slug] === JSON.stringify(record.attention[slug])
+          ? "completed"
+          : value.enabled
+            ? "enabled"
+            : "disabled",
+    };
   if (value.type === "event")
     return {
       id: parsed.id,
@@ -220,11 +238,14 @@ export function watchSummaries(
       const value = object.value;
       if (!id || value.type === "interest") return [];
       const status =
-        value.type === "event"
-          ? value.enabled
-            ? "enabled"
-            : "disabled"
-          : timerObject(record, id, value, now).status;
+        value.type === "source" &&
+        record.sourceRuns?.[object.slug] === JSON.stringify(object)
+          ? "completed"
+          : value.type !== "timer"
+            ? value.enabled
+              ? "enabled"
+              : "disabled"
+            : timerObject(record, id, value, now).status;
       return [
         {
           id,

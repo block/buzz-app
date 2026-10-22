@@ -168,6 +168,7 @@ type Job = {
    * timer edited, disabled, rearmed, replaced or turned off and on again since
    * then does not run it. */
   matched?: { object: AttentionObject; epoch: number };
+  sourceCurrent?: () => boolean;
 };
 type WatchTrigger = Extract<Trigger, { type: "watch" }>;
 type CatchUpTrigger = Extract<Trigger, { type: "catch-up" }>;
@@ -539,11 +540,23 @@ export class AgentRunners {
   }
   /** Queues a plugin's wake in the agent's mention lane. Throws when this
    * copy does not run the agent, or the lane is full. */
-  wakeIn(pubkey: string, trigger: PluginTrigger) {
+  wakeIn(
+    pubkey: string,
+    trigger: PluginTrigger,
+    object?: AttentionObject,
+    sourceCurrent?: () => boolean,
+  ) {
     const runner = this.runners.get(pubkey);
     if (!runner || !this.runs(pubkey) || !this.host.ready(pubkey))
       throw new Error("This copy of Buzz does not run that agent");
-    if (!this.enqueue(runner, { trigger, channelId: trigger.channel }))
+    if (
+      !this.enqueue(runner, {
+        trigger,
+        channelId: trigger.channel,
+        ...(object ? { matched: { object, epoch: runner.epoch } } : {}),
+        ...(sourceCurrent ? { sourceCurrent } : {}),
+      })
+    )
       throw new Error("The agent is busy and could not take this wake");
   }
   /** Whether this copy runs the agent: its type can run it, and no other
@@ -1684,6 +1697,17 @@ export class AgentRunners {
    * queued wakes nothing, even if it now matches again. */
   private current(runner: Runner, agent: Agent, job: Job): Job | undefined {
     const { trigger } = job;
+    if (job.sourceCurrent && !job.sourceCurrent()) return undefined;
+    if (trigger.type === "plugin" && job.matched) {
+      const { object, epoch } = job.matched;
+      return agent.attentionEnabled &&
+        epoch === runner.epoch &&
+        agent.attention[object.slug] === object &&
+        object.value.type === "source" &&
+        object.value.enabled
+        ? job
+        : undefined;
+    }
     if (trigger.type !== "watch" && trigger.type !== "catch-up") return job;
     if (!agent.attentionEnabled) return undefined;
     if (
@@ -1734,7 +1758,7 @@ export class AgentRunners {
     const agent = this.host.agent(runner.pubkey);
     if (!agent) return false;
     const { trigger } = job;
-    if (addressed(trigger)) return true;
+    if (addressed(trigger)) return !!this.current(runner, agent, job);
     if (trigger.type === "watch" || trigger.type === "catch-up")
       return !!this.current(runner, agent, job);
     // A timer occurrence belongs to the object and epoch it fell due under:

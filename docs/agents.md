@@ -850,3 +850,14 @@ without known rates or an incomplete snapshot left something out, and
 unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.
+
+
+## Plugin monitoring sources
+
+Attention also stores `source` watches. A trusted external plugin registers a provider with `agents.addAttentionSource({ id, run })`; its full provider key is `pluginId/id`. The provider receives the saved watch, the agent pubkey, an abort signal and `emit(text)`. It executes deterministic checks without starting an agent turn. Empty output wakes nothing. Nonempty output is delivered privately into the watch's saved channel and optional thread through the normal conversation runner. A channel-level destination must be a Solo chat, just like `agents.wake`.
+
+The host starts enabled sources only for locally held agents with Attention on and an existing Interest. Disabling or editing the watch, turning Attention off, losing the agent, or unloading the provider aborts execution and invalidates queued output. Providers must honor cancellation and own any batching or retries when `emit` refuses a full queue. Natural completion is saved separately from the registration, so queued final output remains valid and a completed producer does not run again after restart. `watch_enable` rewrites the registration and starts a completed source again. `watch_disable`, `watch_show`, `watch_list` and `watch_remove` work with source watches; provider tools own creation and configuration.
+
+This capability does not grant a shell process the agent's Buzz credentials or sandbox it. Plugins remain trusted code and declare their process access through the existing host manifest. Remote providers are unsupported. Attention registrations and completion survive restart, but output accepted into an in-memory conversation queue is not a durable delivery acknowledgement.
+
+The first caller is the external Monitor plugin. Its command and PR tools create Attention-owned monitors when this capability exists and retain their legacy behavior on older hosts. Event watches and timers retain their existing standalone turns.

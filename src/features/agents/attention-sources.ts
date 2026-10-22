@@ -1,0 +1,116 @@
+// Lifecycle for plugin producers. The host owns registration, cancellation and delivery;
+// plugins own execution. A resolved run is terminal until its watch is edited.
+import type { Agent } from "./service";
+import type { AttentionObject, SourceWatch } from "./attention";
+
+export type AttentionSource = Readonly<{
+  id: string;
+  run(
+    input: Readonly<{
+      agent: string;
+      watch: SourceWatch;
+      signal: AbortSignal;
+      /** Empty output wakes nothing. Throws when delivery cannot be queued. */
+      emit(text: string): void;
+    }>,
+  ): Promise<void>;
+}>;
+type SourceObject = AttentionObject & { value: SourceWatch };
+export class AttentionSources {
+  private tails = new Map<string, Promise<void>>();
+  private runs = new Map<
+    string,
+    { object: SourceObject; stop: AbortController; done: boolean }
+  >();
+  constructor(
+    private host: {
+      emit(
+        agent: string,
+        object: SourceObject,
+        text: string,
+        current: () => boolean,
+      ): void;
+      completed(agent: string, object: SourceObject): boolean;
+      finish(agent: string, object: SourceObject): Promise<void>;
+    },
+  ) {}
+  reconcile(
+    provider: string,
+    source: AttentionSource,
+    agents: readonly Agent[],
+  ) {
+    const wanted = new Map<string, { agent: Agent; object: SourceObject }>();
+    for (const agent of agents) {
+      if (!agent.attentionEnabled) continue;
+      for (const object of Object.values(agent.attention)) {
+        const value = object.value;
+        if (
+          value.type === "source" &&
+          value.provider === provider &&
+          value.enabled &&
+          agent.attention[`interest/${value.interest_id}`]?.value.type ===
+            "interest"
+        )
+          wanted.set(`${agent.pubkey}/${object.slug}`, {
+            agent,
+            object: object as SourceObject,
+          });
+      }
+    }
+    for (const [key, run] of this.runs) {
+      if (wanted.get(key)?.object === run.object) continue;
+      run.stop.abort();
+      this.runs.delete(key);
+    }
+    for (const [key, { agent, object }] of wanted) {
+      if (this.runs.has(key) || this.host.completed(agent.pubkey, object))
+        continue;
+      const run = { object, stop: new AbortController(), done: false };
+      this.runs.set(key, run);
+      const emit = (text: string) => {
+        if (run.stop.signal.aborted || run.done)
+          throw new Error("This source watch is no longer running");
+        if (text.trim())
+          this.host.emit(
+            agent.pubkey,
+            object,
+            text,
+            () => !run.stop.signal.aborted,
+          );
+      };
+      const previous = this.tails.get(key);
+      const done = Promise.resolve(previous)
+        .then(() => {
+          if (!run.stop.signal.aborted)
+            return source.run({
+              agent: agent.pubkey,
+              watch: object.value,
+              signal: run.stop.signal,
+              emit,
+            });
+        })
+        .catch((error) => {
+          if (!run.stop.signal.aborted)
+            console.warn(`Attention source ${provider} failed`, error);
+        })
+        .finally(() => {
+          run.done = true;
+          if (this.tails.get(key) === done) this.tails.delete(key);
+          if (!run.stop.signal.aborted)
+            void this.host
+              .finish(agent.pubkey, object)
+              .catch((error) =>
+                console.warn(
+                  "Attention source completion was not saved",
+                  error,
+                ),
+              );
+        });
+      this.tails.set(key, done);
+    }
+  }
+  stop() {
+    for (const run of this.runs.values()) run.stop.abort();
+    this.runs.clear();
+  }
+}

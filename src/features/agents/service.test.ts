@@ -7110,3 +7110,84 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
     { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
   ]);
 });
+
+describe("Attention plugin sources", () => {
+  const root = "e".repeat(64);
+  const watches = {
+    "interest/pr": {
+      type: "interest" as const,
+      instructions: "Report CI changes",
+    },
+    "watch/pr": {
+      type: "source" as const,
+      provider: "example/command",
+      enabled: true,
+      interest_id: "pr",
+      channel,
+      root,
+      config: { command: ["check"] },
+    },
+  };
+  it("delivers source output to the saved conversation and cancels execution when Attention is disabled", async () => {
+    const { service, run, plugin, native } = await setup();
+    let input:
+      | Parameters<import("./attention-sources").AttentionSource["run"]>[0]
+      | undefined;
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async (current) => {
+        input = current;
+        await new Promise<void>((resolve) =>
+          current.signal.addEventListener("abort", () => resolve(), {
+            once: true,
+          }),
+        );
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(input).toBeDefined());
+    input!.emit("CI failed");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]![0].trigger).toMatchObject({
+      type: "plugin",
+      plugin: "example",
+      channel,
+      root,
+      text: "CI failed\n\nInterest: Report CI changes",
+    });
+    await service.save(bot, { attentionEnabled: false });
+    expect(input!.signal.aborted).toBe(true);
+    expect(() => input!.emit("late")).toThrow(/no longer/);
+  });
+  it("persists natural completion without invalidating output already queued for the conversation", async () => {
+    const { service, run, plugin, native } = await setup();
+    let emitSource: ((text: string) => void) | undefined;
+    let finishSource = () => {};
+    plugin.agents.addAttentionSource({
+      id: "command",
+      run: async ({ emit }) => {
+        emitSource = emit;
+        await new Promise<void>((resolve) => {
+          finishSource = resolve;
+        });
+      },
+    });
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(emitSource).toBeDefined());
+    emitSource!("done");
+    finishSource();
+    await vi.waitFor(() =>
+      expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
+    );
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0]![0].trigger).toMatchObject({
+      channel,
+      root,
+      text: expect.stringContaining("done"),
+    });
+  });
+});

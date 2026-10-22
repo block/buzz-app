@@ -123,6 +123,7 @@ import {
   type Checkpoints,
 } from "./catch-up";
 import { readInterrupted, writeInterrupted } from "./interrupted";
+import { AttentionSources } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
 
@@ -153,6 +154,7 @@ export type Agent<Config = unknown> = Readonly<{
   skipped: Readonly<Record<string, SkippedObject>>;
   /** Run state of its timers, by slug; written only by the runtime. */
   timers: Readonly<Record<string, TimerState>>;
+  sourceRuns?: Readonly<Record<string, string>>;
   /** Whether its watches and timers wake it. Off keeps every object. */
   attentionEnabled: boolean;
   config: Config;
@@ -780,6 +782,12 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = {
+  /** Registers a deterministic source owned by this plugin. Attention controls
+   * its lifetime; output goes privately to the watch's saved conversation.
+   * The provider key is pluginId/id. Local agents only. */
+  addAttentionSource(
+    source: import("./attention-sources").AttentionSource,
+  ): void;
   register<Config>(type: AgentType<Config>): void;
   types(): readonly RegisteredAgentType[];
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
@@ -1122,6 +1130,7 @@ export class AgentsService extends Service implements Agents {
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
+  private readonly sourceNames = new Set<string>();
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
@@ -1476,6 +1485,79 @@ export class AgentsService extends Service implements Agents {
     this.ctx.effect(() => {
       this.toolNames.add(tool.name);
       return () => this.toolNames.delete(tool.name);
+    });
+  }
+  addAttentionSource(source: import("./attention-sources").AttentionSource) {
+    const plugin = this.ctx.pluginOwner?.id;
+    if (
+      !plugin ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(source.id) ||
+      typeof source.run !== "function"
+    )
+      throw new Error("A plugin source needs an id and run");
+    const provider = `${plugin}/${source.id}`;
+    if (this.sourceNames.has(provider))
+      throw new Error(`Source ${provider} is already registered`);
+    this.ctx.effect(() => {
+      this.sourceNames.add(provider);
+      const sources = new AttentionSources({
+        completed: (pubkey, object) =>
+          this.records[pubkey]?.sourceRuns?.[object.slug] ===
+          JSON.stringify(object),
+        finish: async (pubkey, object) => {
+          await this.change(pubkey, (record) => {
+            if (!record) return null;
+            if (record.attention[object.slug] !== object) return record;
+            return {
+              ...record,
+              sourceRuns: {
+                ...record.sourceRuns,
+                [object.slug]: JSON.stringify(object),
+              },
+            };
+          });
+        },
+        emit: (pubkey, object, text, current) => {
+          const agent = this.state.running.find(
+            (agent) => agent.pubkey === pubkey,
+          );
+          if (
+            !agent?.attentionEnabled ||
+            agent.attention[object.slug] !== object ||
+            !object.value.enabled
+          )
+            throw new Error("This source watch is no longer enabled");
+          const interest =
+            agent.attention[`interest/${object.value.interest_id}`]?.value;
+          this.runners.wakeIn(
+            pubkey,
+            {
+              type: "plugin",
+              plugin,
+              channel: object.value.channel,
+              ...(object.value.root ? { root: object.value.root } : {}),
+              text: `${text}\n\nInterest: ${interest?.type === "interest" ? interest.instructions : ""}`,
+              id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+              at: Date.now(),
+            },
+            object,
+            current,
+          );
+        },
+      });
+      const update = () =>
+        sources.reconcile(
+          provider,
+          source,
+          this.state.running.filter((agent) => this.runners.runs(agent.pubkey)),
+        );
+      const unsubscribe = this.subscribe(update);
+      update();
+      return () => {
+        unsubscribe();
+        sources.stop();
+        this.sourceNames.delete(provider);
+      };
     });
   }
   tools = () => this.addedTools.snapshot();
@@ -2839,6 +2921,7 @@ export class AgentsService extends Service implements Agents {
       attention: record.attention,
       skipped: record.skipped ?? EMPTY,
       timers: record.timers ?? EMPTY,
+      ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
       attentionEnabled: record.attentionEnabled === true,
       config: record.config,
       ...(this.archiveUnchecked(identity.pubkey) && { archiveUnchecked: true }),
@@ -3177,6 +3260,7 @@ export class AgentsService extends Service implements Agents {
           prior.attention === record.attention &&
           prior.skipped === (record.skipped ?? EMPTY) &&
           prior.timers === (record.timers ?? EMPTY) &&
+          prior.sourceRuns === record.sourceRuns &&
           prior.attentionEnabled === (record.attentionEnabled === true) &&
           prior.config === record.config &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.pubkey) &&

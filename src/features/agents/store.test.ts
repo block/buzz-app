@@ -312,3 +312,26 @@ it("keeps a record saved since, when a late move from the old shared value lands
   expect(readRecords(open())[pubkey]?.config).toEqual({ word: "newer" });
   expect(readRecords(second)[pubkey]?.config).toEqual({ word: "newer" });
 });
+
+it("keeps source completion across reload and clears it when a source is edited", async () => {
+  const value = {
+    type: "source" as const,
+    provider: "monitor/command",
+    interest_id: "pr",
+    enabled: true,
+    channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    config: { command: ["check"] },
+  };
+  let saved = setAttention(record, "watch/pr", value, 7);
+  const signature = JSON.stringify(saved.attention["watch/pr"]);
+  saved = { ...saved, sourceRuns: { "watch/pr": signature } };
+  const storage = memoryStorage();
+  await writeRecord(storage, saved);
+  expect(readRecords(storage)[pubkey]?.sourceRuns).toEqual({
+    "watch/pr": signature,
+  });
+  expect(
+    setAttention(saved, "watch/pr", { ...value, enabled: false }, 8).sourceRuns,
+  ).toEqual({});
+  expect(setAttention(saved, "watch/pr", null, 8).sourceRuns).toEqual({});
+});

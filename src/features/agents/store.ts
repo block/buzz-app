@@ -76,6 +76,8 @@ export type AgentRecord = Readonly<{
   /** Run state of its timers, by slug. Not config, so it never leaves the device;
    * kept here so removing a timer or the agent removes its state with it. */
   timers?: Readonly<Record<string, TimerState>>;
+  /** Terminal source runs, matched to the exact registration. */
+  sourceRuns?: Readonly<Record<string, string>>;
 }>;
 type Stored = { version: 1; agents: Record<string, AgentRecord> };
 
@@ -166,6 +168,18 @@ function readRecord(
     attention,
     skipped,
     config: record.config,
+    ...(record.sourceRuns
+      ? {
+          sourceRuns: Object.fromEntries(
+            Object.entries(record.sourceRuns).filter(
+              ([slug, signature]) =>
+                attention[slug]?.value.type === "source" &&
+                typeof signature === "string" &&
+                signature === JSON.stringify(attention[slug]),
+            ),
+          ),
+        }
+      : {}),
     timers,
     ...(record.attentionEnabled === true ? { attentionEnabled: true } : {}),
   };
@@ -247,6 +261,8 @@ export function setAttention(
   schedule?: "rearm" | "restart",
 ): AgentRecord {
   const prior = record.attention[slug]?.value;
+  const { [slug]: completed, ...sourceRuns } = record.sourceRuns ?? {};
+  if (completed !== undefined) record = { ...record, sourceRuns };
   const { [slug]: _, ...rest } = record.attention;
   const { [slug]: __, ...skipped } = record.skipped ?? {};
   const { [slug]: state, ...timers } = record.timers ?? {};

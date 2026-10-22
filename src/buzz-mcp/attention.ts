@@ -9,6 +9,7 @@ import type {
   AttentionValue,
   EventWatch,
   TimerWatch,
+  SourceWatch,
 } from "../features/agents/attention";
 import type {
   ShownObject,
@@ -232,10 +233,10 @@ ${WRITES}`,
   ),
   tool("watch_list", "Watch summaries. status spent finds spent timers.", {
     interest: str,
-    type: { type: "string", enum: ["event", "timer"] },
+    type: { type: "string", enum: ["event", "timer", "source"] },
     status: {
       type: "string",
-      enum: ["enabled", "disabled", "armed", "inactive", "spent"],
+      enum: ["enabled", "disabled", "armed", "inactive", "spent", "completed"],
     },
     search: { ...str, description: "Case-sensitive, in ids and names." },
   }),
@@ -294,7 +295,7 @@ async function run(
   /** Writes the stored watch with `change` applied. */
   const edit = async (
     change: (
-      value: EventWatch | TimerWatch,
+      value: EventWatch | TimerWatch | SourceWatch,
       shown: Readonly<{ used?: number }>,
     ) => object,
     write: Partial<WriteOptions> = {},
@@ -304,7 +305,7 @@ async function run(
     if (!current || current.type === "interest")
       throw new Error(`not-found: no watch ${String(args.id)}`);
     const value = change(
-      stored(current) as EventWatch | TimerWatch,
+      stored(current) as EventWatch | TimerWatch | SourceWatch,
       current.type === "timer" ? { used: current.used } : {},
     );
     return shown(
@@ -366,7 +367,17 @@ async function run(
     case "watch_update":
       return edit((value) => {
         const fields =
-          value.type === "event" ? eventFields(args) : timerFields(args);
+          value.type === "event"
+            ? eventFields(args)
+            : value.type === "source"
+              ? pick(
+                  args,
+                  ["name", "enabled"],
+                  [...EVENT, ...TIMER].filter(
+                    (key) => key !== "name" && key !== "enabled",
+                  ),
+                )
+              : timerFields(args);
         const clear = Array.isArray(args.clear) ? args.clear : [];
         if (value.type === "timer" && clear.length)
           refuse("a timer has no optional fields to clear");
@@ -423,7 +434,7 @@ async function run(
         watches: attention
           .watches({
             ...(scoped ? { interest: scoped } : {}),
-            ...(args.type === "event" || args.type === "timer"
+            ...(args.type === "event" || args.type === "timer" || args.type === "source"
               ? { type: args.type }
               : {}),
             ...(typeof args.status === "string"

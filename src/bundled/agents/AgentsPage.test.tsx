@@ -365,6 +365,7 @@ function setup(
     resumeInterrupted: vi.fn(),
     dismissInterrupted: vi.fn(),
     wake: vi.fn(),
+    addAttentionSource: vi.fn(),
   } satisfies Agents;
   const disconnected = { status: "disconnected", generation: 0 };
   const relay = {

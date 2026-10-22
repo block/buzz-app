@@ -582,3 +582,48 @@ describe("a classifier", () => {
     );
   });
 });
+
+it("creates command and PR checks through the normal Attention watch tools", async () => {
+  const { call } = agent();
+  await call("interest_set", {
+    id: "triage",
+    instructions: "Watch",
+    expected_state: ABSENT,
+  });
+  const command = await call("watch_add", {
+    interest: "triage",
+    id: "command",
+    type: "command",
+    command: ["check", "--once"],
+    channel,
+    expected_state: ABSENT,
+  });
+  expect(command.object).toMatchObject({
+    type: "source",
+    provider: "buzz.agents/command",
+    channel,
+    config: { command: ["check", "--once"] },
+  });
+  const pr = await call("watch_add", {
+    interest: "triage",
+    id: "pr",
+    type: "github-pr",
+    pr: "https://github.com/example/repo/pull/1",
+    channel,
+    expected_state: ABSENT,
+  });
+  expect(pr.object).toMatchObject({
+    provider: "buzz.agents/github-pr",
+    config: { pr: "https://github.com/example/repo/pull/1" },
+  });
+  await expect(
+    call("watch_add", {
+      interest: "triage",
+      id: "invalid",
+      type: "command",
+      command: [],
+      channel,
+      expected_state: ABSENT,
+    }),
+  ).rejects.toThrow(/command/);
+});

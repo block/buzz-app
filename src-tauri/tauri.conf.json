@@ -33,7 +33,12 @@
   "bundle": {
     "active": true,
     "macOS": { "entitlements": "entitlements.plist" },
-    "resources": { "resources/bin/": "bin/" },
+    "resources": {
+      "resources/bin/": "bin/",
+      "../src/features/agents/attention-pr/": "bin/attention-pr/",
+      "../src/features/agents/attention-pr.sh": "bin/attention-pr.sh",
+      "../src/features/agents/attention-import.py": "bin/attention-import.py"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

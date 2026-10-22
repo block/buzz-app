@@ -53,6 +53,22 @@ const question = {
 const watchFields = {
   name: str,
   enabled: bool,
+  command: {
+    type: "array",
+    items: str,
+    description: "Command watch: program and arguments, without a shell.",
+  },
+  cwd: { ...str, description: "Command watch: absolute working directory." },
+  pr: { ...str, description: "GitHub PR watch: pull request URL." },
+  channel: {
+    ...str,
+    description: "Command or PR watch: destination channel UUID.",
+  },
+  root: {
+    ...str,
+    description:
+      "Command or PR watch: destination thread root; omit for channel conversation.",
+  },
   since: {
     anyOf: [int, { type: "string", enum: ["now"] }],
     description: "Event watch: ignore events before this Unix time.",
@@ -146,11 +162,13 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
   ),
   tool(
     "watch_add",
-    `Add an event watch (needs since and channels) or a timer (needs prompt and interval_secs) to an Interest; only for a new watch.
+    `Add an event watch (since and channels), a timer (prompt and interval_secs), a command watch (command and channel), or a GitHub PR watch (pr and channel) to an Interest; only for a new watch.
 
 Event watch: it sees only channels you are a member of, and "all" means all of those. It sees events that arrive while it is on: an earlier since does not replay older ones. Each matching event watch runs independently. Prefer deterministic selectors for hard rules; use the classifier only for judgment. authors keeps only those authors, exclude_authors: ["OWNER_HEX"] drops the owner's own messages, and is_reply: false keeps only top-level messages (true: only thread replies). A watch has authors or exclude_authors, not both. When a watch reports to the owner, exclude the owner's messages unless they are the signal.
 
 Classifier, for noisy event watches: Jev tests relevance after the normal filters. It sees one event, not history, and has no tools. Use named yes/no questions, for example {"questions":{"release_blocked":{"question":"Does the event say the release cannot proceed until something is fixed?","true":"It reports a release blocker, in any form: a question, an instruction or a status report.","false":"Routine release progress, or a problem that does not stop the release."}}}. Write questions for the facts the Interest needs, not for message types, and accept any phrasing of those facts. Ask one thing per question. The event passes when any question says yes, and each added question can add extra passes, so keep them few. For "A but not B", write one question that says so. Optional per question: true and false descriptions, guidance for examples and exclusions, and threshold (default 0.2; lower passes more). Change a threshold only when eval cases support it. Keep actions in the Interest. Pass uncertain cases. Errors pass events through. Every answer says classifier: available or unavailable. Classifiers can be saved either way and run once one is available; until then a classified watch's events pass unchecked, and the turn they start says so in a <watch-classifier> block.
+
+Command and GitHub PR watches run deterministic checks while Buzz runs. Output enters the saved channel/root conversation for this Interest. Attention off or watch_disable cancels execution and queued output; watch_enable restarts a completed check. Empty output starts no agent turn. Commands inherit host process authority, without Buzz signing credentials. PR watches require the GitHub CLI.
 
 Timer: its interval is at least 60 seconds, and it runs once by default. max_occurrences (a count, or "unbounded") and expires_at (Unix seconds, or "unbounded") control the budget; remaining budget schedules the next interval automatically. The final allowed wake says it is the last.
 
@@ -158,7 +176,10 @@ ${WRITES}`,
     {
       interest: { ...str, description: "The Interest it serves." },
       id,
-      type: { type: "string", enum: ["event", "timer"] },
+      type: {
+        type: "string",
+        enum: ["event", "timer", "command", "github-pr"],
+      },
       expected_state: token,
       ...watchFields,
     },
@@ -356,7 +377,30 @@ async function run(
                 kinds: [],
                 ...eventFields(args),
               }
-            : fail('type must be "event" or "timer"');
+            : args.type === "command" || args.type === "github-pr"
+              ? {
+                  type: "source",
+                  interest_id: interest,
+                  enabled: args.enabled !== false,
+                  provider: `buzz.agents/${args.type}`,
+                  channel: required(args, "channel"),
+                  ...(args.root !== undefined
+                    ? { root: required(args, "root") }
+                    : {}),
+                  ...(args.name !== undefined
+                    ? { name: required(args, "name") }
+                    : {}),
+                  config:
+                    args.type === "command"
+                      ? {
+                          command: args.command,
+                          ...(args.cwd !== undefined
+                            ? { cwd: required(args, "cwd") }
+                            : {}),
+                        }
+                      : { pr: required(args, "pr") },
+                }
+              : fail('type must be "event", "timer", "command" or "github-pr"');
       return shown(
         attention.write(watch("id"), value as AttentionValue, {
           expected: required(args, "expected_state"),

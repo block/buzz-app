@@ -6,5 +6,24 @@
   "discovery": {
     "category": "agents",
     "tags": ["Core", "Essentials", "coding-agents"]
+  },
+  "host": {
+    "processes": [
+      {
+        "id": "attention-command",
+        "program": "bash",
+        "args": ["-c", "exec \"$@\"", "attention"]
+      },
+      {
+        "id": "attention-pr",
+        "program": "attention-pr.sh",
+        "bundled": true
+      },
+      {
+        "id": "attention-import",
+        "program": "attention-import.py",
+        "bundled": true
+      }
+    ]
   }
 }

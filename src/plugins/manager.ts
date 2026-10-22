@@ -100,6 +100,7 @@ export function createPluginManager(
     return current.status === "ready"
       ? current.catalog.plugins.filter(
           (plugin) =>
+            plugin.manifest.id !== "monitor" &&
             plugin.enabled &&
             !(current.externalPluginsPaused && plugin.source === "external"),
         )

@@ -40,7 +40,9 @@ elif [[ "$args" == *"issues/1/comments"* ]]; then
       printf '%s\n' 'issue-comment	11	2026-01-01T00:04:00Z	reviewer	-	b64:cmVjb3ZlcmVkIGZlZWRiYWNr	https://example/recovered'
       ;;
   esac
-elif [[ "$args" == *"pulls/1/comments"* || "$args" == *"pulls/1/reviews"* ]]; then
+elif [[ "$args" == *"pulls/1/reviews"* ]]; then
+  printf '%s' '[{"id":99,"state":"PENDING","submitted_at":null,"user":{"login":"reviewer"},"body":"draft","html_url":"https://example/draft"}]' | jq -r "${@: -1}"
+elif [[ "$args" == *"pulls/1/comments"* ]]; then
   :
 elif [[ "$args" == "pr checks "* ]]; then
   printf '[]\n'

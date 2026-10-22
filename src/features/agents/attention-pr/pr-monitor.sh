@@ -271,7 +271,7 @@ snapshot_comments() {
     "$review_comment_tmp" || \
     ! fetch_comment_endpoint \
     "repos/$REPO/pulls/$PR/reviews?per_page=100" \
-    '["review", .id, (.submitted_at // .updated_at), .user.login, (.state // "UNKNOWN"), ("b64:" + ((.body // "") | @base64)), .html_url] | @tsv' \
+    'select(.state != "PENDING" and .submitted_at != null) | ["review", .id, (.submitted_at // .updated_at), .user.login, (.state // "UNKNOWN"), ("b64:" + ((.body // "") | @base64)), .html_url] | @tsv' \
     "$review_tmp"; then
     rm -rf "$output_dir"
     return 1

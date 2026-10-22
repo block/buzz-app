@@ -56,7 +56,7 @@ export function ModelFamilyMenu({
 }: {
   leading?: ReactNode;
   inherited?: boolean;
-  appearance?: "outlined" | "subtle" | "ghost" | "glass-ghost";
+  appearance?: "outlined" | "glass-ghost";
   resetLabel?: string | undefined;
   label: string;
   effort?: string | undefined;
@@ -91,11 +91,7 @@ export function ModelFamilyMenu({
             focusableWhenDisabled={loading && !disabled}
             variant={appearance === "outlined" ? "outline" : appearance}
             shape="control"
-            size={
-              appearance === "ghost" || appearance === "glass-ghost"
-                ? "xs"
-                : "sm"
-            }
+            size={appearance === "glass-ghost" ? "xs" : "sm"}
             aria-label={`${label}: ${selectedLabel}${effortLabel ? `, ${effortLabel}` : ""}`}
             title={selectedLabel}
           >

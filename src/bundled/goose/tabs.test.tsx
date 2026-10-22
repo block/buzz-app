@@ -82,7 +82,7 @@ function created(
   options: Readonly<{
     reply?: string;
     spawn?: (fake: ReturnType<typeof fakeSpawn>) => GooseSetup;
-    modelAppearance?: "subtle" | "glass-ghost";
+    modelAppearance?: "glass-ghost";
     config?: Config;
   }> = {},
 ) {

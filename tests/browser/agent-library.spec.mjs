@@ -95,6 +95,34 @@ test("agent cards expose selection and creation preserves focus and selected bor
   await ada.focus();
   await page.keyboard.press("ArrowRight");
   await expect(ada).toHaveAttribute("aria-selected", "true");
+  // Chromium models Windows high contrast; WebKit cannot emulate forced colors.
+  if (info.project.name === "chromium") {
+    await page.emulateMedia({ forcedColors: "active" });
+    expect(
+      await page.evaluate(() => matchMedia("(forced-colors: active)").matches),
+    ).toBe(true);
+    const model = ada.getByRole("combobox", { name: "Model", exact: true });
+    await model.focus();
+    await expect(model).toBeFocused();
+    await expect(ada).not.toBeFocused();
+    await expect(ada).toHaveAttribute("aria-selected", "true");
+    await expect(ada).toHaveCSS("outline-style", "solid");
+    await expect(ada).toHaveCSS("outline-width", "2px");
+    await expect(ada).toHaveCSS("outline-offset", "-2px");
+    await page.screenshot({
+      path: info.outputPath("selected-forced-colors.png"),
+    });
+    // This isolated fixture has no app-root keyboard modality listener.
+    await page.evaluate(() => {
+      document.documentElement.dataset.keyboardNavigation = "";
+    });
+    await ada.focus();
+    await expect(ada).toHaveCSS("outline-offset", "2px");
+    await page.emulateMedia({ forcedColors: "none" });
+    await page.evaluate(() => {
+      delete document.documentElement.dataset.keyboardNavigation;
+    });
+  }
   await page.keyboard.press("ArrowRight");
   await expect(
     grid.getByRole("gridcell", { name: "Bo", exact: true }),

@@ -58,7 +58,7 @@ export function Select({
   variant?: "inline" | "field" | "compact" | "preference";
   /** Match adjacent controls without changing the selection treatment. */
   size?: "xs" | "sm" | "md";
-  appearance?: "outlined" | "subtle" | "ghost" | "glass-ghost";
+  appearance?: "outlined" | "glass-ghost";
   disabled?: boolean;
   value: string;
   groups: readonly SelectGroup[];
@@ -172,15 +172,13 @@ export function Select({
                     )}
                   </span>
                 </span>
-                {!(variant === "compact" && appearance === "subtle") && (
-                  <BaseSelect.Icon>
-                    <CaretDownIcon
-                      size={14}
-                      className="buzz-dropdown-chevron"
-                      aria-hidden="true"
-                    />
-                  </BaseSelect.Icon>
-                )}
+                <BaseSelect.Icon>
+                  <CaretDownIcon
+                    size={14}
+                    className="buzz-dropdown-chevron"
+                    aria-hidden="true"
+                  />
+                </BaseSelect.Icon>
               </Button>
             )}
           />

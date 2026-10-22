@@ -2641,7 +2641,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 /* Content hugs short messages while rich content can use the available width. */
 .messageBubble {
   position: relative;
-  --message-link: var(--text-link);
+  --message-link: var(--text-message-link);
   --message-inset: var(--space-2);
   --message-radius: calc(
     var(--text-message) *
@@ -2777,12 +2777,22 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 
 .messageBubble[data-own] {
+  --selection-fill: var(--surface-text-selection-own);
+  --selection-text: var(--text-on-selection-own);
   color: var(--text-message-own);
   background: var(--surface-message-own);
   --message-link: var(--text-message-link-own);
   --mention-fill: var(--affordance-mention-own);
   --mention-hover: var(--affordance-mention-own-hover);
   --mention-text: var(--text-mention-own);
+}
+/* Neutral content and unboxed renderers keep selection paired with their surface. */
+.messageBubble[data-emoji-only],
+.messageBubble[data-diff-only],
+.messageBubble .text :is(code, pre, .codeBlock, table),
+.messageBubble .spoiler[data-revealed="true"] {
+  --selection-fill: var(--surface-text-selection);
+  --selection-text: var(--text-on-selection);
 }
 .messageBubble[data-emoji-only] {
   background: transparent;

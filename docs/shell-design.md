@@ -72,7 +72,9 @@ semantic tokens, UI authoring rules and the local component reference.
   The conversation sidebar retains its saved width and resize behavior.
   Settings opens in the shared expanded Dialog with an integrated sidebar; the
   workspace remains mounted underneath. Its portal fills the shell's workspace
-  frame (navigation, main content and companion panels), excluding the app
+  frame (navigation, main content and companion panels); the popup centers inside
+  it, capped at 72rem × 48rem with shared dialog gutters. Narrow popups fill the
+  host to preserve usable space. The host excludes the app
   header, with equal inline gutters matching the main page’s gutter. At widths
   up to 650px the frame also covers the wrapped header below its titlebar row. The frame
   sits outside the content query container so fixed modal backdrops still block

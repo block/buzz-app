@@ -9,6 +9,7 @@ import type { RelaySession } from "../relay/session";
 import { motion, useReducedMotion } from "motion/react";
 import { Button, type ButtonProps } from "../../shared/design-system/ui/Button";
 import { AgentsContext, useSessionState } from "../agents/react";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { TrashIcon } from "../../shared/design-system/icons";
 import { followUpQueue } from "./follow-up-queue";
@@ -146,6 +147,7 @@ function QueuePreview({ text }: { text: string }) {
       }}
       type="button"
       className={`text-caption ${styles.preview}`}
+      aria-label={text}
       aria-expanded={canExpand ? expanded : undefined}
       aria-disabled={!canExpand || undefined}
       tabIndex={canExpand ? 0 : -1}
@@ -199,23 +201,24 @@ function QueuedSend({
   });
   const compacting = state === "compacting";
   return (
-    <Button
-      {...props}
-      data-queue-action="send"
-      variant="subtle-muted"
-      size="xs"
-      style={{
-        padding: "var(--space-1) var(--space-2)",
-      }}
-      disabled={props.disabled || compacting}
-      focusableWhenDisabled={compacting || undefined}
-      title={
-        compacting
-          ? "Wait for compaction to finish, or interrupt it."
-          : undefined
-      }
+    <Tooltip
+      content="Wait for compaction to finish, or interrupt it."
+      {...(!compacting ? { open: false } : {})}
+      disableHoverablePopup
     >
-      Send
-    </Button>
+      <Button
+        {...props}
+        data-queue-action="send"
+        variant="subtle-muted"
+        size="xs"
+        style={{
+          padding: "var(--space-1) var(--space-2)",
+        }}
+        disabled={props.disabled || compacting}
+        focusableWhenDisabled={compacting || undefined}
+      >
+        Send
+      </Button>
+    </Tooltip>
   );
 }

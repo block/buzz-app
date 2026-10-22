@@ -2,14 +2,26 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { AgentsContext } from "../agents/react";
 import type { Agents } from "../agents/service";
 import { followUpQueue } from "./follow-up-queue";
 import { QueuedFollowUps } from "./QueuedFollowUps";
 
-afterEach(cleanup);
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 function fixture() {
   const session = {
     channels: { list: () => ({ channels: [{ id: "chat" }] }) },
@@ -152,4 +164,21 @@ it("preserves Send focus so consecutive Enter presses send both queued messages"
   await user.keyboard("{Enter}");
   expect(second).toHaveBeenCalledOnce();
   expect(screen.getByRole("textbox")).toHaveFocus();
+});
+
+it("toggles multiline requests while short requests remain non-expandable", async () => {
+  const h = fixture();
+  h.add("Short request");
+  h.add("First line\nSecond line");
+  h.mount();
+  const short = screen.getByRole("button", { name: "Short request" });
+  const long = screen.getByRole("button", { name: /First line\s+Second line/ });
+  expect(short).toHaveAttribute("tabindex", "-1");
+  await userEvent.click(short);
+  expect(short).not.toHaveAttribute("aria-expanded");
+  expect(long).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(long);
+  expect(long).toHaveAttribute("aria-expanded", "true");
+  await userEvent.click(long);
+  expect(long).toHaveAttribute("aria-expanded", "false");
 });

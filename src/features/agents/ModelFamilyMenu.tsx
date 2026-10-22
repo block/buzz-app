@@ -99,15 +99,20 @@ export function ModelFamilyMenu({
             aria-label={`${label}: ${selectedLabel}${effortLabel ? `, ${effortLabel}` : ""}`}
             title={selectedLabel}
           >
+            {leading && (
+              <span className="buzz-select-leading" aria-hidden="true">
+                {leading}
+              </span>
+            )}
             <span className="buzz-select-leading" aria-hidden="true">
-              {leading ?? <ModelIcon model={selected.id || selected.label} />}
+              <ModelIcon model={selected.id || selected.label} />
             </span>
-            {/* Keep Default together while model and effort names yield space. */}
+            {/* Card labels keep Default accessible without crowding the model. */}
             <span className={styles.value}>
               <span className={`buzz-select-value ${styles.model}`}>
                 {selected.label}
               </span>
-              {inherited && (
+              {inherited && appearance === "outlined" && (
                 <span className="buzz-select-value-suffix text-subtle">
                   {" · Default"}
                 </span>

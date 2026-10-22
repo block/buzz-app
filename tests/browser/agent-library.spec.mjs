@@ -2,9 +2,7 @@ import { test, expect } from "./source-fixture.mjs";
 
 // Real flex geometry and clipping are the contract; jsdom cannot detect text
 // painting over adjacent effort labels in a constrained model trigger.
-test("card model defaults and effort labels do not overlap", async ({
-  page,
-}) => {
+test("card model and effort labels do not overlap", async ({ page }) => {
   for (const model of ["gpt-6-sol", "gpt-6-sol-extended-context-preview"]) {
     await page.goto(
       `/tests/fixtures/agent-library.html?inheritedModel=${model}`,
@@ -16,6 +14,7 @@ test("card model defaults and effort labels do not overlap", async ({
         exact: true,
       });
     await expect(trigger).toBeVisible();
+    await expect(trigger).not.toHaveText(/Default/);
     for (const theme of ["light", "dark"]) {
       for (const width of [390, 800, 1280]) {
         await page.setViewportSize({ width, height: 950 });
@@ -33,17 +32,13 @@ test("card model defaults and effort labels do not overlap", async ({
           );
           const geometry = await trigger.evaluate((button) => {
             const model = button.querySelector(".buzz-select-value");
-            const source = button.querySelector(".buzz-select-value-suffix");
             const effort = button.querySelector(".text-body-sm");
-            const content = source.parentElement;
+            const content = model.parentElement;
             const caret = [...button.querySelectorAll("svg")].at(-1);
             return {
-              sourceAfterModel:
-                source.getBoundingClientRect().left >=
-                model.getBoundingClientRect().right - 0.5,
-              effortAfterSource:
+              effortAfterModel:
                 effort.getBoundingClientRect().left >=
-                source.getBoundingClientRect().right - 0.5,
+                model.getBoundingClientRect().right - 0.5,
               contentBeforeCaret:
                 content.getBoundingClientRect().right <=
                 caret.getBoundingClientRect().left + 0.5,
@@ -58,8 +53,7 @@ test("card model defaults and effort labels do not overlap", async ({
             geometry,
             `${model}, ${theme}, ${width}px, ${fontSize}px text`,
           ).toEqual({
-            sourceAfterModel: true,
-            effortAfterSource: true,
+            effortAfterModel: true,
             contentBeforeCaret: true,
             contained: true,
             modelTruncates: true,

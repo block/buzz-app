@@ -101,7 +101,7 @@ it("projects only safe optional avatar artwork without broadening the public fie
     ).toEqual([{ id: "brain", name: "Brain" }]);
   }
 });
-it("read is byte-preserving and rejects missing/malformed/nonregular/oversized sources without copying data into errors", async () => {
+it("read is byte-preserving, treats a missing source as empty, and rejects linked/malformed/nonregular/oversized sources without copying data into errors", async () => {
   const root = await mkdtemp(join(tmpdir(), "buzz-library-"));
   const path = join(root, "managed-agents.json");
   try {
@@ -110,7 +110,22 @@ it("read is byte-preserving and rejects missing/malformed/nonregular/oversized s
     expect(await readAgentLibrary(path)).toEqual(projectAgentLibrary(rows));
     expect(await readFile(path, "utf8")).toBe(raw);
     await symlink(path, join(root, "link"));
-    for (const bad of [join(root, "link"), join(root, "missing"), root])
+    for (const missing of [
+      join(root, "missing"),
+      join(root, "missing-dir/agents.json"),
+    ])
+      expect(await readAgentLibrary(missing)).toEqual({
+        definitions: [],
+        identities: [],
+      });
+    // A dangling link is a link, not a missing library.
+    await symlink(join(root, "missing"), join(root, "dangling"));
+    for (const bad of [
+      join(root, "link"),
+      join(root, "dangling"),
+      join(path, "child"),
+      root,
+    ])
       await expect(readAgentLibrary(bad)).rejects.toThrow("Could not read");
     await writeFile(path, "private broken content");
     await expect(readAgentLibrary(path)).rejects.toThrow("Could not read");
@@ -332,6 +347,7 @@ it.skipIf(!["darwin", "linux"].includes(process.platform))(
         definitions: [],
         identities: [{ pubkey: key, name: "Luna" }],
       });
+      // Missing is empty, never a fallback to the Classic library.
       await rm(current);
       expect(await readAgentLibrary()).toEqual({
         definitions: [],

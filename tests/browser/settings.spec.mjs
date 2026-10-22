@@ -588,12 +588,12 @@ confirmedPresence(
         "Notifications",
         "Shortcuts",
         "Agent setup",
+        "Decisions API",
         "Channel templates",
         "Software updates",
         "Manage plugins",
         "Builderlab agents",
         "Builderlab hosting",
-        "Jev classifier",
       ]) {
         await tab();
         await expect(
@@ -608,6 +608,21 @@ confirmedPresence(
     }
   },
 );
+
+/** A viewer with no saved community starts on the join screen, not the shell. */
+const savedCommunity = (page, viewer) =>
+  page.addInitScript((viewer) => {
+    const key = `buzz-client.v1:${viewer}`;
+    if (!localStorage.getItem(key))
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          profile: { name: "Browser Fixture", picture: "" },
+          memberships: [{ id: "primary", name: "Primary" }],
+          selected: null,
+        }),
+      );
+  }, viewer);
 
 test("hosted deletion reload keeps the UUID until an enabled manual replay", async ({
   page,
@@ -626,6 +641,7 @@ test("hosted deletion reload keeps the UUID until an enabled manual replay", asy
   await page.route("**/api/relay/identity", (route) =>
     route.fulfill({ json: { viewer: owner } }),
   );
+  await savedCommunity(page, owner);
   await page.route("**/api/builderlab/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").at(-1);
     calls.push(action);
@@ -727,6 +743,7 @@ test("hosted deletion keeps a foreign owner's full npub inside the dialog and no
   await page.route("**/api/relay/identity", (route) =>
     route.fulfill({ json: { viewer: owner } }),
   );
+  await savedCommunity(page, owner);
   await page.route("**/api/builderlab/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").at(-1);
     if (action === "auth")
@@ -1003,7 +1020,7 @@ test("discarding community setup leaves the published profile unchanged", async 
     .getByRole("button", { name: "Join a community", exact: true })
     .click();
   await page
-    .getByRole("textbox", { name: "Relay URL", exact: true })
+    .getByRole("textbox", { name: "Community URL", exact: true })
     .fill("wss://primary.example");
   await button(page, "Continue").click();
   await expect(

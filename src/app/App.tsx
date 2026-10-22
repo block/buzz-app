@@ -40,6 +40,7 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
+import { CommunityLanding } from "../features/communities/CommunityLanding";
 import { launchVisible, setLaunchReady, subscribeLaunch } from "./launch";
 
 export function App({ services }: { services: AppServices }) {
@@ -105,6 +106,17 @@ function ConnectedApp({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
+  // Someone without a community starts by joining one. Having had one this
+  // run keeps the shell; Personal space with memberships is unchanged.
+  const [hadCommunity, setHadCommunity] = useState(false);
+  if (!hadCommunity && client.memberships.length > 0) setHadCommunity(true);
+  const firstRun =
+    !settings &&
+    !hadCommunity &&
+    startup !== "recovery" &&
+    client.status === "ready" &&
+    client.relayAvailable &&
+    client.memberships.length === 0;
   // The prompt is stale once Settings ends another way or nothing is left to
   // discard, such as when a pending save is sent behind it.
   if (confirmSettingsDiscard && (!settings || !settingsUnsaved))
@@ -163,6 +175,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
   const launchReady =
     settings ||
     terminal ||
+    firstRun ||
     (!restoring && startup !== "loading" && !route.waiting);
   useEffect(
     () => setLaunchReady(launchReady, terminal),
@@ -217,6 +230,30 @@ function ConnectedApp({ services }: { services: AppServices }) {
           <img src="/buzz-loading-mark.svg" alt="Buzz" width="72" height="72" />
         </picture>
       </div>
+    );
+  const selectCommunity = (id: string | null) => {
+    const recovering =
+      services.navigation.snapshot().ingress &&
+      services.navigation.snapshot().retryable;
+    services.communities.select(id);
+    if (!recovering) select("buzz.channels/channels");
+  };
+  if (firstRun)
+    return (
+      <CommunityLanding
+        communities={services.communities}
+        invite={invite?.viewer === client.viewer ? invite : undefined}
+        onInviteClose={services.invites.clear}
+        settingsCards={services.settingsCards}
+        onJoined={selectCommunity}
+        onCreate={() =>
+          void services.navigation.open({
+            version: 1,
+            kind: "settings",
+            section: "block.hosted-communities/hosted",
+          })
+        }
+      />
     );
   const openSettingsSection = (section: string) => {
     const client = services.communities.snapshot();
@@ -297,13 +334,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
             navigationControls={
               <NavigationControls navigation={services.navigation} />
             }
-            onCommunitySelect={(id) => {
-              const recovering =
-                services.navigation.snapshot().ingress &&
-                services.navigation.snapshot().retryable;
-              services.communities.select(id);
-              if (!recovering) select("buzz.channels/channels");
-            }}
+            onCommunitySelect={selectCommunity}
             // A scoped Settings target selects its community on the way.
             onOpenTarget={(target) => void services.navigation.open(target)}
             communities={services.communities}
@@ -410,6 +441,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
               ) : (
                 <Settings
                   agents={services.agents}
+                  decisions={services.decisions}
                   plugins={plugins}
                   cards={services.settingsCards}
                   adminAccess={services.adminAccess}

@@ -161,9 +161,9 @@ fn native_command_permissions_isolate_webviews() {
         "jev_classifier_status",
         "jev_classifier_set_key",
         "jev_classifier_clear_key",
-        "jev_classify",
         "app_agent_state_load",
         "app_agent_state_set",
+        "decide",
         "title_bar_double_click",
         "notification_show",
         #[cfg(target_os = "macos")]

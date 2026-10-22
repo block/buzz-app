@@ -44,6 +44,7 @@ type ReviewFixtureOptions = {
   fromThread?: boolean;
   attachmentInReply?: boolean;
   openThreadTab?: () => boolean;
+  media?: (url: string) => string | undefined;
 };
 
 function mime(kind: MediaKind) {
@@ -58,6 +59,7 @@ async function setupReview({
   fromThread = false,
   attachmentInReply = false,
   openThreadTab,
+  media = (url) => url,
 }: ReviewFixtureOptions) {
   // The DOM emulator has no playback engine; keep native playback calls observable.
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
@@ -103,7 +105,7 @@ async function setupReview({
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
-      media: (url) => url,
+      media,
       writer: { sign, publish },
       async query(filters) {
         return filters.flatMap((filter) => {
@@ -176,6 +178,57 @@ async function setupReview({
     fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
   return { owner, root, sign, user, attachmentOwner, openReview };
 }
+
+it("keeps the image gallery reachable when the opened thumbnail is unavailable", async () => {
+  await setupReview({
+    kind: "image",
+    openComments: false,
+    media: (url) => (url.endsWith("image.png") ? undefined : url),
+    extraRootTags: [
+      ["imeta", "url https://fixture.test/next.png", "m image/png"],
+    ],
+  });
+  const next = await screen.findByRole("button", { name: "Next image" });
+  fireEvent.click(next);
+  expect(
+    screen.getByRole("img", { name: "Attachment preview" }),
+  ).toHaveAttribute("src", "https://fixture.test/next.png");
+});
+
+it("navigates every mixed attachment even after a video fails", async () => {
+  await setupReview({
+    kind: "video",
+    openComments: false,
+    extraRootTags: [
+      ["imeta", "url https://fixture.test/one.png", "m image/png"],
+      ["imeta", "url https://fixture.test/two.png", "m image/png"],
+      ["imeta", "url https://fixture.test/three.png", "m image/png"],
+      ["imeta", "url https://fixture.test/last.mp4", "m video/mp4"],
+    ],
+  });
+  await screen.findByText("1 / 5");
+  const firstVideo = screen.getByRole("dialog").querySelector("video");
+  assert.exists(firstVideo);
+  fireEvent.error(firstVideo);
+  for (let index = 2; index <= 5; index++) {
+    fireEvent.click(screen.getByRole("button", { name: "Next media" }));
+    await screen.findByText(`${index} / 5`);
+    if (index < 5)
+      expect(
+        screen.getByRole("img", { name: "Attachment preview" }),
+      ).toHaveAttribute(
+        "src",
+        `https://fixture.test/${["one", "two", "three"][index - 2]}.png`,
+      );
+  }
+  expect(screen.getByRole("dialog").querySelector("video")).toHaveAttribute(
+    "src",
+    "https://fixture.test/last.mp4",
+  );
+  expect(screen.getByRole("button", { name: "Next media" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Previous media" }));
+  await screen.findByText("4 / 5");
+});
 
 async function signedTemplate(sign: ReturnType<typeof vi.fn>) {
   await waitFor(() => expect(sign).toHaveBeenCalled());

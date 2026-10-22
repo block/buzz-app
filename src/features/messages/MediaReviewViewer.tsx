@@ -22,9 +22,12 @@ import {
 import {
   SidebarIcon,
   ChatCircleIcon,
+  CaretLeftIcon,
+  CaretRightIcon,
 } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { Attachment, ChannelMessage } from "../relay/contracts";
+import { safeMessageUrl } from "../relay/message-content";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { compareMessages } from "../relay/message-order";
@@ -215,8 +218,6 @@ function ReviewShell({
   const sourceUnavailable = useMediaElementSource(
     attachment.kind === "video" ? source : undefined,
   ).unavailable;
-  const mediaTitle =
-    attachment.kind === "video" ? (attachment.name ?? "Video") : "Image";
   const frame = useRef<HTMLElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const [commentsChoice, setCommentsOpen] = useState<boolean>();
@@ -254,16 +255,43 @@ function ReviewShell({
     : [];
   const [currentTime, setCurrentTime] = useState(initialTime);
   const [includeTime, setIncludeTime] = useState(true);
-  const imageAttachments = useMemo(() => {
+  const mediaAttachments = useMemo(() => {
     const seen = new Set<string>();
     return [
       ...editMessages.flatMap((row) => row.attachments),
       attachment,
     ].filter(
       (item) =>
-        item.kind === "image" && !seen.has(item.url) && !!seen.add(item.url),
+        (item.kind === "image" || item.kind === "video") &&
+        !!safeMessageUrl(item.url) &&
+        !seen.has(item.url) &&
+        !!seen.add(item.url),
     );
   }, [attachment, editMessages]);
+  const mixedGallery =
+    mediaAttachments.length > 1 &&
+    mediaAttachments.some((item) => item.kind === "video");
+  const displayedAttachment =
+    !mixedGallery && attachment.kind === "image"
+      ? (mediaAttachments.find((item) => item.url === selectedImageUrl) ??
+        attachment)
+      : attachment;
+  const mediaTitle =
+    displayedAttachment.name?.trim() ||
+    (displayedAttachment.kind === "video" ? "Video" : "Image");
+  const mediaIndex = mediaAttachments.findIndex(
+    (item) => item.url === attachment.url,
+  );
+  const navigateMedia = (direction: -1 | 1) => {
+    const next = mediaAttachments[mediaIndex + direction];
+    if (next) {
+      video.current?.pause();
+      // The stage may unmount and an end-arrow may become disabled.
+      // Keep subsequent keyboard events inside the surviving dialog.
+      frame.current?.focus({ preventScroll: true });
+      selectAttachment(next, 0);
+    }
+  };
   const [mediaFailed, setMediaFailed] = useState(false);
   // selectionRequest intentionally re-applies a seek when the same URL/time is selected again.
   useEffect(() => {
@@ -311,18 +339,42 @@ function ReviewShell({
       commentsMotion={commentsMotion}
       restoreFocus={restoreFocus}
       close={close}
+      navigate={mixedGallery ? navigateMedia : undefined}
       actions={
-        <IconButton
-          size="compact"
-          aria-label={commentsOpen ? "Hide comments" : "Show comments"}
-          aria-pressed={commentsOpen}
-          onClick={(event) => {
-            prepareSidebarMotion(event.detail > 0);
-            setCommentsMotion(event.detail > 0);
-            setCommentsOpen(!commentsOpen);
-          }}
-          icon={<SidebarIcon size={20} />}
-        />
+        <>
+          {mixedGallery && (
+            <div className={styles.imageReviewSwitcher}>
+              <IconButton
+                size="compact"
+                aria-label="Previous media"
+                disabled={mediaIndex <= 0}
+                onClick={() => navigateMedia(-1)}
+                icon={<CaretLeftIcon size={20} />}
+              />
+              <span aria-live="polite" aria-atomic="true">
+                {mediaIndex + 1} / {mediaAttachments.length}
+              </span>
+              <IconButton
+                size="compact"
+                aria-label="Next media"
+                disabled={mediaIndex >= mediaAttachments.length - 1}
+                onClick={() => navigateMedia(1)}
+                icon={<CaretRightIcon size={20} />}
+              />
+            </div>
+          )}
+          <IconButton
+            size="compact"
+            aria-label={commentsOpen ? "Hide comments" : "Show comments"}
+            aria-pressed={commentsOpen}
+            onClick={(event) => {
+              prepareSidebarMotion(event.detail > 0);
+              setCommentsMotion(event.detail > 0);
+              setCommentsOpen(!commentsOpen);
+            }}
+            icon={<SidebarIcon size={20} />}
+          />
+        </>
       }
       sidebar={
         <aside
@@ -406,7 +458,11 @@ function ReviewShell({
         </aside>
       }
     >
-      {!source || unavailable || sourceUnavailable || mediaFailed ? (
+      {(!source &&
+        (attachment.kind === "video" || mediaAttachments.length < 2)) ||
+      unavailable ||
+      sourceUnavailable ||
+      mediaFailed ? (
         <p
           className={styles.mediaReviewUnavailable}
           role={error ? "alert" : "status"}
@@ -418,7 +474,7 @@ function ReviewShell({
             </Button>
           )}
         </p>
-      ) : attachment.kind === "video" ? (
+      ) : attachment.kind === "video" && source ? (
         <VideoPlayer
           key={source}
           videoRef={video}
@@ -451,8 +507,13 @@ function ReviewShell({
         </VideoPlayer>
       ) : (
         <ImageReviewStage
-          attachments={imageAttachments}
-          selectedUrl={selectedImageUrl}
+          key={mixedGallery ? attachment.url : "images"}
+          attachments={
+            mixedGallery
+              ? [attachment]
+              : mediaAttachments.filter((item) => item.kind === "image")
+          }
+          selectedUrl={mixedGallery ? attachment.url : selectedImageUrl}
           select={setSelectedImageUrl}
           media={session.media}
           onOpenLink={onOpenLink}

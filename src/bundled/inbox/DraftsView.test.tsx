@@ -1039,6 +1039,29 @@ it("meaningful Drafts survive 500 empty records and keep an emptied selected edi
   ).not.toBeInTheDocument();
   expect(screen.getByText("No drafts")).toBeInTheDocument();
 });
+it("tag-only composer state is kept in storage but never listed as a draft", async () => {
+  const h = fixture({ withDm: true, withWriter: true });
+  // The carried-over tag after a send, or a default agent seeded into a chat.
+  const tagOnly = {
+    text: "@Alice ",
+    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
+  };
+  writeView(h.owner.session.scope, "draft:dm-room", tagOnly);
+  writeView(h.owner.session.scope, "draft:room", {
+    text: "@Alice Keep this",
+    recipients: [{ pubkey: h.alice.pubkey, name: "Alice", start: 0, end: 6 }],
+  });
+  render(h.view);
+  await screen.findByText("Please review this");
+  await chooseFilter("Drafts");
+  expect(
+    screen.getByRole("button", { name: "Open draft for #Design" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open draft for Alice" }),
+  ).not.toBeInTheDocument();
+  expect(readView(h.owner.session.scope, "draft:dm-room", "")).toEqual(tagOnly);
+});
 it("hands keyboard focus into draft deletion and back on cancel without changing the saved draft", async () => {
   const h = fixture({ withWriter: true });
   writeView(h.owner.session.scope, "draft:room", "Keep this draft");

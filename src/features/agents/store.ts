@@ -148,7 +148,7 @@ function readRecord(
             ...saved,
             value: {
               ...saved.value,
-              provider: saved.value.config.pr
+              provider: saved.value.config?.pr
                 ? "buzz.agents/github-pr"
                 : "buzz.agents/command",
             },

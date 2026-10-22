@@ -370,3 +370,30 @@ it("moves Monitor source watches into Attention without restarting completed reg
     JSON.stringify(read?.attention["watch/check"]),
   );
 });
+
+it.each([undefined, null])(
+  "keeps malformed legacy source config %s recoverable",
+  async (config) => {
+    const storage = memoryStorage();
+    await writeRecord(storage, {
+      ...record,
+      attention: {
+        "watch/broken": {
+          slug: "watch/broken",
+          modifiedAt: 1,
+          value: {
+            type: "source",
+            provider: "monitor/command",
+            interest_id: "check",
+            enabled: true,
+            channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            config,
+          },
+        },
+      },
+    } as unknown as AgentRecord);
+    const read = readRecords(storage)[pubkey];
+    expect(read?.attention["watch/broken"]).toBeUndefined();
+    expect(read?.skipped?.["watch/broken"]).toBeDefined();
+  },
+);

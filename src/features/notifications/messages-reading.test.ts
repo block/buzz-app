@@ -40,14 +40,17 @@ function mountList(
   vi.spyOn(list, "getBoundingClientRect").mockReturnValue(
     new DOMRect(0, 0, 500, 500),
   );
-  const rows = ids.map((id, index) => {
+  const items = ids.map((id) => {
     const item = document.createElement("div");
     item.dataset.messageId = id;
     list.append(item);
-    return vi
-      .spyOn(item, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(0, 100 + index * 100, 400, 100));
+    return item;
   });
+  const rows = items.map((item, index) =>
+    vi
+      .spyOn(item, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 100 + index * 100, 400, 100)),
+  );
   const real = h.owner.session.unread;
   const leases: { disposed: boolean }[] = [];
   const unread = {
@@ -78,7 +81,21 @@ function mountList(
     rows[index]?.mockReturnValue(new DOMRect(0, 600, 400, 100));
     list.dispatchEvent(new Event("scroll"));
   };
-  return { leases, scrollAway };
+  /** Changes a row's content in place; it stays where it is. */
+  const mutate = async (index: number) => {
+    items[index]?.append("edited");
+    await Promise.resolve(); // MutationObserver delivery
+  };
+  return { leases, scrollAway, mutate };
+}
+/** Queues animation frames without running them, and counts them. */
+function holdFrames() {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    frames.push(callback),
+  );
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  return frames;
 }
 /** Holds delivery at its permission probe, as a slow presentation would. */
 function holdPresentation(h: Awaited<ReturnType<typeof setup>>) {
@@ -94,7 +111,7 @@ function holdPresentation(h: Awaited<ReturnType<typeof setup>>) {
     present: () => present?.(),
   };
 }
-it.each(["in view", "window blur", "scroll away"] as const)(
+it.each(["in view", "window blur", "scroll away", "row mutation"] as const)(
   "Notify while viewing: after the list's own dwell read, the alert follows the view (%s)",
   async (state) => {
     const h = await setup(undefined, undefined, undefined, undefined, true);
@@ -109,11 +126,18 @@ it.each(["in view", "window blur", "scroll away"] as const)(
       // Dwell completes, and its write lease is released after the read.
       await vi.waitFor(() => expect(list.leases[0]?.disposed).toBe(true));
       expect(attention()).toMatchObject({ unread: false, viewing: true });
+      // The permission probe resolves before the list's next frame measures.
+      const frames = holdFrames();
       if (state === "window blur") window.dispatchEvent(new Event("blur"));
       if (state === "scroll away") list.scrollAway(0);
+      if (state === "row mutation") await list.mutate(0);
+      if (state === "scroll away" || state === "row mutation")
+        expect(frames).toHaveLength(1);
       delivery.present();
       await flush();
-      expect(h.show).toHaveBeenCalledTimes(state === "in view" ? 1 : 0);
+      expect(h.show).toHaveBeenCalledTimes(
+        state === "in view" || state === "row mutation" ? 1 : 0,
+      );
     } finally {
       delivery.present();
     }

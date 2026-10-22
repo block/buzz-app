@@ -197,9 +197,11 @@ it("a burst of scrolls and row changes cancels dwell at once but measures rows o
     h.element.dispatchEvent(new Event("scroll"));
     h.mutation();
   }
-  expect(h.leases[0]?.dispose).toHaveBeenCalledOnce();
+  // The current view stays the evidence until the frame replaces it.
+  expect(h.leases[0]?.dispose).not.toHaveBeenCalled();
   expect(measured).not.toHaveBeenCalled();
   vi.advanceTimersToNextFrame();
+  expect(h.leases[0]?.dispose).toHaveBeenCalledOnce();
   // One visibleIds pass reads the viewport once; the bottom check is skipped.
   expect(measured).toHaveBeenCalledOnce();
   // Each event takes its own lease; only the latest one carries the dwell.
@@ -379,6 +381,7 @@ it("scroll and content changes restart dwell; a row seen only at the end is not 
   const h = setup();
   vi.advanceTimersByTime(100);
   h.element.dispatchEvent(new Event("scroll"));
+  vi.advanceTimersToNextFrame();
   expect(h.leases[0]?.dispose).toHaveBeenCalled();
   vi.advanceTimersByTime(100);
   h.setRows([row("replacement", 100, 200)]);
@@ -388,6 +391,26 @@ it("scroll and content changes restart dwell; a row seen only at the end is not 
   h.setRows([row("new-at-end", 100, 200)]);
   vi.advanceTimersByTime(1);
   expect(h.leases[2]?.observe).not.toHaveBeenCalled();
+  // The first dwell was cancelled at the scroll, not at its frame.
+  expect(h.leases[0]?.observe).not.toHaveBeenCalled();
+});
+it("before its frame, the current view confirms each row on demand", () => {
+  const h = setup();
+  const viewed = () => h.leases[0]?.view.mock.lastCall?.[1];
+  expect(viewed()?.("visible")).toBe(true);
+  // Content changes in place: the row is still in view, not absent.
+  h.mutation();
+  expect(h.leases[0]?.dispose).not.toHaveBeenCalled();
+  expect(viewed()?.("visible")).toBe(true);
+  // A scroll moves it out before the frame: it is no longer viewed.
+  h.setRows([row("visible", 600, 700)]);
+  h.element.dispatchEvent(new Event("scroll"));
+  expect(viewed()?.("visible")).toBe(false);
+  // The frame replaces the view with what it measured.
+  vi.advanceTimersToNextFrame();
+  expect(h.leases[0]?.dispose).toHaveBeenCalledOnce();
+  vi.advanceTimersByTime(1000);
+  for (const lease of h.leases) expect(lease.observe).not.toHaveBeenCalled();
 });
 it("active content reflow cannot revoke dwell already queued for durability", async () => {
   const h = setup();
@@ -425,20 +448,23 @@ it.each(["blur", "scroll", "unmount"] as const)(
       [],
       expect.any(Function),
     );
-    expect(h.leases[0]?.view.mock.lastCall?.[1]()).toBe(false);
+    expect(h.leases[0]?.view.mock.lastCall?.[1]("visible")).toBe(false);
     // A view-only replacement still reports the row, with no timer of its own.
     const viewing = h.leases[1];
     expect(viewing?.view).toHaveBeenCalledExactlyOnceWith(
       ["visible"],
       expect.any(Function),
     );
-    expect(viewing?.view.mock.calls[0]?.[1]()).toBe(true);
+    expect(viewing?.view.mock.calls[0]?.[1]("visible")).toBe(true);
     expect(viewing?.dispose).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1000);
     expect(h.leases).toHaveLength(2);
     expect(viewing?.observe).not.toHaveBeenCalled();
     if (end === "blur") window.dispatchEvent(new Event("blur"));
-    if (end === "scroll") h.element.dispatchEvent(new Event("scroll"));
+    if (end === "scroll") {
+      h.element.dispatchEvent(new Event("scroll"));
+      vi.advanceTimersToNextFrame();
+    }
     if (end === "unmount") h.unmount();
     expect(viewing?.dispose).toHaveBeenCalledOnce();
   },

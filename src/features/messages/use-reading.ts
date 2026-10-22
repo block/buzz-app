@@ -99,25 +99,41 @@ export function useReading({
       for (const observed of observing) observed.dispose();
       observing.clear();
     }
+    function shown(row: HTMLElement, viewport: DOMRect) {
+      const bounds = row.getBoundingClientRect();
+      return (
+        row.dataset.membershipRow === undefined &&
+        row.dataset.huddleRow === undefined &&
+        bounds.height > 0 &&
+        bounds.width > 0 &&
+        bounds.top >= Math.max(viewport.top, 0) &&
+        bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) &&
+        bounds.left >= Math.max(viewport.left, 0) &&
+        bounds.right <= Math.min(viewport.right, window.innerWidth)
+      );
+    }
     function visibleIds() {
       const viewport = element.getBoundingClientRect();
       return [...element.querySelectorAll<HTMLElement>("[data-message-id]")]
-        .flatMap((row) => {
-          const bounds = row.getBoundingClientRect();
-          return row.dataset.membershipRow === undefined &&
-            row.dataset.huddleRow === undefined &&
-            row.dataset.messageId &&
-            bounds.height > 0 &&
-            bounds.width > 0 &&
-            bounds.top >= Math.max(viewport.top, 0) &&
-            bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) &&
-            bounds.left >= Math.max(viewport.left, 0) &&
-            bounds.right <= Math.min(viewport.right, window.innerWidth)
+        .flatMap((row) =>
+          row.dataset.messageId && shown(row, viewport)
             ? [row.dataset.messageId]
-            : [];
-        })
+            : [],
+        )
         .slice(0, 128);
     }
+    // Viewing evidence for the current view. While a measurement waits for
+    // its frame, the last view stays the evidence, but a row is confirmed
+    // only when asked: a consumer must not see a still-visible row as absent
+    // (or a scrolled-away row as present) because the frame has not run yet.
+    const viewing = (id: string) => {
+      if (!active()) return false;
+      if (frame === undefined) return true;
+      const row = [
+        ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
+      ].find((row) => row.dataset.messageId === id);
+      return !!row && shown(row, element.getBoundingClientRect());
+    };
     function bottomId() {
       if (
         !latestMessageId ||
@@ -142,20 +158,24 @@ export function useReading({
     // A discrete action (focus, pointer, key, visibility, settling) starts
     // dwell at once. Scroll, list mutations and resizes arrive many times per
     // frame: each cancels dwell at once but measures rows only in the next
-    // frame, rather than forcing a fresh layout of every row per event.
+    // frame, rather than forcing a fresh layout of every row per event. The
+    // current view stays until that frame replaces it (see `viewing`).
     function schedule() {
       unqueue();
       begin();
     }
     function reflow() {
-      cancel();
+      if (timer) clearTimeout(timer);
+      timer = undefined;
       pending?.dispose();
-      pending = undefined;
-      if (!ready()) return;
       // The lease is the intent fence, so take it when the event happens: a
       // manual unread before the frame must invalidate this measurement.
-      pending = acquire();
-      if (!pending) return;
+      pending = ready() ? acquire() : undefined;
+      if (!pending) {
+        unqueue();
+        cancel();
+        return;
+      }
       frame ??= requestAnimationFrame(() => {
         frame = undefined;
         const lease = pending;
@@ -188,7 +208,7 @@ export function useReading({
       handle = lease ?? acquire();
       if (!handle) return;
       try {
-        handle.view(ids, active);
+        handle.view(ids, viewing);
       } catch {
         cancel();
         return;
@@ -219,7 +239,7 @@ export function useReading({
           observed.view([], () => false);
           try {
             handle = session.unread.reading(channelId);
-            handle.view([...visible], active);
+            handle.view([...visible], viewing);
           } catch {
             handle = undefined;
           }

@@ -251,7 +251,7 @@ it("says a provider is not set up instead of offering its catalog's models", asy
   });
   expect(
     await screen.findByText(
-      "Anthropic isn't set up in goose. Add ANTHROPIC_API_KEY in Edit configuration, or run goose configure.",
+      "Anthropic isn't set up in goose. Add API key (ANTHROPIC_API_KEY) in Edit configuration, or run goose configure.",
     ),
   ).toHaveAttribute("role", "alert");
   const user = userEvent.setup();

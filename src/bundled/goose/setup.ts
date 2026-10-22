@@ -214,7 +214,7 @@ export class GooseSetup {
       "";
     const listed = providers.find((item) => item.id === id);
     // A provider not set up offers only the model the agent names.
-    const blocked = listed && missing(listed).length;
+    const blocked = listed && needs(listed);
     const models = (id && !blocked ? await this.models(id) : []).map(
       ({ id, label }) => ({ id, label, efforts: [] }),
     );
@@ -259,19 +259,15 @@ export class GooseSetup {
 
   /** Databricks catalogs can lag its endpoints and AI Gateway services;
    * configured providers use live discovery for both Databricks versions.
-   * A provider missing a field offers none: its catalog's would not run. */
+   * A provider not set up offers none: its catalog's would not run. */
   async models(id: string): Promise<readonly ModelChoice[]> {
     const listing = this.providers();
     const listed = (await listing).providers.find((item) => item.id === id);
-    const absent = listed ? missing(listed) : [];
-    if (listed && absent.length) {
+    const needed = listed ? needs(listed) : "";
+    if (listed && needed) {
       // `goose configure` can set it up meanwhile; trying again reads anew.
       if (this.listing === listing) this.listing = undefined;
-      throw new Error(
-        `${listed.name} isn't set up in goose. Add ${absent
-          .map((key) => key.name)
-          .join(", ")} in Edit configuration, or run goose configure.`,
-      );
+      throw new Error(`${listed.name} isn't set up in goose. ${needed}`);
     }
     const prefixes = PREFIXES[id];
     const models =
@@ -470,13 +466,17 @@ function provider(entry: Entry): Provider {
   };
 }
 
-/** The fields `provider` still needs: required ones without a default. goose
- * lists Ollama as not configured without `OLLAMA_HOST`, though it runs on the
- * host's default. */
-function missing(provider: Provider) {
-  return provider.configured
-    ? []
-    : provider.keys.filter((key) => key.required && !key.default);
+/** What `provider` still needs before it runs, or "" for nothing: a required
+ * field without a default, or signing in. goose lists Ollama as not configured
+ * without `OLLAMA_HOST`, though it runs on the host's default. */
+function needs(provider: Provider) {
+  if (provider.configured) return "";
+  const fields = provider.keys
+    .filter((key) => key.required && !key.default)
+    .map((key) => `${keyLabel(key.name)} (${key.name})`);
+  if (fields.length)
+    return `Add ${fields.join(", ")} in Edit configuration, or run goose configure.`;
+  return provider.signsIn ? "Run goose configure to sign in." : "";
 }
 
 /** `ANTHROPIC_API_KEY` reads as `API key`, `OPENAI_HOST` as `Host`. */

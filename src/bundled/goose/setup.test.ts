@@ -127,7 +127,7 @@ describe("GooseSetup", () => {
       supported: ["databricks-gpt-6-luna"],
     });
     await expect(goose.models("databricks")).rejects.toThrow(
-      "Databricks isn't set up in goose. Add DATABRICKS_HOST in Edit configuration, or run goose configure.",
+      "Databricks isn't set up in goose. Add Host (DATABRICKS_HOST) in Edit configuration, or run goose configure.",
     );
     // `goose configure` sets it up meanwhile; trying again finds its models.
     Object.assign(
@@ -139,6 +139,37 @@ describe("GooseSetup", () => {
     expect(await goose.models("databricks")).toEqual([
       { id: "databricks-gpt-6-luna", label: "databricks-gpt-6-luna" },
     ]);
+  });
+
+  it("offers no models for a provider that signs in until it has", async () => {
+    const { setup: goose } = setup({
+      providers: [
+        {
+          providerId: "copilot",
+          providerName: "GitHub Copilot",
+          configured: false,
+          visibleInSetup: true,
+          configKeys: [
+            {
+              name: "GITHUB_COPILOT_TOKEN",
+              required: true,
+              secret: true,
+              deviceCodeFlow: true,
+            },
+          ],
+          models: [{ id: "gpt-6" }, { id: "claude-opus-5-5" }],
+        },
+      ],
+    });
+    await expect(goose.models("copilot")).rejects.toThrow(
+      "GitHub Copilot isn't set up in goose. Run goose configure to sign in.",
+    );
+    await expect(
+      goose.picks({ provider: "copilot", model: "gpt-6" }),
+    ).resolves.toEqual({
+      current: "gpt-6",
+      models: [{ id: "gpt-6", label: "gpt-6", efforts: [] }],
+    });
   });
 
   it("offers the models of a provider that runs on its fields' defaults", async () => {

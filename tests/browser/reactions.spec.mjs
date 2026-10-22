@@ -304,8 +304,9 @@ test("one active reaction picker preserves target and focus when switching or un
   );
   await page.goto("/tests/fixtures/emoji.html?reactions");
   const rows = page.locator("[data-message-id]");
-  // Open the lower row first so its popup does not cover the next trigger.
-  const firstRow = rows.nth(1);
+  // The picker opens above its trigger. Use rows far enough apart that the
+  // lower row's popup does not cover the upper row.
+  const firstRow = rows.last();
   const secondRow = rows.nth(0);
   const first = firstRow
     .getByRole("group", { name: "Message actions", includeHidden: true })

@@ -187,7 +187,10 @@ for (const direction of ["forward", "backward"]) {
         exact: true,
       }),
     ).toBeFocused();
-    await expect(actions.locator("[data-message-keyboard-time]")).toBeVisible();
+    await expect(row(target).locator("[data-message-time-hint]")).toHaveCSS(
+      "opacity",
+      "1",
+    );
     await page.keyboard.press(direction === "forward" ? "Tab" : "Shift+Tab");
     await expect(
       actions.getByRole("button", {
@@ -598,9 +601,15 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   await page.mouse.move(0, 0);
   await expect(actions).toHaveCSS("opacity", "0");
   await settle(page);
-  const expectClockHidden = async () => {
-    await expect(row.locator("time")).toHaveClass(/sr-only/);
-    await expect(row.locator("time")).toHaveCSS("position", "absolute");
+  const hint = row.locator("[data-message-time-hint]");
+  const expectClockAbove = async () => {
+    await expect(hint).toHaveCSS("opacity", "1");
+    await expect(hint).toHaveCSS("position", "absolute");
+    const clock = await hint.boundingBox();
+    const bubble = await row
+      .locator("[data-message-action-anchor]")
+      .boundingBox();
+    expect(clock.y + clock.height).toBeLessThanOrEqual(bubble.y + 0.5);
   };
   const baseline = await following.boundingBox();
   for (const mode of ["hover", "focus"]) {
@@ -618,7 +627,11 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
             .closest("[data-layout]")
             .querySelector("[data-message-action-anchor]")
             .getBoundingClientRect();
-          return bar.getBoundingClientRect().top < bubble.top;
+          const rect = bar.getBoundingClientRect();
+          return (
+            Math.abs(rect.top - bubble.top) < 1 &&
+            (rect.left >= bubble.right || rect.right <= bubble.left)
+          );
         }),
       )
       .toBe(true);
@@ -626,12 +639,12 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
     const prose = await row.locator("p").first().boundingBox();
     const toolbar = await actions.boundingBox();
     expect(
-      toolbar.y + toolbar.height <= prose.y ||
+      toolbar.x >= prose.x + prose.width ||
         toolbar.x + toolbar.width <= prose.x,
     ).toBe(true);
     await expect(actions).toHaveCSS("position", "fixed");
     expect((await following.boundingBox()).y).toBe(baseline.y);
-    await expectClockHidden();
+    await expectClockAbove();
     await expect
       .poll(() =>
         link.evaluate((node) => {
@@ -696,12 +709,15 @@ test("narrow timeline continuation actions never cover prose or move adjacent ro
   await settle(page);
   await row.scrollIntoViewIfNeeded();
   await settle(page);
-  await expectClockHidden();
+  await expect(hint).toHaveCSS("opacity", "0");
   await row.locator("[data-message-action-anchor]").hover();
+  await expectClockAbove();
+  await hint.hover();
   const timestampHint = page.getByRole("tooltip").filter({ hasText: "2023" });
   await expect(timestampHint).toBeVisible();
   await page.mouse.move(0, 0);
   await expect(timestampHint).toHaveCount(0);
+  await expect(hint).toHaveCSS("opacity", "0");
 });
 
 test("historical single-day DMs and their threads expose dates without hover", async ({

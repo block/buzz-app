@@ -64,7 +64,8 @@ test("reaction previews and the inline picker do not reveal message hover action
   await actions.evaluate((bar) => {
     const card = document.querySelector(".buzz-preview-card[data-open]");
     const rect = card.getBoundingClientRect();
-    bar.style.top = `${rect.top}px`;
+    // End level with the card, clear of the hovered reaction beneath it.
+    bar.style.top = `${rect.bottom - bar.offsetHeight}px`;
     bar.style.left = `${rect.left}px`;
     bar.style.right = "auto";
   });
@@ -646,22 +647,20 @@ test("comment actions revealed while the drawer slides realign when it settles",
   await shown();
   const anchoring = () =>
     actions.evaluate((bar) => {
-      const bubble = bar
-        .closest("[data-layout]")
+      const message = bar.closest("[data-layout]");
+      const bubble = message
         .querySelector("[data-message-action-anchor]")
+        .getBoundingClientRect();
+      const gutter = message
+        .querySelector("[data-message-gutter]")
         .getBoundingClientRect();
       const rect = bar.getBoundingClientRect();
       return {
         right: Math.round(bubble.right),
         anchored:
-          Math.abs(bubble.top + 8 - rect.bottom) < 1 &&
+          Math.abs(bubble.top - rect.top) < 1 &&
           Math.abs(
-            Math.min(
-              bubble.right + 8,
-              bar.closest("[data-message-scroller]").getBoundingClientRect()
-                .right - 12,
-              document.documentElement.clientWidth - 12,
-            ) - rect.right,
+            gutter.left + gutter.width / 2 - (rect.left + rect.width / 2),
           ) < 1,
       };
     });

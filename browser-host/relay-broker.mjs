@@ -1508,8 +1508,19 @@ export function relayBrokerPlugin({
             if (!opening) {
               stream.syncs.delete(id);
               existing?.();
+              // The close can overtake its open: remember it so the late
+              // open cannot take a slot. IDs are never reused on a stream.
+              if (!existing) {
+                stream.closedSyncs.add(id);
+                if (stream.closedSyncs.size > 64)
+                  stream.closedSyncs.delete(
+                    stream.closedSyncs.values().next().value,
+                  );
+              }
               return json(res, 200, { accepted: true });
             }
+            if (stream.closedSyncs.delete(id))
+              return json(res, 409, { error: "Artifact sync already closed" });
             if (existing || stream.syncs.size >= 16)
               return json(res, 429, {
                 error: "Artifact sync capacity reached",
@@ -1773,6 +1784,7 @@ export function relayBrokerPlugin({
               close: undefined,
               write,
               syncs: new Map(),
+              closedSyncs: new Set(),
             };
             const traffic = subscribeRelayTraffic(
               relay.replace(/^http/, "ws"),

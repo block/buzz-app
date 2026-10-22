@@ -76,6 +76,35 @@ export function subscribeBrokerTraffic(
         sync.sink.closed(reason);
       }
   };
+  // A refusal the host sends before it allocates anything.
+  class SyncRefused extends Error {}
+  /** End `id` on the host. The host remembers a close that arrives before
+   * its open, so the order of the two POSTs does not matter. If the close
+   * itself has no known outcome, the stream is reset: the host ends every
+   * sync with its stream, so no host sync can outlive this one. */
+  function retireSync(id: string) {
+    if (closed || !streamId) return;
+    const current = generation;
+    void fetch(`${endpoint}/stream-artifact-sync-close`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId, id }),
+      signal: AbortSignal.any([
+        controller?.signal ?? new AbortController().signal,
+        AbortSignal.timeout(5000),
+      ]),
+    })
+      .then((response) => {
+        // 404: the stream, and so every sync on it, is already gone.
+        if (!response.ok && response.status !== 404)
+          throw new Error("Artifact sync close failed");
+      })
+      .catch(() => {
+        if (!closed && current === generation)
+          controller?.abort(new Error("Artifact sync close interrupted"));
+      });
+  }
   function openSync(sync: BrokerSync) {
     if (closed || !streamId) return;
     const current = generation;
@@ -91,13 +120,19 @@ export function subscribeBrokerTraffic(
       ]),
     })
       .then((response) => {
-        if (!response.ok)
-          throw new Error(`broker refused sync (${response.status})`);
+        if (response.ok) return;
+        const message = `broker refused sync (${response.status})`;
+        throw response.status >= 400 && response.status < 500
+          ? new SyncRefused(message)
+          : new Error(message);
       })
       .catch((error) => {
         if (closed || current !== generation || syncs.get(sync.id) !== sync)
           return;
         syncs.delete(sync.id);
+        // A timeout, network error or 5xx does not say whether the host
+        // opened the sync: end it there too, so it cannot hold a slot.
+        if (!(error instanceof SyncRefused)) retireSync(sync.id);
         sync.sink.closed(
           `error: ${error instanceof Error ? error.message : "broker sync failed"}`,
         );
@@ -481,16 +516,8 @@ export function subscribeBrokerTraffic(
       return () => {
         if (syncs.get(sync.id) !== sync) return;
         syncs.delete(sync.id);
-        if (sync.sent !== generation || !streamId) return;
-        void fetch(`${endpoint}/stream-artifact-sync-close`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ streamId, id: sync.id }),
-          signal: AbortSignal.timeout(5000),
-        }).catch(() => {
-          // The broker ends it with the stream at worst.
-        });
+        // A sync opened on an earlier stream ended with that stream.
+        if (sync.sent === generation) retireSync(sync.id);
       };
     },
     watchPresence(authors) {

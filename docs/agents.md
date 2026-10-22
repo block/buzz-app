@@ -149,19 +149,21 @@ config together; a failed save leaves the choice and draft available to retry
 or revert.
 
 An agent type may also contribute `provider`: a subscribable readiness snapshot,
-a read-only check, and a management-dialog body. **More → Providers** lists each
-active type once using the registered title and icon. It is a quick health view:
-rows show only ready, checking, attention, or a neutral unavailable state. The
-Agents host owns the submenu, modal framing, focus restoration and contribution
+a read-only check, and a management-dialog body. **Settings → Agent setup →
+Harness defaults** lists each active type once using the registered title and
+icon. It is a quick health view: rows show ready (with the default-model
+control), checking, attention, or a neutral unavailable state. The create
+dialog's **Model** row shows the same install and sign-in actions inline. The
+Agents host owns the rows, modal framing, focus restoration and contribution
 error boundary. The plugin owns connection actions and optional defaults inside
 the dialog; blocking install or sign-in work must expose cancellation before the
 dialog can close. Disabled or unloaded types remain in Settings → Plugins → Manage plugins.
 
-Goose's Settings → AI defaults contribution reads and writes Goose's own
+Goose's Settings → Harness defaults contribution reads and writes Goose's own
 configuration through `GooseSetup`. Provider keys stay in Goose's secret store;
 Buzz keeps no separate Goose defaults store. Readiness requires a working
 `goose-acp` and a configured default provider. The per-agent provider/model
-fields remain overrides. Types without a provider contribution have no AI
+fields remain overrides. Types without a provider contribution have no Harness
 defaults row; a failed contribution retains the unavailable fallback.
 
 Workspace, instructions and session scope are always per-agent. Claude and Codex
@@ -680,7 +682,7 @@ There is no agent-global sequence gate: producer sequences reset, skip and inter
 
 ### Try with an existing owner account
 
-Use the [README's public-pin/Keychain setup](../README.md#relay-channels) and run
+Use the [public-pin/Keychain setup](contributing.md#live-relay-development) and run
 `bin/just web` (or `bin/just desktop`). Open the printed Local URL, choose
 the agent's community and open a channel. Keep a runner active for that agent, with
 telemetry publication enabled, then give it work. This activity plugin does not
@@ -755,7 +757,7 @@ status. No keys, config, memory, membership, or runtime state are changed by it.
 
 ### Model-menu design exception
 
-The AI defaults and Goose creation controls intentionally use the shared Menu
+The Harness defaults and Goose creation controls intentionally use the shared Menu
 for family → model → effort navigation, as explicitly requested in product
 review. This is a scoped exception to DESIGN.md's Select/Combobox form-value
 guidance. Keep the selected model and effort accessible, preserve compact chip

@@ -94,6 +94,109 @@ create a second connection, cache or outbox inside a page. The conversation prev
 source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
+## The `buzzodz` CLI
+
+Run `pnpm buzzodz --help` from this repository, or install the standalone executable:
+
+```sh
+cargo install --locked --path crates/plugin-manager --bin buzzodz
+buzzodz plugin init /tmp/my-page example.page "My page"
+# Generate and pack the host-matched type-only preview once:
+pnpm author:build
+(cd dist-author && pnpm pack --pack-destination ..)
+pnpm --dir /tmp/my-page add -D "$PWD/buzz-author-0.0.0-preview.1.tgz"
+buzzodz plugin build /tmp/my-page
+buzzodz plugin install /tmp/my-page/dist
+buzzodz plugin enable example.page
+buzzodz plugin list
+```
+
+The CLI prints readable results and reports errors with a nonzero exit code.
+`disable`, `remove`, and
+`rollback` take a plugin ID. New installs start disabled; updates preserve their
+existing enabled state. `recover` backs up management settings and resets to
+bundled defaults, preserving artifacts for reinstallation.
+
+`--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
+also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
+target the same instance. Otherwise, profiles live under the OS application-data
+directory in `dev.local.buzz.foundation/profiles`.
+
+```sh
+BUZZODZ_PROFILE=experiment just desktop
+buzzodz --profile experiment plugin list
+```
+
+`BUZZODZ_SAFE_MODE=1 just desktop` opens the shell without external pages.
+Bundled pages work on web; their enabled settings are stored in that browser.
+Folder and Git/GitHub loading is available in **desktop Settings → Plugins → Manage plugins**.
+Choose a folder, or enter an HTTPS/SSH repository URL and optional branch/tag;
+then select a built plugin subfolder and install it. New installs are disabled;
+updates retain their enabled state and may run immediately. Repositories must
+include built `manifest.json` + `plugin.js` artifacts—Buzz never runs project builds
+or install scripts. See [import behavior and limits](#loading-from-folders-and-repositories).
+Browser installation is not supported; the browser shows a desktop-only explanation.
+
+## Emoji and reusable conversation UI
+
+Emoji is independently toggleable in Settings. Its picker and custom rendering
+plug into shared conversation surfaces; catalog, event tags and delivery stay
+session-owned. The standard composer remains shared host UI, independent of any
+example plugin. Automated tests use source-only external consumer and tool fixtures
+to exercise component reuse and contribution lifecycle.
+
+## Plugin module contract
+
+`src/bundled/channels` is a bundled example. External projects have `manifest.json`
+(`id`, `name`, `apiVersion: 1`, and optional `description`/`discovery`) and an entry
+point exporting
+`apply(ctx)`. `ctx` is a Cordis context. External JSX plugins export
+`inject = ["react", "pages"]` and obtain `const React = ctx.react` inside `apply`, then call
+`ctx.pages.register({ id, title, component })` to contribute a page. A plugin may register
+several pages or none. Page IDs are unique within their plugin. Add `primary: true` for a
+row in the sidebar's page navigation; every active page is listed in search. Buzz supplies React
+and owns the Cordis runtime (`@deepseek-ai/cordis` 4.0.2). Import their types only
+in external plugins; runtime imports are rejected by the scaffold's builder.
+
+The scaffold uses classic JSX, so normal JSX compiles against the local `React`
+variable. Components in other files can be created by a factory receiving that
+same React instance. Automatic `react/jsx-runtime` imports are not supported by
+the current standalone module format. Older plugins using `apply(ctx, host)` must
+switch to the React injectable and rebuild.
+
+Module evaluation must be pure. Enabled plugins activate even when their page is
+not selected. Register plugin resources with `ctx.effect(() => cleanup)`; these
+are disposed on disable, replacement, or app teardown. React effects belong to
+the visible page and clean up when navigating away. Plugin activation must finish
+within ten seconds, including waiting for required services. Losing a required
+service hides the plugin's pages while Cordis waits and reactivates it; each
+reactivation has a fresh ten-second deadline. Failed activation is shown in Settings;
+disable/enable or install a new revision to retry. Replacement waits for prior
+cleanup; if cleanup stalls, restart before that plugin can activate again.
+
+The CLI scaffolds `src/index.tsx`, a standard `vite.config.ts`, and a `pnpm build`
+script that type-checks and bundles the page. `buzzodz plugin build` runs that
+script; Node/pnpm are only needed for authoring, not installing or loading pages.
+
+API v1 distributes one self-contained JavaScript module; use inline styles or
+existing host classes. Separate CSS/assets are not supported. Type-check an
+external source project with `pnpm exec tsc` in that directory.
+
+The host owns navigation, Settings, loading errors, and render error boundaries.
+Settings controls and CLI management do not depend on plugin activation. Updates are detected while the app
+is running. A selected page remounts when its revision changes; its local React
+state resets. Plugin-specific persistent data has no host API yet.
+
+Plugins are trusted code executing in the app's JavaScript context. They are not
+sandboxed: infinite loops, global changes, and external side effects cannot be
+contained or rolled back by a React error boundary. Restart selects the bundled page, but enabled external plugins still activate.
+Use `BUZZODZ_SAFE_MODE=1` to pause external plugins for a launch if startup freezes.
+This leaves the profile’s saved enabled settings unchanged. The CLI remains usable if the UI
+freezes. Loaded JavaScript module revisions remain in memory until restart.
+
+See [foundation status and open gates](status.md) for maintained decisions,
+remaining acceptance work and historical evidence.
+
 ## Starting contracts
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with

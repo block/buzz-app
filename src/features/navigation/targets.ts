@@ -38,6 +38,9 @@ export type OpenTarget =
       threadRootId?: string;
       /** Presentation within this conversation; never mutation or confirmation state. */
       panel?: "members" | "shared-sessions";
+      /** A link this conversation opened in a panel tab. Opening it still
+       * resolves the URL through the registered panels. */
+      link?: string;
     }>;
 
 const MAX_BYTES = 8192;
@@ -178,6 +181,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "messageId",
           "threadRootId",
           "panel",
+          "link",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
           throw invalid();
@@ -187,6 +191,10 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           value.panel !== "shared-sessions"
         )
           throw invalid();
+        if (value.link !== undefined && typeof value.link !== "string")
+          throw invalid();
+        // Throws on a value that isn't an absolute URL.
+        if (typeof value.link === "string") new URL(value.link);
         target = {
           version: 1,
           kind: "conversation",
@@ -204,6 +212,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           ...(value.panel === "members" || value.panel === "shared-sessions"
             ? { panel: value.panel }
             : {}),
+          ...(typeof value.link === "string" ? { link: value.link } : {}),
         };
         break;
       default:

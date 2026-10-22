@@ -61,6 +61,7 @@ export function useConversationTabs({
   navigationSignal,
   isLive,
   openLink,
+  openLinkPanel = (_opening, show) => show(),
   fallbackFocus,
   eligible,
   threadId,
@@ -89,6 +90,8 @@ export function useConversationTabs({
   navigationSignal?: AbortSignal | undefined;
   isLive(): boolean;
   openLink(url: string): boolean;
+  /** Shows the panel a link opened; a page with history records it as a visit. */
+  openLinkPanel?(opening: PanelOpening, show: () => void): void;
   fallbackFocus?: RefObject<HTMLElement | null>;
   eligible?(entry: PanelOpening): boolean;
   threadId?: string | undefined;
@@ -546,7 +549,7 @@ export function useConversationTabs({
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
-      open(next, true);
+      openLinkPanel(next, () => open(next, true));
       return true;
     }
     return openLink(url);

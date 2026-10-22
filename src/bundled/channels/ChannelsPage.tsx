@@ -69,7 +69,15 @@ import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
-import { panelOpening, type Panels } from "../../features/panels/service";
+import {
+  panelOpening,
+  type PanelOpening,
+  type Panels,
+} from "../../features/panels/service";
+import {
+  parseOpenTarget,
+  type OpenTarget,
+} from "../../features/navigation/targets";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { PanelDock } from "../../features/panels/PanelDock";
@@ -163,6 +171,18 @@ export function ChannelsPage({
       )}
     </section>
   );
+}
+
+/** The conversation plus a link it shows, or nothing when that can't be addressed. */
+function linkTarget(
+  target: Extract<OpenTarget, { kind: "conversation" }>,
+  link: string,
+) {
+  try {
+    return parseOpenTarget({ ...target, link });
+  } catch {
+    return undefined;
+  }
 }
 
 function ChannelWorkspace({
@@ -777,6 +797,52 @@ function ChannelWorkspace({
   const returnFocus = useRef<
     { trigger: HTMLElement; channelId: string | undefined } | undefined
   >(undefined);
+  // The navigation attempt whose link tab is showing; reconnects keep it.
+  const linkVisit = useRef<string>(undefined);
+  // A link shown in a panel tab is its own visit, so Back returns to the tab
+  // it was opened from instead of the visit before that one.
+  const openLinkPanel = useCallback(
+    (opening: PanelOpening, show: () => void) => {
+      const addressed =
+        navigation?.target.kind === "conversation"
+          ? navigation.target
+          : undefined;
+      const target = addressed && linkTarget(addressed, opening.target);
+      // Only a link from the addressed thread (or channel) can be restored there.
+      if (
+        !navigator ||
+        !navigation ||
+        !addressed ||
+        !target ||
+        navigation.signal.aborted ||
+        addressed.link === opening.target ||
+        navigator.snapshot().entry.id !== navigation.entryId ||
+        opening.channelId !== addressed.channelId ||
+        opening.rootId !== routedThread?.rootId
+      ) {
+        show();
+        return;
+      }
+      tabState.leaveVisit();
+      show();
+      void navigator.open(target, { focus: "preserve" });
+      const { entry, attempt } = navigator.snapshot();
+      linkVisit.current = attempt.id;
+      // The panel is already showing; the new visit keeps that selection.
+      tabState.enterVisit(
+        `${entry.id}:${routedThread ? "thread" : "channel"}`,
+        undefined,
+        true,
+      );
+    },
+    [
+      navigator,
+      navigation,
+      routedThread,
+      tabState.leaveVisit,
+      tabState.enterVisit,
+    ],
+  );
   const secondary = useConversationTabs({
     state: tabState,
     relay,
@@ -826,6 +892,7 @@ function ChannelWorkspace({
     navigationSignal: navigation?.signal,
     isLive: () => !destination.current.navigation?.signal.aborted,
     openLink: (url) => openLink(url, { fromThread: true }),
+    openLinkPanel,
     // A Solo conversation has no channel menu; its history takes focus instead.
     fallbackFocus: solo ? historyContainer : settingsTrigger,
     openMembers: () => setMembersOpen(true),
@@ -977,6 +1044,21 @@ function ChannelWorkspace({
         routedThread,
       );
       if (navigation.focus === "preserve") setPreservedVisit(navigation);
+      // Back/Forward onto a link's visit shows its tab again.
+      const link =
+        navigation.target.kind === "conversation"
+          ? navigation.target.link
+          : undefined;
+      const attempt = navigator?.snapshot().attempt.id;
+      const linked =
+        link &&
+        currentId &&
+        attempt !== linkVisit.current &&
+        panelOpening(panels, currentId, link, routedThread?.rootId);
+      if (linked) {
+        linkVisit.current = attempt;
+        open(linked, true);
+      }
     }
     const activity = handoff?.activityThread.current;
     if (
@@ -1014,6 +1096,8 @@ function ChannelWorkspace({
     tabState.enterVisit,
     handoff?.activityAgent,
     current?.id,
+    currentId,
+    navigator,
     panels,
     panelTrigger,
   ]);
@@ -1254,7 +1338,7 @@ function ChannelWorkspace({
             : null);
         // Thread-origin details cover the live thread instead of retiring it.
         if (!fromThread && routedThread) select(channelId);
-        open(next, fromThread);
+        openLinkPanel(next, () => open(next, fromThread));
         return true;
       }
       return false;
@@ -1271,6 +1355,7 @@ function ChannelWorkspace({
       setSettings,
       tabState,
       panelTrigger,
+      openLinkPanel,
     ],
   );
   const hasChannelPanel =

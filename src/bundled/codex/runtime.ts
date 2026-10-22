@@ -1547,6 +1547,7 @@ export class CodexRuntime {
         restoreNotes(request);
         request.answered();
         this.status(agent.pubkey, key, "Idle");
+        active.finished = true;
         ready();
         return;
       }

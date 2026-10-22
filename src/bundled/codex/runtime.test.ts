@@ -4119,3 +4119,24 @@ it("drops source output invalidated while compaction waits without blocking othe
   );
   await f.complete(1);
 });
+
+it("queues an ordinary follow-up when a source is cancelled during startup history", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const reading = deferred<void>();
+  f.read.mockImplementationOnce(async () => {
+    reading.resolve();
+    await gate.promise;
+    return [];
+  });
+  let current = true;
+  await f.runtime.run({ ...pluginWake(f, root), current: () => current });
+  await reading.promise;
+  await f.runtime.run(f.delivery("ordinary follow-up"));
+  current = false;
+  gate.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("ordinary follow-up");
+  expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(0);
+  await f.complete(0);
+});

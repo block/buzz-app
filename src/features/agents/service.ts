@@ -2263,16 +2263,13 @@ export class AgentsService extends Service implements Agents {
   }
 
   async remove(pubkey: string): Promise<void> {
-    if (!this.identities.some((identity) => identity.pubkey === pubkey)) {
-      await this.removeHosted(pubkey);
-      forgetDefaultAgent(pubkey);
-      return;
-    }
+    if (!this.identities.some((identity) => identity.pubkey === pubkey))
+      return this.removeHosted(pubkey);
     const running = this.deleting.get(pubkey);
     if (running) return running;
-    const work = this.removeLocal(pubkey)
-      .then(() => forgetDefaultAgent(pubkey))
-      .finally(() => this.deleting.delete(pubkey));
+    const work = this.removeLocal(pubkey).finally(() =>
+      this.deleting.delete(pubkey),
+    );
     this.deleting.set(pubkey, work);
     return work;
   }
@@ -2308,6 +2305,7 @@ export class AgentsService extends Service implements Agents {
     await native.forget(pubkey);
     // Drops its settings.
     await this.refresh();
+    await handOnMainAgent(binding.session, pubkey);
   }
 
   async unarchive(pubkey: string): Promise<string | undefined> {
@@ -2344,6 +2342,7 @@ export class AgentsService extends Service implements Agents {
       await this.writeUnfinished(
         this.unfinished.filter((setup) => setup.pubkey !== pubkey),
       );
+      await handOnMainAgent(binding.session, pubkey);
     });
   }
   private async exclusive<T>(pubkey: string, step: () => Promise<T>) {
@@ -3370,6 +3369,13 @@ async function leaveCommunity(
   // there is nothing to hide (and no consent path to archive it with).
   if (state === "not-archived" && (await archives.consent(pubkey, signal)))
     await archives.request("archive", pubkey, signal);
+}
+/** After a finished Delete, rereads the shared agent choices so their cached
+ * inventory no longer offers it, then forgets it as the main agent so the
+ * next available one is saved in its place. */
+async function handOnMainAgent(session: RelaySession, pubkey: string) {
+  await session.agentChoices.refresh();
+  forgetDefaultAgent(pubkey);
 }
 function stillArchived(name: string) {
   return `${name} is still archived in this community, so it stays out of member lists and mentions there.`;

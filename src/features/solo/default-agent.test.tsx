@@ -2,6 +2,8 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
+import { createAgentChoices } from "../agents/choices";
+import { createAgentLibrary } from "../agents/library";
 import type { RelaySession } from "../relay/session";
 import {
   forgetDefaultAgent,
@@ -260,4 +262,43 @@ it("a deleted main agent hands the role on for good, even without archive eviden
   expect(screen.getByLabelText("two")).toHaveTextContent("C");
   act(() => update([c, a].filter((agent) => agent !== undefined)));
   expect(screen.getByLabelText("one")).toHaveTextContent("A");
+});
+
+it("after a finished delete, rereads cached inventory before choosing a replacement", async () => {
+  const a = { pubkey: "a".repeat(64), name: "A" };
+  const b = { pubkey: "b".repeat(64), name: "B" };
+  let rows = [b, a];
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: rows,
+  }));
+  const agentChoices = createAgentChoices({
+    scope: `https://relay.example.test:${"f".repeat(64)}`,
+    library: library.queries,
+    signal: new AbortController().signal,
+  });
+  await library.queries.refresh();
+  const session = { agentChoices } as unknown as RelaySession;
+  function Selection() {
+    return (
+      <output aria-label="main">
+        {useDefaultAgent(session, "reread")?.name}
+      </output>
+    );
+  }
+  render(<Selection />);
+  act(() => {
+    setDefaultAgent("reread", b.pubkey);
+  });
+  expect(screen.getByLabelText("main")).toHaveTextContent("B");
+  // B's record is deleted; the cached library still lists it until reread.
+  rows = [a];
+  await act(async () => {
+    await agentChoices.refresh();
+    forgetDefaultAgent(b.pubkey);
+  });
+  expect(screen.getByLabelText("main")).toHaveTextContent("A");
+  rows = [{ pubkey: "c".repeat(64), name: "C" }, a];
+  await act(() => agentChoices.refresh());
+  expect(screen.getByLabelText("main")).toHaveTextContent("A");
 });

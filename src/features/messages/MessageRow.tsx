@@ -772,6 +772,55 @@ function MessageRowContent({
       null
     );
   };
+  const reactionsInBubble =
+    !attachmentOnly &&
+    !cardsOnly &&
+    !row.huddle &&
+    !shownRow &&
+    !emojiOnly &&
+    !row.diff;
+  const reactionContent =
+    session && scope && extensions ? (
+      <MessageReactions
+        onFocusedRemoval={() =>
+          menuTrigger.current?.focus({ preventScroll: true })
+        }
+        row={row}
+        session={session}
+        scope={scope}
+        tools={extensions.tools}
+        inline={extensions.inline}
+        profiles={directory.profiles}
+        disabled={
+          !canReact ||
+          (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
+        }
+      />
+    ) : (
+      reactions.length > 0 && (
+        <div
+          className={`${styles.reactions} ${styles.reactionFallback}`}
+          data-message-reactions
+        >
+          {reactions.map((reaction) => (
+            <span key={JSON.stringify([reaction.content, reaction.emoji?.url])}>
+              {extensions ? (
+                <InlineText
+                  registry={extensions.inline}
+                  content={{ text: reaction.content, message: row, reaction }}
+                  media={media}
+                />
+              ) : (
+                reaction.content
+              )}
+              <span className={styles.reactionCount}>
+                {new Set(reaction.events.map((event) => event.authorId)).size}
+              </span>
+            </span>
+          ))}
+        </div>
+      )
+    );
   const message = (
     <div
       data-message-id={renderMessage ? undefined : row.id}
@@ -959,6 +1008,7 @@ function MessageRowContent({
                   ) : (
                     body
                   )}
+                  {reactionsInBubble && reactionContent}
                 </div>
               )}
               {attachmentGroups.length > 0 && (
@@ -1108,56 +1158,7 @@ function MessageRowContent({
               )}
             </MessageTimestampHint>
           </div>
-          {session && scope && extensions ? (
-            <MessageReactions
-              onFocusedRemoval={() => menuTrigger.current?.focus()}
-              row={row}
-              session={session}
-              scope={scope}
-              tools={extensions.tools}
-              inline={extensions.inline}
-              profiles={directory.profiles}
-              disabled={
-                !canReact ||
-                (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
-              }
-            />
-          ) : (
-            reactions.length > 0 && (
-              <div
-                className={`${styles.reactions} ${styles.reactionFallback}`}
-                data-message-reactions
-              >
-                {reactions.flatMap((reaction) =>
-                  [
-                    ...new Set(reaction.events.map((event) => event.authorId)),
-                  ].map((authorId) => (
-                    <span
-                      key={JSON.stringify([
-                        reaction.content,
-                        reaction.emoji?.url,
-                        authorId,
-                      ])}
-                    >
-                      {extensions ? (
-                        <InlineText
-                          registry={extensions.inline}
-                          content={{
-                            text: reaction.content,
-                            message: row,
-                            reaction,
-                          }}
-                          media={media}
-                        />
-                      ) : (
-                        reaction.content
-                      )}
-                    </span>
-                  )),
-                )}
-              </div>
-            )
-          )}
+          {!reactionsInBubble && reactionContent}
           <DeliveryNotice row={row} retry={retry} />
           {active && session && scope && extensions?.accessories && (
             <ComposerAccessories

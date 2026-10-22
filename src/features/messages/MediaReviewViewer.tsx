@@ -261,6 +261,11 @@ function ReviewShell({
     attachment.kind === "video" ? source : undefined,
   ).unavailable;
   const frame = useRef<HTMLElement>(null);
+  const retryThread = () => {
+    // Refresh removes Retry while loading; keep keyboard input in the viewer.
+    frame.current?.focus({ preventScroll: true });
+    void retry?.();
+  };
   const video = useRef<HTMLVideoElement>(null);
   const [commentsChoice, setCommentsOpen] = useState<boolean>();
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
@@ -496,7 +501,7 @@ function ReviewShell({
               <p className={styles.empty} role={error ? "alert" : "status"}>
                 {error ?? "Loading comments…"}
                 {retry && !unavailable && (
-                  <Button size="sm" type="button" onClick={() => void retry()}>
+                  <Button size="sm" type="button" onClick={retryThread}>
                     Retry
                   </Button>
                 )}
@@ -517,7 +522,7 @@ function ReviewShell({
         >
           {error ?? (loading ? "Loading media…" : "Media unavailable")}
           {retry && unavailable && (
-            <Button size="sm" type="button" onClick={() => void retry()}>
+            <Button size="sm" type="button" onClick={retryThread}>
               Retry
             </Button>
           )}

@@ -84,10 +84,15 @@ function created(
     spawn?: (fake: ReturnType<typeof fakeSpawn>) => GooseSetup;
     modelAppearance?: "subtle";
     config?: Config;
+    /** Fields goose already holds, beyond Databricks' host. */
+    saved?: Readonly<Record<string, readonly string[]>>;
   }> = {},
 ) {
   const saved = new Map<string, Set<string>>([
     ["databricks", new Set(["DATABRICKS_HOST"])],
+    ...Object.entries(options.saved ?? {}).map(
+      ([id, keys]) => [id, new Set(keys)] as const,
+    ),
   ]);
   const fake = fakeSpawn({
     providers: PROVIDERS,
@@ -236,8 +241,33 @@ it("keeps provider fields visible while saving its key and selecting a model", a
   expect(changes.at(-1)).toMatchObject({ model: "", effort: "" });
 });
 
+it("says a provider is not set up instead of offering its catalog's models", async () => {
+  const { saved } = created({
+    config: { ...DEFAULT_CONFIG, provider: "anthropic" },
+  });
+  expect(
+    await screen.findByText(
+      "Anthropic isn't set up in goose. Add ANTHROPIC_API_KEY in Edit configuration, or run goose configure.",
+    ),
+  ).toHaveAttribute("role", "alert");
+  const user = userEvent.setup();
+  await user.click(modelButton());
+  expect(await screen.findByRole("menu")).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
+  await user.keyboard("{Escape}");
+  // `goose configure` sets it up meanwhile.
+  saved.set("anthropic", new Set(["ANTHROPIC_API_KEY"]));
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  await choose(
+    modelButton().getAttribute("aria-label") ?? "",
+    "claude-opus-5-5",
+  );
+});
+
 it("keeps a card's model chip to the model, while its menu shows the level", async () => {
   created({
+    saved: { anthropic: ["ANTHROPIC_API_KEY"] },
     modelAppearance: "subtle",
     config: {
       ...DEFAULT_CONFIG,

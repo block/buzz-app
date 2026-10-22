@@ -212,11 +212,11 @@ export class GooseSetup {
         ? providers.find((item) => item.id === id)?.defaultModel
         : defaults.model) ||
       "";
-    const models = (id ? await this.models(id) : []).map(({ id, label }) => ({
-      id,
-      label,
-      efforts: [],
-    }));
+    // A provider not set up offers only the model the agent names.
+    const usable = providers.some((item) => item.id === id && item.configured);
+    const models = (id && usable ? await this.models(id) : []).map(
+      ({ id, label }) => ({ id, label, efforts: [] }),
+    );
     // A model its provider does not list is still the one it runs on.
     return !current || models.some((model) => model.id === current)
       ? { current, models }
@@ -257,15 +257,26 @@ export class GooseSetup {
   }
 
   /** Databricks catalogs can lag its endpoints and AI Gateway services;
-   * configured providers use live discovery for both Databricks versions. */
+   * configured providers use live discovery for both Databricks versions.
+   * A provider that is not set up offers none: its catalog's would not run. */
   async models(id: string): Promise<readonly ModelChoice[]> {
-    const listed = (await this.providers()).providers.find(
-      (item) => item.id === id,
-    );
+    const listing = this.providers();
+    const listed = (await listing).providers.find((item) => item.id === id);
+    if (listed && !listed.configured) {
+      // `goose configure` can set it up meanwhile; trying again reads anew.
+      if (this.listing === listing) this.listing = undefined;
+      const keys = listed.keys.filter((key) => key.required);
+      throw new Error(
+        `${listed.name} isn't set up in goose. ${
+          keys.length
+            ? `Add ${keys.map((key) => key.name).join(", ")}`
+            : "Set it up"
+        } in Edit configuration, or run goose configure.`,
+      );
+    }
     const prefixes = PREFIXES[id];
     const models =
-      listed?.configured &&
-      (prefixes || id === "databricks_v2" || !listed.models.length)
+      listed && (prefixes || id === "databricks_v2" || !listed.models.length)
         ? await this.supported(id)
         : (listed?.models ?? []);
     return prefixes

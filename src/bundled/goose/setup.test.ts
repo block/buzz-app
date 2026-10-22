@@ -117,11 +117,28 @@ describe("GooseSetup", () => {
       { id: "qwen3", label: "qwen3" },
       { id: "llama4", label: "llama4" },
     ]);
-    expect((await goose.models("anthropic")).map((item) => item.id)).toEqual([
-      "claude-opus-5-5",
-      "claude-haiku-5-5",
+    expect(await goose.models("hidden")).toEqual([]);
+  });
+
+  it("offers no catalog models for a provider that is not set up, and says what it needs", async () => {
+    const providers = PROVIDERS.map((entry) => ({ ...entry }));
+    const { setup: goose } = setup({
+      providers,
+      supported: ["databricks-gpt-6-luna"],
+    });
+    await expect(goose.models("databricks")).rejects.toThrow(
+      "Databricks isn't set up in goose. Add DATABRICKS_HOST in Edit configuration, or run goose configure.",
+    );
+    // `goose configure` sets it up meanwhile; trying again finds its models.
+    Object.assign(
+      providers.find((entry) => entry.providerId === "databricks") ?? {},
+      {
+        configured: true,
+      },
+    );
+    expect(await goose.models("databricks")).toEqual([
+      { id: "databricks-gpt-6-luna", label: "databricks-gpt-6-luna" },
     ]);
-    expect(await goose.models("databricks")).toEqual([]);
   });
 
   it("lists only the workspace's and goose's own Databricks endpoints", async () => {
@@ -189,8 +206,15 @@ describe("GooseSetup", () => {
 
   it("offers an agent its provider's models, or those of goose's config", async () => {
     const { setup: goose } = setup({ supported: ["qwen3", "llama4"] });
+    const { setup: configured } = setup({
+      providers: PROVIDERS.map((entry) =>
+        entry.providerId === "anthropic"
+          ? { ...entry, configured: true }
+          : entry,
+      ),
+    });
     await expect(
-      goose.picks({ provider: "anthropic", model: "" }),
+      configured.picks({ provider: "anthropic", model: "" }),
     ).resolves.toEqual({
       current: "claude-sonnet-5-5",
       models: [
@@ -200,10 +224,19 @@ describe("GooseSetup", () => {
       ],
     });
     await expect(
-      goose.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
+      configured.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
     ).resolves.toMatchObject({
       current: "claude-haiku-5-5",
       models: [{ id: "claude-opus-5-5" }, { id: "claude-haiku-5-5" }],
+    });
+    // A provider that is not set up offers only the model the agent names.
+    await expect(
+      goose.picks({ provider: "anthropic", model: "claude-haiku-5-5" }),
+    ).resolves.toEqual({
+      current: "claude-haiku-5-5",
+      models: [
+        { id: "claude-haiku-5-5", label: "claude-haiku-5-5", efforts: [] },
+      ],
     });
     await expect(goose.picks({ provider: "", model: "" })).resolves.toEqual({
       current: "qwen3",

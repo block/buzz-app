@@ -161,3 +161,37 @@ it("retries retained imports when another community's local recipient becomes av
   stop();
   warning.mockRestore();
 });
+
+it("retains a registration when its existing Interest has different instructions", async () => {
+  const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    options?.onStdout?.(JSON.stringify([registration]));
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited: Promise.resolve(0),
+    };
+  });
+  const save = vi.fn();
+  await importAttention(
+    {
+      snapshot: () => ({
+        running: [
+          {
+            pubkey: "agent",
+            place: "here",
+            attention: {
+              "interest/monitor-check": {
+                value: { type: "interest", instructions: "Another task" },
+              },
+            },
+          },
+        ],
+      }),
+      save,
+    } as unknown as Agents,
+    { spawn },
+  );
+  expect(save).not.toHaveBeenCalled();
+  expect(spawn).toHaveBeenCalledTimes(1);
+});

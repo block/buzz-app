@@ -86,6 +86,12 @@ export async function importAttention(
             JSON.stringify(value)
         )
           throw new Error("Watch id already has another registration");
+        if (
+          agent.attention[interest] &&
+          (agent.attention[interest].value.type !== "interest" ||
+            agent.attention[interest].value.instructions !== item.instructions)
+        )
+          throw new Error("Interest id already has another purpose");
         if (!agent.attention[interest])
           attention[interest] = {
             type: "interest",

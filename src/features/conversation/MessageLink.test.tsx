@@ -25,9 +25,20 @@ import { MessageMarkdown } from "../messages/MessageMarkdown";
 import { ConversationPresentation } from "./ConversationPresentation";
 import { LinkThreadTabContext } from "./LinkLabelContext";
 
+const tauri = vi.hoisted(() => ({
+  isTauri: vi.fn(() => false),
+  invoke: vi.fn(async (..._: unknown[]) => undefined),
+}));
+vi.mock("@tauri-apps/api/core", async (original) => ({
+  ...(await original<typeof import("@tauri-apps/api/core")>()),
+  ...tauri,
+}));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  tauri.isTauri.mockReset().mockReturnValue(false);
+  tauri.invoke.mockReset();
 });
 
 const entry: Contribution<LinkRenderer> = {
@@ -286,6 +297,31 @@ it("preserves ordinary pane interception and modified or middle-click fallback",
     anchor,
     new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }),
   );
+  expect(onOpenLink).not.toHaveBeenCalled();
+});
+
+// The desktop opener's injected click listener skips Cmd, so the link owns it.
+it("opens a desktop Cmd+click in the system browser, not the pane", async () => {
+  tauri.isTauri.mockReturnValue(true);
+  const { anchor, onOpenLink } = mount();
+  const event = new MouseEvent("click", {
+    bubbles: true,
+    cancelable: true,
+    metaKey: true,
+  });
+  fireEvent(anchor, event);
+  expect(event.defaultPrevented).toBe(true);
+  expect(tauri.invoke).toHaveBeenCalledExactlyOnceWith(
+    "plugin:opener|open_url",
+    { url },
+  );
+  expect(onOpenLink).not.toHaveBeenCalled();
+
+  tauri.invoke.mockRejectedValueOnce(new Error("denied"));
+  fireEvent.click(anchor, { metaKey: true });
+  expect(
+    await screen.findByText("Couldn’t open the link in your browser."),
+  ).toBeInTheDocument();
   expect(onOpenLink).not.toHaveBeenCalled();
 });
 

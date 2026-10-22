@@ -2182,7 +2182,7 @@ it("retains the selected profile draft while viewing teams", async () => {
   expect(agents.save).not.toHaveBeenCalled();
 });
 
-it("announces the default agent and presents its menu status without a fake toggle", async () => {
+it("announces the main agent and presents its menu status without a fake toggle", async () => {
   const ada = agent("Ada", 1);
   const view = setup([ada]);
   const choices = {
@@ -2208,11 +2208,62 @@ it("announces the default agent and presents its menu status without a fake togg
     subscribe: () => () => {},
   } as unknown as RelayData;
   view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
-  const card = screen.getByRole("gridcell", { name: "Ada, Default agent" });
+  const card = screen.getByRole("gridcell", { name: "Ada, Main agent" });
+  expect(within(card).getByText("Main agent")).toBeVisible();
   fireEvent.keyDown(card, { key: "F10", shiftKey: true });
   const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
-  expect(within(menu).getByText("Default agent")).toBeVisible();
+  expect(within(menu).getByText("Main agent")).toBeVisible();
+  // Right-click carries the same actions as the card's "..." menu.
+  expect(
+    within(menu).getByRole("menuitem", { name: "Copy public key" }),
+  ).toBeVisible();
   expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
+});
+
+it("offers Make main agent from the card's actions button", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const view = setup([ada, bea]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [
+      { pubkey: ada.pubkey, name: ada.name, managed: true },
+      { pubkey: bea.pubkey, name: bea.name, managed: true },
+    ],
+    archives: { status: "unavailable" },
+  };
+  const connection = {
+    status: "ready",
+    scope: "main-card-button",
+    session: {
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  expect(
+    screen.getByRole("gridcell", { name: "Ada, Main agent" }),
+  ).toBeVisible();
+  const card = screen.getByRole("gridcell", { name: "Bea" });
+  await user.click(
+    within(card).getByRole("button", { name: "Actions for Bea" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Make main agent" }),
+  );
+  expect(
+    await screen.findByRole("gridcell", { name: "Bea, Main agent" }),
+  ).toBeVisible();
 });
 
 it("opens a Marketplace tile in the profile pane and returns focus on close and import", async () => {

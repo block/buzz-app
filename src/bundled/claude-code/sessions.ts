@@ -225,10 +225,11 @@ export class AgentSessions {
       });
     }
     const saved = this.options.store.get(key);
-    const opened = await this.open(key, saved?.id, seen);
+    const opened = await this.open(key, saved?.id, 0);
     if (!("process" in opened)) return opened;
     live = opened;
     if (current && !current()) return { ok: true, undelivered: true };
+    this.touch(key, live, seen);
     const activity = {
       ...pick,
       ...(activityScope ? { activityScope } : {}),

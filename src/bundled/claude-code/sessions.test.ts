@@ -909,6 +909,7 @@ it("drops a cancelled source delivery after process startup without stopping ano
   current = false;
   release();
   await expect(stale).resolves.toMatchObject({ ok: true, undelivered: true });
+  expect(pool.seen("source")).toBe(0);
   await pool.deliver("other", "ordinary message", 2);
   expect(claudes().some((p) => p.prompts.includes("cancelled wake"))).toBe(
     false,

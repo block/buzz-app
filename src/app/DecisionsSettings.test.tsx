@@ -3,17 +3,20 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import type {
-  DecisionProviderStatus,
-  RegisteredProvider,
+import {
+  DEFAULT_DECISION_PROVIDER,
+  type DecisionProviderStatus,
+  type RegisteredProvider,
 } from "../features/decisions/service";
 import { DecisionsSettings } from "./DecisionsSettings";
 
 afterEach(cleanup);
 
+const TYPESAFE = DEFAULT_DECISION_PROVIDER;
+
 /** The decisions service as Settings uses it, choosing as the service does:
- * the saved choice, else the default, which here is the first entry. A
- * choice that is not registered answers nothing. */
+ * the saved choice, else TypeSafe. A choice that is not registered answers
+ * nothing. Labels name TypeSafe's key as "typesafe". */
 function fake(
   entries: ({
     key: string;
@@ -28,23 +31,25 @@ function fake(
     for (const listener of [...listeners]) listener();
   };
   const statuses = new Map(entries.map((entry) => [entry.key, entry.status]));
-  const providers: RegisteredProvider[] = entries.map(({ key, ...entry }) => ({
-    key,
-    id: key,
-    pluginId: key,
-    revision: "one",
-    label: `Provider ${key}`,
-    description: `About ${key}.`,
-    status: () => statuses.get(key) ?? "needs-setup",
-    subscribe: () => () => {},
-    decide: async () => ({ outcome: "failed", reason: "unavailable" }),
-    Settings: () => <p>Settings for {key}</p>,
-    ...(entry.Settings ? { Settings: entry.Settings } : {}),
-    ...(entry.readStatus ? { status: entry.readStatus } : {}),
-  }));
+  const providers: RegisteredProvider[] = entries.map(({ key, ...entry }) => {
+    const name = key === TYPESAFE ? "typesafe" : key;
+    return {
+      key,
+      id: key,
+      pluginId: key,
+      revision: "one",
+      label: `Provider ${name}`,
+      description: `About ${name}.`,
+      status: () => statuses.get(key) ?? "needs-setup",
+      subscribe: () => () => {},
+      decide: async () => ({ outcome: "failed", reason: "unavailable" }),
+      Settings: () => <p>Settings for {name}</p>,
+      ...(entry.Settings ? { Settings: entry.Settings } : {}),
+      ...(entry.readStatus ? { status: entry.readStatus } : {}),
+    };
+  });
   const backend = () =>
-    providers.find((provider) => provider.key === (chosen ?? entries[0]?.key))
-      ?.key;
+    providers.find((provider) => provider.key === (chosen ?? TYPESAFE))?.key;
   return {
     providers: () => providers,
     backend,
@@ -73,7 +78,7 @@ it("says to turn a provider on when none is", () => {
 it("shows a lone provider's settings, with no provider choice", () => {
   render(
     <DecisionsSettings
-      decisions={fake([{ key: "typesafe", status: "needs-setup" }])}
+      decisions={fake([{ key: TYPESAFE, status: "needs-setup" }])}
       active={() => true}
     />,
   );
@@ -88,7 +93,7 @@ it("says once, above every provider's settings, that the provider receives messa
   render(
     <DecisionsSettings
       decisions={fake([
-        { key: "a", status: "ready" },
+        { key: TYPESAFE, status: "ready" },
         { key: "b", status: "needs-setup" },
       ])}
       active={() => true}
@@ -100,19 +105,22 @@ it("says once, above every provider's settings, that the provider receives messa
   const disclosure = screen.getByText(/provider receives the message text/);
   expect(disclosure).toHaveTextContent("private channels");
   expect(
-    disclosure.compareDocumentPosition(screen.getByText("Settings for a")) &
-      Node.DOCUMENT_POSITION_FOLLOWING,
+    disclosure.compareDocumentPosition(
+      screen.getByText("Settings for typesafe"),
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
 });
 
 it("chooses a ready provider at once", async () => {
   const user = userEvent.setup();
   const decisions = fake([
-    { key: "a", status: "ready" },
+    { key: TYPESAFE, status: "ready" },
     { key: "b", status: "ready" },
   ]);
   render(<DecisionsSettings decisions={decisions} active={() => true} />);
-  expect(screen.getByRole("radio", { name: /Provider a/ })).toBeChecked();
+  expect(
+    screen.getByRole("radio", { name: /Provider typesafe/ }),
+  ).toBeChecked();
   await user.click(screen.getByRole("radio", { name: /Provider b/ }));
   expect(decisions.chosen()).toBe("b");
   expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
@@ -122,14 +130,14 @@ it("chooses a ready provider at once", async () => {
 it("shows the settings of one picked before it is ready, and saves the choice once it is", async () => {
   const user = userEvent.setup();
   const decisions = fake([
-    { key: "a", status: "ready" },
+    { key: TYPESAFE, status: "ready" },
     { key: "b", status: "needs-setup" },
   ]);
   render(<DecisionsSettings decisions={decisions} active={() => true} />);
   await user.click(screen.getByRole("radio", { name: /Provider b/ }));
   // The working provider keeps answering until b is set up.
   expect(decisions.chosen()).toBeUndefined();
-  expect(decisions.backend()).toBe("a");
+  expect(decisions.backend()).toBe(TYPESAFE);
   expect(screen.getByRole("radio", { name: /Provider b/ })).toBeChecked();
   expect(screen.getByText("Settings for b")).toBeVisible();
   act(() => decisions.setStatus("b", "ready"));
@@ -140,7 +148,7 @@ it("shows the settings of one picked before it is ready, and saves the choice on
 it("changes nothing while hidden", async () => {
   const user = userEvent.setup();
   const decisions = fake([
-    { key: "a", status: "ready" },
+    { key: TYPESAFE, status: "ready" },
     { key: "b", status: "ready" },
   ]);
   render(<DecisionsSettings decisions={decisions} active={() => false} />);
@@ -153,7 +161,7 @@ it("keeps a provider's failing settings inside its own part, even while hidden",
   const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
   const decisions = fake([
     {
-      key: "a",
+      key: TYPESAFE,
       status: "ready",
       Settings: () => {
         throw new Error("broken plugin");
@@ -179,7 +187,7 @@ it("keeps a provider's failing settings inside its own part, even while hidden",
   selected = "decisions";
   rerender(page());
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Provider a settings are unavailable. You can turn its plugin off in Settings > Plugins.",
+    "Provider typesafe settings are unavailable. You can turn its plugin off in Settings > Plugins.",
   );
   // The rest of the section still works.
   await user.click(screen.getByRole("radio", { name: /Provider b/ }));
@@ -191,7 +199,7 @@ it("keeps a provider's failing settings inside its own part, even while hidden",
 it("treats a provider whose status throws as not ready", async () => {
   const user = userEvent.setup();
   const decisions = fake([
-    { key: "a", status: "ready" },
+    { key: TYPESAFE, status: "ready" },
     {
       key: "b",
       status: "ready",
@@ -205,5 +213,34 @@ it("treats a provider whose status throws as not ready", async () => {
   // Shown, as one picked before it is ready, but not chosen.
   expect(screen.getByText("Settings for b")).toBeVisible();
   expect(decisions.chosen()).toBeUndefined();
-  expect(decisions.backend()).toBe("a");
+  expect(decisions.backend()).toBe(TYPESAFE);
+});
+
+it("offers a lone provider when the chosen one is gone, and answers only once it is chosen", async () => {
+  const user = userEvent.setup();
+  // The user chose b, then turned b's plugin off.
+  const decisions = fake([{ key: TYPESAFE, status: "ready" }], "b");
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  expect(decisions.backend()).toBeUndefined();
+  const radio = screen.getByRole("radio", { name: /Provider typesafe/ });
+  expect(radio).not.toBeChecked();
+  expect(screen.queryByText("Settings for typesafe")).toBeNull();
+  await user.click(radio);
+  expect(decisions.chosen()).toBe(TYPESAFE);
+  expect(decisions.backend()).toBe(TYPESAFE);
+  expect(screen.getByText("Settings for typesafe")).toBeVisible();
+});
+
+it("offers a lone other provider when TypeSafe is off, and sets it up before choosing it", async () => {
+  const user = userEvent.setup();
+  const decisions = fake([{ key: "b", status: "needs-setup" }]);
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  expect(decisions.backend()).toBeUndefined();
+  await user.click(screen.getByRole("radio", { name: /Provider b/ }));
+  // Its setup is reachable, but nothing answers until it is ready.
+  expect(screen.getByText("Settings for b")).toBeVisible();
+  expect(decisions.chosen()).toBeUndefined();
+  act(() => decisions.setStatus("b", "ready"));
+  expect(decisions.chosen()).toBe("b");
+  expect(decisions.backend()).toBe("b");
 });

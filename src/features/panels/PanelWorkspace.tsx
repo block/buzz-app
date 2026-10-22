@@ -74,14 +74,15 @@ const contentTarget = '[data-tab-focus]:not([aria-disabled="true"])';
 
 /** Moves focus from a chosen tab to its content once mounted, unless it left. */
 function focusWhenReady(panel: HTMLElement, tab: HTMLElement) {
-  const observer = new MutationObserver(() => {
-    const content =
-      document.activeElement === tab
-        ? panel.querySelector<HTMLElement>(contentTarget)
-        : undefined;
-    if (content === null) return;
+  const stop = () => {
     observer.disconnect();
-    content?.focus({ preventScroll: true });
+    tab.removeEventListener("blur", stop);
+  };
+  const observer = new MutationObserver(() => {
+    const content = panel.querySelector<HTMLElement>(contentTarget);
+    if (!content) return;
+    stop();
+    content.focus({ preventScroll: true });
   });
   observer.observe(panel, {
     childList: true,
@@ -89,7 +90,8 @@ function focusWhenReady(panel: HTMLElement, tab: HTMLElement) {
     attributes: true,
     attributeFilter: ["aria-disabled"],
   });
-  return () => observer.disconnect();
+  tab.addEventListener("blur", stop);
+  return stop;
 }
 
 /** The channel owns target tabs; private details retain their feature's lifetime. */
@@ -313,7 +315,7 @@ export function PanelWorkspace({
         content?.focus({ preventScroll: true });
         if (!content || document.activeElement !== content)
           tab?.focus({ preventScroll: true });
-        if (panel && !content && tab)
+        if (panel && !content && tab && document.activeElement === tab)
           awaitContent.current = focusWhenReady(panel, tab);
       }
       tab?.parentElement?.scrollIntoView?.({

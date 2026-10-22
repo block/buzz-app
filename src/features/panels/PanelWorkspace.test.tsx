@@ -348,17 +348,20 @@ test("a pointer-chosen tab's composer takes focus when it mounts later, unless t
     const [mounted, setMounted] = useState(["One"]);
     ready = (id) => setMounted((ids) => [...ids, id]);
     return (
-      <PanelWorkspace
-        value={value}
-        select={select}
-        items={["One", "Two", "Three"].map((id) => ({
-          id,
-          label: id,
-          content: mounted.includes(id) && (
-            <input aria-label={`${id} reply`} data-tab-focus="" />
-          ),
-        }))}
-      />
+      <>
+        <input aria-label="Search" />
+        <PanelWorkspace
+          value={value}
+          select={select}
+          items={["One", "Two", "Three", "Four"].map((id) => ({
+            id,
+            label: id,
+            content: mounted.includes(id) && (
+              <input aria-label={`${id} reply`} data-tab-focus="" />
+            ),
+          }))}
+        />
+      </>
     );
   }
   render(<Harness />);
@@ -370,6 +373,12 @@ test("a pointer-chosen tab's composer takes focus when it mounts later, unless t
   await user.keyboard("{ArrowLeft}");
   await act(async () => ready("Three"));
   expect(tab("Two")).toHaveFocus();
+  // Leaving the tab and returning before the composer mounts keeps it there.
+  await user.click(tab("Four"));
+  act(() => screen.getByRole("textbox", { name: "Search" }).focus());
+  act(() => tab("Four").focus());
+  await act(async () => ready("Four"));
+  expect(tab("Four")).toHaveFocus();
 });
 
 test("Escape cancelling IME composition does not close the tab", () => {

@@ -265,12 +265,17 @@ test("Stop in a message's activity ends its local work quietly", async ({
   await expect
     .poll(() => page.evaluate(() => window.localAgentFixture.stopped()))
     .toEqual([event.id]);
-  // Stopped work is neither finished nor failed: its activity just goes, and a
-  // toast confirms the stop.
+  // Stopped work is neither finished nor failed: its live activity goes, a
+  // toast confirms the stop, and the message keeps a note that it stopped.
   await expect(activity).toHaveCount(0);
   await expect(
     page.getByText("Stopped Local tester", { exact: true }),
   ).toBeVisible();
+  const note = row.getByText("Local tester · Stopped", { exact: true });
+  await expect(note).toBeVisible();
+  await row.screenshot({
+    path: testInfo.outputPath("local-activity-stopped.png"),
+  });
   await expect(
     page.locator('[data-channel-id="alpha"] [data-channel-working]'),
   ).toHaveCount(0);

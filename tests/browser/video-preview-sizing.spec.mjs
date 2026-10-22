@@ -90,34 +90,74 @@ test("extreme video metadata stays bounded with reachable controls and uncropped
   await expect(fullscreen).toBeFocused();
 });
 
-// Exercise the real embedded-image caller, after decoding tall image dimensions.
-test("tall GitHub body images stay bounded without cropping", async ({
+// Real layout and decoded pixels are needed to detect image letterboxing.
+// Exercise the GitHub caller and the shared renderer's thread sizing mode.
+test("portrait and tall images keep proportional bounded frames without side bars", async ({
   page,
 }) => {
+  let dimensions = { width: 1179, height: 2556 };
   await page.route(
     "https://user-images.githubusercontent.com/fixture/tall.png",
     (route) =>
       route.fulfill({
         contentType: "image/svg+xml",
-        body: '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="6000"><rect width="1000" height="6000" fill="teal"/><circle cx="500" cy="500" r="400" fill="gold"/></svg>',
+        body: `<svg xmlns="http://www.w3.org/2000/svg" width="${dimensions.width}" height="${dimensions.height}"><rect width="100%" height="100%" fill="teal"/></svg>`,
       }),
   );
-  await page.goto("/tests/fixtures/media-review.html?tall-image", {
-    waitUntil: "domcontentloaded",
-  });
-  const image = page.getByRole("img", { name: "Tall screenshot" });
-  await expect(image).toHaveJSProperty("naturalHeight", 6000);
-  const imagePreview = page.getByRole("button", {
-    name: "Open image fullscreen",
-  });
-  await expect
-    .poll(async () => (await imagePreview.boundingBox()).height)
-    .toBeLessThanOrEqual(448);
-  await expect(image).toHaveCSS("object-fit", "contain");
-  await imagePreview.click();
-  await expect(
-    page.getByRole("dialog", { name: "Image attachment" }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(imagePreview).toBeFocused();
+  for (const size of [
+    { width: 1179, height: 2556 },
+    { width: 1000, height: 6000 },
+  ]) {
+    dimensions = size;
+    for (const thread of [false, true]) {
+      for (const [width, height, rem, theme] of [
+        [1440, 950, 16, "light"],
+        [1440, 700, 16, "dark"],
+        [390, 844, 16, "light"],
+        [390, 844, 20, "dark"],
+      ]) {
+        await page.setViewportSize({ width, height });
+        await page.goto(
+          `/tests/fixtures/media-review.html?tall-image${thread ? "&image-thread" : ""}`,
+          { waitUntil: "domcontentloaded" },
+        );
+        await page.evaluate(
+          ({ rem, theme }) => {
+            document.documentElement.dataset.colorMode = theme;
+            document.documentElement.style.fontSize = `${rem}px`;
+            document.documentElement.style.setProperty(
+              "--type-rem",
+              `${rem}px`,
+            );
+          },
+          { rem, theme },
+        );
+        const image = page.getByRole("img", { name: "Tall screenshot" });
+        await expect(image).toHaveJSProperty("naturalHeight", size.height);
+        const preview = page.getByRole("button", {
+          name: "Open image fullscreen",
+        });
+        await expect
+          .poll(async () => {
+            const bounds = await preview.boundingBox();
+            return bounds.width / bounds.height;
+          })
+          .toBeCloseTo(size.width / size.height, 2);
+        const bounds = await preview.boundingBox();
+        const heightCap =
+          width <= 650 ? 18 * rem : thread ? 22 * rem : 28 * rem;
+        expect(bounds.height).toBeLessThanOrEqual(heightCap);
+        expect(bounds.width).toBeGreaterThan(0);
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+        await expect(image).toHaveCSS("object-fit", "cover");
+        await preview.click();
+        await expect(
+          page.getByRole("dialog", { name: "Image attachment" }),
+        ).toBeVisible();
+        await page.keyboard.press("Escape");
+        await expect(preview).toBeFocused();
+      }
+    }
+  }
 });

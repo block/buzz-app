@@ -222,10 +222,24 @@ function Fixture() {
   const trigger = useRef<HTMLElement | null>(null);
   if (new URLSearchParams(location.search).has("tall-image"))
     return (
-      <GitHubBody
-        url="https://github.com/block/buzz-app/pull/1473"
-        body="![Tall screenshot](https://user-images.githubusercontent.com/fixture/tall.png)"
-      />
+      <div style={{ width: "fit-content", maxWidth: "100%" }}>
+        {new URLSearchParams(location.search).has("image-thread") ? (
+          <MediaAttachment
+            attachment={{
+              kind: "image",
+              url: "https://user-images.githubusercontent.com/fixture/tall.png",
+            }}
+            media={(source) => source}
+            mode="thread"
+            imageDescription="Tall screenshot"
+          />
+        ) : (
+          <GitHubBody
+            url="https://github.com/block/buzz-app/pull/1473"
+            body="![Tall screenshot](https://user-images.githubusercontent.com/fixture/tall.png)"
+          />
+        )}
+      </div>
     );
 
   return (

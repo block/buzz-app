@@ -1028,13 +1028,8 @@ html[data-keyboard-navigation] .audioSeek:focus-visible {
   display: block;
   /* A definite preferred width keeps outgoing fit-content messages from
      collapsing to their byline. max-width still lets narrow panes shrink. */
-  width: min(
-    32rem,
-    max(16rem, calc(min(28rem, 56vh) * var(--media-ratio, 16 / 9)))
-  );
+  width: min(32rem, calc(min(28rem, 56vh) * var(--media-ratio, 16 / 9)));
   max-width: 100%;
-  /* Extreme metadata uses a bounded frame; contain preserves the full media. */
-  max-height: min(28rem, 56vh);
   aspect-ratio: var(--media-ratio, 16 / 9);
   overflow: visible;
   margin-block: var(--space-1);
@@ -1049,11 +1044,7 @@ button.mediaPreview {
   cursor: zoom-in;
 }
 .mediaPreviewThread {
-  max-height: min(22rem, 45vh);
-  width: min(
-    32rem,
-    max(16rem, calc(min(22rem, 45vh) * var(--media-ratio, 16 / 9)))
-  );
+  width: min(32rem, calc(min(22rem, 45vh) * var(--media-ratio, 16 / 9)));
 }
 .mediaPreviewPixels > img:not(.mediaPoster),
 .mediaVideo {
@@ -1064,6 +1055,9 @@ button.mediaPreview {
   height: 100%;
   object-fit: contain;
   background: var(--surface-inverse);
+}
+.mediaPreviewPixels > img:not(.mediaPoster) {
+  object-fit: cover;
 }
 .mediaPoster {
   position: absolute;
@@ -1178,6 +1172,12 @@ button.mediaPreview {
     width: 100%;
     height: 100%;
     border-radius: 0;
+  }
+  .mediaPreview {
+    width: min(32rem, calc(min(18rem, 56vh) * var(--media-ratio, 16 / 9)));
+  }
+  .mediaPreviewThread {
+    width: min(32rem, calc(min(18rem, 45vh) * var(--media-ratio, 16 / 9)));
   }
   .audioAttachment {
     max-width: 100%;

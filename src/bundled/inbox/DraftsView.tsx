@@ -21,7 +21,10 @@ import type { Navigation } from "../../features/navigation/controller";
 import type { NavigationScope } from "../../features/navigation/targets";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { mentionDraft } from "../../features/messages/mention-draft";
+import {
+  hasDraftContent,
+  mentionDraft,
+} from "../../features/messages/mention-draft";
 import { clearAttachmentDraft } from "../../features/messages/attachment-draft";
 import {
   clearView,
@@ -102,10 +105,7 @@ export function DraftsView({
   // The composer owns draft contents and storage; Inbox only enumerates its scope.
   const saved = listDraftViews(
     session.scope,
-    (value) => {
-      const draft = mentionDraft(value);
-      return !!draft.text.trim() || !!draft.sessionCards?.length;
-    },
+    (value) => hasDraftContent(mentionDraft(value)),
     selected,
   );
   void revision;

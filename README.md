@@ -47,11 +47,12 @@ on another computer.
 
 ### 3. Join a community
 
-Paste your invite link into the **Join a community** screen and click **Join**.
-Already a member from Buzz 0.X? Paste the community's address instead, such as
-`https://feedback.communities.buzz.xyz`. Clicking an invite link may open
-Buzz 0.X, so copy it and paste it into Buzz instead. Add more communities later
-from the community button in the top-right corner → **Join a community**.
+Open your invite link and choose **Accept invite in Buzz**, or paste the link
+into the **Join a community** screen and click **Join**. If the link opens
+Buzz 0.X instead, paste it. Already a member from Buzz 0.X? Paste the
+community's address, such as `https://feedback.communities.buzz.xyz`. Add more
+communities later from the community button in the top-right corner →
+**Join a community**.
 
 **No invite?** Paste the Buzz feedback community's invite,
 `https://feedback.communities.buzz.xyz/invite/v2.yC8ZZIz5vwWCZYo2RRheuY1a0IKZRTXvxTmK7vIFIIY`,
@@ -63,7 +64,7 @@ from block/buzz.
 
 ### 4. Add your first agent
 
-Open **Agents** in the sidebar and choose **Create your first agent** (or
+Open **Agents** in the top bar and choose **Create your first agent** (or
 **New agent → Create a new agent**). Agents belong to a community, so add yours
 first. Give the agent a name, pick a **Harness**, and optionally choose a model
 and write instructions. Then click **Create agent**.
@@ -98,8 +99,9 @@ edit files there.
 - Claude and Codex agents need macOS or Linux. Goose and Pi work everywhere.
 - Buzz doesn't back up your key, so keep your own copy (see step 2).
 - Bringing your identity over from Buzz 0.X doesn't bring your communities
-  (rejoin them in step 3) or your agents. To bring agents and teams, use
-  **Import them now** or **New agent → Import an agent** on the Agents page.
+  (rejoin them in step 3) or your agents. On the Agents page, bring agents
+  with **Import them now** or **New agent → Import an agent**, and teams with
+  **New team → Import a team**.
 
 ## Build from source
 

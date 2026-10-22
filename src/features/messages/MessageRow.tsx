@@ -1,5 +1,4 @@
 import { Collapsible } from "@base-ui/react/collapsible";
-import { formatItemTimestamp } from "../../shared/datetime";
 import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
@@ -23,8 +22,8 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { MessageLink } from "../conversation/MessageLink";
 import {
   DayDivider,
+  MessageTimeHint,
   MessageTimestamp,
-  MessageTimestampHint,
 } from "./MessageTimestamp";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -429,6 +428,11 @@ function MessageRowContent({
   // while its card is mounted, and they return to the host list while its
   // fallback shows. A remounted card starts healthy and claims again.
   const bodyShown = !attachmentOnly && !cardsOnly;
+  // A bubble narrower than its payload carries the clock at its own edge.
+  const hintInBubble = bodyShown && !shownRow && !row.huddle;
+  const timeHint = !renderMessage && stackPrevious && (
+    <MessageTimeHint createdAt={row.createdAt} />
+  );
   const messageRenderer = useMessageRenderer(extensions?.messages, row);
   const [failedRenderer, setFailedRenderer] = useState<MessageRenderer>();
   const claims =
@@ -602,32 +606,19 @@ function MessageRowContent({
         messageCopyText(row, directory.profiles, directory.agents)
       }
       quickControls={
-        <>
-          {stackPrevious && (
-            <span
-              className={styles.keyboardMessageTime}
-              data-message-keyboard-time
-              aria-hidden="true"
-            >
-              {formatItemTimestamp(row.createdAt, {
-                withTime: true,
-              })}
-            </span>
-          )}
-          {quickControls ??
-            (canReact && session && scope && extensions ? (
-              <MessageReactionControls
-                row={row}
-                session={session}
-                scope={scope}
-                tools={extensions.tools}
-                inline={extensions.inline}
-                disabled={
-                  !!row.delivery && !["accepted", "seen"].includes(row.delivery)
-                }
-              />
-            ) : undefined)}
-        </>
+        quickControls ??
+        (canReact && session && scope && extensions ? (
+          <MessageReactionControls
+            row={row}
+            session={session}
+            scope={scope}
+            tools={extensions.tools}
+            inline={extensions.inline}
+            disabled={
+              !!row.delivery && !["accepted", "seen"].includes(row.delivery)
+            }
+          />
+        ) : undefined)
       }
       leadingItems={
         session ? (
@@ -794,7 +785,9 @@ function MessageRowContent({
           undefined
         }
       >
-        {!renderMessage && <span className={styles.messageGutter} />}
+        {!renderMessage && (
+          <span className={styles.messageGutter} data-message-gutter />
+        )}
 
         <div className={styles.messageBody}>
           {!renderMessage && overlays}
@@ -807,7 +800,9 @@ function MessageRowContent({
           >
             {/* A live append must not remove the reader's current focus target. */}
             {!renderMessage && (!stackNext || avatarFocused) && (
-              <div className={styles.messageAvatar}>{avatar}</div>
+              <div className={styles.messageAvatar} data-message-avatar>
+                {avatar}
+              </div>
             )}
             <div className={styles.messageHeader}>
               {!row.membership &&
@@ -876,11 +871,10 @@ function MessageRowContent({
                 />
               </div>
             )}
-            <MessageTimestampHint
-              createdAt={
-                !renderMessage && stackPrevious ? row.createdAt : undefined
-              }
-              attachments={attachmentGroups.length > 0}
+            <div
+              className={styles.messagePayload}
+              data-message-payload=""
+              data-attachments={attachmentGroups.length > 0 || undefined}
             >
               {sessionCards.length > 0 && (
                 <div
@@ -959,6 +953,7 @@ function MessageRowContent({
                   ) : (
                     body
                   )}
+                  {hintInBubble && timeHint}
                 </div>
               )}
               {attachmentGroups.length > 0 && (
@@ -1106,7 +1101,8 @@ function MessageRowContent({
                   })}
                 </div>
               )}
-            </MessageTimestampHint>
+              {!hintInBubble && timeHint}
+            </div>
           </div>
           {session && scope && extensions ? (
             <MessageReactions

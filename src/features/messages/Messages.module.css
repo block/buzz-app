@@ -1795,7 +1795,6 @@ html[data-keyboard-navigation] .membership .membershipName:focus-visible {
   gap: var(--space-half);
   padding: var(--space-half);
   margin-inline-start: auto;
-  scroll-margin-block-start: var(--space-2);
   scroll-margin-inline-end: var(--space-3);
   /* Controls are not conversation text: a selection that spans rows passes
      through this bar, and engines copy button labels the user never saw. */
@@ -1856,11 +1855,11 @@ html[data-keyboard-input] .quickReactionGlyph {
     top: 0;
   }
   .messageActions {
-    flex-wrap: wrap;
+    flex-direction: column;
+    flex-wrap: nowrap;
     max-width: none;
     opacity: 0;
     pointer-events: none;
-    translate: 0 -100%;
   }
   /* Closed controls remain focusable at the slot, not at viewport offsets. */
   .messageActions[popover] {
@@ -2689,9 +2688,33 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 
 .messagePayload {
+  position: relative;
   min-width: 0;
   width: fit-content;
   max-width: 100%;
+}
+/* Above the bubble's corner away from the avatar, clear of thread summaries
+   and reactions, which follow the avatar side. */
+.messageTimeHint {
+  @apply text-caption;
+  position: absolute;
+  bottom: 100%;
+  inset-inline-end: 0;
+  padding-inline: var(--space-4);
+  color: var(--text-subtle);
+  white-space: nowrap;
+  user-select: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-state) var(--easing-state);
+}
+.message[data-viewer-message] .messageTimeHint {
+  inset-inline: 0 auto;
+}
+.message[data-actions-revealed] .messageTimeHint,
+html[data-keyboard-navigation] .message:focus-within .messageTimeHint {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* A wide byline must not pull a short own bubble away from its avatar. */
@@ -2720,6 +2743,13 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 .message[data-viewer-message]:not([data-layout="timeline"]) .messageAvatar {
   left: calc(100% + var(--space-2));
+}
+/* The revealed toolbar covers the avatar; its uncovered edge must not open a
+   profile preview over the route to the toolbar. */
+@media (hover: hover) and (pointer: fine) {
+  .message[data-actions-revealed] .messageAvatar {
+    pointer-events: none;
+  }
 }
 .messageBubble > :is(.text, .plainText) {
   margin: 0;
@@ -3052,12 +3082,6 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
 .audienceBody .message[data-layout="continuation"] .messageGutter {
   display: none;
 }
-@media (hover: hover) and (pointer: fine) {
-  /* Activity has no bubble padding for the toolbar to overlap. */
-  .audienceBody .messageActions {
-    scroll-margin-block-start: 0;
-  }
-}
 .audienceAvatar {
   display: grid;
   flex: none;
@@ -3172,21 +3196,6 @@ html[data-keyboard-navigation] .audienceLine:focus-visible {
   height: 100%;
   min-width: 0;
   min-height: 0;
-}
-
-/* Keyboard users can read a grouped message's time without opening a popup. */
-.keyboardMessageTime {
-  display: none;
-  user-select: none;
-}
-html[data-keyboard-navigation]
-  .messageActions:focus-within
-  .keyboardMessageTime {
-  @apply text-caption;
-  display: inline-block;
-  color: var(--text-subtle);
-  padding-inline: var(--space-2);
-  white-space: nowrap;
 }
 
 /* A standalone renderer already owns its surface. Mixed prose keeps its bubble. */

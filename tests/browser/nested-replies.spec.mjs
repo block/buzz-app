@@ -547,22 +547,24 @@ for (const width of [1492, 1280, 1024, 700, 390])
     await page.setViewportSize({ width, height: 950 });
     await expandAll();
     // A same-parent continuation keeps its full timestamp accessible and
-    // exposes it on a long bubble hover, without bringing back an inline clock.
+    // reveals a compact clock above the bubble only with its actions.
     const continuationRow = panel.locator(
       `[data-message-id="${continuation.id}"]`,
     );
     await expect(
       continuationRow.locator('[data-layout="continuation"]'),
     ).toBeVisible();
-    const clock = continuationRow.locator("time");
+    const clock = continuationRow.locator("[data-message-time-hint]");
     await panel.getByRole("textbox", { name: "Reply to thread" }).focus();
     await page
       .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="true"]')
       .hover();
-    await expect(clock).toHaveClass(/sr-only/);
+    await expect(clock).toHaveCSS("opacity", "0");
     await continuationRow
       .getByText("Same-parent continuation", { exact: true })
       .hover();
+    await expect(clock).toHaveCSS("opacity", "1");
+    await clock.hover();
     await expect(page.getByRole("tooltip")).toContainText(/\d{4}/);
     await continuationRow
       .getByRole("button", { name: "More message actions", exact: true })
@@ -570,7 +572,9 @@ for (const width of [1492, 1280, 1024, 700, 390])
     await page
       .locator('[role="tab"][data-tab-value^="thread:"][aria-selected="true"]')
       .hover();
-    await expect(clock).toHaveClass(/sr-only/);
+    await expect(
+      page.getByRole("tooltip").filter({ hasText: /\d{4}/ }),
+    ).toHaveCount(0);
     for (const id of [...ids.slice(0, -1), continuation.id]) {
       const branch = branchFor(id);
       const row = panel.locator(`[data-message-id="${id}"]`);
@@ -607,28 +611,23 @@ for (const width of [1492, 1280, 1024, 700, 390])
         Promise.all(bar.getAnimations().map((animation) => animation.finished)),
       );
       if (width >= 640) {
-        // Headers and continuations both lift the bar over the bubble's top
-        // corner by the same token-sized overlap.
+        // Headers and continuations both level the bar with the bubble's top.
         const placement = await row.evaluate((node) => {
           const bar = node.querySelector('[aria-label="Message actions"]');
           const body = node.querySelector('[class*="_messageBubble_"]');
-          const rect = bar.getBoundingClientRect();
-          const anchor = body.getBoundingClientRect();
           return {
-            actual: rect.bottom,
-            expected:
-              anchor.top +
-              parseFloat(getComputedStyle(bar).scrollMarginBlockStart),
+            actual: bar.getBoundingClientRect().top,
+            expected: body.getBoundingClientRect().top,
           };
         });
         expect(placement.actual).toBeCloseTo(placement.expected, 1);
-        // Header anchoring must not wrap a full toolbar inside the narrower
-        // body column before the row-width action reductions take effect.
+        // The full toolbar stays one column rather than wrapping beside a
+        // narrow body before the row-width action reductions take effect.
         const centres = await actions.evaluate((bar) =>
           [...bar.querySelectorAll("button")]
             .map((button) => button.getBoundingClientRect())
             .filter((box) => box.width > 0 && box.height > 0)
-            .map((box) => box.top + box.height / 2),
+            .map((box) => box.left + box.width / 2),
         );
         expect(Math.max(...centres) - Math.min(...centres)).toBeLessThan(1);
       }

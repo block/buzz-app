@@ -96,6 +96,20 @@ const LABELED_CHANNEL_PAGE = 100;
 /** How long name search reuses the public channel metadata once read. Typing
  * reads it once; a channel created meanwhile shows up after this. */
 const PUBLIC_CHANNEL_PAGE_TTL = 30_000;
+/** The loosest `matchName` rank that name search admits from the open
+ * directory: word starts in order, so "buzz bugs" finds buzz-bugs. Letters
+ * scattered anywhere in a name would match much of a large directory. */
+const PUBLIC_CHANNEL_LOOSEST_RANK = 4;
+
+/** How well an open channel's name matches the typed needle; undefined when
+ * it does not. `exact` admits only the whole name, for `in:#name`. */
+function publicChannelRank(name: string, needle: string, exact?: boolean) {
+  if (exact) return name.toLowerCase() === needle ? 0 : undefined;
+  const rank = matchRank(name, needle);
+  return rank !== undefined && rank <= PUBLIC_CHANNEL_LOOSEST_RANK
+    ? rank
+    : undefined;
+}
 /** How long a channel link keeps a `withheld` answer before rechecking it. */
 const REFERENCE_TTL = 5 * 60_000;
 /** The least wait before a failed channel-link lookup is tried again. */
@@ -1790,17 +1804,17 @@ export function createChannelStore(
     const candidates = [...latest.entries()]
       .flatMap(([id, event]) => {
         const name = metadataName(event);
-        return openMetadata(event) &&
-          !event.tags.some(
+        if (
+          !name ||
+          !openMetadata(event) ||
+          event.tags.some(
             ([key, value]) => key === "archived" && value === "true",
-          ) &&
-          !discovery.authorized(id) &&
-          name &&
-          (settings?.exact
-            ? name.toLowerCase() === needle
-            : name.toLowerCase().includes(needle))
-          ? [{ id, name, rank: matchRank(name, needle) ?? 3 }]
-          : [];
+          ) ||
+          discovery.authorized(id)
+        )
+          return [];
+        const rank = publicChannelRank(name, needle, settings?.exact);
+        return rank === undefined ? [] : [{ id, name, rank }];
       })
       // Best match first before the cut, so an exact name is never dropped.
       .sort(
@@ -1909,12 +1923,10 @@ export function createChannelStore(
     return recentPublic.ids
       .flatMap((id) => {
         const channel = previewable(id);
-        const name = channel?.name.toLowerCase();
-        return channel &&
-          name &&
-          (settings?.exact ? name === needle : name.includes(needle))
-          ? [{ channel, rank: matchRank(channel.name, needle) ?? 3 }]
-          : [];
+        const rank = channel?.name
+          ? publicChannelRank(channel.name, needle, settings?.exact)
+          : undefined;
+        return channel && rank !== undefined ? [{ channel, rank }] : [];
       })
       .sort((a, b) => a.rank - b.rank)
       .map(({ channel }) => channel);

@@ -737,6 +737,31 @@ it("ranks public name matches before the cut and reuses one metadata page while 
   expect(h.channels.matchPublic?.("ops")).toEqual([]);
 });
 
+it("finds a public channel by its words whatever separates them, but not inside another word", async () => {
+  const h = setup();
+  h.channels.ensureList();
+  await h.rosters(0);
+  await h.settled();
+  const id = (n: number) =>
+    `20000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const open = (n: number, name: string) =>
+    metadata(relay, id(n), name, 1_700_000_000, [["public"], ["t", "stream"]]);
+  const spaced = open(0, "buzz-bugs");
+  const page = [spaced, open(1, "rebuzzbugs")];
+  const done = h.channels.searchPublic?.("buzz bugs");
+  assert.exists(done);
+  (await h.next(39000)).respond(page);
+  const resolve = await h.next(39000);
+  expect(resolve.filters[0]?.["#d"]).toEqual([id(0)]);
+  resolve.respond([spaced]);
+  const result = await done;
+  expect(result.channels.map((channel) => channel.name)).toEqual(["buzz-bugs"]);
+  expect(
+    h.channels.matchPublic?.("#buzz bugs").map((channel) => channel.name),
+  ).toEqual(["buzz-bugs"]);
+  expect(h.channels.matchPublic?.("buzz bugs", { exact: true })).toEqual([]);
+});
+
 it("reads every public metadata page, and a keystroke that gives up leaves the read for the next", async () => {
   let clock = 1_000_000;
   const h = setup({ now: () => clock });

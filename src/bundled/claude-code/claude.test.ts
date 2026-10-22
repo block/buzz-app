@@ -396,6 +396,21 @@ it("forgets a stop once its turn ends, so a later failure is reported", async ()
   });
 });
 
+it("does not carry a stopped turn of its own into the next message", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  sessionState(fake, "running");
+  await claude.interrupt();
+  abortTools(fake);
+  expect(claude.active).toBe(false);
+  await expect(claude.send("next")).resolves.toEqual({ ok: true });
+});
+
 it("throws when Claude refuses to stop, and reports a later real error", async () => {
   const { spawn, processes } = fakeSpawn();
   const claude = await ClaudeProcess.start(spawn, {

@@ -556,8 +556,10 @@ export class ClaudeProcess {
       return;
     }
     if (message.type !== "result") return;
-    // A turn that finished before the interrupt took effect is not stopped.
+    // A turn that finished before the interrupt took effect is not stopped,
+    // and a stopped turn of its own has no message to settle.
     if (
+      this.pending &&
       this.stopping &&
       (message.is_error || message.terminal_reason === "aborted_streaming")
     )

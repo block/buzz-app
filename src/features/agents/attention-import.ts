@@ -47,7 +47,9 @@ export async function importAttention(
     try {
       if ("wake" in item) {
         const wake = item.wake;
-        const agent = agents.find(wake.agent);
+        const agent = agents
+          .snapshot()
+          .running.find((agent) => agent.pubkey === wake.agent);
         if (agent?.place !== "here" || !agent.attentionEnabled)
           throw new Error("Recipient Attention is not enabled");
         agents.wake(wake.agent, {
@@ -60,7 +62,9 @@ export async function importAttention(
       }
       const id = `monitor-${item.name}`;
       for (const pubkey of item.agents) {
-        const agent = agents.find(pubkey);
+        const agent = agents
+          .snapshot()
+          .running.find((agent) => agent.pubkey === pubkey);
         if (agent?.place !== "here")
           throw new Error("Recipient is not a local agent");
         const attention: Record<string, AttentionValue> = {};
@@ -99,4 +103,46 @@ export async function importAttention(
       );
     }
   }
+}
+
+/** Retry retained files when local recipients or their connections become usable. */
+export function watchAttentionImport(
+  agents: Agents,
+  host: Pick<Host, "spawn">,
+) {
+  if (!host.spawn) return () => {};
+  let imported = "";
+  let importing = false;
+  let stopped = false;
+  const migrate = () => {
+    const snapshot = agents.snapshot();
+    const recipients = JSON.stringify(
+      snapshot.running.map((agent) => [
+        agent.pubkey,
+        agent.attentionEnabled,
+        agents.relay(agent.pubkey)?.snapshot().status,
+      ]),
+    );
+    if (
+      stopped ||
+      importing ||
+      recipients === imported ||
+      !snapshot.running.length
+    )
+      return;
+    imported = recipients;
+    importing = true;
+    void importAttention(agents, host)
+      .catch((error) => console.warn("Attention migration failed", error))
+      .finally(() => {
+        importing = false;
+        migrate();
+      });
+  };
+  const unsubscribe = agents.subscribe(migrate);
+  migrate();
+  return () => {
+    stopped = true;
+    unsubscribe();
+  };
 }

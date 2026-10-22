@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { importAttention } from "./attention-import";
+import { importAttention, watchAttentionImport } from "./attention-import";
 import type { Agents, Agent } from "./service";
 import type { HostProcessOptions } from "../host/service";
 
@@ -20,7 +20,11 @@ it("saves the Interest and watch before archiving and preserves Attention off", 
   const save = vi.fn(async () => {
     order.push("saved");
   });
-  const agents = { find: () => agent, save } as unknown as Agents;
+  const agents = {
+    find: () => undefined,
+    snapshot: () => ({ running: [{ ...agent, pubkey: "agent" }] }),
+    save,
+  } as unknown as Agents;
   await importAttention(agents, {
     spawn: async (_id, options) => {
       const archive = Boolean(options?.args?.length);
@@ -64,7 +68,9 @@ it("keeps a registration recoverable when saving fails", async () => {
     };
   });
   const agents = {
-    find: () => ({ place: "here", attention: {} }),
+    snapshot: () => ({
+      running: [{ pubkey: "agent", place: "here", attention: {} }],
+    }),
     save: async () => {
       throw new Error("disk full");
     },
@@ -82,7 +88,9 @@ it("archives a pending legacy wake only after queuing it for its original conver
     text: "Review complete",
   };
   const agents = {
-    find: () => ({ place: "here", attentionEnabled: true }),
+    snapshot: () => ({
+      running: [{ pubkey: "agent", place: "here", attentionEnabled: true }],
+    }),
     wake: (_agent: string, delivery: object) => {
       expect(delivery).toEqual({
         channel: wake.channel,
@@ -110,4 +118,46 @@ it("archives a pending legacy wake only after queuing it for its original conver
     },
   });
   expect(order).toEqual(["queued", "archive"]);
+});
+
+it("retries retained imports when another community's local recipient becomes available", async () => {
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  let running: Agent[] = [];
+  let changed = () => {};
+  const save = vi.fn(async () => {});
+  const agents = {
+    snapshot: () => ({ running }),
+    relay: () => ({ snapshot: () => ({ status: "ready" }) }),
+    subscribe: (listener: () => void) => {
+      changed = listener;
+      return () => {};
+    },
+    save,
+  } as unknown as Agents;
+  const spawn = vi.fn(async (_id: string, options?: HostProcessOptions) => {
+    if (!options?.args?.length)
+      options?.onStdout?.(JSON.stringify([registration]));
+    return {
+      write: async () => {},
+      end: async () => {},
+      kill: async () => {},
+      exited: Promise.resolve(0),
+    };
+  });
+  const stop = watchAttentionImport(agents, { spawn });
+  running = [{ pubkey: "other", place: "here", attention: {} } as Agent];
+  changed();
+  await vi.waitFor(() => expect(warning).toHaveBeenCalled());
+  expect(save).not.toHaveBeenCalled();
+  running = [
+    ...running,
+    { pubkey: "agent", place: "here", attention: {} } as Agent,
+  ];
+  changed();
+  await vi.waitFor(() =>
+    expect(save).toHaveBeenCalledWith("agent", expect.anything()),
+  );
+  await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(3));
+  stop();
+  warning.mockRestore();
 });

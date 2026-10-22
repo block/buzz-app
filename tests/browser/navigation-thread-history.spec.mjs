@@ -137,6 +137,58 @@ test("Back restores each thread visit before the previous channel", async ({
   expect(await laterThread.evaluate((node) => node.isConnected)).toBe(true);
 });
 
+// Browser-only: real session-history traversal through the page's visits.
+test("Back from a link opened in a thread returns to that thread, not the one before it", async ({
+  page,
+  app,
+}) => {
+  const url = "https://example.test/linked-from-thread";
+  const roots = app.histories
+    .get("primary/alpha")
+    .filter((row) => row.content.startsWith("Thread root"));
+  await open(page, app);
+  app.append("primary", "alpha", url, true, false, roots[1].id);
+  const threadButton = (root) =>
+    page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ });
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const linked = page.getByRole("complementary", {
+    name: "Wrong panel",
+    exact: true,
+  });
+  await activate(threadButton(roots[0]));
+  await expect(
+    thread.getByText("Thread root 0", { exact: true }),
+  ).toBeVisible();
+  await activate(threadButton(roots[1]));
+  await expect(
+    thread.getByText("Thread root 1", { exact: true }),
+  ).toBeVisible();
+  await thread.locator(`a[href="${url}"]`).click();
+  await expect(linked).toBeVisible();
+
+  await page.goBack();
+  await expect(
+    thread.getByText("Thread root 1", { exact: true }),
+  ).toBeVisible();
+  await expect(linked).toHaveCount(0);
+  // Back switches tabs without closing them, as it does for threads.
+  await expect(
+    page.getByRole("tab", { name: "Wrong panel", exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect(linked).toBeVisible();
+  await page.goBack();
+  await page.goBack();
+  await expect(
+    thread.getByText("Thread root 0", { exact: true }),
+  ).toBeVisible();
+});
+
 for (const reading of [false, true]) {
   test(`ordinary reply-count opening ${reading ? "preserves intervening reading" : "finishes at the bottom"} after held pagination`, async ({
     page,

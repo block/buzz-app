@@ -49,6 +49,12 @@ describe("open target boundary", () => {
     });
     expect(targetKey(target)).not.toBe(targetKey(conversation));
   });
+  it("gives a link opened in a panel its own visit within the conversation", () => {
+    const link = "https://github.com/block/buzz/pull/1";
+    const target = parseOpenTarget({ ...conversation, link });
+    expect(target).toEqual({ ...parseOpenTarget(conversation), link });
+    expect(targetKey(target)).not.toBe(targetKey(conversation));
+  });
   it("supports local targets without account or relay and gives routes stable identity", () => {
     for (const target of [
       { version: 1, kind: "home" },
@@ -90,6 +96,8 @@ describe("open target boundary", () => {
     { ...conversation, panel: "settings" },
     { ...conversation, panel: { kind: "members", remove: "someone" } },
     { ...conversation, panel: null },
+    { ...conversation, link: "not a url" },
+    { ...conversation, link: { href: "https://example.test" } },
     { ...conversation, messageId: undefined, threadRootId: "b".repeat(64) },
     { ...conversation, channelId: "../../other" },
     { version: 1, kind: "page", pluginId: "a/b", pageId: "board" },

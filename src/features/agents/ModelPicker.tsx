@@ -19,12 +19,17 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { ModelFamilyMenu } from "./ModelFamilyMenu";
+import { formatModelChoices } from "./formatModelDisplayName";
 import { Select } from "../../shared/design-system/ui/Select";
 
 export type ModelChoice = Readonly<{
   /** The model ID saved in the type's config. */
   id: string;
   label: string;
+  /** Tells apart labels that read the same; the picker sets it. */
+  qualifier?: string | undefined;
+  /** Absent from the listed models; the family menu shows its description. */
+  unlisted?: boolean;
   description?: string | undefined;
   efforts?: readonly { id: string; label: string }[];
   effortScope?: string;
@@ -176,31 +181,24 @@ export function ModelPicker({
     label: defaultChoice?.label ?? defaultLabel,
     description: defaultChoice?.description ?? defaultDescription,
   };
-  const items: ModelChoice[] = includeDefault
-    ? [
-        fallback,
-        ...models.filter(
-          (model) => model.id !== defaultModel || model.id === value,
-        ),
-      ]
+  const listed: ModelChoice[] = includeDefault
+    ? models.filter((model) => model.id !== defaultModel || model.id === value)
     : [...models];
-  if (value && !items.some((model) => model.id === value))
-    items.push({
+  if (value && !listed.some((model) => model.id === value))
+    listed.push({
       id: value,
       label: value,
       description: allowCustomModel ? "Custom model" : "Unavailable model",
+      unlisted: true,
     });
-  const shown = items.map((model) => {
-    const prefix = modelLabelPrefixes?.find((prefix) =>
-      model.label.toLowerCase().startsWith(prefix.toLowerCase()),
-    );
-    return {
-      ...model,
-      label: prefix ? model.label.slice(prefix.length) : model.label,
-    };
-  });
+  // The default takes part in qualifying names, even when it is not a row.
+  const [shownDefault = fallback, ...shownListed] = formatModelChoices(
+    [fallback, ...listed],
+    modelLabelPrefixes,
+  );
+  const shown = includeDefault ? [shownDefault, ...shownListed] : shownListed;
   const selected =
-    shown.find((model) => model.id === (value || defaultModel)) ?? fallback;
+    shown.find((model) => model.id === (value || defaultModel)) ?? shownDefault;
   const inherited = value === "";
   const selectedLabel = inherited
     ? `${selected.label} · Default`
@@ -237,9 +235,15 @@ export function ModelPicker({
             onConfigure={onConfigure}
             models={shown.filter((model) => model.id !== "")}
             selected={
-              loading ? { ...selected, label: "Loading models…" } : selected
+              loading
+                ? {
+                    ...selected,
+                    label: "Loading models…",
+                    qualifier: undefined,
+                  }
+                : selected
             }
-            defaultChoice={includeDefault ? fallback : undefined}
+            defaultChoice={includeDefault ? shownDefault : undefined}
             disabled={disabled}
             loading={loading}
             description={description}

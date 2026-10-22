@@ -33,6 +33,32 @@ export function modelFamily(model: ModelChoice): string {
   return "Other";
 }
 
+const qualified = (model: ModelChoice) =>
+  model.qualifier ? `${model.label} (${model.qualifier})` : model.label;
+
+/** A model's label, its qualifier dimmed, then any note: one span, so a
+ * menu row's flex label wraps it as text. */
+function ModelLabel({
+  model,
+  children,
+}: {
+  model: ModelChoice;
+  children?: ReactNode;
+}) {
+  return (
+    <span>
+      {model.label}
+      {model.qualifier && (
+        <>
+          {" "}
+          <span className="text-subtle">({model.qualifier})</span>
+        </>
+      )}
+      {children}
+    </span>
+  );
+}
+
 export function ModelFamilyMenu({
   leading,
   inherited = false,
@@ -77,7 +103,7 @@ export function ModelFamilyMenu({
     const family = modelFamily(model);
     families.set(family, [...(families.get(family) ?? []), model]);
   }
-  const selectedLabel = `${selected.label}${inherited ? " · Default" : ""}`;
+  const selectedLabel = `${qualified(selected)}${inherited ? " · Default" : ""}`;
   const menu = (
     <MenuRoot>
       <MenuTrigger
@@ -105,7 +131,9 @@ export function ModelFamilyMenu({
             {/* Select's value text: only the name ellipsizes, not Default.
                 A card's chip gives the name that room; its label and hint keep Default. */}
             <span className="buzz-select-value-text">
-              <span className="buzz-select-value">{selected.label}</span>
+              <span className="buzz-select-value">
+                <ModelLabel model={selected} />
+              </span>
               {inherited && appearance !== "subtle" && (
                 <span className="buzz-select-value-suffix text-subtle">
                   {" · Default"}
@@ -126,7 +154,7 @@ export function ModelFamilyMenu({
             onValueChange={(id) => onChange(id)}
           >
             <MenuRadioItem value="" closeOnClick>
-              {defaultChoice.label} · Default
+              <ModelLabel model={defaultChoice}> · Default</ModelLabel>
             </MenuRadioItem>
           </MenuRadioGroup>
         )}
@@ -161,7 +189,16 @@ export function ModelFamilyMenu({
                         value={model.id}
                         closeOnClick
                       >
-                        {model.label}
+                        <ModelLabel model={model}>
+                          {model.unlisted && model.description && (
+                            <>
+                              {" "}
+                              <span className="text-subtle">
+                                · {model.description}
+                              </span>
+                            </>
+                          )}
+                        </ModelLabel>
                       </MenuRadioItem>
                     ),
                   )}
@@ -220,10 +257,10 @@ function EffortMenu({
       }}
     >
       <MenuSubmenuTrigger role="menuitemradio" aria-checked={selected}>
-        {model.label}
+        <ModelLabel model={model} />
         {selected && <CheckIcon size={16} aria-hidden="true" />}
       </MenuSubmenuTrigger>
-      <MenuSubmenuPopup aria-label={`${model.label} thinking effort`}>
+      <MenuSubmenuPopup aria-label={`${qualified(model)} thinking effort`}>
         {loading && <MenuItem disabled>Loading thinking levels…</MenuItem>}
         {error && <MenuItem disabled>Could not load thinking levels</MenuItem>}
         {(!levels?.length || error) && (

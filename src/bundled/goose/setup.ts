@@ -80,6 +80,41 @@ const PREFIXES: Readonly<Record<string, readonly string[]>> = {
   databricks: ["databricks-", "goose-"],
 };
 
+const MODEL_FILTER = "DATABRICKS_MODEL_FILTER";
+
+/** Which Databricks models are listed, from goose's `DATABRICKS_MODEL_FILTER`
+ * (its environment, else its config): comma-separated patterns, each matched
+ * against a whole model ID, case-sensitively, with `*` for any characters and
+ * `?` for one. A model matching any pattern is listed; unset or blank lists
+ * every model. It only hides models: Databricks still decides access. */
+export function modelFilter(value: unknown): (id: string) => boolean {
+  if (value === null || value === undefined) return () => true;
+  if (!["string", "number", "boolean"].includes(typeof value))
+    throw new Error(`${MODEL_FILTER} must be comma-separated patterns`);
+  const raw = String(value);
+  if (!raw.trim()) return () => true;
+  const patterns = raw
+    .split(",")
+    .map((pattern) => pattern.trim())
+    .filter(Boolean);
+  if (!patterns.length)
+    throw new Error(
+      `${MODEL_FILTER} must contain at least one nonblank pattern`,
+    );
+  const glob = (pattern: string) =>
+    [...pattern]
+      .map((char) =>
+        char === "*"
+          ? ".*"
+          : char === "?"
+            ? "."
+            : char.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&"),
+      )
+      .join("");
+  const matcher = new RegExp(`^(?:${patterns.map(glob).join("|")})$`, "su");
+  return (id) => matcher.test(id);
+}
+
 const TEST_PROMPT = "Reply with exactly: OK";
 const TEST_TIMEOUT_MS = 60_000;
 
@@ -279,11 +314,21 @@ export class GooseSetup {
     let models = this.live.get(id);
     if (!models) {
       models = this.with(async (goose) => {
-        const { models } = (await goose.request(
-          "_goose/unstable/providers/supported-models/list",
-          { providerId: id },
-        )) as { models: string[] };
-        return models.map((model) => ({ id: model, label: model }));
+        const [{ models }, filter] = (await Promise.all([
+          goose.request("_goose/unstable/providers/supported-models/list", {
+            providerId: id,
+          }),
+          id.startsWith("databricks")
+            ? goose.request("_goose/unstable/config/read", {
+                key: MODEL_FILTER,
+                isSecret: false,
+              })
+            : undefined,
+        ])) as [{ models: string[] }, { value?: unknown } | undefined];
+        const listed = modelFilter(filter?.value);
+        return models
+          .filter(listed)
+          .map((model) => ({ id: model, label: model }));
       });
       models.catch(() => this.live.delete(id));
       this.live.set(id, models);

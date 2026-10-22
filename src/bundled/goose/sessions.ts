@@ -228,6 +228,7 @@ export class AgentSessions {
     seen: number,
     {
       steer = text,
+      current,
       fresh,
       title,
       named,
@@ -236,6 +237,7 @@ export class AgentSessions {
       ...activity
     }: Readonly<{
       steer?: string;
+      current?: () => boolean;
       fresh?: () => Promise<string>;
       title?: string;
       named?: (title: string) => void;
@@ -245,6 +247,7 @@ export class AgentSessions {
       ActivityReceipt = {},
   ): Promise<Settled> {
     for (;;) {
+      if (current && !current()) return { ok: true, undelivered: true };
       if (this.disposed) return { ...STOPPED, undelivered: true };
       // A message that arrives while its conversation's session opens uses it.
       const opening = this.opening.get(key);
@@ -271,7 +274,7 @@ export class AgentSessions {
         key,
         live,
         live.session.busy ? steer : text,
-        activity,
+        { ...activity, ...(current ? { current } : {}) },
         model,
       );
     }
@@ -294,8 +297,20 @@ export class AgentSessions {
         throw new Error("goose was stopped");
       }
       if (signal?.aborted) return {};
+      if (current && !current())
+        return {
+          settled: Promise.resolve({ ok: true, undelivered: true } as Settled),
+        };
       this.touch(key, live, seen);
-      return { settled: this.answer(key, live, text, activity, model) };
+      return {
+        settled: this.answer(
+          key,
+          live,
+          text,
+          { ...activity, ...(current ? { current } : {}) },
+          model,
+        ),
+      };
     })();
     this.opening.set(key, starting);
     const opened = () => {

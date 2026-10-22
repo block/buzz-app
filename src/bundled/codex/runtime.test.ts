@@ -4075,3 +4075,47 @@ it("updates Codex repository context from the agent’s captured community, incl
   expect(JSON.stringify(turns.at(-1))).toContain("REPOS in your own workspace");
   expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
 });
+
+it("drops source output invalidated while compaction waits without blocking other work", async () => {
+  const f = fixture();
+  const first = f.delivery("first");
+  const agent = { ...first.agent, config: first.config } as unknown as Agent;
+  await f.runtime.run(first);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, { channelId: "channel", root })).toBe(
+      "idle",
+    ),
+  );
+  const compacted = f.runtime.session(
+    agent,
+    { channelId: "channel", root },
+    "compact",
+  );
+  await vi.waitFor(() =>
+    expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(true),
+  );
+  let current = true;
+  await f.runtime.run({ ...pluginWake(f, root), current: () => current });
+  current = false;
+  f.emit({
+    method: "turn/started",
+    params: { threadId: "thread-1", turn: { id: "compact" } },
+  });
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: { id: "compact", status: "completed" },
+    },
+  });
+  await compacted;
+  await f.runtime.run(f.delivery("ordinary message"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).toContain("ordinary message");
+  expect(f.starts().some((w) => inputText(w).includes("CI failed: lint"))).toBe(
+    false,
+  );
+  await f.complete(1);
+});

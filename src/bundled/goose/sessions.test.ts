@@ -879,3 +879,38 @@ it("keeps saved conversations per agent in storage, most recent first", () => {
   data.set("buzz.goose.sessions.v1", "not json");
   expect(one.list()).toEqual([]);
 });
+
+it("drops a source delivery invalidated during session startup", async () => {
+  const fake = fakeSpawn();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const sessions = new AgentSessions({
+    resolveDirectory: fake.resolveDirectory,
+    tools,
+    process: new SharedProcess(fake, fake.serve),
+    pool: new ServerPool(),
+    launch: async () => {
+      await held;
+      return { workspace: "/w", systemPrompt: "" };
+    },
+    choice: () => ({ provider: "", model: "" }),
+    fingerprint: () => "",
+  });
+  let current = true;
+  const late = sessions.deliver("source", "cancelled wake", 1, {
+    current: () => current,
+  });
+  await flush(30);
+  current = false;
+  release();
+  await expect(late).resolves.toMatchObject({ undelivered: true });
+  await sessions.deliver("other", "ordinary message", 2);
+  expect(
+    fake.geese
+      .flatMap((g) => g.turns)
+      .some((t) => JSON.stringify(t).includes("cancelled wake")),
+  ).toBe(false);
+  sessions.dispose();
+});

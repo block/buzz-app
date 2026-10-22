@@ -410,6 +410,7 @@ export class ClaudeRuntime {
     effort,
     team,
     workingUntil,
+    current,
     ignored,
     signal,
     step,
@@ -521,6 +522,7 @@ export class ClaudeRuntime {
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
           delivered = entry.sessions.deliver(key, text, event.created_at, {
+            ...(wake ? { current } : {}),
             steer: steerPrompt(text),
             fresh: async () => this.review(entry, await prompt(true), notes),
             activityScope: topLevel

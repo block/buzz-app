@@ -182,6 +182,7 @@ export class AgentSessions {
     seen: number,
     {
       steer = text,
+      current,
       fresh,
       pick = {},
       step,
@@ -190,6 +191,7 @@ export class AgentSessions {
       activityScope,
     }: Readonly<{
       steer?: string;
+      current?: () => boolean;
       fresh?: () => Promise<string>;
       pick?: TurnPick;
     }> &
@@ -201,6 +203,7 @@ export class AgentSessions {
     // Checked without awaiting first, so the first message opens it at once.
     const opening = this.opening.get(key);
     if (opening) await opening;
+    if (current && !current()) return { ok: true, undelivered: true };
     let live = this.live.get(key);
     if (
       live &&
@@ -225,6 +228,7 @@ export class AgentSessions {
     const opened = await this.open(key, saved?.id, seen);
     if (!("process" in opened)) return opened;
     live = opened;
+    if (current && !current()) return { ok: true, undelivered: true };
     const activity = {
       ...pick,
       ...(activityScope ? { activityScope } : {}),
@@ -250,7 +254,11 @@ export class AgentSessions {
           undelivered: true,
         };
       }
-      return this.deliver(key, retry, seen, { pick, ...activity });
+      return this.deliver(key, retry, seen, {
+        pick,
+        ...(current ? { current } : {}),
+        ...activity,
+      });
     }
     return delivered;
   }

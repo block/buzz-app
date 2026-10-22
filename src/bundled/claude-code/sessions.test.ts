@@ -894,3 +894,26 @@ it.each(["delete", "fresh"])(
     }
   },
 );
+
+it("drops a cancelled source delivery after process startup without stopping another conversation", async () => {
+  let release!: () => void;
+  const launched = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { pool, claudes } = sessions({ launched });
+  let current = true;
+  const stale = pool.deliver("source", "cancelled wake", 1, {
+    current: () => current,
+  });
+  await flush();
+  current = false;
+  release();
+  await expect(stale).resolves.toMatchObject({ ok: true, undelivered: true });
+  await pool.deliver("other", "ordinary message", 2);
+  expect(claudes().some((p) => p.prompts.includes("cancelled wake"))).toBe(
+    false,
+  );
+  expect(claudes().some((p) => p.prompts.includes("ordinary message"))).toBe(
+    true,
+  );
+});

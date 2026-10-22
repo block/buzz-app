@@ -65,6 +65,7 @@ import {
 import { findConversation } from "./transcript";
 
 type Request = {
+  current?: () => boolean;
   /** The agent's community and owner, as `origin:viewer`. */
   scope: string;
   event: EventData;
@@ -698,6 +699,7 @@ export class CodexRuntime {
     // ends; the agent is done working on this request once it has replied.
     const request: Request = {
       scope: reads.scope,
+      ...(wake ? { current: delivery.current } : {}),
       event,
       ...(wake ? { wake } : {}),
       agent,
@@ -788,6 +790,11 @@ export class CodexRuntime {
               }
               if (active.finished || active.stopped) {
                 queue();
+                return;
+              }
+              if (request.current && !request.current()) {
+                entry.waiting.delete(request);
+                request.answered();
                 return;
               }
               await active.rpc.request("turn/steer", {
@@ -1082,6 +1089,10 @@ export class CodexRuntime {
         entry.waiting.delete(request);
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
+          return;
+        }
+        if (request.current && !request.current()) {
+          request.answered();
           return;
         }
         await this.execute(request, text, key, current, entry);
@@ -1532,6 +1543,13 @@ export class CodexRuntime {
         this.core(request.agent.pubkey, signal),
       ]);
       signal.throwIfAborted();
+      if (request.current && !request.current()) {
+        restoreNotes(request);
+        request.answered();
+        this.status(agent.pubkey, key, "Idle");
+        ready();
+        return;
+      }
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(

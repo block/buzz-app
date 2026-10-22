@@ -290,6 +290,7 @@ export class GooseRuntime {
     team,
     model,
     workingUntil,
+    current,
     ignored,
     signal,
     step,
@@ -397,6 +398,7 @@ export class GooseRuntime {
               : { channel, root: threadReference(event)?.rootId ?? event.id },
         );
         const done = entry.sessions.deliver(key, text, shown, {
+          ...(wake ? { current } : {}),
           steer: steerPrompt(text),
           fresh: async () =>
             this.review(entry, (await prompt(true)).text, notes),

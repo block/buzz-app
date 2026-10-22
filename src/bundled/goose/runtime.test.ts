@@ -484,6 +484,21 @@ describe("GooseRuntime", () => {
     },
   );
 
+  it("has the running goose reload a provider's saved key", async () => {
+    const { deliver, fake, runtime } = setup();
+    await runtime.credentialsChanged("openrouter");
+    expect(fake.geese).toHaveLength(0);
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    await runtime.credentialsChanged("openrouter");
+    expect(fake.geese).toHaveLength(1);
+    const [goose] = fake.geese;
+    const refresh = goose?.received.find((item) =>
+      item.method?.endsWith("inventory/refresh"),
+    );
+    expect(refresh?.params).toEqual({ providerIds: ["openrouter"] });
+  });
+
   it("runs a mention on the agent's thinking level", async () => {
     const { deliver, fake } = setup();
     await deliver(message("1", "@Gander think"), {

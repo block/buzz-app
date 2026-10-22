@@ -9,6 +9,7 @@
 // sessions stay listed after they close.
 import {
   GooseProcess,
+  REQUEST_TIMEOUT_MS,
   type ActivityReceipt,
   type Choice,
   type GooseHost,
@@ -116,6 +117,20 @@ export class SharedProcess {
     void ready.then((goose) => goose.exited.then(forget), forget);
     this.ready = ready;
     return ready;
+  }
+  /** goose caches secrets per process, so a key saved by another one reaches
+   * this one only once an inventory refresh reloads them. Its sessions then
+   * rebuild their provider on their next call. Best effort: a goose that
+   * fails to answer is killed, and the next one starts with fresh secrets. */
+  async refresh(provider: string) {
+    const goose = await this.ready?.catch(() => undefined);
+    await goose
+      ?.request(
+        "_goose/unstable/providers/inventory/refresh",
+        { providerIds: [provider] },
+        REQUEST_TIMEOUT_MS,
+      )
+      .catch(() => undefined);
   }
   /** Stops it, failing every session in it. */
   stop() {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -8,6 +8,7 @@ import type { Host } from "../../../features/host/service";
 import { createAgentClient, type RemoteAgent } from "../agents/client";
 import { createOAuthSession } from "../oauth/session";
 import { ModelSettings } from "./ModelSettings";
+import { ToastProvider } from "../../../shared/design-system/ui/Toast";
 
 beforeEach(() =>
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example"),
@@ -82,7 +83,11 @@ async function fixture(selection: Partial<RemoteAgent> = {}) {
     null,
   );
   render(<ModelSettings {...{ client, session, agent }} subject="account" />, {
-    wrapper: StrictMode,
+    wrapper: ({ children }) => (
+      <StrictMode>
+        <ToastProvider>{children}</ToastProvider>
+      </StrictMode>
+    ),
   });
   await screen.findByRole("combobox", { name: "Model" });
   return {
@@ -121,11 +126,10 @@ it("requires an explicit supported pair, clears effort when the model changes, a
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "Save model" }));
-  await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Saved model and reasoning effort are valid.",
-    ),
-  );
+  expect(
+    await screen.findByRole("dialog", { name: "Model preferences saved" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
   const updates = h.request.mock.calls.filter(([request]) =>
     request.url.endsWith("/update-agent"),
   );
@@ -136,6 +140,23 @@ it("requires an explicit supported pair, clears effort when the model changes, a
     reasoning_effort: "none",
   });
   expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+});
+it("shows no warning or success message when opening valid saved preferences", async () => {
+  await fixture({
+    modelId: "model-one",
+    reasoningEffort: "high",
+    modelSelectionStatus: "valid",
+  });
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+    "Friendly One",
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Reasoning effort" }),
+  ).toHaveTextContent("high");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("dialog", { name: "Model preferences saved" }),
+  ).not.toBeInTheDocument();
 });
 it.each([
   {
@@ -174,6 +195,9 @@ it("preserves a failed draft and refuses to save it through a different account"
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not reach Builderlab",
   );
+  expect(
+    screen.queryByRole("dialog", { name: "Model preferences saved" }),
+  ).not.toBeInTheDocument();
   expect(
     screen.getByRole("combobox", { name: "Reasoning effort" }),
   ).toHaveTextContent("low");

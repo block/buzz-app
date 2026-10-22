@@ -3,6 +3,7 @@ import { Button } from "../../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../../shared/design-system/ui/Header";
 import { Select } from "../../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
+import { useToastNotification } from "../../../shared/design-system/ui/Toast";
 import type {
   AgentClient,
   RemoteAgent,
@@ -11,7 +12,6 @@ import type {
 import type { OAuthSession } from "../oauth/session";
 
 const statuses = {
-  valid: "Saved model and reasoning effort are valid.",
   "setup-required": "Choose a model and reasoning effort to finish setup.",
   "model-unavailable":
     "The saved model is no longer available. Choose another model and reasoning effort.",
@@ -34,6 +34,7 @@ export function ModelSettings({
   agent: RemoteAgent;
   subject: string;
 }) {
+  const notify = useToastNotification();
   const [saved, setSaved] = useState(agent);
   const [models, setModels] = useState<readonly RemoteAgentModel[]>();
   const [modelId, setModelId] = useState(agent.modelId ?? "");
@@ -92,6 +93,8 @@ export function ModelSettings({
       setSaved(remote);
       setModelId(remote.modelId ?? "");
       setEffort(remote.reasoningEffort ?? "");
+      if (remote.modelSelectionStatus === "valid")
+        notify("Model preferences saved", "success");
     } catch (reason) {
       if (!signal.aborted) setError(message(reason));
     } finally {
@@ -105,12 +108,15 @@ export function ModelSettings({
         subtitle="Saved in Builderlab for new tasks."
       />
       <SettingsGroup layout="form">
-        <p role="status" className="m-0 text-body-sm text-secondary">
-          {statuses[saved.modelSelectionStatus ?? "unknown"]}
-          {saved.modelId &&
-            ` Saved model: ${models?.find((choice) => choice.id === saved.modelId)?.displayName ?? saved.modelId}.`}
-          {saved.reasoningEffort && ` Saved effort: ${saved.reasoningEffort}.`}
-        </p>
+        {saved.modelSelectionStatus !== "valid" && (
+          <p role="status" className="m-0 text-body-sm text-warning">
+            {statuses[saved.modelSelectionStatus ?? "unknown"]}
+            {saved.modelId &&
+              ` Saved model: ${models?.find((choice) => choice.id === saved.modelId)?.displayName ?? saved.modelId}.`}
+            {saved.reasoningEffort &&
+              ` Saved effort: ${saved.reasoningEffort}.`}
+          </p>
+        )}
         {models ? (
           models.length ? (
             <>

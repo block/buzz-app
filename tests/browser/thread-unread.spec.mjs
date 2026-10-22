@@ -92,10 +92,38 @@ test.describe("mentioned reply priority", () => {
       .filter({ hasText: "Unread reply 1" });
     await expect(item).toBeVisible();
     await releaseReadingFocus(page);
+    const previousAttempt = await page.evaluate(
+      () => window.fixtureNavigation.snapshot().attempt.id,
+    );
     // Activity opens the thread that is already selected.
     await item.click();
-    await expect(panel).toBeVisible();
-    await expect.poll(async () => (await unread()).observedCount).toBe(0);
+    // The thread is already on screen, so its visibility proves nothing. Wait
+    // for the click's own navigation, so a failure below means the thread was
+    // opened and still not read, never that the click missed.
+    await expect
+      .poll(() =>
+        page.evaluate((previous) => {
+          const { status, attempt } = window.fixtureNavigation.snapshot();
+          return { status, freshAttempt: attempt.id !== previous };
+        }, previousAttempt),
+      )
+      .toEqual({ status: "opened", freshAttempt: true });
+    try {
+      await expect.poll(async () => (await unread()).observedCount).toBe(0);
+    } catch (error) {
+      // Reading needs focus inside the thread; say where it actually was.
+      const focus = await page.evaluate(() => ({
+        active:
+          document.activeElement?.getAttribute("aria-label") ??
+          document.activeElement?.tagName,
+        inThread: !!document.activeElement?.closest("[data-reading-surface]"),
+        windowFocused: document.hasFocus(),
+      }));
+      throw new Error(
+        `The thread opened but stayed unread. Focus: ${JSON.stringify(focus)}`,
+        { cause: error },
+      );
+    }
   });
 });
 

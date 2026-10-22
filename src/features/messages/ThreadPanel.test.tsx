@@ -933,7 +933,13 @@ it("routes media in replies through the resolved root review workspace", () => {
   ];
   h.render();
   fireEvent.click(screen.getByRole("button", { name: "Open media reply" }));
-  expect(open).toHaveBeenCalledExactlyOnceWith("reply", attachment, 0, true);
+  expect(open).toHaveBeenCalledExactlyOnceWith(
+    "reply",
+    attachment,
+    0,
+    true,
+    undefined,
+  );
 });
 
 it("uses the resolved root with the shared composer and reveals an own send even while reading above", () => {

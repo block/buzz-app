@@ -46,6 +46,7 @@ import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
 type MediaReviewViewerProps = {
   attachment: Attachment;
+  initialAttachments?: readonly Attachment[] | undefined;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -131,14 +132,60 @@ function ResolvedReview({
     if (snapshot?.status === "ready" && snapshot.canLoadMore)
       void view?.loadMore();
   }, [view, snapshot?.status, snapshot?.canLoadMore]);
-  if (threadError) return <ReviewShell {...props} error={threadError} />;
-  if (!view || !snapshot) return <ReviewShell {...props} loading />;
+  const knownRows = [
+    snapshot?.root,
+    snapshot?.target,
+    ...(snapshot?.replies ?? []),
+  ].filter((row): row is ChannelMessage => !!row);
+  const attachmentAvailable = knownRows.some((row) =>
+    row.attachments.some((item) => item.url === props.attachment.url),
+  );
+  const resolved = snapshot?.status === "ready" && !snapshot.error;
+  const invalidated =
+    snapshot?.targetStatus === "unavailable" ||
+    (resolved && (!snapshot.root || !attachmentAvailable)) ||
+    (!!snapshot?.error &&
+      (snapshot.status === "idle" || (snapshot.limited && !knownRows.length)));
+  const authoritative =
+    resolved &&
+    !!snapshot.root &&
+    attachmentAvailable &&
+    snapshot.targetStatus === "ready";
+  // A retry clears the thread's error before it has fresh evidence. Keep an
+  // invalidated viewer closed to its opener's stale media until re-admitted.
+  const [blockedView, setBlockedView] = useState<ThreadView>();
+  if (view && invalidated && blockedView !== view) setBlockedView(view);
+  else if (authoritative && blockedView === view) setBlockedView(undefined);
+  const galleryAttachments = attachmentAvailable
+    ? knownRows.flatMap((row) => row.attachments)
+    : props.initialAttachments;
+  const pendingProps = { ...props, galleryAttachments };
+  if (threadError) return <ReviewShell {...pendingProps} error={threadError} />;
+  if (!view || !snapshot) return <ReviewShell {...pendingProps} loading />;
+  if (invalidated || (blockedView === view && !authoritative))
+    return (
+      <ReviewShell
+        {...props}
+        error={
+          snapshot.error ??
+          (snapshot.root
+            ? "Attachment unavailable."
+            : "Original message unavailable.")
+        }
+        unavailable
+        retry={view.refresh}
+      />
+    );
   if (snapshot.error)
     return (
-      <ReviewShell {...props} error={snapshot.error} retry={view.refresh} />
+      <ReviewShell
+        {...pendingProps}
+        error={snapshot.error}
+        retry={view.refresh}
+      />
     );
   if (snapshot.status === "loading" || snapshot.status === "idle")
-    return <ReviewShell {...props} loading />;
+    return <ReviewShell {...pendingProps} loading />;
   if (!snapshot.root)
     return (
       <ReviewShell
@@ -159,13 +206,6 @@ function ResolvedReview({
     )
     .sort(compareMessages);
   const threadRows = [snapshot.root, ...replies];
-  const attachmentAvailable = threadRows.some((row) =>
-    row.attachments.some((item) => item.url === props.attachment.url),
-  );
-  if (!attachmentAvailable)
-    return (
-      <ReviewShell {...props} error="Attachment unavailable." unavailable />
-    );
   return (
     <ReviewShell
       {...props}
@@ -180,6 +220,7 @@ function ResolvedReview({
 
 function ReviewShell({
   attachment,
+  galleryAttachments = [],
   extensions,
   session,
   scope,
@@ -203,6 +244,7 @@ function ReviewShell({
   selectAttachment,
   selectionRequest,
 }: ActiveReviewProps & {
+  galleryAttachments?: readonly Attachment[] | undefined;
   rootId?: string;
   editMessages?: readonly ChannelMessage[];
   replies?: ReturnType<ThreadView["snapshot"]>["replies"];
@@ -258,6 +300,7 @@ function ReviewShell({
   const mediaAttachments = useMemo(() => {
     const seen = new Set<string>();
     return [
+      ...galleryAttachments,
       ...editMessages.flatMap((row) => row.attachments),
       attachment,
     ].filter(
@@ -267,7 +310,7 @@ function ReviewShell({
         !seen.has(item.url) &&
         !!seen.add(item.url),
     );
-  }, [attachment, editMessages]);
+  }, [attachment, editMessages, galleryAttachments]);
   const mixedGallery =
     mediaAttachments.length > 1 &&
     mediaAttachments.some((item) => item.kind === "video");
@@ -452,6 +495,11 @@ function ReviewShell({
             ) : (
               <p className={styles.empty} role={error ? "alert" : "status"}>
                 {error ?? "Loading comments…"}
+                {retry && !unavailable && (
+                  <Button size="sm" type="button" onClick={() => void retry()}>
+                    Retry
+                  </Button>
+                )}
               </p>
             )}
           </div>
@@ -468,7 +516,7 @@ function ReviewShell({
           role={error ? "alert" : "status"}
         >
           {error ?? (loading ? "Loading media…" : "Media unavailable")}
-          {retry && (
+          {retry && unavailable && (
             <Button size="sm" type="button" onClick={() => void retry()}>
               Retry
             </Button>

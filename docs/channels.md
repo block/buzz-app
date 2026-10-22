@@ -1374,7 +1374,10 @@ or MIME metadata for this presentation. Image and compact video pixels use
 `contain`, so the whole frame stays visible without stretching or cropping.
 Other inline video previews and their posters fill their bounded frames with `cover`.
 The media review header displays the selected file's name, falling back to Image
-or Video when unnamed, and updates as gallery selection changes.
+or Video when unnamed, and updates as gallery selection changes. While a thread
+read is pending or fails, the viewer preserves the opener's known media and offers
+thread retry independently of media loading. Verified removal or invalidated access
+retires that fallback through retries until a fresh read re-admits the attachment.
 Image and video previews share smoothed corners and a 1px outer hairline, black at
 10% in light mode and white at 10% in dark mode. The expanded viewer shows the full
 media against a pure-black canvas. Large emoji retain their artwork size with the

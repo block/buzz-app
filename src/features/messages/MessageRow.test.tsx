@@ -1053,7 +1053,18 @@ it.each([
       }),
       { detail: 1 },
     );
-    expect(open).toHaveBeenCalledWith(row.id, attachment, 0, expected);
+    expect(open).toHaveBeenCalledWith(
+      row.id,
+      attachment,
+      0,
+      expected,
+      count === 1
+        ? [attachment]
+        : [
+            attachment,
+            { ...attachment, url: "https://fixture.test/second.png" },
+          ],
+    );
     cleanup();
   },
 );
@@ -1718,7 +1729,13 @@ it.each([true, false])(
             name: "View all 6 images, starting at image 4",
           }),
         );
-        expect(open).toHaveBeenCalledWith(row.id, attachments[3], 0, true);
+        expect(open).toHaveBeenCalledWith(
+          row.id,
+          attachments[3],
+          0,
+          true,
+          attachments,
+        );
       } else {
         expect(screen.queryByText("+3")).toBeNull();
       }

@@ -139,6 +139,7 @@ export type MessageRowProps = {
     attachment: ChannelMessage["attachments"][number],
     seconds: number,
     hasComments?: boolean,
+    attachments?: ChannelMessage["attachments"],
   ) => void;
 };
 
@@ -1115,6 +1116,7 @@ function MessageRowContent({
                                       row.replyCount > 0 ||
                                         (!!row.threadRootId &&
                                           row.threadRootId !== row.id),
+                                      row.attachments,
                                     ),
                                 }
                               : {})}
@@ -1160,6 +1162,7 @@ function MessageRowContent({
                                     row.replyCount > 0 ||
                                       (!!row.threadRootId &&
                                         row.threadRootId !== row.id),
+                                    row.attachments,
                                   ),
                               }
                             : {})}

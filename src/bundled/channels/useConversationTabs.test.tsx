@@ -1282,4 +1282,23 @@ it("mounts a hidden thread tab when first shown and keeps it for the visit", () 
   expect(h.result.current.workspace.hosts).toHaveLength(2);
   act(() => h.result.current.state.select("thread:alpha:r2"));
   expect(h.result.current.workspace.hosts).toHaveLength(2);
+  const restored = (id: string) =>
+    (
+      h.result.current.workspace.hosts.find(
+        (host) => (host as { key?: string }).key === id,
+      ) as unknown as {
+        children: {
+          props: { children: { props: { restored?: unknown } } };
+        };
+      }
+    ).children.props.children.props.restored;
+  expect(restored("thread:alpha:r1")).toBeDefined();
+  // A closed tab reopened in the same visit asks afresh.
+  act(() =>
+    h.result.current.workspace.items
+      .find((item) => item.id === "thread:alpha:r1")
+      ?.close?.(),
+  );
+  act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
+  expect(restored("thread:alpha:r1")).toBeUndefined();
 });

@@ -70,6 +70,28 @@ function suppressPush() {
   );
 }
 
+const contentTarget = '[data-tab-focus]:not([aria-disabled="true"])';
+
+/** Moves focus from a chosen tab to its content once mounted, unless it left. */
+function focusWhenReady(panel: HTMLElement, tab: HTMLElement) {
+  const observer = new MutationObserver(() => {
+    const content =
+      document.activeElement === tab
+        ? panel.querySelector<HTMLElement>(contentTarget)
+        : undefined;
+    if (content === null) return;
+    observer.disconnect();
+    content?.focus({ preventScroll: true });
+  });
+  observer.observe(panel, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["aria-disabled"],
+  });
+  return () => observer.disconnect();
+}
+
 /** The channel owns target tabs; private details retain their feature's lifetime. */
 export function PanelWorkspace({
   items,
@@ -128,6 +150,9 @@ export function PanelWorkspace({
   // keyboard selection keeps focus in the tab list.
   const pointerTab = useRef(false);
   const focusContent = useRef(false);
+  // Content that mounts after its tab is chosen takes that focus once ready.
+  const awaitContent = useRef<() => void>(undefined);
+  useLayoutEffect(() => () => awaitContent.current?.(), []);
   const register = useCallback((tab: Local) => {
     setLocals((current) => [
       ...current.filter((item) => item.id !== tab.id),
@@ -274,14 +299,13 @@ export function PanelWorkspace({
       const tab = root.current?.querySelector<HTMLElement>(
         '[role="tab"][aria-selected="true"]',
       );
-      const content =
+      awaitContent.current?.();
+      awaitContent.current = undefined;
+      const panel =
         focusContent.current && previous.current !== selected
-          ? document
-              .getElementById(panelId(selected))
-              ?.querySelector<HTMLElement>(
-                '[data-tab-focus]:not([aria-disabled="true"])',
-              )
+          ? document.getElementById(panelId(selected))
           : undefined;
+      const content = panel?.querySelector<HTMLElement>(contentTarget);
       // A route may mount/select a retained tab behind an open dialog.
       // Its navigation must not take focus from the modal's own handoff.
       const modal = document.querySelector('dialog[open], [aria-modal="true"]');
@@ -289,6 +313,8 @@ export function PanelWorkspace({
         content?.focus({ preventScroll: true });
         if (!content || document.activeElement !== content)
           tab?.focus({ preventScroll: true });
+        if (panel && !content && tab)
+          awaitContent.current = focusWhenReady(panel, tab);
       }
       tab?.parentElement?.scrollIntoView?.({
         block: "nearest",
@@ -322,11 +348,15 @@ export function PanelWorkspace({
       onClickCapture={drag?.click}
       onPointerDownCapture={(event) => {
         drag?.begin(event);
+        awaitContent.current?.();
+        awaitContent.current = undefined;
         pointerTab.current = !!(event.target as Element).closest?.(
           '[role="tab"]',
         );
       }}
       onKeyDownCapture={() => {
+        awaitContent.current?.();
+        awaitContent.current = undefined;
         pointerTab.current = false;
       }}
       onKeyDown={(event) => {

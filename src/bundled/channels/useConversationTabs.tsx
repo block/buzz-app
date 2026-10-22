@@ -565,6 +565,12 @@ export function useConversationTabs({
       entered: new Map(tabState.tabs.map((tab) => [tab.id, tab])),
     };
   const visitTab = visitTabs.current;
+  // A closed tab's lifetime ends; reopening it starts its requests afresh.
+  const openIds = new Set(tabState.tabs.map((tab) => tab.id));
+  for (const id of visitTab.entered.keys())
+    if (!openIds.has(id)) visitTab.entered.delete(id);
+  for (const id of visitTab.shown)
+    if (!openIds.has(id)) visitTab.shown.delete(id);
   function usableChannel(target: ChannelSummary) {
     return (
       !target.readOnly &&

@@ -1294,6 +1294,9 @@ it("observes a visible reply before its root resolves, then enables thread catch
   );
   h.render();
   screen.getByRole("button", { name: "Close thread" }).focus();
+  // Focus rerenders the rows, which measure again in the next frame.
+  await act(async () => {});
+  await act(() => vi.advanceTimersToNextFrame());
   await act(() => vi.advanceTimersByTimeAsync(299));
   expect(observe).not.toHaveBeenCalled();
   await act(() => vi.advanceTimersByTimeAsync(1));
@@ -1302,6 +1305,7 @@ it("observes a visible reply before its root resolves, then enables thread catch
 
   h.snapshot.root = row;
   h.render();
+  await act(() => vi.advanceTimersToNextFrame());
   await act(() => vi.advanceTimersByTimeAsync(300));
   expect(catchUp).toHaveBeenCalledExactlyOnceWith(reply.id, row.id);
 });

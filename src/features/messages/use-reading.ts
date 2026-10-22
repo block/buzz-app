@@ -43,6 +43,9 @@ export function useReading({
     const element: HTMLElement = scroller.current;
     let handle: ReadingHandle | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let frame: number | undefined;
+    // A deferred measurement's lease, captured when its event arrived.
+    let pending: ReadingHandle | undefined;
     let stopped = false;
     const observing = new Set<ReadingHandle>();
     // The message list or its own composer: typing under a conversation is
@@ -68,22 +71,30 @@ export function useReading({
         !!surface?.contains(node) ||
         focusedTab(node) ||
         !!composer?.current?.contains(node));
-    const active = () =>
+    // Everything but geometry, so an event can check it without a layout.
+    const ready = () =>
       !stopped &&
       element.isConnected &&
       !element.closest('[inert], [hidden], [aria-hidden="true"]') &&
       settled.current &&
       document.visibilityState === "visible" &&
       document.hasFocus() &&
-      focused(document.activeElement) &&
-      element.getClientRects().length > 0;
+      focused(document.activeElement);
+    const active = () => ready() && element.getClientRects().length > 0;
     function cancel() {
       if (timer) clearTimeout(timer);
       timer = undefined;
       handle?.dispose();
       handle = undefined;
     }
+    function unqueue() {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = undefined;
+      pending?.dispose();
+      pending = undefined;
+    }
     function stop() {
+      unqueue();
       cancel();
       for (const observed of observing) observed.dispose();
       observing.clear();
@@ -128,18 +139,59 @@ export function useReading({
         ? latestMessageId
         : undefined;
     }
+    // A discrete action (focus, pointer, key, visibility, settling) starts
+    // dwell at once. Scroll, list mutations and resizes arrive many times per
+    // frame: each cancels dwell at once but measures rows only in the next
+    // frame, rather than forcing a fresh layout of every row per event.
     function schedule() {
+      unqueue();
+      begin();
+    }
+    function reflow() {
       cancel();
-      if (!active()) return;
+      pending?.dispose();
+      pending = undefined;
+      if (!ready()) return;
+      // The lease is the intent fence, so take it when the event happens: a
+      // manual unread before the frame must invalidate this measurement.
+      pending = acquire();
+      if (!pending) return;
+      frame ??= requestAnimationFrame(() => {
+        frame = undefined;
+        const lease = pending;
+        pending = undefined;
+        // No lease at event time means no reading intent to measure.
+        if (lease) begin(lease);
+      });
+    }
+    function acquire() {
+      try {
+        return session.unread.reading(channelId);
+      } catch {
+        return undefined; // Membership may disappear between commit and observation.
+      }
+    }
+    // Capture the lease BEFORE dwell: a newer manual action invalidates it.
+    // A deferred measurement brings the lease its event captured.
+    function begin(lease?: ReadingHandle) {
+      cancel();
+      if (!active()) {
+        lease?.dispose();
+        return;
+      }
       const ids = visibleIds();
       const bottom = bottomId();
-      if (!ids.length && !bottom) return;
+      if (!ids.length && !bottom) {
+        lease?.dispose();
+        return;
+      }
+      handle = lease ?? acquire();
+      if (!handle) return;
       try {
-        // Capture the lease BEFORE dwell: a newer manual action invalidates it.
-        handle = session.unread.reading(channelId);
         handle.view(ids, active);
       } catch {
-        return; // Membership may disappear between commit and observation.
+        cancel();
+        return;
       }
       timer = setTimeout(() => {
         timer = undefined;
@@ -182,13 +234,9 @@ export function useReading({
         }
       }, 300);
     }
-    for (const event of [
-      "scroll",
-      "pointerdown",
-      "keydown",
-      "reading-positioned",
-    ])
+    for (const event of ["pointerdown", "keydown", "reading-positioned"])
       element.addEventListener(event, schedule);
+    element.addEventListener("scroll", reflow);
     const focus = (event: FocusEvent) =>
       focused(event.type === "focusin" ? event.target : event.relatedTarget)
         ? schedule()
@@ -200,13 +248,13 @@ export function useReading({
     const visibility = () =>
       document.visibilityState === "visible" ? schedule() : stop();
     document.addEventListener("visibilitychange", visibility);
-    const mutation = new MutationObserver(schedule);
+    const mutation = new MutationObserver(reflow);
     mutation.observe(element, {
       childList: true,
       subtree: true,
       characterData: true,
     });
-    const resize = new ResizeObserver(schedule);
+    const resize = new ResizeObserver(reflow);
     resize.observe(element);
     schedule();
     return () => {
@@ -214,13 +262,9 @@ export function useReading({
       stop();
       mutation.disconnect();
       resize.disconnect();
-      for (const event of [
-        "scroll",
-        "pointerdown",
-        "keydown",
-        "reading-positioned",
-      ])
+      for (const event of ["pointerdown", "keydown", "reading-positioned"])
         element.removeEventListener(event, schedule);
+      element.removeEventListener("scroll", reflow);
       document.removeEventListener("focusin", focus);
       document.removeEventListener("focusout", focus);
       window.removeEventListener("blur", stop);

@@ -1,3 +1,4 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useConversationPresentation } from "./ConversationPresentation";
 import {
   useContext,
@@ -212,6 +213,17 @@ export function MessageLink({
       if (internal) {
         event.preventDefault();
         openInternal();
+        return;
+      }
+      // The desktop opener's own click listener ignores Cmd, so open it here.
+      if (external && event.metaKey && isTauri()) {
+        event.preventDefault();
+        invoke("plugin:opener|open_url", { url }).catch(() =>
+          setNotice({
+            text: "Couldn’t open the link in your browser.",
+            error: true,
+          }),
+        );
         return;
       }
       if (

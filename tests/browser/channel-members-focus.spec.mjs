@@ -1126,6 +1126,10 @@ test("member helper aligns with content and Owner stays beside a person's name",
           await Promise.all(
             element
               .getAnimations({ subtree: true })
+              .filter(
+                (animation) =>
+                  animation.effect?.getComputedTiming().iterations !== Infinity,
+              )
               .map((animation) => animation.finished),
           );
         });

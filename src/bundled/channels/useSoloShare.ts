@@ -417,6 +417,7 @@ export function useSoloShare({
         () => {},
         true,
         source?.channelType === "solo",
+        true,
       );
       const historySaved = remember();
       progress("Posting chat link…");

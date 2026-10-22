@@ -74,6 +74,10 @@ Reject pipes and sockets created before exec. Sign both processes with hardened
 runtime and without entitlements that allow code injection. These access controls
 need native tests; the app hook does not supply them.
 
+The certificate check trusts access to its signing key. Another program that can
+use that key and app identifier can satisfy the same requirement. Approval to use
+the signing key across rebuilds therefore extends trust to those programs.
+
 ## Automatic backup and optional recovery
 
 Desktop builds configured with `BUZZ_NSEC_BACKUP_SERVICE_URL` and

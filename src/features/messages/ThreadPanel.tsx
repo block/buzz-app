@@ -770,14 +770,13 @@ function ThreadMessages({
       !element
     )
       return;
-    const surface = element.closest("[data-reading-surface]");
-    // Focus on this thread's own selected tab already counts as reading it.
-    const label = surface
-      ?.closest('[role="tabpanel"]')
-      ?.getAttribute("aria-labelledby");
-    const tab = label ? document.getElementById(label) : null;
+    // Focus already in this surface, or on any tab (the person is steering the
+    // tab strip), is not stolen; only focus left behind by the opener moves in.
     const focused = document.activeElement;
-    if (!surface?.contains(focused) && !tab?.contains(focused))
+    if (
+      !element.closest("[data-reading-surface]")?.contains(focused) &&
+      !focused?.closest('[role="tab"]')
+    )
       element.focus({ preventScroll: true });
   }, [navigation?.signal]);
   // Ordinary opens follow the latest reply after bounded history finishes.

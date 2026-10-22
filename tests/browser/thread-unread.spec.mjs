@@ -125,6 +125,83 @@ test.describe("mentioned reply priority", () => {
       );
     }
   });
+
+  test("an Activity reopening leaves focus the person moved meanwhile", async ({
+    page,
+    app,
+  }) => {
+    // As above, hold the clock so the thread cannot be read while it opens.
+    await page.clock.install();
+    await holdReadingFocus(page);
+    await open(page, app);
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content === "Thread root 1");
+    const panel = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const composer = page.getByRole("textbox", {
+      name: "Message #Alpha",
+      exact: true,
+    });
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    await expect(panel).toBeVisible();
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.clock.resume();
+    await page.locator('button[data-channel-id="alpha"]').hover();
+    const item = page
+      .getByRole("dialog", { name: "Activity in Alpha" })
+      .getByRole("button", { name: /Open unread thread from/ })
+      .filter({ hasText: "Unread reply 1" });
+    await expect(item).toBeVisible();
+    await releaseReadingFocus(page);
+    const previousAttempt = await page.evaluate(
+      () => window.fixtureNavigation.snapshot().attempt.id,
+    );
+    // Hold the reopening's reads so the person can move focus before the
+    // thread receives its request.
+    let held = false;
+    let release;
+    let sawRead;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const read = new Promise((resolve) => {
+      sawRead = resolve;
+    });
+    await page.route("**/api/relay/**/query", async (route) => {
+      if (held) {
+        sawRead();
+        await gate;
+      }
+      await route.continue().catch(() => {});
+    });
+    held = true;
+    try {
+      await item.click();
+      await read;
+      await composer.click();
+      await page.keyboard.type("Still typing");
+    } finally {
+      held = false;
+      release();
+    }
+    await expect
+      .poll(() =>
+        page.evaluate((previous) => {
+          const { status, attempt } = window.fixtureNavigation.snapshot();
+          return { status, freshAttempt: attempt.id !== previous };
+        }, previousAttempt),
+      )
+      .toEqual({ status: "opened", freshAttempt: true });
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveText("Still typing");
+  });
 });
 
 test("thread buttons show observed unread independently, clear only after reading, and expose hover/focus affordance", async ({

@@ -111,6 +111,7 @@ import {
   type RecoveryStatus,
 } from "./recovery";
 import { createReminders } from "./reminders";
+import { createArtifactSyncView, type ArtifactSyncView } from "./artifact-sync";
 import {
   retainEvents,
   matchesEvent,
@@ -950,6 +951,7 @@ export function createRelaySession(
     notify,
   });
   let traffic: LiveSubscription | undefined;
+  const artifactSyncs = new Set<ArtifactSyncView>();
   const liveListeners = new Set<() => void>();
   let liveSnapshot: LiveSnapshot = Object.freeze({
     status: transport?.subscribe ? "connecting" : "unavailable",
@@ -2249,6 +2251,43 @@ export function createRelaySession(
     },
     /** Whether read() search filters may ask for `search_sort: "newest"`. */
     searchSort: transport?.searchSort === true,
+    /** NIP-AR sync: an exact, kept-current set of current artifacts for a
+     * filter that names its channels with `#h`. Status `unsupported` means
+     * this relay has no sync; use read() with `artifact: "current"` instead.
+     * Dispose with the plugin's scope. */
+    artifacts: {
+      sync(filter: unknown): ArtifactSyncView {
+        if (closed || artifactSyncs.size >= 32)
+          throw new Error("Artifact sync capacity unavailable");
+        const view = createArtifactSyncView(
+          filter,
+          transport?.artifactSync && transport.subscribe
+            ? (input, sink) => {
+                // Live traffic can start after the plugin asks; retry until it does.
+                if (traffic?.syncArtifacts)
+                  return traffic.syncArtifacts(input, sink);
+                queueMicrotask(() =>
+                  sink.closed(
+                    closed
+                      ? "unsupported: relay session disposed"
+                      : "disconnected: live connection not started",
+                  ),
+                );
+                return () => {};
+              }
+            : undefined,
+        );
+        artifactSyncs.add(view);
+        const dispose = view.dispose;
+        return {
+          ...view,
+          dispose() {
+            artifactSyncs.delete(view);
+            dispose();
+          },
+        };
+      },
+    },
     /** An owned retained event view, not a replacement query snapshot. Limits bound
      * requests, not retained results. Ranked search/feed filters require read().
      * Subscribe, refresh and dispose with the plugin's scope. */
@@ -3012,6 +3051,8 @@ export function createRelaySession(
       stopInterests();
       stopHintGuard();
       stopWarmPreferences();
+      for (const view of [...artifactSyncs]) view.dispose();
+      artifactSyncs.clear();
       traffic?.dispose();
       liveListeners.clear();
       incomingListeners.clear();

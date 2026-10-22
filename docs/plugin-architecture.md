@@ -962,8 +962,6 @@ not generation. Reactive filtered reads use `session.observe`;
 writes use `session.outbox` or the `session.messages` convenience methods. Reads,
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
-See [shared plugin services](shared-plugin-services.md) for channel creation,
-artifact operations, and local agent conversations.
 For kind 30177 publication, follow the
 [managed-agent registration guidance](relay-queries.md#managed-agent-registration-kind-30177).
 

@@ -2558,7 +2558,9 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
   expect(service.find(bot)).toBeUndefined();
   // Cached choices are reread first, so the deleted agent can't be saved
   // again as its own replacement.
-  expect(session.agentChoices.refresh).toHaveBeenCalled();
+  expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
+    fresh: true,
+  });
   expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
   expect(
     vi.mocked(session.agentChoices.refresh).mock.invocationCallOrder[0],

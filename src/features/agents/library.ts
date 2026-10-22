@@ -57,9 +57,12 @@ export function createAgentLibrary(
     snapshot = Object.freeze(next);
     for (const listener of listeners) notify(listener);
   }
-  function refresh(): Promise<void> {
+  /** Joins a read in flight, unless `fresh`: then it supersedes that read,
+   * which may predate a change the caller just made. */
+  function refresh({ fresh = false } = {}): Promise<void> {
     if (closed || !read) return Promise.resolve();
-    if (pending) return pending;
+    if (pending && !fresh) return pending;
+    controller?.abort();
     const owned = new AbortController();
     controller = owned;
     publish({ ...snapshot, status: "loading" });

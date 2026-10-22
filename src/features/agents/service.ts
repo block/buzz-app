@@ -3370,11 +3370,11 @@ async function leaveCommunity(
   if (state === "not-archived" && (await archives.consent(pubkey, signal)))
     await archives.request("archive", pubkey, signal);
 }
-/** After a finished Delete, rereads the shared agent choices so their cached
- * inventory no longer offers it, then forgets it as the main agent so the
- * next available one is saved in its place. */
+/** After a finished Delete, rereads the shared agent choices, superseding any
+ * read begun before it, so their inventory no longer offers it; then forgets
+ * it as the main agent so the next available one is saved in its place. */
 async function handOnMainAgent(session: RelaySession, pubkey: string) {
-  await session.agentChoices.refresh();
+  await session.agentChoices.refresh(true, { fresh: true });
   forgetDefaultAgent(pubkey);
 }
 function stillArchived(name: string) {

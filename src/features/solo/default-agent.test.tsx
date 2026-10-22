@@ -302,3 +302,52 @@ it("after a finished delete, rereads cached inventory before choosing a replacem
   await act(() => agentChoices.refresh());
   expect(screen.getByLabelText("main")).toHaveTextContent("A");
 });
+
+it("a read begun before the delete can't bring the deleted main agent back", async () => {
+  const a = { pubkey: "a".repeat(64), name: "A" };
+  const b = { pubkey: "b".repeat(64), name: "B" };
+  let rows = [b, a];
+  let release: (() => void) | undefined;
+  let hold = false;
+  const library = createAgentLibrary(async () => {
+    const captured = rows;
+    if (hold) await new Promise<void>((resolve) => (release = resolve));
+    return { definitions: [], identities: captured };
+  });
+  const agentChoices = createAgentChoices({
+    scope: `https://relay.example.test:${"f".repeat(64)}`,
+    library: library.queries,
+    signal: new AbortController().signal,
+  });
+  await library.queries.refresh();
+  const session = { agentChoices } as unknown as RelaySession;
+  function Selection() {
+    return (
+      <output aria-label="main">
+        {useDefaultAgent(session, "held")?.name}
+      </output>
+    );
+  }
+  render(<Selection />);
+  act(() => {
+    setDefaultAgent("held", b.pubkey);
+  });
+  // A read that captured B is still in flight when B is deleted.
+  hold = true;
+  const stale = library.queries.refresh();
+  await act(async () => {});
+  hold = false;
+  rows = [a];
+  await act(async () => {
+    await agentChoices.refresh(true, { fresh: true });
+    forgetDefaultAgent(b.pubkey);
+  });
+  await act(async () => {
+    release?.();
+    await stale;
+  });
+  expect(screen.getByLabelText("main")).toHaveTextContent("A");
+  rows = [{ pubkey: "c".repeat(64), name: "C" }, a];
+  await act(() => agentChoices.refresh());
+  expect(screen.getByLabelText("main")).toHaveTextContent("A");
+});

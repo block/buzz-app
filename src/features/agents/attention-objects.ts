@@ -1,3 +1,4 @@
+import { sourceCompleted } from "./attention";
 // One-object reads and writes of an agent's attention, with Janet's scoped
 // object contract: a show returns the object and its expected-state token, and
 // every write must present the token of the object it replaces. A token is a
@@ -133,12 +134,11 @@ export function objectAt(
     return {
       id: parsed.id,
       ...value,
-      status:
-        record.sourceRuns?.[slug] === JSON.stringify(record.attention[slug])
-          ? "completed"
-          : value.enabled
-            ? "enabled"
-            : "disabled",
+      status: sourceCompleted(record.sourceRuns, record.attention[slug])
+        ? "completed"
+        : value.enabled
+          ? "enabled"
+          : "disabled",
     };
   if (value.type === "event")
     return {
@@ -238,8 +238,7 @@ export function watchSummaries(
       const value = object.value;
       if (!id || value.type === "interest") return [];
       const status =
-        value.type === "source" &&
-        record.sourceRuns?.[object.slug] === JSON.stringify(object)
+        value.type === "source" && sourceCompleted(record.sourceRuns, object)
           ? "completed"
           : value.type !== "timer"
             ? value.enabled

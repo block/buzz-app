@@ -1,3 +1,4 @@
+import { sourceCompleted } from "./attention";
 // The owner's view of an agent's `agent-attention/v1` objects. The agent writes
 // them itself, through its attention tools; the owner reads them here, turns
 // attention on or off, and can remove an object this app cannot read. Watches
@@ -321,8 +322,7 @@ function WatchRow({
                 : "has a classifier, which cannot run on this device, so every match passes"),
           ];
   const state =
-    value.type === "source" &&
-    agent.sourceRuns?.[slug] === JSON.stringify(object)
+    value.type === "source" && sourceCompleted(agent.sourceRuns, object)
       ? "Completed"
       : status?.spent
         ? "Spent"

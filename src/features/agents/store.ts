@@ -1,3 +1,4 @@
+import { sourceCompleted, sourceSignature } from "./attention";
 // Device-local settings for agents: each agent's attention objects in the
 // `agent-attention/v1` shape, one JSON blob its plugin type owns, and its timers'
 // run state. Which agents exist, their type and name, and their keys live in
@@ -139,7 +140,20 @@ function readRecord(
   const entries = Object.entries(record.attention ?? {}).sort(([a], [b]) =>
     a < b ? -1 : a > b ? 1 : 0,
   );
-  for (const [slug, object] of entries) {
+  for (const [slug, saved] of entries) {
+    const object =
+      saved?.value?.type === "source" &&
+      saved.value.provider === "monitor/command"
+        ? {
+            ...saved,
+            value: {
+              ...saved.value,
+              provider: saved.value.config.pr
+                ? "buzz.agents/github-pr"
+                : "buzz.agents/command",
+            },
+          }
+        : saved;
     const modifiedAt = Number.isSafeInteger(object?.modifiedAt)
       ? object.modifiedAt
       : 0;
@@ -171,12 +185,21 @@ function readRecord(
     ...(record.sourceRuns
       ? {
           sourceRuns: Object.fromEntries(
-            Object.entries(record.sourceRuns).filter(
-              ([slug, signature]) =>
-                attention[slug]?.value.type === "source" &&
-                typeof signature === "string" &&
-                signature === JSON.stringify(attention[slug]),
-            ),
+            Object.entries(record.sourceRuns)
+              .filter(
+                ([slug, signature]) =>
+                  attention[slug]?.value.type === "source" &&
+                  typeof signature === "string" &&
+                  (sourceCompleted({ [slug]: signature }, attention[slug]) ||
+                    sourceCompleted(
+                      { [slug]: signature },
+                      record.attention[slug],
+                    )),
+              )
+              .map(([slug]) => [
+                slug,
+                sourceSignature(attention[slug] as AttentionObject),
+              ]),
           ),
         }
       : {}),

@@ -284,6 +284,35 @@ export function validateObject(
       )
         fail("provider must be plugin/source");
       if (!isObject(object.config)) fail("config must be an object");
+      if (object.provider === "buzz.agents/command") {
+        const config = object.config as Record<string, unknown>;
+        const command = config.command;
+        if (
+          !Array.isArray(command) ||
+          !command.length ||
+          typeof command[0] !== "string" ||
+          !command[0] ||
+          command.length > 256 ||
+          command.some(
+            (part) => typeof part !== "string" || part.includes("\0"),
+          )
+        )
+          fail("command must be a non-empty list of arguments");
+        if (
+          config.cwd !== undefined &&
+          (typeof config.cwd !== "string" ||
+            !(config.cwd.startsWith("/") || /^[A-Za-z]:[\\/]/.test(config.cwd)))
+        )
+          fail("cwd must be absolute");
+      }
+      if (
+        object.provider === "buzz.agents/github-pr" &&
+        (typeof (object.config as Record<string, unknown>).pr !== "string" ||
+          !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+$/.test(
+            (object.config as Record<string, unknown>).pr as string,
+          ))
+      )
+        fail("pr must be a GitHub pull request URL");
       if (typeof object.channel !== "string" || !CHANNEL.test(object.channel))
         fail("channel must be a channel id");
       if (
@@ -463,4 +492,17 @@ export function attentionOf(
     watches,
     orphans: watches.filter((object) => !ids.has(object.value.interest_id)),
   };
+}
+
+/** Identity of the exact saved registration whose producer finished. */
+export const sourceSignature = (object: AttentionObject) =>
+  JSON.stringify(object);
+export function sourceCompleted(
+  runs: Readonly<Record<string, string>> | undefined,
+  object: AttentionObject | undefined,
+) {
+  return (
+    object?.value.type === "source" &&
+    runs?.[object.slug] === sourceSignature(object)
+  );
 }

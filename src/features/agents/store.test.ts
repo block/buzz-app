@@ -316,7 +316,7 @@ it("keeps a record saved since, when a late move from the old shared value lands
 it("keeps source completion across reload and clears it when a source is edited", async () => {
   const value = {
     type: "source" as const,
-    provider: "monitor/command",
+    provider: "buzz.agents/command",
     interest_id: "pr",
     enabled: true,
     channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -334,4 +334,39 @@ it("keeps source completion across reload and clears it when a source is edited"
     setAttention(saved, "watch/pr", { ...value, enabled: false }, 8).sourceRuns,
   ).toEqual({});
   expect(setAttention(saved, "watch/pr", null, 8).sourceRuns).toEqual({});
+});
+
+it("moves Monitor source watches into Attention without restarting completed registrations", async () => {
+  const storage = memoryStorage();
+  const saved = setAttention(
+    setAttention(
+      record,
+      "interest/check",
+      { type: "interest", instructions: "Watch" },
+      1,
+    ),
+    "watch/check",
+    {
+      type: "source",
+      provider: "monitor/command",
+      interest_id: "check",
+      enabled: true,
+      channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      config: { pr: "https://github.com/example/repo/pull/1" },
+    },
+    2,
+  );
+  await writeRecord(storage, {
+    ...saved,
+    sourceRuns: {
+      "watch/check": JSON.stringify(saved.attention["watch/check"]),
+    },
+  });
+  const read = readRecords(storage)[pubkey];
+  expect(read?.attention["watch/check"]?.value).toMatchObject({
+    provider: "buzz.agents/github-pr",
+  });
+  expect(read?.sourceRuns?.["watch/check"]).toBe(
+    JSON.stringify(read?.attention["watch/check"]),
+  );
 });

@@ -147,6 +147,27 @@ it("a refused channel removal does not fail Remove or leave outbox work", async 
   expect(instance.session.outbox?.snapshot()).toEqual([]);
 });
 
+it("skips archived channels, where the relay refuses membership changes", async () => {
+  const active = `${"a".repeat(8)}-channel`,
+    archived = `${"b".repeat(8)}-channel`;
+  const { fixture, instance } = setup(viewer, {
+    [active]: [agent.pubkey, viewer.pubkey],
+    [archived]: [agent.pubkey, viewer.pubkey],
+  });
+  fixture.archivedChannels.add(archived);
+  await removeAgentFromChannels(
+    instance.session,
+    agent.pubkey,
+    new AbortController().signal,
+  );
+  expect(fixture.published.map((event) => event.tags[0])).toEqual([
+    ["h", active],
+  ]);
+  expect(fixture.channels[active]).not.toContain(agent.pubkey);
+  expect(fixture.channels[archived]).toContain(agent.pubkey);
+  expect(instance.session.outbox?.snapshot()).toEqual([]);
+});
+
 it("signs a new channel removal instead of resending one the relay would refuse as stale", async () => {
   const { fixture, instance } = setup();
   const removeFromChannels = () =>

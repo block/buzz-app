@@ -151,9 +151,9 @@ export async function deleteAgentRecord(
 }
 
 /** Base Buzz `removeAgentFromAllChannels` over the relay's rosters for this
- * agent plus the viewer's loaded channels. Resolves only once a fresh relay
- * read lists the agent in none of them; any refusal or unknown outcome throws
- * after every channel operation has settled. */
+ * agent plus the viewer's loaded channels, skipping archived ones. Resolves
+ * only once a fresh relay read lists the agent in none of them; any refusal or
+ * unknown outcome throws after every channel operation has settled. */
 export async function removeAgentFromChannels(
   session: Pick<RelaySession, "outbox" | "channels" | "channelWrites">,
   pubkey: string,
@@ -163,7 +163,9 @@ export async function removeAgentFromChannels(
     ...(await session.channelWrites.memberChannels(pubkey, signal)),
     ...session.channels
       .list()
-      .channels.filter((channel) => channel.members?.includes(pubkey))
+      .channels.filter(
+        (channel) => !channel.archived && channel.members?.includes(pubkey),
+      )
       .map((channel) => channel.id),
   ]);
   if (!pending.size) return;

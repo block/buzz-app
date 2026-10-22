@@ -1509,12 +1509,12 @@ export function relayBrokerPlugin({
               existing?.();
               // The close can overtake its open: remember it so the late
               // open cannot take a slot. IDs are never reused on a stream.
+              // A forgotten record would let its open take a slot again, so
+              // a stream with too many unresolved closes ends instead: that
+              // ends every sync on it, and a late open finds no stream.
               if (!existing) {
-                stream.closedSyncs.add(id);
-                if (stream.closedSyncs.size > 64)
-                  stream.closedSyncs.delete(
-                    stream.closedSyncs.values().next().value,
-                  );
+                if (stream.closedSyncs.size >= 64) stream.close();
+                else stream.closedSyncs.add(id);
               }
               return json(res, 200, { accepted: true });
             }

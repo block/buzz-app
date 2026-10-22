@@ -30,6 +30,13 @@ import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { LinkLabel } from "../../bundled/links/InlineLink";
+import { attestedOwner } from "../agents/owner-attestation";
+
+// Real verification, observed so tests can wait for its verdict.
+vi.mock("../agents/owner-attestation", async (original) => {
+  const actual = await original<typeof import("../agents/owner-attestation")>();
+  return { ...actual, attestedOwner: vi.fn(actual.attestedOwner) };
+});
 
 const row: ChannelMessage = {
   id: "root",
@@ -3662,18 +3669,27 @@ it.each([
       tags: [["auth", owner.pubkey, conditions, sig]],
     });
     const quinn: Profile = { name: "Quinn", isAgent: true };
-    const profiles = new Map<string, Profile>([
-      [agent.pubkey, quinn],
-      [owner.pubkey, { name: "Logan" }],
-    ]);
-    const ensure = vi.fn(async () => {});
+    let profiles = new Map<string, Profile>([[agent.pubkey, quinn]]);
+    const listeners = new Set<() => void>();
+    // The owner's name arrives after verification, as a background load.
+    const ensure = vi.fn(async () => {
+      // Later than the render that requested it, so only a subscription shows it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      profiles = new Map(profiles).set(owner.pubkey, { name: "Logan" });
+      for (const listener of listeners) listener();
+    });
     const subscribe = () => () => {};
+    const verifications = vi.mocked(attestedOwner);
+    verifications.mockClear();
     const session = {
       channels: { list: () => listed, subscribeList: subscribe },
       messages: {},
       profiles: {
         snapshot: () => profiles,
-        subscribe,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
         ensure,
         event: (key: string) => (key === agent.pubkey ? head : undefined),
       },
@@ -3690,15 +3706,20 @@ it.each([
       const byline = view.container.querySelector("strong")?.parentElement;
       // The mention-chip agent mark sits beside the name either way.
       expect(byline?.querySelector("svg")).not.toBeNull();
+      expect(verifications).toHaveBeenCalledWith(head);
+      // Barrier: the real signature check has returned its verdict.
+      await act(async () => {
+        await verifications.mock.results[0]?.value;
+      });
       if (label) {
         await waitFor(() =>
           expect(view.container).toHaveTextContent(`Quinn· ${label}`),
         );
         expect(ensure).toHaveBeenCalledWith([owner.pubkey], "background");
       } else {
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        });
+        await expect(verifications.mock.results[0]?.value).resolves.toBe(
+          undefined,
+        );
         expect(view.container).not.toHaveTextContent("agent");
         expect(ensure).not.toHaveBeenCalled();
       }

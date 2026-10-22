@@ -199,6 +199,8 @@ ${WRITES}`,
           type: "string",
           enum: [
             "name",
+            "cwd",
+            "root",
             "authors",
             "exclude_authors",
             "tags",
@@ -414,22 +416,33 @@ async function run(
           value.type === "event"
             ? eventFields(args)
             : value.type === "source"
-              ? pick(
-                  args,
-                  ["name", "enabled"],
-                  [...EVENT, ...TIMER].filter(
-                    (key) => key !== "name" && key !== "enabled",
-                  ),
-                )
+              ? sourceFields(args, value)
               : timerFields(args);
         const clear = Array.isArray(args.clear) ? args.clear : [];
+        if (
+          value.type === "source" &&
+          clear.some(
+            (key) =>
+              ![
+                "name",
+                "root",
+                ...(value.provider === "buzz.agents/command" ? ["cwd"] : []),
+              ].includes(String(key)),
+          )
+        )
+          refuse("not an optional field of this source watch");
         if (value.type === "timer" && clear.length)
           refuse("a timer has no optional fields to clear");
         // Janet's rule: only a rearm arms a timer, with a new deadline.
         if (value.type === "timer" && !value.enabled && fields.enabled === true)
           refuse("use watch_rearm to turn a timer on");
         const next: Record<string, unknown> = { ...value, ...fields };
-        for (const key of clear) delete next[String(key)];
+        for (const key of clear) {
+          if (value.type === "source" && key === "cwd") {
+            next.config = { ...(next.config as object) };
+            delete (next.config as Record<string, unknown>).cwd;
+          } else delete next[String(key)];
+        }
         return next;
       });
     case "watch_enable":
@@ -545,13 +558,32 @@ function pick(args: Args, names: readonly string[], other: readonly string[]) {
       .map((key) => [key, args[key]]),
   );
 }
+const SOURCE = ["name", "enabled", "command", "cwd", "pr", "channel", "root"];
+function sourceFields(args: Args, value: SourceWatch): Record<string, unknown> {
+  const configKeys =
+    value.provider === "buzz.agents/command"
+      ? ["command", "cwd"]
+      : value.provider === "buzz.agents/github-pr"
+        ? ["pr"]
+        : [];
+  const names = ["name", "enabled", "channel", "root", ...configKeys];
+  const fields = pick(args, names, [...EVENT, ...TIMER, ...SOURCE]);
+  const config = { ...value.config };
+  for (const key of configKeys) {
+    if (key in fields) {
+      config[key] = fields[key];
+      delete fields[key];
+    }
+  }
+  return { ...fields, config };
+}
 function eventFields(args: Args) {
-  const fields = pick(args, EVENT, TIMER);
+  const fields = pick(args, EVENT, [...TIMER, ...SOURCE]);
   if (fields.since === "now") fields.since = seconds();
   return fields;
 }
 function timerFields(args: Args) {
-  const fields = pick(args, TIMER, EVENT);
+  const fields = pick(args, TIMER, [...EVENT, ...SOURCE]);
   for (const key of ["max_occurrences", "expires_at"])
     if (fields[key] === "unbounded") fields[key] = null;
   return fields;

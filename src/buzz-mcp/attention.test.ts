@@ -627,3 +627,45 @@ it("creates command and PR checks through the normal Attention watch tools", asy
     }),
   ).rejects.toThrow(/command/);
 });
+
+it("updates command config and conversation and rejects foreign provider fields", async () => {
+  const { call } = agent();
+  await call("interest_set", {
+    id: "triage",
+    instructions: "Watch",
+    expected_state: ABSENT,
+  });
+  const added = await call("watch_add", {
+    interest: "triage",
+    id: "command",
+    type: "command",
+    command: ["old"],
+    channel,
+    expected_state: ABSENT,
+  });
+  const updated = await call("watch_update", {
+    id: "command",
+    command: ["new"],
+    cwd: "/tmp",
+    root: "e".repeat(64),
+    expected_state: added.expected_state,
+  });
+  expect(updated.object).toMatchObject({
+    config: { command: ["new"], cwd: "/tmp" },
+    root: "e".repeat(64),
+  });
+  const cleared = await call("watch_update", {
+    id: "command",
+    clear: ["cwd", "root"],
+    expected_state: updated.expected_state,
+  });
+  expect(cleared.object.config).toEqual({ command: ["new"] });
+  expect(cleared.object).not.toHaveProperty("root");
+  await expect(
+    call("watch_update", {
+      id: "command",
+      pr: "https://github.com/a/b/pull/1",
+      expected_state: cleared.expected_state,
+    }),
+  ).rejects.toThrow();
+});

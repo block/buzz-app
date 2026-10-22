@@ -2190,7 +2190,7 @@ it("announces the main agent and presents its menu status without a fake toggle"
     complete: true,
     pending: false,
     selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
-    archives: { status: "unavailable" },
+    archives: { status: "unavailable", archived: [] },
   };
   const connection = {
     status: "ready",
@@ -2233,7 +2233,7 @@ it("offers Make main agent from the card's actions button", async () => {
       { pubkey: ada.pubkey, name: ada.name, managed: true },
       { pubkey: bea.pubkey, name: bea.name, managed: true },
     ],
-    archives: { status: "unavailable" },
+    archives: { status: "unavailable", archived: [] },
   };
   const connection = {
     status: "ready",

@@ -17,7 +17,7 @@ it("choosing a default updates new-chat routing only in its account/community sc
       { pubkey: "a".repeat(64), name: "First", managed: true },
       { pubkey: "b".repeat(64), name: "Second", managed: true },
     ],
-    archives: { status: "unavailable" },
+    archives: { status: "unavailable", archived: [] },
   };
   const session = {
     agentChoices: {
@@ -60,7 +60,7 @@ it("waits for complete fallback and settled archive evidence, but honors an avai
     complete: false,
     pending: true,
     selectable: [relay],
-    archives: { status: "loading" },
+    archives: { status: "loading", archived: [] },
   };
   const listeners = new Set<() => void>();
   const session = {
@@ -99,7 +99,7 @@ it("waits for complete fallback and settled archive evidence, but honors an avai
   });
   expect(screen.getByLabelText("choice")).toBeEmptyDOMElement();
   act(() => {
-    choices = { ...choices, archives: { status: "ready" } };
+    choices = { ...choices, archives: { status: "ready", archived: [] } };
     for (const notify of listeners) notify();
   });
   expect(screen.getByLabelText("choice")).toHaveTextContent("Local");
@@ -113,7 +113,7 @@ it("a requested agent replaces the default, and nothing stands in for it", () =>
       { pubkey: "a".repeat(64), name: "First", managed: true },
       { pubkey: "b".repeat(64), name: "Second", managed: true },
     ],
-    archives: { status: "unavailable" },
+    archives: { status: "unavailable", archived: [] },
   };
   const session = {
     agentChoices: {
@@ -138,4 +138,66 @@ it("a requested agent replaces the default, and nothing stands in for it", () =>
   );
   expect(screen.getByLabelText("b").textContent).toBe("Second");
   expect(screen.getByLabelText("d").textContent).toBe("none");
+});
+
+it("keeps the main agent stable: saves the first pick and replaces only a deleted choice", () => {
+  const first = { pubkey: "a".repeat(64), name: "First", managed: true };
+  const second = { pubkey: "b".repeat(64), name: "Second", managed: true };
+  let choices = {
+    status: "ready",
+    complete: true,
+    selectable: [first, second],
+    archives: { status: "ready", archived: [] as string[] },
+  };
+  const listeners = new Set<() => void>();
+  const update = (next: Partial<typeof choices>) => {
+    choices = { ...choices, ...next };
+    for (const notify of listeners) notify();
+  };
+  const session = {
+    agentChoices: {
+      snapshot: () => choices,
+      subscribe: (notify: () => void) => {
+        listeners.add(notify);
+        return () => listeners.delete(notify);
+      },
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as unknown as RelaySession;
+  function Selection() {
+    return (
+      <output aria-label="main">
+        {useDefaultAgent(session, "stable")?.name}
+      </output>
+    );
+  }
+  render(<Selection />);
+  // The automatic pick is saved, so a different load order doesn't move it.
+  expect(screen.getByLabelText("main")).toHaveTextContent("First");
+  act(() => update({ selectable: [second, first] }));
+  expect(screen.getByLabelText("main")).toHaveTextContent("First");
+  // A chosen agent missing for a while is stood in for, then comes back.
+  act(() => {
+    setDefaultAgent("stable", second.pubkey);
+  });
+  act(() => update({ selectable: [first] }));
+  expect(screen.getByLabelText("main")).toHaveTextContent("First");
+  act(() => update({ selectable: [first, second] }));
+  expect(screen.getByLabelText("main")).toHaveTextContent("Second");
+  // Deleting it hands the role on for good.
+  act(() =>
+    update({
+      selectable: [first],
+      archives: { status: "ready", archived: [second.pubkey] },
+    }),
+  );
+  expect(screen.getByLabelText("main")).toHaveTextContent("First");
+  act(() =>
+    update({
+      selectable: [second, first],
+      archives: { status: "ready", archived: [] },
+    }),
+  );
+  expect(screen.getByLabelText("main")).toHaveTextContent("First");
 });

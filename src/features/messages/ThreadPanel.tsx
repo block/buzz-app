@@ -752,7 +752,8 @@ function ThreadMessages({
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
   // Opening a thread that is already shown selects nothing new, so no tab
-  // hands focus to it. Without focus inside, reading never starts.
+  // hands focus to it. Without focus inside, reading never starts. A first
+  // opening (not yet positioned) is focused by its tab and must be left alone.
   // The signal identifies one request; the navigation object is re-bound per
   // relay snapshot, so a re-render of the same request must not refocus.
   const handledRequest = useRef(navigation?.signal);
@@ -767,6 +768,7 @@ function ThreadMessages({
       navigation.focus === "preserve" ||
       !rootTarget ||
       !active ||
+      !positioned.current ||
       !element
     )
       return;

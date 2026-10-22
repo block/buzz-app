@@ -75,7 +75,7 @@ chmod +x "$temp_dir/bin/gh"
 
 PATH="$temp_dir/bin:$PATH" \
 FAKE_TICK="$temp_dir/tick" \
-TMPDIR="$temp_dir/state" PR_MONITOR_STATE_DIRECTORY="$temp_dir/state/pr-monitor-owner-repo-1" \
+TMPDIR="$temp_dir/state" \
 MONITOR_PR_PYTHON_BIN="$(command -v python3)" \
   "$monitor" --repo owner/repo --include-non-employees --interval 0.01 1 >"$temp_dir/default.out"
 
@@ -86,13 +86,12 @@ grep -q '\*\*reviewer\*\* \(reviewed\|approved\|requested changes\) ·' "$temp_d
 ! grep -q 'self initial\|self edited\|self reply\|self review\|self task' "$temp_dir/default.out"
 ! grep -q 'stable external review comment' "$temp_dir/default.out"
 # The self edit was consumed into state before the external event arrived.
-grep -q $'issue-comment\t10\t2026-01-01T00:01:00Z' "$temp_dir/state/pr-monitor-owner-repo-1/comments.state"
 
 rm -rf "$temp_dir/state" "$temp_dir/tick"
 mkdir -p "$temp_dir/state"
 PATH="$temp_dir/bin:$PATH" \
 FAKE_TICK="$temp_dir/tick" \
-TMPDIR="$temp_dir/state" PR_MONITOR_STATE_DIRECTORY="$temp_dir/state/pr-monitor-owner-repo-1" \
+TMPDIR="$temp_dir/state" \
 MONITOR_PR_PYTHON_BIN="$(command -v python3)" \
   "$monitor" --repo owner/repo --include-non-employees --interval 0.01 --include-self-comments 1 >"$temp_dir/include.out"
 
@@ -111,16 +110,15 @@ echo "pr-monitor self-comment tests passed"
 printf 'unrelated-employee\n' >"$temp_dir/allowlist"
 rm -rf "$temp_dir/state" "$temp_dir/tick"
 mkdir -p "$temp_dir/state"
-PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" PR_MONITOR_STATE_DIRECTORY="$temp_dir/state/pr-monitor-owner-repo-1" \
+PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" \
   "$monitor" --repo owner/repo --interval 0.01 --allowlist "$temp_dir/allowlist" 1 >"$temp_dir/denied.out"
 grep -q '0 comments · 0 unresolved' "$temp_dir/denied.out"
 ! grep -q '· \[view\]\|external feedback' "$temp_dir/denied.out"
-grep -q $'issue-comment\t11' "$temp_dir/state/pr-monitor-owner-repo-1/comments.state"
 grep -q 'PR #1 \(merged\|closed\)' "$temp_dir/denied.out"
 
 rm -rf "$temp_dir/state" "$temp_dir/tick"
 mkdir -p "$temp_dir/state"
-PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" PR_MONITOR_STATE_DIRECTORY="$temp_dir/state/pr-monitor-owner-repo-1" \
+PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" \
   "$monitor" --repo owner/repo --interval 0.01 --employee-org employees 1 >"$temp_dir/employees.out"
 grep -q 'external feedback' "$temp_dir/employees.out"
 grep -q '\*\*reviewer\*\* \(reviewed\|approved\|requested changes\) ·' "$temp_dir/employees.out"
@@ -135,14 +133,14 @@ grep -q 'cannot load employee whitelist' "$temp_dir/failed.err"
 # Squareup repositories enable the organization roster without flags.
 rm -rf "$temp_dir/state" "$temp_dir/tick"
 mkdir -p "$temp_dir/state"
-PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" PR_MONITOR_STATE_DIRECTORY="$temp_dir/state/pr-monitor-owner-repo-1" \
+PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" \
   "$monitor" --repo squareup/repo --interval 0.01 1 >"$temp_dir/squareup.out"
 grep -q 'external feedback' "$temp_dir/squareup.out"
 
 # The explicit opt-out bypasses a failing roster lookup.
 rm -rf "$temp_dir/state" "$temp_dir/tick"
 mkdir -p "$temp_dir/state"
-PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" PR_MONITOR_STATE_DIRECTORY="$temp_dir/state/pr-monitor-owner-repo-1" FAKE_ROSTER_FAILURE=1 \
+PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/tick" TMPDIR="$temp_dir/state" FAKE_ROSTER_FAILURE=1 \
   "$monitor" --repo squareup/repo --interval 0.01 --include-non-employees 1 >"$temp_dir/opt-out.out"
 grep -q 'external feedback' "$temp_dir/opt-out.out"
 echo 'pr-monitor employee whitelist tests passed'

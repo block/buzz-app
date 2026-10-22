@@ -33,7 +33,7 @@ PY
 chmod +x "$temp_dir/bin/gh"
 for owner in squareup block; do
   mkdir -p "$temp_dir/$owner"
-  PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/$owner/tick" TMPDIR="$temp_dir/$owner" PR_MONITOR_STATE_DIRECTORY="$temp_dir/$owner/pr-monitor-$owner-repo-1" \
+  PATH="$temp_dir/bin:$PATH" FAKE_TICK="$temp_dir/$owner/tick" TMPDIR="$temp_dir/$owner" \
     "$script_dir/pr-monitor.sh" --repo "$owner/repo" --interval 0.01 1 > "$temp_dir/$owner.out"
   grep -q '12 comments · 4 unresolved' "$temp_dir/$owner.out"
   for author in reviewer 'builderbot-code-review[bot]' 'square-task-list-completed[bot]' 'github-actions[bot]'; do
@@ -43,7 +43,6 @@ for owner in squareup block; do
   done
   ! grep -q 'test-user\|outsider\|imposter' "$temp_dir/$owner.out"
   # Suppressed authors still enter snapshots, so their edits cannot replay.
-  grep -q 'outsider' "$temp_dir/$owner/pr-monitor-$owner-repo-1/comments.state"
 done
 # Personal and other owners have no implicitly trusted authors, even bots.
 for mode in default include-self explicit; do

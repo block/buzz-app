@@ -38,7 +38,6 @@ ALLOWED_AUTHORS=""
 AUTHOR_ALLOWLIST_ENABLED=0
 INCLUDE_SELF_COMMENTS=0
 QUIET_INITIAL=0
-ONCE=0
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 AUTHOR_DEFAULTS="${MONITOR_PR_AUTHOR_DEFAULTS:-$SCRIPT_DIR/policies/author-defaults.sh}"
 [[ -f "$AUTHOR_DEFAULTS" ]] || { echo "ERROR: author defaults not found: $AUTHOR_DEFAULTS" >&2; exit 1; }
@@ -57,7 +56,6 @@ while [[ $# -gt 0 ]]; do
     --no-ignore-bots) IGNORE_AUTHORS=""; shift;;
     --include-self-comments) INCLUDE_SELF_COMMENTS=1; shift;;
     --quiet-initial) QUIET_INITIAL=1; shift;;
-    --once) ONCE=1; shift;;
     -h|--help) usage; exit 0;;
     *)
       if [[ -n "$PR" ]]; then
@@ -80,16 +78,6 @@ if [[ -z "$REPO" ]]; then REPO=$(gh repo view --json nameWithOwner -q .nameWithO
 if ! [[ "$PR" =~ ^[0-9]+$ ]]; then echo "ERROR: PR must be a number or URL" >&2; exit 1; fi
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO#*/}"
-ROSTER_CACHE="${PR_MONITOR_STATE_DIRECTORY:-}/authors.state"
-ROSTER_POLICY=$(jq -cn --arg repo "$REPO" --arg org "$EMPLOYEE_ORG" --arg file "$AUTHOR_ALLOWLIST_FILE" --argjson non_employees "$INCLUDE_NON_EMPLOYEES" '{repo:$repo,org:$org,file:$file,non_employees:$non_employees}')
-if [[ "$ONCE" == "1" && -f "$ROSTER_CACHE" && "${PR_MONITOR_REFRESH_ROSTER:-0}" != "1" ]]; then
-  [[ "$(jq -c '.policy' "$ROSTER_CACHE")" == "$ROSTER_POLICY" ]] || exit 1
-  jq -e '.authors | type == "string"' "$ROSTER_CACHE" >/dev/null || exit 1
-  ALLOWED_AUTHORS=$(jq -r '.authors' "$ROSTER_CACHE")
-  AUTHOR_ALLOWLIST_ENABLED=$(jq -r '.enabled' "$ROSTER_CACHE")
-  CURRENT_GITHUB_USER=$(jq -r '.user' "$ROSTER_CACHE")
-  [[ "$AUTHOR_ALLOWLIST_ENABLED" =~ ^[01]$ && -n "$CURRENT_GITHUB_USER" ]] || exit 1
-else
 # Deny comment delivery unless the owner has a policy or an explicit roster.
 if [[ "$INCLUDE_NON_EMPLOYEES" != "1" ]]; then
   AUTHOR_ALLOWLIST_ENABLED=1
@@ -121,21 +109,9 @@ if [[ "$INCLUDE_SELF_COMMENTS" != "1" && -z "$CURRENT_GITHUB_USER" ]]; then
   exit 1
 fi
 
-fi
-if [[ "$ONCE" == "1" && -n "${PR_MONITOR_STATE_DIRECTORY:-}" ]]; then
-  mkdir -p "$PR_MONITOR_STATE_DIRECTORY"
-  jq -cn --argjson policy "$ROSTER_POLICY" --arg authors "$ALLOWED_AUTHORS" --arg user "$CURRENT_GITHUB_USER" --argjson enabled "$AUTHOR_ALLOWLIST_ENABLED" '{policy:$policy,authors:$authors,user:$user,enabled:$enabled}' > "$ROSTER_CACHE"
-fi
-
-# Default state belongs to this producer, not every watcher of the same PR.
-# Explicit state directories support --once callers that persist their snapshots.
-if [[ -n "${PR_MONITOR_STATE_DIRECTORY:-}" ]]; then
-  STATE_DIR="$PR_MONITOR_STATE_DIRECTORY"
-  mkdir -p "$STATE_DIR"
-else
-  STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pr-monitor-${REPO//\//-}-${PR}.XXXXXX")
-  trap 'rm -rf "$STATE_DIR"' EXIT
-fi
+# Polling snapshots belong to this producer and end with its lifetime.
+STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pr-monitor-${REPO//\//-}-${PR}.XXXXXX")
+trap 'rm -rf "$STATE_DIR"' EXIT
 CI_EVENT_POLICY="${MONITOR_PR_CI_POLICY:-$SCRIPT_DIR/policies/ci-event-policy.py}"
 COMMENT_AUTHOR_POLICY="${MONITOR_PR_AUTHOR_POLICY:-$SCRIPT_DIR/policies/comment-author-policy.sh}"
 PYTHON3="${MONITOR_PR_PYTHON_BIN:-$(command -v python3 2>/dev/null || true)}"
@@ -520,13 +496,8 @@ pr_change_is_explained_by_submitted_review() {
 }
 
 first=1
-if [[ "$ONCE" == "1" && -s "$STATE_DIR/pr.state" && -f "$STATE_DIR/comments.state" && -f "$STATE_DIR/checks.state" ]]; then first=0; fi
 comment_fetch_failures=0
 comment_health_degraded=0
-if [[ "$ONCE" == "1" && -f "$STATE_DIR/health.state" ]]; then
-  read -r comment_fetch_failures comment_health_degraded < "$STATE_DIR/health.state"
-  [[ "$comment_fetch_failures" =~ ^[0-9]+$ && "$comment_health_degraded" =~ ^[01]$ ]] || exit 1
-fi
 deferred_comments_state="$STATE_DIR/deferred-comments.state"
 touch "$deferred_comments_state"
 while true; do
@@ -538,7 +509,6 @@ while true; do
   checks_state="$STATE_DIR/checks.state"
 
   if ! snapshot_pr_state > "$pr_tmp"; then
-    [[ "$ONCE" == "1" ]] && exit 1
     if [[ "$first" == "1" ]]; then
       emit "⚠️ Couldn't fetch PR #$PR in $REPO; retrying"
     fi
@@ -547,7 +517,6 @@ while true; do
   fi
   comments_available=1
   if ! snapshot_comments > "$comments_tmp"; then
-    [[ "$ONCE" == "1" && "$first" == "1" ]] && exit 1
     comments_available=0
     rm -f "$comments_tmp"
     comment_fetch_failures=$((comment_fetch_failures + 1))
@@ -679,12 +648,10 @@ while true; do
     esac
   fi
   cp "$pr_state" "$pr_state.prev"
-  printf '%s %s\n' "$comment_fetch_failures" "$comment_health_degraded" > "$STATE_DIR/health.state"
   if [[ "$terminal_state" == "1" ]]; then
     exit 0
   fi
 
-  [[ "$ONCE" == "1" ]] && exit 0
   first=0
   sleep "$INTERVAL"
 done

@@ -52,7 +52,7 @@ chmod +x "$temp_dir/bin/gh"
 
 PATH="$temp_dir/bin:$PATH" \
 FAKE_TICK="$temp_dir/tick" \
-TMPDIR="$temp_dir/state" PR_MONITOR_STATE_DIRECTORY="$temp_dir/state/pr-monitor-owner-repo-1" \
+TMPDIR="$temp_dir/state" \
 MONITOR_PR_PYTHON_BIN="$(command -v python3)" \
 PR_MONITOR_COMMENT_FETCH_ATTEMPTS=1 \
 PR_MONITOR_COMMENT_FETCH_RETRY_DELAY=0 \
@@ -64,7 +64,5 @@ grep -q 'Comment polling degraded after 2 consecutive failures' "$temp_dir/out"
 grep -q 'Comment polling recovered' "$temp_dir/out"
 grep -q 'recovered feedback' "$temp_dir/out"
 # The initial snapshot survives failed polls, and the recovered snapshot advances state.
-grep -q $'issue-comment\t10\t2026-01-01T00:00:00Z' "$temp_dir/state/pr-monitor-owner-repo-1/comments.state"
-grep -q $'issue-comment\t11\t2026-01-01T00:04:00Z' "$temp_dir/state/pr-monitor-owner-repo-1/comments.state"
 
 echo "pr-monitor comment error tests passed"

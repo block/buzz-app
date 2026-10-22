@@ -1,6 +1,6 @@
 # GitHub PR producer
 
-A read-only producer for `buzz-monitor.py` that polls a GitHub PR and prints only changes an owner of the PR would act on. It never posts to GitHub, and works the same in a terminal. Requires `gh` (authenticated for the repository), `jq`, and `python3`.
+A read-only producer for Attention that polls a GitHub PR and prints only changes an owner of the PR would act on. It never posts to GitHub, and works the same in a terminal. Requires `gh` (authenticated for the repository), `jq`, and `python3`.
 
 Prefer `monitor-pr-with-base.sh`, which adds base-branch conflict detection and keeps the startup summary out of stdout. `pr-monitor.sh` alone takes the same PR argument (`--repo owner/repo <number>` also works) and prints an initial snapshot first.
 

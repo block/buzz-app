@@ -24,7 +24,7 @@ esac
 SH
 chmod +x "$tmp/bin/gh"
 for run in a b; do
-  env -u PR_MONITOR_STATE_DIRECTORY PATH="$tmp/bin:$PATH" TMPDIR="$tmp/state" BARRIER="$tmp" RUN_ID="$run" bash "$here/pr-monitor.sh" --once --include-non-employees https://github.com/example/repo/pull/1 > "$tmp/$run.out" 2> "$tmp/$run.err" &
+  env PATH="$tmp/bin:$PATH" TMPDIR="$tmp/state" BARRIER="$tmp" RUN_ID="$run" bash "$here/pr-monitor.sh" --include-non-employees https://github.com/example/repo/pull/1 > "$tmp/$run.out" 2> "$tmp/$run.err" &
   if [[ "$run" == a ]]; then first=$!; else second=$!; fi
 done
 status=0

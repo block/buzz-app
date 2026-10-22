@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, expect, it } from "vitest";
 import { createOAuthSession } from "../oauth/session";
 import { deferred } from "../test-helpers";
@@ -18,7 +19,9 @@ it("offers Cancel sign-in only while sign-in is pending, then restores the provi
     return login.promise;
   });
   const Create = createCreatePanel(session);
-  render(<Create config={{}} disabled={false} onChange={() => {}} />);
+  render(<Create config={{}} disabled={false} onChange={() => {}} />, {
+    wrapper: StrictMode,
+  });
   expect(screen.getByText(/Its provider keeps its key/)).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Cancel sign-in" }),

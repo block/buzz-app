@@ -36,6 +36,8 @@ import gooseManifest from "./goose/manifest.json";
 import * as goose from "./goose";
 import piManifest from "./pi/manifest.json";
 import * as pi from "./pi";
+import ampManifest from "./amp/manifest.json";
+import * as amp from "./amp";
 import channelsManifest from "./channels/manifest.json";
 import githubManifest from "./github/manifest.json";
 import * as channels from "./channels";
@@ -204,6 +206,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...piManifest, apiVersion: 1 },
     module: pi,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...ampManifest, apiVersion: 1 },
+    module: amp,
     enabledByDefault: false,
   },
   {

@@ -7,18 +7,27 @@ import { readView, subscribeView, writeView } from "../../shared/view-state";
 // Saved on this device for the account and community (the view scope).
 const KEY = "solo:default-agent";
 
+const PUBKEY = /^[0-9a-f]{64}$/;
+
 /** Makes an agent the one new Berd messages are tagged for. */
 export function setDefaultAgent(scope: string, pubkey: string) {
-  return writeView(scope, KEY, /^[0-9a-f]{64}$/.test(pubkey) ? pubkey : null);
+  return writeView(scope, KEY, PUBKEY.test(pubkey) ? pubkey : null);
 }
 
-function useChosenAgent(scope: string) {
+/**
+ * The agent explicitly chosen on this device, with no stand-in: nothing writes
+ * this but a person choosing one, so its absence means they never have. Read
+ * `useDefaultAgent` instead to learn which agent a message would be tagged for.
+ */
+export function readDefaultAgent(scope: string) {
+  const value = readView<unknown>(scope, KEY, null);
+  return typeof value === "string" && PUBKEY.test(value) ? value : undefined;
+}
+
+export function useChosenAgent(scope: string) {
   return useSyncExternalStore(
-    useCallback((notify) => subscribeView(scope, notify), [scope]),
-    () => {
-      const value = readView<unknown>(scope, KEY, null);
-      return typeof value === "string" ? value : undefined;
-    },
+    useCallback((notify: () => void) => subscribeView(scope, notify), [scope]),
+    () => readDefaultAgent(scope),
   );
 }
 

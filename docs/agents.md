@@ -782,11 +782,13 @@ or their full ID when that is alike too. Saved and requested models keep their
 full IDs. An agent's one-line summary shows the ID.
 
 `DATABRICKS_MODEL_FILTER`, read through goose's config (its environment
-variable, else the same key in goose's `config.yaml`), limits which Databricks
-models are listed: comma-separated patterns, each matched against a whole ID,
-case-sensitively, with `*` for any characters and `?` for one, for example
-`goose-*,data_workflow_tools.goose.*`. A model matching any pattern is listed.
-Unset or blank lists every model; a value without patterns is reported as a
+variable, else the same key in goose's `config.yaml`), narrows the listing of
+`databricks` and `databricks_v2`: comma-separated patterns, each matched against
+a whole ID, case-sensitively, with `*` for any characters and `?` for one, for
+example `goose-*,data_workflow_tools.goose.*`. A listed model matching any
+pattern stays listed. Unset or blank keeps the provider's full listing, which
+for `databricks` is still only its `databricks-` and `goose-` endpoints, so a
+filter cannot widen it. A value without patterns is reported as a
 listing error, and a filter that matches nothing lists none. It only hides
 models: a saved model the filter hides is kept, and its menu marks it as a
 "Custom model" in pickers that accept one (profiles, cards, new agents) or an

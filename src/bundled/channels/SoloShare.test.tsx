@@ -34,7 +34,12 @@ import {
   saveShareHistory,
   shareHistoryKey,
 } from "../../features/solo/share-history";
-import { ChatAccessIndicator, SoloShare } from "./SoloShare";
+import {
+  ChatAccessIndicator,
+  ChatSharedMark,
+  SoloShare,
+  soloSharedMarkId,
+} from "./SoloShare";
 import { SoloWorkspaces } from "./SoloWorkspaces";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import {
@@ -914,7 +919,7 @@ it("starting over preserves access and lets Outbox finish the exact link before 
   render(<OutboxStatus outbox={outbox} profiling={createRelayProfiler()} />);
   await user.click(screen.getByText(/^Outbox ·/));
   // The Outbox renders the message, not its last transport error.
-  const linkRow = screen.getByText(/\[Session:/).closest("li");
+  const linkRow = screen.getByText(/\[Chat:/).closest("li");
   if (!linkRow) throw new Error("Missing Outbox link");
   t.failLink(false);
   await user.click(within(linkRow).getByRole("button", { name: "Retry" }));
@@ -1553,6 +1558,18 @@ it("shows Shared on cold render from verified members and cached human evidence 
   expect(
     screen.getByRole("button", { name: "Shared · Manage access" }),
   ).toBeEnabled();
+  cleanup();
+  // The sidebar's status mark reads the same evidence but is not an action.
+  render(
+    <>
+      <button type="button" aria-describedby={soloSharedMarkId(source)}>
+        Row
+      </button>
+      <ChatSharedMark session={t.session} channel={channel} />
+    </>,
+  );
+  expect(screen.getByRole("button")).toHaveAccessibleDescription("Shared");
+  expect(screen.getAllByRole("button")).toHaveLength(1);
   expect(t.session.memberAdministration.snapshot(source)?.status).not.toBe(
     "ready",
   );

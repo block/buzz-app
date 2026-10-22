@@ -117,7 +117,7 @@ backlog and the thread being read, without reading unopened threads' replies.
   marks that the channel count does not show, so an already-read community costs no writes. One failing channel does not stop
   the sweep; the first failure is rethrown afterwards. A channel whose grant is
   revoked before its turn is skipped, not failed; like a grant that arrives
-  mid-sweep, it waits for the next explicit action. The community rail's
+  mid-sweep, it waits for the next explicit action. The community switcher's
   Mark all as read uses it for the selected community only.
 - `markUnreadLocal(target)` is durable **on this browser profile/device only**.
   Automatic reading does not clear it. An explicit mark-through clears that
@@ -130,7 +130,7 @@ The sidebar separates ordinary unread from directed attention. Ordinary backlog
 or local manual intent strengthens the channel label; protected attention alone
 retains its dot without bolding a caught-up channel. DMs retain unread bolding.
 Solo chat labels strengthen for any observed unread message, including mentions,
-broadcasts and relevant replies; their attention dots remain independent.
+broadcasts and relevant replies, so Solo rows omit the attention dot.
 Ordinary unread renders no row marker. DMs, mentions, broadcasts, and
 relevant thread replies add one accent dot; non-DM row numerals are omitted and DM
 avatars are reserved for promoted offscreen cues. Thread activity reuses that dot:

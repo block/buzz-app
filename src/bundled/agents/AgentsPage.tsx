@@ -659,7 +659,14 @@ function CardContextMenu({
     >
       <ContextMenuTrigger
         render={card}
+        // Events from the card's open menus bubble through their portals;
+        // only the card itself opens this menu.
+        onContextMenu={(event) => {
+          if (!event.currentTarget.contains(event.target as Node))
+            event.preventBaseUIHandler();
+        }}
         onKeyDown={(event) => {
+          if (!event.currentTarget.contains(event.target as Node)) return;
           if (
             event.key === "ContextMenu" ||
             (event.shiftKey && event.key === "F10")

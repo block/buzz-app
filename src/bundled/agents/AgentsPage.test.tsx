@@ -2264,6 +2264,31 @@ it("offers Make main agent from the card's actions button", async () => {
   expect(
     await screen.findByRole("gridcell", { name: "Bea, Main agent" }),
   ).toBeVisible();
+  expect(screen.getByRole("gridcell", { name: "Ada" })).toBeVisible();
+  // Right-click opens the same actions, including the main agent choice.
+  fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Make main agent" }),
+  );
+  expect(
+    await screen.findByRole("gridcell", { name: "Ada, Main agent" }),
+  ).toBeVisible();
+  expect(screen.getByRole("gridcell", { name: "Bea" })).toBeVisible();
+});
+
+it("opens deletion from the card's right-click menu", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  fireEvent.contextMenu(screen.getByRole("gridcell", { name: "Ada" }));
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Delete agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Delete Ada?" });
+  expect(agents.remove).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+  expect(agents.remove).toHaveBeenCalledWith(agent("Ada", 1).pubkey);
 });
 
 it("opens a Marketplace tile in the profile pane and returns focus on close and import", async () => {

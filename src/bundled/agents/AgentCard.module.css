@@ -378,7 +378,8 @@ html[data-keyboard-navigation] .card:focus-visible {
   }
 }
 /* Placeholder treatment until the card's status styling is designed. */
-/* Centered above the portrait, clear of the corner menu. */
+/* Centered above the portrait; the inline inset clears the corner menu
+   (its offset plus a small icon button). */
 .tag {
   position: absolute;
   inset-block-start: var(--space-3);

@@ -1,3 +1,4 @@
+import { sourceCompleted, sourceSignature } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
   AgentConfigStore,
@@ -123,7 +124,7 @@ import {
   type Checkpoints,
 } from "./catch-up";
 import { readInterrupted, writeInterrupted } from "./interrupted";
-import { AttentionSources } from "./attention-sources";
+import { AttentionSources, type AttentionSource } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
 
@@ -1130,7 +1131,7 @@ export class AgentsService extends Service implements Agents {
   private readonly addedTools;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
-  private readonly sourceNames = new Set<string>();
+  private readonly attentionSources;
   private readonly listeners = new Set<() => void>();
   /** Every saved identity, deleted ones included: native's list is the agent
    * list, and `records` only adds settings to it. */
@@ -1216,6 +1217,7 @@ export class AgentsService extends Service implements Agents {
     super(ctx, "agents");
     this.contributions = createContributions<AgentType>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
+    this.attentionSources = createContributions<AttentionSource>(ctx);
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
     void migrateWatchFilters(storage);
@@ -1377,6 +1379,27 @@ export class AgentsService extends Service implements Agents {
         ).catch((error) => console.warn("Couldn't name the Solo chat", error)),
     });
     ctx.effect(() => {
+      const running = new Map<Contribution<AttentionSource>, () => void>();
+      const reconcile = () => {
+        const active = this.attentionSources.snapshot();
+        for (const [source, stop] of running) {
+          if (active.includes(source)) continue;
+          stop();
+          running.delete(source);
+        }
+        for (const source of active) {
+          if (!running.has(source))
+            running.set(source, this.startAttentionSource(source));
+        }
+      };
+      const unsubscribe = this.attentionSources.subscribe(reconcile);
+      reconcile();
+      return () => {
+        unsubscribe();
+        for (const stop of running.values()) stop();
+      };
+    });
+    ctx.effect(() => {
       const stops = [
         this.contributions.subscribe(() => {
           this.update();
@@ -1495,70 +1518,65 @@ export class AgentsService extends Service implements Agents {
       typeof source.run !== "function"
     )
       throw new Error("A plugin source needs an id and run");
-    const provider = `${plugin}/${source.id}`;
-    if (this.sourceNames.has(provider))
-      throw new Error(`Source ${provider} is already registered`);
-    this.ctx.effect(() => {
-      this.sourceNames.add(provider);
-      const sources = new AttentionSources({
-        completed: (pubkey, object) =>
-          this.records[pubkey]?.sourceRuns?.[object.slug] ===
-          JSON.stringify(object),
-        finish: async (pubkey, object) => {
-          await this.change(pubkey, (record) => {
-            if (!record) return null;
-            if (record.attention[object.slug] !== object) return record;
-            return {
-              ...record,
-              sourceRuns: {
-                ...record.sourceRuns,
-                [object.slug]: JSON.stringify(object),
-              },
-            };
-          });
-        },
-        emit: (pubkey, object, text, current) => {
-          const agent = this.state.running.find(
-            (agent) => agent.pubkey === pubkey,
-          );
-          if (
-            !agent?.attentionEnabled ||
-            agent.attention[object.slug] !== object ||
-            !object.value.enabled
-          )
-            throw new Error("This source watch is no longer enabled");
-          const interest =
-            agent.attention[`interest/${object.value.interest_id}`]?.value;
-          this.runners.wakeIn(
-            pubkey,
-            {
-              type: "plugin",
-              plugin,
-              channel: object.value.channel,
-              ...(object.value.root ? { root: object.value.root } : {}),
-              text: `${text}\n\nInterest: ${interest?.type === "interest" ? interest.instructions : ""}`,
-              id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
-              at: Date.now(),
+    this.attentionSources.register(this.ctx, source);
+  }
+  private startAttentionSource(source: Contribution<AttentionSource>) {
+    const sources = new AttentionSources({
+      completed: (pubkey, object) =>
+        sourceCompleted(this.records[pubkey]?.sourceRuns, object),
+      finish: async (pubkey, object) => {
+        await this.change(pubkey, (record) => {
+          if (!record) return null;
+          if (record.attention[object.slug] !== object) return record;
+          return {
+            ...record,
+            sourceRuns: {
+              ...record.sourceRuns,
+              [object.slug]: sourceSignature(object),
             },
-            object,
-            current,
-          );
-        },
-      });
-      const update = () =>
-        sources.reconcile(
-          provider,
-          source,
-          this.state.running.filter((agent) => this.runners.runs(agent.pubkey)),
+          };
+        });
+      },
+      emit: (pubkey, object, text, current) => {
+        const agent = this.state.running.find(
+          (agent) => agent.pubkey === pubkey,
         );
-      const unsubscribe = this.subscribe(update);
-      update();
-      return () => {
-        unsubscribe();
-        sources.stop();
-        this.sourceNames.delete(provider);
-      };
+        if (
+          !agent?.attentionEnabled ||
+          agent.attention[object.slug] !== object ||
+          !object.value.enabled
+        )
+          throw new Error("This source watch is no longer enabled");
+        const interest =
+          agent.attention[`interest/${object.value.interest_id}`]?.value;
+        this.runners.wakeIn(
+          pubkey,
+          {
+            type: "plugin",
+            plugin: source.pluginId,
+            channel: object.value.channel,
+            ...(object.value.root ? { root: object.value.root } : {}),
+            text: `${text}\n\nInterest: ${interest?.type === "interest" ? interest.instructions : ""}`,
+            id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+            at: Date.now(),
+          },
+          object,
+          current,
+        );
+      },
     });
+    const update = () =>
+      sources.reconcile(
+        source.key,
+        source,
+        this.state.running.filter((agent) => this.runners.runs(agent.pubkey)),
+      );
+    const unsubscribe = this.subscribe(update);
+    update();
+    return () => {
+      unsubscribe();
+      sources.stop();
+    };
   }
   tools = () => this.addedTools.snapshot();
   wake(

@@ -96,11 +96,13 @@ async function setup({
   resumes = false,
   /** How `run` answers, from the first delivery on. */
   answer = undefined as AgentType<Config>["run"],
+  pluginActive = (): boolean => true,
+  subscribePlugin = (_listener: () => void) => () => {},
 } = {}) {
   const ctx = new Context();
   ctx.provide("pluginStatus", {
-    isActive: () => true,
-    subscribe: () => () => {},
+    isActive: pluginActive,
+    subscribe: subscribePlugin,
   });
   const fake = fakeRelay();
   const second = fakeRelay("https://other.example.test");
@@ -7128,6 +7130,37 @@ describe("Attention plugin sources", () => {
       config: { command: ["check"] },
     },
   };
+  it("starts sources only for active plugin revisions and cancels them on deactivation", async () => {
+    let active = false;
+    const listeners = new Set<() => void>();
+    const { service, plugin, native } = await setup({
+      pluginActive: () => active,
+      subscribePlugin: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    });
+    let signal: AbortSignal | undefined;
+    const produce = vi.fn(async (input: { signal: AbortSignal }) => {
+      signal = input.signal;
+      await new Promise<void>((resolve) =>
+        input.signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    });
+    plugin.agents.addAttentionSource({ id: "command", run: produce });
+    expect(produce).not.toHaveBeenCalled();
+    active = true;
+    for (const listener of listeners) listener();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+    await service.save(bot, { attentionEnabled: true, attention: watches });
+    await vi.waitFor(() => expect(produce).toHaveBeenCalledTimes(1));
+    active = false;
+    for (const listener of listeners) listener();
+    expect(signal?.aborted).toBe(true);
+  });
   it("delivers source output to the saved conversation and cancels execution when Attention is disabled", async () => {
     const { service, run, plugin, native } = await setup();
     let input:

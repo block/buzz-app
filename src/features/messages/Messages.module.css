@@ -2841,7 +2841,8 @@ html[data-keyboard-navigation] .channelJoinSurface {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-.message .delivery {
+.message .delivery,
+.message > .messageBody > [data-activity-stopped] {
   padding-inline-start: var(--space-4);
 }
 .message .reactions {
@@ -2866,6 +2867,10 @@ html[data-keyboard-navigation] .channelJoinSurface {
 }
 .message[data-viewer-message] > .messageBody > [data-message-activity] {
   align-self: flex-end;
+}
+.message[data-viewer-message] > .messageBody > [data-activity-stopped] {
+  align-self: flex-end;
+  padding-inline: 0 var(--space-4);
 }
 .message[data-viewer-message] > .messageBody > [data-thread-summary] {
   align-self: flex-end;

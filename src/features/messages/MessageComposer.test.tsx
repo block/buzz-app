@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import { Context } from "@deepseek-ai/cordis";
+import { PluginRuntime } from "../../plugins/runtime";
+import { ConversationService } from "../conversation/service";
+import * as emojiPlugin from "../../bundled/emoji";
 import { File as NodeFile } from "node:buffer";
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember } from "../channel-members/members";
@@ -8566,3 +8570,72 @@ it("keeps automatic recipient replacements out of recent mention ranking", () =>
   act(() => expect(h.commands().replaceRecipients([second])).toBe(true));
   expect([...(mentionHistory(h.session, "channel") ?? [])]).toEqual(before);
 });
+
+it("previews a picked GIF while preserving its source through undo and send", async () => {
+  const { h, enable } = await mountGifComposer();
+  const source = "![Party](https://emoji.test/party.gif)";
+  h.fill(source);
+  expect(within(h.input()).getByRole("img", { name: "Party" })).toHaveAttribute(
+    "src",
+    "https://emoji.test/party.gif",
+  );
+  expect(h.input()).toHaveValue(source);
+  expect(h.input()).not.toHaveTextContent(source);
+  await h.user.keyboard("{Control>}z{/Control}");
+  expect(h.input()).toHaveValue("");
+  await h.user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+  expect(within(h.input()).getByRole("img", { name: "Party" })).toBeVisible();
+  await enable(false);
+  expect(h.input().querySelector("[data-gif-preview]")).toBeNull();
+  expect(h.input()).toHaveTextContent(source);
+  expect(h.input()).toHaveValue(source);
+  await enable(true);
+  expect(within(h.input()).getByRole("img", { name: "Party" })).toBeVisible();
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    source,
+    [],
+    [],
+  );
+});
+
+it.each([
+  "`![Party](https://emoji.test/party.gif)`",
+  "```\n![Party](https://emoji.test/party.gif)\n```",
+  "![Party](javascript:party.gif)",
+])("keeps literal or unsafe GIF source as text: %s", async (source) => {
+  const { h } = await mountGifComposer();
+  h.fill(source);
+  expect(h.input().querySelector("[data-gif-preview]")).toBeNull();
+});
+
+async function mountGifComposer() {
+  const root = new Context();
+  const runtime = new PluginRuntime(root, async () => emojiPlugin);
+  const service = new ConversationService(root);
+  onTestFinished(async () => {
+    await runtime.dispose();
+    await root.fiber.dispose();
+  });
+  const plugin = {
+    manifest: { id: "buzz.emoji", name: "Emoji", apiVersion: 1 as const },
+    enabled: true,
+    source: "external" as const,
+    revision: "one",
+    previous: null,
+    reloadable: true,
+    error: null,
+  };
+  const enable = async (enabled: boolean) => {
+    await act(async () => {
+      runtime.reconcile(enabled ? [plugin] : []);
+      await vi.waitFor(() =>
+        expect(service.tools.snapshot()).toHaveLength(enabled ? 1 : 0),
+      );
+    });
+  };
+  await enable(true);
+  const h = mount({ extensions: service });
+  return { h, enable };
+}

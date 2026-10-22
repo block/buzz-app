@@ -1,3 +1,5 @@
+import type { GifShortcut } from "./gif-shortcut";
+import { useConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -44,8 +46,10 @@ export function EmojiPicker({
   reaction = false,
   gifRequests = relayGifRequests,
   externalTrigger,
+  gifShortcut,
 }: {
   session: ComposerSession;
+  gifShortcut?: GifShortcut;
   scope: string;
   disabled: boolean;
   insert(value: string): void;
@@ -58,6 +62,7 @@ export function EmojiPicker({
     finalFocus(): HTMLButtonElement | false;
   };
 }) {
+  const active = useConversationPresentation();
   const [colorMode, setColorMode] = useState<"light" | "dark">();
   const [open, setOpen] = useState(!!externalTrigger);
   const [tab, setTab] = useState<"emoji" | "gifs">("emoji");
@@ -88,7 +93,7 @@ export function EmojiPicker({
       ? gifAvailability.supported
       : undefined
     : false;
-  const showGifTab = gifs === true;
+  const showGifTab = gifs === true || (tab === "gifs" && gifs === undefined);
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,
     session.emoji.snapshot,
@@ -141,6 +146,36 @@ export function EmojiPicker({
       appearance.disconnect();
     };
   }, [open, disabled, reaction]);
+  useEffect(() => {
+    const form = controls.current?.closest("form");
+    if (!form || reaction || disabled || !community || !active) return;
+    const open = () => {
+      accepted.current = false;
+      if (gifs !== true) setGifAvailability(undefined);
+      setGifDiscoveryRequested(true);
+      setTab("gifs");
+      setOpen(true);
+    };
+    if (gifShortcut) return gifShortcut.register(form, open);
+    const openGifs = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.keyCode === 229 ||
+        event.altKey ||
+        event.shiftKey ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.key.toLowerCase() !== "g"
+      )
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.repeat) return;
+      open();
+    };
+    form.addEventListener("keydown", openGifs, true);
+    return () => form.removeEventListener("keydown", openGifs, true);
+  }, [community, disabled, reaction, gifs, active, gifShortcut]);
   useEffect(() => {
     if (
       !community ||
@@ -237,6 +272,7 @@ export function EmojiPicker({
   const gifContent = community && (
     <GifPicker
       community={community}
+      enabled={gifs === true}
       search={gifRequests.search}
       initialQuery={search.current}
       onQueryChange={(value) => {

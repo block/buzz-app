@@ -77,3 +77,53 @@ it("uses the supplied window owner for GIF discovery, search, retry and selectio
     owner.dispose();
   }
 });
+
+it.each(["metaKey", "ctrlKey"])(
+  "opens GIF search from the owning composer with %s+G",
+  async (modifier) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const owner = createRelaySession(null);
+    let resolveSupport!: (supported: boolean) => void;
+    const supports = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveSupport = resolve;
+        }),
+    );
+    const search = vi.fn(async () => []);
+    try {
+      render(
+        <form>
+          <input aria-label="Draft" />
+          <EmojiPicker
+            session={owner.session}
+            scope={`https://example.test:${"ab".repeat(32)}`}
+            disabled={false}
+            insert={vi.fn()}
+            gifRequests={{ supports, search }}
+          />
+        </form>,
+      );
+      const draft = screen.getByRole("textbox", { name: "Draft" });
+      draft.focus();
+      fireEvent.keyDown(draft, { key: "g", [modifier]: true });
+      expect(
+        await screen.findByRole("searchbox", { name: "Search GIFs" }),
+      ).toHaveFocus();
+      expect(search).not.toHaveBeenCalled();
+      resolveSupport(true);
+      expect(screen.getByRole("tab", { name: "GIF" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    } finally {
+      owner.dispose();
+    }
+  },
+);

@@ -377,6 +377,35 @@ export function createAgentClient(
         signal,
       );
     },
+    async configure(
+      pubkey: string,
+      settings: {
+        instructions: string;
+        modelId: string;
+        reasoningEffort: string;
+      },
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (
+        !/^[0-9a-f]{64}$/.test(pubkey) ||
+        !validInstructions(settings.instructions) ||
+        !settings.modelId.trim() ||
+        !settings.reasoningEffort.trim()
+      )
+        throw new Error(
+          "Choose a model and reasoning effort and check the instructions.",
+        );
+      await request(
+        "update-agent",
+        {
+          agent_pubkey: pubkey,
+          agent_instructions: settings.instructions,
+          model_id: settings.modelId,
+          reasoning_effort: settings.reasoningEffort,
+        },
+        signal,
+      );
+    },
     async updateInstructions(
       agent: RemoteAgent,
       instructions: string,

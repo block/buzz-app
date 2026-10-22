@@ -28,6 +28,7 @@ elif [[ "$args" == *"reviewThreads(first: 100)"* ]]; then
 elif [[ "$args" == *"issues/1/comments"* ]]; then
   case "$tick" in
     1)
+      if [[ "${FAIL_INITIAL:-0}" == 1 ]]; then exit 1; fi
       printf '%s\n' 'issue-comment	10	2026-01-01T00:00:00Z	reviewer	-	b64:aW5pdGlhbA==	https://example/initial'
       ;;
     2|3)
@@ -50,7 +51,10 @@ fi
 SH
 chmod +x "$temp_dir/bin/gh"
 
+for fail_initial in 0 1; do
+rm -f "$temp_dir/tick"
 PATH="$temp_dir/bin:$PATH" \
+FAIL_INITIAL="$fail_initial" \
 FAKE_TICK="$temp_dir/tick" \
 TMPDIR="$temp_dir/state" \
 MONITOR_PR_PYTHON_BIN="$(command -v python3)" \
@@ -62,7 +66,13 @@ PR_MONITOR_COMMENT_HEALTH_FAILURE_THRESHOLD=2 \
 ! grep -q 'No server is currently available\|by unknown' "$temp_dir/out"
 grep -q 'Comment polling degraded after 2 consecutive failures' "$temp_dir/out"
 grep -q 'Comment polling recovered' "$temp_dir/out"
-grep -q 'recovered feedback' "$temp_dir/out"
+if [[ "$fail_initial" == 0 ]]; then
+  grep -q 'recovered feedback' "$temp_dir/out"
+else
+  ! grep -q 'recovered feedback' "$temp_dir/out"
+fi
+grep -q 'PR #1 closed' "$temp_dir/out"
 # The initial snapshot survives failed polls, and the recovered snapshot advances state.
 
+done
 echo "pr-monitor comment error tests passed"

@@ -287,10 +287,10 @@ snapshot_comments() {
 snapshot_checks() {
   local checks_json
   if ! checks_json=$(gh pr checks "$PR" --repo "$REPO" --json name,bucket,state,link 2>/dev/null); then
-    printf 'checks\tunknown\tgh-pr-checks-failed\n'
-    return
+    [[ -n "$checks_json" ]] || return 1
   fi
 
+  jq -e 'type == "array"' <<<"$checks_json" >/dev/null || return 1
   printf '%s' "$checks_json" \
     | jq -r '.[] | ["check", .name, (.bucket // "unknown"), (.state // "unknown"), (.state // "unknown"), (.link // "")] | @tsv' \
     | sort
@@ -531,7 +531,11 @@ while true; do
     comment_fetch_failures=0
     comment_health_degraded=0
   fi
-  snapshot_checks > "$checks_tmp"
+  checks_available=1
+  if ! snapshot_checks > "$checks_tmp"; then
+    checks_available=0
+    : > "$checks_tmp"
+  fi
 
   current_state=$(cut -f1 "$pr_tmp")
   current_draft_state=$(cut -f4 "$pr_tmp")
@@ -572,6 +576,9 @@ while true; do
     done < "$unresolved_tmp"
   else
     submitted_review_explains_decision=0
+    if [[ "$comments_available" == "1" && ! -f "$comments_state" ]]; then
+      cp "$comments_tmp" "$comments_state"
+    fi
     if [[ "$comments_available" == "1" ]] && ! cmp -s "$comments_state" "$comments_tmp"; then
       comments_delta="$STATE_DIR/comments.delta"
       new_comment_records "$comments_state" "$comments_tmp" > "$comments_delta"
@@ -609,7 +616,7 @@ while true; do
         fi
       fi
     fi
-    if ! cmp -s "$checks_state" "$checks_tmp"; then
+    if [[ "$checks_available" == "1" && -f "$checks_state" ]] && ! cmp -s "$checks_state" "$checks_tmp"; then
       review_decision=$(cut -f3 "$pr_tmp")
       draft_state=$(cut -f4 "$pr_tmp")
       ci_decision=$($PYTHON3 "$CI_EVENT_POLICY" \
@@ -633,7 +640,9 @@ while true; do
   if [[ "$comments_available" == "1" ]]; then
     mv "$comments_tmp" "$comments_state"
   fi
-  mv "$checks_tmp" "$checks_state"
+  if [[ "$checks_available" == "1" ]]; then
+    mv "$checks_tmp" "$checks_state"
+  fi
 
   terminal_state=0
   if [[ "$first" == "1" ]]; then

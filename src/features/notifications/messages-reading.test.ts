@@ -21,6 +21,7 @@ afterEach(async () => {
 function mountList(
   h: Awaited<ReturnType<typeof setup>>,
   ids: readonly string[],
+  { offscreen = false } = {},
 ) {
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
   vi.stubGlobal(
@@ -49,7 +50,9 @@ function mountList(
   const rows = items.map((item, index) =>
     vi
       .spyOn(item, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(0, 100 + index * 100, 400, 100)),
+      .mockReturnValue(
+        new DOMRect(0, (offscreen ? 600 : 100) + index * 100, 400, 100),
+      ),
   );
   const real = h.owner.session.unread;
   const leases: { disposed: boolean }[] = [];
@@ -81,12 +84,17 @@ function mountList(
     rows[index]?.mockReturnValue(new DOMRect(0, 600, 400, 100));
     list.dispatchEvent(new Event("scroll"));
   };
+  /** Moves a row into the viewport, as a user scroll does. */
+  const scrollInto = (index: number) => {
+    rows[index]?.mockReturnValue(new DOMRect(0, 100, 400, 100));
+    list.dispatchEvent(new Event("scroll"));
+  };
   /** Changes a row's content in place; it stays where it is. */
   const mutate = async (index: number) => {
     items[index]?.append("edited");
     await Promise.resolve(); // MutationObserver delivery
   };
-  return { leases, scrollAway, mutate };
+  return { leases, scrollAway, scrollInto, mutate };
 }
 /** Queues animation frames without running them, and counts them. */
 function holdFrames() {
@@ -143,6 +151,29 @@ it.each(["in view", "window blur", "scroll away", "row mutation"] as const)(
     }
   },
 );
+it("an unread alert stays quiet when its row scrolls into view before the list's next frame", async () => {
+  const h = await setup(undefined, undefined, undefined, undefined, true);
+  // Notify while viewing is off: a row in view must not alert.
+  const row = h.make("scrolled into view");
+  const delivery = holdPresentation(h);
+  try {
+    h.emit([row], "live");
+    await vi.waitFor(() => expect(delivery.held()).toBe(true));
+    const list = mountList(h, [row.id], { offscreen: true });
+    const attention = () => h.owner.session.unread.attention("room", row.id);
+    expect(attention()).toMatchObject({ unread: true, viewing: false });
+    // The permission probe resolves before the list's next frame measures.
+    const frames = holdFrames();
+    list.scrollInto(0);
+    expect(frames).toHaveLength(1);
+    expect(attention()).toMatchObject({ unread: true, viewing: true });
+    delivery.present();
+    await flush();
+    expect(h.show).not.toHaveBeenCalled();
+  } finally {
+    delivery.present();
+  }
+});
 it("Notify while viewing: a row read and scrolled away stays quiet while a later row's write is pending", async () => {
   // Once armed, the first read-state write passes and the next one is held.
   let release: (() => void) | undefined;

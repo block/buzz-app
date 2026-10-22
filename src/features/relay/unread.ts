@@ -74,10 +74,12 @@ export type ThreadActivitySnapshot = Readonly<{
 }>;
 export type ReadingHandle = Readonly<{
   /** Qualified visible rows only. This publishes no read intent and ends with the
-   * lease. `visible` answers per row, so a consumer can confirm a row on demand. */
+   * lease. `visible` decides each of this channel's rows; `measured` says the
+   * row is among `messageIds`. A consumer that is re-measuring may confirm any
+   * of its rows on demand instead. */
   view(
     messageIds: readonly string[],
-    visible: (messageId: string) => boolean,
+    visible: (messageId: string, measured: boolean) => boolean,
   ): void;
   /** Only message IDs actually visible to the active consumer; no caller timestamps. */
   observe(messageIds: readonly string[]): Promise<void>;
@@ -240,7 +242,11 @@ export function createUnread({
   const handles = new Set<() => void>();
   const views = new Map<
     () => void,
-    { ids: ReadonlySet<string>; visible: (messageId: string) => boolean }
+    {
+      channelId: string;
+      ids: ReadonlySet<string>;
+      visible: (messageId: string, measured: boolean) => boolean;
+    }
   >();
   // Per-visit message overlay; only the sidebar hint is persisted in read state.
   const forcedMessages = new Map<string, Set<string>>();
@@ -684,7 +690,9 @@ export function createUnread({
       lookups.get(conversationKey(channelId, entry.parentId ?? ""))?.done ===
         false;
     const viewing = [...views.values()].some(
-      (view) => view.ids.has(messageId) && view.visible(messageId),
+      (view) =>
+        view.channelId === channelId &&
+        view.visible(messageId, view.ids.has(messageId)),
     );
     return Object.freeze({
       status: kind
@@ -2035,7 +2043,10 @@ export function createUnread({
       };
       return Object.freeze({
         dispose,
-        view(ids: readonly string[], visible: (id: string) => boolean) {
+        view(
+          ids: readonly string[],
+          visible: (id: string, measured: boolean) => boolean,
+        ) {
           if (!valid() || ids.length > 128) return;
           const verified = ids.filter((id) => {
             try {
@@ -2046,8 +2057,9 @@ export function createUnread({
             }
           });
           views.set(dispose, {
+            channelId,
             ids: new Set(verified),
-            visible: (id) => valid() && visible(id),
+            visible: (id, measured) => valid() && visible(id, measured),
           });
         },
         async catchUp(id: string, rootId?: string) {

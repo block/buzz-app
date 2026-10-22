@@ -122,13 +122,14 @@ export function useReading({
         )
         .slice(0, 128);
     }
-    // Viewing evidence for the current view. While a measurement waits for
-    // its frame, the last view stays the evidence, but a row is confirmed
-    // only when asked: a consumer must not see a still-visible row as absent
-    // (or a scrolled-away row as present) because the frame has not run yet.
-    const viewing = (id: string) => {
+    // Viewing evidence. A measured view answers for the rows it measured.
+    // While a measurement waits for its frame, the last measurement is stale,
+    // so any row of this list is checked only when a consumer asks: a frame
+    // that has not run yet must not hide a row that is in view, newly or still,
+    // or report one that has scrolled away.
+    const viewing = (id: string, measured: boolean) => {
       if (!active()) return false;
-      if (frame === undefined) return true;
+      if (frame === undefined) return measured;
       const row = [
         ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
       ].find((row) => row.dataset.messageId === id);
@@ -158,22 +159,25 @@ export function useReading({
     // A discrete action (focus, pointer, key, visibility, settling) starts
     // dwell at once. Scroll, list mutations and resizes arrive many times per
     // frame: each cancels dwell at once but measures rows only in the next
-    // frame, rather than forcing a fresh layout of every row per event. The
-    // current view stays until that frame replaces it (see `viewing`).
+    // frame, rather than forcing a fresh layout of every row per event. Until
+    // then the deferred lease answers for visibility on demand (`viewing`).
     function schedule() {
       unqueue();
       begin();
     }
     function reflow() {
-      if (timer) clearTimeout(timer);
-      timer = undefined;
+      cancel();
       pending?.dispose();
+      pending = undefined;
+      if (!ready()) return;
       // The lease is the intent fence, so take it when the event happens: a
       // manual unread before the frame must invalidate this measurement.
-      pending = ready() ? acquire() : undefined;
-      if (!pending) {
+      pending = acquire();
+      if (!pending) return;
+      try {
+        pending.view([], viewing);
+      } catch {
         unqueue();
-        cancel();
         return;
       }
       frame ??= requestAnimationFrame(() => {

@@ -332,6 +332,10 @@ test("Stop in a thread summary's activity stops its work", async ({
   await expect(
     page.getByText("Stopped Local tester", { exact: true }),
   ).toBeVisible();
+  // With no replies there is no thread summary left; the note stays instead.
+  await expect(
+    row.getByText("Local tester · Stopped", { exact: true }),
+  ).toBeVisible();
 });
 
 // Real host composition: one summary combines replies and exact-message work.

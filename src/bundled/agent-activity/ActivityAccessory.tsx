@@ -169,6 +169,26 @@ export function ActivityAccessory(props: ActivityProps) {
   const bubble = shown.length
     ? shown
     : (leaving ?? (ended ? retained.current : []));
+  // Once its live bubble has left, a stopped request stays noted here.
+  const noted = bubble.length ? [] : stopped.filter(visible);
+  const note = noted.length ? (
+    <div
+      className={`${styles.root} ${styles.stopped} text-caption text-subtle buzz-arrive`}
+      data-activity-stopped=""
+      data-buzz-ui=""
+    >
+      <AvatarStack
+        size="mini"
+        items={noted.map(({ agent }) => ({
+          id: agent,
+          name: named(agent),
+          src: avatarMedia(profiles.get(agent)?.picture, session.media),
+          shape: "squircle",
+        }))}
+      />
+      <span>{noted.map(({ agent }) => named(agent)).join(", ")} · Stopped</span>
+    </div>
+  ) : null;
   if (props.renderMessageSummary) {
     return (
       <>
@@ -180,34 +200,11 @@ export function ActivityAccessory(props: ActivityProps) {
           entries={bubble}
           interactive={shown.length > 0}
         />
+        {note}
       </>
     );
   }
-  if (!bubble.length) {
-    // Once its live bubble has left, a stopped request stays noted here.
-    const noted = stopped.filter(visible);
-    if (!noted.length) return null;
-    return (
-      <div
-        className={`${styles.root} ${styles.stopped} text-caption text-subtle buzz-arrive`}
-        data-activity-stopped=""
-        data-buzz-ui=""
-      >
-        <AvatarStack
-          size="mini"
-          items={noted.map(({ agent }) => ({
-            id: agent,
-            name: named(agent),
-            src: avatarMedia(profiles.get(agent)?.picture, session.media),
-            shape: "squircle",
-          }))}
-        />
-        <span>
-          {noted.map(({ agent }) => named(agent)).join(", ")} · Stopped
-        </span>
-      </div>
-    );
-  }
+  if (!bubble.length) return note;
   return (
     <section
       ref={section}

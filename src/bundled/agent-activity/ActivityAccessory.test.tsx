@@ -665,6 +665,47 @@ it.each(["waiting", "working"])(
     }
   },
 );
+it("notes a stopped request beside a thread summary host", async () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(
+    <ActivityAccessory
+      {...f.props}
+      renderMessageSummary={(activity) =>
+        activity ? (
+          <button type="button" ref={activity.ref}>
+            View thread: {activity.label}
+          </button>
+        ) : null
+      }
+    />,
+  );
+  try {
+    act(() => {
+      local
+        .begin({
+          scope: "test",
+          channelId: "c",
+          threadRootId: root,
+          messageId: root,
+          agent: A,
+        })
+        .interruptible(async () => {});
+    });
+    expect(
+      screen.getByRole("button", { name: /View thread: Blossom/ }),
+    ).toBeInTheDocument();
+    // The browser journey stops it through the summary's popup.
+    await act(() => f.props.session.agentActivity.interrupt(A, "c", root));
+    expect(
+      screen.queryByRole("button", { name: /View thread/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Blossom · Stopped")).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
 it("notes only stopped requests once their work settles", () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);

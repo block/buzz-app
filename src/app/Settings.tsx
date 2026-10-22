@@ -775,15 +775,6 @@ export function Settings({
   const restorePluginFocus = useRef(false);
   const pluginSection = useRef<HTMLElement>(null);
   const layout = useRef<HTMLDivElement>(null);
-  const catalogScroll = useRef<{ element: HTMLElement; top: number } | null>(
-    null,
-  );
-  const retainCatalogScroll = () => {
-    const element = pluginSection.current?.closest<HTMLElement>(
-      ".buzz-settings-page",
-    );
-    if (element) catalogScroll.current = { element, top: element.scrollTop };
-  };
   const detailsClose = useRef<HTMLButtonElement>(null);
   const selectedPlugin = catalog?.plugins.find(
     (plugin) => plugin.manifest.id === selectedPluginId,
@@ -820,13 +811,7 @@ export function Settings({
       setSelectedPluginId(undefined);
     }
   }, [catalog, selectedPlugin, selectedPluginId]);
-  useLayoutEffect(() => {
-    const saved = catalogScroll.current;
-    if (saved) saved.element.scrollTop = saved.top;
-    catalogScroll.current = null;
-  });
   const closePluginDetails = () => {
-    retainCatalogScroll();
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
     setSelectedPluginId(undefined);
@@ -963,7 +948,6 @@ export function Settings({
                       aria-expanded={active}
                       aria-controls={active ? "plugin-details" : undefined}
                       onClick={(event) => {
-                        retainCatalogScroll();
                         pluginTrigger.current = event.currentTarget;
                         if (!active) setActivationAttempt(undefined);
                         setSelectedPluginId(active ? undefined : id);

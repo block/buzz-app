@@ -125,10 +125,14 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     panel.locator("ul:not(.contains-task-list):not([aria-label])"),
   ).toHaveCSS("list-style-type", "disc");
   for (let index = 0; index < 2; index++) {
-    const video = videos.nth(index);
-    await panel
+    const preview = panel.locator("[data-video-preview]").nth(index);
+    const video = preview.locator("video");
+    // The two-second fixture must not end while a slow runner prepares Pause.
+    await video.evaluate((element) => {
+      element.loop = true;
+    });
+    await preview
       .getByRole("button", { name: "Play video", exact: true })
-      .nth(index)
       .click();
     await expect
       .poll(() => video.evaluate((element) => element.currentTime))
@@ -136,9 +140,15 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     await expect
       .poll(() => video.evaluate((element) => element.videoWidth))
       .toBeGreaterThan(0);
-    await panel
+    await preview
       .getByRole("button", { name: "Pause video", exact: true })
       .click();
+    await expect
+      .poll(() => video.evaluate((element) => element.paused))
+      .toBe(true);
+    await expect(
+      preview.getByRole("button", { name: "Play video", exact: true }),
+    ).toBeVisible();
   }
   for (const source of [before, after])
     await expect(panel.locator(`a[href="${source}"]`)).toHaveCount(0);

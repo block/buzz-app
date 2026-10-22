@@ -356,6 +356,10 @@ it("tells apart Databricks models that read the same by their dimmed source", as
   expect(within(system).getByText("(system.ai)", { exact: false })).toHaveClass(
     "text-subtle",
   );
+  // One text run, so the row's flex label wraps it as words, not columns.
+  expect(
+    system.querySelector(".buzz-menu-choice-label")?.childNodes,
+  ).toHaveLength(1);
   expect(
     screen.getByRole("menuitemradio", {
       name: "GPT-6.1 Sol (data_workflow_tools.goose)",
@@ -449,6 +453,9 @@ it("marks a saved model the list lacks in the family menu", async () => {
   });
   expect(saved).toBeChecked();
   expect(within(saved).getByText("· Custom model")).toHaveClass("text-subtle");
+  expect(
+    saved.querySelector(".buzz-menu-choice-label")?.childNodes,
+  ).toHaveLength(1);
   expect(
     screen.getByRole("menuitemradio", { name: "GPT-6 Luna" }),
   ).toBeVisible();

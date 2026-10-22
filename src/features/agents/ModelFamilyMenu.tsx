@@ -36,10 +36,17 @@ export function modelFamily(model: ModelChoice): string {
 const qualified = (model: ModelChoice) =>
   model.qualifier ? `${model.label} (${model.qualifier})` : model.label;
 
-/** A model's label, its qualifier dimmed. */
-function ModelLabel({ model }: { model: ModelChoice }) {
+/** A model's label, its qualifier dimmed, then any note: one span, so a
+ * menu row's flex label wraps it as text. */
+function ModelLabel({
+  model,
+  children,
+}: {
+  model: ModelChoice;
+  children?: ReactNode;
+}) {
   return (
-    <>
+    <span>
       {model.label}
       {model.qualifier && (
         <>
@@ -47,7 +54,8 @@ function ModelLabel({ model }: { model: ModelChoice }) {
           <span className="text-subtle">({model.qualifier})</span>
         </>
       )}
-    </>
+      {children}
+    </span>
   );
 }
 
@@ -146,7 +154,7 @@ export function ModelFamilyMenu({
             onValueChange={(id) => onChange(id)}
           >
             <MenuRadioItem value="" closeOnClick>
-              <ModelLabel model={defaultChoice} /> · Default
+              <ModelLabel model={defaultChoice}> · Default</ModelLabel>
             </MenuRadioItem>
           </MenuRadioGroup>
         )}
@@ -181,15 +189,16 @@ export function ModelFamilyMenu({
                         value={model.id}
                         closeOnClick
                       >
-                        <ModelLabel model={model} />
-                        {model.unlisted && model.description && (
-                          <>
-                            {" "}
-                            <span className="text-subtle">
-                              · {model.description}
-                            </span>
-                          </>
-                        )}
+                        <ModelLabel model={model}>
+                          {model.unlisted && model.description && (
+                            <>
+                              {" "}
+                              <span className="text-subtle">
+                                · {model.description}
+                              </span>
+                            </>
+                          )}
+                        </ModelLabel>
                       </MenuRadioItem>
                     ),
                   )}

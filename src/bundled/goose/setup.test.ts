@@ -121,21 +121,17 @@ describe("GooseSetup", () => {
   });
 
   it("offers no catalog models for a provider that is not set up, and says what it needs", async () => {
-    const providers = PROVIDERS.map((entry) => ({ ...entry }));
+    const saved = new Map<string, Set<string>>();
     const { setup: goose } = setup({
-      providers,
+      saved,
       supported: ["databricks-gpt-6-luna"],
     });
     await expect(goose.models("databricks")).rejects.toThrow(
       "Databricks isn't set up in goose. Add Host (DATABRICKS_HOST) in Edit configuration, or run goose configure.",
     );
-    // `goose configure` sets it up meanwhile; trying again finds its models.
-    Object.assign(
-      providers.find((entry) => entry.providerId === "databricks") ?? {},
-      {
-        configured: true,
-      },
-    );
+    // `goose configure` sets it up meanwhile; a fresh read finds its models.
+    saved.set("databricks", new Set(["DATABRICKS_HOST"]));
+    await goose.check();
     expect(await goose.models("databricks")).toEqual([
       { id: "databricks-gpt-6-luna", label: "databricks-gpt-6-luna" },
     ]);
@@ -176,23 +172,23 @@ describe("GooseSetup", () => {
     // goose lists Ollama as not configured without `OLLAMA_HOST`, though it
     // runs on localhost's.
     const { setup: goose } = setup({
-      providers: PROVIDERS.map((entry) =>
-        entry.providerId === "ollama"
-          ? {
-              ...entry,
-              configured: false,
-              configKeys: [
-                {
-                  name: "OLLAMA_HOST",
-                  required: true,
-                  secret: false,
-                  default: "localhost",
-                },
-              ],
-              models: [{ id: "qwen3" }, { id: "llama4" }],
-            }
-          : entry,
-      ),
+      providers: [
+        {
+          providerId: "ollama",
+          providerName: "Ollama",
+          configured: false,
+          visibleInSetup: true,
+          configKeys: [
+            {
+              name: "OLLAMA_HOST",
+              required: true,
+              secret: false,
+              default: "localhost",
+            },
+          ],
+          models: [{ id: "qwen3" }, { id: "llama4" }],
+        },
+      ],
     });
     expect((await goose.models("ollama")).map(({ id }) => id)).toEqual([
       "qwen3",
@@ -272,11 +268,7 @@ describe("GooseSetup", () => {
   it("offers an agent its provider's models, or those of goose's config", async () => {
     const { setup: goose } = setup({ supported: ["qwen3", "llama4"] });
     const { setup: configured } = setup({
-      providers: PROVIDERS.map((entry) =>
-        entry.providerId === "anthropic"
-          ? { ...entry, configured: true }
-          : entry,
-      ),
+      saved: new Map([["anthropic", new Set(["ANTHROPIC_API_KEY"])]]),
     });
     await expect(
       configured.picks({ provider: "anthropic", model: "" }),

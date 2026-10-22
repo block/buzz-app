@@ -150,7 +150,7 @@ export function createTabs({
     );
     const current = listing.value?.defaults;
     const id = current?.provider ?? "";
-    const [models, reloadModels] = useRead(
+    const [models] = useRead(
       () => (id ? setup.models(id) : Promise.resolve([] as ModelChoice[])),
       `${id}:${state.readiness}:${!!state.blocking}`,
       id,
@@ -162,7 +162,8 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
-          retry={reloadModels}
+          // A fresh read changes readiness, which reads both again.
+          retry={() => void setup.check()}
         >
           <ModelPicker
             includeDefault={false}
@@ -1048,6 +1049,10 @@ export function createTabs({
       () => (provider ? setup.models(provider) : Promise.resolve([])),
       provider,
     );
+    const refresh = () => {
+      reload();
+      reloadModels();
+    };
     const fallback =
       (current.provider
         ? listing.value?.providers.find((item) => item.id === provider)
@@ -1081,11 +1086,8 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
-          // Setting goose up can change its default model too.
-          retry={() => {
-            reload();
-            reloadModels();
-          }}
+          // `goose configure` can set it up meanwhile, on another default model.
+          retry={() => void setup.check().then(refresh)}
           disabled={disabled}
         >
           <ModelPicker
@@ -1140,8 +1142,7 @@ export function createTabs({
                 effort:
                   choice.provider === current.provider ? current.effort : "",
               });
-              reload();
-              reloadModels();
+              refresh();
               setOpen(false);
             }}
           />

@@ -772,13 +772,11 @@ function ThreadMessages({
       !element
     )
       return;
-    // Focus already in this surface, or on any tab (the person is steering the
-    // tab strip), is not stolen; only focus left behind by the opener moves in.
+    // Only focus the opener left behind (its control unmounted) moves in.
+    // Focus the person has since placed anywhere, even a moment after a first
+    // opening whose request arrived late, is not stolen.
     const focused = document.activeElement;
-    if (
-      !element.closest("[data-reading-surface]")?.contains(focused) &&
-      !focused?.closest('[role="tab"]')
-    )
+    if (!focused || focused === document.body)
       element.focus({ preventScroll: true });
   }, [navigation?.signal]);
   // Ordinary opens follow the latest reply after bounded history finishes.

@@ -12,7 +12,8 @@ const DISCLOSURE =
 /** Chooses the provider that answers decisions on this device and shows the
  * selected provider's own settings. Providers are plugins. One picked before
  * it is ready shows its settings, but the choice is saved only once it is
- * ready, so a working provider keeps answering until then. */
+ * ready, so a working provider keeps answering until then. The choice is
+ * hidden only when one provider is registered and already answering. */
 export function DecisionsSettings({
   decisions,
   active,
@@ -49,6 +50,9 @@ export function DecisionsSettings({
   const selected = pending && pending.key !== backend ? pending : undefined;
   const shown =
     selected ?? providers.find((provider) => provider.key === backend);
+  // With no provider answering, even a lone one must be choosable: decisions
+  // never move to a provider the user did not choose.
+  const choosable = providers.length > 1 || backend === undefined;
   return (
     <section aria-labelledby="decisions-settings-title">
       <Header
@@ -66,7 +70,7 @@ export function DecisionsSettings({
           data-buzz-ui=""
           className="mt-section-gap flex flex-col items-start gap-section-gap"
         >
-          {providers.length > 1 && (
+          {choosable && (
             <div className="w-full max-w-md">
               <InlineHeader title="Decisions API Provider" />
               <Field

@@ -47,6 +47,56 @@ test.describe("mentioned reply priority", () => {
       new Set(["Broadcast descendant", "Unread reply 1"]),
     );
   });
+
+  test("opening an already-open thread from Activity reads it", async ({
+    page,
+    app,
+  }) => {
+    // Reading needs a 300ms dwell (use-reading.ts); hold the clock so the
+    // thread cannot earn it while it opens.
+    await page.clock.install();
+    await holdReadingFocus(page);
+    await open(page, app);
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content === "Thread root 1");
+    const alpha = page.locator('button[data-channel-id="alpha"]');
+    const panel = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const unread = () =>
+      page.evaluate(
+        (rootId) =>
+          window.fixtureRelay.snapshot().session.unread.snapshot({
+            kind: "thread",
+            channelId: "alpha",
+            rootId,
+          }),
+        root.id,
+      );
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    await expect(panel).toBeVisible();
+    // The reader is looking elsewhere: the open thread stays unread.
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.clock.resume();
+    expect((await unread()).observedCount).toBeGreaterThan(0);
+    await alpha.hover();
+    const item = page
+      .getByRole("dialog", { name: "Activity in Alpha" })
+      .getByRole("button", { name: /Open unread thread from/ })
+      .filter({ hasText: "Unread reply 1" });
+    await expect(item).toBeVisible();
+    await releaseReadingFocus(page);
+    // Activity opens the thread that is already selected.
+    await item.click();
+    await expect(panel).toBeVisible();
+    await expect.poll(async () => (await unread()).observedCount).toBe(0);
+  });
 });
 
 test("thread buttons show observed unread independently, clear only after reading, and expose hover/focus affordance", async ({

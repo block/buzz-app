@@ -751,6 +751,35 @@ function ThreadMessages({
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
+  // Opening a thread that is already shown selects nothing new, so no tab
+  // hands focus to it. Without focus inside, reading never starts.
+  // The signal identifies one request; the navigation object is re-bound per
+  // relay snapshot, so a re-render of the same request must not refocus.
+  const handledRequest = useRef(navigation?.signal);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new request moves focus; the others merely qualify it.
+  useLayoutEffect(() => {
+    if (handledRequest.current === navigation?.signal) return;
+    handledRequest.current = navigation?.signal;
+    const element = scroller.current;
+    if (
+      !navigation ||
+      navigation.signal.aborted ||
+      navigation.focus === "preserve" ||
+      !rootTarget ||
+      !active ||
+      !element
+    )
+      return;
+    const surface = element.closest("[data-reading-surface]");
+    // Focus on this thread's own selected tab already counts as reading it.
+    const label = surface
+      ?.closest('[role="tabpanel"]')
+      ?.getAttribute("aria-labelledby");
+    const tab = label ? document.getElementById(label) : null;
+    const focused = document.activeElement;
+    if (!surface?.contains(focused) && !tab?.contains(focused))
+      element.focus({ preventScroll: true });
+  }, [navigation?.signal]);
   // Ordinary opens follow the latest reply after bounded history finishes.
   // Keep that first positioning invisible; exact-message navigation reveals itself.
   const positioning =

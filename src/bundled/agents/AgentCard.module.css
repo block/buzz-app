@@ -378,15 +378,12 @@ html[data-keyboard-navigation] .card:focus-visible {
   }
 }
 /* Placeholder treatment until the card's status styling is designed. */
-/* Centered above the portrait; the inline inset clears the corner menu
-   (its offset plus a small icon button). */
+/* Primary text follows the mode, as the card backdrop does: dark on light
+   cards and light on dark ones. */
 .tag {
   position: absolute;
-  inset-block-start: var(--space-3);
-  inset-inline: calc(var(--space-8) + var(--space-2));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-subtle);
-  @apply text-caption;
+  inset-block-start: var(--space-4);
+  inset-inline-start: var(--space-4);
+  color: var(--text-primary);
+  @apply text-label-sm;
 }

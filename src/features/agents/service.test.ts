@@ -6105,12 +6105,20 @@ it("retains hosted creation settings across restart and retries without provisio
     expect.objectContaining({ config }),
   );
   const revised = { ...config, instructions: "Revised." };
+  const picture = "https://example.test/revised.png";
   const agent = await again.service.create({
     type: "example/cloud",
     name: "Sky",
     config: revised,
+    picture,
   });
   expect(agent.unfinished).toBeUndefined();
+  expect(agent.picture).toBe(picture);
+  expect(records.publish).toHaveBeenLastCalledWith(
+    again.session,
+    { pubkey: hostedKey, name: "Sky", picture, runtime: "example/cloud" },
+    expect.any(AbortSignal),
+  );
   expect(restarted.remote.activate).toHaveBeenLastCalledWith(
     expect.objectContaining({ config: revised }),
   );

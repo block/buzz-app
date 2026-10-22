@@ -1600,10 +1600,16 @@ export class AgentsService extends Service implements Agents {
           setup.owner === binding.viewer,
       );
       if (pending) {
-        if (config !== undefined)
+        if (config !== undefined || listed)
           await this.writeUnfinished(
             this.unfinished.map((setup) =>
-              setup === pending ? { ...setup, config } : setup,
+              setup === pending
+                ? {
+                    ...setup,
+                    ...(config !== undefined ? { config } : {}),
+                    ...(listed ? { picture: listed } : {}),
+                  }
+                : setup,
             ),
           );
         return this.finish(pending.pubkey);

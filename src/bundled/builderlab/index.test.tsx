@@ -515,7 +515,10 @@ it.each([
         subject: "user",
         email: "a@example.com",
         expires_at: "2030",
-        capabilities: { can_use_remote_agents: true },
+        capabilities: {
+          can_use_remote_agents: true,
+          can_use_builderlab_decisions: true,
+        },
       };
     } else if (url.endsWith("/list-agents")) {
       result = {

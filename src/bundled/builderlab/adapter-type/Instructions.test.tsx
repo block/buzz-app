@@ -65,7 +65,12 @@ function fixture() {
   let subject = "account-a";
   const session = createOAuthSession(async () => ({
     value: "credential",
-    account: { subject, email: "a@example.com", canUseRemoteAgents: true },
+    account: {
+      subject,
+      email: "a@example.com",
+      canUseRemoteAgents: true,
+      canUseBuilderlabDecisions: false,
+    },
   }));
   let stored = response();
   const request = vi.fn<Host["request"]>(async ({ url, body }) => {

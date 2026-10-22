@@ -632,7 +632,7 @@ html[data-keyboard-navigation]
   margin: 0;
   border-radius: inherit;
 }
-.thumbnail [data-image-preview] > img {
+.thumbnail [data-image-preview] img {
   width: 100%;
   height: 100%;
   object-fit: cover;

@@ -192,7 +192,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
       ).toHaveText(`${percent}%`);
     }
     await expect(
-      dialog.getByRole("heading", { name: "Image", exact: true }),
+      dialog.getByRole("heading", { name: "photo.png", exact: true }),
     ).toHaveCSS("font-size", "28px");
     await page.bringToFront();
     await expect(composer).toBeVisible();
@@ -214,7 +214,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
     );
     await expect(composer).toBeVisible();
     await expect(
-      dialog.getByRole("heading", { name: "Image", exact: true }),
+      dialog.getByRole("heading", { name: "photo.png", exact: true }),
     ).toHaveCSS("font-size", "28px");
     await page.bringToFront();
     await dialog.screenshot({

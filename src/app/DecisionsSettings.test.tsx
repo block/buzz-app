@@ -229,6 +229,9 @@ it("offers a lone provider when the chosen one is gone, and answers only once it
   expect(decisions.chosen()).toBe(TYPESAFE);
   expect(decisions.backend()).toBe(TYPESAFE);
   expect(screen.getByText("Settings for typesafe")).toBeVisible();
+  // The choice stays for this visit, so focus stays on it.
+  expect(radio).toBeChecked();
+  expect(radio).toHaveFocus();
 });
 
 it("offers a lone other provider when TypeSafe is off, and sets it up before choosing it", async () => {
@@ -243,4 +246,7 @@ it("offers a lone other provider when TypeSafe is off, and sets it up before cho
   act(() => decisions.setStatus("b", "ready"));
   expect(decisions.chosen()).toBe("b");
   expect(decisions.backend()).toBe("b");
+  const radio = screen.getByRole("radio", { name: /Provider b/ });
+  expect(radio).toBeChecked();
+  expect(radio).toHaveFocus();
 });

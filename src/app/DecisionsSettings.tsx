@@ -13,7 +13,8 @@ const DISCLOSURE =
  * selected provider's own settings. Providers are plugins. One picked before
  * it is ready shows its settings, but the choice is saved only once it is
  * ready, so a working provider keeps answering until then. The choice is
- * hidden only when one provider is registered and already answering. */
+ * hidden only when one provider is registered and already answering when
+ * Settings opens. */
 export function DecisionsSettings({
   decisions,
   active,
@@ -51,8 +52,12 @@ export function DecisionsSettings({
   const shown =
     selected ?? providers.find((provider) => provider.key === backend);
   // With no provider answering, even a lone one must be choosable: decisions
-  // never move to a provider the user did not choose.
-  const choosable = providers.length > 1 || backend === undefined;
+  // never move to a provider the user did not choose. Once offered, the choice
+  // stays for this visit, so choosing does not remove the focused control.
+  const [offered, setOffered] = useState(false);
+  const needsChoice = providers.length > 1 || backend === undefined;
+  if (needsChoice && !offered) setOffered(true);
+  const choosable = needsChoice || (offered && providers.length > 0);
   return (
     <section aria-labelledby="decisions-settings-title">
       <Header

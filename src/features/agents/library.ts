@@ -58,7 +58,8 @@ export function createAgentLibrary(
     for (const listener of listeners) notify(listener);
   }
   /** Joins a read in flight, unless `fresh`: then it supersedes that read,
-   * which may predate a change the caller just made. */
+   * which may predate a change the caller just made, and that read's waiters
+   * wait for the new one. */
   function refresh({ fresh = false } = {}): Promise<void> {
     if (closed || !read) return Promise.resolve();
     if (pending && !fresh) return pending;
@@ -90,7 +91,10 @@ export function createAgentLibrary(
           controller = undefined;
           pending = undefined;
         }
-      });
+      })
+      // A superseded read's waiters follow the read that replaced it, so a
+      // finished refresh always means current inventory.
+      .then(() => (controller !== owned && pending ? pending : undefined));
     return pending;
   }
   function clear() {

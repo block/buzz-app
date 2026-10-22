@@ -7148,9 +7148,9 @@ describe("Attention plugin sources", () => {
     await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() => expect(input).toBeDefined());
-    input!.emit("CI failed");
+    input?.emit("CI failed");
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    expect(run.mock.calls[0]![0].trigger).toMatchObject({
+    expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
       type: "plugin",
       plugin: "example",
       channel,
@@ -7158,8 +7158,8 @@ describe("Attention plugin sources", () => {
       text: "CI failed\n\nInterest: Report CI changes",
     });
     await service.save(bot, { attentionEnabled: false });
-    expect(input!.signal.aborted).toBe(true);
-    expect(() => input!.emit("late")).toThrow(/no longer/);
+    expect(input?.signal.aborted).toBe(true);
+    expect(() => input?.emit("late")).toThrow(/no longer/);
   });
   it("persists natural completion without invalidating output already queued for the conversation", async () => {
     const { service, run, plugin, native } = await setup();
@@ -7178,13 +7178,13 @@ describe("Attention plugin sources", () => {
     await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
     await service.save(bot, { attentionEnabled: true, attention: watches });
     await vi.waitFor(() => expect(emitSource).toBeDefined());
-    emitSource!("done");
+    emitSource?.("done");
     finishSource();
     await vi.waitFor(() =>
       expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
     );
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    expect(run.mock.calls[0]![0].trigger).toMatchObject({
+    expect(run.mock.calls[0]?.[0].trigger).toMatchObject({
       channel,
       root,
       text: expect.stringContaining("done"),

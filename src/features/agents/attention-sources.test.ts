@@ -84,9 +84,9 @@ it("starts once, spends no turn on empty output, and emits into the registered w
   await Promise.resolve();
   h.manager.reconcile("monitor/command", h.provider, agents);
   expect(h.provider.run).toHaveBeenCalledTimes(1);
-  h.inputs[0]!.emit(" ");
+  h.inputs[0]?.emit(" ");
   expect(h.emit).not.toHaveBeenCalled();
-  h.inputs[0]!.emit("CI failed");
+  h.inputs[0]?.emit("CI failed");
   expect(h.emit).toHaveBeenCalledWith(
     "a",
     watch,
@@ -111,8 +111,8 @@ it.each(["off", "removed", "edited", "unloaded"])(
           ? []
           : [agent(reason === "edited" ? object() : watch, reason !== "off")],
       );
-    expect(h.inputs[0]!.signal.aborted).toBe(true);
-    expect(() => h.inputs[0]!.emit("late")).toThrow(/no longer/);
+    expect(h.inputs[0]?.signal.aborted).toBe(true);
+    expect(() => h.inputs[0]?.emit("late")).toThrow(/no longer/);
     await Promise.all(
       vi.mocked(h.provider.run).mock.results.map((result) => result.value),
     );
@@ -127,7 +127,7 @@ it("records natural completion once and does not restart a completed registratio
     agents = [agent(watch)];
   h.manager.reconcile("monitor/command", h.provider, agents);
   await Promise.resolve();
-  h.endings[0]!();
+  h.endings[0]?.();
   await vi.waitFor(() => expect(h.finish).toHaveBeenCalledWith("a", watch));
   h.manager.reconcile("monitor/command", h.provider, agents);
   expect(h.provider.run).toHaveBeenCalledTimes(1);

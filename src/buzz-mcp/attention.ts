@@ -434,7 +434,9 @@ async function run(
         watches: attention
           .watches({
             ...(scoped ? { interest: scoped } : {}),
-            ...(args.type === "event" || args.type === "timer" || args.type === "source"
+            ...(args.type === "event" ||
+            args.type === "timer" ||
+            args.type === "source"
               ? { type: args.type }
               : {}),
             ...(typeof args.status === "string"

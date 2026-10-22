@@ -126,9 +126,11 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
   ).toHaveCSS("list-style-type", "disc");
   for (let index = 0; index < 2; index++) {
     const video = videos.nth(index);
-    await panel
+    // Each player owns its controls. The two-second clip can end before a
+    // Pause click lands, flipping that button to Play, so let it finish.
+    const player = video.locator("..");
+    await player
       .getByRole("button", { name: "Play video", exact: true })
-      .nth(index)
       .click();
     await expect
       .poll(() => video.evaluate((element) => element.currentTime))
@@ -136,9 +138,12 @@ test("PR media plays under the packaged media policy in a narrow GitHub panel", 
     await expect
       .poll(() => video.evaluate((element) => element.videoWidth))
       .toBeGreaterThan(0);
-    await panel
-      .getByRole("button", { name: "Pause video", exact: true })
-      .click();
+    await expect
+      .poll(() => video.evaluate((element) => element.ended))
+      .toBe(true);
+    await expect(
+      player.getByRole("button", { name: "Play video", exact: true }),
+    ).toBeVisible();
   }
   for (const source of [before, after])
     await expect(panel.locator(`a[href="${source}"]`)).toHaveCount(0);

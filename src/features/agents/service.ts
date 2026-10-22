@@ -125,6 +125,7 @@ import {
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { nameSoloChat } from "./solo-chat-name";
+import { forgetDefaultAgent } from "../solo/default-agent";
 
 /** Where an agent runs: `here`, with its key on this device; `hosted`, by its
  * type's provider; or `elsewhere`, on another of the owner's devices. Only an
@@ -2262,13 +2263,16 @@ export class AgentsService extends Service implements Agents {
   }
 
   async remove(pubkey: string): Promise<void> {
-    if (!this.identities.some((identity) => identity.pubkey === pubkey))
-      return this.removeHosted(pubkey);
+    if (!this.identities.some((identity) => identity.pubkey === pubkey)) {
+      await this.removeHosted(pubkey);
+      forgetDefaultAgent(pubkey);
+      return;
+    }
     const running = this.deleting.get(pubkey);
     if (running) return running;
-    const work = this.removeLocal(pubkey).finally(() =>
-      this.deleting.delete(pubkey),
-    );
+    const work = this.removeLocal(pubkey)
+      .then(() => forgetDefaultAgent(pubkey))
+      .finally(() => this.deleting.delete(pubkey));
     this.deleting.set(pubkey, work);
     return work;
   }

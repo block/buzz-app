@@ -2,7 +2,12 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useAgentChoices } from "../agents/use-choices";
 import type { MentionRecipient } from "../messages/mention-draft";
 import type { RelaySession } from "../relay/session";
-import { readView, subscribeView, writeView } from "../../shared/view-state";
+import {
+  clearViewValue,
+  readView,
+  subscribeView,
+  writeView,
+} from "../../shared/view-state";
 
 // Saved on this device for the account and community (the view scope).
 const KEY = "solo:default-agent";
@@ -12,7 +17,14 @@ export function setDefaultAgent(scope: string, pubkey: string) {
   return writeView(scope, KEY, /^[0-9a-f]{64}$/.test(pubkey) ? pubkey : null);
 }
 
-function useChosenAgent(scope: string) {
+/** A deleted agent stops being the main agent everywhere it was chosen; the
+ * next available one takes over and is saved. */
+export function forgetDefaultAgent(pubkey: string) {
+  clearViewValue(KEY, pubkey);
+}
+
+/** The agent explicitly saved as main, whether or not it can be tagged now. */
+export function useChosenAgent(scope: string) {
   return useSyncExternalStore(
     useCallback((notify) => subscribeView(scope, notify), [scope]),
     () => {

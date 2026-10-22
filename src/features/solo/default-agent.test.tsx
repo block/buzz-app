@@ -3,7 +3,11 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { RelaySession } from "../relay/session";
-import { setDefaultAgent, useDefaultAgent } from "./default-agent";
+import {
+  forgetDefaultAgent,
+  setDefaultAgent,
+  useDefaultAgent,
+} from "./default-agent";
 
 afterEach(() => {
   cleanup();
@@ -200,4 +204,60 @@ it("keeps the main agent stable: saves the first pick and replaces only a delete
     }),
   );
   expect(screen.getByLabelText("main")).toHaveTextContent("First");
+});
+
+it("a deleted main agent hands the role on for good, even without archive evidence", () => {
+  const [a, b, c] = ["a", "b", "c"].map((letter) => ({
+    pubkey: letter.repeat(64),
+    name: letter.toUpperCase(),
+    managed: true,
+  }));
+  let choices = {
+    status: "ready",
+    complete: true,
+    selectable: [a, b, c],
+    archives: { status: "unavailable", archived: [] as string[] },
+  };
+  const listeners = new Set<() => void>();
+  const update = (selectable: typeof choices.selectable) => {
+    choices = { ...choices, selectable };
+    for (const notify of listeners) notify();
+  };
+  const session = {
+    agentChoices: {
+      snapshot: () => choices,
+      subscribe: (notify: () => void) => {
+        listeners.add(notify);
+        return () => listeners.delete(notify);
+      },
+      retain: () => () => {},
+      ensure: () => {},
+    },
+  } as unknown as RelaySession;
+  function Selection({ scope }: { scope: string }) {
+    return (
+      <output aria-label={scope}>
+        {useDefaultAgent(session, scope)?.name}
+      </output>
+    );
+  }
+  render(
+    <>
+      <Selection scope="one" />
+      <Selection scope="two" />
+    </>,
+  );
+  act(() => {
+    setDefaultAgent("one", b?.pubkey ?? "");
+    setDefaultAgent("two", c?.pubkey ?? "");
+  });
+  act(() => {
+    update([a, c].filter((agent) => agent !== undefined));
+    forgetDefaultAgent(b?.pubkey ?? "");
+  });
+  expect(screen.getByLabelText("one")).toHaveTextContent("A");
+  // Another scope's choice is untouched.
+  expect(screen.getByLabelText("two")).toHaveTextContent("C");
+  act(() => update([c, a].filter((agent) => agent !== undefined)));
+  expect(screen.getByLabelText("one")).toHaveTextContent("A");
 });

@@ -45,6 +45,7 @@ import { useAgentChoices } from "../../features/agents/use-choices";
 import type { RelaySession } from "../../features/relay/session";
 import {
   setDefaultAgent,
+  useChosenAgent,
   useDefaultAgent,
 } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
@@ -602,6 +603,8 @@ type InventoryProps = {
   newAgent: ReactNode;
   /** The agent new Berd messages are tagged for, in this community. */
   defaultAgent?: string | undefined;
+  /** False while another agent stands in for a missing chosen one. */
+  defaultPinned?: boolean;
   onMakeDefault?: ((pubkey: string) => void) | undefined;
   defaultChoices?: ReadonlySet<string>;
 };
@@ -613,6 +616,7 @@ function DefaultAgentInventory({
   ...props
 }: InventoryProps & { session: RelaySession; scope: string }) {
   const current = useDefaultAgent(session, scope);
+  const chosen = useChosenAgent(scope);
   const choices = useAgentChoices(session, true, true);
   const [error, setError] = useState("");
   return (
@@ -620,6 +624,7 @@ function DefaultAgentInventory({
       <Inventory
         {...props}
         defaultAgent={current?.pubkey}
+        defaultPinned={!!current && current.pubkey === chosen}
         defaultChoices={
           new Set(choices.selectable.map((agent) => agent.pubkey))
         }
@@ -659,9 +664,13 @@ function CardContextMenu({
     >
       <ContextMenuTrigger
         render={card}
-        // Events from the card's open menus bubble through their portals;
-        // only the card itself opens this menu.
+        // Right-clicks and long-presses in the card's open menus bubble
+        // through their portals; only the card itself opens this menu.
         onContextMenu={(event) => {
+          if (!event.currentTarget.contains(event.target as Node))
+            event.preventBaseUIHandler();
+        }}
+        onTouchStart={(event) => {
           if (!event.currentTarget.contains(event.target as Node))
             event.preventBaseUIHandler();
         }}
@@ -696,6 +705,7 @@ function Inventory({
   onBuild,
   newAgent,
   defaultAgent,
+  defaultPinned,
   defaultChoices,
   onMakeDefault,
 }: InventoryProps) {
@@ -768,6 +778,7 @@ function Inventory({
                     onMakeDefault
                       ? {
                           isMain,
+                          pinned: isMain && !!defaultPinned,
                           available: !!defaultChoices?.has(agent.pubkey),
                           onMake: () => onMakeDefault(agent.pubkey),
                         }
@@ -830,7 +841,9 @@ function InventoryCard({
   onBuild(): void;
   onRemoved(): void;
   /** Whether it is the community's main agent and can be made it. */
-  main?: { isMain: boolean; available: boolean; onMake(): void } | undefined;
+  main?:
+    | { isMain: boolean; pinned: boolean; available: boolean; onMake(): void }
+    | undefined;
 }) {
   const agent = props.agent;
   const [saving, setSaving] = useState(false);
@@ -852,7 +865,8 @@ function InventoryCard({
   const actions = (remove?: () => void) => (
     <>
       {main &&
-        (main.isMain ? (
+        // A stand-in for a missing chosen agent can be made main for good.
+        (main.pinned ? (
           <MenuNote>Main agent</MenuNote>
         ) : (
           <MenuItem disabled={!main.available} onClick={main.onMake}>

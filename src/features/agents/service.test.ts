@@ -6,6 +6,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { bytesToHex } from "nostr-tools/utils";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { forgetDefaultAgent } from "../solo/default-agent";
 import { AgentConfigStore, type Subject } from "./agent-config";
 import type { Mode } from "./agent-start";
 import { channelTemplates } from "../channel-templates/local";
@@ -69,6 +70,10 @@ const records = vi.hoisted(() => ({
   publish: vi.fn(),
   remove: vi.fn(),
   removeAgent: vi.fn(),
+}));
+vi.mock("../solo/default-agent", async (original) => ({
+  ...(await original<typeof import("../solo/default-agent")>()),
+  forgetDefaultAgent: vi.fn(),
 }));
 vi.mock("./relay-removal", () => ({
   removeAgentFromChannels: leaveChannels,
@@ -2527,6 +2532,8 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
   await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
   warn.mockRestore();
   expect(service.find(bot)?.deleting).toBe(true);
+  // Only a finished Delete hands the main agent role on.
+  expect(forgetDefaultAgent).not.toHaveBeenCalled();
   expect(native.remove).not.toHaveBeenCalled();
   // Reconnecting retries nothing.
   recover();
@@ -2548,6 +2555,7 @@ it("keeps a Delete that fails partway listed and stopped, deletes nothing, and r
     "forget",
   ]);
   expect(service.find(bot)).toBeUndefined();
+  expect(forgetDefaultAgent).toHaveBeenCalledWith(bot);
 });
 
 it("shows an agent whose settings could not be saved with its type's defaults", async () => {

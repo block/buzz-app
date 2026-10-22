@@ -33,6 +33,7 @@ import type {
 } from "../../features/agents/service";
 import type { OldTeam, PortableAgent } from "../../features/agents/native";
 import { localStore } from "../../features/agents/state";
+import { setDefaultAgent } from "../../features/solo/default-agent";
 import type { RelayData } from "../../features/relay/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -2364,4 +2365,48 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
     view.unmount();
     owner.dispose();
   }
+});
+
+it("offers Make main agent on a stand-in for a missing chosen agent", async () => {
+  const ada = agent("Ada", 1);
+  const view = setup([ada]);
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    selectable: [{ pubkey: ada.pubkey, name: ada.name, managed: true }],
+    archives: { status: "unavailable", archived: [] },
+  };
+  const connection = {
+    status: "ready",
+    scope: "stand-in",
+    session: {
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  // The chosen agent isn't among the choices, and wasn't deleted.
+  act(() => {
+    setDefaultAgent("stand-in", "d".repeat(64));
+  });
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  const card = screen.getByRole("gridcell", { name: "Ada, Main agent" });
+  fireEvent.contextMenu(card);
+  const menu = await screen.findByRole("menu", { name: "Actions for Ada" });
+  fireEvent.click(
+    within(menu).getByRole("menuitem", { name: "Make main agent" }),
+  );
+  fireEvent.contextMenu(card);
+  expect(
+    within(
+      await screen.findByRole("menu", { name: "Actions for Ada" }),
+    ).queryByRole("menuitem", { name: "Make main agent" }),
+  ).toBeNull();
 });

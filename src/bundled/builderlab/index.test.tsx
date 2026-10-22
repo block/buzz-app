@@ -446,6 +446,8 @@ it("shares plugin login with Settings and hosted Agents, replays failed setup wr
             ]
           : [],
       };
+    } else if (url.endsWith("/get-model-catalog")) {
+      result = { models: [] };
     } else if (url.endsWith("/register-agent")) {
       const name = JSON.parse(body).agent_name;
       const hosted = name === "Hosted";

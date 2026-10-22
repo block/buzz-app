@@ -35,6 +35,11 @@ The agent's Identity tab reads its current instructions from Builderlab and
 saves changes directly to the provider. Loading and saving use the same login;
 failed saves keep the draft, and switching accounts requires the original
 account before saving. Empty instructions can be saved to clear them.
+The Settings tab loads a separate model catalog from Builderlab. Choose a model
+and one of that model's reasoning efforts, then save the pair for new tasks.
+There is no default or fallback selection. Missing or unavailable saved choices
+show the server's setup status and require a supported pair. Changing the model
+clears the effort choice. Instructions and model settings save independently.
 Settings shows the fixed remote workspace and per-thread session behavior. Both
 tabs link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been

@@ -86,6 +86,7 @@ function created(
     config?: Config;
     /** Fields goose already holds, beyond Databricks' host. */
     saved?: Readonly<Record<string, readonly string[]>>;
+    defaults?: Readonly<{ providerId: string; modelId: string }>;
   }> = {},
 ) {
   const saved = new Map<string, Set<string>>([
@@ -96,7 +97,10 @@ function created(
   ]);
   const fake = fakeSpawn({
     providers: PROVIDERS,
-    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    defaults: options.defaults ?? {
+      providerId: "databricks",
+      modelId: "goose-claude",
+    },
     saved,
     reply: options.reply ?? "OK",
     thinking: {
@@ -242,8 +246,8 @@ it("keeps provider fields visible while saving its key and selecting a model", a
 });
 
 it("says a provider is not set up instead of offering its catalog's models", async () => {
-  const { saved } = created({
-    config: { ...DEFAULT_CONFIG, provider: "anthropic" },
+  const { fake, saved } = created({
+    defaults: { providerId: "anthropic", modelId: "claude-sonnet-5-5" },
   });
   expect(
     await screen.findByText(
@@ -255,13 +259,16 @@ it("says a provider is not set up instead of offering its catalog's models", asy
   expect(await screen.findByRole("menu")).toBeVisible();
   expect(screen.queryByRole("menuitem", { name: "Claude" })).toBeNull();
   await user.keyboard("{Escape}");
-  // `goose configure` sets it up meanwhile.
+  // `goose configure` sets it up meanwhile, on another default model.
   saved.set("anthropic", new Set(["ANTHROPIC_API_KEY"]));
+  await new GooseSetup(fake).saveDefaults({
+    provider: "anthropic",
+    model: "claude-opus-5-5",
+  });
   await user.click(screen.getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-  await choose(
-    modelButton().getAttribute("aria-label") ?? "",
-    "claude-opus-5-5",
+  await waitFor(() =>
+    expect(modelButton()).toHaveTextContent("claude-opus-5-5"),
   );
 });
 

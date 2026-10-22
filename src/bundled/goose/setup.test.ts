@@ -141,6 +141,40 @@ describe("GooseSetup", () => {
     ]);
   });
 
+  it("offers the models of a provider that runs on its fields' defaults", async () => {
+    // goose lists Ollama as not configured without `OLLAMA_HOST`, though it
+    // runs on localhost's.
+    const { setup: goose } = setup({
+      providers: PROVIDERS.map((entry) =>
+        entry.providerId === "ollama"
+          ? {
+              ...entry,
+              configured: false,
+              configKeys: [
+                {
+                  name: "OLLAMA_HOST",
+                  required: true,
+                  secret: false,
+                  default: "localhost",
+                },
+              ],
+              models: [{ id: "qwen3" }, { id: "llama4" }],
+            }
+          : entry,
+      ),
+    });
+    expect((await goose.models("ollama")).map(({ id }) => id)).toEqual([
+      "qwen3",
+      "llama4",
+    ]);
+    await expect(
+      goose.picks({ provider: "ollama", model: "qwen3" }),
+    ).resolves.toMatchObject({
+      current: "qwen3",
+      models: [{ id: "qwen3" }, { id: "llama4" }],
+    });
+  });
+
   it("lists only the workspace's and goose's own Databricks endpoints", async () => {
     const { setup: goose } = setup({
       providers: PROVIDERS.map((entry) =>

@@ -1081,7 +1081,11 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
-          retry={reloadModels}
+          // Setting goose up can change its default model too.
+          retry={() => {
+            reload();
+            reloadModels();
+          }}
           disabled={disabled}
         >
           <ModelPicker

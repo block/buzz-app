@@ -212,9 +212,10 @@ export class GooseSetup {
         ? providers.find((item) => item.id === id)?.defaultModel
         : defaults.model) ||
       "";
+    const listed = providers.find((item) => item.id === id);
     // A provider not set up offers only the model the agent names.
-    const usable = providers.some((item) => item.id === id && item.configured);
-    const models = (id && usable ? await this.models(id) : []).map(
+    const blocked = listed && missing(listed).length;
+    const models = (id && !blocked ? await this.models(id) : []).map(
       ({ id, label }) => ({ id, label, efforts: [] }),
     );
     // A model its provider does not list is still the one it runs on.
@@ -258,25 +259,24 @@ export class GooseSetup {
 
   /** Databricks catalogs can lag its endpoints and AI Gateway services;
    * configured providers use live discovery for both Databricks versions.
-   * A provider that is not set up offers none: its catalog's would not run. */
+   * A provider missing a field offers none: its catalog's would not run. */
   async models(id: string): Promise<readonly ModelChoice[]> {
     const listing = this.providers();
     const listed = (await listing).providers.find((item) => item.id === id);
-    if (listed && !listed.configured) {
+    const absent = listed ? missing(listed) : [];
+    if (listed && absent.length) {
       // `goose configure` can set it up meanwhile; trying again reads anew.
       if (this.listing === listing) this.listing = undefined;
-      const keys = listed.keys.filter((key) => key.required);
       throw new Error(
-        `${listed.name} isn't set up in goose. ${
-          keys.length
-            ? `Add ${keys.map((key) => key.name).join(", ")}`
-            : "Set it up"
-        } in Edit configuration, or run goose configure.`,
+        `${listed.name} isn't set up in goose. Add ${absent
+          .map((key) => key.name)
+          .join(", ")} in Edit configuration, or run goose configure.`,
       );
     }
     const prefixes = PREFIXES[id];
     const models =
-      listed && (prefixes || id === "databricks_v2" || !listed.models.length)
+      listed?.configured &&
+      (prefixes || id === "databricks_v2" || !listed.models.length)
         ? await this.supported(id)
         : (listed?.models ?? []);
     return prefixes
@@ -468,6 +468,15 @@ function provider(entry: Entry): Provider {
     // The exact ID: a catalog name can stand for several models.
     models: models.map((model) => ({ id: model.id, label: model.id })),
   };
+}
+
+/** The fields `provider` still needs: required ones without a default. goose
+ * lists Ollama as not configured without `OLLAMA_HOST`, though it runs on the
+ * host's default. */
+function missing(provider: Provider) {
+  return provider.configured
+    ? []
+    : provider.keys.filter((key) => key.required && !key.default);
 }
 
 /** `ANTHROPIC_API_KEY` reads as `API key`, `OPENAI_HOST` as `Host`. */

@@ -31,6 +31,10 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import lockfile from "proper-lockfile";
 import { AuthFile, serve } from "./host.mjs";
+import { Harness } from "@earendil-works/pi-durable";
+const originalOpen = Harness.open;
+let openedHarness;
+Harness.open = async (...args) => { openedHarness = await originalOpen(...args); return openedHarness; };
 const data = process.argv[2];
 const faux = fauxProvider();
 const models = createModels();
@@ -83,6 +87,15 @@ out.a = { ...(await pi.rpc("wait", { agent, submission: a.submission })), calls:
 faux.setResponses([fauxAssistantMessage("Plain answer")]);
 const b = await pi.rpc("deliver", turn("B", "second"));
 out.b = { ...(await pi.rpc("wait", { agent, submission: b.submission })), conversation: b.conversation };
+// A cleanup write must not replace an already-settled answer with an RPC error.
+const commit = openedHarness.commit;
+let waitCommits = 0;
+openedHarness.commit = function (...args) {
+  if (++waitCommits === 2) throw new Error("Reply cleanup storage failure");
+  return commit.apply(this, args);
+};
+try { out.cleanupFailure = await pi.rpc("wait", { agent, submission: b.submission, request: "B" }); }
+finally { openedHarness.commit = commit; }
 // What a transcript and usage read: the places, and the entries without schemas.
 out.places = (await pi.rpc("places", { agent })).places;
 out.recorded = Object.keys((await pi.rpc("recorded", { agent, conversation: a.conversation })).models);
@@ -315,6 +328,10 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         arguments: { text: "hi", final: true },
       },
     ]);
+    expect(out.cleanupFailure).toMatchObject({
+      status: "done",
+      text: "Plain answer",
+    });
     expect(out.recorded).toEqual(["faux/faux-1"]);
     expect(out.places).toEqual([
       { key: "chan/root", conversation: out.a.conversation, seen: 100 },

@@ -19,6 +19,8 @@ const LOADING_TILES = [
 export function GifPicker({
   community,
   enabled = true,
+  unavailable,
+  retryDiscovery,
   initialQuery,
   onQueryChange,
   select,
@@ -26,6 +28,8 @@ export function GifPicker({
 }: {
   community: string;
   enabled?: boolean;
+  unavailable?: string | undefined;
+  retryDiscovery?: (() => void) | undefined;
   search?: typeof fetchKlipyGifs;
   initialQuery: string;
   onQueryChange(query: string): void;
@@ -85,7 +89,19 @@ export function GifPicker({
         />
       </div>
       <div className={`${styles.gifResults} buzz-thin-scrollbar`}>
-        {!gifs && !error ? (
+        {unavailable ? (
+          <div
+            className={styles.gifEmpty}
+            role={retryDiscovery ? "alert" : "status"}
+          >
+            <p>{unavailable}</p>
+            {retryDiscovery && (
+              <Button type="button" onClick={retryDiscovery}>
+                Retry GIF availability
+              </Button>
+            )}
+          </div>
+        ) : !gifs && !error ? (
           <div
             className={styles.gifLoading}
             role="status"

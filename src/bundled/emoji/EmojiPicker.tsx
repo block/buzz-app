@@ -1,3 +1,5 @@
+import { createShortcutBindings } from "../../features/shortcuts/preferences";
+import { matches } from "../../features/shortcuts/bindings";
 import type { GifShortcut } from "./gif-shortcut";
 import { useConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -69,6 +71,7 @@ export function EmojiPicker({
   const [gifAvailability, setGifAvailability] = useState<{
     community: string;
     supported: boolean | undefined;
+    error?: string;
   }>();
   const [gifDiscoveryRequested, setGifDiscoveryRequested] = useState(false);
   const [{ perLine, availableWidth, scale }, setLayout] = useState({
@@ -93,7 +96,7 @@ export function EmojiPicker({
       ? gifAvailability.supported
       : undefined
     : false;
-  const showGifTab = gifs === true || (tab === "gifs" && gifs === undefined);
+  const showGifTab = gifs === true || tab === "gifs";
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,
     session.emoji.snapshot,
@@ -157,15 +160,21 @@ export function EmojiPicker({
       setOpen(true);
     };
     if (gifShortcut) return gifShortcut.register(form, open);
+    const bindings = createShortcutBindings(window);
+    const apple = /Mac|iPhone|iPad/.test(window.navigator.platform);
     const openGifs = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented ||
         event.isComposing ||
+        event.getModifierState("AltGraph") ||
         event.keyCode === 229 ||
-        event.altKey ||
-        event.shiftKey ||
-        !(event.metaKey || event.ctrlKey) ||
-        event.key.toLowerCase() !== "g"
+        !matches(
+          bindings.resolve("buzz.emoji/gif-picker") ?? [
+            { key: "g", mod: true },
+          ],
+          event,
+          apple,
+        )
       )
         return;
       event.preventDefault();
@@ -174,7 +183,10 @@ export function EmojiPicker({
       open();
     };
     form.addEventListener("keydown", openGifs, true);
-    return () => form.removeEventListener("keydown", openGifs, true);
+    return () => {
+      form.removeEventListener("keydown", openGifs, true);
+      bindings.dispose();
+    };
   }, [community, disabled, reaction, gifs, active, gifShortcut]);
   useEffect(() => {
     if (
@@ -189,17 +201,16 @@ export function EmojiPicker({
       (supported) => {
         if (!controller.signal.aborted) {
           setGifAvailability({ community, supported });
-          if (!supported) {
-            setTab("emoji");
-          }
         }
       },
       () => {
         if (!controller.signal.aborted) {
-          setGifAvailability({ community, supported: undefined });
+          setGifAvailability({
+            community,
+            supported: undefined,
+            error: "Could not check GIF availability.",
+          });
           setGifDiscoveryRequested(false);
-
-          setTab("emoji");
         }
       },
     );
@@ -273,6 +284,21 @@ export function EmojiPicker({
     <GifPicker
       community={community}
       enabled={gifs === true}
+      unavailable={
+        gifs === false
+          ? "GIFs are not available in this community."
+          : gifAvailability?.community === community
+            ? gifAvailability.error
+            : undefined
+      }
+      retryDiscovery={
+        gifAvailability?.community === community && gifAvailability.error
+          ? () => {
+              setGifAvailability(undefined);
+              setGifDiscoveryRequested(true);
+            }
+          : undefined
+      }
       search={gifRequests.search}
       initialQuery={search.current}
       onQueryChange={(value) => {

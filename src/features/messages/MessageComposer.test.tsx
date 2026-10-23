@@ -8588,6 +8588,7 @@ it("previews a picked GIF while preserving its source through undo and send", as
   await enable(false);
   expect(h.input().querySelector("[data-gif-preview]")).toBeNull();
   expect(h.input()).toHaveTextContent(source);
+  expect(h.input().querySelector('[contenteditable="false"]')).toBeNull();
   expect(h.input()).toHaveValue(source);
   await enable(true);
   expect(within(h.input()).getByRole("img", { name: "Party" })).toBeVisible();

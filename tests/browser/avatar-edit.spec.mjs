@@ -205,9 +205,10 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
   const color = await spectrum
     .locator("span")
     .evaluate((el) => getComputedStyle(el).backgroundColor);
-  await expect(
-    page.getByRole("img", { name: "Emoji avatar preview" }),
-  ).toHaveCSS("background-color", color);
+  await expect(page.getByRole("slider", { name: "Emoji position" })).toHaveCSS(
+    "background-color",
+    color,
+  );
   await page.screenshot({
     path: test.info().outputPath("avatar-custom-color.png"),
   });
@@ -225,9 +226,10 @@ test("avatar custom spectrum supports dragging, keyboard hue and return focus", 
     page.getByRole("button", { name: "Custom background color", exact: true }),
   ).toBeFocused();
   await page.getByRole("tab", { name: "Emoji", exact: true }).click();
-  await expect(
-    page.getByRole("img", { name: "Emoji avatar preview" }),
-  ).toHaveCSS("background-color", color);
+  await expect(page.getByRole("slider", { name: "Emoji position" })).toHaveCSS(
+    "background-color",
+    color,
+  );
   const viewport = page
     .getByRole("tablist", { name: "Avatar source" })
     .locator("../../../..");
@@ -457,7 +459,7 @@ test("avatar picker previews pointer selections and respects reduced motion", as
   const emoji = page.getByRole("button", { name: "😀", exact: true });
   await emoji.click();
   const artwork = page
-    .getByRole("img", { name: "Emoji avatar preview" })
+    .getByRole("slider", { name: "Emoji position" })
     .locator("canvas");
   await expect(artwork).toHaveAttribute("data-animate", "true");
   await emoji.press("Enter");
@@ -469,12 +471,43 @@ test("avatar picker previews pointer selections and respects reduced motion", as
   await page
     .getByRole("button", { name: "Use #63C6F2 background", exact: true })
     .click();
+  await expect(page.getByRole("slider", { name: "Emoji position" })).toHaveCSS(
+    "background-color",
+    "rgb(99, 198, 242)",
+  );
+  const position = page.getByRole("slider", { name: "Emoji position" });
+  const box = await position.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height, {
+    steps: 4,
+  });
+  await page.mouse.up();
+  // Dragging the preview moves the emoji down without closing the editor.
+  await expect(position).toHaveAttribute("aria-valuetext", "20% down");
   await expect(
-    page.getByRole("img", { name: "Emoji avatar preview" }),
-  ).toHaveCSS("background-color", "rgb(99, 198, 242)");
+    page.getByRole("tab", { name: "Emoji", exact: true }),
+  ).toBeVisible();
   await page.getByRole("tab", { name: "Emoji", exact: true }).click();
   await search.fill("");
   await page.screenshot({
     path: test.info().outputPath("profile-avatar-picker.png"),
   });
+});
+
+test("transparent emoji avatars upload with a clear background", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/profile-settings.html");
+  const alpha = await page.evaluate(async () => {
+    const { emojiAvatar } = await import(
+      "/src/features/profiles/avatar-upload.ts"
+    );
+    const image = await createImageBitmap(await emojiAvatar("😀"));
+    const context = new OffscreenCanvas(512, 512).getContext("2d");
+    context.drawImage(image, 0, 0);
+    const pixel = (x, y) => context.getImageData(x, y, 1, 1).data[3];
+    return { corner: pixel(0, 0), center: pixel(256, 256) };
+  });
+  expect(alpha).toEqual({ corner: 0, center: 255 });
 });

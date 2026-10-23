@@ -70,6 +70,7 @@ export function paintEmojiAvatar(
   emoji: string,
   color?: string,
   scale = emojiAvatarScale,
+  offset = 0,
 ) {
   canvas.width = canvas.height = 512;
   const context = canvas.getContext("2d");
@@ -119,20 +120,25 @@ export function paintEmojiAvatar(
     context,
     516 * fit,
     256 - ((left + right + 1) / 2 - 512) * fit,
-    256 - ((top + bottom + 1) / 2 - 512) * fit,
+    256 + 512 * offset - ((top + bottom + 1) / 2 - 512) * fit,
   );
 }
 
 /** Persist ordinary square artwork; Avatar owns human/agent clipping. */
 export async function emojiAvatar(
   emoji: string,
-  color: string,
+  color?: string,
   scale = emojiAvatarScale,
+  offset = 0,
 ): Promise<File> {
-  if (!emoji || emoji.length > 64 || !/^#[0-9a-f]{6}$/i.test(color))
+  if (
+    !emoji ||
+    emoji.length > 64 ||
+    (color !== undefined && !/^#[0-9a-f]{6}$/i.test(color))
+  )
     throw new Error("Choose an emoji and a background color.");
   const canvas = document.createElement("canvas");
-  paintEmojiAvatar(canvas, emoji, color, scale);
+  paintEmojiAvatar(canvas, emoji, color, scale, offset);
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (value) =>

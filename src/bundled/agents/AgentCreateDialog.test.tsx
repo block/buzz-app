@@ -219,6 +219,7 @@ it("creates with a custom emoji on a chosen background", async () => {
     "😀",
     "#476CFF",
     emojiAvatarScale,
+    0,
   );
   await waitFor(() =>
     expect(uploadAvatar).toHaveBeenCalledWith(

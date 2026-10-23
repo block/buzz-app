@@ -1951,6 +1951,26 @@ it("reports a failed wake at its thread's root, never at the wake's own id", asy
   });
   expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
 });
+it("refreshes a queued plugin wake's instructions when its turn starts", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  let instructions = "Original instructions";
+  const wakeText = vi.fn(async () => instructions);
+  await f.runtime.run({
+    ...pluginWake(f, root),
+    model: "deep-model",
+    wakeText,
+  });
+  instructions = "Updated instructions";
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const input = JSON.stringify(f.starts()[1]?.params);
+  expect(input).toContain("Updated instructions");
+  expect(input).not.toContain("Original instructions");
+  expect(wakeText).toHaveBeenCalledOnce();
+  await f.complete(1, "SECOND");
+});
 it("takes a wake with no thread only in a Solo chat", async () => {
   const f = fixture();
   const ignored = vi.fn();

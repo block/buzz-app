@@ -74,6 +74,7 @@ type Request = {
   conversation: Conversation;
   /** A plugin's wake, for which `event` is its local anchor. */
   wake?: PluginTrigger;
+  wakeText?: Delivery["wakeText"];
   /** Latest request's thread, independent of session scope; absent in DMs. */
   toolRoot?: string;
   /** The agent's team sections, if it is on a team. */
@@ -700,6 +701,7 @@ export class CodexRuntime {
       ...(wake ? { current: delivery.current } : {}),
       event,
       ...(wake ? { wake } : {}),
+      ...(delivery.wakeText ? { wakeText: delivery.wakeText } : {}),
       agent,
       settings,
       ...(toolRoot ? { toolRoot } : {}),
@@ -782,6 +784,10 @@ export class CodexRuntime {
                 return;
               }
               const context = await this.history(request, entry.abort.signal);
+              const wake = request.wake && {
+                ...request.wake,
+                text: (await request.wakeText?.()) ?? request.wake.text,
+              };
               if (entry.abort.signal.aborted) {
                 request.failActivity("Codex was stopped");
                 return;
@@ -799,7 +805,7 @@ export class CodexRuntime {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
                 input: input(
-                  `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, noteOf(request), request.wake)}`,
+                  `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, true, noteOf(request), wake)}`,
                 ),
               });
               active.reply = request;
@@ -1540,6 +1546,10 @@ export class CodexRuntime {
         this.history(request, signal),
         this.core(request.agent.pubkey, signal),
       ]);
+      const wake = request.wake && {
+        ...request.wake,
+        text: (await request.wakeText?.()) ?? request.wake.text,
+      };
       signal.throwIfAborted();
       if (request.current && !request.current()) {
         restoreNotes(request);
@@ -1552,7 +1562,7 @@ export class CodexRuntime {
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(
-          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, noteOf(request), request.wake)}`,
+          `${context}${request.project ?? ""}${turnInput(request.event, request.conversation, text, false, noteOf(request), wake)}`,
         ),
         model,
         effort,

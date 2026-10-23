@@ -317,13 +317,14 @@ function MessageRowContent({
     session,
     agentAuthor && !stackPrevious ? row.authorId : undefined,
   );
-  const ownerLabel = !owner
-    ? undefined
-    : owner.id === viewer
-      ? "Your agent"
-      : owner.profile && !owner.profile.nameIsFallback
-        ? `${resolveName(owner.id, owner.profile.name)}’s agent`
-        : undefined;
+  // The viewer's own agents carry only the agent mark.
+  const ownerLabel =
+    owner &&
+    owner.id !== viewer &&
+    owner.profile &&
+    !owner.profile.nameIsFallback
+      ? `${resolveName(owner.id, owner.profile.name)}’s agent`
+      : undefined;
   const presenceId = useId();
   const shown = shownRow ?? row;
   const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);

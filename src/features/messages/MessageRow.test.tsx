@@ -3636,12 +3636,8 @@ it.each([
     viewer: undefined,
     label: "Logan’s agent",
   },
-  {
-    case: "viewer's agent",
-    forged: false,
-    viewer: "owner",
-    label: "Your agent",
-  },
+  // The viewer's own agent shows only the mark.
+  { case: "viewer's agent", forged: false, viewer: "owner", label: undefined },
   { case: "forged owner", forged: true, viewer: undefined, label: undefined },
 ])(
   "names an agent's owner from its signed profile ($case)",
@@ -3716,6 +3712,13 @@ it.each([
           expect(view.container).toHaveTextContent(`Quinn· ${label}`),
         );
         expect(ensure).toHaveBeenCalledWith([owner.pubkey], "background");
+      } else if (viewer === "owner") {
+        await expect(verifications.mock.results[0]?.value).resolves.toBe(
+          owner.pubkey,
+        );
+        // Barrier: the owner's name has loaded, so a label would show now.
+        await waitFor(() => expect(profiles.has(owner.pubkey)).toBe(true));
+        expect(view.container).not.toHaveTextContent("agent");
       } else {
         await expect(verifications.mock.results[0]?.value).resolves.toBe(
           undefined,

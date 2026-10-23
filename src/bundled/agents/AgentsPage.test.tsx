@@ -53,8 +53,10 @@ vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   paintEmojiAvatar: vi.fn(),
 }));
 
+const bestieDisposals: (() => void)[] = [];
 afterEach(() => {
   cleanup();
+  for (const dispose of bestieDisposals.splice(0)) dispose();
   vi.unstubAllGlobals();
   localStorage.clear();
 });
@@ -2207,11 +2209,14 @@ function bestieTiles() {
     archives: { status: "unavailable" },
   };
   const listeners = new Set<() => void>();
+  const owner = createRelaySession(null);
+  bestieDisposals.push(() => owner.dispose());
   const connection = {
     status: "ready",
     viewer: ada.owner,
     scope,
     session: {
+      ...owner.session,
       viewer: ada.owner,
       agentChoices: {
         snapshot: () => choices,

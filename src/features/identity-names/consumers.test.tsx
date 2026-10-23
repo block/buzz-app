@@ -451,7 +451,7 @@ it("scopes search DM labels and message authors to their own conversation", asyn
   act(() => f.join());
   expect(
     screen.getByRole("option", {
-      name: /hello.*Larry · rcaj, Larry · 04hu · Larry · rcaj/,
+      name: /hello.*Larry · 04hu, Larry · rcaj · Larry · rcaj/,
     }),
   ).toBeVisible();
 });

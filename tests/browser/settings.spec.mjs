@@ -509,6 +509,7 @@ confirmedPresence(
       for (const name of [
         "Local settings",
         "Custom emoji",
+        "Shared compute",
         "Pair mobile",
         "Leave or remove",
         "Identity",
@@ -581,6 +582,7 @@ confirmedPresence(
       for (const name of [
         "Local settings",
         "Custom emoji",
+        "Shared compute",
         "Pair mobile",
         "Leave or remove",
         "Identity",

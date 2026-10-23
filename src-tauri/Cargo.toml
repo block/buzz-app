@@ -6,18 +6,20 @@ license = "Apache-2.0"
 edition = "2021"
 rust-version = "1.90"
 
-[features]
-native-mcp = ["dep:tauri-plugin-mcp-bridge"]
-
 [lib]
 name = "buzz_foundation_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+native-mcp = ["dep:tauri-plugin-mcp-bridge"]
 
 [build-dependencies]
 url = "2"
 tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
+buzz-mesh-compute = { path = "../src/bundled/mesh-compute/compute" }
 buzz-nsec-backup = { path = "../crates/nsec-backup" }
 buzz-pairing = { path = "../crates/pairing" }
 nostr-pairing = { package = "nostr", version = "0.44", features = ["nip44"] }
@@ -28,7 +30,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "aws_
 webpki-roots = "1"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
-tauri = { version = "=2.12.4", features = ["unstable"] }
+tauri = { version = "=2.12.4", features = ["unstable", "macos-private-api"] }
 wry = { version = "=0.57.0", default-features = false, features = ["os-webview"] }
 buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-credential-store = { path = "../crates/credential-store" }
@@ -68,7 +70,8 @@ tempfile = "3"
 fs2 = "0.4"
 arboard = { version = "3", features = ["wayland-data-control"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+
 
 [dev-dependencies]
 hex = "0.4"

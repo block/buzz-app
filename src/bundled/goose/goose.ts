@@ -43,6 +43,8 @@ export type Settled = Readonly<{
   text?: string;
   /** The message gave up before any turn took it in. */
   undelivered?: true;
+  /** A successful Buzz answer tool ran, rather than a merely empty response. */
+  answered?: true;
 }>;
 
 export type ActivityReceipt = Readonly<{
@@ -64,6 +66,14 @@ export type ToolServer = (
  * `buzz__<name>`. */
 export const TOOL_SERVER = "buzz";
 const DEVELOPER = { type: "platform", name: "developer" };
+
+/** A goose built-in extension entry for `session/new`; `available_tools`
+ * limits it to the listed tools. */
+export type PlatformExtension = Readonly<{
+  type: "platform";
+  name: string;
+  available_tools?: readonly string[];
+}>;
 
 /** What every `goose-acp` runs with: tools run without asking, and no Buzz
  * identity reaches it from the app's environment. Nor does a provider or
@@ -212,6 +222,11 @@ export class GooseProcess {
       named?: (title: string) => void;
       tools?: ToolServer;
       choice?: () => Choice;
+      /** goose built-ins beside the Buzz tools; developer when left out. */
+      platform?: readonly PlatformExtension[];
+      /** Replaces goose's own base prompt with `systemPrompt` instead of
+       * appending it, for small models that a long prompt throws off. */
+      replacePrompt?: boolean;
     }>,
   ): Promise<GooseSession> {
     const named =
@@ -258,7 +273,10 @@ export class GooseProcess {
             // the Buzz entry and holds the `mcpServers` copy in memory, so
             // the token stays out of sessions.db; older goose uses this one.
             enabledExtensions: buzz
-              ? [DEVELOPER, { type: "mcp", server: buzz }]
+              ? [
+                  ...(launch.platform ?? [DEVELOPER]),
+                  { type: "mcp", server: buzz },
+                ]
               : [],
             ...(title ? { sessionTitle: title } : {}),
             // On the provider's default model, whatever goose's config holds.
@@ -283,11 +301,23 @@ export class GooseProcess {
     }
     try {
       // Appended under goose's own prompt, which carries each extension's
-      // instructions; `set` would replace it, and render ours as a template.
+      // instructions. `set` replaces that prompt and renders the text as a
+      // template, so ours goes in raw.
       if (launch.systemPrompt)
         await this.request(
           "_goose/unstable/session/system-prompt/set",
-          { sessionId, mode: "append", key: "buzz", text: launch.systemPrompt },
+          launch.replacePrompt
+            ? {
+                sessionId,
+                mode: "set",
+                text: `{% raw %}${launch.systemPrompt.replace(/{%-?\s*endraw\s*-?%}/g, "")}{% endraw %}`,
+              }
+            : {
+                sessionId,
+                mode: "append",
+                key: "buzz",
+                text: launch.systemPrompt,
+              },
           REQUEST_TIMEOUT_MS,
         );
     } catch (error) {
@@ -569,7 +599,7 @@ export class GooseSession {
    * with one more model call, whose text nobody posts. */
   finished() {
     if (this.pending === 1 && !this.queue.length && !this.steering)
-      this.settle({ ok: true });
+      this.settle({ ok: true, answered: true });
   }
 
   /** Stops the work: the running turn, as ACP's `session/cancel` does, and
@@ -779,6 +809,7 @@ export class GooseSession {
     this.settle({
       ...(error ? { ok: false, error } : { ok: true }),
       ...(text ? { text } : {}),
+      ...(this.acted ? { answered: true } : {}),
     });
   }
   /** Settles the work the owner stopped, leaving messages sent since. */

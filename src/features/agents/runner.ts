@@ -9,6 +9,7 @@ import type {
   AgentAttention,
   AgentHandle,
   AgentUpdateInput,
+  AgentWake,
   RegisteredAgentType,
   Trigger,
 } from "./service";
@@ -413,6 +414,8 @@ export type RunnerHost = {
     agent: Agent,
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** Wakes the agent in another of its conversations. */
+  wake(agent: Agent, wake: AgentWake): void;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   /** The owner's thread tabs as the agent's handle offers them. */
@@ -2325,6 +2328,10 @@ export class AgentRunners {
       updateAgent: async (input: AgentUpdateInput) => {
         lifetime.throwIfAborted();
         return this.host.updateAgent(agent, input);
+      },
+      wake: (wake: AgentWake) => {
+        lifetime.throwIfAborted();
+        this.host.wake(agent, wake);
       },
       templates: () => this.host.templates(agent),
       tabs: () => this.host.tabs(agent),

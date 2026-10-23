@@ -301,6 +301,13 @@ export type SessionUsage = Readonly<{
   lastAt: number;
   observations: readonly UsageObservation[];
 }>;
+/** A conversation to wake an agent in, and what to tell it there. `root` is
+ * the thread's root event id; leave it out for a Solo chat. */
+export type AgentWake = Readonly<{
+  channel: string;
+  root?: string;
+  text: string;
+}>;
 /** The agent as `run` holds it. A run's handle works for as long as the
  * agent exists; one from `Agents.handle` fails each call while `handle`
  * would not return it, and for good once the agent's type or its plugin is
@@ -318,6 +325,9 @@ export type AgentHandle = Readonly<{
   updateAgent?(
     input: AgentUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** Wakes this agent in another of its conversations, as `Agents.wake`
+   * would, telling it the wake is its own. */
+  wake?(wake: AgentWake): void;
   publish(event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
@@ -392,7 +402,9 @@ export type CaughtUp = Readonly<{
   event: RelayEvent;
   classifier?: ClassifierOutcome;
 }>;
-/** A local wake delivered in a conversation, never a signed message. */
+/** A local wake delivered in a conversation, never a signed message: a
+ * plugin's (`Agents.wake`), or with no `plugin` the agent's own from another
+ * of its conversations (the `self_handoff` tool), or Attention's. */
 export type ConversationWake = Readonly<
   {
     channel: string;
@@ -402,7 +414,7 @@ export type ConversationWake = Readonly<
     text: string;
     id: string;
     at: number;
-  } & ({ type: "plugin"; plugin: string } | { type: "attention" })
+  } & ({ type: "plugin"; plugin?: string } | { type: "attention" })
 >;
 export type Trigger =
   /** Directly addressed: a chat message that mentions the agent. `resumed`
@@ -870,13 +882,9 @@ export type Agents = AgentToolHooks & {
   tools(): readonly AddedTool[];
   /** Wakes an agent this copy of the app runs in one of its conversations,
    * as a mention there would, but with no message: the agent is told `text`
-   * comes from this plugin, not its owner, and is data. `root` is the
-   * thread's root event id; leave it out for a Solo chat. Throws when this copy does not run the agent or its queue is full;
+   * comes from this plugin, not its owner, and is data. Throws when this copy does not run the agent or its queue is full;
    * like a mention, a queued wake is dropped if the agent stops running here. */
-  wake(
-    pubkey: string,
-    wake: Readonly<{ channel: string; root?: string; text: string }>,
-  ): void;
+  wake(pubkey: string, wake: AgentWake): void;
   snapshot(): AgentsSnapshot;
   subscribe(listener: () => void): () => void;
   /** Gives each `interrupted` agent again the turns it was working on, each
@@ -1512,6 +1520,7 @@ export class AgentsService extends Service implements Agents {
         this.notify();
         return { requestId: id, saved: false };
       },
+      wake: (agent, wake) => this.wakeIn(agent.pubkey, wake),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -1821,16 +1830,16 @@ export class AgentsService extends Service implements Agents {
     };
   }
   tools = () => this.addedTools.snapshot();
-  wake(
-    pubkey: string,
-    {
-      channel,
-      root,
-      text,
-    }: Readonly<{ channel: string; root?: string; text: string }>,
-  ) {
+  wake(pubkey: string, wake: AgentWake) {
     const plugin = this.ctx.pluginOwner?.id;
     if (!plugin) throw new Error("Only a plugin wakes an agent");
+    this.wakeIn(pubkey, wake, plugin);
+  }
+  private wakeIn(
+    pubkey: string,
+    { channel, root, text }: AgentWake,
+    plugin?: string,
+  ) {
     if (!channel || !text.trim())
       throw new Error("A wake needs a channel and text");
     // Harnesses find the thread from a well-formed id; any other would leave
@@ -1839,7 +1848,7 @@ export class AgentsService extends Service implements Agents {
       throw new Error("A wake's root must be the thread's 64-hex event id");
     this.runners.wakeIn(pubkey, {
       type: "plugin",
-      plugin,
+      ...(plugin && { plugin }),
       channel,
       ...(root ? { root: root.toLowerCase() } : {}),
       text,

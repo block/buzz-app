@@ -141,6 +141,15 @@ typing go to the thread root, or the channel itself in a Solo chat, and a wake
 with no `root` outside a Solo chat is ignored. A wake is not saved for resume
 and shows no activity row or Stop.
 
+An agent hands off to itself in another of its conversations with the
+`self_handoff` tool, which takes a channel, a thread and text. The tool requires
+a channel the agent can see, and a thread in that channel (any message of it
+names its root) unless the channel is a Solo chat, which is one conversation
+whatever thread is named. It refuses the current conversation. It is the same
+`plugin` trigger with no `plugin`, shown in a `<self-handoff>` section that says
+the agent handed it off to itself, that nobody wrote it as a message, and that
+it acts only on what its owner asked.
+
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
 or publishing a message. Pass the thread root for a thread conversation.

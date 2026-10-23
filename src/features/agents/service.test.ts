@@ -1164,6 +1164,25 @@ describe("a plugin's wake", () => {
     );
   });
 
+  it("comes from the agent itself through its handle, with no plugin", async () => {
+    const { service, run, plugin, native } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    await held(native);
+    const other = "d".repeat(64);
+    run.mockImplementationOnce(async ({ agent }) =>
+      agent.wake?.({ channel, root: other, text: "take this over" }),
+    );
+    plugin.agents.wake(bot, { channel, root, text: "first" });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const { trigger } = run.mock.calls[1]?.[0] ?? {};
+    expect(trigger).toMatchObject({
+      type: "plugin",
+      channel,
+      root: other,
+      text: "take this over",
+    });
+    expect(trigger).not.toHaveProperty("plugin");
+  });
   it("is dropped like a mention when the agent stops running here", async () => {
     const { service, run, plugin, native } = await setup();
     await service.create({ type: "example/echo", name: "Echo" });

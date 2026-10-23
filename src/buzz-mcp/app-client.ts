@@ -132,6 +132,11 @@ export function appClient(
         throw new Error("Agent changes are unavailable on this host");
       return agent.updateAgent(input);
     },
+    wake: (wake) => {
+      check();
+      if (!agent.wake) throw new Error("Self-handoff is unavailable here");
+      agent.wake(wake);
+    },
     templates: async () => {
       check();
       return agent.templates();

@@ -9,7 +9,7 @@ import {
 
 const source: SourceWatch = {
   type: "source",
-  provider: "monitor/command",
+  provider: "example/command",
   interest_id: "release",
   enabled: true,
   channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -80,9 +80,9 @@ it("starts once, spends no turn on empty output, and emits into the registered w
   const h = harness(),
     watch = object(),
     agents = [agent(watch)];
-  h.manager.reconcile("monitor/command", h.provider, agents);
+  h.manager.reconcile("example/command", h.provider, agents);
   await Promise.resolve();
-  h.manager.reconcile("monitor/command", h.provider, agents);
+  h.manager.reconcile("example/command", h.provider, agents);
   expect(h.provider.run).toHaveBeenCalledTimes(1);
   h.inputs[0]?.emit(" ");
   expect(h.emit).not.toHaveBeenCalled();
@@ -100,12 +100,12 @@ it.each(["off", "removed", "edited", "unloaded"])(
   async (reason) => {
     const h = harness(),
       watch = object();
-    h.manager.reconcile("monitor/command", h.provider, [agent(watch)]);
+    h.manager.reconcile("example/command", h.provider, [agent(watch)]);
     await Promise.resolve();
     if (reason === "unloaded") h.manager.stop();
     else
       h.manager.reconcile(
-        "monitor/command",
+        "example/command",
         h.provider,
         reason === "removed"
           ? []
@@ -125,22 +125,22 @@ it("records natural completion once and does not restart a completed registratio
   const h = harness(),
     watch = object(),
     agents = [agent(watch)];
-  h.manager.reconcile("monitor/command", h.provider, agents);
+  h.manager.reconcile("example/command", h.provider, agents);
   await Promise.resolve();
   h.endings[0]?.();
   await vi.waitFor(() => expect(h.finish).toHaveBeenCalledWith("a", watch));
-  h.manager.reconcile("monitor/command", h.provider, agents);
+  h.manager.reconcile("example/command", h.provider, agents);
   expect(h.provider.run).toHaveBeenCalledTimes(1);
   h.manager.stop();
   h.completed.mockReturnValue(true);
-  h.manager.reconcile("monitor/command", h.provider, agents);
+  h.manager.reconcile("example/command", h.provider, agents);
   expect(h.provider.run).toHaveBeenCalledTimes(1);
 });
 it("does not start an orphan source or a source belonging to another provider", async () => {
   const h = harness(),
     watch = object(),
     orphan = { ...agent(watch), attention: { [watch.slug]: watch } };
-  h.manager.reconcile("monitor/command", h.provider, [orphan]);
+  h.manager.reconcile("example/command", h.provider, [orphan]);
   h.manager.reconcile("another/command", h.provider, [agent(watch)]);
   await Promise.resolve();
   expect(h.provider.run).not.toHaveBeenCalled();
@@ -172,9 +172,9 @@ it("waits for an aborted producer to exit before starting its replacement", asyn
         );
     },
   };
-  manager.reconcile("monitor/command", provider, [agent(object())]);
+  manager.reconcile("example/command", provider, [agent(object())]);
   await Promise.resolve();
-  manager.reconcile("monitor/command", provider, [agent(object())]);
+  manager.reconcile("example/command", provider, [agent(object())]);
   await Promise.resolve();
   expect(inputs).toHaveLength(1);
   expect(inputs[0]?.signal.aborted).toBe(true);
@@ -190,11 +190,11 @@ it("does not persist a rejected producer as completed and can retry after restar
   vi.mocked(h.provider.run).mockRejectedValueOnce(new Error("spawn failed"));
   const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
   try {
-    h.manager.reconcile("monitor/command", h.provider, agents);
+    h.manager.reconcile("example/command", h.provider, agents);
     await vi.waitFor(() => expect(warning).toHaveBeenCalled());
     expect(h.finish).not.toHaveBeenCalled();
     h.manager.stop();
-    h.manager.reconcile("monitor/command", h.provider, agents);
+    h.manager.reconcile("example/command", h.provider, agents);
     await vi.waitFor(() => expect(h.provider.run).toHaveBeenCalledTimes(2));
   } finally {
     h.manager.stop();

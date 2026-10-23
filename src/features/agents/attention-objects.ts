@@ -253,7 +253,7 @@ export function watchSummaries(
           ...(value.type !== "timer" && value.name ? { name: value.name } : {}),
           type: value.type,
           status,
-          ...(value.type === "event" && value.classifier
+          ...(value.type !== "timer" && value.classifier
             ? { classified: true as const }
             : {}),
         },

@@ -120,7 +120,8 @@ const watchFields = {
       questions: {
         type: "object",
         additionalProperties: question,
-        description: "Named yes/no questions; the event passes on any yes.",
+        description:
+          "Named yes/no questions; the event or source output passes on any yes.",
       },
     },
     required: ["questions"],
@@ -174,7 +175,7 @@ export const ATTENTION_TOOLS: readonly Tool[] = [
 
 Event watch: it sees only channels you are a member of, and "all" means all of those. It sees events that arrive while it is on: an earlier since does not replay older ones. Each matching event watch runs independently. Prefer deterministic selectors for hard rules; use the classifier only for judgment. authors keeps only those authors, exclude_authors: ["OWNER_HEX"] drops the owner's own messages, and is_reply: false keeps only top-level messages (true: only thread replies). A watch has authors or exclude_authors, not both. When a watch reports to the owner, exclude the owner's messages unless they are the signal.
 
-Classifier, for noisy event watches: Jev tests relevance after the normal filters. It sees one event, not history, and has no tools. Use named yes/no questions, for example {"questions":{"release_blocked":{"question":"Does the event say the release cannot proceed until something is fixed?","true":"It reports a release blocker, in any form: a question, an instruction or a status report.","false":"Routine release progress, or a problem that does not stop the release."}}}. Write questions for the facts the Interest needs, not for message types, and accept any phrasing of those facts. Ask one thing per question. The event passes when any question says yes, and each added question can add extra passes, so keep them few. For "A but not B", write one question that says so. Optional per question: true and false descriptions, guidance for examples and exclusions, and threshold (default 0.2; lower passes more). Change a threshold only when eval cases support it. Keep actions in the Interest. Pass uncertain cases. Errors pass events through. Every answer says classifier: available or unavailable. Classifiers can be saved either way and run once one is available; until then a classified watch's events pass unchecked, and the turn they start says so in a <watch-classifier> block.
+Classifier, for noisy event watches or source subscriptions: Jev tests relevance after the normal filters. It sees one event or emitted source output, not history, and has no tools. Use named yes/no questions, for example {"questions":{"release_blocked":{"question":"Does the event say the release cannot proceed until something is fixed?","true":"It reports a release blocker, in any form: a question, an instruction or a status report.","false":"Routine release progress, or a problem that does not stop the release."}}}. Write questions for the facts the Interest needs, not for message types, and accept any phrasing of those facts. Ask one thing per question. The event passes when any question says yes, and each added question can add extra passes, so keep them few. For "A but not B", write one question that says so. Optional per question: true and false descriptions, guidance for examples and exclusions, and threshold (default 0.2; lower passes more). Change a threshold only when eval cases support it. Keep actions in the Interest. Pass uncertain cases. Errors pass events through. Every answer says classifier: available or unavailable. Classifiers can be saved either way and run once one is available; until then a classified watch's events pass unchecked, and the turn they start says so in a <watch-classifier> block.
 
 All subscription types share delivery: channel and optional root continue that conversation; omit both for an independent turn with the Interest instructions. A root requires a channel. Source providers are supplied by plugins and own their configuration. Empty output starts no agent turn. Attention off or watch_disable cancels execution and queued output; watch_enable restarts a completed source. The address selects the execution conversation and default posting destination; explicit reporting instructions in the Interest take precedence. It grants no additional permission.
 
@@ -279,7 +280,7 @@ const NAMES = new Set(ATTENTION_TOOLS.map((item) => item.name));
 export const isAttentionTool = (name: string) => NAMES.has(name);
 
 const UNAVAILABLE_NOTE =
-  "No classifier can run on this device now, so this watch's events pass unchecked. It is kept, and runs once a classifier is available.";
+  "No classifier can run on this device now, so this watch's inputs pass unchecked. It is kept, and runs once a classifier is available.";
 
 /** Runs attention tool `name`. A throw is a tool error for the agent to read;
  * its text names the classifier state too. */
@@ -310,7 +311,7 @@ async function run(
 ): Promise<object> {
   const note = (object: ShownObject | null) =>
     classifier === "unavailable" &&
-    object?.type === "event" &&
+    (object?.type === "event" || object?.type === "source") &&
     object.classifier
       ? { classifier_note: UNAVAILABLE_NOTE }
       : {};
@@ -415,7 +416,8 @@ async function run(
         if (
           value.type === "source" &&
           clear.some(
-            (key) => !["name", "channel", "root"].includes(String(key)),
+            (key) =>
+              !["name", "channel", "root", "classifier"].includes(String(key)),
           )
         )
           refuse("not an optional field of this source watch");
@@ -549,7 +551,15 @@ function pick(args: Args, names: readonly string[], other: readonly string[]) {
       .map((key) => [key, args[key]]),
   );
 }
-const SOURCE = ["name", "enabled", "provider", "config", "channel", "root"];
+const SOURCE = [
+  "name",
+  "enabled",
+  "provider",
+  "config",
+  "channel",
+  "root",
+  "classifier",
+];
 function sourceFields(args: Args) {
   return pick(args, SOURCE, [...EVENT, ...TIMER]);
 }

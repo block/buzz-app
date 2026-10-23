@@ -83,6 +83,7 @@ export async function wakePrompt(
           id,
           provider: trigger.watch.provider,
           text: trigger.text,
+          ...(trigger.classifier ? { classifier: trigger.classifier } : {}),
           interest: current.interest_id,
           ...instructions,
           conversation: !!current.channel,

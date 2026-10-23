@@ -717,7 +717,9 @@ export class CodexRuntime {
       trigger.type !== "plugin"
     )
       return delivery.ignored?.();
-    // A plugin's wake is the owner's installed code, not a message to check.
+    // A wake is not a message to check: a plugin's is the owner's installed
+    // code, and the agent's own handoff comes from a turn already acting
+    // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
@@ -1271,6 +1273,9 @@ export class CodexRuntime {
       ? {
           channel: request.conversation.channelId,
           ...(request.toolRoot ? { root: request.toolRoot } : {}),
+          ...(request.toolRoot && !request.conversation.root
+            ? { wholeChannel: true }
+            : {}),
           ...(request.conversation.topLevel &&
           !request.conversation.threadReplies
             ? { topLevel: true }

@@ -150,7 +150,7 @@ export function createTabs({
     );
     const current = listing.value?.defaults;
     const id = current?.provider ?? "";
-    const [models] = useRead(
+    const [models, reloadModels] = useRead(
       () => (id ? setup.models(id) : Promise.resolve([] as ModelChoice[])),
       `${id}:${state.readiness}:${!!state.blocking}`,
       id,
@@ -162,8 +162,9 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
-          // A fresh read changes readiness, which reads both again.
-          retry={() => void setup.check()}
+          // Shown only when ready, so its provider is set up. A recheck could
+          // settle on attention, and the host would unmount this, focus and all.
+          retry={reloadModels}
         >
           <ModelPicker
             includeDefault={false}
@@ -1086,8 +1087,12 @@ export function createTabs({
         <ModelDiscoveryRecovery
           error={models.status === "error" ? models.error : undefined}
           loading={models.status === "loading"}
-          // `goose configure` can set it up meanwhile, on another default model.
-          retry={() => void setup.check().then(refresh)}
+          // `goose configure` can set it up meanwhile, on another default
+          // model. The check starts a fresh read at once, which these share.
+          retry={() => {
+            void setup.check();
+            refresh();
+          }}
           disabled={disabled}
         >
           <ModelPicker

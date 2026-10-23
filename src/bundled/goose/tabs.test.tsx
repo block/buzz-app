@@ -160,6 +160,35 @@ async function choose(label: string, option: string) {
 /** The model field, labeled with goose's default or the agent's choice. */
 const modelButton = () => screen.getByRole("button", { name: /^Goose model:/ });
 
+/** Settings' Harness defaults, offering Goose on `setup`. */
+function gooseDefaults(setup: GooseSetup) {
+  const { DefaultControl, ProviderDialogBody } = createTabs({
+    setup,
+    ...unused,
+  });
+  const types = [
+    {
+      defaults: () => ({ config: DEFAULT_CONFIG }),
+      key: "buzz.goose/goose",
+      pluginId: "buzz.goose",
+      revision: "test",
+      id: "goose",
+      title: "Goose",
+      provider: {
+        subscribe: setup.subscribe,
+        snapshot: setup.snapshot,
+        check: setup.check,
+        DefaultControl,
+        DialogBody: ProviderDialogBody,
+      },
+    },
+  ] as RegisteredAgentType[];
+  return {
+    types: () => types,
+    subscribe: () => () => {},
+  } as unknown as Agents;
+}
+
 /** Opens the provider dialog from the model field. */
 async function openChoices() {
   await userEvent.setup().click(modelButton());
@@ -996,6 +1025,8 @@ for (const host of ["defaults", "create"] as const) {
             fail = reject;
           }),
       );
+    // A recheck that never settles: retry feedback must not wait on it.
+    vi.spyOn(setup, "check").mockReturnValue(new Promise(() => {}));
     const { DefaultControl, CreateModel } = createTabs({ setup, ...unused });
     render(
       host === "defaults" ? (
@@ -1030,6 +1061,30 @@ for (const host of ["defaults", "create"] as const) {
   });
 }
 
+it("keeps Goose default recovery focused where a recheck would need attention", async () => {
+  const setup = new GooseSetup(
+    fakeSpawn({
+      providers: PROVIDERS,
+      defaults: { providerId: "databricks", modelId: "goose-claude" },
+    }),
+  );
+  vi.spyOn(setup, "models")
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue([{ id: "goose-claude", label: "Claude" }]);
+  render(<AgentDefaults agents={gooseDefaults(setup)} />);
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  // A recheck would now settle on attention and replace the control.
+  vi.spyOn(setup, "providers").mockRejectedValue(new Error("unreachable"));
+  retry.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: /^Goose default model:/ }),
+    ).toHaveFocus(),
+  );
+  expect(setup.snapshot().readiness).toBe("ready");
+});
+
 it.each([false, true])(
   "preserves return focus through pending discovery (move focus: %s)",
   async (moveFocus) => {
@@ -1040,34 +1095,9 @@ it.each([false, true])(
       supported,
     });
     const setup = new GooseSetup(fake);
-    const { DefaultControl, ProviderDialogBody } = createTabs({
-      setup,
-      ...unused,
-    });
-    const types = [
-      {
-        defaults: () => ({ config: DEFAULT_CONFIG }),
-        key: "buzz.goose/goose",
-        pluginId: "buzz.goose",
-        revision: "test",
-        id: "goose",
-        title: "Goose",
-        provider: {
-          subscribe: setup.subscribe,
-          snapshot: setup.snapshot,
-          check: setup.check,
-          DefaultControl,
-          DialogBody: ProviderDialogBody,
-        },
-      },
-    ] as RegisteredAgentType[];
-    const agents = {
-      types: () => types,
-      subscribe: () => () => {},
-    } as unknown as Agents;
     render(
       <>
-        <AgentDefaults agents={agents} />
+        <AgentDefaults agents={gooseDefaults(setup)} />
         <button type="button">Another setting</button>
       </>,
     );

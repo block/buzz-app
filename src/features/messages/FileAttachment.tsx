@@ -11,8 +11,7 @@ import {
   safeOpenUrl,
 } from "./attachment-source";
 import styles from "./Messages.module.css";
-import { downloadNativeMedia } from "./native-download";
-import { useState } from "react";
+import { useFileDownload } from "./use-file-download";
 
 export function formatFileSize(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -40,7 +39,10 @@ export function FileAttachment({
   source: string | undefined;
   onOpenLink(url: string): boolean;
 }) {
-  const [downloadError, setDownloadError] = useState(false);
+  const { downloading, downloadError, download } = useFileDownload(
+    source,
+    attachment.name ?? "",
+  );
   const displayName = attachment.name ?? mimeLabel(attachment.mime) ?? "File";
   const nativeSource = source ? isNativeMediaSource(source) : false;
   const proxySource = source ? isProxySource(source) || nativeSource : false;
@@ -61,13 +63,15 @@ export function FileAttachment({
       <span className={styles.fileAttachmentBody}>
         <span className={styles.fileAttachmentName}>{displayName}</span>
         <span className={styles.fileAttachmentMeta}>
-          {source
-            ? attachment.size
-              ? formatFileSize(attachment.size)
-              : proxySource
-                ? "Download file"
-                : "Open file"
-            : "File unavailable"}
+          {nativeSource && downloading
+            ? "Downloading…"
+            : source
+              ? attachment.size
+                ? formatFileSize(attachment.size)
+                : proxySource
+                  ? "Download file"
+                  : "Open file"
+              : "File unavailable"}
         </span>
       </span>
       {proxySource ? (
@@ -109,12 +113,9 @@ export function FileAttachment({
           className={styles.fileAttachment}
           aria-label={`Download ${displayName}`}
           title={displayName}
-          onClick={() => {
-            setDownloadError(false);
-            void downloadNativeMedia(source, attachment.name ?? "").catch(() =>
-              setDownloadError(true),
-            );
-          }}
+          aria-disabled={downloading || undefined}
+          aria-busy={downloading || undefined}
+          onClick={download}
         >
           {content}
         </button>

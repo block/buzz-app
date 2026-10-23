@@ -203,6 +203,7 @@ function setup(
     agent,
     session,
     solo,
+    core,
     connection,
   };
 }
@@ -1637,6 +1638,35 @@ it("recovers a channel-scoped wake's answer in its saved thread", async () => {
     await vi.waitFor(() => expect(f.published).toHaveLength(1));
     expect(f.published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
   } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("starts no standalone source turn invalidated during core-memory loading", async () => {
+  const f = setup({
+    wait: () => ({ status: "done", answer: 5, text: "Stale" }),
+  });
+  const memory = deferred<string | null>();
+  f.core.mockImplementationOnce(() => memory.promise);
+  let valid = true;
+  try {
+    const running = f.runtime.runOnce({
+      delivery: {
+        agent: f.agent,
+        config: DEFAULT_CONFIG,
+        current: () => valid,
+      },
+      key: "source/build",
+      signal: new AbortController().signal,
+      prompt: async () => "Build finished",
+    } as unknown as StandaloneTurn);
+    await vi.waitFor(() => expect(f.core).toHaveBeenCalledTimes(1));
+    valid = false;
+    memory.resolve(null);
+    await expect(running).resolves.toEqual({ ok: true });
+    expect(f.host.requests("once")).toEqual([]);
+  } finally {
+    memory.resolve(null);
     f.runtime.dispose();
   }
 });

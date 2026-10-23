@@ -90,6 +90,44 @@ test("agent cards expose selection and creation preserves focus and avatar choic
       });
     }
   }
+  // An invalid field inside the scrollport may still be covered by sticky chrome.
+  await page.setViewportSize({ width: 390, height: 700 });
+  await name.evaluate((field) => {
+    const popup = field.closest('[role="dialog"]');
+    const header = popup.querySelector(".buzz-dialog-header");
+    popup.scrollTop +=
+      field.getBoundingClientRect().top - header.getBoundingClientRect().top;
+  });
+  await expect
+    .poll(() =>
+      name.evaluate((field) => {
+        const header = field
+          .closest('[role="dialog"]')
+          .querySelector(".buzz-dialog-header");
+        return (
+          field.getBoundingClientRect().top <
+          header.getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBe(true);
+  await dialog
+    .getByRole("button", { name: "Create agent", exact: true })
+    .click();
+  await expect(name).toBeFocused();
+  await expect
+    .poll(() =>
+      name.evaluate((field) => {
+        const header = field
+          .closest('[role="dialog"]')
+          .querySelector(".buzz-dialog-header");
+        return (
+          field.getBoundingClientRect().top >=
+          header.getBoundingClientRect().bottom
+        );
+      }),
+    )
+    .toBe(true);
   await dialog.getByRole("button", { name: "Customize avatar" }).click();
   await page.getByRole("menuitem", { name: "Emoji", exact: true }).click();
   const option = dialog

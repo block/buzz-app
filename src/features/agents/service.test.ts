@@ -8204,3 +8204,58 @@ it.each(["close", "unload", "abort"])(
     await expect(request({ id: 4, method: "tools/list" })).rejects.toThrow();
   },
 );
+
+it("keeps classifying after source completion storage fails", async () => {
+  const jev = fakeJev();
+  let answer!: (value: DecisionResult) => void;
+  jev.decide.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+  );
+  const { service, plugin, native, storage, run, emit } = await setup({ jev });
+  plugin.agents.addAttentionSource({
+    id: "command",
+    run: async ({ emit }) => {
+      emit("classify this");
+    },
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(native.claim).toHaveBeenCalledWith(bot));
+  const classifier = {
+    questions: {
+      deploy: { question: "Is this a failed build?", threshold: 0.5 },
+    },
+  };
+  const channelWatch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (channelWatch?.type !== "event") throw new Error("Missing channel watch");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: {
+      "watch/channel": { ...channelWatch, classifier },
+      "watch/pr": {
+        type: "source",
+        interest_id: "default",
+        enabled: true,
+        provider: "example/command",
+        config: {},
+        classifier,
+      },
+    },
+  });
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() =>
+    expect(service.find(bot)?.sourceRuns?.["watch/pr"]).toBeDefined(),
+  );
+  const saving = vi
+    .spyOn(storage, "set")
+    .mockRejectedValueOnce(new Error("disk full"));
+  answer(answered(0.1));
+  await vi.waitFor(() => expect(saving).toHaveBeenCalled());
+  await settle();
+  expect(service.find(bot)?.attention["watch/pr"]).toBeDefined();
+  emit({ events: [deploy("after-recovery")] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  expect(jev.decide).toHaveBeenCalledTimes(2);
+});

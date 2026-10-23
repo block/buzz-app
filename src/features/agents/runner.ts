@@ -1691,7 +1691,9 @@ export class AgentRunners {
             object &&
             sourceCompleted(this.host.record(agent.pubkey).sourceRuns, object)
           )
-            await this.completeSource(agent.pubkey, object);
+            await this.completeSource(agent.pubkey, object).catch((error) =>
+              console.warn("Attention source completion was not saved", error),
+            );
         }
       }
     })();

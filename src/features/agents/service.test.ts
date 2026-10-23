@@ -7325,7 +7325,6 @@ it("serializes standalone source output per Interest and drops queued output aft
   expect(run).not.toHaveBeenCalled();
 });
 
-
 it("gives a run its owner's channel templates with the owner's agents each adds", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

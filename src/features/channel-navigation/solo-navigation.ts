@@ -127,12 +127,13 @@ export class SoloNavigationService
       this.stopSession = connection.session.channels.subscribeList(
         this.refresh,
       );
-      this.stopView = this.binding
-        ? subscribeView(this.binding.scope, () => {
-            this.readOptions();
-            this.refresh();
-          })
-        : undefined;
+      this.stopView =
+        this.binding && typeof window !== "undefined"
+          ? subscribeView(this.binding.scope, () => {
+              this.readOptions();
+              this.refresh();
+            })
+          : undefined;
       this.readOptions();
     }
     this.refresh();

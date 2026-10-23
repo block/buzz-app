@@ -3,6 +3,7 @@
 // host run each agent. It knows nothing of where it runs: everything it needs
 // of the device, community and storage comes through its RunnerHost, so the
 // desktop app and a standalone host run agents with the same code.
+import { bytesToHex } from "nostr-tools/utils";
 import type {
   Agent,
   AgentAttention,
@@ -17,7 +18,7 @@ import {
   type ReadFilter,
   type RelayEvent,
 } from "../relay/events";
-import { wake } from "../agent-harness/wakes";
+import { wake, wakePrompt } from "../agent-harness/wakes";
 import { type PluginTrigger, wakeLands } from "../agent-harness/plugin-wake";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
@@ -183,6 +184,29 @@ const interestOf = (trigger: Trigger) =>
   addressed(trigger)
     ? undefined
     : (trigger.type === "timer" ? trigger.timer : trigger.watch).interest_id;
+/** Conversation delivery is independent of what produced the wake. */
+function conversationWake(
+  trigger: Trigger,
+  text: string,
+): PluginTrigger | undefined {
+  if (trigger.type === "plugin") return trigger;
+  const target =
+    trigger.type === "timer"
+      ? trigger.timer
+      : !addressed(trigger)
+        ? trigger.watch
+        : undefined;
+  if (!target?.channel) return;
+  return {
+    type: "plugin",
+    plugin: "buzz.agents",
+    channel: target.channel,
+    ...(target.root ? { root: target.root } : { topLevel: true }),
+    text,
+    id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+    at: Date.now(),
+  };
+}
 const channelOf = (event: RelayEvent) =>
   event.tags.find(([key]) => key === "h")?.[1];
 /** The key of the catch-up stream that `trigger`'s event is in, for a kind 9
@@ -543,7 +567,12 @@ export class AgentRunners {
     const runner = this.runners.get(pubkey);
     if (!runner || !this.runs(pubkey) || !this.host.ready(pubkey))
       throw new Error("This copy of Buzz does not run that agent");
-    if (!this.enqueue(runner, { trigger, channelId: trigger.channel }))
+    if (
+      !this.enqueue(runner, {
+        trigger,
+        channelId: trigger.channel,
+      })
+    )
       throw new Error("The agent is busy and could not take this wake");
   }
   /** Whether this copy runs the agent: its type can run it, and no other
@@ -1734,7 +1763,7 @@ export class AgentRunners {
     const agent = this.host.agent(runner.pubkey);
     if (!agent) return false;
     const { trigger } = job;
-    if (addressed(trigger)) return true;
+    if (addressed(trigger)) return !!this.current(runner, agent, job);
     if (trigger.type === "watch" || trigger.type === "catch-up")
       return !!this.current(runner, agent, job);
     // A timer occurrence belongs to the object and epoch it fell due under:
@@ -1982,7 +2011,12 @@ export class AgentRunners {
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
     const handle = this.handleFor(runner, agent, signal);
-    const working = this.working(runner, job, agent);
+    const anchor = conversationWake(job.trigger, "");
+    const working = this.working(
+      runner,
+      anchor ? { ...job, trigger: anchor, channelId: anchor.channel } : job,
+      agent,
+    );
     const trigger = job.trigger;
     const named =
       trigger.type === "mention"
@@ -2016,7 +2050,26 @@ export class AgentRunners {
       });
       const { trigger } = job;
       const runOnce = type.runOnce?.bind(type);
-      if (addressed(trigger) || !runOnce) return run(delivery);
+      if (addressed(trigger)) return run(delivery);
+      const target =
+        trigger.type === "timer"
+          ? trigger.timer
+          : !addressed(trigger)
+            ? trigger.watch
+            : undefined;
+      if (target?.channel) {
+        const text = await wakePrompt(
+          handle,
+          trigger,
+          trigger.slug.replace(/^watch\//, ""),
+          delivery.current,
+        );
+        if (!text || !delivery.current()) return;
+        const wake = conversationWake(trigger, text);
+        if (wake)
+          return run({ ...delivery, channelId: wake.channel, trigger: wake });
+      }
+      if (!runOnce) return run(delivery);
       // A watch or timer is a standalone turn; this lane is held until it ends.
       delivery.workingUntil(
         wake(
@@ -2157,8 +2210,8 @@ export class AgentRunners {
     agent: Agent,
   ) {
     work?.started();
-    // A plugin's wake types in its thread as a mention of the root would, and
-    // one with no thread only in a Solo chat (`wakeLands`): never at its own id.
+    // A plugin wake types where it posts: its thread, a Solo chat, or the
+    // channel explicitly addressed by a subscription, never its own id.
     const wake = trigger.type === "plugin" ? trigger : undefined;
     const event =
       trigger.type === "mention"
@@ -2185,7 +2238,7 @@ export class AgentRunners {
           .then((flat) => {
             if (wake && !wakeLands(wake, flat))
               throw new Error("The wake has no conversation here");
-            return flat;
+            return flat || wake?.topLevel === true;
           }),
         event,
         channel,

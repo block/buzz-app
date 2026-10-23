@@ -1111,3 +1111,62 @@ it.each(["completed", "stopped"])(
     }
   },
 );
+
+it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
+  const f = setup({ hold: true, canvas: "Only Solo chats supply this" });
+  await f.run({ ...pluginWake(), topLevel: true });
+  await flush(100);
+  const text = f.goose()?.turns[0]?.text ?? "";
+  expect(text).toContain('<plugin-wake plugin="github">');
+  expect(text).toContain(TOP_LEVEL_PROMPT);
+  expect(text).not.toContain(WAKE_ID);
+  expect(text).not.toContain("Only Solo chats supply this");
+  f.goose()?.exit(1, "Error: boom\n");
+  await vi.waitFor(() =>
+    expect(f.published.some((event) => event.kind === 9)).toBe(true),
+  );
+  for (const event of f.published.filter(({ kind }) => kind === 9))
+    expect(event.tags.some((tag) => tag[0] === "e")).toBe(false);
+  expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
+});
+
+it("keeps a shared session's posting policy until its active turn settles", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  f.agent.query.mockResolvedValue([message("1", "threaded work")]);
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    const next = f.run({
+      type: "plugin",
+      plugin: "example",
+      channel,
+      topLevel: true,
+      id: "f".repeat(64),
+      at: 200_000,
+      text: "channel work",
+    });
+    await next;
+    const reply = await process.mcp(
+      process.turns[0]?.sessionId ?? "",
+      "tools/call",
+      {
+        name: "send",
+        arguments: {
+          audience: "everyone",
+          text: "thread reply",
+          reply: "1".repeat(64),
+        },
+      },
+    );
+    expect(reply.result).not.toMatchObject({ isError: true });
+    expect(process.turns[0]?.steered).toEqual([]);
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+    expect(process.turns[1]?.text).toContain("channel work");
+    process.turns[1]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});

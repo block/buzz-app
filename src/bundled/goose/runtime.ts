@@ -125,6 +125,15 @@ type Entry = {
   handle?: AgentHandle;
   /** Where each conversation's tools default to: its latest turn's thread. */
   contexts: Map<string, Context>;
+  policies: Map<
+    string,
+    {
+      topLevel: boolean;
+      handed: Promise<unknown>;
+      settled: Promise<unknown>;
+      cancel(): void;
+    }
+  >;
 };
 
 export class GooseRuntime {
@@ -290,6 +299,7 @@ export class GooseRuntime {
     team,
     model,
     workingUntil,
+    current,
     ignored,
     signal,
     step,
@@ -335,12 +345,13 @@ export class GooseRuntime {
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     // Frozen for the turn: its key, prompt, tools and posts all follow it.
-    const topLevel = await soloChat(
+    const solo = await soloChat(
       () => this.relay(agent.pubkey),
       agent.owner,
       channel,
       signal,
     );
+    const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // `fresh` is for a session that has been shown nothing yet.
     const prompt = async (fresh: boolean) => {
@@ -352,6 +363,7 @@ export class GooseRuntime {
         topLevel,
         fresh,
         resumed,
+        solo,
       );
       const { channel: where } = turn;
       const text = turnPrompt({
@@ -380,40 +392,79 @@ export class GooseRuntime {
         // the short deadline for handing a message to the harness.
         if (this.agents.get(agent.pubkey) !== entry) return;
         if (!deferred) signal.throwIfAborted();
-        // Plugins' notes wait until the turn is handed over, so one that
-        // fails or is cancelled before then leaves them for the next.
-        const noteRoot =
-          key === channel
-            ? undefined
-            : (threadReference(event)?.rootId ?? event.id);
-        const notes = agent.notes?.(channel, noteRoot) ?? [];
-        const text = this.review(entry, prepared, notes);
-        entry.contexts.set(
-          key,
-          topLevel
-            ? { channel, topLevel }
-            : key === channel
-              ? { channel }
-              : { channel, root: threadReference(event)?.rootId ?? event.id },
-        );
-        const done = entry.sessions.deliver(key, text, shown, {
-          steer: steerPrompt(text),
-          fresh: async () =>
-            this.review(entry, (await prompt(true)).text, notes),
-          title: sessionTitle(entry.name, place, key.split("/")[1]),
-          // A Solo chat takes the name goose gives its first session.
-          ...(topLevel && named ? { named } : {}),
-          ...(!deferred ? { signal } : {}),
-          ...(model ? { model } : {}),
-          activityScope: topLevel
-            ? channel
-            : (threadReference(event)?.rootId ?? event.id),
-          ...(step ? { step } : {}),
-          ...(acknowledged ? { acknowledged } : {}),
-          ...(superseded ? { superseded } : {}),
+        let noteRoot: string | undefined;
+        let notes: ReturnType<NonNullable<AgentHandle["notes"]>> = [];
+        const prior = entry.policies.get(key);
+        const same = prior?.topLevel === topLevel;
+        const wait = prior && (same ? prior.handed : prior.settled);
+        let delivered!: ReturnType<AgentSessions["deliver"]>;
+        let interrupted = false;
+        const handed = (async () => {
+          await wait;
+          if (interrupted || this.agents.get(agent.pubkey) !== entry) {
+            delivered = Promise.resolve({ ok: true, undelivered: true });
+            return;
+          }
+          // Plugins' notes wait until the turn is handed over, so one that
+          // fails or is cancelled before then leaves them for the next.
+          noteRoot =
+            key === channel
+              ? undefined
+              : (threadReference(event)?.rootId ?? event.id);
+          notes = agent.notes?.(channel, noteRoot) ?? [];
+          const text = this.review(
+            entry,
+            wait ? (await prompt(false)).text : prepared,
+            notes,
+          );
+          entry.contexts.set(
+            key,
+            topLevel
+              ? { channel, topLevel }
+              : key === channel
+                ? { channel }
+                : { channel, root: threadReference(event)?.rootId ?? event.id },
+          );
+          delivered = entry.sessions.deliver(key, text, shown, {
+            ...(wake ? { current } : {}),
+            steer: steerPrompt(text),
+            fresh: async () =>
+              this.review(entry, (await prompt(true)).text, notes),
+            title: sessionTitle(entry.name, place, key.split("/")[1]),
+            // A Solo chat takes the name goose gives its first session.
+            ...(solo && named ? { named } : {}),
+            ...(!deferred ? { signal } : {}),
+            ...(model ? { model } : {}),
+            activityScope: topLevel
+              ? channel
+              : (threadReference(event)?.rootId ?? event.id),
+            ...(step ? { step } : {}),
+            ...(acknowledged ? { acknowledged } : {}),
+            ...(superseded ? { superseded } : {}),
+          });
+        })();
+        const done = handed.then(() => delivered);
+        const policy = {
+          topLevel,
+          handed,
+          settled: Promise.all([same ? prior.settled : undefined, done]).then(
+            () => undefined,
+          ),
+          cancel() {
+            interrupted = true;
+            prior?.cancel();
+          },
+        };
+        entry.policies.set(key, policy);
+        void policy.settled.then(() => {
+          if (entry.policies.get(key) === policy) entry.policies.delete(key);
         });
+        if (!wait) await handed;
         workingUntil(done);
-        interruptible?.(() => entry.sessions.interrupt(key));
+        interruptible?.(() => {
+          policy.cancel();
+          return entry.sessions.interrupt(key);
+        });
         this.notify();
         void done
           .then((result) => {
@@ -528,6 +579,7 @@ export class GooseRuntime {
     /** Given again after a reload stopped it: it is shown what came after it,
      * its own replies included, as its new session cannot know them. */
     resumed = false,
+    solo = topLevel,
   ) {
     const snapshot = this.relay(self)?.snapshot();
     const session = snapshot?.status === "ready" ? snapshot.session : undefined;
@@ -549,7 +601,7 @@ export class GooseRuntime {
     const seen = fresh || resumed ? 0 : entry.sessions.seen(key);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const owner = entry.handle?.owner;
-    const reading = topLevel
+    const reading = solo
       ? readProject(
           session && owner
             ? () =>
@@ -644,6 +696,7 @@ export class GooseRuntime {
       team: "",
       sessions: undefined as unknown as AgentSessions,
       contexts: new Map(),
+      policies: new Map(),
     };
     // Every session of the agent shares them, so they read the settings, the
     // handle and the conversation's place as they are when called.

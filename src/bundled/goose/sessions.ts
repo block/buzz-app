@@ -228,6 +228,7 @@ export class AgentSessions {
     seen: number,
     {
       steer = text,
+      current,
       fresh,
       title,
       named,
@@ -236,6 +237,7 @@ export class AgentSessions {
       ...activity
     }: Readonly<{
       steer?: string;
+      current?: () => boolean;
       fresh?: () => Promise<string>;
       title?: string;
       named?: (title: string) => void;
@@ -245,6 +247,7 @@ export class AgentSessions {
       ActivityReceipt = {},
   ): Promise<Settled> {
     for (;;) {
+      if (current && !current()) return { ok: true, undelivered: true };
       if (this.disposed) return { ...STOPPED, undelivered: true };
       // A message that arrives while its conversation's session opens uses it.
       const opening = this.opening.get(key);
@@ -266,12 +269,12 @@ export class AgentSessions {
         this.drop(key, live);
         break;
       }
-      this.touch(key, live, seen);
       return this.answer(
         key,
         live,
+        seen,
         live.session.busy ? steer : text,
-        activity,
+        { ...activity, ...(current ? { current } : {}) },
         model,
       );
     }
@@ -294,8 +297,20 @@ export class AgentSessions {
         throw new Error("goose was stopped");
       }
       if (signal?.aborted) return {};
-      this.touch(key, live, seen);
-      return { settled: this.answer(key, live, text, activity, model) };
+      if (current && !current())
+        return {
+          settled: Promise.resolve({ ok: true, undelivered: true } as Settled),
+        };
+      return {
+        settled: this.answer(
+          key,
+          live,
+          seen,
+          text,
+          { ...activity, ...(current ? { current } : {}) },
+          model,
+        ),
+      };
     })();
     this.opening.set(key, starting);
     const opened = () => {
@@ -338,7 +353,14 @@ export class AgentSessions {
       this.drop(key, live);
       return { ok: true };
     }
-    const result = await this.answer(key, live, "/compact", {}, undefined);
+    const result = await this.answer(
+      key,
+      live,
+      this.seen(key),
+      "/compact",
+      {},
+      undefined,
+    );
     // goose ends the turn either way, and says which in its text.
     if (!result.ok || result.text === "Compaction complete") return result;
     return {
@@ -500,11 +522,22 @@ export class AgentSessions {
   private async answer(
     key: string,
     live: Live,
+    seen: number,
     text: string,
     activity: ActivityReceipt,
     model: string | undefined,
   ) {
-    const sent = live.session.send(text, activity, model);
+    const sent = live.session.send(
+      text,
+      {
+        ...activity,
+        delivered: () => {
+          if (this.live.get(key) === live) this.touch(key, live, seen);
+          activity.delivered?.();
+        },
+      },
+      model,
+    );
     // A final Buzz send can answer before goose finishes its model work.
     void live.session.idle().then(() => {
       if (this.live.get(key) === live) this.options.onChange?.();

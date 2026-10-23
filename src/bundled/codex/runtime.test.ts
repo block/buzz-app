@@ -3091,7 +3091,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   const channel = JSON.stringify(["channel", "channel"]);
   const elsewhere = JSON.stringify(["unlisted", root]);
   f.storage.set(
-    `buzz.codex.sessions.v7:${scope}:${pubkey}`,
+    `buzz.codex.sessions.v8:${scope}:${pubkey}`,
     JSON.stringify({
       [channel]: { threadId: "before-timestamps", workspace: "/w" },
       [thread]: { threadId: "older", workspace: "/w", at: 1 },
@@ -3128,7 +3128,7 @@ it("lists saved conversations newest first from storage, and moves a started one
   expect(latest?.at).toBeGreaterThan(2);
   const stored = Object.keys(
     JSON.parse(
-      f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
+      f.storage.get(`buzz.codex.sessions.v8:${scope}:${pubkey}`) ?? "{}",
     ),
   );
   expect(stored.at(-1)).toBe(latest?.key);
@@ -3249,7 +3249,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     1,
   );
   const saved = JSON.parse(
-    f.storage.get(`buzz.codex.sessions.v7:${scope}:${pubkey}`) ?? "{}",
+    f.storage.get(`buzz.codex.sessions.v8:${scope}:${pubkey}`) ?? "{}",
   );
   expect(Object.values(saved)).toEqual([
     expect.objectContaining({ tools: expect.any(String) }),
@@ -4074,4 +4074,111 @@ it("updates Codex repository context from the agent’s captured community, incl
   const turns = f.sent.filter((wire) => wire.method === "turn/start");
   expect(JSON.stringify(turns.at(-1))).toContain("REPOS in your own workspace");
   expect(JSON.stringify(turns.at(-1))).not.toContain("/code/codex");
+});
+
+it("drops source output invalidated while compaction waits without blocking other work", async () => {
+  const f = fixture();
+  const first = f.delivery("first");
+  const agent = { ...first.agent, config: first.config } as unknown as Agent;
+  await f.runtime.run(first);
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, { channelId: "channel", root })).toBe(
+      "idle",
+    ),
+  );
+  const compacted = f.runtime.session(
+    agent,
+    { channelId: "channel", root },
+    "compact",
+  );
+  await vi.waitFor(() =>
+    expect(f.sent.some((w) => w.method === "thread/compact/start")).toBe(true),
+  );
+  let current = true;
+  await f.runtime.run({ ...pluginWake(f, root), current: () => current });
+  current = false;
+  f.emit({
+    method: "turn/started",
+    params: { threadId: "thread-1", turn: { id: "compact" } },
+  });
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-1",
+      turn: { id: "compact", status: "completed" },
+    },
+  });
+  await compacted;
+  await f.runtime.run(f.delivery("ordinary message"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(inputText(f.starts()[1])).toContain("ordinary message");
+  expect(f.starts().some((w) => inputText(w).includes("CI failed: lint"))).toBe(
+    false,
+  );
+  await f.complete(1);
+});
+
+it("queues an ordinary follow-up when a source is cancelled during startup history", async () => {
+  const f = fixture();
+  const gate = deferred<void>();
+  const reading = deferred<void>();
+  f.read.mockImplementationOnce(async () => {
+    reading.resolve();
+    await gate.promise;
+    return [];
+  });
+  let current = true;
+  await f.runtime.run({ ...pluginWake(f, root), current: () => current });
+  await reading.promise;
+  await f.runtime.run(f.delivery("ordinary follow-up"));
+  current = false;
+  gate.resolve();
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(inputText(f.starts()[0])).toContain("ordinary follow-up");
+  expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(0);
+  await f.complete(0);
+});
+
+it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
+  const f = fixture();
+  const delivery = pluginWake(f);
+  if (delivery.trigger.type !== "plugin")
+    throw new Error("Expected plugin wake");
+  f.snapshot.session.canvas.available = true;
+  f.snapshot.session.canvas.read.mockResolvedValue(
+    canvasHead("Only Solo chats supply this"),
+  );
+  await f.runtime.run({
+    ...delivery,
+    trigger: { ...delivery.trigger, topLevel: true },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const input = JSON.stringify(f.starts()[0]?.params);
+  expect(input).toContain("<plugin-wake plugin=");
+  expect(input).toContain("top-level");
+  expect(input).not.toContain(WAKE_ID);
+  expect(f.snapshot.session.canvas.read).not.toHaveBeenCalled();
+  f.exits.resolve(3);
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    tags: expect.not.arrayContaining([expect.arrayContaining(["e"])]),
+  });
+  expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
+});
+
+it("does not reuse persisted bindings with pre-delivery built-in tool schemas", () => {
+  const f = fixture();
+  f.storage.set(
+    `buzz.codex.sessions.v7:${scope}:${pubkey}`,
+    JSON.stringify({
+      [JSON.stringify(["channel", root])]: {
+        threadId: "old-schema",
+        workspace: "/w",
+      },
+    }),
+  );
+  expect(f.runtime.conversations(pubkey)).toEqual([]);
+  f.runtime.dispose();
 });

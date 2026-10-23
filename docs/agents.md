@@ -850,3 +850,7 @@ without known rates or an incomplete snapshot left something out, and
 unavailable when nothing was known.
 It is never priced at zero. Sessions count by activity time, whether or not they
 recorded usage. Usage does not read or publish kind-44200 metrics.
+
+## Attention delivery destinations
+
+Event watches and timers accept an optional delivery `channel` and thread `root`. The event watch's `channels` still selects where to listen. With an address, the wake continues that conversation with the Interest's instructions; a channel without a root posts at channel level. Without an address, it runs an independent turn in the Interest's lane. Timers retain their occurrence and expiry budgets. The Attention panel shows listening channels separately from the delivery destination.

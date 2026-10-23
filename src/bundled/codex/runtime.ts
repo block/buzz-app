@@ -65,6 +65,7 @@ import {
 import { findConversation } from "./transcript";
 
 type Request = {
+  current?: () => boolean;
   /** The agent's community and owner, as `origin:viewer`. */
   scope: string;
   event: EventData;
@@ -613,8 +614,8 @@ export class CodexRuntime {
   private storageKey(scope: string, pubkey: string) {
     // Resume restores the persisted tool schema, so a binding from before a
     // tool change starts fresh. v5 added channel and member management; v6
-    // added the shared session tools; v7 added the shared note tools.
-    return `buzz.codex.sessions.v7:${scope}:${pubkey}`;
+    // added the shared session tools; v7 added the shared note tools; v8 adds Attention delivery fields.
+    return `buzz.codex.sessions.v8:${scope}:${pubkey}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -668,15 +669,12 @@ export class CodexRuntime {
     if (!channelId) throw new Error("The event has no unambiguous channel");
     const settings = this.resolveConfig(delivery.config);
     const channel = await reads.channel(channelId);
-    const topLevel = await reads.soloChat(
-      agent.owner,
-      channelId,
-      delivery.signal,
-    );
+    const solo = await reads.soloChat(agent.owner, channelId, delivery.signal);
+    const topLevel = solo || wake?.topLevel === true;
     if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
-    const project = topLevel
+    const project = solo
       ? (await readProject(canvas && (() => canvas(channelId, agent.owner))))
           ?.section
       : undefined;
@@ -698,6 +696,7 @@ export class CodexRuntime {
     // ends; the agent is done working on this request once it has replied.
     const request: Request = {
       scope: reads.scope,
+      ...(wake ? { current: delivery.current } : {}),
       event,
       ...(wake ? { wake } : {}),
       agent,
@@ -721,7 +720,7 @@ export class CodexRuntime {
       ...(trigger.type === "mention" && trigger.resumed
         ? { resumed: true }
         : {}),
-      ...(topLevel && delivery.named ? { named: delivery.named } : {}),
+      ...(solo && delivery.named ? { named: delivery.named } : {}),
     };
     if (!validWorkspace(settings.workspace)) {
       failActivity(
@@ -788,6 +787,11 @@ export class CodexRuntime {
               }
               if (active.finished || active.stopped) {
                 queue();
+                return;
+              }
+              if (request.current && !request.current()) {
+                entry.waiting.delete(request);
+                request.answered();
                 return;
               }
               await active.rpc.request("turn/steer", {
@@ -1082,6 +1086,10 @@ export class CodexRuntime {
         entry.waiting.delete(request);
         if (entry.abort.signal.aborted) {
           request.failActivity("Codex was stopped");
+          return;
+        }
+        if (request.current && !request.current()) {
+          request.answered();
           return;
         }
         await this.execute(request, text, key, current, entry);
@@ -1532,6 +1540,14 @@ export class CodexRuntime {
         this.core(request.agent.pubkey, signal),
       ]);
       signal.throwIfAborted();
+      if (request.current && !request.current()) {
+        restoreNotes(request);
+        request.answered();
+        this.status(agent.pubkey, key, "Idle");
+        active.finished = true;
+        ready();
+        return;
+      }
       const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
         threadId: active.threadId,
         input: input(

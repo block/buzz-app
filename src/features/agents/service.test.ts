@@ -8027,3 +8027,58 @@ it("refuses change drafts it cannot apply", async () => {
   ).rejects.toThrow("use its pubkey");
   expect(service.updateRequests()).toEqual([]);
 });
+
+it("connects a different plugin to the local agent's Buzz tools without exposing its handle", async () => {
+  const { service, plugin, ctx, native } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  let request!: import("../host/service").McpHandler;
+  const close = vi.fn(async () => {});
+  ctx.provide("host", {
+    serveMcp: async (handler: import("../host/service").McpHandler) => {
+      request = handler;
+      return {
+        url: "http://127.0.0.1:1234/mcp",
+        headers: [],
+        close,
+        closed: new Promise<void>(() => {}),
+      };
+    },
+  } as unknown as import("../host/service").Host);
+  const consumer = ctx.extend({
+    pluginOwner: Object.freeze({ id: "consumer", revision: "one" }),
+  });
+  expect(consumer.agents.handle(bot)).toBeUndefined();
+  const controller = new AbortController();
+  await expect(
+    service.connect(bot, { signal: controller.signal }),
+  ).rejects.toThrow(/installed plugin/);
+  await expect(
+    consumer.agents.connect("missing", { signal: controller.signal }),
+  ).rejects.toThrow(/not running/);
+  await consumer.agents.connect(bot, { signal: controller.signal, channel });
+  await request({
+    id: 1,
+    method: "tools/call",
+    params: { name: "read", arguments: { channel } },
+  });
+  expect(native.query).toHaveBeenCalledWith(bot, expect.any(Array));
+  const result = await request({
+    id: 2,
+    method: "tools/call",
+    params: {
+      name: "mem_set",
+      arguments: { slug: "source-test", text: "agent-owned output" },
+    },
+  });
+  expect(result).not.toHaveProperty("result.isError", true);
+  expect(native.remember).toHaveBeenCalledWith(
+    bot,
+    "mem/source-test",
+    "agent-owned output",
+    expect.any(Number),
+  );
+  controller.abort();
+  await expect(request({ id: 3, method: "tools/list" })).rejects.toThrow();
+  expect(close).toHaveBeenCalledTimes(1);
+});

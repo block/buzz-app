@@ -650,15 +650,16 @@ export class AgentRunners {
     return true;
   }
   /** The agent's handle outside any run, while this copy runs it with a
-   * type of `pluginId`, not changing it, and its community is live. Each
+   * type of `pluginId` when specified, not changing it, and its community is live. Each
    * call through the handle checks that again, so a kept handle stops
    * working while it no longer holds, and for good once the agent's type
    * or its plugin is replaced. */
-  handle(pubkey: string, pluginId: string) {
+  handle(pubkey: string, pluginId?: string) {
     const held = () => {
       const runner = this.runners.get(pubkey);
       const agent = this.host.ready(pubkey);
-      return runner?.type?.pluginId === pluginId &&
+      return runner?.type &&
+        (pluginId === undefined || runner.type.pluginId === pluginId) &&
         !runner.transitioning &&
         agent &&
         this.runs(pubkey)

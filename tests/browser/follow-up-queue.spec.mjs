@@ -186,7 +186,8 @@ test("queue focus survives preview release and pointer removal", async ({
   const { editor, first } = await startWorkingAgent(page, app);
   const queue = page.getByRole("region", { name: "Queued follow-ups" });
   await editor.press("End");
-  await editor.pressSequentially("A long queued request ".repeat(30));
+  // Seed long content in one input event; this journey tests focus, not typing throughput.
+  await page.keyboard.insertText("A long queued request ".repeat(30));
   await editor.press("Enter");
   const preview = queue.locator('[data-queue-action="preview"]');
   await expect(preview).toHaveAttribute("aria-expanded", "false");

@@ -37,6 +37,10 @@ it("keeps the people preview and overflow current as profiles and membership arr
     media: (url: string) => url,
   } as unknown as RelaySession;
   render(<ChannelMemberAvatars session={session} channelId="channel" />);
+  expect(session.profiles.ensure).toHaveBeenLastCalledWith(
+    members,
+    "background",
+  );
   expect(screen.getByTitle("Alice")).toBeInTheDocument();
   expect(screen.getByTitle("Bob")).toBeInTheDocument();
   expect(screen.getByTitle("Carol")).toBeInTheDocument();
@@ -62,6 +66,10 @@ it("keeps the people preview and overflow current as profiles and membership arr
     list = { channels: [{ id: "channel", members }] };
     for (const listener of listeners) listener();
   });
+  expect(session.profiles.ensure).toHaveBeenLastCalledWith(
+    ["bob"],
+    "background",
+  );
   expect(screen.getByTitle("Bob")).toBeInTheDocument();
   expect(screen.queryByTitle("Dana")).not.toBeInTheDocument();
   expect(screen.queryByText(/^\+/)).not.toBeInTheDocument();

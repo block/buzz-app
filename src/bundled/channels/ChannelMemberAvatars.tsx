@@ -38,7 +38,7 @@ export function ChannelMemberAvatars({
   useEffect(() => {
     if (memberKey)
       void session.profiles
-        .ensure(memberKey.split(":"), "foreground")
+        .ensure(memberKey.split(":"), "background")
         .catch(() => {});
   }, [session, memberKey]);
   const agents = new Set(choices.identities.map((agent) => agent.pubkey));

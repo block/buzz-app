@@ -679,6 +679,8 @@ html[data-keyboard-navigation]
     display: block;
     overflow-x: hidden;
     overflow-y: auto;
+    /* Focus scrolling now belongs to the popup, not its unbounded body. */
+    scroll-padding-block: var(--dialog-padding);
     /* Clip composited scrolling/blur layers to the rounded popup, retaining
        its outer shadow and the sticky chrome inside the scrollport. */
     contain: paint;

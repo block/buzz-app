@@ -19,7 +19,11 @@ import {
   type RelayEvent,
 } from "../relay/events";
 import { wake, wakePrompt } from "../agent-harness/wakes";
-import { type PluginTrigger, wakeLands } from "../agent-harness/plugin-wake";
+import {
+  type PluginTrigger,
+  wakeAnchor,
+  wakeLands,
+} from "../agent-harness/plugin-wake";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
 import { EFFORT_TAG, MODEL_TAG } from "../relay/messages";
 import type { LiveBatch } from "../relay/incoming";
@@ -343,7 +347,7 @@ export type RunnerHost = {
   agent(pubkey: string): Agent | undefined;
   /** Whether the agent is in the event's channel, or undefined while its
    * roster is only the one saved on disk and the relay has not confirmed it. */
-  member(agent: Agent, event: RelayEvent): boolean | undefined;
+  member(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
   /** While the owner is still starting this chat, settles once it can take
@@ -2012,6 +2016,7 @@ export class AgentRunners {
     ]);
     const handle = this.handleFor(runner, agent, signal);
     const anchor = conversationWake(job.trigger, "");
+    const destination = !addressed(job.trigger) ? anchor : undefined;
     const working = this.working(
       runner,
       anchor ? { ...job, trigger: anchor, channelId: anchor.channel } : job,
@@ -2051,7 +2056,11 @@ export class AgentRunners {
             }
           : {}),
         ...(named ? { named } : {}),
-        current: () => !lifetime.aborted && this.stillCurrent(runner, job),
+        current: () =>
+          !lifetime.aborted &&
+          this.stillCurrent(runner, job) &&
+          (!destination ||
+            this.host.member(agent, wakeAnchor(destination)) === true),
       });
       const { trigger } = job;
       const runOnce = type.runOnce?.bind(type);
@@ -2063,6 +2072,7 @@ export class AgentRunners {
             ? trigger.watch
             : undefined;
       if (target?.channel) {
+        if (!delivery.current()) return;
         const text = await wakePrompt(
           handle,
           trigger,

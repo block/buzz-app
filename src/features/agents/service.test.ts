@@ -7163,10 +7163,18 @@ it.each([undefined, "e".repeat(64)])(
 
 it("delivers matched events to their configured address rather than the listening channel", async () => {
   const runOnce = vi.fn(async () => ({ ok: true }));
-  const { service, run, emit, native } = await setup({ runOnce });
+  const { service, run, emit, native, session } = await setup({ runOnce });
   await service.create({ type: "example/echo", name: "Echo" });
   const destination = "11111111-1111-1111-1111-111111111111";
   const root = "e".repeat(64);
+  const list = session.channels.list();
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    ...list,
+    channels: [
+      ...list.channels,
+      { id: destination, name: "Destination", members: [viewer, bot] },
+    ],
+  });
   const watch = service.find(bot)?.attention["watch/channel"]?.value;
   if (watch?.type !== "event") throw new Error("fixture");
   await service.save(bot, {
@@ -7201,3 +7209,48 @@ it("delivers matched events to their configured address rather than the listenin
   }
   expect(runOnce).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "does not deliver timer history without confirmed membership (cached: %s)",
+  async (cached) => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const runOnce = vi.fn(async () => ({ ok: true }));
+    const { service, run, session } = await setup({ runOnce });
+    await service.create({ type: "example/echo", name: "Echo" });
+    const destination = "11111111-1111-1111-1111-111111111111";
+    const list = session.channels.list();
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      ...list,
+      channels: [
+        ...list.channels,
+        {
+          id: destination,
+          name: "Private",
+          members: cached ? [viewer, bot] : [viewer],
+          ...(cached ? { cached: true as const } : {}),
+        },
+      ],
+    });
+    const timer = {
+      type: "timer" as const,
+      interest_id: "default",
+      prompt: "Check",
+      enabled: true,
+      interval_secs: 60,
+      armed_at: 1_000,
+      max_occurrences: 1,
+      expires_at: null,
+    };
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: {
+        "watch/blocked": { ...timer, channel: destination },
+        "watch/witness": timer,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    // The same Interest's next turn proves the first handover has settled.
+    await vi.waitFor(() => expect(runOnce).toHaveBeenCalledTimes(1));
+    expect(run).not.toHaveBeenCalled();
+  },
+);

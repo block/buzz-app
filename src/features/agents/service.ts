@@ -3304,7 +3304,7 @@ export class AgentsService extends Service implements Agents {
     for (const listener of this.listeners) listener();
   }
   /** The event's channel as the agent's community knows it, if at all. */
-  private channelOf(agent: Agent, event: RelayEvent) {
+  private channelOf(agent: Agent, event: Pick<RelayEvent, "tags">) {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     const channels = this.bindingOf(agent)?.session.channels;
     if (!channel || !channels) return undefined;
@@ -3319,7 +3319,10 @@ export class AgentsService extends Service implements Agents {
    * unknown, wakes no watch. A roster only loaded from disk decides nothing
    * (undefined): the agent may have been removed or added since it was saved,
    * so the event waits until the relay confirms it. */
-  private member(agent: Agent, event: RelayEvent): boolean | undefined {
+  private member(
+    agent: Agent,
+    event: Pick<RelayEvent, "tags">,
+  ): boolean | undefined {
     const summary = this.channelOf(agent, event);
     if (summary?.cached) return undefined;
     return !!summary?.members?.includes(agent.pubkey);

@@ -39,7 +39,11 @@ function fixture() {
 it("returns authenticated transport details and revokes calls on close", async () => {
   const f = fixture();
   f.started();
-  const connection = await connectMcp(f.serve, f.handler, f.controller.signal);
+  const connection = await connectMcp(
+    f.serve,
+    () => f.handler,
+    f.controller.signal,
+  );
   expect(connection.headers).toEqual(f.server.headers);
   expect(await f.request({ id: 1 })).toEqual({ id: 1 });
   await connection.close();
@@ -49,7 +53,7 @@ it("returns authenticated transport details and revokes calls on close", async (
 
 it("closes a transport that finishes starting after cancellation", async () => {
   const f = fixture();
-  const pending = connectMcp(f.serve, f.handler, f.controller.signal);
+  const pending = connectMcp(f.serve, () => f.handler, f.controller.signal);
   f.controller.abort();
   f.started();
   await expect(pending).rejects.toThrow();
@@ -69,7 +73,7 @@ it.each(["abort", "unload"])(
         }),
     );
     f.started();
-    await connectMcp(f.serve, f.handler, f.controller.signal);
+    await connectMcp(f.serve, () => f.handler, f.controller.signal);
     const result = f.request({ id: 1 });
     if (reason === "abort") f.controller.abort();
     else {

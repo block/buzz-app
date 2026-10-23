@@ -1855,40 +1855,42 @@ export class AgentsService extends Service implements Agents {
       return source;
     };
     const source = reads();
-    const client = appClient(handle, {
-      signal: options.signal,
-      relayAuthor: source.relayAuthor?.(),
-      signingAuthority: source.workflowAuthority(),
-      audienceAuthorityCommunity: source.audienceAuthorityCommunity?.(),
-      check: () => {
-        if (reads().connection !== source.connection)
-          throw new Error("The agent's community connection changed");
-      },
-      read: async (path) => {
-        if (!host.readFile)
-          throw new Error("This plugin cannot read local files");
-        return host.readFile(
-          path,
-          options.cwd === undefined ? undefined : { cwd: options.cwd },
-        );
-      },
-      memories: (slug) => reads().memoryListing(options.signal, slug),
-    });
     return connectMcp(
       host.serveMcp.bind(host),
-      (message) =>
-        respond(
-          client,
-          {
-            ...(options.channel === undefined
-              ? {}
-              : { channel: options.channel }),
-            ...(options.root === undefined
-              ? { topLevel: true }
-              : { root: options.root }),
+      (signal) => {
+        const client = appClient(handle, {
+          signal,
+          relayAuthor: source.relayAuthor?.(),
+          signingAuthority: source.workflowAuthority(),
+          audienceAuthorityCommunity: source.audienceAuthorityCommunity?.(),
+          check: () => {
+            if (reads().connection !== source.connection)
+              throw new Error("The agent's community connection changed");
           },
-          message,
-        ),
+          read: async (path) => {
+            if (!host.readFile)
+              throw new Error("This plugin cannot read local files");
+            return host.readFile(
+              path,
+              options.cwd === undefined ? undefined : { cwd: options.cwd },
+            );
+          },
+          memories: (slug) => reads().memoryListing(signal, slug),
+        });
+        return (message) =>
+          respond(
+            client,
+            {
+              ...(options.channel === undefined
+                ? {}
+                : { channel: options.channel }),
+              ...(options.root === undefined
+                ? { topLevel: true }
+                : { root: options.root }),
+            },
+            message,
+          );
+      },
       options.signal,
     );
   }

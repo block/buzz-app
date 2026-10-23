@@ -120,7 +120,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ...(spawn && {
       usage: (agent, { since, signal }) =>
         readUsage(
-          spawn,
+          {
+            spawn,
+            ...(host.readFile && { readFile: host.readFile.bind(host) }),
+          },
           config(agent.config).workspace,
           agent.pubkey,
           runtime.conversations(agent.pubkey).map((saved) => saved.sessionId),

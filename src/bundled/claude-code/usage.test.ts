@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -238,7 +245,7 @@ it("finds the agent's sessions with the manifest's processes", async () => {
     `${context(["Session scope: channel", "Channel: dm"])}\n${reply(1000, "m1", usage(5, 6))}`,
   );
   const sessions = await readUsage(
-    processes(home),
+    { spawn: processes(home) },
     "~/.buzz",
     agent,
     ["saved", "gone"],
@@ -259,7 +266,7 @@ it("finds the agent's sessions with the manifest's processes", async () => {
   // Activity before `since` is left out.
   expect(
     await readUsage(
-      processes(home),
+      { spawn: processes(home) },
       "~/.buzz",
       agent,
       [],
@@ -269,24 +276,95 @@ it("finds the agent's sessions with the manifest's processes", async () => {
   ).toEqual([]);
 });
 
+it("reads again only the files changed since the last read", async () => {
+  home = mkdtempSync(join(tmpdir(), "claude-usage-"));
+  const base = home;
+  const project = join(base, ".claude/projects/-Users-me--buzz");
+  const write = (path: string, content: string, old = false) => {
+    mkdirSync(dirname(join(project, path)), { recursive: true });
+    writeFileSync(join(project, path), content);
+    // Older than a listing looks back.
+    const then = new Date(Date.now() - 2 * HOUR);
+    if (old) utimesSync(join(project, path), then, then);
+  };
+  const spawned = JSON.stringify({
+    type: "user",
+    timestamp: at(500),
+    toolUseResult: { agentId: "x" },
+  });
+  write(
+    "one.jsonl",
+    `${threadPrompt()}\n${spawned}\n${reply(1000, "m1", usage(1, 2))}`,
+    true,
+  );
+  write(
+    "one/subagents/agent-x.jsonl",
+    reply(1500, "s1", usage(3, 4), "claude-opus-5-5", { isSidechain: true }),
+    true,
+  );
+  write("theirs.jsonl", `${threadPrompt(other)}`, true);
+  const reads: string[] = [];
+  const host = {
+    spawn: processes(base),
+    readFile: async (path: string) => {
+      reads.push(path.replace(/^~\/\.claude\/projects\/-Users-me--buzz\//, ""));
+      return readFileSync(path.replace(/^~/, base));
+    },
+  };
+  const ids = async () =>
+    (
+      await readUsage(
+        host,
+        "~/.buzz",
+        agent,
+        [],
+        0,
+        new AbortController().signal,
+      )
+    ).map((session) => session.id);
+  expect(await ids()).toEqual(["one"]);
+  expect(reads.sort()).toEqual(["one.jsonl", "one/subagents/agent-x.jsonl"]);
+  reads.length = 0;
+  expect(await ids()).toEqual(["one"]);
+  expect(reads).toEqual([]);
+  // Sessions started since: only the agent's own is read.
+  write("two.jsonl", `${threadPrompt()}\n${reply(HOUR, "m2", usage(5, 6))}`);
+  write("theirs-too.jsonl", threadPrompt(other));
+  expect(await ids()).toEqual(["two", "one"]);
+  expect(reads).toEqual(["two.jsonl"]);
+  // A transcript deleted since is gone, not remembered.
+  rmSync(join(project, "one/subagents/agent-x.jsonl"));
+  const sessions = await readUsage(
+    host,
+    "~/.buzz",
+    agent,
+    [],
+    0,
+    new AbortController().signal,
+  );
+  expect(sessions.find((session) => session.id === "one")?.gaps).toEqual([
+    "A subagent’s transcript is gone",
+  ]);
+});
+
 /** Runs the manifest's processes for real, `~` being `home`; the workspace
  * resolves to /Users/me/.buzz. */
 it("fails rather than undercount when a search fails partway", async () => {
   const spawn = async (id: string, options: HostProcessOptions = {}) => {
     if (id === "workspace") options.onStdout?.("/Users/me/.buzz\n");
-    if (id === "find") {
-      options.onStdout?.("s.jsonl\n");
+    if (id === "owners") {
+      options.onStdout?.(`./s.jsonl:Agent: ${agent}\n`);
       options.onStderr?.("grep: ./t.jsonl: Permission denied\n");
     }
     return {
       write: async () => undefined,
       end: async () => undefined,
       kill: async () => undefined,
-      exited: Promise.resolve(id === "find" ? 2 : 0),
+      exited: Promise.resolve(id === "owners" ? 2 : 0),
     };
   };
   await expect(
-    readUsage(spawn, "~/.buzz", agent, [], 0, new AbortController().signal),
+    readUsage({ spawn }, "~/.buzz", agent, [], 0, new AbortController().signal),
   ).rejects.toThrow("Permission denied");
 });
 

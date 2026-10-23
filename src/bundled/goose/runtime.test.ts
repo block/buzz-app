@@ -1207,3 +1207,48 @@ it("session Interrupt discards a channel wake queued behind threaded work", asyn
     f.runtime.dispose();
   }
 });
+
+it("Interrupt during a queued prompt rebuild restores notes without starting a turn", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  let release!: () => void;
+  const reading = new Promise<RelayEvent[]>((resolve) => {
+    release = () => resolve([]);
+  });
+  const restoreNotes = vi.fn();
+  const notes = vi.fn(() => ["pending note"]);
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    await f.run({ ...pluginWake(), topLevel: true }, {
+      agent: { ...f.agent, notes, restoreNotes },
+      workingUntil,
+    } as unknown as Partial<Delivery>);
+    f.read.mockImplementationOnce(() => reading);
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(notes).toHaveBeenCalledTimes(1));
+    await f.runtime.session(
+      {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+      } as unknown as Agent,
+      { channelId: channel },
+      "interrupt",
+    );
+    release();
+    await workingUntil.mock.calls[0]?.[0];
+    await vi.waitFor(() =>
+      expect(restoreNotes).toHaveBeenCalledWith(
+        channel,
+        ["pending note"],
+        undefined,
+      ),
+    );
+    expect(process.turns).toHaveLength(1);
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});

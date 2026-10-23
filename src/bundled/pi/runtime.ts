@@ -518,6 +518,7 @@ export class PiRuntime {
         text,
         steer: steerPrompt(text),
         request,
+        ...(wake ? { reply: where } : {}),
         ...picked,
       });
       sends = entry.sends.get(submitted.conversation) ?? 0;
@@ -540,6 +541,7 @@ export class PiRuntime {
           entry,
           agent.pubkey,
           submitted.submission,
+          wake ? request : undefined,
         );
         if (waited.status === "done") {
           await this.answer(
@@ -827,12 +829,19 @@ export class PiRuntime {
         conversation: number;
         request: string;
         context?: { channel: string; root?: string; topLevel?: boolean };
+        reply?: Where;
       }[];
     }>("unfinished", { agent: pubkey });
     const taken: Receipt[] = [];
     const waits: (() => Promise<void>)[] = [];
     const dropped: { submission: number; conversation: number }[] = [];
-    for (const { submission, conversation, request, context } of unfinished) {
+    for (const {
+      submission,
+      conversation,
+      request,
+      context,
+      reply,
+    } of unfinished) {
       const { handle } = entry;
       if (
         !handle ||
@@ -850,9 +859,10 @@ export class PiRuntime {
       // A conversation several threads share has no root: its answer goes to
       // the thread of the mention, whose id is the request.
       const root =
+        reply?.root ??
         context.root ??
         (context.topLevel ? request : await this.threadOf(pubkey, request));
-      const where = {
+      const where = reply ?? {
         channel: context.channel,
         root,
         topLevel: !!context.topLevel,
@@ -874,7 +884,7 @@ export class PiRuntime {
       entry.active.set(conversation, active);
       const sends = entry.sends.get(conversation) ?? 0;
       waits.push(() =>
-        this.settle(entry, pubkey, submission)
+        this.settle(entry, pubkey, submission, reply ? request : undefined)
           .then(async (waited) => {
             if (!ours()) return;
             if (waited.status === "done")
@@ -953,6 +963,7 @@ export class PiRuntime {
     entry: Entry,
     pubkey: string,
     submission: number,
+    request?: string,
   ): Promise<Waited> {
     // Given up, the run is still unfinished, and nothing waits for it now.
     const abandon = (error: unknown) => {
@@ -963,7 +974,11 @@ export class PiRuntime {
       let waited: Waited | { status: "reopen" };
       try {
         if (attempt) await this.reopen(entry, pubkey);
-        waited = await this.pi.request("wait", { agent: pubkey, submission });
+        waited = await this.pi.request("wait", {
+          agent: pubkey,
+          submission,
+          ...(request ? { request } : {}),
+        });
       } catch (error) {
         if (attempt || !(error instanceof PiStopped) || entry.closed)
           throw abandon(error);

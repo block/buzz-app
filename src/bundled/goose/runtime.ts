@@ -418,6 +418,10 @@ export class GooseRuntime {
             wait ? (await prompt(false)).text : prepared,
             notes,
           );
+          if (interrupted || this.agents.get(agent.pubkey) !== entry) {
+            delivered = Promise.resolve({ ok: true, undelivered: true });
+            return;
+          }
           entry.contexts.set(
             key,
             topLevel

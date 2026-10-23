@@ -105,7 +105,7 @@ faux.setResponses([
   async (_context, options) => { calling.release(); await abortable(d.gate, options?.signal); return fauxAssistantMessage("first try"); },
   () => fauxAssistantMessage("Resumed answer"),
 ]);
-const d1 = await pi.rpc("deliver", turn("D", "fifth"));
+const d1 = await pi.rpc("deliver", { ...turn("D", "fifth"), reply: { channel: "chan", root: "wake-root", topLevel: false } });
 await calling.gate;
 const stopped = pi.rpc("wait", { agent, submission: d1.submission });
 await pi.stop();
@@ -358,6 +358,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         submission: expect.any(Number),
         conversation: out.a.conversation,
         request: "D",
+        reply: { channel: "chan", root: "wake-root", topLevel: false },
         context: { channel: "chan", root: "root" },
       },
     ]);

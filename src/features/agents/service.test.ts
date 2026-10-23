@@ -7089,30 +7089,6 @@ it("stops trying presence on a session that cannot send it", async () => {
   warn.mockRestore();
 });
 
-it("gives a run its owner's channel templates with the owner's agents each adds", async () => {
-  const { service, run, emit } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  await service.create({ type: "example/echo", name: "Sib" });
-  const team = await service.saveTeam({
-    name: "Crew",
-    instructions: "",
-    members: [sibling],
-  });
-  vi.spyOn(channelTemplates, "snapshot").mockReturnValueOnce([
-    {
-      id: "t",
-      name: "Launch",
-      teams: [team.id],
-      agents: [other, bot],
-      canvas: "# Plan",
-    },
-  ]);
-  const { templates } = await handleOf(run, emit);
-  expect(templates()).toEqual([
-    { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
-  ]);
-});
-
 describe("Attention plugin sources", () => {
   const root = "e".repeat(64);
   const watches = {
@@ -7223,4 +7199,28 @@ describe("Attention plugin sources", () => {
       text: expect.stringContaining("done"),
     });
   });
+});
+
+it("gives a run its owner's channel templates with the owner's agents each adds", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.create({ type: "example/echo", name: "Sib" });
+  const team = await service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [sibling],
+  });
+  vi.spyOn(channelTemplates, "snapshot").mockReturnValueOnce([
+    {
+      id: "t",
+      name: "Launch",
+      teams: [team.id],
+      agents: [other, bot],
+      canvas: "# Plan",
+    },
+  ]);
+  const { templates } = await handleOf(run, emit);
+  expect(templates()).toEqual([
+    { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
+  ]);
 });

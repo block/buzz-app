@@ -19,7 +19,17 @@ export type RemoteAgent = Readonly<{
   pubkey: string;
   status: "Active" | "Unattested" | "Revoked" | "Unknown";
   instructions?: string;
+  /** Beekeeper's `AgentType`; absent for a plain agent. */
+  agentType?: AgentType;
 }>;
+
+/** Beekeeper's `AgentType` values other than a plain agent's, as sent in
+ * `agent_type`. */
+export type AgentType = "AGENT_TYPE_BESTIE";
+
+/** The owner already has a live (unattested or active) Bestie; Beekeeper
+ * allows only one and refuses to register a second. */
+export class BestieAlreadyExistsError extends Error {}
 
 export const MAX_INSTRUCTIONS_LENGTH = 20_000;
 
@@ -47,6 +57,14 @@ function agentStatus(value: unknown): RemoteAgent["status"] {
   if (status === "1" || status === "UNATTESTED") return "Unattested";
   if (status === "3" || status === "REVOKED") return "Revoked";
   return "Unknown";
+}
+
+/** Protobuf JSON may carry the enum by name or number; a plain agent is
+ * `AGENT_TYPE_GENERIC`, `AGENT_TYPE_UNSPECIFIED` or absent. */
+function rowAgentType(value: unknown): RemoteAgent["agentType"] {
+  return value === "AGENT_TYPE_BESTIE" || value === 1 || value === "1"
+    ? "AGENT_TYPE_BESTIE"
+    : undefined;
 }
 
 /** Native owner identity: the viewer key and the Builderlab-binding-only signer. */
@@ -313,6 +331,10 @@ export function createAgentClient(
         signal,
       );
     },
+    /** Posts `body` to a Beekeeper route as the signed-in owner, with the
+     * same session and HTTP errors as the methods here. For a plugin's own
+     * routes, such as Bestie's check-in. */
+    beekeeper: request,
     async delete(
       agent: Pick<RemoteAgent, "id">,
       signal: AbortSignal,
@@ -372,6 +394,9 @@ export function createAgentClient(
         agent: RemoteAgent,
         intent: RegistrationIntent,
       ) => void,
+      /** Beekeeper's `AgentType` value, sent as `agent_type` unchanged;
+       * omitted for a plain agent. */
+      agentType?: string,
     ): Promise<RemoteAgent> {
       signal.throwIfAborted();
       const agentName = name.trim();
@@ -385,12 +410,17 @@ export function createAgentClient(
         oauthTarget(),
         account.subject,
         agentName,
+        agentType,
       );
       let result: Record<string, unknown>;
       try {
         result = await request(
           "register-agent",
-          { agent_name: agentName, idempotency_key: intent.key },
+          {
+            agent_name: agentName,
+            idempotency_key: intent.key,
+            ...(agentType ? { agent_type: agentType } : {}),
+          },
           signal,
         );
       } catch (error) {
@@ -408,6 +438,12 @@ export function createAgentClient(
         throw error;
       }
       const status = resultStatus(result.status);
+      if ([6, "EXISTS"].includes(status)) {
+        clearRegistration(intent);
+        throw new BestieAlreadyExistsError(
+          "Your Builderlab account already has a Bestie.",
+        );
+      }
       const rejected = new Map<string | number, string>([
         [2, "Agent creation is disabled on this server."],
         ["DISABLED", "Agent creation is disabled on this server."],
@@ -474,13 +510,17 @@ export function createAgentClient(
         )
       )
         throw new Error("Builderlab returned an invalid agent list.");
-      return agents.map((row) => ({
-        id: row.agent_id,
-        name: row.agent_name,
-        pubkey: row.agent_pubkey,
-        status: agentStatus(row.status),
-        instructions: row.agent_instructions ?? "",
-      }));
+      return agents.map((row) => {
+        const agentType = rowAgentType(row.agent_type);
+        return {
+          id: row.agent_id,
+          name: row.agent_name,
+          pubkey: row.agent_pubkey,
+          status: agentStatus(row.status),
+          instructions: row.agent_instructions ?? "",
+          ...(agentType ? { agentType } : {}),
+        };
+      });
     },
   };
 }

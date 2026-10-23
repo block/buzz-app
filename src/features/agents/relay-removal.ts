@@ -159,16 +159,15 @@ export async function removeAgentFromChannels(
   pubkey: string,
   signal: AbortSignal,
 ) {
-  const pending = new Set([
-    ...(await session.channelWrites.memberChannels(pubkey, signal)),
-    ...session.channels
+  const pending = await session.channelWrites.memberChannels(
+    pubkey,
+    signal,
+    session.channels
       .list()
-      .channels.filter(
-        (channel) => !channel.archived && channel.members?.includes(pubkey),
-      )
+      .channels.filter((channel) => channel.members?.includes(pubkey))
       .map((channel) => channel.id),
-  ]);
-  if (!pending.size) return;
+  );
+  if (!pending.length) return;
   const outbox = session.outbox;
   if (!outbox?.supports(9001))
     throw new Error("This community cannot remove agents from channels.");
@@ -225,9 +224,7 @@ export async function removeAgentFromChannels(
   // Confirm each channel against its own fresh roster: a cached loaded roster
   // may still list the agent after the relay removed it.
   const listed = await Promise.all(
-    [...pending].map((id) =>
-      session.channelWrites.listsMember(id, pubkey, signal),
-    ),
+    pending.map((id) => session.channelWrites.listsMember(id, pubkey, signal)),
   );
   const remaining = listed.filter(Boolean);
   if (remaining.length)

@@ -157,7 +157,7 @@ it("skips archived channels, where the relay refuses membership changes", async 
   fixture.archivedChannels.add(archived);
   const loaded = [
     { id: active, members: [agent.pubkey] },
-    { id: archived, archived: true, members: [agent.pubkey] },
+    { id: archived, members: [agent.pubkey] },
   ];
   await removeAgentFromChannels(
     {

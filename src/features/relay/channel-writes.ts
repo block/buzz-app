@@ -342,11 +342,15 @@ export function createChannelWrites(
       );
     return channel;
   }
-  /** Unarchived channel IDs whose relay-signed roster lists `pubkey`, as far
-   * as this viewer may read. The relay refuses membership changes in an
-   * archived channel, where a membership is inert. Throws rather than return a
-   * possibly truncated set. */
-  async function memberChannels(pubkey: string, caller: AbortSignal) {
+  /** Unarchived channel IDs among `candidates` and those whose relay-signed
+   * roster lists `pubkey`, as far as this viewer may read. The relay refuses
+   * membership changes in an archived channel, where a membership is inert.
+   * Throws rather than return a possibly truncated set. */
+  async function memberChannels(
+    pubkey: string,
+    caller: AbortSignal,
+    candidates: Iterable<string>,
+  ) {
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const limit = 500;
     const events = await discovery.read(
@@ -367,7 +371,7 @@ export function createChannelWrites(
     );
     if (events.length >= limit)
       throw new Error("Too many channels to confirm. Retry later.");
-    const ids = new Set<string>();
+    const ids = new Set(candidates);
     for (const event of events) {
       const id = event.tags.find(([name]) => name === "d")?.[1];
       if (

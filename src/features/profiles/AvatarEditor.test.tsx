@@ -328,7 +328,7 @@ it("previews an inline agent emoji and its background with Done in the form foot
   footer.remove();
 });
 
-it("sizes, moves and clears the emoji background in its preview and its uploaded avatar", async () => {
+it("sizes and moves the emoji in its preview and its uploaded avatar", async () => {
   vi.mocked(emojiAvatar).mockResolvedValue(
     new File([], "avatar.png", { type: "image/png" }),
   );
@@ -347,12 +347,12 @@ it("sizes, moves and clears the emoji background in its preview and its uploaded
   fireEvent.click(screen.getByRole("tab", { name: "Emoji" }));
   const size = screen.getByRole("slider", { name: "Emoji size" });
   expect(size).toHaveValue("1");
-  fireEvent.change(size, { target: { value: "1.2" } });
+  fireEvent.change(size, { target: { value: "1.5" } });
   expect(paintEmojiAvatar).toHaveBeenLastCalledWith(
     expect.any(HTMLCanvasElement),
     "😀",
     undefined,
-    emojiAvatarScale * 1.2,
+    emojiAvatarScale * 1.5,
     0,
   );
   expect(
@@ -369,27 +369,15 @@ it("sizes, moves and clears the emoji background in its preview and its uploaded
     expect.any(HTMLCanvasElement),
     "😀",
     undefined,
-    emojiAvatarScale * 1.2,
+    emojiAvatarScale * 1.5,
     0.1,
   );
-  fireEvent.click(screen.getByRole("tab", { name: "Background" }));
-  const transparent = screen.getByRole("button", {
-    name: "Use transparent background",
-  });
-  fireEvent.click(transparent);
-  expect(transparent).toHaveAttribute("aria-pressed", "true");
-  expect(
-    screen.getByRole("button", { name: "Custom background color" }),
-  ).toHaveAttribute("aria-pressed", "false");
-  expect(
-    screen.getByRole("slider", { name: "Emoji position" }),
-  ).not.toHaveStyle({ backgroundColor: "#FFF4CC" });
   fireEvent.click(screen.getByRole("button", { name: "Done" }));
   await waitFor(() => expect(change).toHaveBeenCalledWith(next));
   expect(emojiAvatar).toHaveBeenCalledExactlyOnceWith(
     "😀",
-    undefined,
-    emojiAvatarScale * 1.2,
+    "#FFF4CC",
+    emojiAvatarScale * 1.5,
     0.1,
   );
 });

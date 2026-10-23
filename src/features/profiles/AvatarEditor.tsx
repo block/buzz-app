@@ -47,7 +47,7 @@ type Props = {
 type DraftPreview = {
   picture: string;
   emoji?: string;
-  color?: string | undefined;
+  color?: string;
   scale?: number;
   offset?: number;
   pulse?: number;
@@ -423,7 +423,7 @@ function AvatarDraft({
   const [picture, setPicture] = useState(value);
   const [mode, setMode] = useState<"image" | "emoji" | "background">("image");
   const [emoji, setEmoji] = useState("😀");
-  const [color, setColor] = useState<string | undefined>("#FFF4CC");
+  const [color, setColor] = useState("#FFF4CC");
   // The slider is relative to the default size, so 100% never crops a circle.
   const [zoom, setZoom] = useState(1);
   const scale = emojiAvatarScale * zoom;
@@ -522,8 +522,8 @@ function AvatarDraft({
       <span className="text-label-sm">Emoji size</span>
       <input
         type="range"
-        min={0.75}
-        max={1.25}
+        min={1}
+        max={2}
         step={0.05}
         value={zoom}
         aria-valuetext={`${Math.round(zoom * 100)}%`}
@@ -612,29 +612,20 @@ function AvatarDraft({
       <div className={styles.backgroundPanel}>
         {customColorOpen ? (
           <AvatarCustomColor
-            color={color ?? "#FFFFFF"}
+            color={color}
             disabled={disabled || busy}
             onChange={setColor}
             onClose={() => setCustomColorOpen(false)}
           />
         ) : (
           <fieldset className={styles.swatches} aria-label="Avatar background">
-            <button
-              type="button"
-              className={styles.swatch}
-              data-transparent
-              aria-label="Use transparent background"
-              aria-pressed={!color}
-              disabled={disabled || busy}
-              onClick={() => setColor(undefined)}
-            />
             {colors.map((swatch) => (
               <button
                 key={swatch}
                 type="button"
                 className={styles.swatch}
                 aria-label={`Use ${swatch} background`}
-                aria-pressed={color?.toUpperCase() === swatch}
+                aria-pressed={color.toUpperCase() === swatch}
                 disabled={disabled || busy}
                 style={{ backgroundColor: swatch }}
                 onClick={() => setColor(swatch)}
@@ -645,7 +636,7 @@ function AvatarDraft({
               type="button"
               className={styles.customColor}
               aria-label="Custom background color"
-              aria-pressed={!!color && !colors.includes(color.toUpperCase())}
+              aria-pressed={!colors.includes(color.toUpperCase())}
               disabled={disabled || busy}
               onClick={() => setCustomColorOpen(true)}
             />

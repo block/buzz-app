@@ -498,20 +498,3 @@ test("avatar picker previews pointer selections and respects reduced motion", as
     page.getByRole("tab", { name: "Emoji", exact: true }),
   ).toHaveCount(0);
 });
-
-test("transparent emoji avatars upload with a clear background", async ({
-  page,
-}) => {
-  await page.goto("/tests/fixtures/profile-settings.html");
-  const alpha = await page.evaluate(async () => {
-    const { emojiAvatar } = await import(
-      "/src/features/profiles/avatar-upload.ts"
-    );
-    const image = await createImageBitmap(await emojiAvatar("😀"));
-    const context = new OffscreenCanvas(512, 512).getContext("2d");
-    context.drawImage(image, 0, 0);
-    const pixel = (x, y) => context.getImageData(x, y, 1, 1).data[3];
-    return { corner: pixel(0, 0), center: pixel(256, 256) };
-  });
-  expect(alpha).toEqual({ corner: 0, center: 255 });
-});

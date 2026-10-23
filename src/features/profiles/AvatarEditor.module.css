@@ -146,7 +146,7 @@ html[data-keyboard-navigation] .panelViewport {
   gap: var(--space-3) var(--space-2);
   max-height: min(21.75rem, 40vh);
   overflow: auto;
-  padding: var(--space-3) var(--space-1);
+  padding: var(--space-3) 0;
 }
 
 .swatch,
@@ -177,12 +177,6 @@ html[data-keyboard-navigation] .panelViewport {
     #b141ff,
     #ff4d4d
   );
-}
-
-.swatch[data-transparent] {
-  background:
-    repeating-conic-gradient(var(--border-standard) 0 25%, transparent 0 50%)
-    50% / 0.75rem 0.75rem;
 }
 
 .emojiScale {

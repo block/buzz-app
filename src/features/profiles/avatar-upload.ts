@@ -127,15 +127,11 @@ export function paintEmojiAvatar(
 /** Persist ordinary square artwork; Avatar owns human/agent clipping. */
 export async function emojiAvatar(
   emoji: string,
-  color?: string,
+  color: string,
   scale = emojiAvatarScale,
   offset = 0,
 ): Promise<File> {
-  if (
-    !emoji ||
-    emoji.length > 64 ||
-    (color !== undefined && !/^#[0-9a-f]{6}$/i.test(color))
-  )
+  if (!emoji || emoji.length > 64 || !/^#[0-9a-f]{6}$/i.test(color))
     throw new Error("Choose an emoji and a background color.");
   const canvas = document.createElement("canvas");
   paintEmojiAvatar(canvas, emoji, color, scale, offset);

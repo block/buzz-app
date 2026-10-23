@@ -1187,6 +1187,16 @@ function Composer({
     setError(undefined);
     return true;
   }
+  function replaceRecipientsIfEmpty(recipients: readonly MentionRecipient[]) {
+    const current = valueRef.current;
+    const prose = [...current.recipients]
+      .sort((a, b) => b.start - a.start)
+      .reduce(
+        (text, tag) => text.slice(0, tag.start) + text.slice(tag.end),
+        current.text,
+      );
+    return !prose.trim() && replaceRecipients(recipients);
+  }
   function insertResource(resource: ComposerResource): true | string {
     if (
       !permitted.current ||
@@ -1914,20 +1924,6 @@ function Composer({
           send();
         }}
       >
-        {editing.target && (
-          <div className={styles.composerEditHeader}>
-            <PencilSimpleIcon size={18} />
-            <span>Editing message</span>
-            <IconButton
-              type="button"
-              size="sm"
-              aria-label={editing.locked ? "Close edit" : "Cancel edit"}
-              disabled={editing.busy}
-              onClick={editing.close}
-              icon={<XIcon size={18} />}
-            />
-          </div>
-        )}
         <label className="sr-only" htmlFor={inputId}>
           {label}
         </label>
@@ -1954,9 +1950,24 @@ function Composer({
             onDismiss={() => setAttachmentError(undefined)}
           />
         )}
-        <ComposerReplyContext>
-          {!editing.target && replyContext}
-        </ComposerReplyContext>
+        <ComposerContext key={editing.target ? "edit" : "reply"}>
+          {editing.target ? (
+            <div className={styles.replyContext}>
+              <PencilSimpleIcon size={18} aria-hidden="true" />
+              <div>Editing message</div>
+              <IconButton
+                type="button"
+                size="sm"
+                aria-label={editing.locked ? "Close edit" : "Cancel edit"}
+                disabled={editing.busy}
+                onClick={editing.close}
+                icon={<XIcon size={16} aria-hidden="true" />}
+              />
+            </div>
+          ) : (
+            replyContext
+          )}
+        </ComposerContext>
         <div className={styles.composerContent}>
           {!editing.target && (
             <ComposerAttachments
@@ -2181,6 +2192,7 @@ function Composer({
                     insertMention={insertMention}
                     insertMentions={insertMentions}
                     replaceRecipients={replaceRecipients}
+                    replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
                     insertResource={insertResource}
                     focus={() => input.current?.focus()}
                   />
@@ -2336,8 +2348,8 @@ function Composer({
   );
 }
 
-/** Retain the last preview for collapse; reply semantics clear immediately. */
-function ComposerReplyContext({ children }: { children: ReactNode }) {
+/** Retain the last preview for collapse; context semantics clear immediately. */
+function ComposerContext({ children }: { children: ReactNode }) {
   const open = !!children;
   const [lastContext, setLastContext] = useState(children);
   if (open && children !== lastContext) setLastContext(children);

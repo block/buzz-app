@@ -269,7 +269,7 @@ it.each([APP, "https://tiny-counter--bpsites.apps.builderlab.xyz/"])(
   "opens %s beside the conversation the agent works in",
   async (url) => {
     const { call, ctx } = await setup();
-    const panel = ctx.panels.register.mock.calls[0][0];
+    const panel = ctx.panels.register.mock.calls[0]?.[0];
     expect(panel.matches(url)).toBe(true);
     await expect(
       call("apps_open", { url }, { channel: "c1", root: "r1" }),

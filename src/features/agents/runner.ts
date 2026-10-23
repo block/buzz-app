@@ -2048,7 +2048,7 @@ export class AgentRunners {
     const anchor = conversationWake(job.trigger, "");
     const working = this.working(
       runner,
-      anchor ? { ...job, trigger: anchor } : job,
+      anchor ? { ...job, trigger: anchor, channelId: anchor.channel } : job,
       agent,
     );
     const trigger = job.trigger;

@@ -7089,6 +7089,30 @@ it("stops trying presence on a session that cannot send it", async () => {
   warn.mockRestore();
 });
 
+it("gives a run its owner's channel templates with the owner's agents each adds", async () => {
+  const { service, run, emit } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  await service.create({ type: "example/echo", name: "Sib" });
+  const team = await service.saveTeam({
+    name: "Crew",
+    instructions: "",
+    members: [sibling],
+  });
+  vi.spyOn(channelTemplates, "snapshot").mockReturnValueOnce([
+    {
+      id: "t",
+      name: "Launch",
+      teams: [team.id],
+      agents: [other, bot],
+      canvas: "# Plan",
+    },
+  ]);
+  const { templates } = await handleOf(run, emit);
+  expect(templates()).toEqual([
+    { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
+  ]);
+});
+
 describe("Attention plugin sources", () => {
   const root = "e".repeat(64);
   const watches = {
@@ -7251,7 +7275,7 @@ it.each([undefined, "e".repeat(64)])(
 
 it("delivers matched events to their configured address rather than the listening channel", async () => {
   const runOnce = vi.fn(async () => ({ ok: true }));
-  const { service, run, emit } = await setup({ runOnce });
+  const { service, run, emit, native } = await setup({ runOnce });
   await service.create({ type: "example/echo", name: "Echo" });
   const destination = "11111111-1111-1111-1111-111111111111";
   const root = "e".repeat(64);
@@ -7263,7 +7287,12 @@ it("delivers matched events to their configured address rather than the listenin
       "watch/channel": { ...watch, channel: destination, root },
     },
   });
-  emit({ events: [deploy("addressed-subscription")] });
+  let finish = () => {};
+  const turn = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  run.mockImplementationOnce(({ workingUntil }) => workingUntil(turn));
+  emit({ channelId: channel, events: [deploy("addressed-subscription")] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   const trigger = run.mock.calls[0]?.[0].trigger;
   expect(trigger).toMatchObject({ type: "plugin", channel: destination, root });
@@ -7272,6 +7301,16 @@ it("delivers matched events to their configured address rather than the listenin
   expect(trigger.text).toContain("observed-message");
   expect(trigger.text).toContain("Be brief.");
   expect(trigger.text).not.toContain("no default destination");
+  try {
+    await vi.waitFor(async () => {
+      const pulses = await published(native, 20002);
+      expect(pulses.length).toBeGreaterThan(0);
+      for (const pulse of pulses)
+        expect(pulse.tags).toContainEqual(["h", destination]);
+    });
+  } finally {
+    finish();
+  }
   expect(runOnce).not.toHaveBeenCalled();
 });
 
@@ -7325,28 +7364,4 @@ it("serializes standalone source output per Interest and drops queued output aft
   await Promise.resolve();
   expect(prompts).toHaveLength(1);
   expect(run).not.toHaveBeenCalled();
-});
-
-it("gives a run its owner's channel templates with the owner's agents each adds", async () => {
-  const { service, run, emit } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  await service.create({ type: "example/echo", name: "Sib" });
-  const team = await service.saveTeam({
-    name: "Crew",
-    instructions: "",
-    members: [sibling],
-  });
-  vi.spyOn(channelTemplates, "snapshot").mockReturnValueOnce([
-    {
-      id: "t",
-      name: "Launch",
-      teams: [team.id],
-      agents: [other, bot],
-      canvas: "# Plan",
-    },
-  ]);
-  const { templates } = await handleOf(run, emit);
-  expect(templates()).toEqual([
-    { name: "Launch", canvas: "# Plan", agents: [bot, sibling] },
-  ]);
 });

@@ -489,6 +489,7 @@
   background: var(--surface-inset);
 }
 .attachmentImage canvas,
+.attachmentImage video,
 .attachmentImage img {
   position: absolute;
   inset: 0;
@@ -499,6 +500,21 @@
 .attachmentImage img {
   object-fit: contain;
 }
+.attachmentImage video {
+  object-fit: contain;
+}
+.mediaGridBadge {
+  position: absolute;
+  inset-inline-start: var(--space-2);
+  inset-block-end: var(--space-2);
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
+  border-radius: var(--radius-control);
+  color: var(--text-on-media);
+  background: var(--bg-media-glass);
+  pointer-events: none;
+}
 .attachmentImageUnavailable {
   @apply text-caption;
   display: grid;
@@ -506,6 +522,13 @@
   padding: var(--space-1);
   cursor: auto;
   color: var(--text-subtle);
+}
+.attachmentImageUnavailable > span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
 }
 .imageGroup {
   min-width: 0;
@@ -517,6 +540,23 @@
   align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-1);
+}
+.imageGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  width: 22.5rem;
+  max-width: 100%;
+}
+.imageOverflow {
+  @apply text-heading;
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-on-media);
+  background: var(--bg-media-glass);
+  pointer-events: none;
 }
 
 html[data-keyboard-navigation] .attachmentImage:focus-visible {
@@ -2937,7 +2977,7 @@ html[data-keyboard-navigation] .channelJoinSurface {
 .message[data-viewer-message]
   > .messageBody
   > .messageContent
-  :is(.messageAttachments, .imageList) {
+  :is(.messageAttachments, .imageList:not(.imageGrid)) {
   align-items: flex-end;
 }
 

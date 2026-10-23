@@ -1129,3 +1129,44 @@ it("delivers a rootless subscription to its channel without publishing its ancho
     expect(event.tags.some((tag) => tag[0] === "e")).toBe(false);
   expect(JSON.stringify(f.published)).not.toContain(WAKE_ID);
 });
+
+it("keeps a shared session's posting policy until its active turn settles", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  f.agent.query.mockResolvedValue([message("1", "threaded work")]);
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const process = f.goose();
+    if (!process) throw new Error("Expected Goose process");
+    const next = f.run({
+      type: "plugin",
+      plugin: "example",
+      channel,
+      topLevel: true,
+      id: "f".repeat(64),
+      at: 200_000,
+      text: "channel work",
+    });
+    await next;
+    const reply = await process.mcp(
+      process.turns[0]?.sessionId ?? "",
+      "tools/call",
+      {
+        name: "send",
+        arguments: {
+          audience: "everyone",
+          text: "thread reply",
+          reply: "1".repeat(64),
+        },
+      },
+    );
+    expect(reply.result).not.toMatchObject({ isError: true });
+    expect(process.turns[0]?.steered).toEqual([]);
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+    expect(process.turns[1]?.text).toContain("channel work");
+    process.turns[1]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});

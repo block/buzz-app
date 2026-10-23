@@ -976,3 +976,19 @@ it.each([false, true])(
     sessions.dispose();
   },
 );
+
+it("drops standalone output invalidated after its prompt is built", async () => {
+  const { sessions, fake } = setup();
+  let current = true;
+  const result = await sessions.runOnce(
+    "source/check",
+    () => {
+      current = false;
+      return "cancelled output";
+    },
+    { current: () => current },
+  );
+  expect(result.ok).toBe(true);
+  expect(fake.geese.flatMap((process) => process.turns)).toEqual([]);
+  sessions.dispose();
+});

@@ -1,3 +1,7 @@
+import { appClient } from "../../buzz-mcp/app-client";
+import { respond } from "../../buzz-mcp/rpc";
+import { connectMcp } from "../../buzz-mcp/connection";
+import type { HostMcpServer } from "../host/service";
 import { sourceCompleted } from "./attention";
 import { createLocalAgentActivity } from "./local-activity";
 import {
@@ -880,6 +884,18 @@ export type Agents = {
    * it; like any type whose agents run here, it has `run`. A kept handle
    * throws once this no longer holds, so ask again when acting. */
   handle(pubkey: string): AgentHandle | undefined;
+  /** Gives an installed plugin an authenticated local Buzz MCP endpoint for
+   * an agent running here, regardless of its harness type. Requires host.mcp.
+   * The app retains the key. Abort or close revokes the connection. */
+  connect(
+    pubkey: string,
+    options: Readonly<{
+      signal: AbortSignal;
+      channel?: string;
+      root?: string;
+      cwd?: string;
+    }>,
+  ): Promise<HostMcpServer>;
   /** The owner's connection to a running agent's community, which need not be
    * the selected one: read the agent's conversations through this. */
   relay(pubkey: string): RelayData | undefined;
@@ -1815,6 +1831,66 @@ export class AgentsService extends Service implements Agents {
   handle(pubkey: string) {
     const owner = this.ctx.pluginOwner;
     return owner && this.runners.handle(pubkey, owner.id);
+  }
+  async connect(
+    pubkey: string,
+    options: Readonly<{
+      signal: AbortSignal;
+      channel?: string;
+      root?: string;
+      cwd?: string;
+    }>,
+  ): Promise<HostMcpServer> {
+    if (!this.ctx.pluginOwner)
+      throw new Error("Only an installed plugin connects as an agent");
+    options.signal.throwIfAborted();
+    const handle = this.runners.handle(pubkey);
+    if (!handle) throw new Error("This agent is not running here");
+    const host = this.ctx.host;
+    if (!host?.serveMcp)
+      throw new Error("Agent connections require a desktop MCP host");
+    const reads = () => {
+      const source = ownerReads(this.relay(pubkey), pubkey);
+      if (!source) throw new Error("The agent's community is not connected");
+      return source;
+    };
+    const source = reads();
+    const client = appClient(handle, {
+      signal: options.signal,
+      relayAuthor: source.relayAuthor?.(),
+      signingAuthority: source.workflowAuthority(),
+      audienceAuthorityCommunity: source.audienceAuthorityCommunity?.(),
+      check: () => {
+        if (reads().connection !== source.connection)
+          throw new Error("The agent's community connection changed");
+      },
+      read: async (path) => {
+        if (!host.readFile)
+          throw new Error("This plugin cannot read local files");
+        return host.readFile(
+          path,
+          options.cwd === undefined ? undefined : { cwd: options.cwd },
+        );
+      },
+      memories: (slug) => reads().memoryListing(options.signal, slug),
+    });
+    return connectMcp(
+      host.serveMcp.bind(host),
+      (message) =>
+        respond(
+          client,
+          {
+            ...(options.channel === undefined
+              ? {}
+              : { channel: options.channel }),
+            ...(options.root === undefined
+              ? { topLevel: true }
+              : { root: options.root }),
+          },
+          message,
+        ),
+      options.signal,
+    );
   }
   note(pubkey: string, channelId: string, text: string, root?: string) {
     return this.runners.note(pubkey, channelId, text, root);

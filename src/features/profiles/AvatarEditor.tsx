@@ -485,7 +485,7 @@ function AvatarDraft({
           <input
             type="range"
             min={0.4}
-            max={1}
+            max={1.6}
             step={0.05}
             value={scale}
             aria-valuetext={`${Math.round(scale * 100)}%`}

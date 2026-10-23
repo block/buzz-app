@@ -72,20 +72,29 @@ export function paintEmojiAvatar(
   scale = emojiAvatarScale,
 ) {
   canvas.width = canvas.height = 512;
-  // Paint large and only ever shrink, so a zoomed emoji stays sharp.
-  const glyph = document.createElement("canvas");
-  glyph.width = glyph.height = 1024;
   const context = canvas.getContext("2d");
-  const source = glyph.getContext("2d", { willReadFrequently: true });
-  if (!context || !source)
+  const probe = document.createElement("canvas").getContext("2d", {
+    willReadFrequently: true,
+  });
+  if (!context || !probe)
     throw new Error("Emoji images are unavailable in this browser.");
-  source.font =
-    '516px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
-  source.textAlign = "center";
-  source.textBaseline = "middle";
-  source.fillStyle = "#000000";
-  source.fillText(emoji, 512, 512);
-  const pixels = source.getImageData(0, 0, 1024, 1024);
+  // Measure the artwork once, then paint it at the font size that fits, so
+  // even a zoomed emoji is drawn at full resolution.
+  const paint = (
+    target: CanvasRenderingContext2D,
+    size: number,
+    x: number,
+    y: number,
+  ) => {
+    target.font = `${size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+    target.textAlign = "center";
+    target.textBaseline = "middle";
+    target.fillStyle = "#000000";
+    target.fillText(emoji, x, y);
+  };
+  probe.canvas.width = probe.canvas.height = 1024;
+  paint(probe, 516, 512, 512);
+  const pixels = probe.getImageData(0, 0, 1024, 1024);
   let left = 1024;
   let right = -1;
   let top = 1024;
@@ -105,20 +114,12 @@ export function paintEmojiAvatar(
     context.fillRect(0, 0, 512, 512);
   }
   if (right < left) return;
-  const width = right - left + 1;
-  const height = bottom - top + 1;
-  const fit = (512 * scale) / Math.max(width, height);
-  context.imageSmoothingQuality = "high";
-  context.drawImage(
-    glyph,
-    left,
-    top,
-    width,
-    height,
-    256 - (width * fit) / 2,
-    256 - (height * fit) / 2,
-    width * fit,
-    height * fit,
+  const fit = (512 * scale) / Math.max(right - left + 1, bottom - top + 1);
+  paint(
+    context,
+    516 * fit,
+    256 - ((left + right + 1) / 2 - 512) * fit,
+    256 - ((top + bottom + 1) / 2 - 512) * fit,
   );
 }
 

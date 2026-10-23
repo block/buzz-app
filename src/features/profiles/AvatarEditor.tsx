@@ -130,7 +130,8 @@ export function AvatarEditor(props: Props) {
           const target =
             event instanceof FocusEvent ? event.relatedTarget : event.target;
           if (
-            !next &&
+            (details.reason === "outside-press" ||
+              details.reason === "focus-out") &&
             target instanceof Element &&
             target.closest("[data-emoji-position]")
           )

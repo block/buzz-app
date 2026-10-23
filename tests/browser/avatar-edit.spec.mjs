@@ -493,6 +493,10 @@ test("avatar picker previews pointer selections and respects reduced motion", as
   await page.screenshot({
     path: test.info().outputPath("profile-avatar-picker.png"),
   });
+  await position.press("Escape");
+  await expect(
+    page.getByRole("tab", { name: "Emoji", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("transparent emoji avatars upload with a clear background", async ({

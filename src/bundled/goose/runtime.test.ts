@@ -1288,3 +1288,29 @@ it("keeps a queued Goose prompt in its admitted scope after settings change", as
     f.runtime.dispose();
   }
 });
+
+it("notifies subscribers when the final Goose posting policy settles", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  const agent = {
+    ...f.agent,
+    config: { ...DEFAULT_CONFIG, scope: "channel" },
+  } as unknown as Agent;
+  const place = { channelId: channel };
+  const states: string[] = [];
+  const unsubscribe = f.runtime.subscribe(() => {
+    states.push(f.runtime.sessionState(agent, place));
+  });
+  try {
+    await f.deliver(message("1", "threaded work"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    expect(states.at(-1)).toBe("active");
+    f.goose()?.turns[0]?.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    expect(states.at(-1)).toBe("idle");
+  } finally {
+    unsubscribe();
+    f.runtime.dispose();
+  }
+});

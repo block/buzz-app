@@ -202,6 +202,13 @@ the agent's mention lane immediately. It waits for the action without spending
 its handover deadline; other conversations continue, and stopping the agent
 cancels the deferred work.
 
+Claude's channel-scoped sessions save a separate history timestamp for each
+thread. Working in one thread does not mark another thread's messages as seen.
+The 200 most recently addressed threads are tracked across reloads. Older saves
+and evicted entries supply that thread's recent context again on its next turn;
+the saved Claude session is retained. DMs and Solo chats keep one conversation
+timestamp.
+
 Codex's provider model menu offers **Codex recommended** (the catalog's
 recommendation) and specific models. Blank model preferences follow the
 recommendation; blank thinking preferences follow the selected model's default
@@ -546,8 +553,10 @@ store and stops it, keeping its key. The cleanup (`AgentsService.cleanup`, share
 helpers in `features/agents/relay-removal.ts`) then runs:
 
 1. An exact one-member 9001 (`h`, `p`, `client-id`) goes through the outbox for every
-   channel whose relay-signed 39002 roster lists the agent, plus the viewer's loaded
-   channels. Each channel's own fresh roster must then omit the agent.
+   unarchived channel whose relay-signed 39002 roster lists the agent, plus the
+   viewer's loaded unarchived channels. Each channel's own fresh roster must then omit
+   the agent. The relay refuses membership changes in an archived channel, so its
+   roster keeps the deleted agent.
 2. A fresh archive read runs; unless it already lists the identity, it is archived
    through the request path above when a consent path exists. An agent that never
    published an owner-attested profile has nothing to hide and is not archived.

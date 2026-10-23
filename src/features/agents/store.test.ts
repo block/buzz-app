@@ -386,7 +386,7 @@ it.each([undefined, null])(
           modifiedAt: 1,
           value: {
             type: "source",
-            provider,
+            provider: "monitor/command",
             interest_id: "check",
             enabled: true,
             channel: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",

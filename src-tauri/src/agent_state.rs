@@ -223,6 +223,14 @@ pub(crate) async fn app_agent_state_set(
     value: Option<String>,
     absent: Option<bool>,
 ) -> Result<Option<String>, String> {
+    save(&state, key, value, absent)
+}
+pub(crate) fn save(
+    state: &AgentState,
+    key: String,
+    value: Option<String>,
+    absent: Option<bool>,
+) -> Result<Option<String>, String> {
     match (value, absent.unwrap_or(false)) {
         (Some(value), true) => state.add(&key, &value),
         (value, _) => state.set(&key, value.as_deref()).map(|_| None),
@@ -305,6 +313,11 @@ mod tests {
         );
         assert_eq!(key.len(), 251);
         assert!(encode(&key).len() > NAME_LIMIT);
+        // The name the agent host's `fileName` gives it (storage.test.ts).
+        assert_eq!(
+            file_name(&key),
+            "~2418a80781b72ec15bca6c4423fa41f0937d29e13b19fe1247bf0daaa571773f"
+        );
         for key in [key.as_str(), &":".repeat(86), &"k".repeat(NAME_LIMIT + 1)] {
             state.set(key, Some("{\"a\":1}")).unwrap();
             let name = file_name(key);

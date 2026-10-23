@@ -595,8 +595,8 @@ The source of truth is ordinary Markdown in one root level-two `Todos` section:
 ordinary Markdown renders it as plain text. Canvases without it keep their
 existing meaning: `[ ]` is To do and `[x]`/`[X]` is Done.
 
-Only top-level unordered checkbox items in that section are shown. Nested lists,
-quotes and fenced examples are not tasks in this view. Doing and checkbox edits
+Unordered checkbox items in that section are shown, including nested tasks. Nested tasks remain under their root task’s status group, with collapsible subtrees.
+Quotes and fenced examples are not tasks in this view. Doing and checkbox edits
 change one source byte; additions insert below the heading without rewriting other
 content.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
@@ -1454,6 +1454,8 @@ editing an existing message, both mention commands insert identity references
 without changing the original notification recipients.
 
 `replaceRecipients([{ pubkey, name }, …])` changes the recipient set in one undoable transaction, preserving prose, formatting, focus and the mapped selection. Mentions that stay keep their names and positions, including duplicates; new recipients are inserted at the start. An unchanged set does not edit the draft, regardless of order. Removed mentions also remove one following space when present, leaving punctuation unchanged. An empty array clears selected mentions. Automatic replacement does not update recent-mention rankings. It uses the same admission and lifetime checks as insertion and rejects the entire edit for invalid or unavailable recipients or length limits. It returns false while editing a sent message. Plain-text names do not become recipients.
+
+`replaceRecipientsIfEmpty` takes the same selection but rejects the change if the current draft contains non-whitespace text outside selected mention spans. Automatic targeting can use this guarded command when available. A false result must not trigger unrestricted replacement. The host checks the current draft at invocation, so a retained command cannot overwrite recipients after typing begins.
 
 `insertResource({ uri, label })` inserts a host-owned inline reference to plugin
 content, such as a repository issue or pull request. The host normalizes the label

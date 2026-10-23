@@ -1588,3 +1588,55 @@ it.each([undefined, root.id])(
     }
   },
 );
+
+it("persists a channel-scoped wake's reply thread separately from its tool context", async () => {
+  const f = setup();
+  try {
+    await f.deliver(
+      {
+        type: "plugin",
+        plugin: "attention",
+        channel,
+        root: root.id,
+        id: "f".repeat(64),
+        at: 200_000,
+        text: "CI changed",
+      },
+      { config: { ...DEFAULT_CONFIG, scope: "channel" } },
+    ).run;
+    expect(f.host.requests("deliver")[0]?.params).toMatchObject({
+      key: channel,
+      context: { channel },
+      reply: { channel, root: root.id, topLevel: false },
+    });
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("recovers a channel-scoped wake's answer in its saved thread", async () => {
+  const f = setup({
+    unfinished: () => ({
+      submissions: [
+        {
+          submission: 41,
+          conversation: 5,
+          request: "f".repeat(64),
+          context: { channel },
+          reply: { channel, root: root.id, topLevel: false },
+        },
+      ],
+    }),
+    wait: ({ submission }) =>
+      submission === 41
+        ? { status: "done", answer: 9, text: "Recovered wake" }
+        : new Promise(() => {}),
+  });
+  try {
+    await f.deliver({ type: "mention", event: reply("2", "@Pi hi") }).run;
+    await vi.waitFor(() => expect(f.published).toHaveLength(1));
+    expect(f.published[0]?.tags).toContainEqual(["e", root.id, "", "reply"]);
+  } finally {
+    f.runtime.dispose();
+  }
+});

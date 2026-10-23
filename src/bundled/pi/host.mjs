@@ -45,6 +45,14 @@ const Places = defineDoc({
   scope: "session",
   initial: () => ({}),
 });
+/** A plugin wake's reply destination belongs to its request, independently
+ * of the conversation's tool defaults. Recorded before submission for recovery. */
+const Replies = defineDoc({
+  kind: "buzz.replies",
+  version: 1,
+  scope: "session",
+  initial: () => ({}),
+});
 /** Messages that arrive while Pi works join its run at the next boundary. */
 const SETTINGS = { steeringMode: "all" };
 /** Pi's own default thinking level, for a model that thinks. */
@@ -677,7 +685,7 @@ export function serve({
     },
     /** A turn for a conversation key: its Pi conversation, made the first
      * time, takes the request, or steers its run if one is working. */
-    async deliver({ agent, key, at, context: tools, ...turn }) {
+    async deliver({ agent, key, at, context: tools, reply, ...turn }) {
       const opened = await agentOf(agent);
       const prior = opened.queues.get(key);
       const delivered = (async () => {
@@ -705,6 +713,10 @@ export function serve({
         }
         opened.contexts.set(conversation.id, tools);
         const { busy } = await watch(opened, conversation.id);
+        if (reply)
+          await harness.commit(async (tx) => {
+            (await tx.doc(Replies))[turn.request] = reply;
+          }, context);
         const submitted = await submit(conversation, turn, busy);
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.
@@ -743,6 +755,7 @@ export function serve({
     async unfinished({ agent }) {
       const opened = await agentOf(agent);
       const { submissions } = await opened.harness.inspect(context);
+      const replies = (await opened.harness.snapshot(Replies, context)) ?? {};
       return {
         submissions: submissions.flatMap(
           ({ id, conversationId, requestId }) => {
@@ -753,6 +766,9 @@ export function serve({
                     submission: id,
                     conversation: conversationId,
                     request: requestId,
+                    ...(replies[requestId]
+                      ? { reply: replies[requestId] }
+                      : {}),
                     ...(place ? { context: place } : {}),
                   },
                 ]
@@ -785,10 +801,16 @@ export function serve({
       }
     },
     /** How a request settled: its answer's text, or why it has none. */
-    async wait({ agent, submission }) {
+    async wait({ agent, submission, request }) {
       // Its run is in Pi's storage: the plugin opens the agent again.
       if (failed.has(agent)) return { status: "reopen" };
-      return settle(await agentOf(agent), submission);
+      const opened = await agentOf(agent);
+      const result = await settle(opened, submission);
+      if (request && result.status !== "closed")
+        await opened.harness.commit(async (tx) => {
+          delete (await tx.doc(Replies))[request];
+        }, context);
+      return result;
     },
     async abort({ agent, conversation }) {
       const { harness } = await agentOf(agent);
